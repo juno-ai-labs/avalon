@@ -1,4 +1,4 @@
-import { projectColorCells } from '../lib/project-palette';
+import { markColors, projectColorCells } from '../lib/project-palette';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { GENERATED_WORKSTREAM_ICON_KEYS, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
 import clsx from 'clsx';
@@ -85,7 +85,9 @@ function AppearanceChoices({ selected, change, error }: Pick<ReturnType<typeof u
       {projectColorCells().map((color, cell) => (color === null
         ? <span aria-hidden="true" className="appearance-picker-gap" key={`gap-${cell}`} />
         : <DropdownMenu.RadioItem key={color} value={color} aria-label={label(color)} title={label(color)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ color }); }}>
-          <span className="appearance-picker-swatch" style={{ background: `var(--av-sys-color-project-${color})` }} />
+          {/* The pastel a mark of this colour gets, with its ink as a dot, so
+              the swatch previews the mark rather than the bare hue. */}
+          <span className="appearance-picker-swatch" style={{ background: markColors(color).tint, '--swatch-ink': markColors(color).ink } as React.CSSProperties} />
         </DropdownMenu.RadioItem>))}
     </DropdownMenu.RadioGroup>
     <DropdownMenu.Separator className="appearance-picker-divider" />
@@ -94,7 +96,7 @@ function AppearanceChoices({ selected, change, error }: Pick<ReturnType<typeof u
       <IconCatalog renderIcon={(icon) => {
         const Icon = WORKSTREAM_ICON_COMPONENTS[icon];
         return <DropdownMenu.RadioItem key={icon} value={icon} aria-label={label(icon)} title={label(icon)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ icon }); }}>
-          <Icon size={20} strokeWidth={1.8} stroke={`var(--av-sys-color-project-${selected.color})`} />
+          <Icon size={20} strokeWidth={1.8} stroke={selected.color ? markColors(selected.color).ink : undefined} />
         </DropdownMenu.RadioItem>;
       }} />
     </DropdownMenu.RadioGroup>
