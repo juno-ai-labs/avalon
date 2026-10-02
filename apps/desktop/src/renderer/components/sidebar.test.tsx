@@ -2162,11 +2162,31 @@ describe('pinned channels', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Sorted A to Z. Sort by recent activity' }));
     expect(channelTitles()).toEqual(['Zulu sync', 'Bravo notes', 'alpha review']);
-    expect(screen.getByRole('button', { name: 'Sorted by recent activity. Sort A to Z' })).toHaveTextContent('Recent');
+    expect(screen.getByRole('button', { name: 'Sorted by recent activity. Sort by what needs you' })).toHaveTextContent('Recent');
     expect(window.localStorage.getItem('rally.sidebar-channel-sort')).toBe('recent');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sorted by recent activity. Sort A to Z' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sorted by recent activity. Sort by what needs you' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sorted by what needs you. Sort A to Z' }));
     expect(channelTitles()).toEqual(['alpha review', 'Bravo notes', 'Zulu sync']);
+  });
+
+  it('sorts Needs you as the Channels with something for this reader, then the rest, each newest first', () => {
+    window.localStorage.setItem('rally.sidebar-channel-sort', 'needs_you');
+    useUiStore.setState({ sidebarChannelSort: 'needs_you' });
+    renderWith([
+      pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0),
+      workstream('ws-quiet-new', 'Quiet newest', 'completed', '2026-07-31T20:00:00.000Z'),
+      workstream('ws-unread-old', 'Unread oldest', 'completed', '2026-07-01T20:00:00.000Z', { hasUnread: true }),
+      workstream('ws-quiet-old', 'Quiet oldest', 'completed', '2026-07-02T20:00:00.000Z'),
+      // Read, but a Breakout needs this reader: the same input that bolds it.
+      { ...workstream('ws-breakout', 'Breakout waiting', 'completed', '2026-07-20T20:00:00.000Z'), breakoutAttentionCount: 1 },
+    ]);
+    const channelTitles = [...screen.getByRole('region', { name: 'Channels' })
+      .querySelectorAll('[data-workstream-id] .sidebar-row-title-copy')]
+      .map((title) => title.textContent ?? '');
+
+    expect(channelTitles).toEqual(['Breakout waiting', 'Unread oldest', 'Quiet newest', 'Quiet oldest']);
+    expect(screen.getByRole('button', { name: 'Sorted by what needs you. Sort A to Z' })).toHaveTextContent('Needs you');
   });
 
   it('shows an empty Pinned section that says how to pin, before anything is pinned', () => {
