@@ -5,6 +5,7 @@ import { WORKSTREAM_ICON_KEYS } from "@rally/contracts";
 
 import type { Env } from "../src/env";
 import {
+  chooseWorkstreamIcon,
   nameWorkstream,
   normalizeGeneratedTitle,
   provisionalWorkstreamTitle,
@@ -452,6 +453,80 @@ describe("work-stream naming", () => {
       title: "Avalon download link",
       titleStatus: "automatic",
     }]);
+  });
+
+  it("gives an imported Channel an icon from its history, and keeps its name", async () => {
+    const database = seededDatabase();
+    // An import is created with the name the importer typed, settled.
+    applyWorkstreamObjectRootFields(objectStoreOf(database), {
+      title: "Danny's onboarding chat",
+      titleStatus: "settled",
+    });
+    seedMessages(database, 2);
+    const requests: Array<Record<string, unknown>> = [];
+    const published: Array<Record<string, unknown>> = [];
+    stubOpenRouter(requests, "Avalon download link");
+    const env = environment(database, published);
+
+    await chooseWorkstreamIcon(env, {
+      workspaceId,
+      workstreamId,
+      objective: "Danny's onboarding chat",
+      userId,
+    });
+
+    expect(workstreamRow(database)).toMatchObject({
+      title: "Danny's onboarding chat",
+      title_status: "settled",
+    });
+    // The colour stays unchosen, so the id-derived one stays in force.
+    expect(appearance(database)).toEqual({ icon: "megaphone", color: null });
+    // No room event: one carrying a title could undo a rename that landed
+    // after this pass read the row. The directory projection carries the icon.
+    expect(published).toEqual([]);
+    // The imported history is what the model reads. The client appends the
+    // expected JSON Schema to the last message, so the rendered payload is the
+    // part before it.
+    const [rendered] = (requests[0]?.messages as Array<{ content: string }>)[1]!.content.split("\n\n");
+    expect((JSON.parse(String(rendered)) as { conversation: unknown[] }).conversation).toHaveLength(2);
+  });
+
+  it("keeps an import's icon when the name it came with normalizes away", async () => {
+    const database = seededDatabase();
+    applyWorkstreamObjectRootFields(objectStoreOf(database), { titleStatus: "settled" });
+    // A bare heading marker is a name the normalizer reduces to nothing. The
+    // icon pass throws the name away regardless, so the icon still stands.
+    stubOpenRouter([], "##");
+    const env = environment(database, []);
+
+    await chooseWorkstreamIcon(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+    });
+
+    expect(appearance(database)).toEqual({ icon: "megaphone", color: null });
+    expect(workstreamRow(database)).toMatchObject({ title: provisionalTitle, title_status: "settled" });
+  });
+
+  it("keeps the icon a person chose for an import", async () => {
+    const database = seededDatabase();
+    applyWorkstreamObjectRootFields(objectStoreOf(database), {
+      titleStatus: "settled",
+      appearance: { icon: "rocket", color: null },
+    });
+    const published: Array<Record<string, unknown>> = [];
+    stubOpenRouter([], "Avalon download link");
+    const env = environment(database, published);
+
+    await chooseWorkstreamIcon(env, {
+      workspaceId,
+      workstreamId,
+      objective,
+    });
+
+    expect(appearance(database)).toEqual({ icon: "rocket", color: null });
+    expect(published).toEqual([]);
   });
 
   it("never names a work stream without an OpenRouter key", async () => {

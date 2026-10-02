@@ -148,6 +148,47 @@ export async function nameWorkstream(env: Env, input: WorkstreamNamingInput): Pr
 }
 
 /**
+ * Icon-only pass for a conversation created with its title (an import); see
+ * `docs/workstream-naming.md#prepared-history`. Never rejects: see
+ * {@link guarded}.
+ */
+export async function chooseWorkstreamIcon(env: Env, input: {
+  workspaceId: string;
+  workstreamId: string;
+  objective: string;
+  userId?: string | undefined;
+}): Promise<void> {
+  await guarded(env, input.workspaceId, input.workstreamId, async () => {
+    const generated = await generateName(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      userId: input.userId,
+      objective: input.objective,
+      openingMessage: "",
+      recentMessages: await loadNamingContext(env, input.workspaceId, input.workstreamId),
+      iconOnly: true,
+    });
+    if (generated.icon === null) return;
+    // No room event: `workstream_renamed` carries a title, and one read before
+    // a person's rename could land after it. The directory projection that
+    // commits with this write carries the icon instead.
+    const result = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId).rename({
+      title: null,
+      icon: generated.icon,
+      from: "settled",
+      to: "settled",
+      now: Date.now(),
+    });
+    logStructuredEvent(env, "info", "workstream_icon_chosen", {
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      outcome: result.outcome,
+      icon: result.icon,
+    });
+  });
+}
+
+/**
  * Run one naming pass and swallow whatever it throws.
  *
  * Every caller of this module is somewhere a name is the least important thing
@@ -322,6 +363,8 @@ async function generateName(env: Env, input: {
   objective: string;
   openingMessage: string;
   recentMessages?: WorkstreamNameContextMessage[];
+  /** The caller writes no name, so the icon stands without one. */
+  iconOnly?: boolean;
 }): Promise<GeneratedName> {
   if (!env.OPENROUTER_API_KEY) return NOTHING_GENERATED;
   try {
@@ -347,7 +390,9 @@ async function generateName(env: Env, input: {
     // chosen alongside a name, and an answer whose name normalized away to
     // nothing is one this pass is reporting as unusable — writing its icon
     // anyway would spend the one icon a work stream gets on the pass that
-    // failed.
+    // failed. The icon pass is the exception: it writes no name, so a name
+    // that normalized away says nothing about the icon beside it.
+    if (input.iconOnly) return { title: null, icon: result.icon ?? null };
     return title === null ? NOTHING_GENERATED : { title, icon: result.icon ?? null };
   } catch (error) {
     logStructuredEvent(env, "warn", "workstream_naming_failed", {
