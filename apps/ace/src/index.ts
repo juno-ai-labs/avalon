@@ -20,7 +20,7 @@ import {
   updateManagedFlag,
   updateManagedModelRouting,
 } from './flagship';
-import { validateOpenRouterModels } from './openrouter';
+import { validateOpenRouterModels, validateRouting } from './openrouter';
 import {
   ManagedFlagUpdateSchema,
   ManagedModelRoleSchema,
@@ -142,25 +142,15 @@ app.put('/api/models/:role', async (c) => {
       message: 'The model route is incomplete or does not match the requested role.',
     }, 400);
   }
-  let validations;
-  try {
-    validations = await validateOpenRouterModels([
-      body.data.routing.model,
-      ...body.data.routing.fallbackModels,
-    ]);
-  } catch {
+  const validation = await validateRouting(body.data.routing);
+  if (!validation.ok) {
+    if (validation.code === 'openrouter_validation_unavailable') {
+      return c.json({ error: validation.code, message: validation.message }, 502);
+    }
     return c.json({
-      error: 'openrouter_validation_unavailable',
-      message: 'OpenRouter model validation is temporarily unavailable. No changes were saved.',
-    }, 502);
-  }
-  const invalidModelIds = validations.filter((validation) => !validation.valid)
-    .map((validation) => validation.modelId);
-  if (invalidModelIds.length > 0) {
-    return c.json({
-      error: 'invalid_openrouter_models',
-      message: `OpenRouter does not recognize or currently route: ${invalidModelIds.join(', ')}`,
-      invalidModelIds,
+      error: validation.code,
+      message: validation.message,
+      invalidModelIds: validation.invalidModelIds,
     }, 400);
   }
   const flag = await updateManagedModelRouting(c.env, role.data, body.data);
@@ -287,6 +277,8 @@ app.onError((error, c) => {
   console.error(JSON.stringify({ event: 'ace_request_failed', path: c.req.path, error: error.message, ...(errorCode ? { error_code: errorCode } : {}) }));
   return c.json({ error: 'internal_error' }, 500);
 });
+
+export { FlagAdministration } from './flag-administration';
 
 export default {
   fetch: app.fetch,
