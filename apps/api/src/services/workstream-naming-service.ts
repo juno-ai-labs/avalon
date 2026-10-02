@@ -148,6 +148,54 @@ export async function nameWorkstream(env: Env, input: WorkstreamNamingInput): Pr
 }
 
 /**
+ * Give a conversation that was created with its name an icon, and leave the
+ * name alone.
+ *
+ * A conversation import is created with the title the importer typed, so the
+ * first pass never runs for it and it would keep the id-derived icon for good.
+ * This is the same model call over the same committed history, and its answer
+ * goes through the same `rename` with no title and `settled` on both sides of
+ * the fence: the name and its status stay exactly as they are, and the icon is
+ * written only where none is stored. The name the model also returns is
+ * discarded; it is asked for because the icon is chosen against what the name
+ * leads with. The colour is not asked for: it stays the id-derived one, as on
+ * every other conversation.
+ *
+ * Never rejects: see {@link guarded}.
+ */
+export async function chooseWorkstreamIcon(env: Env, input: {
+  workspaceId: string;
+  workstreamId: string;
+  substreamId?: string | undefined;
+  objective: string;
+  /** The title creation settled, published if the row cannot report its own. */
+  title: string;
+  userId?: string | undefined;
+}): Promise<void> {
+  await guarded(env, input.workspaceId, input.workstreamId, async () => {
+    const generated = await generateName(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      userId: input.userId,
+      objective: input.objective,
+      openingMessage: "",
+      recentMessages: await loadNamingContext(env, input.workspaceId, input.workstreamId, input.substreamId),
+    });
+    if (generated.icon === null) return;
+    await advanceTitle(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      substreamId: input.substreamId,
+      from: "settled",
+      to: "settled",
+      title: null,
+      icon: generated.icon,
+      standingTitle: input.title,
+    });
+  });
+}
+
+/**
  * Run one naming pass and swallow whatever it throws.
  *
  * Every caller of this module is somewhere a name is the least important thing
@@ -380,7 +428,8 @@ async function advanceTitle(env: Env, input: {
   workspaceId: string;
   workstreamId: string;
   substreamId?: string | undefined;
-  from: "naming" | "automatic";
+  /** `settled` only for the icon pass, which writes no title. */
+  from: "naming" | "automatic" | "settled";
   to: "automatic" | "settled";
   title: string | null;
   icon: WorkstreamIconKey | null;
@@ -408,7 +457,12 @@ async function advanceTitle(env: Env, input: {
     });
     return;
   }
-  const title = input.title ?? input.standingTitle;
+  // The icon pass changes no title, so when the object refused the icon there
+  // is nothing to tell anyone.
+  if (input.title === null && input.from === "settled" && !result.icon) return;
+  // The row's own title where it reports one: the icon pass writes none,
+  // and a person may have renamed the conversation while the model was thinking.
+  const title = result.title ?? input.title ?? input.standingTitle;
   logStructuredEvent(env, "info", "workstream_named", {
     workspace_id: input.workspaceId,
     workstream_id: input.workstreamId,
