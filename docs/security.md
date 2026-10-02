@@ -125,8 +125,10 @@ same as desktop.
   input, and lists and reads the network responses the tab received. Those
   results — network bodies included — reach the model unredacted, by product
   decision: the page already received them. The boundary is the tab: one tab,
-  held to the provider's own sites, with no other tab and no DevTools
-  passthrough; there is no egress filter on the page. The import window is the
+  held to named hosts of the provider's chat app, file and sign-in servers
+  (`PROVIDER_SITES` in `browser-conversation.ts`) — never the company's whole
+  domain, which in the same signed-in browser includes its API and billing
+  consoles — with no other tab and no DevTools passthrough; there is no egress filter on the page. The import window is the
   one non-conversation window allowed to open a realtime socket, to the hidden
   conversation its agent runs in, and it closes that socket when the window
   navigates, crashes or closes. See [`desktop-actions.md`](desktop-actions.md)
