@@ -430,6 +430,10 @@ export function BreakoutMenu({
     return <>
       {appearance}
       {actions?.onSetPublic && <div className="title-menu-settings"><PublicSwitch actions={actions} /></div>}
+      {actions?.onArchive && <>
+        {(appearance || actions.onSetPublic) && <TitleMenuSeparator />}
+        <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(breakout)}>Archive breakout</TitleMenuItem>
+      </>}
     </>;
   }
   return <>
@@ -448,14 +452,10 @@ export function BreakoutMenu({
       {actions?.onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={() => actions.onRename?.(breakout)} />}
       {actions?.onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={() => actions.onCopyLink?.(breakout)} />}
       {actions?.onShare && <ActionTile icon={<IconShare2 aria-hidden="true" size={20} stroke={1.6} />} label="Share" onSelect={() => actions.onShare?.(breakout)} />}
-      {(appearance || actions?.onSetPublic) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
+      {(appearance || actions?.onSetPublic || actions?.onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(participants.length, scope, participantsPending)} view={PEOPLE_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
-    {actions?.onArchive && <>
-      <TitleMenuSeparator />
-      <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(breakout)}>Archive breakout</TitleMenuItem>
-    </>}
   </>;
 }
 
