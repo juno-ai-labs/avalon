@@ -1,4 +1,7 @@
-import { Check, CircleAlert, LoaderCircle, X } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { sessionImportCanonicalUrl } from '@rally/contracts/workstream-links';
+import { IconCheck, IconClockHour4 } from '@tabler/icons-react';
+import { CircleAlert, Copy, Ellipsis, LoaderCircle, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { BrowserImportContext } from '../../common/browser-import';
 import {
@@ -54,7 +57,7 @@ function ImportSteps({ steps }: { steps: readonly SessionImportStep[] }): React.
   const earlier = Math.max(0, steps.length - LISTED_STEPS);
   return <ol aria-live="polite" className="browser-import-steps">
     {earlier > 0 && <li className="is-earlier" key="earlier">
-      <Check aria-hidden="true" size={14} />
+      <IconClockHour4 aria-hidden="true" size={14} />
       <span>{earlier} previous {earlier === 1 ? 'action' : 'actions'}</span>
     </li>}
     {steps.slice(earlier).map((step) => <li className={`is-${step.status}`} key={step.id}>
@@ -62,7 +65,7 @@ function ImportSteps({ steps }: { steps: readonly SessionImportStep[] }): React.
         ? <LoaderCircle aria-label="In progress" className="spin" size={14} />
         : step.status === 'failed'
           ? <CircleAlert aria-label="Failed" size={14} />
-          : <Check aria-label="Done" size={14} />}
+          : <IconCheck aria-label="Done" size={14} />}
       <span>{step.label}</span>
     </li>)}
     {/* Between tools the model is choosing what to do next; the list should not look stalled. */}
@@ -84,7 +87,7 @@ function ImportSteps({ steps }: { steps: readonly SessionImportStep[] }): React.
  * goes to its recorded conversation and adds what changed instead.
  */
 export function BrowserImportWindow(): React.JSX.Element {
-  const { api } = useAppSession();
+  const { api, session } = useAppSession();
   const bridge = desktopBridge();
   const { state, active, error: browserError, command } = useEmbeddedBrowser();
   const pageRef = useRef<HTMLElement>(null);
@@ -101,6 +104,9 @@ export function BrowserImportWindow(): React.JSX.Element {
   const [steps, setSteps] = useState<readonly SessionImportStep[]>([]);
   const [mirror, setMirror] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  // The running import's agent conversation and its Channel, which a bad import is debugged from.
+  const [importRun, setImportRun] = useState<{ workstreamId: string; substreamId: string } | null>(null);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   const conversation = active ? browserConversation(active) : null;
   const update = context?.update ?? null;
@@ -168,6 +174,8 @@ export function BrowserImportWindow(): React.JSX.Element {
     capture();
     setRun(started);
     setSteps([]);
+    setImportRun(null);
+    setCopyFailed(false);
     void started.done.then(async (result) => {
       const workstreamId = reserved.current;
       reserved.current = null;
@@ -198,7 +206,8 @@ export function BrowserImportWindow(): React.JSX.Element {
     if (update) {
       if (!updatable || !active) return;
       watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
-        mode: { kind: 'update', workstreamId: update.workstreamId }, onSteps: setSteps }));
+        mode: { kind: 'update', workstreamId: update.workstreamId }, onSteps: setSteps,
+        onStarted: setImportRun }));
       return;
     }
     const spaces = context?.spaces ?? [];
@@ -220,10 +229,20 @@ export function BrowserImportWindow(): React.JSX.Element {
     watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
       mode: { kind: 'create', title, spaceIds: [spaceId], clientMessageId: pending.clientMessageId },
       onSteps: setSteps,
-      onStarted: ({ workstreamId }) => {
-        reserved.current = workstreamId;
-        void bridge.reportBrowserImport({ phase: 'importing', workstreamId, title, spaceId }).catch(() => undefined);
+      onStarted: (started) => {
+        reserved.current = started.workstreamId;
+        setImportRun(started);
+        void bridge.reportBrowserImport({ phase: 'importing', workstreamId: started.workstreamId, title, spaceId }).catch(() => undefined);
       } }));
+  };
+
+  const copyImportId = (): void => {
+    const workspace = session?.workspace;
+    if (!importRun || !workspace) return;
+    setCopyFailed(false);
+    void bridge.getRuntimeConfig().then(({ webBaseUrl }) => bridge.copyText(sessionImportCanonicalUrl(webBaseUrl, {
+      region: workspace.region, workspaceId: workspace.id, importId: importRun.substreamId, workstreamId: importRun.workstreamId,
+    }))).catch(() => setCopyFailed(true));
   };
 
   const spaces = context?.spaces ?? [];
@@ -264,11 +283,24 @@ export function BrowserImportWindow(): React.JSX.Element {
       description="Rally is reading this conversation in the page behind. It is locked until the import finishes."
       dismissible={false}
       footer={<Button onClick={() => void run?.cancel()}>Cancel</Button>}
+      headerActions={<DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <IconButton label="More import actions"><Ellipsis size={16} /></IconButton>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
+            <DropdownMenu.Item className="menu-item" disabled={!importRun || !session?.workspace} onSelect={copyImportId}>
+              <Copy size={14} /> Copy import id
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>}
       onOpenChange={(open) => { if (!open) void run?.cancel(); }}
       open={run !== null}
       title={update ? 'Importing updates' : 'Importing conversation'}
     >
       <ImportSteps steps={steps} />
+      {copyFailed && <InlineError>The import id could not be copied.</InlineError>}
     </Modal>
     <Modal
       footer={<>

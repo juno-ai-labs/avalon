@@ -101,7 +101,10 @@ returns the main window to where it was. The pending-row rule is in
    model is still working. The page itself is parked out of the window at full
    size ([embedded browser](embedded-browser.md)), so the person cannot click,
    type or navigate into what the agent is reading, and the window's browser
-   shortcuts are off. Cancel is the only way out.
+   shortcuts are off. Cancel is the only way out. The modal's ⋯ menu has
+   **Copy import id**, which copies
+   `/app/<region>/<organization>/i/<agent conversation>/c/<Channel>`
+   (`sessionImportCanonicalUrl`) for a bug report once the API has answered.
 4. **Finish.** `import_finish` names the stored messages array. The desktop
    checks it against `BrowserImportMessagesSchema`, turns each file handle into
    inline bytes, and posts the ordinary import request: `POST
@@ -365,6 +368,30 @@ HTML/code artifacts remain stored files; importing does not launch a site.
   provider's page returns or what a model makes of it.
 
 ## Changelog
+
+### 2026-10-02 — Copy import id from the progress modal
+
+**What changed:** The progress modal has a menu with **Copy import id**, which
+copies an `/app/<region>/<organization>/i/<id>/c/<Channel>` address naming
+the import agent's hidden conversation and its Channel. `Modal` gained a `headerActions` slot for it.
+
+**Why:** People report imports that came out wrong, and there was no way to say
+which run produced one. The hidden child is the id that names the run (its
+transcript is the agent's reasoning and tool calls); the Channel id names only
+the result. The address carries the Channel too because the hidden child's
+object is named by both ids and nothing maps a hidden child back to its
+Channel.
+
+**Considered and rejected:** Routing `/i/` to a page now. Nobody has said what
+a debugging view should show, so building one would be guessing.
+
+**Consequences:** Until something routes `/i/`, opening the address lands on
+the site's "This link did not lead to a Rally resource" page and records an
+`invalid` desktop handoff, so those counts include import ids people clicked.
+A future route must read the `/c/` segment rather than look the Channel up,
+since no lookup from a hidden child to its Channel exists.
+
+Shipped in juno-ai-labs/avalon#1065.
 
 ### 2026-10-01 — Read conversations with an agent instead of fixed readers
 
