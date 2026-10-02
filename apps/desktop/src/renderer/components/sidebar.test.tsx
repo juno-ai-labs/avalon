@@ -2195,7 +2195,9 @@ describe('pinned channels', () => {
     const section = screen.getByRole('region', { name: 'Pinned' });
     expect(within(section).getByText('Move a channel here to pin it')).toBeVisible();
     expect(within(section).queryByRole('link')).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
+    // The sort toggle lives in this heading, so it is there without pins too.
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Sorted A to Z. Sort by recent activity' })).toBeVisible();
   });
 
   it('renders pinned rows in their stored order rather than by activity', () => {
@@ -2585,15 +2587,15 @@ describe('pinned channels', () => {
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
 
       // The animated element is the one the Pinned section now renders, and it
-      // rises one slot from the second alphabetical row to the first pinned one,
-      // under the Pinned heading that was already there.
+      // rises two slots from the second alphabetical row to the first pinned
+      // one: past the row above it and past the Channels heading, which was
+      // already there because it carries the sort toggle.
       const moved = playedOn('workstream:ws-first');
       expect(moved).toBeDefined();
       expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(moved!.element);
-      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 48px)' }));
-      // The row it passed shifts down two slots: one for the pinned row above
-      // it and one for the Channels heading the list now has.
-      expect(playedOn('workstream:ws-recent')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
+      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
+      // The row it passed shifts down one slot, for the pinned row now above it.
+      expect(playedOn('workstream:ws-recent')?.keyframes).toEqual([{ transform: 'translate(0px, -48px)' }, { transform: 'translate(0px, 0px)' }]);
     });
 
     // `scrollIntoView` scrolls to the box as transformed, and the motion's first

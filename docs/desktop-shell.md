@@ -57,10 +57,10 @@ in the Channel menu. The desktop remembers the filter per device
 (`useUiStore.sidebarSpaceFilter`, `rally.sidebar-space-filter`). Opening a
 Channel the filter would hide widens the list to All.
 
-The list is **Pinned**, then every other Channel, A to Z by default. With pins
-above it the rest is headed **Channels**, and each heading carries a quiet hint
-at its far edge (*Drag to reorder* when there are pins to reorder; the sort
-toggle on **Channels**); with no pins the list stands alone and has no heading.
+The list is **Pinned**, then every other Channel, A to Z by default. The rest
+is headed **Channels** whenever it has rows, pinned or not, because that heading
+carries the sort toggle; **Pinned** carries a quiet *Drag to reorder* hint when
+there are pins to reorder.
 The toggle, the current label followed by an `arrows-sort` icon (last, so the
 icon stays put when the label changes width), cycles the
 unpinned Channels through **A–Z** (case-insensitive, `compareAlphabeticalTitle`),
@@ -70,8 +70,7 @@ Recent order). "Something for this reader" is `workstreamHasActivityForViewer`,
 the same input that makes a row's title bold: unread, or a Breakout (or Main)
 that needs them. The desktop
 remembers the choice per device (`useUiStore.sidebarChannelSort`,
-`rally.sidebar-channel-sort`), and it still applies while the heading is
-hidden. A row shows the glyph,
+`rally.sidebar-channel-sort`). A row shows the glyph,
 the title and the last activity time. Under them it shows the names of the
 Channel's Spaces, without General; a Channel only in General has a one-line
 row. An unread row has a semibold title and its dot is red; the weight follows the
@@ -272,12 +271,13 @@ pinning them, and for the choice to survive a restart.
 prefers when this reader last opened the Channel. The ask was most recent
 update, and the row's time already shows `lastActivityAt`, so ordering by it
 keeps the list and its times in agreement. Storing the choice on the server
-was also out: the ask was a local preference.
+was also out: the ask was a local preference. So was keeping the **Channels**
+heading only when something is pinned, as before. The heading now carries the toggle, so that
+rule would hide Recent and Needs you from exactly the reader who has pinned
+nothing and most needs them. The heading shows whenever the list has rows.
 
-**Consequences:** The toggle lives in the heading, which only shows when
-something is pinned; without pins the stored order still applies but cannot be
-changed from the sidebar. Showing the control without pins means giving the
-lone list a heading, which this document deliberately avoids.
+**Consequences:** The unpinned list always has a heading, so a member with no
+pins sees one more row above their Channels than before.
 
 ### 2026-10-02 — Space pills sort A to Z
 
