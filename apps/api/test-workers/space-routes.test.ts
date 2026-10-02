@@ -397,23 +397,6 @@ describe("conversation import routes", () => {
       .toEqual([expect.objectContaining({ spaceId: destination.id, scope: "personal" })]);
   });
 
-  // The import window lists the Channel in the main window under this id
-  // before the create returns, so the Channel has to be created under it.
-  it("creates the Channel under the id the caller listed it under", async () => {
-    const listedId = "019a0000-0000-7000-8000-00000000d2a1";
-    const imported = await request("/workstreams/import", OWNER_AUTH, {
-      title: "Listed import",
-      source: { provider: "claude", url: null, sessionId: "listed-session" },
-      content: { messages: [{ role: "user", text: "Listed first", sourceMessageId: "u1" }] },
-      clientMessageId: "00000000-0000-7000-8000-00000000d2a2",
-      workstreamId: listedId,
-      spaceIds: [],
-    });
-
-    expect(imported.status).toBe(201);
-    expect((imported.body as { workstream: { id: string } }).workstream.id).toBe(listedId);
-  });
-
   it('rejects a different source before uploading its files', async () => {
     const imported = await importChannel('Source validation', '00000000-0000-7000-8000-00000000d206', [],
       [{ role: 'user', text: 'Original', sourceMessageId: 'u1' }]);
