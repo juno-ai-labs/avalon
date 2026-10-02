@@ -37,6 +37,8 @@ const AUTH: AuthContext = { sessionId: SESSION_ID, userId: USER_ID, workspaceId:
 useSelectedModel();
 /** The scripted agent: read the page, then finish with the stored messages. */
 const provider = useOpenRouterDouble((call: ProviderCall) => {
+  // The icon pass the opened Channel gets, a structured call with no tools.
+  if (call.toolNames.length === 0) return { say: JSON.stringify({ title: "Tomato watering", icon: "megaphone" }) };
   const toolResults = call.messages.filter((message) => message.role === "tool").length;
   if (toolResults === 0) return { callTool: { name: "browser_evaluate", arguments: { script: "return window.__probe" } } };
   if (toolResults === 1) return { callTool: { name: "import_finish", arguments: { title: "Garden irrigation", messages: "messages-handle" } } };
@@ -56,7 +58,11 @@ function creationEnv(): Env {
   return new Proxy(env, {
     get: (current, property, receiver) => property === "WORKSTREAM_EMAIL_ADDRESS_KEY"
       ? "workerd-test-email-address-key-0123456789"
-      : Reflect.get(current, property, receiver),
+      // The opened Channel's icon pass is a model call from the Worker, which
+      // skips it without a key and a naming model; the provider double answers it.
+      : property === "OPENROUTER_API_KEY" ? "workerd-test-openrouter-key"
+        : property === "OPENROUTER_CLASSIFIER_MODEL" ? "double/naming"
+          : Reflect.get(current, property, receiver),
   });
 }
 
@@ -188,6 +194,9 @@ describe("a conversation import run", () => {
 
     const opened = await new WorkstreamObjectClient(creationEnv(), AUTH, run.workstreamId, "0").get();
     expect(opened.title).toBe("Garden irrigation");
+    // The importer's name stands, and the icon pass read the history for an
+    // icon; the colour is left to the id.
+    expect(opened.appearance).toEqual({ icon: "megaphone", color: null });
     const checkpoint = await new WorkstreamObjectClient(creationEnv(), AUTH, run.workstreamId, "0").importedSessionCheckpoint();
     expect(checkpoint.map((entry) => entry.sourceMessageId)).toEqual(["m1", "m2"]);
 

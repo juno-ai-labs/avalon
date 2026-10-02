@@ -258,6 +258,9 @@ export class WorkstreamIdentityStorage {
    * `docs/workstream-naming.md`; telling a generated icon from a chosen one
    * would take provenance this column does not carry.
    *
+   * `settled` on both sides with no title offers the icon alone; see
+   * `docs/workstream-naming.md#prepared-history`.
+   *
    * The written icon comes back so the caller can publish exactly what landed,
    * rather than re-deriving it from a row that could move again.
    */

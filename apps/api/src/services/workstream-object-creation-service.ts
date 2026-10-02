@@ -36,7 +36,7 @@ import {
   openUnderExternalBindingClaim,
 } from "./external-binding-claims";
 import { provisionalWorkstreamDescription } from "./workstream-description-service";
-import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
+import { chooseWorkstreamIcon, nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import {
   writeRegionalWorkstreamAnchorBatch,
 } from "./workstream-runtime-database";
@@ -75,6 +75,8 @@ interface ReceiptRow {
 
 interface CreateOptions {
   contentIdentityHash?: string;
+  /** Run the icon pass on a Channel created with its title (an import). */
+  chooseIcon?: boolean;
   initialization?: ConversationInitialization;
   /** Authority snapshot already resolved by the owning HTTP route in this request. */
   authorityControl?: WorkstreamAuthorityControl;
@@ -231,7 +233,11 @@ export class WorkstreamObjectCreationService {
     conversation: PreparedConversation,
     identityHash: string,
   ) {
-    return this.createPrepared(input, conversation, { reason: "session_import", contentIdentityHash: identityHash });
+    return this.createPrepared(input, conversation, {
+      reason: "session_import",
+      contentIdentityHash: identityHash,
+      chooseIcon: true,
+    });
   }
 
   async create(input: CreateInput, options: CreateOptions = {}): Promise<{
@@ -589,8 +595,8 @@ export class WorkstreamObjectCreationService {
     // provisional title in `naming` forever — a permanent skeleton shimmer in
     // the sidebar. Naming reaches transcript and identity through their typed
     // object ports; it does not need a database-shaped work-stream proxy.
-    if (body.title == null) {
-      const naming = nameWorkstream(
+    const naming = body.title == null
+      ? nameWorkstream(
         this.env,
         {
           workspaceId: this.auth.workspaceId,
@@ -601,7 +607,17 @@ export class WorkstreamObjectCreationService {
           provisionalTitle: title,
           useConversationContext: options.initialization?.kind === "history",
         },
-      ).catch((error: unknown) => {
+      )
+      : options.chooseIcon
+        ? chooseWorkstreamIcon(this.env, {
+          workspaceId: this.auth.workspaceId,
+          workstreamId: receipt.workstream_id,
+          userId: this.auth.userId,
+          objective,
+        })
+        : null;
+    if (naming) {
+      const settled = naming.catch((error: unknown) => {
         logWarn(this.env, "workstream_first_naming_failed", {
           workspace_id: this.auth.workspaceId,
           workstream_id: receipt.workstream_id,
@@ -612,7 +628,7 @@ export class WorkstreamObjectCreationService {
       // records which of the two happened rather than a duration that would
       // mean opposite things in the two cases.
       span.setAttributes({ "rally.create.first_naming": this.defer ? "deferred" : "awaited" });
-      if (this.defer) this.defer(naming); else await span.step("workstream.create.naming.first_pass", () => naming);
+      if (this.defer) this.defer(settled); else await span.step("workstream.create.naming.first_pass", () => settled);
     }
     return created;
   }
