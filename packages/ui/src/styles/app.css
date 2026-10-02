@@ -7570,6 +7570,10 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .single-sidebar .account-trigger .avatar { height: 28px; width: 28px; }
 .single-sidebar .account-trigger { font-weight: 500; }
 .sidebar-section-hint { color: var(--av-sys-color-text-disabled); flex: none; font-size: 11.5px; }
+.sidebar-sort-toggle { align-items: center; background: none; border: 0; border-radius: 6px; color: var(--av-sys-color-text-disabled); cursor: pointer; display: inline-flex; flex: none; font: inherit; gap: 4px; margin-right: -4px; padding: 2px 4px; }
+.sidebar-sort-toggle:hover,
+.sidebar-sort-toggle:hover .sidebar-section-hint { color: var(--av-sys-color-text-muted); }
+.sidebar-sort-toggle:focus-visible { box-shadow: var(--av-sys-focus-ring-quiet); outline: 0; }
 .channel-row-main { gap: 1px; }
 .channel-row-heading { align-items: baseline; display: flex; gap: 8px; min-width: 0; }
 .channel-row-heading > .sidebar-row-title { flex: 1; min-width: 0; }
