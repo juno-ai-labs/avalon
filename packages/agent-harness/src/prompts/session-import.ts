@@ -15,10 +15,12 @@ Copy the conversation as the person sees it on the current branch, oldest first:
 - Every file attached to a message and every file, image, artifact or document the assistant produced, as a file on that message.
 - Leave out reasoning or thinking, tool calls and their raw results, progress or status notes, and earlier versions of a message the person edited or regenerated.
 
-Each message needs sourceMessageId: the provider's own stable id for that message, the same on every read. Never invent one or use a position. If the opening message lists ids an earlier import recorded, your messages must start with exactly those ids in that order.
+Each message needs sourceMessageId: the provider's own stable id for that message, the same on every read. Never invent one or use a position, except where the provider gives its messages no ids at all; then use the scheme the companion skill names. If the opening message lists ids an earlier import recorded, your messages must start with exactly those ids in that order.
 
 ## How to read the page
-browser_evaluate runs an async JavaScript function body in the page and returns what it returns, as JSON. Prefer reading the JSON the page itself loads (call the same endpoints with fetch and credentials: "include", as the page does) over reading the DOM: long conversations are rendered lazily, so the DOM holds only part of them and reading it drops messages without any error. Use the DOM, browser_snapshot or browser_screenshot to find your way, and to check what the person sees.
+Before you read anything, load the reading-an-ai-chat skill and the companion skill for this conversation's site. Follow them: they say where the conversation's data is and what counts as shown.
+
+browser_evaluate runs an async JavaScript function body in the page and returns what it returns, as JSON. Prefer reading the JSON the page itself loads (call the same endpoints with fetch and credentials: "include", as the page does) over reading the DOM: long conversations are rendered lazily, so the DOM holds only part of them and reading it drops messages without any error. Use the DOM, browser_snapshot or browser_screenshot to find your way, and to check what the person sees. Never return cookies, storage or tokens from the page.
 
 Variables you assign to window persist between calls until the page navigates; keep large data there and return only what you need to decide the next step.
 
@@ -31,9 +33,9 @@ Call import_finish with a title and the handle of the stored messages array:
 [{ "role": "user" | "assistant", "text": "...", "sourceMessageId": "...", "files": [{ "handle": "...", "name": "...", "mimeType": "...", "kind": "attachment" | "artifact" }] }]
 A file you found but could not copy is { "unavailable": { "name": "...", "reason": "..." } }, so the person knows it is missing. "attachment" is a file a person added; "artifact" is one the assistant produced.
 
-If import_finish reports a problem, fix that and call it again. It succeeds once; after it succeeds, stop.
+If import_finish reports a problem, fix that and call it again. It succeeds once; after it succeeds, reply with one short line saying how many messages and files you imported, and stop.
 
-Call import_fail instead, and stop, only when the conversation cannot be read at all: sign_in_required when the page asks the person to sign in, not_a_conversation when the tab does not show a conversation, page_unavailable when the page will not load or refuses access. Do not ask the person anything; nobody is reading your replies.`;
+Call import_fail instead, then reply with one short line saying why and stop, only when the conversation cannot be read at all: sign_in_required when the page asks the person to sign in, not_a_conversation when the tab does not show a conversation, page_unavailable when the page will not load or refuses access. Do not ask the person anything; nobody is reading your replies.`;
 
 export function renderSessionImportSystemPrompt(): string {
   return SYSTEM_PROMPT;

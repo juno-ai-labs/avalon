@@ -2,7 +2,6 @@ import { ArrowLeft, ArrowRight, Globe2, Plus, RotateCw, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState, type RefObject } from 'react';
 import {
   embeddedBrowserShortcut,
-  type EmbeddedBrowserBounds,
   type EmbeddedBrowserCommand,
   type EmbeddedBrowserState,
   type EmbeddedBrowserTab,
@@ -11,7 +10,6 @@ import { desktopBridge } from '../lib/platform';
 import { IconButton } from './primitives';
 
 const emptyState: EmbeddedBrowserState = { tabs: [], activeTabId: null };
-const hidden: EmbeddedBrowserBounds = { x: 0, y: 0, width: 0, height: 0 };
 
 /**
  * This window's browser: its tabs, the active one, and the command entry
@@ -64,7 +62,9 @@ export function useEmbeddedBrowser(): {
  * Keeps the native page over `pageRef`'s rectangle while `show` holds.
  *
  * The page is a native view above the renderer, so it cannot be layered under
- * a Rally dialog or menu; it is hidden while one is open instead.
+ * a Rally dialog or menu; it is hidden while one is open instead. Hidden keeps
+ * the rectangle: main parks the page out of the window at this size, so an
+ * agent driving it reads, captures and clicks the same page it did in view.
  */
 export function useEmbeddedBrowserPlacement(pageRef: RefObject<HTMLElement | null>, show: boolean): void {
   useEffect(() => {
@@ -78,7 +78,7 @@ export function useEmbeddedBrowserPlacement(pageRef: RefObject<HTMLElement | nul
       const occluded = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')]
         .some((overlay) => !overlay.contains(page) && overlay.getAttribute('data-state') !== 'closed');
       const rect = page.getBoundingClientRect();
-      void bridge.setEmbeddedBrowserBounds(occluded ? hidden : {
+      void bridge.setEmbeddedBrowserBounds({
         x: Math.round(Math.max(0, rect.left)),
         y: Math.round(Math.max(0, rect.top)),
         width: Math.max(0, Math.round(Math.min(rect.right, window.innerWidth) - Math.max(0, rect.left))),
@@ -165,19 +165,22 @@ export function focusAddress(addressRef: RefObject<HTMLInputElement | null>): vo
  * itself is handled in main and arrives here only as a request for the address
  * field.
  */
-export function useEmbeddedBrowserShortcuts({ state, command, addressRef, scope, onCloseLast }: {
+export function useEmbeddedBrowserShortcuts({ state, command, addressRef, scope, onCloseLast, enabled = true }: {
   state: EmbeddedBrowserState;
   command: (input: EmbeddedBrowserCommand) => Promise<void>;
   addressRef: RefObject<HTMLInputElement | null>;
   scope?: RefObject<HTMLElement | null>;
   /** Called instead of closing the only tab when it is blank. */
   onCloseLast?: () => void;
+  /** False while something else is driving the browser and keys must not move it. */
+  enabled?: boolean;
 }): void {
   const latest = useRef(state);
   latest.current = state;
   const closeLast = useRef(onCloseLast);
   closeLast.current = onCloseLast;
   useEffect(() => {
+    if (!enabled) return;
     const mac = /Mac/u.test(navigator.platform);
     const onKey = (event: KeyboardEvent): void => {
       if (scope && !(scope.current?.contains(document.activeElement) ?? false)) return;
@@ -205,7 +208,7 @@ export function useEmbeddedBrowserShortcuts({ state, command, addressRef, scope,
       window.removeEventListener('keydown', onKey);
       unsubscribe();
     };
-  }, [addressRef, command, scope]);
+  }, [addressRef, command, scope, enabled]);
 }
 
 /** A tab's leading mark: a spinner while loading, then the page's icon, then a globe. */

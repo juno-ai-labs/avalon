@@ -483,7 +483,7 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships five skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Three are unowned and offered to every run: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The other two — `polling-for-events` below and `building-live-sites` above — each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin. The latter two of the unowned three are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships eight skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Three are unowned and offered to every run: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The other five each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The latter two of the unowned three are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
 `polling-for-events` is what a run reads when somebody asks to be told whenever something happens. Its first instruction is to *not* poll: most connectors declare events Rally can trigger on, so the skill sends the model to `plugin_inspect` before it reaches for a timer, and the interval is the fallback for what inspection rules out. It then carries the three things a model gets wrong unaided: the cadence floor (no `interval` trigger faster than every ten minutes, slower is fine, and the person's own stated cadence wins), the keyed memory table that stops a run re-reporting what the last one already saw, and the steer away from `resource_watch`, which a model reaches for when told to watch one document and which `SidekickDO` builds neither a schedule nor an evaluator for. It sets `ownerPlugin: "rally:sidekicks"` because the whole procedure is drafting a Sidekick, which also keeps it out of an automation occurrence's catalog — an occurrence is deliberately never given the drafting tools.
 
@@ -899,7 +899,9 @@ profiled run, replaces three things wholesale: the system prompt (the
 profile's, not the work-stream prompt), the model route (the profile's
 Flagship role, `resolveAgentModelRouting`), and the tool surface — exactly the
 profile's plugins as always-active core plugins, through `profileHarnessTools`,
-with no built-in or connector plugin, no plugin discovery and no skills. The
+with no built-in or connector plugin and no plugin discovery. Its skill
+catalog is exactly the skills the profile names: a skill is instructions only,
+so naming one widens nothing a run can do. The
 registry is `apps/api/src/services/agent-profiles.ts`; `session_import`, the
 conversation importer, is its first entry, and its tools are [desktop
 actions](desktop-actions.md). A stored profile this Worker does not know fails
@@ -1437,6 +1439,15 @@ The alternatives were an input field on the activation (any activation path
 could then forget it) and a new Durable Object for the import (rejected: the
 loop and its durability already live here). A future profile must stay
 fail-closed — an unknown profile is a failed run, never the default surface.
+
+A profile also names the skills its catalog offers; `session_import` names the
+three AI-chat readers. Before them, the importer re-derived each provider's page
+on every run: 9 of 19 calls reverse-engineering ChatGPT's markup, a DOM read
+that silently dropped 8 of 15 messages, and a page script that sent the
+signed-in site's cookies to the model. With the skills it reads the page's own
+data in 6–14 calls. The knowledge stayed in skills rather than the prompt so the
+catalog line is all a run pays for until it loads one, and so a browser-bearing
+run that is not an import can use the same readers.
 
 ### 2026-09-27 — A run's result reaches a conversation only by conversation_post
 

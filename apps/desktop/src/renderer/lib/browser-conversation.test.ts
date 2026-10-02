@@ -16,6 +16,10 @@ describe('browser conversations', () => {
       .toMatchObject({ provider: 'chatgpt', shared: true });
     expect(browserConversation(tab('d', 'Wrong route', 'https://claude.ai/c/6ab43c03-6b2c-83e8-9eba-f1c51fa1e7a0'))).toBeNull();
     expect(browserConversation(tab('e', 'Home', 'https://claude.ai/new'))).toBeNull();
+    expect(browserConversation(tab('f', '', 'https://chatgpt.com/s/cx_6abef53d71248191a4b8dcde6233784d')))
+      .toEqual({ provider: 'chatgpt', id: 'cx_6abef53d71248191a4b8dcde6233784d', url: 'https://chatgpt.com/s/cx_6abef53d71248191a4b8dcde6233784d', title: 'Shared ChatGPT task', shared: true });
+    expect(browserConversation(tab('g', 'Fix the build', 'https://claude.ai/code/session_01TPsq6orNbtJsDTRQjwKLDs')))
+      .toEqual({ provider: 'claude', id: 'session_01TPsq6orNbtJsDTRQjwKLDs', url: 'https://claude.ai/code/session_01TPsq6orNbtJsDTRQjwKLDs', title: 'Fix the build', shared: false });
   });
 
   it('allows an import only its own provider’s sites, over HTTPS', () => {

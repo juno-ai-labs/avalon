@@ -118,6 +118,12 @@ export {
   WRITING_AN_EMAIL_SKILL,
 } from "./built-in-skills";
 export {
+  READING_AI_CHATS_SKILLS,
+  READING_AN_AI_CHAT_SKILL,
+  READING_CHATGPT_CONVERSATIONS_SKILL,
+  READING_CLAUDE_CONVERSATIONS_SKILL,
+} from "./reading-ai-chats-skills";
+export {
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILLS_SYSTEM_MESSAGE,
   AVALON_SKILL_TOOL_DEFINITIONS,
@@ -1760,12 +1766,27 @@ function rawUsageToSdk(usage: Record<string, unknown>): ChatUsage {
   };
 }
 
+/**
+ * What one OpenRouter call cost, in dollars. On a bring-your-own-key account
+ * OpenRouter's `cost` is only its own fee — often 0 — and the provider's
+ * charge is reported separately as `costDetails.upstreamInferenceCost`; reading
+ * `cost` alone recorded every such call as free.
+ */
+export function openRouterCallCostUsd(usage: Pick<ChatUsage, "cost" | "isByok" | "costDetails">): number | undefined {
+  const fee = typeof usage.cost === "number" && Number.isFinite(usage.cost) ? usage.cost : undefined;
+  const upstream = usage.isByok ? usage.costDetails?.upstreamInferenceCost : undefined;
+  const providerCharge = typeof upstream === "number" && Number.isFinite(upstream) ? upstream : undefined;
+  if (fee === undefined && providerCharge === undefined) return undefined;
+  return (fee ?? 0) + (providerCharge ?? 0);
+}
+
 function sdkUsageRecord(usage: ChatUsage): Record<string, number> {
+  const cost = openRouterCallCostUsd(usage);
   return {
     prompt_tokens: usage.promptTokens,
     completion_tokens: usage.completionTokens,
     total_tokens: usage.totalTokens,
-    ...(typeof usage.cost === "number" ? { cost: usage.cost } : {}),
+    ...(cost !== undefined ? { cost } : {}),
     ...(typeof usage.completionTokensDetails?.reasoningTokens === "number"
       ? { reasoning_tokens: usage.completionTokensDetails.reasoningTokens }
       : {}),

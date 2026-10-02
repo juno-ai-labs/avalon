@@ -21,6 +21,9 @@ interface BrowserTab {
 
 const embeddedBrowserContents = new WeakSet<WebContents>();
 
+/** Where a hidden active tab waits: far outside any window, at its full size. */
+const PARKED_OFFSET = 100_000;
+
 export function isEmbeddedBrowserWebContents(contents: WebContents): boolean {
   return embeddedBrowserContents.has(contents);
 }
@@ -121,10 +124,26 @@ export class EmbeddedBrowser {
     this.layout();
   }
 
+  /**
+   * The active tab keeps its size whether or not it is in view. Hidden, it is
+   * parked outside the window: nobody can click or type into it, and a Rally
+   * overlay paints over where it was, but an agent driving it still reads,
+   * captures and clicks a full-size page that keeps rendering. Collapsing it
+   * to nothing — what hiding used to do — stopped an import mid-run whenever
+   * a dialog opened over the page.
+   */
   private layout(): void {
     for (const tab of this.tabs.values()) {
-      tab.view.setBounds(this.visible && tab.id === this.activeTabId
-        ? this.bounds : { x: 0, y: 0, width: 0, height: 0 });
+      const active = tab.id === this.activeTabId;
+      const contents = tab.view.webContents;
+      contents.setBackgroundThrottling(!active);
+      if (!active) tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      else if (this.visible) tab.view.setBounds(this.bounds);
+      else {
+        tab.view.setBounds({ ...this.bounds, x: PARKED_OFFSET, y: PARKED_OFFSET });
+        // Keys follow focus, not position: a parked page keeps none.
+        if (contents.isFocused() && !this.window.isDestroyed()) this.window.webContents.focus();
+      }
     }
   }
 

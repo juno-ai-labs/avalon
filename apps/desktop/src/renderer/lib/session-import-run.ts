@@ -92,6 +92,16 @@ export const SESSION_IMPORT_FAILURE_COPY: Record<SessionImportFailureReason, str
 
 const ENDED = new Set(['completed', 'failed', 'stopped', 'needs_input', 'idle']);
 
+/**
+ * One thing the agent did, as the import window lists it: the harness's own
+ * words for the step while it runs, then the tool's summary of what it did.
+ */
+export interface SessionImportStep {
+  id: string;
+  label: string;
+  status: 'running' | 'done' | 'failed';
+}
+
 export interface SessionImportRun {
   readonly done: Promise<SessionImportRunResult>;
   /** Stop the agent; a new Channel that never opened is discarded. */
@@ -113,7 +123,8 @@ export function startSessionImportRun(input: {
   tabId: string;
   sourceUrl: string;
   mode: SessionImportMode;
-  onProgress?: (step: { label: string; steps: number }) => void;
+  /** Every step so far, oldest first, each time one starts or ends. */
+  onSteps?: (steps: readonly SessionImportStep[]) => void;
 }): SessionImportRun {
   const conversation = conversationAt(input.sourceUrl, '');
   const provider: BrowserConversationProvider | null = conversation?.provider ?? null;
@@ -124,7 +135,21 @@ export function startSessionImportRun(input: {
   let cancelled = false;
   let socket: RealtimeSocket | null = null;
   let run: { workstreamId: string; substreamId: string } | null = null;
-  let steps = 0;
+  const steps: SessionImportStep[] = [];
+  /**
+   * Whether the agent's run has begun. The subscription can open on the
+   * conversation's earlier, idle status, which is not this run ending; a run
+   * that has started and then ends without a finish gave up, however many
+   * steps it took — including none.
+   */
+  let started = false;
+  /** A step's row, once: a resubscribed socket replays frames already listed. */
+  const recordStep = (id: string, next: (current: SessionImportStep | undefined) => SessionImportStep) => {
+    const at = steps.findIndex((step) => step.id === id);
+    if (at === -1) steps.push(next(undefined));
+    else steps[at] = next(steps[at]);
+    input.onSteps?.([...steps]);
+  };
   /** How the run ends once the action that decided it has been answered. */
   let ending: SessionImportRunResult | null = null;
   const finish = (result: SessionImportRunResult) => {
@@ -186,7 +211,10 @@ export function startSessionImportRun(input: {
   const seen = new Set<string>();
   let queue = Promise.resolve();
   const onFrame = (raw: string) => {
-    let frame: { type?: string; request?: unknown; invocation?: { toolName?: string }; status?: string };
+    let frame: {
+      type?: string; request?: unknown; status?: string;
+      invocation?: { id?: string; toolCallId?: string; activityName?: string | null; outputSummary?: string | null; status?: string };
+    };
     try { frame = JSON.parse(raw) as typeof frame; } catch { return; }
     if (frame.type === 'desktop_action_requested') {
       const parsed = DesktopActionRequestSchema.safeParse(frame.request);
@@ -200,10 +228,22 @@ export function startSessionImportRun(input: {
         socket?.send(JSON.stringify({ type: 'answer_desktop_action', actionId: request.id, outcome }));
         if (ending) finish(ending);
       });
-    } else if (frame.type === 'tool_started') {
-      steps += 1;
-      input.onProgress?.({ label: frame.invocation?.toolName ?? 'Working', steps });
-    } else if (frame.type === 'harness_status_changed' && frame.status && ENDED.has(frame.status) && steps > 0) {
+    } else if ((frame.type === 'tool_started' || frame.type === 'tool_completed') && frame.invocation) {
+      const invocation = frame.invocation;
+      const id = invocation.toolCallId ?? invocation.id;
+      if (!id) return;
+      if (frame.type === 'tool_started') {
+        recordStep(id, (current) => current ?? { id, label: invocation.activityName ?? 'Working', status: 'running' });
+      } else {
+        recordStep(id, (current) => ({
+          id,
+          label: invocation.outputSummary ?? current?.label ?? invocation.activityName ?? 'Working',
+          status: invocation.status === 'failed' || invocation.status === 'ambiguous' ? 'failed' : 'done',
+        }));
+      }
+    } else if (frame.type === 'harness_status_changed' && frame.status === 'running') {
+      started = true;
+    } else if (frame.type === 'harness_status_changed' && frame.status && ENDED.has(frame.status) && (started || steps.length > 0)) {
       // Finishing answers before the run ends; an end with no finish means the agent gave up.
       void queue.then(() => finish({ kind: 'unfinished' }));
     }

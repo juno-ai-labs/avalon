@@ -23,7 +23,7 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical fact preparation for ordered conversations. |
 | `apps/desktop/src/renderer/lib/browser-conversation.ts` | Which tab shows an importable conversation, and the provider sites an import may use. |
 | `apps/desktop/src/renderer/lib/session-import-run.ts` | The desktop half of a run: start it, answer its actions, assemble and hand over what the agent stored. |
-| `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: Import, the name-and-Space sheet, progress and Cancel. |
+| `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: Import, the name-and-Space sheet, the run's progress modal and Cancel. |
 | `apps/desktop/src/renderer/lib/browser-import-progress.tsx` | The main window's half: lists the Channel as pending, shows "Importing conversation…", and settles or discards it. |
 | `packages/agent-harness/src/evaluation.ts` | Scenario/checkpoint evaluation using the production Rally runtime. |
 | `apps/desktop/src/renderer/components/new-workstream-menu.tsx`, `session-import-update-dialog.tsx` | The menu item that opens the import window, and the explicit update control. |
@@ -75,6 +75,26 @@ returns the main window to where it was. The pending-row rule is in
    long conversations render lazily and a DOM read drops messages silently. Page
    script keeps bytes and the assembled messages with the desktop through
    `rally.store`; the model and the API see only handles.
+
+   The agent loads two [skills](agent-harness.md#skills) first: the generic
+   `reading-an-ai-chat` procedure and its site's companion
+   (`reading-chatgpt-conversations` or `reading-claude-conversations`). They say
+   where the conversation's data is, what counts as shown, how files and
+   documents become files, and how to check the result against the page before
+   finishing. Accepted URLs — `chatgpt.com/c|share/<uuid>`, ChatGPT task shares
+   `chatgpt.com/s/<id>`, `claude.ai/chat|share/<uuid>` and Claude Code sessions
+   `claude.ai/code/session_<id>` — are one table, `conversationSourceAt` in
+   `@rally/contracts`, shared by the window and the API.
+
+   While the agent works, the window holds a non-dismissible modal over a
+   blurred capture of the page, refreshed as each step ends. The modal lists
+   each step in the harness's words (`activityName`) and then the tool's own
+   summary of what it did; past three, the oldest fold into one "N previous
+   actions" line, and between tools a "Deciding the next step…" row shows the
+   model is still working. The page itself is parked out of the window at full
+   size ([embedded browser](embedded-browser.md)), so the person cannot click,
+   type or navigate into what the agent is reading, and the window's browser
+   shortcuts are off. Cancel is the only way out.
 4. **Finish.** `import_finish` names the stored messages array. The desktop
    checks it against `BrowserImportMessagesSchema`, turns each file handle into
    inline bytes, and posts the ordinary import request: `POST
@@ -328,9 +348,42 @@ regenerating a long conversation as output tokens would be slow, costly, and
 able to change what it copies. The import's identity — the session id and the
 ids an update keeps — comes from the URL and the checkpoint, never the model.
 
+Reading moved into skills the agent loads, and the URL table into
+`@rally/contracts`. Tested against eight real links, the skill-less agent
+re-derived each page per run and lost messages to lazy rendering; with the
+skills, every share imported its full count — including a 48-message claude.ai
+share it had imported as 47 by dropping lines it judged to be narration — and a
+dead task share failed cleanly. The window and the API had parsed source URLs
+separately and already disagreed; one table keeps them from drifting again.
+Codex task shares give messages no ids, so they are identified by share id and
+turn; that is safe only because a share never changes.
+
+The import tools no longer end the run themselves. `import_finish` and
+`import_fail` used to return `halt: "completed"`, which left a run with no
+final turn; terminalization refuses a completed run without one, so every
+import — successful ones included — ended `failed`, logged only as the generic
+`agent_loop_failed` because the loop read nothing but an error's `code`. They
+now return to the model, whose one-line reply is the final turn, the same way a
+Sidekick's submission does, and the loop names a code-shaped failure through
+`diagnosticErrorCode`. The window likewise treats a run that ends without a
+finish as unfinished once it has started, rather than only after its first
+step, so an agent that gives up at once no longer leaves the window waiting.
+Signed-in verification against the owners' own chats confirmed originals:
+claude.ai uploads byte-for-byte (a preview is taken only where claude.ai offers
+no original), ChatGPT's generated images at full size, and an artifact equal to
+its source apart from added citation links. Files a Claude Code session
+delivered were found on one run and not on the next; that remains open.
+
+Progress moved from a step count in the toolbar into a modal that locks the
+window while the agent works. A person who clicked, scrolled or navigated the
+page mid-run changed what the agent was reading under it; locking the page is
+cheaper than teaching the agent to recover from that. The modal shows the page
+as a blurred capture because the page is a native view no CSS can blur.
+
 A future change must keep the agent's tool surface to its profile's plugins,
-keep identity out of the model's hands, and keep the 25 MB store cap equal to
-the upload limit.
+keep identity out of the model's hands, keep the 25 MB store cap equal to
+the upload limit, and keep the page unreachable to the person while a run
+drives it.
 
 ### 2026-10-01 — Read a shared ChatGPT conversation from the page that rendered it
 

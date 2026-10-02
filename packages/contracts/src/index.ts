@@ -6,6 +6,7 @@ import { AutomationLifecycleStateSchema,
   AutomationScopeSchema } from "./automation-agent";
 import { ConnectorInstallationSchema } from "./connector-installation";
 export * from "./conversation-attention";
+export * from "./conversation-source";
 import { HarnessStatusSchema } from "./conversation-attention";
 export * from "./agent-communication";
 import { AgentExchangeSchema } from "./agent-communication";

@@ -3823,9 +3823,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         }
       } catch (error) {
         if (error instanceof RunOwnershipLostError) return;
+        // A plain Error whose message is itself a code — `final_turn_required`
+        // from terminalization — names the failure as well as an explicit
+        // `code` does; reading only `code` reported every such run as the
+        // generic `agent_loop_failed`.
         const code = error instanceof Error && "code" in error && typeof error.code === "string"
           ? error.code
-          : "agent_loop_failed";
+          : diagnosticErrorCode(error, "agent_loop_failed");
         const loop = this.loop.loop();
         if (loop?.status === "executing"
           && loop.active_execution_id === activation.execution.runId
