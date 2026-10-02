@@ -1,4 +1,4 @@
-import { IconPlus } from '@tabler/icons-react';
+import { IconFolderPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ComponentPropsWithRef, ReactNode } from 'react';
 
@@ -35,7 +35,7 @@ export function SpacePillAddButton({ className, label = 'New space', ...props }:
   label?: string;
 }): React.JSX.Element {
   return <button aria-label={label} className={clsx('space-pill-add', className)} type="button" {...props}>
-    <IconPlus aria-hidden="true" size={15} stroke={1.8} />
+    <IconFolderPlus aria-hidden="true" size={15} stroke={1.8} />
   </button>;
 }
 
