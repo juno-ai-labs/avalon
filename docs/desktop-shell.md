@@ -61,7 +61,8 @@ The list is **Pinned**, then every other Channel, A to Z by default. With pins
 above it the rest is headed **Channels**, and each heading carries a quiet hint
 at its far edge (*Drag to reorder* when there are pins to reorder; the sort
 toggle on **Channels**); with no pins the list stands alone and has no heading.
-The toggle, an `arrows-sort` icon beside the current label, switches the
+The toggle, the current label followed by an `arrows-sort` icon (last, so the
+icon stays put when the label changes width), switches the
 unpinned Channels between **A–Z** (case-insensitive, `compareAlphabeticalTitle`)
 and **Recent** (newest `lastActivityAt` first, ties A to Z). The desktop
 remembers the choice per device (`useUiStore.sidebarChannelSort`,
