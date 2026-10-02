@@ -35,14 +35,14 @@ const tokensDirectory = join(root, 'config', 'design-tokens');
 const themesDirectory = join(tokensDirectory, 'themes');
 const desktopSource = join(root, 'apps', 'desktop', 'src');
 const sharedUiSource = join(root, 'packages', 'ui', 'src');
-export const stylesheetPath = join(sharedUiSource, 'styles', 'themes.css');
+const stylesheetPath = join(sharedUiSource, 'styles', 'themes.css');
 export const manifestPath = join(desktopSource, 'common', 'theme-assets.ts');
 /** Where a `bundled` font source resolves to, and what `themes.css` points at. */
 export const fontsDirectory = join(sharedUiSource, 'fonts');
 const fontsHrefPrefix = '../fonts/';
 
 /** The custom property a token path is written to. */
-export function customProperty(path) {
+function customProperty(path) {
   return `--av-${path.replace(/\./gu, '-')}`;
 }
 

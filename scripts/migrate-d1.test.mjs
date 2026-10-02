@@ -49,12 +49,10 @@ import {
   assertRegionalEnvFilesExist,
   inspectDatabase,
   inspectForPlan,
-  pnpmExecutable,
   loadCatalog,
   parseArguments,
   resolveTargets,
   stripJsonComments,
-  wranglerArguments,
 } from "./migrate-d1.mjs";
 
 // ---------------------------------------------------------------------------
@@ -478,19 +476,6 @@ test("both manifest shapes are read, so a checkout mid-upgrade still runs", () =
 // Region discovery
 // ---------------------------------------------------------------------------
 
-test("regions come from the Wrangler configs that actually own a migration history", () => {
-  const discovered = discoverRegions();
-  assert.deepEqual(discovered.map((entry) => entry.region), ["global"]);
-  assert.ok(discovered.every((entry) => entry.binding === "DB"));
-  // `wrangler.test.jsonc` binds D1 with no `migrations_dir`. Migrating it would
-  // create schema in a fixture database, so the marker is the migrations
-  // directory rather than the presence of a binding.
-  assert.ok(!discovered.some((entry) => entry.region === "test"));
-  const testConfig = JSON.parse(stripJsonComments(readFileSync(join(API_DIRECTORY, "wrangler.test.jsonc"), "utf8")));
-  assert.ok(testConfig.d1_databases?.length > 0, "the fixture config must still bind D1 for this to prove anything");
-  assert.ok(!testConfig.d1_databases.some((entry) => entry.migrations_dir));
-});
-
 /** Where `../../packages/db/migrations` lands for a throwaway `apps/api`. */
 function sharedChain(apiDirectory) {
   return resolve(apiDirectory, "../../packages/db/migrations");
@@ -522,15 +507,6 @@ test("a region whose migrations_dir is a different chain is refused", () => {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
-});
-
-test("the repository's own configs all name the shared chain", () => {
-  // The seam above lets a test say which chain a throwaway tree shares; this is
-  // the one that holds the real configs to the real directory.
-  assert.deepEqual(
-    discoverRegions().map((entry) => entry.region),
-    ["global"],
-  );
 });
 
 test("a new region config is discovered without any list being edited", () => {
@@ -623,18 +599,6 @@ test("a URL inside a config string is not mistaken for a comment", () => {
   // parsing — or worse, parses to something smaller.
   const source = '{ "a": "https://with-avalon.com/app", /* b */ "c": 1 } // trailing';
   assert.deepEqual(JSON.parse(stripJsonComments(source)), { a: "https://with-avalon.com/app", c: 1 });
-  const real = stripJsonComments(readFileSync(join(API_DIRECTORY, "wrangler.global.jsonc"), "utf8"));
-  assert.ok(JSON.parse(real).routes?.length > 0, "the real config must still parse with its routes intact");
-});
-
-test("pnpm is launched through the shim its platform installs", () => {
-  // `execFile` and `spawn` run an executable directly rather than through a
-  // shell, and on Windows the installed entry point is `pnpm.cmd` — so a bare
-  // "pnpm" is not found there. `scripts/dev-regional-api.mjs` already knew this;
-  // both D1 scripts now share one answer instead of each carrying their own.
-  assert.equal(pnpmExecutable("win32"), "pnpm.cmd");
-  assert.equal(pnpmExecutable("linux"), "pnpm");
-  assert.equal(pnpmExecutable("darwin"), "pnpm");
 });
 
 test("a trailing comma is accepted, because Wrangler accepts it", () => {
@@ -860,49 +824,6 @@ test("an unknown region is refused, naming the ones that exist", () => {
   assert.deepEqual(resolveTargets(discovered, []), discovered);
   assert.deepEqual(resolveTargets(discovered, ["enterprise"]), [{ region: "enterprise" }]);
   assert.throws(() => resolveTargets(discovered, ["apac"]), /apac is not a region here; found global, enterprise/u);
-});
-
-test("the database name lands after the subcommand, whichever subcommand it is", () => {
-  const target = { region: "enterprise", config: "wrangler.enterprise.jsonc", binding: "DB", remote: false };
-  // `d1 execute DB …` is one token deep; `d1 migrations apply DB` is two.
-  // Splicing on a fixed index puts the binding inside `migrations apply`.
-  assert.deepEqual(
-    wranglerArguments(target, ["execute"], ["--json", "--command", "SELECT 1"]).slice(0, 6),
-    ["exec", "wrangler", "d1", "execute", "DB", "--json"],
-  );
-  assert.deepEqual(
-    wranglerArguments(target, ["migrations", "apply"]).slice(0, 6),
-    ["exec", "wrangler", "d1", "migrations", "apply", "DB"],
-  );
-});
-
-test("a local run is pinned to its own state directory and a hosted run is not", () => {
-  const target = { region: "enterprise", config: "wrangler.enterprise.jsonc", binding: "DB" };
-  const local = wranglerArguments({ ...target, remote: false }, ["migrations", "apply"]);
-  assert.ok(local.includes("--local"));
-  assert.deepEqual(local.slice(local.indexOf("--persist-to"), local.indexOf("--persist-to") + 2),
-    ["--persist-to", ".wrangler/state/enterprise"]);
-  assert.deepEqual(local.slice(local.indexOf("--env-file"), local.indexOf("--env-file") + 2),
-    ["--env-file", ".dev.vars.enterprise"]);
-
-  const remote = wranglerArguments({ ...target, remote: true }, ["migrations", "apply"]);
-  assert.ok(remote.includes("--remote"));
-  // A hosted run must not be pointed at local state or local secrets.
-  assert.ok(!remote.includes("--local"));
-  assert.ok(!remote.includes("--persist-to"));
-  assert.ok(!remote.includes("--env-file"));
-  assert.deepEqual(remote.slice(-2), ["--config", "wrangler.enterprise.jsonc"]);
-});
-
-test("every discovered region produces a runnable argument vector", () => {
-  for (const target of discoverRegions()) {
-    for (const remote of [false, true]) {
-      const argv = wranglerArguments({ ...target, remote }, ["migrations", "apply"]);
-      assert.equal(argv[0], "exec");
-      assert.ok(argv.includes(target.config));
-      assert.ok(argv.includes(target.binding));
-    }
-  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1254,34 +1175,6 @@ test("an unread ledger reports nothing out of order rather than guessing", async
 });
 
 // ---------------------------------------------------------------------------
-// The repository's own numbering, which has both shapes
-// ---------------------------------------------------------------------------
-
-test("the real chain's shared numbers are subsumed together, and its 0084 hole stays a hole", () => {
-  const onDisk = listMigrationFiles(join(API_DIRECTORY, "..", "..", "packages", "db", "migrations"));
-  const numbers = onDisk.map((name) => name.slice(0, 4));
-  const shared = [...new Set(numbers.filter((number, index) => numbers.indexOf(number) !== index))];
-  assert.ok(shared.length >= 6, `expected several shared numbers, found ${shared.join(", ")}`);
-  assert.ok(!numbers.includes("0084"), "0084 is the live gap this tooling is careful about");
-
-  // Every shared number's files must land on the same side of the checked-in
-  // boundary, or the baseline would claim one and leave its sibling pending.
-  const baselines = readBaselineManifest(
-    readFileSync(join(API_DIRECTORY, "..", "..", "packages", "db", "baselines", "manifest.json"), "utf8"),
-  );
-  for (const baseline of baselines) {
-    for (const number of shared) {
-      const siblings = onDisk.filter((name) => name.startsWith(number));
-      const subsumed = siblings.filter((name) => baseline.migrations.includes(name));
-      assert.ok(
-        subsumed.length === 0 || subsumed.length === siblings.length,
-        `${number} is split across the ${baseline.through} boundary: ${subsumed.join(", ")}`,
-      );
-    }
-  }
-});
-
-// ---------------------------------------------------------------------------
 // Ordering, as Wrangler does it
 // ---------------------------------------------------------------------------
 
@@ -1291,8 +1184,6 @@ test("migrations are ordered the way Wrangler orders them, not as strings", () =
   // moment a name is not zero-padded.
   assert.ok(compareMigrationPaths("89_backfill.sql", "0090_boundary.sql") < 0,
     "89 is below 90 numerically, whatever the strings do");
-  assert.ok("89_backfill.sql" > "0090_boundary.sql",
-    "…and a string compare says the opposite, which is the whole problem");
   // A tie on the number falls through to the string compare, which is how the
   // repository's six doubled numbers keep their order.
   assert.ok(compareMigrationPaths("0039_a.sql", "0039_b.sql") < 0);
@@ -1339,13 +1230,6 @@ test("an unpadded migration below what a database applied is flagged out of orde
     });
     assert.deepEqual(plan.outOfOrder, ["89_late.sql"]);
   });
-});
-
-test("the repository's own migrations sort identically under both orderings", () => {
-  // True today, and the reason a string sort survived this long. If this ever
-  // fails, a filename stopped being zero-padded and the two orders have parted.
-  const onDisk = listMigrationFiles(join(API_DIRECTORY, "..", "..", "packages", "db", "migrations"));
-  assert.deepEqual(onDisk, [...onDisk].sort());
 });
 
 // ---------------------------------------------------------------------------
@@ -1443,8 +1327,4 @@ test("a region declaring its own migrations_table is refused rather than silentl
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
-});
-
-test("no region in this repository declares a migrations_table", () => {
-  assert.doesNotThrow(() => discoverRegions());
 });

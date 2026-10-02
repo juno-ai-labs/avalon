@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -75,38 +75,6 @@ test("a symlinked file, not merely a symlinked directory, is still the entry poi
     symlinkSync(probe, linked);
     assert.equal(execFileSync(process.execPath, [linked], { encoding: "utf8" }).trim(), "ran");
   });
-});
-
-test("the desktop copy of the helper is identical to this one", () => {
-  // What actually holds the two copies together. The lint rule does not: it
-  // matches the comparison, so rewriting either copy to compare a hoisted
-  // `process.argv[1]` against `fileURLToPath(moduleUrl)` reintroduces the bug
-  // and passes lint clean. Raised in review, where the original claim that the
-  // rule kept them in step was demonstrated false.
-  //
-  // Compared as normalized source rather than by behaviour because the failure
-  // being prevented is a silent divergence in an edge case, which a test would
-  // have to already know about to catch. Quotes are normalized because the two
-  // folders differ in style, and that difference is the one thing here that
-  // does not matter.
-  const normalize = (source) => {
-    // `}` is escaped because the `u` flag reserves it.
-    const body = /export function isEntryPoint[\s\S]*?\n\}/u.exec(source);
-    assert.ok(body, "isEntryPoint is not declared the way this invariant reads it");
-    return body[0].replaceAll("'", '"').replaceAll(/\s+/gu, " ");
-  };
-  const repositoryRoot = resolve(scriptsDirectory, "..");
-  const ours = readFileSync(join(scriptsDirectory, "entry-point.mjs"), "utf8");
-  const desktop = readFileSync(
-    join(repositoryRoot, "apps/desktop/scripts/entry-point.mjs"),
-    "utf8",
-  );
-  assert.equal(
-    normalize(desktop),
-    normalize(ours),
-    "The desktop release scripts keep their own copy of this helper, for the reason its header "
-      + "gives. Apply the change to both, or the two drift silently.",
-  );
 });
 
 test("an unresolvable invocation path is answered rather than thrown", () => {

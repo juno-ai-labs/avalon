@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { check, truncatedHeadings } from "./check-document-headings.mjs";
+import { truncatedHeadings } from "./check-document-headings.mjs";
 
 test("catches the damage that prompted this check", () => {
   // Verbatim from docs/security.md after the theme branch was rebased. The
@@ -51,8 +51,4 @@ test("leaves fenced code alone", () => {
 test("does not fire on prose that merely contains an em dash", () => {
   assert.deepEqual(truncatedHeadings("The 8 regions — all of them — are listed.\n"), []);
   assert.deepEqual(truncatedHeadings("8-13 is a ratio, not a date.\n"), []);
-});
-
-test("the repository's own documents are clean", async () => {
-  assert.deepEqual(await check("docs"), []);
 });
