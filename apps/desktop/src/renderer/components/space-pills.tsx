@@ -1,14 +1,14 @@
 import { IconArchive, IconRestore } from '@tabler/icons-react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import type { ContainerOrder, PersonalOrder, SpaceSummary } from '@rally/contracts';
+import type { SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { SpacePill, SpacePillAddButton, SpacePillStrip } from '@rally/ui/components/space-pills';
 import { SidebarRefreshRow } from '@rally/ui/components/sidebar-refresh-row';
+import { compareAlphabeticalName } from '@rally/ui/lib/alphabetical';
 import clsx from 'clsx';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
 import { blockedChannelLabel, spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
 import type { WorkstreamSummary } from '../lib/types';
 import { NewWorkstreamMenu } from './new-workstream-menu';
@@ -28,21 +28,17 @@ interface SpacePillsProps {
   outOfDate: boolean;
   onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
   onCreateSpace: (name: string) => Promise<void>;
-  onOrderPreviewChange: (order: string[] | null) => void;
   onArchive?: ((spaceId: string) => Promise<void>) | undefined;
   onMoveChannel: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
-  onReorder: (order: ContainerOrder) => Promise<void>;
   onRetry: () => void;
   onRestore: (spaceId: string) => Promise<void>;
   onSelect: (spaceId: string | null) => void;
-  ordering: PersonalOrder;
   workstreams: WorkstreamSummary[];
 }
 
 const CHANNEL_DRAG_TYPE = 'application/x-rally-workstream-id';
 const CHANNEL_DRAG_SOURCE_SPACE_TYPE = 'application/x-rally-channel-source-space-id';
 const CHANNEL_DROP_ACCEPTED_FLASH_MS = 780;
-const SPACE_DRAG_TYPE = 'application/x-rally-space-id';
 
 /**
  * The Organization's Spaces as filters across the top of the sidebar.
@@ -52,6 +48,10 @@ const SPACE_DRAG_TYPE = 'application/x-rally-space-id';
  * the Channel list below draws. **All** is every Channel the reader holds.
  * General is the Organization's default home rather than a place anybody
  * chose, so it has no pill: its Channels are under All.
+ *
+ * All leads, then every other pill sorts by name, case-insensitive A–Z. The
+ * order is not arranged by hand, so a pill has no drag or keyboard reorder;
+ * dragging a Channel onto a pill still places it in that Space.
  */
 export function SpacePills({
   inactiveSpaces,
@@ -64,23 +64,17 @@ export function SpacePills({
   outOfDate,
   onCreateChannel,
   onCreateSpace,
-  onOrderPreviewChange,
   onArchive,
   onMoveChannel,
-  onReorder,
   onRetry,
   onRestore,
   onSelect,
-  ordering,
   workstreams,
 }: SpacePillsProps): React.JSX.Element {
   const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const revealedRevision = useRef<number | null>(null);
-  const [dragOrder, setDragOrder] = useState<string[] | null>(null);
-  const dragOrderRef = useRef<string[] | null>(null);
   const [failure, setFailure] = useState<AcknowledgedError | null>(null);
-  const draggingSpaceId = useRef<string | null>(null);
   const [channelDropTargetId, setChannelDropTargetId] = useState<string | null>(null);
   const [acceptedChannelDropTargetId, setAcceptedChannelDropTargetId] = useState<string | null>(null);
   const acceptedChannelDropTimer = useRef<{
@@ -99,16 +93,9 @@ export function SpacePills({
       clearTimeout(acceptedChannelDropTimer.current.handle);
     }
   }, []);
-  const storedSpaces = useMemo(() => orderByStoredIds(
-    spaces,
-    storedOrderFor(ordering, { kind: 'organization' }),
-    (space) => space.id,
-  ), [ordering, spaces]);
-  const storedIds: string[] = storedSpaces.map((space) => space.id);
-  const orderedSpaces = (dragOrder === null
-    ? storedSpaces
-    : orderByStoredIds(spaces, dragOrder, (space) => space.id))
-    .filter((space) => space.systemRole !== 'general');
+  const orderedSpaces = useMemo(() => spaces
+    .filter((space) => space.systemRole !== 'general')
+    .sort(compareAlphabeticalName), [spaces]);
   useLayoutEffect(() => {
     if (revealSelection === null || revealedRevision.current === revealSelection.revision) return;
     const pill = scrollRef.current?.querySelector<HTMLElement>(
@@ -138,35 +125,6 @@ export function SpacePills({
           || currentArchiveTarget.systemRole === 'general'
         ? 'This space is no longer available to archive.'
         : null;
-
-  const previewOrder = (order: string[] | null): void => {
-    dragOrderRef.current = order;
-    setDragOrder(order);
-    onOrderPreviewChange(order);
-  };
-
-  // The stored order keeps General's place; only the pills a reader can see
-  // move, so a drag never has to say where a hidden Space goes.
-  const withHiddenSpaces = (visibleIds: string[]): string[] => {
-    const visible = new Set(visibleIds);
-    let next = 0;
-    return storedIds.map((id) => visible.has(id) ? visibleIds[next++]! : id);
-  };
-
-  const commitOrder = async (ids: string[]): Promise<void> => {
-    previewOrder(ids);
-    setFailure(null);
-    try {
-      await onReorder({ container: { kind: 'organization' }, itemIds: ids });
-    } catch {
-      setFailure({
-        title: 'Spaces could not be reordered',
-        copy: 'The spaces are back in the order they were in. Try again in a moment.',
-      });
-    } finally {
-      if (dragOrderRef.current === ids) previewOrder(null);
-    }
-  };
 
   const flashAcceptedChannelDrop = (spaceId: string): number => {
     const token = acceptedChannelDropGeneration.current + 1;
@@ -234,25 +192,17 @@ export function SpacePills({
         ) : <>
           {outOfDate && <SidebarRefreshRow onRefresh={onRetry} />}
           <SpacePill onClick={() => onSelect(null)} selected={selectedSpaceId === null}>All</SpacePill>
-          {orderedSpaces.map((space, index) => (
+          {orderedSpaces.map((space) => (
             <ContextMenu.Root key={space.id}>
               <ContextMenu.Trigger asChild>
                 <SpacePill
-                  aria-describedby={!readOnly && ready && orderedSpaces.length > 1 ? 'spaces-reorder-help' : undefined}
                   aria-description={space.scope === 'workspace' ? 'Public space' : undefined}
                   className={clsx(
                     channelDropTargetId === space.id && 'is-channel-drop-target',
                     acceptedChannelDropTargetId === space.id && 'is-channel-drop-accepted',
                   )}
                   data-space-id={space.id}
-                  draggable={!readOnly}
                   onClick={() => onSelect(space.id)}
-                  onDragEnd={(event: DragEvent<HTMLElement>) => {
-                    const next = committedOrder(dragOrder, storedIds, (event.dataTransfer?.dropEffect ?? 'none') !== 'move');
-                    draggingSpaceId.current = null;
-                    if (next) void commitOrder(next);
-                    else previewOrder(null);
-                  }}
                   onDragEnter={(event: DragEvent<HTMLElement>) => {
                     const placesChannel = space.reach !== 'through_channel'
                       && selectedSpaceId !== space.id
@@ -261,39 +211,20 @@ export function SpacePills({
                     if (placesChannel) {
                       event.preventDefault();
                       setChannelDropTargetId(space.id);
-                      return;
                     }
-                    if (!event.dataTransfer.types.includes(SPACE_DRAG_TYPE)) return;
-                    event.preventDefault();
-                    const dragged = draggingSpaceId.current;
-                    if (!dragged || dragged === space.id) return;
-                    const visible: string[] = orderedSpaces.map((item) => item.id);
-                    previewOrder(withHiddenSpaces(moveWithin(
-                      (dragOrderRef.current ?? storedIds).filter((id) => visible.includes(id)),
-                      dragged,
-                      index,
-                    )));
                   }}
                   onDragOver={(event: DragEvent<HTMLElement>) => {
-                    const reordersSpace = event.dataTransfer.types.includes(SPACE_DRAG_TYPE);
                     const placesChannel = space.reach !== 'through_channel'
                       && selectedSpaceId !== space.id
                       && event.dataTransfer.types.includes(CHANNEL_DRAG_TYPE)
                       && event.dataTransfer.types.includes(CHANNEL_DRAG_SOURCE_SPACE_TYPE);
-                    if (!reordersSpace && !placesChannel) return;
+                    if (!placesChannel) return;
                     event.preventDefault();
                     event.dataTransfer.dropEffect = 'move';
                   }}
                   onDragLeave={(event: DragEvent<HTMLElement>) => {
                     if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
                     setChannelDropTargetId((current) => current === space.id ? null : current);
-                  }}
-                  onDragStart={(event: DragEvent<HTMLElement>) => {
-                    if (readOnly) return;
-                    draggingSpaceId.current = space.id;
-                    previewOrder(storedIds);
-                    event.dataTransfer.effectAllowed = 'move';
-                    event.dataTransfer.setData(SPACE_DRAG_TYPE, space.id);
                   }}
                   onDrop={(event: DragEvent<HTMLElement>) => {
                     const workstreamId = event.dataTransfer.getData(CHANNEL_DRAG_TYPE);
@@ -331,15 +262,6 @@ export function SpacePills({
                         });
                       });
                   }}
-                  onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
-                    if (readOnly) return;
-                    if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
-                    event.preventDefault();
-                    const visible = orderedSpaces.map((item) => item.id);
-                    const nextIndex = index + (event.key === 'ArrowLeft' ? -1 : 1);
-                    if (nextIndex < 0 || nextIndex >= visible.length) return;
-                    void commitOrder(withHiddenSpaces(moveWithin(visible, space.id, nextIndex)));
-                  }}
                   selected={selectedSpaceId === space.id}
                 >
                   {space.name}
@@ -366,9 +288,6 @@ export function SpacePills({
           ))}
         </>}
       </SpacePillStrip>
-      {!readOnly && ready && orderedSpaces.length > 1 && <p className="sr-only" id="spaces-reorder-help">
-        Hold Alt and press the Left or Right Arrow key to reorder a space.
-      </p>}
       <AcknowledgedErrorDialog
         error={failure}
         onAcknowledge={() => setFailure(null)}

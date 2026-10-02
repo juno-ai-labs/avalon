@@ -23,7 +23,7 @@ right panel.
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
 | `packages/ui/src/styles/app.css` | The "Single sidebar", "Title pills", "Breakouts in the Channel" and "Split conversation" blocks. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | The desktop sidebar: top actions, the All filter, pins under All (`allPinPosition`), rows. |
-| `apps/desktop/src/renderer/components/space-pills.tsx` | Desktop pills: reorder, drop a Channel on a Space, archive, restore. |
+| `apps/desktop/src/renderer/components/space-pills.tsx` | Desktop pills: A–Z order, drop a Channel on a Space, archive, restore. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The Channel screen: both panes, both pills, the one-slot rule, Breakout creation in the right pane. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation. Draws chips and ticks for Main, owns its right panel by conversation, honours a scroll-to-turn request. |
 | `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Routes a clicked web link to the pane it was clicked in. |
@@ -47,8 +47,10 @@ The web app has none of them; the Mac download link sits above its account
 menu.
 
 Under it, the Space pills, whose row fades at whichever edge has pills scrolled past it (the app's scroll-edge fade, on the inline axis). The round **New space** button, a folder with a plus, leads, and its
-right-click offers **Restore archived space**. Then **All**, then each Space in
-the person's saved order. **General has no pill.** It is where a Channel lives
+right-click offers **Restore archived space**. Then **All**, then each Space by
+name, case-insensitive A to Z (`compareAlphabeticalName`). Pills cannot be
+reordered by drag or keyboard; dragging a Channel onto a pill still places it
+in that Space. **General has no pill.** It is where a Channel lives
 when nobody put it in a Space, and All already shows it. A pill filters the
 list below and does not navigate; **Open space** is on its right-click menu and
 in the Channel menu. The desktop remembers the filter per device
@@ -242,6 +244,30 @@ from the shared navigation directory.
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-02 — Space pills sort A to Z
+
+**What changed:** The Space pills lost drag and `Alt`+`Arrow` reordering. All
+leads, then every Space sorts by name, case-insensitive, through the same
+collator the Channel list uses. The placement and creation pickers follow the
+same order, so General now sorts among them by name rather than sitting in its
+stored place, and the Start a new channel picker defaults to the first Space
+alphabetically.
+
+**Why:** Product asked for a fixed, predictable order. A hand-arranged strip
+cost a drag gesture that competed with clicking a pill and with dropping a
+Channel on one, plus an optimistic-preview path shared across four surfaces.
+
+**Considered and rejected:** Deleting the `organization` order from the server
+and the socket payload. Shipped desktops still parse and send it, so removing
+it needs a coordinated cutover for no gain to this change.
+
+**Consequences:** The server still stores and serves the `organization`
+container order, and `PUT /workspace/order` still accepts it; the desktop just
+no longer reads or writes it. Bringing hand ordering back is a client change
+only.
+
+Shipped in #1061.
 
 ### 2026-10-01 — One sidebar, title pills, and Breakouts beside their Channel
 
