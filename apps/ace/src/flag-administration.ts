@@ -83,7 +83,16 @@ export class FlagAdministration extends WorkerEntrypoint<Env> implements FlagAdm
           message: `The flag definition is not valid: ${issuesMessage(update.error)}`,
         };
       }
-      const flag = await updateManagedFlag(this.env, update.data.key, update.data);
+      let flag: unknown;
+      try {
+        flag = await updateManagedFlag(this.env, update.data.key, update.data);
+      } catch (error) {
+        // Flagship already changed; only the client notification failed.
+        if (error instanceof FlagChangeNotificationError) {
+          logWrite('ace_product_flag_updated', input.actor, { flag_key: update.data.key });
+        }
+        throw error;
+      }
       logWrite('ace_product_flag_updated', input.actor, { flag_key: update.data.key });
       return { ok: true, value: flag };
     });

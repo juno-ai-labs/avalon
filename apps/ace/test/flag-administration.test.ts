@@ -116,8 +116,9 @@ describe('FlagAdministration', () => {
     });
   });
 
-  it('says the save landed when only the client notification failed', async () => {
+  it('says the save landed and records the engineer when only the client notification failed', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ success: true, result: {} }));
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
     const result = await administration({
       PRODUCT_FLAG_CHANGE_QUEUE: createTestQueue({ send: vi.fn(async () => { throw new Error('queue down'); }) }),
@@ -128,6 +129,12 @@ describe('FlagAdministration', () => {
       code: 'flag_change_notification_failed',
       message: expect.stringContaining('Flagship saved the flag'),
     });
+    expect(logged.mock.calls.map((call) => JSON.parse(String(call[0])))).toEqual([{
+      event: 'ace_product_flag_updated',
+      actor_subject: 'engineer-1',
+      via: 'engineering_mcp',
+      flag_key: 'live-artifacts-enabled',
+    }]);
   });
 
   it('refuses a model OpenRouter does not route before reading or writing Flagship', async () => {
