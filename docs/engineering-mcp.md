@@ -5,8 +5,9 @@ SQLite database inside a workspace, work stream, substream, Sidekick, or live
 web artifact Durable Object.
 It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
-repair writes. It is not a product API and it is never available to Rally users
-by virtue of product membership.
+repair writes. It also reads and changes the feature flags and agent model
+routes that Ace manages, through Ace. It is not a product API and it is never
+available to Rally users by virtue of product membership.
 
 ## Where the code lives
 
@@ -25,6 +26,9 @@ by virtue of product membership.
   routes all four.
 - `packages/contracts/src/engineering-inspection.ts` is the runtime-validated
   RPC vocabulary shared by both Workers.
+- `apps/ace/src/flag-administration.ts` is the private named `WorkerEntrypoint`
+  Ace exports for the flag tools. Its interface and input schemas live in
+  `apps/ace/src/protocol.ts`, which this Worker compiles.
 - `.github/workflows/deploy-api.yml` deploys this Worker only after both
   regional API entrypoints are live and healthy.
 
@@ -92,6 +96,34 @@ only through the product's own read-only admitted query path
 console arbitrary SQL there would mean changing the facet host module every
 stateful artifact runs. See [`live-web-artifacts.md`](live-web-artifacts.md).
 
+### Feature and model flags
+
+The four flag tools call Ace's `FlagAdministration` entrypoint over the
+`FLAG_ADMINISTRATION` Service Binding. They hold no Flagship credential and
+write nothing themselves:
+
+| Tool | Ace method | Effect |
+| --- | --- | --- |
+| `list_feature_flags` | `listProductFlags` | Each managed product flag's catalog entry and live Flagship definition, `null` if not provisioned |
+| `update_feature_flag` | `updateProductFlag` | Replaces the flag's whole definition, then queues the key-only client notification |
+| `list_model_flags` | `listModelFlags` | Each agent role's catalog entry, checked-in default route, and live Flagship definition |
+| `update_model_flag` | `updateModelRouting` | Checks every model id against OpenRouter, then replaces the default variation's route plan, keeping rules and other variations |
+
+These are the same catalogs, schemas and write functions the Ace pages use, so
+an MCP write is validated, fanned out to connected clients, and limited to the
+managed keys exactly as an Ace save is. See [`ace.md`](ace.md) for what each
+write does in Flagship and [`feature-flags.md`](feature-flags.md) for what
+each flag controls.
+
+`update_feature_flag` is a whole replacement because Flagship's API is: rules
+left out of the call are deleted. The tool description tells the client to read
+the flag first and send it back with its change.
+
+Ace answers `{ ok: false, code, message }` for a failure it can name: a schema
+rejection by field, a Flagship refusal by HTTP status, an unknown OpenRouter
+model, or a save that landed but whose client notification did not queue. The
+MCP logs the code and returns the message to the engineer.
+
 The shared Durable Object base waits for the object's checked-in migrations,
 runs the supplied statement through `ctx.storage.sql.exec`, and returns column
 names, JSON-safe rows, and the platform's physical `rowsRead` and `rowsWritten`
@@ -142,6 +174,12 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
   build did not know is an unknown key mid-rollout and strict parsing rejects
   it. Adding the next object kind's id as a required field breaks every existing
   SQL tool for the length of the deployment window.
+
+- Flag tools reach Flagship only through Ace. A direct Flagship write from this
+  Worker would skip the client notification and the managed-key allowlist, and
+  would put a second Flagship token on a second Worker.
+- Ace records `actor_subject` and `via: "engineering_mcp"` on every flag write
+  it makes for this Worker, beside this Worker's own audit event.
 
 ## Boundaries and non-goals
 
@@ -227,6 +265,12 @@ generation fences admit only the current active authority. Existing Access tests
 signature, issuer, audience, cookie, and header verification because this
 Worker imports that one verifier rather than forking it.
 
+`apps/ace/test/flag-administration.test.ts` drives the entrypoint against a
+Flagship and OpenRouter double, the two APIs that cannot run here: the write
+reaches Flagship and queues the key, staged model variations and rules survive,
+and each refusal arrives under its code before any Flagship I/O. The MCP suite
+proves the tools forward the engineer's identity and surface Ace's refusal.
+
 The deployment workflow dry-runs the MCP bundle during verification and, after
 deployment, requires a non-browser `401` carrying an OAuth protected-resource
 challenge.
@@ -267,6 +311,28 @@ configuration and administrator-added HTTPS redirect allowlist entries. It also
 ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
+
+### 2026-10-02 — Read and change managed flags through Ace
+
+**What changed:** `list_feature_flags`, `update_feature_flag`,
+`list_model_flags` and `update_model_flag` call a new `FlagAdministration`
+entrypoint on Ace over a Service Binding.
+
+**Why:** Engineers working through an MCP client had no way to see or change a
+flag without leaving for the Ace pages.
+
+**Considered and rejected:** Giving this Worker its own Flagship token and
+calling the API directly. That is a second write path that would skip the
+client notification queue unless it rebuilt it, and a second Worker holding a
+token that can change every flag. Calling Ace's HTTP routes was also rejected:
+they sit behind a different Access audience and a same-origin check written for
+a browser.
+
+**What a future change has to respect:** Ace stays the one place that writes a
+managed flag. A new flag kind is added to Ace's catalog and entrypoint first;
+this Worker only forwards. The MCP deploys from the API workflow and Ace from
+its own, so for the length of a rollout the flag tools can fail with a missing
+entrypoint until Ace is live.
 
 ### 2026-09-28 — Reach a Sidekick's run conversations
 

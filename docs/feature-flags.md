@@ -39,7 +39,7 @@ The rest:
 | --- | --- |
 | `apps/api/src/services/flag-targeting-attributes.ts` | Loads the facts, caches them, and holds the line on what may leave the Worker. |
 | `apps/api/src/routes/feature-flags.ts` | `GET /feature-flags`, answered under identity auth. |
-| `apps/ace` | Access-protected editor and write authority for the managed user-facing product flags. See [`ace.md`](ace.md). |
+| `apps/ace` | Access-protected editor and write authority for the managed user-facing product flags, also reachable from the engineering MCP's flag tools. See [`ace.md`](ace.md) and [`engineering-mcp.md`](engineering-mcp.md#feature-and-model-flags). |
 | `apps/api/src/queues/product-feature-flag-consumer.ts`, `WorkspaceDO.notifyProductFeatureFlagChanged` | Regional key-only fan-out and private per-user socket refresh. |
 | `packages/contracts` — `AGENT_MODEL_OVERRIDES` | The closed set of pinnable models. |
 | `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
