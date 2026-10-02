@@ -87,21 +87,28 @@ first, then the rest by their first pin (`allPinPosition`).
 ### Title pills
 
 Every conversation pane's header is a `TitlePillHeader`: its own pill centred,
-the pane's controls at the right, and ancestors stacked at the left. The pill's
-icon is the appearance picker; the rest of the pill opens its menu.
+the pane's controls at the right, and ancestors stacked at the left. A
+Channel pill's icon is its appearance picker; the rest of the pill opens its
+menu, and its chevron points right while a Breakout is open beside it. A
+Breakout pill wears the breakout arrow (`BreakoutPillIcon`) and, once its
+whole history is loaded, its reply count (`ConversationHeaderContext.replyCount`,
+one per turn of what people and Rally said); its own icon and colour are chosen
+from **Icon and color** in its menu (`AppearanceSubmenu`). An open pill fills
+solid and drops its lift to the bare ring.
 
 - **Channel menu:** the Space it lives in (with **Open space**), people,
   Public/Private, Add people, Rename, Make public, Copy channel link, Share,
   Import updates, Artifacts, Sidekicks, the Channel's Breakouts (newest activity
   first, filter past six, "Show N more"), and Archive.
 - **Breakout menu:** the Channel it belongs to (with **Show in channel**),
-  people, Private/Public, Add people, Rename, Copy breakout link, Share, and
-  Archive.
+  the message it started from, people, Private/Public, Add people, Rename,
+  Icon and color, Copy breakout link, Share, and Archive.
 
 ### Breakouts
 
-A Breakout is still created only from a message (**New breakout from this
-message**). Its launch surface opens in the right pane: a second Main surface
+A Breakout is still created only from a message. Under Rally's newest reply
+the action is a visible line, **Start a breakout from this message**; on every
+other message it is **New breakout** among the actions that appear on hover. Its launch surface opens in the right pane: a second Main surface
 with `paneKey="launch"`, so it owns its own panel scope. Once created, the
 route's `?substream=` names it and it opens in the right pane beside Main. The
 route contract is unchanged: deep links, the restored last route and search
@@ -110,12 +117,18 @@ hits land in the pane.
 Each Breakout row the Channel receives carries `originTurnId` and
 `lastActivityAt` ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
 
+- **Origin card:** the top of a Breakout's feed shows the Channel message it
+  started from as a card, with up to three messages before it, each a step
+  fainter the further back (`BreakoutOrigin`). It reads the Channel's own
+  transcript cache, so it draws only when the origin is loaded there, and only
+  above the Breakout's first message, never above a window with earlier pages.
 - **Chips:** `MessageFeed` draws a chip row after the last row of each origin
   turn. A chip shows the title, "N new" when there is news, and "Open" with an
   accent ring when it is the open Breakout.
 - **Tick bar:** down Main's leading edge, one tick per Breakout, in origin-turn
-  order for turns that are loaded and by creation time after them. A grey short
-  tick is quiet, a red longer one has news, and the open one is longest.
+  order for turns that are loaded and by creation time after them. Colour says
+  news and length says open, at the design's sizes: a quiet tick is 11×2 grey,
+  one with news 20×3 in `sys.color.workstream.news`, and the open one 26×4.
   Hovering a tick names it; pressing it opens the Breakout and scrolls Main to
   the origin.
 - **Show in channel:** the Breakout menu sends Main a `scrollToTurn` request,

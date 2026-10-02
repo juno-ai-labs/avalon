@@ -2476,6 +2476,12 @@ export function ElicitationPanel({
 interface MessageBlockProps {
   onStartSubstream?: (throughTurnId: string) => void;
   /**
+   * Whether this is the newest thing Rally said in the feed. Its breakout
+   * action is then a visible line under the message rather than one of the
+   * actions that appear on hover.
+   */
+  latestReply?: boolean;
+  /**
    * How this transcript resolves and opens a citation. Absent on a surface
    * without a work stream behind it, which is exactly when every citation in a
    * message degrades to the label text it already carried.
@@ -2513,6 +2519,7 @@ interface MessageBlockProps {
 
 export function MessageBlock({
   onStartSubstream,
+  latestReply = false,
   citations,
   collapseHeadings = false,
   currentUserId,
@@ -2774,11 +2781,16 @@ export function MessageBlock({
             citations={citations}
             collapseHeadings={collapseHeadings}
             mentions={message.mentions}
-            onStartSubstream={startSubstream}
+            onStartSubstream={latestReply ? undefined : startSubstream}
             streaming={message.streaming}
             text={message.text ?? ''}
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
           />
+          {latestReply && startSubstream && (
+            <button className="message-start-breakout-link" onClick={startSubstream} type="button">
+              <span aria-hidden="true">↳</span> Start a breakout from this message
+            </button>
+          )}
 
         </>
       )}

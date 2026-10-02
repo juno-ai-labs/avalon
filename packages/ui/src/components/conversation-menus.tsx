@@ -223,6 +223,7 @@ export function ChannelMenu({
 export function BreakoutMenu({
   actions,
   addSidekick,
+  appearance,
   breakout,
   channel,
   onOpenSidekick,
@@ -240,6 +241,8 @@ export function BreakoutMenu({
 }: {
   actions?: ConversationRowActions | undefined;
   addSidekick?: ReactNode;
+  /** The Breakout's icon-and-colour choice, as a submenu, when the viewer may change it. */
+  appearance?: ReactNode;
   onOpenSidekick?: (id: string) => void;
   onRefreshSidekicks?: (() => void) | undefined;
   onSidekickMenuOpen?: () => void;
@@ -280,6 +283,7 @@ export function BreakoutMenu({
     <TitleMenuSeparator />
     {onParticipants && <TitleMenuItem icon={<IconUserPlus aria-hidden="true" size={16} stroke={1.8} />} onSelect={onParticipants}>Add people</TitleMenuItem>}
     {actions?.onRename && <TitleMenuItem icon={<IconPencil aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onRename?.(breakout)}>Rename</TitleMenuItem>}
+    {appearance}
     {actions?.onMakePublic && <TitleMenuItem disabled={actions.publicDisabled} icon={<IconWorld aria-hidden="true" size={16} stroke={1.8} />} onSelect={actions.onMakePublic}>Make public to organization</TitleMenuItem>}
     {actions?.onCopyLink && <TitleMenuItem icon={<IconLink aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onCopyLink?.(breakout)}>Copy breakout link</TitleMenuItem>}
     {actions?.onShare && <TitleMenuItem icon={<IconShare2 aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onShare?.(breakout)}>Share</TitleMenuItem>}

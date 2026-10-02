@@ -7537,7 +7537,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .channel-row-second-trailing .sidebar-workstream-timer { flex-basis: 14px; height: 14px; margin-left: 0; width: 14px; }
 /* Unread is said the mockup's way: a semibold title and a red dot. */
 .single-sidebar .channel-row.is-unread .sidebar-row-title { font-weight: 600; }
-.single-sidebar .channel-row-marker .status-unread .status-dot { background: var(--av-sys-color-danger-base); }
+.single-sidebar .channel-row-marker .status-unread .status-dot { background: var(--av-sys-color-workstream-news); }
 .single-sidebar .channel-row .sidebar-row-icon { height: 40px; width: 40px; }
 .single-sidebar .channel-row .sidebar-row-title { font-size: 14.5px; }
 .single-sidebar .channel-row-subtitle { font-size: 13px; line-height: 18px; }
@@ -7591,7 +7591,9 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    the bare ring, whichever of its parts opened the menu. */
 .title-pill[data-state='open'],
 .title-pill.is-split:has(> [data-state='open']) {
-  background: var(--av-sys-color-surface-raised-hover);
+  /* Solid, as the design's #eee: the translucent hover wash let the header
+     behind it through, so the pressed pill read as a tint rather than a fill. */
+  background: color-mix(in srgb, var(--av-sys-color-surface-raised) 90%, rgb(119 119 119));
   box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong);
 }
 .title-pill.is-split > .title-pill-menu-trigger[data-state='open'] { background: transparent; }
@@ -7617,6 +7619,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-pill-select:hover,
 .title-pill-menu-trigger:hover { background: var(--av-sys-color-state-hover); }
 .title-pill-icon { align-items: center; display: inline-flex; flex: none; }
+.title-pill-breakout-icon { color: var(--av-ref-color-neutral-11); }
 .title-pill-title { font-size: 14.5px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .title-pill-meta { color: var(--av-sys-color-text-muted); flex: none; font-size: 13px; }
 .title-pill-chevron { color: var(--av-sys-color-text-muted); flex: none; }
@@ -7726,6 +7729,26 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    Chips under the message a Breakout started from, and the tick bar down the
    Channel's leading edge. */
 .breakout-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; padding-left: 14px; }
+/* Under Rally's newest reply, the breakout action as a quiet line instead of
+   a hover action: the likeliest place to branch, said without a button's weight. */
+.message-start-breakout-link {
+  align-items: center;
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 13px;
+  gap: 7px;
+  height: 30px;
+  margin-top: 4px;
+  padding: 0 12px 0 10px;
+}
+.message-start-breakout-link > span { color: var(--av-sys-color-text-disabled); }
+.message-start-breakout-link:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .breakout-chip {
   align-items: center;
   background: var(--av-sys-color-surface-raised);
@@ -7745,16 +7768,36 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .breakout-chip:hover { background: var(--av-sys-color-surface-raised-hover); }
 .breakout-chip-icon { color: var(--av-sys-color-text-muted); flex: none; }
 .breakout-chip-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.breakout-chip-news { color: var(--av-sys-color-danger-base); flex: none; font-weight: 600; }
+.breakout-chip-news { color: var(--av-sys-color-workstream-news); flex: none; font-weight: 600; }
 .breakout-chip-open { flex: none; font-weight: 600; }
 .breakout-chip.is-open { background: var(--av-sys-color-accent-wash); box-shadow: 0 0 0 1.5px var(--av-sys-color-accent-base); color: var(--av-sys-color-accent-strong); }
 .breakout-chip.is-open .breakout-chip-icon { color: var(--av-sys-color-accent-base); }
 
-.breakout-tick-bar {
+/* The top of a Breakout: the Channel message it started from as a card, and
+   up to three before it, each a step fainter the further back it is, so the
+   lead-up reads as context rather than as more conversation. */
+.breakout-origin { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 18px; }
+.breakout-origin-context { display: flex; flex-direction: column; gap: 8px; list-style: none; margin: 0; padding: 0 14px; }
+.breakout-origin-context-item { display: flex; flex-direction: column; gap: 2px; opacity: calc(0.9 - var(--origin-step, 1) * 0.2); }
+.breakout-origin-author { color: var(--av-sys-color-text-muted); font-size: 11.5px; }
+.breakout-origin-context-text { -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--av-sys-color-text-subtle); display: -webkit-box; font-size: 13.5px; line-height: 1.5; overflow: hidden; }
+.breakout-origin-card {
+  background: var(--av-sys-color-surface-sunken);
+  border-radius: 18px;
+  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-subtle);
   display: flex;
   flex-direction: column;
   gap: 4px;
-  left: 10px;
+  padding: 12px 14px;
+}
+.breakout-origin-byline { color: var(--av-sys-color-text-muted); font-size: 11.5px; }
+.breakout-origin-text { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-sys-color-text-subtle); display: -webkit-box; font-size: 14px; line-height: 1.55; overflow: hidden; }
+
+.breakout-tick-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  left: 12px;
   max-height: calc(100% - 160px);
   overflow-y: auto;
   position: absolute;
@@ -7765,12 +7808,14 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 }
 .breakout-tick-bar::-webkit-scrollbar { display: none; }
 .breakout-tick { align-items: center; background: transparent; border: 0; cursor: pointer; display: flex; height: 8px; padding: 0 4px 0 6px; width: 40px; }
-.breakout-tick-mark { background: var(--av-sys-color-border-strong); border-radius: 2px; display: block; height: 2px; transition: width 120ms ease, background 120ms ease; width: 11px; }
+.breakout-tick-mark { background: var(--av-ref-color-line-4); border-radius: 2px; display: block; height: 2px; transition: width 120ms ease, background 120ms ease; width: 11px; }
 .breakout-tick:hover .breakout-tick-mark,
 .breakout-tick:focus-visible .breakout-tick-mark { background: var(--av-sys-color-text-muted); width: 16px; }
-.breakout-tick.has-news .breakout-tick-mark { background: var(--av-sys-color-danger-base); height: 3px; width: 20px; }
+.breakout-tick.has-news .breakout-tick-mark { background: var(--av-sys-color-workstream-news); height: 3px; width: 20px; }
 .breakout-tick.is-open .breakout-tick-mark { height: 4px; width: 26px; }
-.breakout-tick.is-open:not(.has-news) .breakout-tick-mark { background: var(--av-sys-color-text-default); }
+/* Colour says news and length says open, as in the design: an open Breakout
+   with nothing new is the longest tick, in a grey a step darker than the rest. */
+.breakout-tick.is-open:not(.has-news) .breakout-tick-mark { background: var(--av-sys-color-text-disabled); }
 .breakout-tick-card {
   background: var(--av-sys-color-surface-raised);
   border-radius: 16px;
@@ -7785,7 +7830,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .breakout-tick-card-title { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 15px; font-weight: 500; gap: 10px; }
 .breakout-tick-card-title > svg { color: var(--av-sys-color-text-muted); flex: none; }
 .breakout-tick-card-meta { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 12.5px; gap: 6px; }
-.breakout-tick-card-news { color: var(--av-sys-color-danger-base); font-weight: 600; }
+.breakout-tick-card-news { color: var(--av-sys-color-workstream-news); font-weight: 600; }
 /* The transcript makes room for the ticks only when there are ticks. */
 .workstream-screen:has(> .breakout-tick-bar) .transcript-column { padding-left: max(var(--space-8), 48px); }
 

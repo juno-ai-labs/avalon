@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconChevronDown, IconX } from '@tabler/icons-react';
+import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconX } from '@tabler/icons-react';
 
 import { IconButton } from './primitives';
 import clsx from 'clsx';
@@ -28,6 +28,11 @@ export interface TitlePillLevel {
    * another.
    */
   iconAction?: ReactNode;
+  /**
+   * Which way the chevron points. Down by default; right for a Channel whose
+   * Breakout is open beside it, pointing at where the conversation went.
+   */
+  chevron?: 'down' | 'right';
 }
 
 export function TitlePill({ level, variant = 'current' }: {
@@ -39,7 +44,8 @@ export function TitlePill({ level, variant = 'current' }: {
     <span className="title-pill-title">{level.title}</span>
     {level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
   </>;
-  const chevron = <IconChevronDown aria-hidden="true" className="title-pill-chevron" size={13} stroke={2} />;
+  const Chevron = level.chevron === 'right' ? IconChevronRight : IconChevronDown;
+  const chevron = <Chevron aria-hidden="true" className="title-pill-chevron" size={13} stroke={2} />;
   const menu = level.menu ? <DropdownMenu.Portal>
     <DropdownMenu.Content align={variant === 'ancestor' ? 'start' : 'center'} className="menu-content title-pill-menu" collisionPadding={12} sideOffset={8}>
       {level.menu}
@@ -137,4 +143,9 @@ export function TitlePillClose({ label, onClose }: { label: string; onClose: () 
   return <IconButton className="title-pill-close" label={label} onClick={onClose}>
     <IconX aria-hidden="true" size={16} stroke={1.9} />
   </IconButton>;
+}
+
+/** A Breakout's mark in its title pill: the arrow its chips and rows wear. */
+export function BreakoutPillIcon(): React.JSX.Element {
+  return <IconCornerDownRight aria-hidden="true" className="title-pill-breakout-icon" size={15} stroke={1.9} />;
 }

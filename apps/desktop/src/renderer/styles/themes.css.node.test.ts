@@ -193,6 +193,8 @@ describe('token references', () => {
     // The open Breakout's pane width, set by SplitConversationLayout from the
     // width the reader dragged it to.
     '--split-breakout-width',
+    // How far back an origin-context message sits, set per row by BreakoutOrigin.
+    '--origin-step',
     '--radix-dropdown-menu-content-available-height',
     '--radix-select-content-available-height', '--radix-select-trigger-width'];
 
