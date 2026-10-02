@@ -135,8 +135,8 @@ plan, using OpenRouter model ids exactly as OpenRouter publishes them:
 
 ```json
 {
-  "model": "x-ai/grok-4.3",
-  "fallbackModels": ["google/gemini-3.6-flash"]
+  "model": "openai/gpt-5.6-terra",
+  "fallbackModels": ["google/gemini-3.8-flash"]
 }
 ```
 
@@ -825,7 +825,7 @@ would mean maintaining two copies of every flag that are meant to stay
 identical. Staging a rollout per region does not need a second app either:
 `region` is in the evaluation context, so a targeting rule reaches one region.
 
-Ace automatically ensures all ten `agent-model-*` JSON flags plus
+Ace automatically ensures all seven `agent-model-*` JSON flags plus
 `meeting-recording-enabled`, `suggested-work-enabled`,
 `multiple-workspaces-enabled`,
 `live-artifacts-enabled`, `push-notifications-enabled`, and `digests-enabled` exist on every
@@ -878,7 +878,7 @@ assembled outside that release path, the equivalent manual command is:
 
 ```bash
 pnpm exec wrangler flagship flags create <APP_ID> agent-model-workstream --type json \
-  -V current='{"model":"x-ai/grok-4.3","fallbackModels":["google/gemini-3.6-flash"]}' \
+  -V current='{"model":"openai/gpt-5.6-terra","fallbackModels":["google/gemini-3.8-flash"]}' \
   --default current \
   -d "Work-stream agent OpenRouter models"
 ```
@@ -1095,6 +1095,29 @@ both intent enqueue and delivery. Turning it off stops queued sends as well as
 hiding the Notifications section.
 
 ## Changelog
+
+### 2026-10-02 — The default route moves to GPT-5.6 Terra and Gemini 3.8 Flash
+
+**What changed:** `OPENROUTER_PRIMARY_MODEL` is now `openai/gpt-5.6-terra` and
+`OPENROUTER_FALLBACK_MODELS` is `google/gemini-3.8-flash`, in the Worker
+variables, the sandbox defaults, and Ace's catalog and seed values for every
+role that mirrors them.
+
+**Why:** A team decision to change the default models; its reasoning was not
+recorded here.
+
+**Consequences:** The work-stream, inline-child and import roles were
+Azure-first on `x-ai/grok-4.3`; `openai/gpt-5.6-terra` has no Azure binding, so
+they now reach OpenRouter alone. Ace never overwrites a flag that exists, so
+production keeps whatever each `agent-model-*` flag serves until someone edits
+it in Ace: changing these defaults moves only an absent or unreachable flag.
+Terra accepts image input on OpenRouter, which the import role needs. The
+2026-09-11 Sidekick delivery research recorded Terra failing a tool-calling turn
+with `completion_defect` three times in a row before the fallback served it;
+that fix is deferred, so a role moved onto Terra leans on its fallback for
+those turns.
+
+PR #1062.
 
 ### 2026-09-17 — Addressing leaves the model-flag catalog
 
