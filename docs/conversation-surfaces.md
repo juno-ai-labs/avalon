@@ -433,9 +433,8 @@ a gradient painted over the line, because each of those rows has an idle, a
 hover and a current fill and an overlay matched to one shows as a bar in the
 other two.
 
-The same 24px mask sits on the rails' own scrollers: `.sidebar-scroll` and
-`.workstream-context-scroll` on the block axis, `.sidebar-automation-strip` on
-the inline axis. A list that overflows fades the edge items are disappearing
+The same 24px mask sits on the sidebar's own scroller, `.sidebar-scroll`, on
+the block axis. A list that overflows fades the edge items are disappearing
 into, and only that edge — the far edge at rest, both once the scroller has
 moved, the near edge when it can go no further. A list that fits has no
 timeline and therefore no mask, so the first and last items stay at full ink.

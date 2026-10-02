@@ -363,14 +363,6 @@ pre {
   animation-range: normal, 0px 24px, calc(100% - 24px) 100%;
 }
 
-.sidebar .sidebar-automation-strip {
-  scroll-padding-inline: 24px;
-  animation: clipped-scroll-fade-inline linear both, clipped-scroll-fade-start linear both, clipped-scroll-fade-end linear both;
-  animation-duration: auto, auto, auto;
-  animation-timeline: scroll(self inline), scroll(self inline), scroll(self inline);
-  animation-range: normal, 0px 24px, calc(100% - 24px) 100%;
-}
-
 .rally-mark {
   background: currentColor;
   color: var(--av-sys-color-brand-ink);
@@ -560,14 +552,6 @@ pre {
    discovered, and would make this the only tooltip with a type scale. */
 .tooltip-hint { display: grid; gap: 1px; justify-items: start; }
 .tooltip-hint > small { font-size: inherit; opacity: .72; }
-/* One cap for everything a Sidekick tile's tooltip says, because both of its
-   answers hang off the same 80px tile: a marker's state sentence set on one line
-   is half the window wide, and a Sidekick name may be 120 characters, which is
-   wider still. Either reaches out of the sidebar and across the conversation
-   unwrapped, and a tip much wider than what it points at reads as belonging to
-   something else. A little under the timer tooltip's 260px, which hangs off a
-   row the width of the sidebar rather than off a tile. */
-.sidekick-tile-tooltip { max-width: 220px; }
 
 @keyframes tooltip-in {
   from { opacity: 0; transform: translateY(-2px); }
@@ -5310,7 +5294,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
      timeline pace the near and far lengths. The kill switch above would pin
      both animations at their 100% keyframes, so a list that overflows would
      always fade its leading edge and never its trailing one. */
-  .sidebar-scroll, .sidebar .sidebar-automation-strip {
+  .sidebar-scroll {
     animation-duration: auto !important;
   }
   .status-running .status-dot { opacity: 1; }
@@ -7190,85 +7174,9 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .rally-search-footer { flex-shrink: 0; border-top: 1px solid var(--av-sys-color-border-default); display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 12px; color: var(--av-sys-color-text-subtle); font-size: 13px; }
 .rally-search-state { position: absolute; top: 126px; left: 16px; right: 16px; color: var(--av-sys-color-text-subtle); font-size: 13px; text-align: center; pointer-events: none; }
 
-/* Grok Bot 0.44.0 pinned-tile metrics; see automation-lifecycle.md.
- * Keep one horizontal row instead of the reference auto-fit grid. */
-.sidebar-automation-strip {
-  display: flex;
-  flex-shrink: 0;
-  min-width: 0;
-  gap: 8px;
-  /* The one subtree in which a keyword is allowed to travel — the property
-     inherits — because a lone tile is sized to its caption, `auto`, and has
-     to reach the rail's 54px from there. */
-  interpolate-size: allow-keywords;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  justify-content: safe center;
-  /* Padding rather than a margin, so the tiles scroll to the sidebar's edge
-     rather than stopping short of it, and so the rail — 21px each side — can
-     centre a lone tile and let the next one show past the padding. */
-  padding: 14px 12px 18px;
-  scrollbar-width: thin;
-  transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
-}
-.sidebar-automation-strip > .sidebar-context-target {
-  flex: 0 0 80px;
-  min-width: 0;
-  transition: flex-basis var(--sidebar-layout-motion), max-width var(--sidebar-layout-motion), min-width var(--sidebar-layout-motion);
-}
-.sidebar-row.automation-tile {
-  align-items: center;
-  border: 0;
-  border-radius: 10px;
-  color: var(--av-sys-color-text-default);
-  flex-direction: column;
-  flex-basis: auto;
-  gap: 6px;
-  height: auto;
-  min-height: 0;
-  padding: 6px 4px 4px;
-  text-align: center;
-  transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion);
-  width: 100%;
-}
-.sidebar-row.automation-tile:hover { background-image: var(--hover-layer); }
-.sidebar-row.automation-tile.is-active,
-.sidebar-row.automation-tile.is-active:hover { background: var(--av-cmp-row-background-selected); }
-.sidebar-row.automation-tile:focus-visible { outline-offset: -2px; }
-.sidebar-automation-strip > .sidebar-context-target:only-child { flex-basis: auto; min-width: 80px; max-width: 100px; }
 .automation-tile-glyph { display: block; height: 60px; transition: height var(--sidebar-layout-motion), width var(--sidebar-layout-motion); width: 60px; }
 .automation-glyph { color: var(--glyph-ink, var(--av-sys-color-text-on-inverse)); display: block; height: 100%; width: 100%; }
 .automation-tile-name { font-size: 11px; font-weight: 400; height: 16px; letter-spacing: .005em; line-height: 16px; max-width: 100%; overflow: hidden; transition: height var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); white-space: nowrap; }
-/* A running Sidekick's marker is a play cut out of its own hexagon, drawn in
-   `HexagonGlyph` — geometry, colour and knockout together, in the viewBox units
-   that scale it with the tile. Nothing here positions it: the box no longer
-   needs to be a containing block, because the marker is part of the artwork
-   rather than a badge laid over it. */
-/* The new-Sidekick tile's hexagon: the same silhouette as a Sidekick's, drawn
-   as an empty slot rather than an identity, because there is no Sidekick yet to
-   take a fill or a symbol from. Dashed because the outline is what says "not a
-   Sidekick yet" at 36px, where a solid fill in any colour would read as one.
-   The stroke is in the viewBox's own units, so it scales with the tile like the
-   shape it traces.
-
-   `text-muted`, the same ink the plus inside is drawn in — not a `border-*`
-   token. This outline is the whole mark
-   rather than a divider beside content, so it answers to the 3:1 floor for
-   graphical objects, and the border ramp has no headroom for that: against
-   `surface-default`, `border-strong` is 1.38:1 in the light theme and 1.44:1 in
-   the dark, while `text-muted` is 5.35:1 and 7.99:1. Hover and focus go one
-   step further to `text-subtle`. */
-.sidekick-new-glyph .automation-glyph-shape { stroke: var(--av-sys-color-text-muted); stroke-dasharray: 7 5; stroke-width: 3; }
-.sidebar-row.automation-tile:hover .sidekick-new-glyph .automation-glyph-shape,
-.sidebar-row.automation-tile:focus-visible .sidekick-new-glyph .automation-glyph-shape { stroke: var(--av-sys-color-text-subtle); }
-/* The rail keeps the strip where the full sidebar has it — below the list,
-   above the account row — and keeps it a horizontally scrolling row: one 54px
-   tile centred when there is one, and the next showing past the padding when
-   there are more. The tiles shed their captions and shrink to the rows'
-   54px square as the sidebar narrows. */
-.app-shell .sidebar.is-compact .sidebar-automation-strip { gap: 0; padding: 8px calc((100% - 54px) / 2) 12px; }
-.app-shell .sidebar.is-compact .sidebar-automation-strip > .sidebar-context-target { flex-basis: 54px; max-width: 54px; min-width: 54px; }
-.app-shell .sidebar.is-compact .automation-tile { gap: 0; padding: 9px; }
 .app-shell .sidebar.is-compact .automation-tile-glyph { height: 36px; width: 36px; }
 .app-shell .sidebar.is-compact .automation-tile-name { height: 0; opacity: 0; visibility: hidden; }
 /* Sidekick library and profile use the same identity glyph as sidebar tiles. */
@@ -7607,6 +7515,20 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   letter-spacing: .02em;
   text-transform: none;
 }
+/* The mockup's spacing: a 10px gutter, rows 2px apart with 12px corners, a
+   40px glyph slot 10px from the text, and the time a step lighter than the
+   Space under the title. */
+.single-sidebar .sidebar-scroll { padding-inline: 10px; }
+.single-sidebar .sidebar-list { gap: 2px; }
+.single-sidebar .sidebar-row.channel-row { border-radius: 12px; gap: 10px; }
+.single-sidebar .channel-row .sidebar-row-icon { height: 40px; width: 40px; }
+.single-sidebar .channel-row .sidebar-row-title { font-size: 14.5px; }
+.single-sidebar .channel-row-subtitle { font-size: 13px; line-height: 18px; }
+.single-sidebar .channel-row-time { color: var(--av-sys-color-text-disabled); }
+.single-sidebar .sidebar-footer-line { margin-inline: 16px; width: auto; }
+.single-sidebar .sidebar-footer { padding-inline: 10px; }
+.single-sidebar .account-trigger .avatar { height: 28px; width: 28px; }
+.single-sidebar .account-trigger { font-weight: 500; }
 .sidebar-section-hint { color: var(--av-sys-color-text-disabled); flex: none; font-size: 11.5px; }
 .channel-row-main { gap: 1px; }
 .channel-row-heading { align-items: baseline; display: flex; gap: 8px; min-width: 0; }
