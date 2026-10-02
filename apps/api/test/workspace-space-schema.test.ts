@@ -17,6 +17,9 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace
  */
 const SPACE_SCHEMA_VERSION = 63;
 
+/** The version that let a person order the Pinned section under All. */
+const PINNED_ORDER_VERSION = 87;
+
 const SPACE_ID = "00000000-0000-7000-8000-0000000000c1";
 const OTHER_SPACE_ID = "00000000-0000-7000-8000-0000000000c2";
 const CHANNEL_ID = "00000000-0000-7000-8000-0000000000c3";
@@ -235,5 +238,38 @@ describe("WorkspaceDO space schema", () => {
       `INSERT INTO workspace_retirement_graph (parent_kind, parent_id, recorded_at, retired_at)
        VALUES ('space', ?, 10, NULL)`,
     ).run(SPACE_ID)).not.toThrow();
+  });
+
+  it("given personal order rows, when 87 widens their kinds, then the rows survive and All's pins are accepted", () => {
+    const database = openDatabase();
+    apply(database, PINNED_ORDER_VERSION - 1);
+    const insertOrder = (kind: string, containerId: string, itemId: string, position = 0): void => {
+      database.prepare(
+        `INSERT INTO workspace_container_order
+           (user_id, container_kind, container_id, item_id, position, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 1, 2)`,
+      ).run(USER_ID, kind, containerId, itemId, position);
+    };
+    insertOrder("organization", WORKSPACE_ID, SPACE_ID);
+    insertOrder("space", SPACE_ID, CHANNEL_ID, 3);
+    expect(() => insertOrder("pinned", WORKSPACE_ID, CHANNEL_ID)).toThrow(/CHECK constraint failed/u);
+
+    apply(database, PINNED_ORDER_VERSION, PINNED_ORDER_VERSION - 1);
+
+    // A person's arrangement of their Spaces and of a Space's Channels is
+    // carried through the rebuild, positions and timestamps intact.
+    expect(database.prepare(
+      `SELECT container_kind, container_id, item_id, position, created_at, updated_at
+         FROM workspace_container_order ORDER BY container_kind`,
+    ).all()).toEqual([
+      { container_kind: "organization", container_id: WORKSPACE_ID, item_id: SPACE_ID, position: 0, created_at: 1, updated_at: 2 },
+      { container_kind: "space", container_id: SPACE_ID, item_id: CHANNEL_ID, position: 3, created_at: 1, updated_at: 2 },
+    ]);
+    expect(() => insertOrder("pinned", WORKSPACE_ID, CHANNEL_ID)).not.toThrow();
+    expect(() => insertOrder("workstream", CHANNEL_ID, SPACE_ID)).toThrow(/CHECK constraint failed/u);
+    // The rebuild brings back the ordering index the reads seek on.
+    expect(database.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'workspace_container_order' AND name NOT LIKE 'sqlite_%'",
+    ).all()).toEqual([{ name: "workspace_container_order_position_idx" }]);
   });
 });
