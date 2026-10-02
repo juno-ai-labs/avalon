@@ -86,7 +86,7 @@ export function resolveLocalDatabase(directory, entries) {
  * do not, a quote, bold, and one long bullet. Space placement is not in D1,
  * so the preview cannot safely invent a canonical Channel URL.
  */
-export function sampleBody(input) {
+function sampleBody(input) {
   const link = (title) => `**${title}**`;
   const sections = input.workstreams.slice(0, 3).map((workstream, index) => index === 0
     ? [

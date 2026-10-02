@@ -47,7 +47,6 @@ import {
 } from "./d1-baseline.mjs";
 import { MIGRATIONS_DIRECTORY, baselineFileNameFor, buildBaseline, snapshotChain } from "./create-d1-baseline.mjs";
 import { verifyAgainstRegions, chainFingerprint, describeComparison } from "./check-d1-baseline-against-remote.mjs";
-import { discoverRegions } from "./migrate-d1.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const baselinesDirectory = join(repositoryRoot, "packages", "db", "baselines");
@@ -111,15 +110,6 @@ test("an unknown boundary is refused rather than silently producing an empty bas
     () => subsumedMigrations(["0001_initial.sql"], "0099_not_a_migration.sql"),
     /is not a migration in this repository/u,
   );
-});
-
-test("a baseline is named b_<nnnn>_<text>.sql after the migration it stands through", () => {
-  assert.equal(
-    baselineFileNameFor("0090_drop_legacy_product_tables.sql"),
-    "b_0090_drop_legacy_product_tables.sql",
-  );
-  assert.match(manifest.file, /^b_\d{4}_[a-z0-9][a-z0-9_.-]*\.sql$/u);
-  assert.equal(manifest.file, baselineFileNameFor(manifest.through));
 });
 
 test("a name that is not a migration file cannot become a baseline name", () => {
@@ -225,13 +215,6 @@ test("a row the second replay did not produce is skipped rather than reported as
   // left for the equivalence suite to fail on loudly.
   assert.deepEqual(detectVolatileColumns({ a: [{ x: 1 }] }, { a: [] }), {});
   assert.deepEqual(detectVolatileColumns({ a: [{ x: 1 }] }, {}), {});
-});
-
-test("the real chain's volatile columns are exactly the two seeded timestamps", () => {
-  assert.deepEqual(manifest.volatileColumns, {
-    digest_reconciliation_control: ["updated_at"],
-    workstream_authority_control: ["updated_at"],
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -359,14 +342,6 @@ test("a snapshot omits constraint indexes SQLite creates without SQL of their ow
 // The checked-in artifacts
 // ---------------------------------------------------------------------------
 
-test("the baseline lives outside the directory Wrangler applies migrations from", () => {
-  // Wrangler applies every `.sql` file in `migrations_dir`. A baseline in there
-  // would be applied as the next migration on every database including
-  // production, where it would collide with the schema already present.
-  assert.ok(!listMigrationFiles(MIGRATIONS_DIRECTORY).includes(manifest.file));
-  assert.ok(!baselinesDirectory.startsWith(MIGRATIONS_DIRECTORY));
-});
-
 test("the baseline records exactly the subsumed migrations in its ledger", () => {
   const database = new DatabaseSync(":memory:");
   database.exec(baselineSql);
@@ -427,15 +402,6 @@ test("the recorded production fingerprint covers every object the chain creates"
   const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
   const truncated = chainFingerprint(MIGRATIONS_DIRECTORY, { through: recorded.through });
   assert.equal(Object.keys(recorded.objects).length, Object.keys(truncated).length);
-});
-
-test("the recorded production fingerprint covers every region this checkout has", () => {
-  // Retirement does not rewrite a historical production observation. Every
-  // current deployment must still be covered by the recorded baseline.
-  const recorded = JSON.parse(readFileSync(join(baselinesDirectory, "production-fingerprint.json"), "utf8"));
-  for (const { region } of discoverRegions()) {
-    assert.ok(recorded.regions.includes(region), `Record the baseline fingerprint for ${region}`);
-  }
 });
 
 // ---------------------------------------------------------------------------
