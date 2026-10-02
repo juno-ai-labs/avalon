@@ -403,6 +403,9 @@
     "sys.color.workstream.mentioned": {
       "$type": "color"
     },
+    "sys.color.workstream.news": {
+      "$type": "color"
+    },
     "sys.color.workstream.unseen": {
       "$type": "color"
     },

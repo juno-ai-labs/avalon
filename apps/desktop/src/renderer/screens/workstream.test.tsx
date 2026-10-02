@@ -12,6 +12,7 @@ import {
   AddResourceDialog,
   acceptedMessageOverlayDeliveryState,
   branchProvenance,
+  conversationReplyCount,
   conversationReadAcknowledgement,
   highestVisibleAttentionSequence,
   initialTranscriptAnchorIndex,
@@ -927,6 +928,24 @@ describe('workspaceMemberFromSession', () => {
       role: 'member',
       timezone: 'America/Los_Angeles',
     });
+  });
+});
+
+describe('how many replies a conversation holds', () => {
+  it('counts each turn of what people and Rally said once', () => {
+    const row = (id: string, overrides: Partial<Message>): Message => ({
+      id, workstreamId: 'workstream-1', sequenceNumber: 1, authorType: 'agent', messageType: 'text',
+      text: id, createdAt: '2026-09-09T20:00:00.000Z', ...overrides,
+    });
+    expect(conversationReplyCount([
+      row('a', { authorType: 'human', transcriptTurnId: 'turn-1' }),
+      // One answer split over two text rows is still one reply.
+      row('b', { transcriptTurnId: 'turn-2' }),
+      row('c', { transcriptTurnId: 'turn-2' }),
+      row('d', { messageType: 'tool_event', transcriptTurnId: 'turn-2' }),
+      row('e', { authorType: 'system', transcriptTurnId: 'turn-3' }),
+      row('f', { authorType: 'human', transcriptTurnId: 'turn-4' }),
+    ])).toBe(3);
   });
 });
 

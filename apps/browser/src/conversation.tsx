@@ -26,8 +26,8 @@ import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { BreakoutMenu, ChannelMenu } from '@rally/ui/components/conversation-menus';
 import { SpacePill, SpacePillStrip, SidebarTopActions } from '@rally/ui/components/space-pills';
 import { SplitConversationLayout } from '@rally/ui/components/split-conversation';
-import { TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { WorkstreamGlyph, WorkstreamMark } from '@rally/ui/components/workstream-glyph';
+import { BreakoutPillIcon, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 import { Button, InlineError, Modal, StatusDot } from '@rally/ui/components/primitives';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
 import { logWarn } from '../../desktop/src/common/logger';
@@ -212,6 +212,7 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
     title: channelTitle,
     label: `Channel menu: ${channelTitle}`,
     ...(onSelect ? { onSelect } : {}),
+    ...(!onSelect && openBreakoutId !== null ? { chevron: 'right' as const } : {}),
     menu: <ChannelMenu
       actions={{
         onShare: (target) => setSharingSubstream(target.substreamId),
@@ -244,9 +245,10 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
     const listed = parent?.conversations.find((item) => item.substreamId === breakoutId);
     return {
       key: `breakout:${breakoutId}`,
-      icon: <WorkstreamMark appearance={listed?.appearance} id={breakoutId} size={20} />,
+      icon: <BreakoutPillIcon />,
       title: context.detail.title,
       label: `Breakout menu: ${context.detail.title}`,
+      ...(context.replyCount ? { meta: `${context.replyCount} ${context.replyCount === 1 ? 'reply' : 'replies'}` } : {}),
       menu: <BreakoutMenu
         actions={{
           onShare: (target) => setSharingSubstream(target.substreamId),
@@ -255,6 +257,7 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
         }}
         breakout={{ substreamId: breakoutId, title: context.detail.title }}
         channel={{ id: parentId, title: channelTitle, appearance: parent?.appearance }}
+        origin={context.origin}
         onParticipants={context.openParticipantDialog}
         onShowInChannel={mainVisible ? () => {
           if (breakoutOwnsRail) closeRail();
@@ -295,6 +298,7 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
       />}
       sidebarScope="conversation"
       substreamId={openBreakoutId}
+      breakoutOrigin={{ turnId: breakoutMarks?.find((mark) => mark.substreamId === openBreakoutId)?.originTurnId, channelTitle }}
     />;
   return <>
     {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={parentId} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
