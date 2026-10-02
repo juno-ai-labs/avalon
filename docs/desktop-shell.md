@@ -56,8 +56,9 @@ list below and does not navigate; **Open space** is on its right-click menu and
 in the Channel menu. The desktop remembers the filter per device
 (`useUiStore.sidebarSpaceFilter`, `rally.sidebar-space-filter`). Opening a
 Channel the filter would hide, or moving the open Channel out of the filtered
-Space, widens the list to All. Picking a pill while a Channel is open filters
-as asked, even if the open Channel drops out of the list.
+Space, widens the list to All. Picking a pill that hides the open Channel
+filters as asked and opens the first Channel the filtered list draws, or the
+Space's dashboard when it holds none.
 
 The list is **Pinned**, then every other Channel, A to Z by default. The rest
 is headed **Channels** whenever it has rows, pinned or not, because that heading
@@ -259,18 +260,24 @@ from the shared navigation directory.
 
 **What changed:** The rule that widens the list to All when the open Channel is
 outside the filter now runs only when the open Channel, or its set of Spaces,
-changes. It no longer runs when the reader picks a pill.
+changes, not when the reader picks a pill. A pill that hides the open Channel
+now opens the first Channel in the filtered list once that Space's Channels
+have loaded, or the Space's dashboard when it holds none.
 
-**Why:** The rule ran on every filter change, so with any Channel open, picking
-a Space that did not hold it snapped straight back to All. Since a Channel is
-almost always open, the pills looked like they did nothing.
+**Why:** The rule ran on every filter change, so with any Channel open,
+picking a Space that did not hold it snapped straight back to All. Since a
+Channel is almost always open, the pills looked like they did nothing.
+Product then asked that the pick open a Channel in that Space rather than
+leave the open one off the list.
 
 **Considered and rejected:** Dropping the widen rule. It still earns its place
-when a link or a stored filter opens a Channel the list would hide.
+when a link or a stored filter opens a Channel the list would hide. Keeping the
+open Channel and leaving its row off the list, which the first fix did: the
+open screen and the list disagreed about where the reader was.
 
-**Consequences:** The open Channel's row may be absent from the list after the
-reader picks a pill. Anything that assumes the active row is always drawn must
-not rely on the widen rule for it.
+**Consequences:** The navigation waits for the picked Space's Channels and
+drops itself if the route changes or another pill is picked first. It pushes a
+history entry, so Back returns to the earlier Channel and widens to All.
 
 ### 2026-10-02 — Channels sort toggle: A–Z, Recent, or Needs you
 

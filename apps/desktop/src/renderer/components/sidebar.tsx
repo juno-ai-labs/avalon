@@ -1173,7 +1173,8 @@ export function Sidebar({
   // reader may pick another pill without leaving the page. A Channel the
   // filter would hide widens the list to All when it opens or leaves the
   // filtered Space, so the row on screen starts in the list. A pill picked
-  // while it is open is the reader's choice and filters as asked.
+  // while it is open filters as asked and opens a Channel the filter keeps;
+  // see `selectSpaceFromPill`.
   const appliedRouteSpace = useRef<string | null>(null);
   const widenedForWorkstream = useRef<string | null>(null);
   const routeWorkstreamKey = routeWorkstream ? `${routeWorkstream.id}:${routeWorkstream.spaceIds.join(',')}` : null;
@@ -1491,6 +1492,40 @@ export function Sidebar({
     loadingMoreWorkstreams,
     navigate,
     pendingChannelMoveNavigation,
+  ]);
+  // A pill that hides the open Channel opens the first Channel the filtered
+  // list draws, once that Space's Channels have loaded, or the Space's
+  // dashboard when it holds none. Dropped if the reader leaves the route or
+  // picks another pill first.
+  const [pendingPillNavigation, setPendingPillNavigation] = useState<{ origin: string; spaceId: string } | null>(null);
+  const selectSpaceFromPill = useCallback((spaceId: string | null): void => {
+    setSelectedSpaceId(spaceId);
+    setPendingPillNavigation(spaceId !== null && routeWorkstream && !routeWorkstream.spaceIds.includes(spaceId)
+      ? { origin: currentRouteRef.current, spaceId }
+      : null);
+  }, [routeWorkstream, setSelectedSpaceId]);
+  useEffect(() => {
+    if (pendingPillNavigation === null) return;
+    if (currentRoute !== pendingPillNavigation.origin || selectedSpaceId !== pendingPillNavigation.spaceId) {
+      setPendingPillNavigation(null);
+      return;
+    }
+    if (channelsLoading) return;
+    const first = displayedWorkstreams.find((workstream) => !workstream.pending);
+    if (!first && (hasMoreWorkstreams || loadingMoreWorkstreams)) return;
+    setPendingPillNavigation(null);
+    void navigate(first
+      ? `/workstreams/${encodeURIComponent(first.id)}`
+      : `/spaces/${encodeURIComponent(pendingPillNavigation.spaceId)}`);
+  }, [
+    channelsLoading,
+    currentRoute,
+    displayedWorkstreams,
+    hasMoreWorkstreams,
+    loadingMoreWorkstreams,
+    navigate,
+    pendingPillNavigation,
+    selectedSpaceId,
   ]);
   // Whether this session has the hierarchy at all. A host that hands over no
   // directory is the guest shell, where Space discovery is deferred — see
@@ -2185,7 +2220,7 @@ export function Sidebar({
           onMoveChannel={moveChannelFromSelectedSpace}
           onRetry={onRetrySpaces}
           onRestore={onRestoreSpace}
-          onSelect={setSelectedSpaceId}
+          onSelect={selectSpaceFromPill}
           ready={spacesReady}
           outOfDate={spacesOutOfDate}
           selectedSpaceId={selectedSpaceId}
