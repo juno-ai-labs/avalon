@@ -23,6 +23,25 @@ function endpoint(env: Env, suffix = ''): string {
     + `/flagship/apps/${encodeURIComponent(env.FLAGSHIP_APP_ID)}/flags${suffix}`;
 }
 
+/** Flagship refused or failed a request; the status is what a log can name. */
+export class FlagshipRequestError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = 'FlagshipRequestError';
+  }
+}
+
+/**
+ * Flagship accepted the write but the key-only change notification did not
+ * queue. Saving again is safe and repairs the notification.
+ */
+export class FlagChangeNotificationError extends Error {
+  constructor() {
+    super('Flagship saved the flag, but the change notification to connected clients failed. Save the same definition again to notify them.');
+    this.name = 'FlagChangeNotificationError';
+  }
+}
+
 async function request(env: Env, path: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(endpoint(env, path), {
     ...init,
@@ -35,7 +54,10 @@ async function request(env: Env, path: string, init?: RequestInit): Promise<unkn
   const body = await response.json().catch(() => null) as { result?: unknown; errors?: Array<{ message?: string }> } | null;
   if (!response.ok) {
     const detail = body?.errors?.map((error) => error.message).filter(Boolean).join('; ');
-    throw new Error(`Flagship request failed (${response.status})${detail ? `: ${detail}` : ''}`);
+    throw new FlagshipRequestError(
+      response.status,
+      `Flagship request failed (${response.status})${detail ? `: ${detail}` : ''}`,
+    );
   }
   return body?.result;
 }
@@ -70,10 +92,14 @@ export async function updateManagedFlag(
   });
   // Flagship configuration propagates asynchronously. Carry only the key, and
   // let every WorkspaceDO evaluate after the documented propagation window.
-  await env.PRODUCT_FLAG_CHANGE_QUEUE.send(
-    { kind: 'flagship_product_flag_changed', flagKey: parsedKey },
-    { delaySeconds: FLAGSHIP_PROPAGATION_DELAY_SECONDS },
-  );
+  try {
+    await env.PRODUCT_FLAG_CHANGE_QUEUE.send(
+      { kind: 'flagship_product_flag_changed', flagKey: parsedKey },
+      { delaySeconds: FLAGSHIP_PROPAGATION_DELAY_SECONDS },
+    );
+  } catch {
+    throw new FlagChangeNotificationError();
+  }
   return result;
 }
 
