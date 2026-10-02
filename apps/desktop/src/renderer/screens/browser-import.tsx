@@ -104,8 +104,8 @@ export function BrowserImportWindow(): React.JSX.Element {
   const [steps, setSteps] = useState<readonly SessionImportStep[]>([]);
   const [mirror, setMirror] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  // The running import's agent conversation, which a bad import is debugged from.
-  const [importId, setImportId] = useState<string | null>(null);
+  // The running import's agent conversation and its Channel, which a bad import is debugged from.
+  const [importRun, setImportRun] = useState<{ workstreamId: string; substreamId: string } | null>(null);
 
   const conversation = active ? browserConversation(active) : null;
   const update = context?.update ?? null;
@@ -173,7 +173,7 @@ export function BrowserImportWindow(): React.JSX.Element {
     capture();
     setRun(started);
     setSteps([]);
-    setImportId(null);
+    setImportRun(null);
     void started.done.then(async (result) => {
       const workstreamId = reserved.current;
       reserved.current = null;
@@ -205,7 +205,7 @@ export function BrowserImportWindow(): React.JSX.Element {
       if (!updatable || !active) return;
       watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
         mode: { kind: 'update', workstreamId: update.workstreamId }, onSteps: setSteps,
-        onStarted: ({ substreamId }) => setImportId(substreamId) }));
+        onStarted: setImportRun }));
       return;
     }
     const spaces = context?.spaces ?? [];
@@ -227,18 +227,19 @@ export function BrowserImportWindow(): React.JSX.Element {
     watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
       mode: { kind: 'create', title, spaceIds: [spaceId], clientMessageId: pending.clientMessageId },
       onSteps: setSteps,
-      onStarted: ({ workstreamId, substreamId }) => {
-        reserved.current = workstreamId;
-        setImportId(substreamId);
-        void bridge.reportBrowserImport({ phase: 'importing', workstreamId, title, spaceId }).catch(() => undefined);
+      onStarted: (started) => {
+        reserved.current = started.workstreamId;
+        setImportRun(started);
+        void bridge.reportBrowserImport({ phase: 'importing', workstreamId: started.workstreamId, title, spaceId }).catch(() => undefined);
       } }));
   };
 
   const copyImportId = (): void => {
     const workspace = session?.workspace;
-    if (!importId || !workspace) return;
-    void bridge.getRuntimeConfig().then(({ webBaseUrl }) => bridge.copyText(sessionImportCanonicalUrl(webBaseUrl,
-      { region: workspace.region, workspaceId: workspace.id, importId }))).catch(() => undefined);
+    if (!importRun || !workspace) return;
+    void bridge.getRuntimeConfig().then(({ webBaseUrl }) => bridge.copyText(sessionImportCanonicalUrl(webBaseUrl, {
+      region: workspace.region, workspaceId: workspace.id, importId: importRun.substreamId, workstreamId: importRun.workstreamId,
+    }))).catch(() => undefined);
   };
 
   const spaces = context?.spaces ?? [];
@@ -285,7 +286,7 @@ export function BrowserImportWindow(): React.JSX.Element {
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-            <DropdownMenu.Item className="menu-item" disabled={!importId || !session?.workspace} onSelect={copyImportId}>
+            <DropdownMenu.Item className="menu-item" disabled={!importRun || !session?.workspace} onSelect={copyImportId}>
               <Copy size={14} /> Copy import id
             </DropdownMenu.Item>
           </DropdownMenu.Content>
