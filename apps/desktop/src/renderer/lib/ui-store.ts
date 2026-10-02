@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { WorkstreamSummary } from './types';
 
 /** The general channel context rail remains retired; artifact reading uses the slot directly. */
 export const CONTEXT_SIDEBAR_ENABLED = false;
@@ -37,12 +38,13 @@ interface UiState {
   // stream pass null and share one bucket.
   setRailScope: (scope: string | null) => void;
   /**
-   * The sidebar's own pin action, so a Channel's menu pins exactly as the
-   * sidebar's row would — the same Space choice and the same reveal — rather
-   * than through a second copy of that rule. Null while no sidebar is mounted.
+   * The sidebar's own pin action, so a Channel's menu pins through the same
+   * rule (`channelPinTargets`, answered as under All) and the same reveal. It
+   * takes the menu's own row, which need not be in the sidebar's loaded page.
+   * Null while no sidebar is mounted.
    */
-  pinChannel: ((workstreamId: string, pinned: boolean) => void) | null;
-  setPinChannel: (pin: ((workstreamId: string, pinned: boolean) => void) | null) => void;
+  pinChannel: ((workstream: WorkstreamSummary, pinned: boolean) => void) | null;
+  setPinChannel: (pin: ((workstream: WorkstreamSummary, pinned: boolean) => void) | null) => void;
 }
 
 export const MIN_RAIL_WIDTH = 280;

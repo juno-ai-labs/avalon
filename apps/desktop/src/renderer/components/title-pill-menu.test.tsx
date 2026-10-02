@@ -119,4 +119,43 @@ describe('a title pill menu with levels', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add Jordan' }));
     expect(onAdd).toHaveBeenCalledWith(newcomer);
   });
+
+  it('keeps keyboard focus in the menu across levels, and returns it to the row it left', async () => {
+    const newcomer = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
+    renderChannelPill({ people: { candidates: [member, newcomer], onAdd: vi.fn(), adding: false, currentUserId: member.id } });
+    openMenu();
+    const peopleRow = await screen.findByRole('menuitem', { name: /^People/u });
+    peopleRow.focus();
+    fireEvent.keyDown(peopleRow, { key: 'Enter' });
+
+    // Entering a level with a search puts the caret in it.
+    const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
+    expect(search).toHaveFocus();
+    // Tab reaches the Add button, which is not a menu item.
+    fireEvent.change(search, { target: { value: 'jor' } });
+    fireEvent.keyDown(search, { key: 'Tab' });
+    expect(screen.getByRole('button', { name: 'Add Jordan' })).toHaveFocus();
+
+    // Escape returns to the root with focus on the row that led here.
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Add Jordan' }), { key: 'Escape' });
+    expect(await screen.findByRole('menuitem', { name: /^People/u })).toHaveFocus();
+  });
+
+  it('steps back with the left arrow from an item, but not from a key a nested menu already handled', async () => {
+    renderChannelPill();
+    openMenu();
+    const row = await screen.findByRole('menuitem', { name: /^Breakouts/u });
+    row.focus();
+    fireEvent.keyDown(row, { key: 'Enter' });
+    const breakout = await screen.findByRole('menuitem', { name: /Pricing/u });
+    expect(breakout).toHaveFocus();
+
+    // A submenu inside the level closes itself on ArrowLeft and marks the key handled.
+    breakout.addEventListener('keydown', (event) => event.preventDefault(), { once: true });
+    fireEvent.keyDown(breakout, { key: 'ArrowLeft' });
+    expect(screen.getByRole('menuitem', { name: /Pricing/u })).toBeInTheDocument();
+
+    fireEvent.keyDown(breakout, { key: 'ArrowLeft' });
+    expect(await screen.findByRole('menuitem', { name: /^Breakouts/u })).toHaveFocus();
+  });
 });

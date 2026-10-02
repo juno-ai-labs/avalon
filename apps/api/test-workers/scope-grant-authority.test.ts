@@ -286,7 +286,17 @@ it("applies committed grants to the grant directory in the same object even when
   expect(await listSharedDirectory(env, workspaceId, recipientId)).toEqual({ workstreams: [{
     parentId, title: null, archived: false, conversations: [{ substreamId: childId, title: "Shared breakout", archived: false }],
   }] });
+  // A released desktop asks without `shell` and parses strictly: it must get
+  // exactly the keys it knows, or it rejects the whole read.
   expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({
+    spaces: [
+      { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", workstreamIds: [parentId] },
+      { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", scope: "workspace", workstreamIds: [parentId] },
+    ],
+    workstreams: [{ parentId, title: "Private parent", scope: "personal", archived: false,
+      conversations: [{ substreamId: childId, title: "Shared breakout", scope: "personal", archived: false }] }],
+  });
+  expect(await listSharedNavigationDirectory(env, workspaceId, recipientId, false, true)).toEqual({
     spaces: [
       { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", systemRole: null, workstreamIds: [parentId] },
       { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", scope: "workspace", systemRole: null, workstreamIds: [parentId] },
@@ -351,7 +361,7 @@ it("shows every containing Space when a guest has shared Breakouts, reading ever
   });
 
   const calls: string[] = [];
-  expect(await listSharedNavigationDirectory(countingEnv(calls), workspaceId, recipientId)).toEqual({
+  expect(await listSharedNavigationDirectory(countingEnv(calls), workspaceId, recipientId, false, true)).toEqual({
     spaces: [
       { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", systemRole: null, workstreamIds: [parentId] },
       { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", scope: "workspace", systemRole: null, workstreamIds: [secondParentId] },

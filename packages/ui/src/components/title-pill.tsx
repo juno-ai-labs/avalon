@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconX } from '@tabler/icons-react';
+import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconSearch, IconX } from '@tabler/icons-react';
 
 import { IconButton } from './primitives';
 import clsx from 'clsx';
@@ -32,19 +32,51 @@ export function useTitleMenuNav(): TitleMenuNav {
   return useContext(TitleMenuNavContext);
 }
 
+/** Every control a level offers, in reading order: items, inputs and buttons alike. */
+const TITLE_MENU_CONTROLS = [
+  '[role="menuitem"]:not([data-disabled])',
+  '[role="menuitemcheckbox"]:not([data-disabled])',
+  'input:not([disabled])',
+  'button:not([disabled])',
+].join(', ');
+
+/**
+ * Where focus lands after a move between levels. Entering one, its search when
+ * it has one, else its first item; returning to the root, the row that led to
+ * the level just left. Selecting that row unmounted it, so without this focus
+ * falls to the page and the menu stops answering the keyboard.
+ */
+function focusAfterMove(view: HTMLElement, left: string | null): void {
+  const target = (left && view.querySelector<HTMLElement>(`[data-title-menu-level="${left}"]`))
+    || view.querySelector<HTMLElement>('[data-title-menu-autofocus]')
+    || view.querySelector<HTMLElement>(TITLE_MENU_CONTROLS);
+  target?.focus({ preventScroll: true });
+}
+
 /**
  * The menu's frame, sized to whichever level is showing and travelling between
  * those sizes rather than cutting, so moving to People reads as the same popout
  * reshaping itself. The level's own rows enter on a short stagger, keyed by the
  * level so each move replays it.
+ *
+ * Tab moves through every control in the level, not only its items. The menu
+ * takes Tab away from the page, and a level's search, its Add buttons and its
+ * Sidekick rows are not items, so this is their only way in by keyboard.
  */
 export function TitleMenuMorph({ children }: { children: ReactNode }): React.JSX.Element {
   const { view, direction } = useTitleMenuNav();
   const inner = useRef<HTMLDivElement>(null);
+  const shownKey = useRef<string | null | undefined>(undefined);
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   useLayoutEffect(() => {
     const element = inner.current;
     if (!element) return undefined;
+    const key = view?.key ?? null;
+    // Not on the menu's own opening: Radix places focus then.
+    if (shownKey.current !== undefined && shownKey.current !== key) {
+      focusAfterMove(element, key === null ? shownKey.current : null);
+    }
+    shownKey.current = key;
     const measure = (): void => setSize({ width: element.offsetWidth, height: element.offsetHeight });
     measure();
     if (typeof ResizeObserver === 'undefined') return undefined;
@@ -53,11 +85,68 @@ export function TitleMenuMorph({ children }: { children: ReactNode }): React.JSX
     return () => observer.disconnect();
   }, [view]);
   return <div className="title-menu-morph" style={size ? { height: size.height, width: size.width } : undefined}>
-    <div className="title-menu-view" data-direction={direction} key={view?.key ?? 'root'} ref={inner}>
+    <div
+      className="title-menu-view"
+      data-direction={direction}
+      key={view?.key ?? 'root'}
+      onKeyDown={(event) => {
+        if (event.key !== 'Tab') return;
+        const controls = [...event.currentTarget.querySelectorAll<HTMLElement>(TITLE_MENU_CONTROLS)];
+        if (controls.length === 0) return;
+        const at = controls.indexOf(document.activeElement as HTMLElement);
+        const step = event.shiftKey ? -1 : 1;
+        const next = controls[(at + step + controls.length) % controls.length] ?? controls[0]!;
+        event.preventDefault();
+        event.stopPropagation();
+        next.focus({ preventScroll: true });
+      }}
+      ref={inner}
+    >
       {children}
     </div>
   </div>;
 }
+
+/**
+ * A level's search box. It keeps the letters typed (the menu's typeahead would
+ * take them), lets Tab and Escape through to the menu, takes focus when its
+ * level opens, and hands the down arrow to the first result.
+ */
+export function TitleMenuSearch({ label, onChange, value }: {
+  label: string; onChange: (value: string) => void; value: string;
+}): React.JSX.Element {
+  return <label className="title-menu-search">
+    <IconSearch aria-hidden="true" size={15} stroke={1.8} />
+    <input
+      aria-label={label}
+      data-title-menu-autofocus=""
+      onChange={(event) => onChange(event.currentTarget.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' || event.key === 'Tab') return;
+        event.stopPropagation();
+        if (event.key !== 'ArrowDown') return;
+        const view = event.currentTarget.closest('.title-menu-view');
+        const first = view?.querySelector<HTMLElement>('[role="menuitem"]:not([data-disabled])');
+        if (!first) return;
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }}
+      placeholder={label}
+      value={value}
+    />
+  </label>;
+}
+
+/**
+ * Props for an item listed under a level's search: hovering it must not pull
+ * focus out of the box mid-word, which is what a menu item does on hover.
+ */
+export const keepSearchFocus = {
+  onPointerMove: (event: React.PointerEvent): void => {
+    if (document.activeElement instanceof HTMLInputElement
+      && event.currentTarget.closest('.title-menu-view')?.contains(document.activeElement)) event.preventDefault();
+  },
+};
 
 /**
  * One level of a conversation's title: a Channel, or a Breakout inside it.
@@ -135,6 +224,9 @@ export function TitlePill({ level, variant = 'current' }: {
       onEscapeKeyDown={(event) => { if (view) { event.preventDefault(); back(); } }}
       onKeyDown={(event) => {
         if (!view || event.key !== 'ArrowLeft') return;
+        // A submenu inside a level (Icon and color, Add Sidekick) is portalled
+        // but still bubbles here; its own ArrowLeft is not a step back.
+        if (event.defaultPrevented || !event.currentTarget.contains(event.target as Node)) return;
         if (event.target instanceof HTMLInputElement) return;
         event.preventDefault();
         back();

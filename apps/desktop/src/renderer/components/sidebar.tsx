@@ -1,6 +1,6 @@
 import { ShareConversationDialog } from './scope-sharing-panel';
 import { useOptionalCollaborationSession } from '../lib/collaboration-session';
-import { IconShare2 } from '@tabler/icons-react';
+import { IconPin, IconShare2 } from '@tabler/icons-react';
 import { ChannelRowContent, NavigationRowContent } from '@rally/ui/components/navigation';
 import {
   ResizableSidebar,
@@ -109,6 +109,14 @@ interface SidebarProps {
   onPinWorkstream: (workstream: WorkstreamSummary, spaceId: string, pinned: boolean) => Promise<boolean>;
   /** The pinned list's new order, in full, after a drag or a keyboard move. */
   onReorderPinnedWorkstreams: (spaceId: string, workstreamIds: string[]) => Promise<void>;
+  /**
+   * The person's own order for **All**'s Pinned section, which draws pins from
+   * every Space and so has no Space's run to rearrange. Ids it names come
+   * first; a pin it has never seen follows by `allPinPosition`.
+   */
+  allPinnedOrder?: readonly string[];
+  /** Save that order, in full. Absent where the host cannot, and All's pins do not reorder. */
+  onReorderAllPinned?: (workstreamIds: string[]) => Promise<void>;
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
   onPreviewWorkstreamBatch: (
@@ -590,8 +598,7 @@ function WorkstreamRow({
   const addableSpaces = spaceOptions.filter((space) => !space.disabled);
   const removablePlacement = isProductChannel && placementSpaceId !== undefined
     && spaces.some((space) => space.id === placementSpaceId && space.reach !== 'through_channel');
-  const canStartPinDrag = canDragToPinned && placementSpaceId !== undefined
-    && !isPinned && !spacesReadOnly;
+  const canStartPinDrag = canDragToPinned && !isPinned && !spacesReadOnly;
   const nextWakeupTime = workstream.nextPendingWakeup
     ? formatDateTime(workstream.nextPendingWakeup.dueAt)
     : null;
@@ -918,7 +925,7 @@ function WorkstreamRow({
  */
 export function orderPinnedWorkstreams(
   workstreams: WorkstreamSummary[],
-  dragOrder: string[] | null,
+  dragOrder: readonly string[] | null,
 ): WorkstreamSummary[] {
   const pinned = workstreams
     .filter((workstream) => workstream.pinPosition !== null)
@@ -956,8 +963,38 @@ export function allPinPosition(
   return ALL_PINS_OUTSIDE_GENERAL_OFFSET + Math.min(...pins.map((pin) => pin.position));
 }
 
+/** The key All's own pinned order is held under, beside the Spaces' ids. */
+const ALL_PINNED = 'all';
+const EMPTY_ORDER: readonly string[] = [];
+
 /** Pins outside General follow every General pin in All's section. */
 const ALL_PINS_OUTSIDE_GENERAL_OFFSET = 1_000_000;
+
+/**
+ * The Spaces a pin or unpin writes to. Under a Space, that Space. Under All, a
+ * pin lands in General when the Channel lives there and in its first active
+ * Space otherwise; an unpin clears every Space that pins it, because All shows
+ * a Channel pinned anywhere as pinned. A Channel's own menu always answers as
+ * All does: it is about the Channel, not about the list's filter.
+ */
+export function channelPinTargets(
+  workstream: Pick<WorkstreamSummary, 'spaceIds' | 'spacePins'>,
+  pinned: boolean,
+  { activeSpaceIds, generalSpaceId, selectedSpaceId }: {
+    activeSpaceIds: ReadonlySet<string>; generalSpaceId: string | null; selectedSpaceId: string | null;
+  },
+): string[] {
+  if (selectedSpaceId !== null) return [selectedSpaceId];
+  if (!pinned) {
+    return (workstream.spacePins ?? [])
+      .map((pin) => pin.spaceId)
+      .filter((spaceId) => workstream.spaceIds.includes(spaceId));
+  }
+  const home = generalSpaceId !== null && workstream.spaceIds.includes(generalSpaceId)
+    ? generalSpaceId
+    : workstream.spaceIds.find((spaceId) => activeSpaceIds.has(spaceId));
+  return home ? [home] : [];
+}
 
 type SidebarMenuFailure = 'archive' | 'add_to_space' | 'pin' | 'unpin' | 'reorder_pinned';
 
@@ -1004,6 +1041,8 @@ export function Sidebar({
   onMarkWorkstreamUnread,
   onPinWorkstream,
   onReorderPinnedWorkstreams,
+  allPinnedOrder = EMPTY_ORDER,
+  onReorderAllPinned,
   onRenameWorkstream,
   onPreviewWorkstreamBatch,
   onCreateChannel = async () => { throw new Error('Channel creation is unavailable.'); },
@@ -1321,22 +1360,25 @@ export function Sidebar({
   // one the server last confirmed, and the one the pointer is building on top
   // of it. Comparing a finished drag against the second would compare it with
   // itself and conclude nothing moved.
+  // Under All the stored order is the person's own list for All, laid over
+  // the order the pins' Spaces give them; under a Space, that Space's run.
+  const storedAllOrder = selectedSpaceId === null ? allPinnedOrder : null;
   const storedPinnedWorkstreams = useMemo(
-    () => orderPinnedWorkstreams(visibleWorkstreams, null),
-    [visibleWorkstreams],
+    () => orderPinnedWorkstreams(visibleWorkstreams, storedAllOrder),
+    [storedAllOrder, visibleWorkstreams],
   );
-  // The one Space whose pinned run this section is drawing, and so the one a
-  // drag can rearrange. Under All that is General, and only while every pin
-  // on screen is one of General's: the others belong to runs All does not own.
-  const pinOrderSpaceId = selectedSpaceId ?? (
+  // The list a drag rearranges: the selected Space's run, or All's own order.
+  // Under All without a way to save that order, General's run, and only while
+  // every pin on screen is one of General's.
+  const pinOrderSpaceId = selectedSpaceId ?? (onReorderAllPinned ? ALL_PINNED : (
     generalSpaceId !== null && storedPinnedWorkstreams.every((pinned) => (
       pinned.spacePins?.some((pin) => pin.spaceId === generalSpaceId)
     )) ? generalSpaceId : null
-  );
+  ));
   const activeDragOrder = dragOrder !== null && dragOrder.spaceId === pinOrderSpaceId ? dragOrder.itemIds : null;
   const pinnedWorkstreams = useMemo(
-    () => orderPinnedWorkstreams(visibleWorkstreams, activeDragOrder),
-    [activeDragOrder, visibleWorkstreams],
+    () => orderPinnedWorkstreams(visibleWorkstreams, activeDragOrder ?? storedAllOrder),
+    [activeDragOrder, storedAllOrder, visibleWorkstreams],
   );
   const unpinnedWorkstreams = useMemo(() => (
     visibleWorkstreams
@@ -1614,28 +1656,16 @@ export function Sidebar({
     });
   };
 
-  /**
-   * The Spaces a pin or unpin from this list writes to. Under a Space, that
-   * Space. Under All, a pin lands in General when the Channel lives there and
-   * in its first Space otherwise; an unpin clears every Space that pins it,
-   * because All shows a Channel pinned anywhere as pinned.
-   */
-  const pinTargets = (workstream: WorkstreamSummary, pinned: boolean): string[] => {
-    if (selectedSpaceId !== null) return [selectedSpaceId];
-    const active = new Set<string>(placementSpaces.map((space) => space.id));
-    if (!pinned) {
-      return (workstream.spacePins ?? [])
-        .map((pin) => pin.spaceId)
-        .filter((spaceId) => workstream.spaceIds.includes(spaceId));
-    }
-    const home = generalSpaceId !== null && workstream.spaceIds.includes(generalSpaceId)
-      ? generalSpaceId
-      : workstream.spaceIds.find((spaceId) => active.has(spaceId));
-    return home ? [home] : [];
-  };
-
-  const togglePin = async (workstream: WorkstreamSummary, pinned: boolean): Promise<void> => {
-    const targets = pinTargets(workstream, pinned);
+  const togglePin = async (
+    workstream: WorkstreamSummary,
+    pinned: boolean,
+    filter: string | null = selectedSpaceId,
+  ): Promise<void> => {
+    const targets = channelPinTargets(workstream, pinned, {
+      activeSpaceIds: new Set(placementSpaces.map((space) => space.id)),
+      generalSpaceId,
+      selectedSpaceId: filter,
+    });
     if (targets.length === 0) return;
     const motionIntent = { id: workstream.id, pinned };
     motionMoveIntent.current = motionIntent;
@@ -1675,16 +1705,15 @@ export function Sidebar({
     }
   };
 
-  // Lend the pin action to a Channel's menu. A ref keeps the registered
-  // function stable while it always runs against this render's rows.
-  const pinFromMenu = useRef<(workstreamId: string, pinned: boolean) => void>(() => undefined);
-  pinFromMenu.current = (workstreamId, pinned) => {
-    const workstream = workstreams.find((candidate) => candidate.id === workstreamId);
-    if (workstream) void togglePin(workstream, pinned);
-  };
+  // Lend the pin action to a Channel's menu, which passes the row it holds:
+  // the Channel need not be in this list's loaded page. The menu answers as
+  // All does whatever this list is filtered to. A ref keeps the registered
+  // function stable while it always runs against this render's Spaces.
+  const pinFromMenu = useRef<(workstream: WorkstreamSummary, pinned: boolean) => void>(() => undefined);
+  pinFromMenu.current = (workstream, pinned) => { void togglePin(workstream, pinned, null); };
   const setPinChannel = useUiStore((state) => state.setPinChannel);
   useEffect(() => {
-    setPinChannel((workstreamId, pinned) => pinFromMenu.current(workstreamId, pinned));
+    setPinChannel((workstream, pinned) => pinFromMenu.current(workstream, pinned));
     return () => setPinChannel(null);
   }, [setPinChannel]);
 
@@ -1712,10 +1741,11 @@ export function Sidebar({
       // Search only reorders the visible slots; hidden pins keep their place.
       const visibleIds = new Set(order);
       let nextVisible = 0;
-      const completeOrder = orderPinnedWorkstreams(visibleWorkstreams, null).map((pinned) => (
+      const completeOrder = storedPinnedWorkstreams.map((pinned) => (
         visibleIds.has(pinned.id) ? order[nextVisible++]! : pinned.id
       ));
-      await onReorderPinnedWorkstreams(spaceId, completeOrder);
+      if (spaceId === ALL_PINNED) await onReorderAllPinned?.(completeOrder);
+      else await onReorderPinnedWorkstreams(spaceId, completeOrder);
     } catch {
       setMenuFailure('reorder_pinned');
     } finally {
@@ -2159,10 +2189,10 @@ export function Sidebar({
             </div>
           )}
 
-          {/* Normally only when something is pinned. The first Channel drag
-              temporarily reveals the destination so pinning does not require
-              using the context menu once before the gesture exists. */}
-          {(pinnedWorkstreams.length > 0 || pinDropWorkstreamId !== null) && (
+          {/* Always there once the Organization is open, empty or not: an
+              empty section is where a Channel is dragged to pin it, so it has
+              to exist before anything is pinned. */}
+          {(pinnedWorkstreams.length > 0 || pinDropWorkstreamId !== null || (spacesReady && !spacesReadOnly)) && (
             // The whole section is the drop target, heading included. A release
             // anywhere a reader would call "inside the list they are arranging"
             // has to count as a drop: `dragend` reads a release nothing accepted
@@ -2214,7 +2244,12 @@ export function Sidebar({
               </p>}
               <SidebarList>
                 {pinnedWorkstreams.length === 0 && (
-                  <div className="pinned-empty-drop-surface">Drop channel here to pin</div>
+                  <div
+                    className={clsx('pinned-empty-drop-surface', pinDropWorkstreamId !== null && 'is-armed')}
+                  >
+                    <IconPin aria-hidden="true" size={15} stroke={1.7} />
+                    <span>Move a channel here to pin it</span>
+                  </div>
                 )}
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow

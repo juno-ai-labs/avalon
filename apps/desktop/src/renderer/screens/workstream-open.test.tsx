@@ -351,6 +351,19 @@ describe('socket-first channel open', () => {
     if (next === 'rename') expect(screen.getByRole('dialog', { name: 'Rename channel' })).toBeVisible();
   });
 
+  it('copies the Channel\'s email address from More, where the old header kept it', async () => {
+    const copy = vi.spyOn(desktopBridge(), 'copyText').mockResolvedValue(undefined);
+    const boot = { ...recoveryBoot(), emailAddress: 'recovered@in.rally.test' };
+    renderScreen(cache => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+
+    await mainMenu(['More', 'Copy channel email address']);
+
+    await waitFor(() => expect(copy).toHaveBeenCalledWith('recovered@in.rally.test'));
+  });
+
   it('positions a laid-out opening before enabling automatic history requests', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
     vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(2000);

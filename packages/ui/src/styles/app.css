@@ -5816,19 +5816,28 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .app-shell .sidebar .pinned-section {
   transition: margin-bottom var(--sidebar-layout-motion), margin-top var(--sidebar-layout-motion), padding-bottom var(--sidebar-layout-motion);
 }
+/* The empty Pinned section: a quiet outline that says what it is for, which
+   wakes in the accent while a Channel is being dragged and could land here. */
 .pinned-empty-drop-surface {
   align-items: center;
-  background: color-mix(in srgb, var(--av-sys-color-accent-base) 12%, transparent);
-  border-radius: var(--av-sys-size-radius-sm);
-  box-shadow: inset 0 0 0 1px var(--av-sys-color-focus-quiet);
+  border: 1px dashed var(--av-sys-color-border-strong);
+  border-radius: var(--av-sys-size-radius-md);
   color: var(--av-sys-color-text-muted);
   display: flex;
-  font-size: 11px;
+  font-size: 12px;
+  gap: 6px;
   justify-content: center;
-  margin: 0 4px;
-  min-height: var(--av-cmp-row-height-dense);
-  padding: 0 8px;
+  margin: 2px 4px 4px;
+  min-height: 44px;
+  padding: 0 12px;
   text-align: center;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+.pinned-empty-drop-surface > svg { flex: none; opacity: .7; }
+.pinned-empty-drop-surface.is-armed {
+  background: color-mix(in srgb, var(--av-sys-color-accent-base) 8%, transparent);
+  border-color: color-mix(in srgb, var(--av-sys-color-accent-base) 45%, transparent);
+  color: var(--av-sys-color-accent-base);
 }
 .app-shell .sidebar .pinned-section-line { height: 0; margin-top: 0; opacity: 0; }
 .app-shell .sidebar.is-compact .pinned-section {
@@ -7981,7 +7990,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    that opened it stays, the other is hidden but kept mounted. */
 .split-conversation { display: flex; height: 100%; min-width: 0; position: relative; }
 .split-conversation-pane { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; position: relative; }
-.split-conversation-pane.is-breakout { border-left: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle); flex: 0 0 var(--split-breakout-width, 50%); max-width: max(50%, calc(100% - var(--conversation-min-width))); }
+.split-conversation-pane.is-breakout { border-left: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle); flex: 0 0 var(--split-breakout-width, 50%); max-width: calc(100% - var(--conversation-min-width)); }
 .split-conversation-pane.is-breakout.is-alone { border-left: 0; flex: 1 1 0; max-width: none; }
 .split-conversation-pane[hidden] { display: none; }
 .split-conversation-pane > .conversation-layout { flex: 1; min-height: 0; }

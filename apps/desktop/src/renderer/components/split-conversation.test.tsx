@@ -9,9 +9,9 @@ describe('clampBreakoutWidth', () => {
     expect(clampBreakoutWidth(500.4, 1_200)).toBe(500);
   });
 
-  it('splits evenly when the container cannot fit two minimums', () => {
-    expect(clampBreakoutWidth(300, 600)).toBe(300);
-    expect(clampBreakoutWidth(800, 601)).toBe(301);
+  it('holds the breakout at the minimum when the container cannot fit two', () => {
+    expect(clampBreakoutWidth(300, 600)).toBe(424);
+    expect(clampBreakoutWidth(800, 600)).toBe(424);
   });
 });
 
@@ -54,5 +54,19 @@ describe('SplitConversationLayout', () => {
     expect(onBreakoutWidthChange).toHaveBeenLastCalledWith(616);
     fireEvent.keyDown(resizer, { key: 'ArrowRight' });
     expect(onBreakoutWidthChange).toHaveBeenLastCalledWith(584);
+  });
+
+  it('shows the Breakout alone when the window cannot fit two conversations', () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 800, height: 800, left: 0, right: 600, top: 0, width: 600, x: 0, y: 0, toJSON: () => ({}),
+    });
+    try {
+      render(layout('split'));
+      expect(screen.getByText('Main pane')).not.toBeVisible();
+      expect(screen.getByText('Breakout pane')).toBeVisible();
+      expect(screen.queryByRole('separator', { name: 'Resize breakout' })).not.toBeInTheDocument();
+    } finally {
+      rect.mockRestore();
+    }
   });
 });

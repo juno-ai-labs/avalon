@@ -10,13 +10,12 @@ import {
   IconPencil,
   IconPin,
   IconRobot,
-  IconSearch,
   IconShare2,
   IconUserPlus,
   IconUsers,
   IconWorld,
 } from '@tabler/icons-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { compareAlphabeticalTitle } from '../lib/alphabetical';
 import type { SidebarPresentation, WorkspaceMember } from '../lib/types';
@@ -24,7 +23,7 @@ import { breakoutHasActivity, type BreakoutMark } from './breakout-marks';
 import { Avatar } from './primitives';
 import { ResourceIcon } from './resource-icon';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
-import { TitleMenuHeader, TitleMenuItem, TitleMenuLink, TitleMenuSeparator, useTitleMenuNav, type TitleMenuView } from './title-pill';
+import { keepSearchFocus, TitleMenuHeader, TitleMenuItem, TitleMenuLink, TitleMenuSearch, TitleMenuSeparator, useTitleMenuNav, type TitleMenuView } from './title-pill';
 import { WorkstreamMark } from './workstream-glyph';
 
 /** The id a Breakout being written is selected under before it exists. */
@@ -84,7 +83,7 @@ function LevelRow({ icon, label, meta, view }: {
   icon: ReactNode; label: string; meta?: ReactNode; view: TitleMenuView;
 }): React.JSX.Element {
   const nav = useTitleMenuNav();
-  return <DropdownMenu.Item className="menu-item title-menu-level-row" onSelect={(event) => { event.preventDefault(); nav.open(view); }}>
+  return <DropdownMenu.Item className="menu-item title-menu-level-row" data-title-menu-level={view.key} onSelect={(event) => { event.preventDefault(); nav.open(view); }}>
     {icon}
     <span className="title-menu-item-copy">{label}</span>
     {meta !== undefined && <span className="title-menu-level-meta">{meta}</span>}
@@ -133,17 +132,7 @@ function PeopleView({ manage, members, noun, people, presentUserIds, scope }: {
       </span>
       {manage && <TitleMenuLink onSelect={manage}>Change</TitleMenuLink>}
     </div>
-    {people && <label className="title-menu-search">
-      <IconSearch aria-hidden="true" size={15} stroke={1.8} />
-      <input
-        aria-label="Add someone by name or email"
-        // The menu's typeahead would otherwise take every letter typed here.
-        onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}
-        onChange={(event) => setQuery(event.currentTarget.value)}
-        placeholder="Add someone by name or email"
-        value={query}
-      />
-    </label>}
+    {people && <TitleMenuSearch label="Add someone by name or email" onChange={setQuery} value={query} />}
     {people?.error && <p className="title-menu-error" role="alert">{people.error}</p>}
     {!needle && members.map((member) => <div className="title-menu-person" key={member.id}>
       <Avatar member={member} size="medium" />
@@ -204,28 +193,26 @@ function BreakoutsView({ breakouts, onOpenBreakout, openSubstreamId, renderAge }
   const matching = ordered?.filter((breakout) => !needle || breakout.title.toLocaleLowerCase().includes(needle));
   const shown = expanded || needle ? matching : matching?.slice(0, BREAKOUT_PREVIEW_ROWS);
   const hidden = (matching?.length ?? 0) - (shown?.length ?? 0);
+  const firstRevealed = useRef<HTMLDivElement>(null);
+  // "Show N more" unmounts as it is chosen; focus goes to the first row it revealed.
+  useLayoutEffect(() => {
+    if (expanded) firstRevealed.current?.focus({ preventScroll: true });
+  }, [expanded]);
   return <>
-    {(breakouts?.length ?? 0) > BREAKOUT_PREVIEW_ROWS && <label className="title-menu-search">
-      <IconSearch aria-hidden="true" size={15} stroke={1.8} />
-      <input
-        aria-label="Find a breakout"
-        onChange={(event) => setQuery(event.currentTarget.value)}
-        onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}
-        placeholder="Find a breakout"
-        value={query}
-      />
-    </label>}
+    {(breakouts?.length ?? 0) > BREAKOUT_PREVIEW_ROWS && <TitleMenuSearch label="Find a breakout" onChange={setQuery} value={query} />}
     {breakouts === undefined
       ? <p className="title-menu-empty">Loading breakouts…</p>
       : breakouts.length === 0
         ? <p className="title-menu-empty">Start a breakout from any message.</p>
         : shown?.length === 0
           ? <p className="title-menu-empty">No breakout matches.</p>
-          : shown?.map((breakout) => <DropdownMenu.Item
+          : shown?.map((breakout, index) => <DropdownMenu.Item
             aria-current={breakout.substreamId === openSubstreamId ? 'true' : undefined}
             className="menu-item title-menu-item title-menu-breakout"
             key={breakout.substreamId}
             onSelect={() => onOpenBreakout(breakout.substreamId)}
+            ref={index === BREAKOUT_PREVIEW_ROWS ? firstRevealed : undefined}
+            {...keepSearchFocus}
           >
             <IconCornerDownRight aria-hidden="true" size={14} stroke={1.8} />
             <span className="title-menu-item-copy">{breakout.title}</span>

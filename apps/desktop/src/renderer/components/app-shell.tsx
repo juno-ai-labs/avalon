@@ -1,4 +1,4 @@
-import type { CreateSpaceRequest, PersonalOrder, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
+import type { CreateSpaceRequest, PersonalOrder, PinnedOrder, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
@@ -23,9 +23,9 @@ import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { uuidV7 } from '../lib/telemetry';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
-import { INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, SPACES_QUERY_KEY, applyContainerOrder } from '../lib/sidebar-list-store';
+import { INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, PINNED_ORDER_QUERY_KEY, SPACES_QUERY_KEY, applyContainerOrder, applyPinnedOrder } from '../lib/sidebar-list-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
-import { usePersonalOrder, useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
+import { usePersonalOrder, usePinnedOrder, useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { activeRealtimeWorkstreamId } from '../lib/workspace-workstream-sockets';
 import { useWorkspaceSocket, type SidebarConnect, type WorkspaceSocketState } from '../lib/workspace-socket';
@@ -606,6 +606,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const visibleInactiveSpaces = guestSession ? [] : inactiveSpaces.data?.items ?? [];
   const spacesReady = guestSession ? !associativeNavigation.isPending : socketSpacesReady;
   const ordering = usePersonalOrder();
+  const pinnedOrder = usePinnedOrder();
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
   const workspaceDirectory = useQuery<DesktopWorkspaceOnboardingState>({
@@ -922,6 +923,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onReorderPinnedWorkstreams={async (spaceId, workstreamIds) => {
           if (!api) return;
           await applyPinResponse(spaceId, () => api.reorderWorkstreamPins(spaceId, workstreamIds));
+        }}
+        allPinnedOrder={pinnedOrder}
+        onReorderAllPinned={async (workstreamIds) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const expected = queryClient.getQueryData<PinnedOrder>(PINNED_ORDER_QUERY_KEY);
+          applyPinnedOrder(queryClient, await api.reorderAllPinned(workstreamIds), expected);
         }}
         onRenameWorkstream={async (workstream, title) => {
           if (!api) return;

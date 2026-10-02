@@ -538,7 +538,9 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
       <p>Shared conversations aren’t supported at this width yet.</p>
     </section>
   </main>;
-  return <div className="browser-workspace workspace-shell">
+  // The sidebar writes its own width while it is mounted; without it the main
+  // pane must not keep the width's initial value as a blank gutter.
+  return <div className="browser-workspace workspace-shell" style={sidebarVisible ? undefined : { '--av-cmp-sidebar-width': '0px' } as React.CSSProperties}>
     <OpenLoneWorkstream directory={directory.data} navigationSpaces={navigationSpaces} />
     {sidebarVisible
       ? <SharedNavigation accountMenu={accountMenu} directory={directory} navigationSpaces={navigationSpaces} />

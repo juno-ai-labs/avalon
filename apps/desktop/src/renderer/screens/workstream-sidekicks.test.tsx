@@ -155,8 +155,30 @@ function renderScreen(participant = false, cachedOwnedSidekicks?: WorkstreamAuto
  * are not buttons there.
  */
 async function openChannelMenu(): Promise<void> {
-  fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Investigate ENG-142' }), { button: 0, ctrlKey: false });
+  await openSidekicksIn('Channel menu: Investigate ENG-142');
+}
+
+/** The open Breakout's pill, beside Main's; its child detail carries the same title. */
+async function openBreakoutMenu(): Promise<void> {
+  await openSidekicksIn('Breakout menu: Investigate ENG-142');
+}
+
+async function openSidekicksIn(pill: string): Promise<void> {
+  fireEvent.pointerDown(await screen.findByRole('button', { name: pill }), { button: 0, ctrlKey: false });
   fireEvent.click(await screen.findByRole('menuitem', { name: /^Sidekicks/u }));
+}
+
+/** Closes the open pane menu from its own pill, which toggles it whatever level it is on. */
+async function closeMenu(pill: 'Channel' | 'Breakout'): Promise<void> {
+  fireEvent.pointerDown(screen.getByRole('button', { name: new RegExp(`^${pill} menu: `, 'u') }), { button: 0, ctrlKey: false });
+  await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+}
+
+/** Opens the Breakout beside Main, as the split layout mounts both panes. */
+async function openBreakoutBesideMain(): Promise<void> {
+  fireEvent.click(screen.getByRole('link', { name: 'Switch child' }));
+  expect(await screen.findByRole('button', { name: 'Breakout menu: Investigate ENG-142' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Channel menu: Investigate ENG-142' })).toBeVisible();
 }
 
 /**
@@ -211,6 +233,68 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     expect(await screen.findByText('That Sidekick couldn’t be removed.')).toBeVisible();
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     expect(api.removeAttachedSidekick).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes a Sidekick from the Breakout only, and keeps its failure out of Main beside it', async () => {
+    currentSession.mockReturnValue({ user: { id: 'person', name: 'Person', email: 'person@example.com' }, workspace: null });
+    api.getWorkstreamSidekicks.mockResolvedValue([]);
+    api.removeAttachedSidekick.mockRejectedValue(new Error('Removal failed in the breakout.'));
+    renderScreen(true);
+    await openBreakoutBesideMain();
+
+    await openBreakoutMenu();
+    fireEvent.contextMenu(await screen.findByLabelText('Editorial guidance'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this breakout' }));
+    expect(await screen.findByText('That Sidekick couldn’t be removed.')).toBeVisible();
+    expect(screen.queryByText('Removal failed in the breakout.')).not.toBeInTheDocument();
+    expect(api.removeAttachedSidekick).toHaveBeenCalledTimes(1);
+    expect(api.removeAttachedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', childId);
+    await closeMenu('Breakout');
+
+    await openChannelMenu();
+    expect(await screen.findByLabelText('Editorial guidance')).toBeVisible();
+    expect(screen.queryByText('That Sidekick couldn’t be removed.')).not.toBeInTheDocument();
+  });
+
+  it('lists each pane’s own loaded Sidekicks and the Channel’s shared recommendations with a Breakout beside Main', async () => {
+    api.getWorkstreamSidekicks.mockResolvedValue([]);
+    api.getRecommendedSidekicks.mockResolvedValue([{ id: 'shared', name: 'Shared guide', description: '', available: true }]);
+    api.getAttachedSidekicks.mockImplementation((_id, _signal, substreamId) => Promise.resolve([
+      { id: substreamId === childId ? 'child-local' : 'main-local', name: substreamId === childId ? 'Child guide' : 'Main guide', description: '', available: true },
+    ]));
+    renderScreen();
+    await openBreakoutBesideMain();
+
+    await openChannelMenu();
+    expect(await screen.findByLabelText('Main guide')).toBeVisible();
+    expect(screen.getByLabelText('Shared guide')).toHaveAttribute('aria-description', 'Recommended Sidekick');
+    expect(screen.queryByLabelText('Child guide')).not.toBeInTheDocument();
+    await closeMenu('Channel');
+
+    await openBreakoutMenu();
+    expect(await screen.findByLabelText('Child guide')).toBeVisible();
+    expect(screen.getByLabelText('Shared guide')).toHaveAttribute('aria-description', 'Recommended Sidekick');
+    expect(screen.queryByLabelText('Main guide')).not.toBeInTheDocument();
+  });
+
+  it('reads the Breakout’s recommendations for the Breakout rather than reusing Main’s', async () => {
+    api.getWorkstreamSidekicks.mockResolvedValue([]);
+    api.getAttachedSidekicks.mockResolvedValue([]);
+    api.getRecommendedSidekicks.mockImplementation((_id, _signal, substreamId) => Promise.resolve([
+      { id: 'recommended', name: substreamId === childId ? 'Child recommendation' : 'Main recommendation', description: '', available: true },
+    ]));
+    renderScreen();
+    await openBreakoutBesideMain();
+
+    await openBreakoutMenu();
+    expect(await screen.findByLabelText('Child recommendation')).toBeVisible();
+    expect(screen.queryByLabelText('Main recommendation')).not.toBeInTheDocument();
+    await closeMenu('Breakout');
+
+    await openChannelMenu();
+    expect(await screen.findByLabelText('Main recommendation')).toBeVisible();
+    expect(screen.queryByLabelText('Child recommendation')).not.toBeInTheDocument();
+    expect(api.getRecommendedSidekicks).toHaveBeenCalledWith(workstreamId, expect.any(AbortSignal), childId);
   });
 
   it.each([

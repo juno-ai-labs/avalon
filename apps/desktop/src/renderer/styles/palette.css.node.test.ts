@@ -368,11 +368,15 @@ describe('mark pastels', () => {
     expect(markColors('rose')).toEqual({
       tint: 'var(--av-sys-color-project-tint-rose)',
       ink: 'var(--av-sys-color-project-ink-rose)',
+      bare: 'var(--av-sys-color-project-ink-rose)',
     });
     // `black` is the account accent and the retired keys are only ever read
     // back; neither has a pastel pair, so they keep the hue under its ink.
     for (const key of ['black', 'gray', 'brown', 'yellow', 'teal'] as const) {
-      expect(markColors(key)).toEqual({ tint: `var(--av-sys-color-project-${key})`, ink: glyphInk(key) });
+      // Drawn bare, on the page, the near-white ink would vanish; the hue reads.
+      expect(markColors(key)).toEqual({
+        tint: `var(--av-sys-color-project-${key})`, ink: glyphInk(key), bare: `var(--av-sys-color-project-${key})`,
+      });
     }
   });
 });

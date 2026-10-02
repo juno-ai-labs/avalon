@@ -1,4 +1,4 @@
-import type { ContainerOrder, PersonalOrder, SpaceSnapshot } from '@rally/contracts';
+import type { ContainerOrder, PersonalOrder, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import { sameContainer } from './personal-order';
@@ -70,6 +70,8 @@ export const SPACES_READY_QUERY_KEY = ['spaces-ready'] as const;
  * talking to a server without this field should show.
  */
 export const PERSONAL_ORDER_QUERY_KEY = ['personal-order'] as const;
+/** All's Pinned order; see `PinnedOrderSchema`. */
+export const PINNED_ORDER_QUERY_KEY = ['pinned-order'] as const;
 
 const SIDEBAR_LIST_WATERLINES_KEY = ['sidebar-list-waterlines'] as const;
 
@@ -148,6 +150,8 @@ export function applyVersionedSpaceSnapshot(
   snapshot: SpaceSnapshot,
   ordering: PersonalOrder,
   spacesReady: boolean,
+  /** All's Pinned order; a payload from a server without it reads as none. */
+  pinnedOrder: PinnedOrder = [],
 ): boolean {
   pinWaterlineLedger(queryClient);
   const waterlines = queryClient.getQueryData<Partial<Record<SidebarWaterline, number>>>(
@@ -161,8 +165,23 @@ export function applyVersionedSpaceSnapshot(
   queryClient.setQueryData(SPACES_QUERY_KEY, snapshot.active);
   queryClient.setQueryData(INACTIVE_SPACES_QUERY_KEY, snapshot.inactive);
   queryClient.setQueryData(PERSONAL_ORDER_QUERY_KEY, ordering);
+  queryClient.setQueryData(PINNED_ORDER_QUERY_KEY, pinnedOrder);
   queryClient.setQueryData(SPACES_READY_QUERY_KEY, spacesReady);
   return true;
+}
+
+/**
+ * All's Pinned order as the write answered it, ahead of the snapshot that
+ * carries it, for the reason `applyContainerOrder` gives.
+ */
+export function applyPinnedOrder(
+  queryClient: QueryClient,
+  order: PinnedOrder,
+  expectedCurrent?: PinnedOrder,
+): void {
+  queryClient.setQueryData<PinnedOrder>(PINNED_ORDER_QUERY_KEY, (current = []) => (
+    expectedCurrent !== undefined && current !== expectedCurrent ? current : order
+  ));
 }
 
 /**
