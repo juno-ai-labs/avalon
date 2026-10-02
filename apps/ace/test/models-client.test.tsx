@@ -40,7 +40,7 @@ describe('Ace Models client', () => {
     expect(routingFromFlag(workstreamFlag({ model: 'custom/current', fallbackModels: ['custom/backup'] }), 'workstream'))
       .toMatchObject({ source: 'flagship', routing: { model: 'custom/current', fallbackModels: ['custom/backup'] } });
     expect(routingFromFlag(workstreamFlag({ model: '', fallbackModels: [] }), 'workstream'))
-      .toMatchObject({ source: 'checked-in', routing: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] } });
+      .toMatchObject({ source: 'checked-in', routing: { model: 'openai/gpt-5.6-terra', fallbackModels: ['google/gemini-3.8-flash'] } });
     expect(routingFromFlag({
       ...workstreamFlag({ model: 'ignored', fallbackModels: [] }),
       variations: { current: { model: 'custom/without-fallbacks' } },

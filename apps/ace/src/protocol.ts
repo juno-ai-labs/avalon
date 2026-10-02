@@ -61,7 +61,7 @@ export const MANAGED_MODELS = [
     key: 'agent-model-workstream',
     label: 'Work-stream agent',
     description: 'Runs the main participant-visible work stream and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.',
-    defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
+    defaultRouting: { model: 'openai/gpt-5.6-terra', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
     rank: 2,
@@ -70,7 +70,7 @@ export const MANAGED_MODELS = [
     key: 'agent-model-inline-child',
     label: 'Inline subagent',
     description: 'Runs a bounded read-only child task delegated by a work-stream agent and returns the result to its parent.',
-    defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
+    defaultRouting: { model: 'openai/gpt-5.6-terra', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
     rank: 3,
@@ -79,7 +79,7 @@ export const MANAGED_MODELS = [
     key: 'agent-model-workstream-description',
     label: 'Work-stream description',
     description: 'Re-evaluates the derived one-line description after terminal runs and rewrites it only when the work stream changed purpose.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
     rank: 4,
@@ -88,7 +88,7 @@ export const MANAGED_MODELS = [
     key: 'agent-model-workstream-naming',
     label: 'Work-stream naming',
     description: 'Creates the short work-stream title from the opening request while the creator waits.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
     rank: 5,
@@ -97,7 +97,7 @@ export const MANAGED_MODELS = [
     key: 'agent-model-work-opportunity-admission',
     label: 'Suggested-work admission',
     description: 'Decides whether recent unclaimed activity should become a personal or workspace suggestion and drafts its candidate.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
     rank: 6,
@@ -106,7 +106,7 @@ export const MANAGED_MODELS = [
     key: 'agent-model-work-opportunity-ranking',
     label: 'Suggested-work ranking',
     description: 'Orders admitted suggestions for one person, accounting for freshness and impressions before storing the visible set.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
     rank: 7,
@@ -115,7 +115,7 @@ export const MANAGED_MODELS = [
     key: 'agent-model-session-import',
     label: 'Conversation import',
     description: 'Drives the person\'s desktop browser (page script, page outline, screenshots, input) to read a ChatGPT or Claude conversation and its files into a new Channel. Must accept images.',
-    defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
+    defaultRouting: { model: 'openai/gpt-5.6-terra', fallbackModels: ['google/gemini-3.8-flash'] },
   },
 ] as const satisfies readonly ManagedModelDefinition[];
 
