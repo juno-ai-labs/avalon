@@ -61,16 +61,11 @@ The list is **Pinned**, then every other Channel, A to Z by default. The rest
 is headed **Channels** whenever it has rows, pinned or not, because that heading
 carries the sort toggle; **Pinned** carries a quiet *Drag to reorder* hint when
 there are pins to reorder.
-The toggle, the current label followed by an `arrows-sort` icon (last, so the
-icon stays put when the label changes width), cycles the
-unpinned Channels through **A–Z** (case-insensitive, `compareAlphabeticalTitle`),
-**Recent** (newest `lastActivityAt` first, ties A to Z) and **Needs you** (every
-Channel with something for this reader first, then the rest, each half in
-Recent order). "Something for this reader" is `workstreamHasActivityForViewer`,
-the same input that makes a row's title bold: unread, or a Breakout (or Main)
-that needs them. The desktop
-remembers the choice per device (`useUiStore.sidebarChannelSort`,
-`rally.sidebar-channel-sort`). A row shows the glyph,
+The toggle cycles the unpinned Channels through **A–Z** (case-insensitive),
+**Recent** (newest `lastActivityAt` first) and **Needs you** (bold rows first,
+then the rest, each newest first). Needs you reads
+`workstreamHasActivityForViewer`, the same input as the bold title. The choice
+is per device, in `rally.sidebar-channel-sort`. A row shows the glyph,
 the title and the last activity time. Under them it shows the names of the
 Channel's Spaces, without General; a Channel only in General has a one-line
 row. An unread row has a semibold title and its dot is red; the weight follows the

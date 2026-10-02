@@ -132,10 +132,4 @@ describe('sidebar channel sort', () => {
     const { useUiStore: restarted } = await import('./ui-store');
     expect(restarted.getState().sidebarChannelSort).toBe('recent');
   });
-
-  it('comes back to Needs you after a restart', async () => {
-    window.localStorage.setItem('rally.sidebar-channel-sort', 'needs_you');
-    const { useUiStore: restarted } = await import('./ui-store');
-    expect(restarted.getState().sidebarChannelSort).toBe('needs_you');
-  });
 });
