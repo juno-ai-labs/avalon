@@ -117,7 +117,7 @@ from; reduced motion turns both off.
   **Archive channel** last.
 - **Breakout menu:** root header is the Channel it belongs to (with **Show in
   channel**) and the message it started from. People and Sidekicks as above;
-  More is Icon and color and Make public.
+  More is Icon and color, **Public to organization**, and **Archive breakout** last.
 
 ### Breakouts
 

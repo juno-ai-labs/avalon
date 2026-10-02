@@ -337,7 +337,7 @@ describe('socket-first channel open', () => {
         { substreamId: childId, title: child.title, createdByUserId: null, createdAt: child.createdAt, updatedAt: child.updatedAt },
       ] });
     }, childId);
-    await titleMenu('Breakout menu: Private investigation', action === 'rename' ? 'Rename' : 'Archive breakout');
+    await titleMenu('Breakout menu: Private investigation', action === 'rename' ? 'Rename' : ['More', 'Archive breakout']);
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed child' } });
     fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
     await waitFor(() => expect(action === 'rename' ? api.renameSubstream : api.setSubstreamArchived)
