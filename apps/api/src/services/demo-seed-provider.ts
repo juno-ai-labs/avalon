@@ -46,7 +46,7 @@ export const DEMO_SEED_PROVIDER_KEY = "demo-seed-no-provider";
  *
  * The seam replaces the OpenRouter client's `fetch` and nothing else, so a
  * seeded run has to be one the planner sends to OpenRouter alone. A model
- * bound to the Azure transport — production's default `x-ai/grok-4.3` is one —
+ * bound to the Azure transport, such as `x-ai/grok-4.3`,
  * is tried there first or only there, and the seed would never be asked: the
  * turn would come from a live model, and an `ask` would fail its settlement.
  * So the route keeps the resolved model when it is unbound, otherwise the
