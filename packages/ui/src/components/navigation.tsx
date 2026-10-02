@@ -35,10 +35,12 @@ export function SidebarNavigationRowContent({ icon, title, marks, titlePrefix, a
  * dot at the row's leading edge. The host decides each value; an empty
  * `subtitle` leaves a one-line row rather than an empty second line.
  */
-export function ChannelRowContent({ id, title, appearance, naming, marks, titlePrefix, time, subtitle, marker }: {
+export function ChannelRowContent({ id, title, appearance, naming, marks, titlePrefix, time, subtitle, subtitleTrailing, marker }: {
   id: string; title: string; appearance?: WorkstreamAppearance; naming?: boolean;
   marks?: ReactNode; titlePrefix?: ReactNode;
   time?: ReactNode; subtitle?: ReactNode; marker?: ReactNode;
+  /** A small mark on the second line, under the time, such as a scheduled run. */
+  subtitleTrailing?: ReactNode;
 }): React.JSX.Element {
   return <>
     {marker ? <span className="channel-row-marker">{marker}</span> : null}
@@ -52,7 +54,10 @@ export function ChannelRowContent({ id, title, appearance, naming, marks, titleP
         </span></span>
         {time ? <span className="channel-row-time">{time}</span> : null}
       </span>
-      {subtitle ? <span className="sidebar-row-activity channel-row-subtitle">{subtitle}</span> : null}
+      {subtitle || subtitleTrailing ? <span className="channel-row-second">
+        <span className="sidebar-row-activity channel-row-subtitle">{subtitle}</span>
+        {subtitleTrailing ? <span className="channel-row-second-trailing">{subtitleTrailing}</span> : null}
+      </span> : null}
     </span>
   </>;
 }
