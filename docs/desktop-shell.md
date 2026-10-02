@@ -62,9 +62,13 @@ above it the rest is headed **Channels**, and each heading carries a quiet hint
 at its far edge (*Drag to reorder* when there are pins to reorder; the sort
 toggle on **Channels**); with no pins the list stands alone and has no heading.
 The toggle, the current label followed by an `arrows-sort` icon (last, so the
-icon stays put when the label changes width), switches the
-unpinned Channels between **A–Z** (case-insensitive, `compareAlphabeticalTitle`)
-and **Recent** (newest `lastActivityAt` first, ties A to Z). The desktop
+icon stays put when the label changes width), cycles the
+unpinned Channels through **A–Z** (case-insensitive, `compareAlphabeticalTitle`),
+**Recent** (newest `lastActivityAt` first, ties A to Z) and **Needs you** (every
+Channel with something for this reader first, then the rest, each half in
+Recent order). "Something for this reader" is `workstreamHasActivityForViewer`,
+the same input that makes a row's title bold: unread, or a Breakout (or Main)
+that needs them. The desktop
 remembers the choice per device (`useUiStore.sidebarChannelSort`,
 `rally.sidebar-channel-sort`), and it still applies while the heading is
 hidden. A row shows the glyph,
@@ -252,11 +256,14 @@ from the shared navigation directory.
 
 ## Changelog
 
-### 2026-10-02 — Channels sort toggle: A–Z or Recent
+### 2026-10-02 — Channels sort toggle: A–Z, Recent, or Needs you
 
 **What changed:** The **Channels** heading's *A–Z* hint became a button with an
-`arrows-sort` icon that switches the unpinned list between A to Z and most
-recent activity. The choice is a per-device preference in `localStorage`.
+`arrows-sort` icon that cycles the unpinned list through A to Z, most recent
+activity, and Needs you (bold rows first, then the rest, each newest first).
+The choice is a per-device preference in `localStorage`. Needs you reads the
+same `workstreamHasActivityForViewer` the row's bold title does, so a row
+cannot sort as needing the reader while drawn as read, or the reverse.
 
 **Why:** Product asked for a way to see the Channels that moved last without
 pinning them, and for the choice to survive a restart.

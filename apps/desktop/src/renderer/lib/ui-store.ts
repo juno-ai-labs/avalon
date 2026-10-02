@@ -6,7 +6,7 @@ export const CONTEXT_SIDEBAR_ENABLED = false;
 
 export type RailVariant = 'context' | 'browser';
 /** How the sidebar orders the Channels nobody pinned. */
-export type SidebarChannelSort = 'alphabetical' | 'recent';
+export type SidebarChannelSort = 'alphabetical' | 'recent' | 'needs_you';
 /** The panel occupying the right sidebar slot. */
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
@@ -84,7 +84,8 @@ function saveSpaceFilter(spaceId: string | null): void {
 function loadChannelSort(): SidebarChannelSort {
   if (typeof window === 'undefined') return 'alphabetical';
   try {
-    return window.localStorage.getItem(SIDEBAR_CHANNEL_SORT_STORAGE_KEY) === 'recent' ? 'recent' : 'alphabetical';
+    const stored = window.localStorage.getItem(SIDEBAR_CHANNEL_SORT_STORAGE_KEY);
+    return stored === 'recent' || stored === 'needs_you' ? stored : 'alphabetical';
   } catch {
     return 'alphabetical';
   }
