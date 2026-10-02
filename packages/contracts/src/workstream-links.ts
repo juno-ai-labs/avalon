@@ -162,18 +162,23 @@ export function sidekickCanonicalUrl(webBaseUrl: string, target: SidekickLinkTar
 export interface SessionImportLinkTarget extends WorkspaceTarget {
   /** The import agent's hidden conversation: the run a bad import is debugged from. */
   importId: string;
+  /** The Channel the import fills; the hidden conversation's object is named under it. */
+  workstreamId: string;
 }
 
 /**
  * The address a person copies from the import window to report a bad import.
  * Nothing routes it yet; it carries the Organization and the import's id in
- * the canonical link shape so whoever reads the report can find the run.
+ * the canonical link shape, and the Channel as `c`, because the run's object
+ * is named by both and cannot be found from the import's id alone.
  */
 export function sessionImportCanonicalUrl(webBaseUrl: string, target: SessionImportLinkTarget): string {
-  if (!isWorkspaceTarget(target) || !isWorkstreamId(target.importId)) {
-    throw new Error("An import link requires a region, Organization UUID, and import UUID");
+  if (!isWorkspaceTarget(target) || !isWorkstreamId(target.importId) || !isWorkstreamId(target.workstreamId)) {
+    throw new Error("An import link requires a region, Organization UUID, import UUID, and Channel UUID");
   }
-  return new URL(`${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/i/${uuidToBase58(target.importId)}`, webBaseUrl).toString();
+  const url = new URL(`${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${uuidToBase58(target.workspaceId)}/i/${uuidToBase58(target.importId)}`, webBaseUrl);
+  url.searchParams.set("c", uuidToBase58(target.workstreamId));
+  return url.toString();
 }
 
 /** Parse the canonical Sidekick path. */
