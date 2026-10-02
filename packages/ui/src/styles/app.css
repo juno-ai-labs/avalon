@@ -973,27 +973,14 @@ pre {
   border-right: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
 }
 
-/* The line between two side-by-side panels stops short of the window's top and
+/* The line between two conversation panels stops short of the window's top and
    bottom rather than running edge to edge. It starts level with the title pill,
-   centred in the 64px header, and ends level with the top of an empty composer,
-   so the gap reads as part of the conversation's own frame. Every divider
-   between panels reads these two, so they move together. */
+   centred in the 64px header, and ends level with the top of an empty composer.
+   The sidebars keep their full-height edge: their fill differs from the pane's,
+   so a shorter line would leave the colour change drawn without one. */
 :root {
   --panel-divider-inset-top: 14px;
   --panel-divider-inset-bottom: calc(var(--composer-dock-gap) + var(--composer-capsule-height));
-}
-.sidebar,
-.spaces-sidebar { border-right: 0; }
-.sidebar::after,
-.spaces-sidebar::after {
-  background: var(--av-cmp-sidebar-border);
-  bottom: var(--panel-divider-inset-bottom);
-  content: '';
-  pointer-events: none;
-  position: absolute;
-  right: 0;
-  top: var(--panel-divider-inset-top);
-  width: var(--av-sys-size-border-hairline);
 }
 
 /* Registered so the navigation's width can be transitioned rather than only
@@ -5290,7 +5277,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 
 @media (max-width: 560px) {
   .dialog-content { min-width: 0; width: calc(100vw - 24px); }
-  .workstream-launch-screen:not(.is-launching) > .launch-dock { padding: 10px 16px 18px; }
+  .workstream-launch-screen:not(.is-launching) > .launch-dock { padding: 10px 16px var(--composer-dock-gap); }
   .waiting-workstream-row { grid-template-columns: auto auto minmax(0, 1fr) 15px; }
   .waiting-workstream-row > svg { grid-column: 4; }
   .waiting-workstream-source,
@@ -6821,9 +6808,10 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
      on the keystroke that submits it — in a band around 600px, the one thing
      this whole arrangement exists to stop. The hero's old 34px was sized for a
      690px column that no longer exists, and the two narrow-width media rules
-     that used to equalise it were already saying this. The vertical values stay
-     the launcher's own. */
-  padding: 12px 16px 28px;
+     that used to equalise it were already saying this. The bottom is every
+     dock's too: a Breakout launcher sits beside its Channel, and a deeper gap
+     held its empty field 12px above the Channel's and dropped it on submit. */
+  padding: 12px 16px var(--composer-dock-gap);
   position: relative;
   right: auto;
 }
@@ -7143,7 +7131,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .new-chat-screen:not(.is-launching) > .launch-dock {
   align-self: center;
   grid-row: 2 / 4;
-  padding: 0 16px 16px;
+  padding: 0 16px var(--composer-dock-gap);
 }
 
 /* Centred, the field has only half the pane above it, and the mention and
