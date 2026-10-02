@@ -7561,7 +7561,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   background: var(--av-sys-color-surface-raised);
   border: 0;
   border-radius: var(--av-sys-size-radius-pill);
-  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-default);
+  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong);
   color: var(--av-sys-color-text-subtle);
   cursor: pointer;
   display: inline-flex;
@@ -7597,6 +7597,17 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   transform: none;
   width: 8px;
 }
+/* The single sidebar's headings are quiet sentence-case labels with an
+   optional hint at the far edge, not the uppercase group labels elsewhere. */
+.single-sidebar .sidebar-section-heading { height: 30px; padding: 0 10px 0 14px; }
+.single-sidebar .sidebar-section-heading h2 {
+  color: var(--av-sys-color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  text-transform: none;
+}
+.sidebar-section-hint { color: var(--av-sys-color-text-disabled); flex: none; font-size: 11.5px; }
 .channel-row-main { gap: 1px; }
 .channel-row-heading { align-items: baseline; display: flex; gap: 8px; min-width: 0; }
 .channel-row-heading > .sidebar-row-title { flex: 1; min-width: 0; }
@@ -7637,6 +7648,15 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 }
 .title-pill:hover,
 .title-pill[data-state='open'] { background: var(--av-sys-color-surface-raised-hover); }
+/* Open, the pill reads as pressed: the whole pill fills and its lift drops to
+   the bare ring, whichever of its parts opened the menu. */
+.title-pill[data-state='open'],
+.title-pill.is-split:has(> [data-state='open']) {
+  background: var(--av-sys-color-surface-raised-hover);
+  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong);
+}
+.title-pill.is-split > .title-pill-menu-trigger[data-state='open'] { background: transparent; }
+:is(.title-pill[data-state='open'], .title-pill-menu-trigger[data-state='open']) .title-pill-chevron { color: var(--av-sys-color-text-subtle); }
 .title-pill.is-ancestor { box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong); }
 .title-pill.is-split { cursor: default; gap: 0; padding: 0; }
 .title-pill-select,
@@ -7656,8 +7676,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-pill-select { padding: 0 6px 0 8px; }
 .title-pill-menu-trigger { padding: 0 12px 0 4px; }
 .title-pill-select:hover,
-.title-pill-menu-trigger:hover,
-.title-pill-menu-trigger[data-state='open'] { background: var(--av-sys-color-state-hover); }
+.title-pill-menu-trigger:hover { background: var(--av-sys-color-state-hover); }
 .title-pill-icon { align-items: center; display: inline-flex; flex: none; }
 .title-pill-title { font-size: 14.5px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .title-pill-meta { color: var(--av-sys-color-text-muted); flex: none; font-size: 13px; }
@@ -7670,7 +7689,25 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   width: 32px;
 }
 
-.title-pill-menu.menu-content { display: flex; flex-direction: column; gap: 2px; max-height: min(640px, calc(100vh - 96px)); overflow-y: auto; padding: 14px; width: 380px; }
+.title-pill-menu.menu-content {
+  border: 0;
+  border-radius: 16px;
+  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-default), var(--av-sys-elevation-shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(640px, calc(100vh - 96px));
+  overflow-y: auto;
+  padding: 14px;
+  width: 380px;
+}
+.title-pill-menu .menu-separator { background: var(--av-sys-color-border-subtle); margin: 8px 0; }
+.title-pill-menu .menu-item { border-radius: 8px; font-size: 13.5px; min-height: 34px; padding: 0 8px; }
+.title-pill-menu .menu-item:not(.menu-item-danger) { color: var(--av-sys-color-text-default); }
+.title-pill-menu .menu-item:not(.menu-item-danger) > svg { color: var(--av-ref-color-neutral-11); flex: none; }
+.title-pill-menu .avatar-stack .avatar { border-color: var(--av-sys-color-surface-raised); height: 28px; width: 28px; }
+.title-pill-menu .avatar-stack .avatar-fallback { font-size: 10px; }
+.title-pill-menu .avatar-stack-item + .avatar-stack-item { margin-left: -8px; }
 .title-menu-header { align-items: center; display: flex; gap: 10px; padding: 4px 4px 8px; }
 .title-menu-header-icon {
   align-items: center;
@@ -7691,6 +7728,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-menu-origin {
   background: var(--av-sys-color-surface-sunken);
   border-radius: 12px;
+  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-subtle);
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -7717,8 +7755,9 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-menu-item { gap: 10px; }
 .title-menu-item-copy { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .title-menu-item-age { color: var(--av-sys-color-text-muted); flex: none; font-size: 11.5px; }
-.title-menu-item-dot { background: var(--av-sys-color-danger-base); border-radius: 50%; flex: none; height: 8px; width: 8px; }
-.title-menu-breakout { color: var(--av-sys-color-text-default); }
+.title-menu-item-dot { background: var(--av-sys-color-accent-base); border-radius: 50%; flex: none; height: 8px; width: 8px; }
+.title-menu-breakout { color: var(--av-sys-color-text-default); min-height: 36px; }
+.title-pill-menu .title-menu-breakout > svg { color: var(--av-sys-color-text-muted); }
 .title-menu-breakout[aria-current='true'] { background: var(--av-sys-color-state-hover); font-weight: 500; }
 .title-menu-section-heading { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; font-weight: 600; padding: 4px 6px 6px; }
 .title-menu-search {
@@ -7736,7 +7775,13 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-menu-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 0; padding: 4px 8px 6px; }
 .title-menu-more { border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-subtle); cursor: pointer; font-size: 13px; outline: 0; padding: 7px 8px; }
 .title-menu-more[data-highlighted] { background: var(--av-sys-color-state-hover); }
-.title-menu-sidekicks .workstream-context-section { padding: 0; }
+.title-menu-sidekicks .workstream-context-section { margin-top: 6px; padding: 0; }
+.title-menu-sidekicks .workstream-context-section h2 { margin: 0 6px 4px; }
+/* Sidekick rows are menu rows here, so they take the menu's size rather than
+   the larger row they had in the old channel sidebar. */
+.title-menu-sidekicks .workstream-context-row { border-radius: 8px; flex-basis: 34px; font-size: 13.5px; gap: 10px; height: 34px; min-height: 34px; padding: 0 8px; }
+.title-menu-sidekicks .workstream-context-row .sidebar-row-icon { height: 16px; width: 16px; }
+.title-menu-sidekicks .workstream-context-row .sidebar-row-icon > svg { height: 15px; width: 15px; }
 
 /* ── Breakouts in the Channel ──────────────────────────────────────────────
    Chips under the message a Breakout started from, and the tick bar down the
@@ -7747,13 +7792,13 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   background: var(--av-sys-color-surface-raised);
   border: 0;
   border-radius: var(--av-sys-size-radius-pill);
-  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-default);
+  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong);
   color: var(--av-sys-color-text-default);
   cursor: pointer;
   display: inline-flex;
   font: inherit;
   font-size: 13px;
-  gap: 6px;
+  gap: 7px;
   height: 30px;
   max-width: 100%;
   padding: 0 12px 0 10px;
@@ -7790,12 +7835,12 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .breakout-tick-card {
   background: var(--av-sys-color-surface-raised);
   border-radius: 16px;
-  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-default), var(--av-sys-elevation-shadow-lg);
+  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong), var(--av-sys-elevation-shadow-md);
   display: flex;
   flex-direction: column;
   gap: 6px;
   max-width: 340px;
-  padding: 12px 16px;
+  padding: 14px 16px;
   z-index: 60;
 }
 .breakout-tick-card-title { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 15px; font-weight: 500; gap: 10px; }
