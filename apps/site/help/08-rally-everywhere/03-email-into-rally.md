@@ -20,15 +20,12 @@ luminous-tidal-structured-curie@automation.rallywith.ai
 Three cheerful words and a famous scientist (or an animal), joined with hyphens.
 Nobody will ever guess one, and nobody will ever have to: you copy it.
 
-In the Mac app, click **…** (**More channel actions**) in the Channel's header
-and choose **Copy channel email address**.
-
-On the iPhone, the Channel's **Details** panel shows the address too.
+On the iPhone, the Channel's **Details** panel shows the address.
 
 Paste it into the **To** or **Cc** line of any email. Save it in your contacts
 under the Channel's name and you will not have to look it up again.
 
-If neither place shows an address, the Channel does not have one yet.
+If it shows no address, the Channel does not have one yet.
 
 ## What happens when mail arrives
 

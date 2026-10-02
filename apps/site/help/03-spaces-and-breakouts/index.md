@@ -15,7 +15,7 @@ This chapter is about putting up shelves.
 
 A **Space** is a group of Channels that belong together: a client, a team, a
 product launch, the office move. Every Channel sits in at least one Space, and
-when you click a Space in the rail on the left, you see only its Channels. The
+when you click a Space's pill at the top of the sidebar, you see only its Channels. The
 rest of the Organization's work is still there, on other shelves, out of your
 way.
 

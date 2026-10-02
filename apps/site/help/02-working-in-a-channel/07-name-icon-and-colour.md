@@ -1,6 +1,6 @@
 ---
 title: Names, icons and colours
-description: Rename a Channel or Breakout, pick its icon and colour, and understand the description Rally keeps for it.
+description: Use the title pill menu, rename a Channel or Breakout, pick its icon and colour, and understand the description Rally keeps for it.
 ---
 
 You name a Channel when you start it, and Rally picks it an icon and a colour.
@@ -9,46 +9,54 @@ as described in [Your first Channel](../01-getting-started/05-your-first-channel
 Rally's picks are educated guesses. When you have a dozen Channels, a good name and a
 recognisable icon are what let you find the right one in a hurry.
 
-## The Channel header
+## The title pill
 
-The strip across the top of a Channel holds, from left to right:
+The name of whatever you are reading floats at the top of the conversation, in
+a rounded **title pill**: the Channel's icon, then its name. Click the icon to
+change the icon and colour (below). Click the name to open the Channel's menu.
 
-- The Channel's **icon**, on a coloured tile.
-- Its **name**.
-- A **Private** badge, if the Channel is private.
-- The **people** in it (see [People in the room](05-people-in-the-room.md)).
-- A **…** button (**More channel actions**) with **Copy channel link**,
-  **Copy channel ID** and, when the Channel has one, **Copy channel email
-  address**. Links are covered in
-  [Search and links](../03-spaces-and-breakouts/06-search-and-links.md) and the
-  email address in [Email into Rally](../08-rally-everywhere/03-email-into-rally.md).
+The menu opens with the Space the Channel lives in at the top, with **Open
+space** beside it (a Channel that is only in General skips this line). Under
+that is a row of buttons:
+
+- **Add people** brings someone in. See [People in the room](05-people-in-the-room.md).
+- **Rename** gives the Channel a new name (below).
+- **Copy link** copies a link to the Channel. Links are covered in
+  [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
+- **Share** invites someone by email. See
+  [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md).
+- **More** holds the Channel's settings: the **Pinned in sidebar** switch,
+  **Make public to organization**, **Import updates** for an imported Channel,
+  and the Channel's **Artifacts**.
+
+Below the buttons are three rows, each with a count: **People**, **Sidekicks**
+and **Breakouts**. Click one and the menu changes in place to show that list,
+and the pill turns into a breadcrumb, such as the Channel's name followed by
+**People**. To go back, click the Channel's name in the pill, or press
+<kbd>Esc</kbd> or <kbd>←</kbd>. The menu always opens at the top again next
+time. **Archive channel** sits at the bottom.
+
+A Breakout has a pill of its own, with the same buttons and rows except
+Breakouts. Its menu names the Channel it belongs to and the message it started
+from. See [Breakouts](../03-spaces-and-breakouts/03-breakouts.md#the-breakout-menu).
 
 ## Renaming
 
-### From the header
+### From the title pill
 
-1. Click the Channel's name in the header. (Hovering it shows **Click to rename.
-   Press Enter to save.**) You can also move to the name with the keyboard and
-   press <kbd>F2</kbd> or <kbd>Return</kbd>.
-2. Type the new name.
-3. Press <kbd>Return</kbd>, or click the tick (**Save name**), to save. Press
-   <kbd>Esc</kbd>, or click the **X** (**Cancel rename**), to leave it as it was.
+1. Click the Channel's name in its title pill and choose **Rename**.
+2. In the **Rename channel** window, type the new name and click **Rename**.
 
-This works the same way in a Breakout.
+This works the same way in a Breakout, in a window called **Rename breakout**.
+The **Rename** button stays greyed out until you have changed something.
 
-When Rally is naming a conversation, such as a new Breakout, the name area
-shimmers while it thinks one up. You can rename it once the name has arrived.
+When Rally is naming a conversation, such as a new Breakout, the name shimmers
+while it thinks one up. You can rename it once the name has arrived.
 
 ### From the sidebar
 
-You do not have to open a Channel to rename it.
-
-1. Right-click the Channel in the sidebar and choose **Rename**.
-2. In the **Rename channel** window, type the new name and click **Rename**.
-
-Breakouts work the same way from their own right-click menu, in a window called
-**Rename breakout**. The **Rename** button stays greyed out until you have
-changed something.
+You do not have to open a Channel to rename it. Right-click the Channel in the
+sidebar and choose **Rename**.
 
 ### Things to know about names
 
@@ -60,16 +68,15 @@ changed something.
 
 ### Reading a long name
 
-The sidebar is narrow, so long names get cut short. Rest your pointer on a
+Long names can get cut short in the sidebar. Rest your pointer on a
 Channel in the sidebar and a small card shows its icon and full name. The card
 also says **Public to organization** if anyone in the Organization can open it.
-In the header, a name too long to fit shows in full when you hover it.
 
 ## Icon and colour
 
-Click the icon at the left of the Channel's name (**Change channel icon and
-color**, or **Change breakout icon and color** in a Breakout). A small palette
-opens.
+Click the icon at the left of the Channel's name in its title pill. In a
+Breakout, open its menu and choose **More**, then **Icon and color**. A small
+palette opens.
 
 - The top part, **Color**, has 14 round swatches in two rows, in rainbow order:
   Rose, Red, Orange, Amber, Lime, Green and Emerald, then Cyan, Blue, Indigo,
@@ -84,10 +91,11 @@ Click a colour, click an icon, and you are done. There is no **Save** button:
 each click saves straight away, and the palette stays open so you can try a few.
 Click outside the palette or press <kbd>Esc</kbd> to close it.
 
-The symbol on the tile switches between white and black by itself so it stays
-readable: black on Amber, Lime and Green, white on the rest. Channel and Space
-colours stay the same in light and dark mode, so a blue Channel is the same
-blue whichever look you choose.
+Channel, Breakout, Space and Sidekick icons are drawn in a soft, pastel shade
+of the colour you pick, with the symbol in a deeper shade of the same colour, so
+a sidebar of forty Channels stays calm. The shades adjust for light and dark
+mode. People's own colours are not softened: they stay at full strength, so you
+can tell people apart at a glance.
 
 ### Things to know about icons and colours
 

@@ -5,21 +5,21 @@ description: Pin, move, file and archive Channels so the sidebar shows what matt
 
 With your Spaces in place, the next job is getting the right Channels onto the
 right shelves and the busiest ones within reach. Almost all of it happens in the
-Channels rail, the column of Channels beside the Spaces rail.
+sidebar's Channel list, under the Space pills.
 
 ## The Channel menu
 
-Right-click any Channel in the Channels rail for its menu. From top to bottom:
+Right-click any Channel in the sidebar for its menu. From top to bottom:
 
 | Item | What it does |
 | --- | --- |
-| **Pin** / **Unpin** | Keeps the Channel at the top of this Space's list, for you. See [Pinning](#pinning). |
+| **Pin** / **Unpin** | Keeps the Channel at the top of the list, for you. See [Pinning](#pinning). |
 | **Mark as unread** | Marks the Channel unread again, so it nags you later. |
 | **Share** | Invites someone by email into the Channel's main conversation. See [Sharing with people outside your Organization](05-sharing-with-guests.md). |
 | **Rename** | Opens **Rename channel**. Names can be up to 180 characters. |
 | **Add to space** | Puts the Channel in another Space as well. See [One Channel, several Spaces](#one-channel-several-spaces). |
 | **Manage access** | Shows exactly who can read the Channel and why. See [Who can see what](04-who-can-see-what.md). |
-| **Remove from space** | Takes the Channel out of the Space you are looking at. |
+| **Remove from space** | Takes the Channel out of the Space whose pill you have selected. |
 | **Archive channel** | Retires the Channel for everyone. See [Archiving](#archiving). |
 
 Not every item appears every time. Rally's own built-in Channels do not offer
@@ -29,40 +29,45 @@ Space you only see through one of its Channels.
 Renaming, icons and colours are covered in more detail in
 [Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md).
 
-> [!TIP]
-> To copy a link to a Channel, use the **…** (**More channel actions**) button
-> in the Channel's header and choose **Copy channel link**. It is not in the
-> right-click menu.
+Open the Channel and click its name in the title pill for a second menu, with
+**Copy link**, the **Pinned in sidebar** switch, its People, Sidekicks and
+Breakouts. See
+[Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md#the-title-pill).
 
 ## Pinning
 
-Channels in the rail are listed alphabetically, which is fair but not always
-helpful. Pinning lets you keep the Channels you live in at the top, in a
-**Pinned** section, in whatever order you like.
+Channels in the sidebar are listed alphabetically, which is fair but not always
+helpful. Pinning keeps the Channels you live in at the top, in a **Pinned**
+section, in whatever order you like. The section is always there, even before
+you pin anything: empty, it reads **Move a channel here to pin it**.
 
-- **To pin**, right-click a Channel and choose **Pin**, or drag it up into the
-  pinned area. While you drag, **Drop channel here to pin** shows you where to
-  let go.
-- **To unpin**, right-click it and choose **Unpin**.
+- **To pin**, drag a Channel up into **Pinned** and let go. You can also
+  right-click it and choose **Pin**, or open it, click its name in the title
+  pill, choose **More** and turn on **Pinned in sidebar**.
+- **To unpin**, right-click it and choose **Unpin**, or turn **Pinned in
+  sidebar** off.
 - **To reorder your pins**, drag them up and down. From the keyboard, select a
   pinned Channel, hold <kbd>⌥ Option</kbd> and press <kbd>↑</kbd> or
   <kbd>↓</kbd>. The arrow keys on their own only move the selection.
 
 Pins are yours alone. They follow you to your other devices and change nothing
-for anyone else in the Channel. They are also kept per Space, so a Channel that
-lives in two Spaces can be pinned in one and not the other. Only pinned Channels
-can be reordered. The rest stay alphabetical.
+for anyone else in the Channel. Each Space keeps its own pins, so with a Space's
+pill selected, a Channel that lives in two Spaces can be pinned in one and not
+the other. Under **All**, **Pinned** shows everything you have pinned in any
+Space, in an order of its own that you arrange the same way and that also
+follows you to your other devices. Unpinning a Channel under **All** unpins it
+everywhere. Only pinned Channels can be reordered. The rest stay alphabetical.
 
 You can pin up to 1,000 Channels, by which point the Pinned section has become
 the sidebar and you are back where you started.
 
-The Spaces rail reorders the same way: drag a Space, or select it and use
-<kbd>⌥ Option</kbd> with <kbd>↑</kbd> or <kbd>↓</kbd>.
+The Space pills reorder in much the same way: drag a pill sideways, or select
+it and use <kbd>⌥ Option</kbd> with <kbd>←</kbd> or <kbd>→</kbd>.
 
 ## Moving a Channel to another Space
 
-Drag a Channel from the Channels rail and drop it on a Space in the Spaces rail.
-The Space pulses to say it has caught it. The Channel moves: it leaves the Space
+Drag a Channel from the sidebar's list and drop it on a Space's pill. The
+pill pulses to say it has caught it. The Channel moves: it leaves the Space
 you dragged it from and lives in the new one instead.
 
 - You can only drop on a Space you are able to change, and not on the Space you
@@ -105,9 +110,9 @@ is no button anywhere that deletes a Channel.
 
 | To archive | Do this |
 | --- | --- |
-| A Channel | Right-click it in the Channels rail and choose **Archive channel**. |
-| A Breakout | Right-click it in the Channel sidebar and choose **Archive breakout**. See [Breakouts](03-breakouts.md). |
-| A Space | Right-click it and choose **Archive space**. See [Spaces](01-spaces.md#archive-and-restore-a-space). |
+| A Channel | Right-click it in the sidebar and choose **Archive channel**, or choose it at the bottom of the Channel's title pill menu. |
+| A Breakout | Click its name in its title pill and choose **Archive breakout**. See [Breakouts](03-breakouts.md). |
+| A Space | Right-click its pill and choose **Archive space**. See [Spaces](01-spaces.md#archive-and-restore-a-space). |
 | A Sidekick | Click **…** on the Sidekick and choose **Archive Sidekick**. See [The Sidekicks window](../07-sidekicks/04-the-sidekicks-window.md). |
 
 > [!WARNING]
@@ -123,11 +128,9 @@ Spaces are the exception: an archived Space can be restored, as described in
 
 ## Making room
 
-Collapsing and widening the rails is covered in
-[A tour of the window](../01-getting-started/04-a-tour-of-the-window.md#making-room).
-One extra: hover over the edge of the Channels rail until **Drag to resize**
-appears. Double-click the edge, or select it and press <kbd>Return</kbd>, to
-fold the rail or open it again in one go.
+The sidebar stays open; it does not fold away. To give the conversation more
+room, drag the sidebar's right edge to make it narrower. Rally remembers the
+width on this Mac.
 
 ## When something goes wrong
 
