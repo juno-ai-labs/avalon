@@ -48,12 +48,9 @@ function renderPills(props: Partial<React.ComponentProps<typeof SpacePills>> = {
           onCreateChannel={vi.fn(async () => undefined)}
           onCreateSpace={vi.fn(async () => undefined)}
           onMoveChannel={vi.fn(async () => undefined)}
-          onOrderPreviewChange={vi.fn()}
-          onReorder={vi.fn(async () => undefined)}
           onRestore={vi.fn(async () => undefined)}
           onRetry={vi.fn()}
           onSelect={onSelect}
-          ordering={[]}
           outOfDate={false}
           ready
           selectedSpaceId={null}
@@ -94,37 +91,13 @@ function channelTransfer(workstreamId: string, sourceSpaceId: string) {
   };
 }
 
-/**
- * jsdom implements no `DataTransfer`, and the Space drag reads two of its
- * fields: `types`, which is how a pill tells a Channel's drag passing through
- * it from a Space's own, and `dropEffect`, which is how `dragend` tells a
- * release the strip took from one backed out of.
- */
-function spaceTransfer(dropEffect: 'move' | 'none' = 'move'): {
-  dropEffect: string; effectAllowed: string; types: string[];
-  setData: (type: string, value: string) => void; getData: (type: string) => string;
-} {
-  const data = new Map<string, string>();
-  const transfer = {
-    dropEffect,
-    effectAllowed: '',
-    types: [] as string[],
-    setData: (type: string, value: string) => {
-      data.set(type, value);
-      if (!transfer.types.includes(type)) transfer.types.push(type);
-    },
-    getData: (type: string) => data.get(type) ?? '',
-  };
-  return transfer;
-}
-
 describe('SpacePills', () => {
   it('draws All first, then a pill per Space except General, with the selection pressed', () => {
     renderPills({ selectedSpaceId: 'launch' });
 
     const pills = within(screen.getByRole('group', { name: 'Spaces' })).getAllByRole('button');
-    expect(pills.map((item) => item.textContent)).toEqual(['All', 'Launch', 'Hiring']);
-    expect(pills.map((item) => item.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false']);
+    expect(pills.map((item) => item.textContent)).toEqual(['All', 'Hiring', 'Launch']);
+    expect(pills.map((item) => item.getAttribute('aria-pressed'))).toEqual(['false', 'false', 'true']);
     expect(screen.queryByRole('button', { name: 'General' })).not.toBeInTheDocument();
   });
 
@@ -178,37 +151,29 @@ describe('SpacePills', () => {
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith(null));
   });
 
-  it('keeps General in its stored place when Alt+Arrow reorders the visible pills', async () => {
-    const onReorder = vi.fn(async () => undefined);
-    renderPills({ onReorder });
+  it('sorts Spaces by name, case-insensitive, after All', () => {
+    renderPills({
+      spaces: [
+        space('zeta', 'zeta'),
+        general,
+        space('beta', 'Beta'),
+        space('aardvark', 'aardvark'),
+        space('alpha', 'Alpha'),
+      ],
+    });
 
-    expect(screen.getByText('Hold Alt and press the Left or Right Arrow key to reorder a space.')).toBeInTheDocument();
-    fireEvent.keyDown(pill('Launch'), { altKey: true, key: 'ArrowRight' });
-
-    await waitFor(() => expect(onReorder).toHaveBeenCalledWith({
-      container: { kind: 'organization' },
-      itemIds: ['general', 'hiring', 'launch'],
-    }));
+    expect(within(screen.getByRole('group', { name: 'Spaces' })).getAllByRole('button')
+      .map((item) => item.textContent)).toEqual(['All', 'aardvark', 'Alpha', 'Beta', 'zeta']);
   });
 
-  it('does not reorder past either end of the strip', () => {
-    const onReorder = vi.fn(async () => undefined);
-    renderPills({ onReorder });
+  it('keeps the A–Z order when a pill is dragged or moved with Alt+Arrow', () => {
+    renderPills();
 
+    expect(pill('Hiring')).not.toHaveAttribute('draggable', 'true');
     fireEvent.keyDown(pill('Launch'), { altKey: true, key: 'ArrowLeft' });
-    fireEvent.keyDown(pill('Hiring'), { altKey: true, key: 'ArrowRight' });
 
-    expect(onReorder).not.toHaveBeenCalled();
-  });
-
-  it('reports a refused Space reorder in an acknowledged error dialog', async () => {
-    renderPills({ onReorder: async () => { throw new Error('Could not save the order'); } });
-
-    fireEvent.keyDown(pill('Hiring'), { altKey: true, key: 'ArrowLeft' });
-
-    const dialog = await screen.findByRole('dialog', { name: 'Spaces could not be reordered' });
-    expect(within(dialog).getByText('The spaces are back in the order they were in. Try again in a moment.')).toBeVisible();
-    expect(screen.queryByText('Could not save the order')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('group', { name: 'Spaces' })).getAllByRole('button')
+      .map((item) => item.textContent)).toEqual(['All', 'Hiring', 'Launch']);
   });
 
   it('opens the Create a new space form from the New space button', async () => {
@@ -387,58 +352,6 @@ describe('SpacePills', () => {
 
     expect(within(reopened).getByRole('button', { name: 'Archived' })).toBeVisible();
     expect(screen.queryByText('The space couldn’t be restored.')).not.toBeInTheDocument();
-  });
-
-  describe('dragging a Space', () => {
-    it('saves the full new order, General in its stored place, when a drag completes', async () => {
-      const onReorder = vi.fn(async () => undefined);
-      renderPills({ onReorder });
-
-      const dataTransfer = spaceTransfer();
-      fireEvent.dragStart(pill('Hiring'), { dataTransfer });
-      fireEvent.dragEnter(pill('Launch'), { dataTransfer });
-      fireEvent.dragEnd(pill('Hiring'), { dataTransfer });
-
-      await waitFor(() => expect(onReorder).toHaveBeenCalledWith({
-        container: { kind: 'organization' },
-        itemIds: ['general', 'hiring', 'launch'],
-      }));
-    });
-
-    // Escape leaves the drag with no accepted drop, which the browser reports
-    // as `none`. Backing out is not finishing: the order persists to every
-    // session the person has open.
-    it('saves nothing and restores the stored order when a drag is backed out of', async () => {
-      const onReorder = vi.fn(async () => undefined);
-      renderPills({ onReorder });
-
-      const dataTransfer = spaceTransfer();
-      fireEvent.dragStart(pill('Hiring'), { dataTransfer });
-      fireEvent.dragEnter(pill('Launch'), { dataTransfer });
-      expect(within(screen.getByRole('group', { name: 'Spaces' })).getAllByRole('button').map((item) => item.textContent))
-        .toEqual(['All', 'Hiring', 'Launch']);
-      fireEvent.dragEnd(pill('Hiring'), { dataTransfer: { ...dataTransfer, dropEffect: 'none' } });
-
-      await waitFor(() => expect(within(screen.getByRole('group', { name: 'Spaces' })).getAllByRole('button')
-        .map((item) => item.textContent)).toEqual(['All', 'Launch', 'Hiring']));
-      expect(onReorder).not.toHaveBeenCalled();
-    });
-
-    it('explains why a dragged order snapped back when saving it fails', async () => {
-      renderPills({ onReorder: async () => { throw new Error('Could not save space order'); } });
-
-      const dataTransfer = spaceTransfer();
-      fireEvent.dragStart(pill('Hiring'), { dataTransfer });
-      fireEvent.dragEnter(pill('Launch'), { dataTransfer });
-      fireEvent.dragEnd(pill('Hiring'), { dataTransfer });
-
-      const dialog = await screen.findByRole('dialog', { name: 'Spaces could not be reordered' });
-      expect(within(dialog).getByText('The spaces are back in the order they were in. Try again in a moment.')).toBeVisible();
-      expect(screen.queryByText('Could not save space order')).not.toBeInTheDocument();
-      fireEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
-      await waitFor(() => expect(within(screen.getByRole('group', { name: 'Spaces' })).getAllByRole('button')
-        .map((item) => item.textContent)).toEqual(['All', 'Launch', 'Hiring']));
-    });
   });
 
   describe('dropping a Channel', () => {

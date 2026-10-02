@@ -16,7 +16,7 @@ import { NewWorkstreamMenu } from './new-workstream-menu';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { conversationNeedsViewer, type ContainerOrder, type CreateSpaceRequest, type PersonalOrder, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
+import { conversationNeedsViewer, type CreateSpaceRequest, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
@@ -30,8 +30,8 @@ import {
 } from '../lib/deep-link-navigation';
 import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
-import { committedOrder, moveWithin, orderByStoredIds, storedOrderFor } from '../lib/personal-order';
-import { compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
+import { committedOrder, moveWithin, orderByStoredIds } from '../lib/personal-order';
+import { compareAlphabeticalName, compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
@@ -127,16 +127,6 @@ interface SidebarProps {
   onAddChannelToSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
   onMoveChannelToSpace?: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
   onRemoveChannelFromSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
-  /**
-   * Every list this person has arranged by hand, and the one way to change one.
-   *
-   * One prop pair for three containers — the Organization's Spaces, a Space's
-   * Channels, a Channel's Breakouts — because they are one mechanism. Channel
-   * pins remain a separate per-Space placement property: they select prominence
-   * inside a container without changing that container's manual order.
-   */
-  ordering?: PersonalOrder;
-  onReorderContainer?: (order: ContainerOrder) => Promise<void>;
   onRestoreSpace?: (spaceId: string) => Promise<void>;
   onArchiveSpace?: ((spaceId: string) => Promise<void>) | undefined;
   onSignOut: () => void;
@@ -1052,8 +1042,6 @@ export function Sidebar({
   onAddChannelToSpace = async () => undefined,
   onMoveChannelToSpace = async () => undefined,
   onRemoveChannelFromSpace = async () => undefined,
-  ordering = [],
-  onReorderContainer = async () => undefined,
   onRestoreSpace = async () => undefined,
   onArchiveSpace,
   onSignOut,
@@ -1297,9 +1285,6 @@ export function Sidebar({
   // Space's preview after navigation. `null` means the pinned list is showing
   // what the server last said.
   const [dragOrder, setDragOrder] = useState<{ spaceId: string; itemIds: string[] } | null>(null);
-  // SpacesSidebar owns the gesture, but every destination picker owns the
-  // promise's optimistic result with it so no sibling surface lags the rail.
-  const [spaceOrderPreview, setSpaceOrderPreview] = useState<string[] | null>(null);
   const pinnedDrag = useRef<{ dropped: boolean; workstreamId: string } | null>(null);
   const [pinDropWorkstreamId, setPinDropWorkstreamId] = useState<string | null>(null);
   const motionMoveIntent = useRef<{ id: string; pinned: boolean } | null>(null);
@@ -1457,14 +1442,11 @@ export function Sidebar({
    * below decides what to draw by asking whether a Channel's Spaces are among
    * these, so a section that disagreed with the hierarchy about which Spaces
    * exist would leave every placed Channel in neither list.
-   * Keep this collection in the Organization's saved order too, so every
-   * placement chooser presents the same sequence as the Space rail.
+   * Sorted by name, case-insensitive, so every placement chooser presents
+   * the same sequence as the Space pills.
    */
-  const placementSpaces = useMemo(() => orderByStoredIds(
-    spaces !== undefined && spacesReady ? spaces : [],
-    spaceOrderPreview ?? storedOrderFor(ordering, { kind: 'organization' }),
-    (space) => space.id,
-  ), [ordering, spaceOrderPreview, spaces, spacesReady]);
+  const placementSpaces = useMemo(() => (spaces !== undefined && spacesReady ? [...spaces] : [])
+    .sort(compareAlphabeticalName), [spaces, spacesReady]);
   /**
    * The line under a Channel's title: the Spaces it lives in, General left
    * out because General is where a Channel is when it is in no Space at all.
@@ -2128,13 +2110,10 @@ export function Sidebar({
           onArchive={onArchiveSpace}
           onCreateChannel={createChannelFromSidebar}
           onCreateSpace={createSpaceFromSidebar}
-          onOrderPreviewChange={setSpaceOrderPreview}
           onMoveChannel={moveChannelFromSelectedSpace}
-          onReorder={onReorderContainer}
           onRetry={onRetrySpaces}
           onRestore={onRestoreSpace}
           onSelect={setSelectedSpaceId}
-          ordering={ordering}
           ready={spacesReady}
           outOfDate={spacesOutOfDate}
           selectedSpaceId={selectedSpaceId}
