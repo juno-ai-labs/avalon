@@ -2325,8 +2325,10 @@ export function Sidebar({
                       onClick={() => setChannelSort(channelSort === 'recent' ? 'alphabetical' : 'recent')}
                       type="button"
                     >
-                      <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
+                      {/* Text first, icon last: the icon keeps its place at
+                          the edge while the label changes width. */}
                       <span className="sidebar-section-hint">{channelSort === 'recent' ? 'Recent' : 'A–Z'}</span>
+                      <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
                     </button>
                   </div>
                 )}
