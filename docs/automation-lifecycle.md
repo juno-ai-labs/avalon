@@ -245,11 +245,10 @@ not export a Cloudflare class from the Worker entrypoint.
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
 | `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
-| `apps/desktop/src/renderer/components/sidebar.tsx`, `components/inspector-rail.tsx` | Enabled standalone Sidekick tiles above the account menu open library details, and `SidekickStripTile`, the tile shape they and the empty strip's **New Sidekick** action share; the center rail shows the participant facepile and this room's Sidekicks. |
+| `apps/desktop/src/renderer/components/inspector-rail.tsx` | The center rail shows the participant facepile and this room's Sidekicks. |
 | `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section both of a work stream's rails render, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
 | `packages/ui/src/components/conversation-menus.tsx`, `screens/conversation-surface.tsx` | The section's place in the Channel's title menu, below its people; the two queries behind it (`workstream-sidekicks` and `attached-sidekicks`), the participant check that decides whether a row may be detached, and the 403 a non-participant viewer's listing is read as none. |
-| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen, and the empty strip's tile is the same silhouette outlined around a plus. |
-| `packages/ui/src/styles/app.css` | `.sidekick-tile-tooltip`, the one width every answer a strip tile's tooltip gives is held to. |
+| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen. |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
 
@@ -311,61 +310,10 @@ elicitation forms.
 
 ### Conversational publication
 
-Enabled personal and workspace Sidekicks render as a horizontal scrolling strip
-above the account menu, in both the expanded sidebar and the compact rail. The
-rail keeps the strip where it is and keeps it horizontal: the tiles shed their
-captions and shrink to the work-stream rows' 54px square with 9px padding and
-36px artwork, one tile centred when there is one and the next showing past the
-21px padding when there are more, and the strip scrolls sideways for the rest.
-The tiles change shape over the sidebar's own collapse motion, so they arrive
-with the edge rather than a frame ahead of it. Enabled means lifecycle
-`active`, not a run currently in progress and not the stored `loadable` capability.
-Draft, paused, and workstream-owned Sidekicks are excluded. A workspace with
-**no active personal or workspace Sidekick** gets one **New Sidekick** tile in
-the strip instead, which opens the library window on `/sidekicks/new`. Draft,
-paused, and workstream-owned Sidekicks remain reachable from the library, but
-they do not occupy this strip; if they are the only Sidekicks available, the
-new-Sidekick tile keeps the sidebar from leaving the slot blank. The strip is
-absent while the workspace answer carrying the Sidekicks has not arrived, which
-the list itself reports by being `undefined` rather than empty. Each tile reuses
-the rounded hexagon, stable identity
-color, and centered symbol introduced for automation shortcuts. A running
-Sidekick — lifecycle `active`, which is every Sidekick the strip shows — carries
-a **play** in `success-base` at the bottom right, cut out of the hexagon's own
-fill along the play's outline so the gap around it follows the symbol and shows
-whatever the row is painted in. The New Sidekick tile is the same tile and the
-same hexagon, outlined and dashed with a plus in it rather than filled, and
-carries no lifecycle marker.
-
-Both the tile and that play answer a pointer, through **one** tooltip per tile —
-the renderer's own `Tip`, never a native `title`. The tile has a single tooltip
-slot and what it says follows what the pointer is on: the Sidekick's name, and
-its scope where that is **Workspace**, opening **upward** because the caption is
-ellipsized at 80px and the rail drops it outright; and while the pointer is on
-the play, that marker's own sentence — `Active — in service and waiting on its
-triggers.` — opening **downward** onto the account row. One `.sidekick-tile-tooltip`
-caps both answers at 220px: a tile is 80px, a name may be 120 characters, and
-that sentence set on one line is half the window wide. The hexagon reports the
-pointer
-(`onMarkerHover`, over a transparent target the size of the marker's whole box)
-and owns the words (`HexagonMarker.description`); the rail owns the slot. The
-answer swaps both ways with no second delay and no gap. The tile's line never
-names the state: every tile in the strip is active, the play reports it, and a
-screen reader gets it from the tile's `aria-label`, which is unchanged.
-
-The strip follows the installed Grok Bot 0.44.0 pinned layout, inspected on
-2026-09-07 in `Contents/Resources/app.asar`: `index-C6zjACOA.js` and
-`index-DfPT5G9o.css`. Its 80px tiles are centered with an 8px gap, 60px
-artwork, 6px artwork-to-caption gap, 6px/4px top/bottom tile padding,
-4px horizontal tile padding, and 10px corners. Captions use 11px type,
-16px line height, and .005em tracking. Hover and selected fills use `--av-sys-color-state-hover` and
-`--av-cmp-row-background-selected`; icons use `--av-sys-color-text-on-inverse`.
-These preserve the reference proportions while following light and dark appearance. The outer 8px/12px plus inner 6px block
-padding becomes 14px/18px on our strip. One tile can grow to fit a caption
-up to 92px. The deliberate differences are one horizontally scrolling row
-(the reference wraps an auto-fit grid), lifecycle state instead of message
-state, and an indicator at bottom right as requested — the reference's dot,
-here the play the changelog below explains.
+The sidebar shows no Sidekicks. The library window is reached from the
+account menu's **Sidekicks** item, and a Channel's own Sidekicks are listed in
+its title menu. A running Sidekick still carries `SIDEKICK_RUNNING_MARKER`, the
+**play** in `success-base` cut out of its hexagon, wherever its glyph is drawn.
 
 ### Drafting in the conversation
 `sidekick_submit_draft` calls `SidekickDO.saveDefinition` under the submitting
@@ -972,7 +920,7 @@ substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 | `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
 | `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read. |
 | `apps/desktop/src/renderer/screens/automation.test.tsx` | `pnpm --filter @rally/desktop test` | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx`, `components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The strip: which Sidekicks qualify, the tile's accessible name, the play cut out of the hexagon with its own mask, and the two tooltips — the tile carrying the name and scope through `Tip` rather than a native `title`, the tile's one tooltip saying whichever part of it the pointer is on, swapping both ways with no second delay, and answering for the play even when the pointer reaches it inside the tile tooltip's own delay — that one driven on fake timers, each advance flushed on its own. |
+| `apps/desktop/src/renderer/components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The play cut out of the hexagon with its own mask, its hover target, and the sentence it reports. |
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once. |
 | `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
@@ -1122,6 +1070,23 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-10-02 — The sidebar no longer shows Sidekicks
+
+**What changed:** The Sidekick strip above the account row is gone, with its
+tiles, its **New Sidekick** slot, their tooltip and the sidebar's `automations`
+prop. The library opens from the account menu, and a Channel's Sidekicks are in
+its title menu.
+
+**Why:** The redesigned sidebar is one list of Channels under the Space pills,
+and the strip was the one thing below that list. It was asked to go so the
+sidebar reads as light as the design it follows. Nothing became unreachable:
+the account menu already opened the same library window.
+
+**Consequences:** `SIDEKICK_RUNNING_MARKER` and the hexagon marker now draw
+only where a Sidekick's glyph appears outside the sidebar. A future surface that
+wants Sidekicks in navigation should be a Space or menu entry, not a return of
+the strip's fixed slot.
 
 ### 2026-09-28 — The Sidekick library checks membership once, at authentication
 
