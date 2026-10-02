@@ -307,16 +307,14 @@ scenarios retain their names.
 
 A conversation import is created with the name the importer typed, so it is
 `settled` and the first pass never runs. Creation runs the **icon pass**
-(`chooseWorkstreamIcon`) instead, when the caller asks for it with `chooseIcon`,
-which only `openReservedImport` does. It is the same model call over the same
-imported history, through the same `rename`, with no title and `settled` on both
-sides of the fence. So the name and its status stay as they are, and the icon is
-written only where none is stored, as for any pass. The name the model also
-returns is thrown away: it is asked for because the icon is chosen against what
-the name leads with. The colour stays the id-derived one, as on every other
-conversation. When the object refuses the icon, nothing is published; otherwise
-the `workstream_renamed` event carries the title the row holds, which `rename`
-now returns, so a person's rename during the call is not undone on screen.
+(`chooseWorkstreamIcon`) instead when the caller sets `chooseIcon`, which only
+`openReservedImport` does. It is the same model call over the imported history,
+written through `rename` with no title and `settled` on both sides of the fence:
+the name and its status stay as they are, and the icon is written only where none
+is stored. The model's name is discarded, and the icon stands even when that name
+normalizes to nothing. The colour stays the id-derived one. The pass publishes no
+room event, because `workstream_renamed` carries a title and one sent after a
+person's rename would undo it; the directory projection carries the icon.
 
 ## Invariants
 
@@ -452,10 +450,9 @@ ordinary work-stream update and belongs to the object's product service.
   stream past an appearance it cannot read"*. Restore either `.parse` and both
   fail with the row stuck in `naming`.
 - The icon pass has its own cases in the same file: an imported Channel gets the
-  icon and keeps its settled name, and nothing is published when a person's
-  icon is already there. Break the first by not passing the history to the
-  model (the conversation assertion fails), the second by removing the early
-  return in `advanceTitle`. `apps/api/test-workers/session-import-run.test.ts`
+  icon from its history and keeps its settled name, and keeps the icon when the
+  model's name normalizes away. Break both by offering no icon to `rename`, the
+  second alone by dropping `iconOnly` from `generateName`. `apps/api/test-workers/session-import-run.test.ts`
   proves the wiring on real workerd: the opened Channel has the double's icon.
   Break it by passing `chooseIcon: false` from `openReservedImport`.
 - `packages/agent-harness/src/prompts.test.ts` asserts a description line for
@@ -498,22 +495,24 @@ ordinary work-stream update and belongs to the object's product service.
 ### 2026-10-02 — Imports get an icon from their history
 
 **What changed:** A Channel created by a conversation import runs an icon-only
-pass after it opens. `rename` accepts `settled` as the fence with no title, and
-returns the title the row holds.
+pass after it opens, through `rename` with `settled` as the fence and no title.
 
 **Why:** Imports carry the name the importer typed, so the first pass never
 ran and every imported Channel kept one of the twelve id-derived abstract
 marks, whatever it was about. Reusing the naming call, prompt and `rename`
 keeps one policy for generated icons; a separate import prompt would drift.
 
-**Rejected:** Letting the model pick the colour too. The colour stays on the id
-hash, which spreads Channels across the ring with no model opinion to maintain.
-Also rejected: creating imports untitled and letting the first pass name them,
-which would replace the name the importer chose.
+**Considered and rejected:** Letting the model pick the colour too; the id hash
+spreads Channels across the ring with no model opinion to maintain. Creating
+imports untitled so the first pass names them, which would replace the name the
+importer chose. Publishing `workstream_renamed` with the icon, which carries a
+title and could undo a rename that lands between the write and the event.
 
-**Consequences:** The event this pass publishes is a `workstream_renamed` with
-an unchanged title, so clients apply it as they do any naming event. A later
-change that lets this pass write anything else must keep it off the title.
+**Consequences:** The icon reaches clients only through the directory
+projection, a few seconds after the Channel opens. A change that lets this pass
+write anything else must keep it off the title.
+
+Pull request: [#1067](https://github.com/juno-ai-labs/avalon/pull/1067).
 
 ### 2026-09-18 — Keep guest Main renaming inside conversation authority
 

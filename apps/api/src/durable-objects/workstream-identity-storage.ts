@@ -258,13 +258,11 @@ export class WorkstreamIdentityStorage {
    * `docs/workstream-naming.md`; telling a generated icon from a chosen one
    * would take provenance this column does not carry.
    *
-   * The icon pass for a Channel created with its name passes `from` and `to`
-   * as `settled` with no title, which offers the icon and leaves the name and
-   * its status as they are.
+   * `settled` on both sides with no title offers the icon alone; see
+   * `docs/workstream-naming.md#prepared-history`.
    *
-   * The written icon comes back, with the title the row now holds, so the
-   * caller can publish exactly what landed rather than re-deriving it from a
-   * row that could move again.
+   * The written icon comes back so the caller can publish exactly what landed,
+   * rather than re-deriving it from a row that could move again.
    */
   rename(input: {
     title: string | null;
@@ -273,11 +271,11 @@ export class WorkstreamIdentityStorage {
     from: string;
     to: string;
     now: number;
-  }): { outcome: "renamed" | "superseded"; icon: WorkstreamIconKey | null; title: string | null } {
+  }): { outcome: "renamed" | "superseded"; icon: WorkstreamIconKey | null } {
     return this.storage.transactionSync(() => {
       const root = this.identity();
       if (!root || root.title_status !== input.from) {
-        return { outcome: "superseded" as const, icon: null, title: null };
+        return { outcome: "superseded" as const, icon: null };
       }
       // Nothing about the icon may throw between here and the `UPDATE`. The
       // title write and the `title_status` advance are in this transaction, and
@@ -315,7 +313,7 @@ export class WorkstreamIdentityStorage {
         icon === null ? null : JSON.stringify({ ...stored, icon }),
         input.now,
       );
-      return { outcome: "renamed" as const, icon, title: input.title ?? root.title };
+      return { outcome: "renamed" as const, icon };
     });
   }
 
