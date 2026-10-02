@@ -35,7 +35,11 @@ interface PendingImport {
 function endedMessage(result: SessionImportRunResult): string | null {
   if (result.kind === 'imported' || result.kind === 'cancelled') return null;
   if (result.kind === 'failed') return SESSION_IMPORT_FAILURE_COPY[result.reason];
-  if (result.kind === 'unfinished') return 'The import did not finish. Try again, or cancel.';
+  if (result.kind === 'unfinished') {
+    return result.refusal
+      ? `The import did not finish. Rally refused it: ${result.refusal}`
+      : 'The import did not finish. Try again, or cancel.';
+  }
   return result.message;
 }
 
@@ -121,10 +125,11 @@ export function BrowserImportWindow(): React.JSX.Element {
   const updateUrl = update?.sourceUrl ?? null;
   const openedUpdate = useRef<string | null>(null);
   useEffect(() => {
-    if (!updateUrl || !active || openedUpdate.current === updateUrl) return;
+    // A run drives the tab; a context that arrives during it waits for it to end.
+    if (!updateUrl || !active || run || openedUpdate.current === updateUrl) return;
     openedUpdate.current = updateUrl;
     if (active.url !== updateUrl) void command({ action: 'navigate', tabId: active.id, url: updateUrl });
-  }, [updateUrl, active, command]);
+  }, [updateUrl, active, run, command]);
 
   // Main reuses an open window and replaces its context, so a choice the new
   // Spaces no longer hold, or a Space the new context locks away, moves to the
@@ -132,10 +137,10 @@ export function BrowserImportWindow(): React.JSX.Element {
   // sheet takes a new request identity with it.
   useEffect(() => {
     const offered = context?.spaces ?? [];
-    if (spaceId === '' || offered.some((space) => space.id === spaceId)) return;
+    if (run || spaceId === '' || offered.some((space) => space.id === spaceId)) return;
     setSpaceId(offered[0]?.id ?? '');
     setPending((current) => current && { ...current, clientMessageId: crypto.randomUUID() });
-  }, [context, spaceId]);
+  }, [context, spaceId, run]);
 
   // A failure names the chat it was about; it does not follow the person to the next one.
   useEffect(() => { setFailure(null); }, [conversation?.url]);
@@ -168,8 +173,17 @@ export function BrowserImportWindow(): React.JSX.Element {
       reserved.current = null;
       if (result.kind === 'imported') {
         if (workstreamId) await bridge.reportBrowserImport({ phase: 'imported', workstreamId }).catch(() => undefined);
-        await bridge.completeBrowserImport(result.workstreamId);
-        return;
+        try {
+          await bridge.completeBrowserImport(result.workstreamId);
+          return;
+        } catch {
+          // The Channel is imported and listed; only opening it failed, so the
+          // window lets go of the page rather than holding the modal forever.
+          setRun(null);
+          setMirror(null);
+          setFailure('The conversation was imported, but Rally could not open it. Find it in your Channels.');
+          return;
+        }
       }
       if (workstreamId) void bridge.reportBrowserImport({ phase: 'failed', workstreamId }).catch(() => undefined);
       setRun(null);

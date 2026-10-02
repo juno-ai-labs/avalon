@@ -25,9 +25,25 @@ import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
 import { bootstrapConversationChildRuntime, provisionWorkstreamObject } from "./workstream-runtime-database";
 
-/** The create key's stand-in for history the reservation does not have yet. */
-function importIdentityHash(clientMessageId: string): string {
-  return `session-import:${clientMessageId}`;
+/**
+ * The create key's stand-in for history the reservation does not have yet:
+ * the key and the conversation the person opened, so `complete` can only
+ * open the reservation with the conversation it was reserved for.
+ */
+function importIdentityHash(clientMessageId: string, sourceUrl: string): string {
+  return `session-import:${clientMessageId}:${sourceUrl}`;
+}
+
+/**
+ * The agent child of a new import, derived from its reservation: a replayed
+ * start names the same child, finds it, and launches nothing new.
+ */
+async function importChildId(workstreamId: string, clientMessageId: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${workstreamId}:${clientMessageId}`)));
+  digest[6] = (digest[6]! & 0x0f) | 0x80; // version 8: a name-derived UUID
+  digest[8] = (digest[8]! & 0x3f) | 0x80; // RFC 9562 variant
+  const hex = [...digest.subarray(0, 16)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 /**
@@ -63,15 +79,70 @@ export class SessionImportRunService {
     };
   }
 
-  /** Reserve a new Channel and start the agent that will fill it. */
+  private parent() {
+    const workspaceId = this.auth.workspaceId;
+    return durableObjectStubForWorkspace(
+      this.env, this.env.WORKSPACE_DOS, workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)),
+    );
+  }
+
+  /**
+   * Reserve a new Channel and start the agent that will fill it. Replaying
+   * the same create key returns the run it started; a launch that fails
+   * retires the reservation, so no listed Channel is left that nothing fills.
+   */
   async start(input: { sourceUrl: string; title: string; spaceIds: readonly string[]; clientMessageId: string }) {
     const source = browserConversationSource(input.sourceUrl);
     const { workstreamId } = await this.creation().reserveImport(
       this.channelInput(input),
-      importIdentityHash(input.clientMessageId),
+      importIdentityHash(input.clientMessageId, source.url),
     );
-    const substreamId = await this.launch(workstreamId, source, []);
-    return { workstreamId, substreamId };
+    const childId = await importChildId(workstreamId, input.clientMessageId);
+    const parent = await this.parent();
+    if (await parent.ownsHiddenChild({ workspaceId: this.auth.workspaceId, parentId: workstreamId, substreamId: childId, userId: this.auth.userId })) {
+      return { workstreamId, substreamId: childId };
+    }
+    try {
+      await this.launch(workstreamId, source, [], childId);
+    } catch (error) {
+      await this.retire(workstreamId, input.clientMessageId).catch(() => undefined);
+      throw error;
+    }
+    return { workstreamId, substreamId: childId };
+  }
+
+  /** Stop the caller's earlier import agents on a Channel, so one runs at a time. */
+  private async stopEarlierImports(workstreamId: string): Promise<void> {
+    const workspaceId = this.auth.workspaceId;
+    const parent = await this.parent();
+    const earlier = await parent.hiddenChildren({ workspaceId, parentId: workstreamId, userId: this.auth.userId });
+    await Promise.all(earlier.map(async (substreamId) => {
+      const child = await durableObjectStubForWorkspace(
+        this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
+        conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(workstreamId), asSubstreamId(substreamId)),
+      );
+      await child.stopOwnedAgent();
+    }));
+  }
+
+  /** Retire a new import's create key and archive its Channel, which never opened. */
+  private async retire(workstreamId: string, clientMessageId: string): Promise<void> {
+    const workspaceId = this.auth.workspaceId;
+    const retired = await this.env.DB.prepare(
+      `UPDATE workstream_create_receipts
+          SET state = 'failed', error_code = 'session_import_discarded', updated_at = ?
+        WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id = ?
+          AND workstream_id = ? AND state IN ('reserved', 'failed')
+        RETURNING workstream_id`,
+    ).bind(new Date().toISOString(), workspaceId, this.auth.userId, clientMessageId, workstreamId)
+      .first<{ workstream_id: string }>();
+    if (retired?.workstream_id !== workstreamId) {
+      throw new ApiError(409, "session_import_already_open", "This channel has already opened; archive it instead");
+    }
+    const result = await (await this.parent()).discardReservedMain({ workspaceId, parentId: workstreamId, userId: this.auth.userId });
+    if (result.status === "refused") {
+      throw new ApiError(409, `session_import_discard_${result.code}`, "This channel cannot be discarded");
+    }
   }
 
   /** Start the agent again on a Channel imported before, keeping its recorded messages first. */
@@ -81,7 +152,9 @@ export class SessionImportRunService {
     if (!recorded?.url) throw new ApiError(409, "session_import_source_missing", "This channel has no updateable source session");
     const checkpoint = await client.importedSessionCheckpoint();
     const source = browserConversationSource(recorded.url);
-    const substreamId = await this.launch(workstreamId, source, checkpoint.map((entry) => entry.sourceMessageId));
+    await this.stopEarlierImports(workstreamId);
+    const substreamId = uuidV7(Date.now());
+    await this.launch(workstreamId, source, checkpoint.map((entry) => entry.sourceMessageId), substreamId);
     return { workstreamId, substreamId };
   }
 
@@ -95,10 +168,10 @@ export class SessionImportRunService {
     workstreamId: string,
     source: { provider: "chatgpt" | "claude"; url: string },
     recordedMessageIds: readonly string[],
+    childId: string,
   ): Promise<string> {
     const workspaceId = this.auth.workspaceId;
     const userId = asUserId(this.auth.userId);
-    const childId = uuidV7(Date.now());
     const parent = await durableObjectStubForWorkspace(
       this.env, this.env.WORKSPACE_DOS, workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)),
     );
@@ -188,11 +261,21 @@ export class SessionImportRunService {
   /** Initialize a reserved Channel with what the agent read. */
   async complete(workstreamId: string, body: SessionImportRequest) {
     assertImportIdentity(body);
+    if (!body.source.url) throw new ApiError(422, "session_import_source_missing", "The import names no source conversation");
+    // Before anything is opened: a key that belongs to another Channel must
+    // not initialize that Channel and then report a mismatch.
+    const receipt = await this.env.DB.prepare(
+      `SELECT workstream_id FROM workstream_create_receipts
+        WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id = ?`,
+    ).bind(this.auth.workspaceId, this.auth.userId, body.clientMessageId).first<{ workstream_id: string }>();
+    if (receipt?.workstream_id !== workstreamId) {
+      throw new ApiError(409, "session_import_channel_mismatch", "This import key belongs to another channel");
+    }
     const conversation = await prepareSessionImport(this.env, this.auth, body, body.clientMessageId);
     const created = await this.creation().openReservedImport(
       this.channelInput({ title: body.title, clientMessageId: body.clientMessageId, spaceIds: body.spaceIds }),
       conversation,
-      importIdentityHash(body.clientMessageId),
+      importIdentityHash(body.clientMessageId, browserConversationSource(body.source.url).url),
     );
     if (created.workstream.id !== workstreamId) {
       throw new ApiError(409, "session_import_channel_mismatch", "This import key belongs to another channel");
@@ -208,30 +291,20 @@ export class SessionImportRunService {
    */
   async discard(input: { workstreamId: string; substreamId: string; clientMessageId: string | null }) {
     const workspaceId = this.auth.workspaceId;
+    const parent = await this.parent();
+    // Authorized before anything is stopped: only the hidden child the caller
+    // reserved for an import. Any other conversation's agent — a Channel's
+    // own, a Breakout's, another person's import — is out of reach here.
+    if (!await parent.ownsHiddenChild({ workspaceId, parentId: input.workstreamId, substreamId: input.substreamId, userId: this.auth.userId })) {
+      throw new ApiError(404, "session_import_not_found", "No import of yours runs in that conversation");
+    }
     const child = await durableObjectStubForWorkspace(
       this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
       conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asWorkstreamId(input.workstreamId), asSubstreamId(input.substreamId)),
     );
     await child.stopOwnedAgent();
     if (input.clientMessageId === null) return { discarded: false };
-    const retired = await this.env.DB.prepare(
-      `UPDATE workstream_create_receipts
-          SET state = 'failed', error_code = 'session_import_discarded', updated_at = ?
-        WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id = ?
-          AND workstream_id = ? AND state IN ('reserved', 'failed')
-        RETURNING workstream_id`,
-    ).bind(new Date().toISOString(), workspaceId, this.auth.userId, input.clientMessageId, input.workstreamId)
-      .first<{ workstream_id: string }>();
-    if (retired?.workstream_id !== input.workstreamId) {
-      throw new ApiError(409, "session_import_already_open", "This channel has already opened; archive it instead");
-    }
-    const parent = await durableObjectStubForWorkspace(
-      this.env, this.env.WORKSPACE_DOS, workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)),
-    );
-    const result = await parent.discardReservedMain({ workspaceId, parentId: input.workstreamId, userId: this.auth.userId });
-    if (result.status === "refused") {
-      throw new ApiError(409, `session_import_discard_${result.code}`, "This channel cannot be discarded");
-    }
+    await this.retire(input.workstreamId, input.clientMessageId);
     return { discarded: true };
   }
 }

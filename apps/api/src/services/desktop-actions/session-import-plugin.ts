@@ -17,7 +17,7 @@ const FinishArgumentsSchema = z.strictObject({
   messages: z.string().min(1).describe("The handle rally.store returned for the stored messages array."),
 });
 const FailArgumentsSchema = z.strictObject({
-  reason: SessionImportFailureReasonSchema.describe("sign_in_required: the page asks the person to sign in. not_a_conversation: the tab does not show a conversation. page_unavailable: the page will not load or refuses access."),
+  reason: SessionImportFailureReasonSchema.describe("sign_in_required: the page asks the person to sign in. not_a_conversation: the tab does not show a conversation. page_unavailable: the page will not load or refuses access. unreadable: the conversation shows, but its messages cannot be read with their ids, or import_finish refuses for a reason the stored messages cannot fix."),
 });
 
 /**

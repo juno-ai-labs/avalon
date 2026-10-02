@@ -169,7 +169,7 @@ import { WorkstreamObjectStore } from "./workstream-object-storage";
 import type { SequencedSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
-import { DESKTOP_ACTION_MAX_OUTCOME_BYTES, WorkstreamDesktopActionStorage } from "./workstream-desktop-action-storage";
+import { WorkstreamDesktopActionStorage } from "./workstream-desktop-action-storage";
 import type { DesktopAction, DesktopActionOutcome } from "@rally/contracts/desktop-actions";
 import {
   type ToolReceiptOperationRequest,
@@ -6193,22 +6193,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.sendError(socket, "desktop_action_forbidden", "Only the person this conversation works for can answer its desktop actions.");
       return;
     }
-    // Every answer is recorded before it is used, so one the row cannot hold
-    // becomes a failure the model can act on rather than a write that throws.
-    const outcome: DesktopActionOutcome = textEncoder.encode(JSON.stringify(answered)).byteLength > DESKTOP_ACTION_MAX_OUTCOME_BYTES
-      ? { ok: false, code: "result_too_large", message: `The answer is over ${DESKTOP_ACTION_MAX_OUTCOME_BYTES} bytes.` }
-      : answered;
+    // Every answer is recorded before it is used; one the row cannot hold is
+    // recorded as a failure the model can act on rather than a write that throws.
     const result = this.desktopActions.answer({
       id: actionId,
-      outcome,
+      outcome: answered,
       answeredByUserId: attachment.userId,
       now: Date.now(),
     });
-    if (result === "unknown") {
+    if (result.status === "unknown") {
       this.sendError(socket, "desktop_action_not_found", "No desktop action has that id.");
       return;
     }
-    if (result === "answered") this.desktopActionWaiters.get(actionId)?.(outcome);
+    if (result.status === "answered") this.desktopActionWaiters.get(actionId)?.(result.outcome);
   }
 
   /**

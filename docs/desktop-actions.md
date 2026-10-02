@@ -6,8 +6,11 @@ look at it, give it input, load a file through it. The loop never holds a
 `WebContents` and never reaches the desktop any other way; it records a typed
 request, the conversation's room publishes it on the socket the desktop already
 holds, and the desktop answers it. The conversation import agent
-([session import](session-import.md)) is the first user; the protocol knows
-nothing about imports.
+([session import](session-import.md)) is the first user. The transport — the
+durable record, the socket frames, the waiter — knows nothing about imports;
+the action union in `@rally/contracts` does carry the importer's
+`session_import.finish` / `session_import.fail` kinds and its stored-messages
+schema, handled by the import window's own handlers.
 
 ## Where the code lives
 
@@ -91,9 +94,12 @@ frame — the room has the answer then — before it closes its socket.
   Otherwise an answer could arrive for an action the object cannot match, or a
   repeated answer could change a result a tool already used. Guard: the
   eviction test in `session-import-run.test.ts` (Workers).
-- **Every answer is stored before it is used**, so one larger than a SQLite row
-  (2 MB, the platform's limit) is turned into `result_too_large` instead of a
-  failed write. Guard: verified by reading, no automated test.
+- **Every answer is stored before it is used**, in the row of the action it
+  answers, so one that would take the row past `DESKTOP_ACTION_MAX_ROW_BYTES`
+  (the platform's 2 MB, less what the action itself holds) is recorded as
+  `result_too_large` instead of a failed write. A pending row this Worker can
+  no longer parse is left out of what a subscriber is offered, rather than
+  failing every subscribe. Guard: `desktop-action-storage.test.ts` (Workers).
 - **Stored bytes stay on the desktop.** The model and the API see handles.
   Otherwise a long conversation would be re-emitted as model output, slowly and
   possibly altered.
@@ -147,8 +153,8 @@ Page content is untrusted, and so is anything the model writes in reaction to
 it. The model can run script in a page the person is signed in to — that is the
 capability — so the boundary is around the tab: one tab, the work's own sites,
 no other tab and no DevTools passthrough. There is no network egress filter on
-the page; a decision recorded in [session import](session-import.md)'s
-changelog. Page script runs in the page, never in Rally's renderer or main
+the page, and outcomes — network bodies included — are not redacted; both are
+recorded in this document's changelog. Page script runs in the page, never in Rally's renderer or main
 process, and the desktop validates every action and every stored value it
 hands on.
 
@@ -156,26 +162,38 @@ hands on.
 
 ### 2026-10-01 — Introduce desktop actions for the conversation importer
 
-[Embedded browser](embedded-browser.md) planned a typed desktop-action request
-and result on the existing browser command path; the conversation importer is
-what built it. It runs in the conversation's own `SubstreamAgent` and socket
-rather than a new object or a WorkspaceDO relay, because the agent loop is
-already there and the importing desktop already holds that socket. The wait was
-first designed elicitation-style — halt the run, admit the answer as new input,
-resume — and rejected for a durable row plus an in-memory wait: one activation
-per browser step would have made an import of dozens of steps slow, and the row
-alone gives eviction safety through the existing tool re-entry. A future
-consumer should keep the creator-only answer rule unless it states whose desktop
-may act for its conversation.
+**What changed:** An agent loop on the API can ask the conversation creator's
+desktop to act in its browser: a durable `desktop_actions` row, a
+`desktop_action_requested` frame on the conversation's socket, an in-memory
+wait, and an answer the desktop sends back. The browser tools include a network
+panel (`browser.network_list` / `browser.network_read`) over responses the tab
+recorded. A desktop re-sends a stored answer to a re-offered action.
 
-The browser's network panel became two actions, and answers became re-sendable.
+**Why:** [Embedded browser](embedded-browser.md) planned this boundary; the
+conversation importer needed it to read a page the person is signed in to.
 Agents spent most of an import reconstructing the request that had loaded a
 conversation — a token here, a request body there — when the page had already
-received the response; reading recorded responses removes that step for every
-site at once, and keeping Fetch and XHR bodies lets an agent read one again
-after Chromium has let it go. Answers changed after ChatGPT imports lost their
-finish answer: the window sent it and closed its socket at once, a send that
-met the socket between connections was dropped, and the re-offered action was
-ignored as already handled, so the tool waited out its timeout. Re-sending a
-stored answer was chosen over making send itself durable, because the room's
-re-offer already exists to recover exactly this.
+received the response, so reading recorded responses removes that step for
+every site at once. ChatGPT imports lost their finish answer when the window
+sent it into a socket between connections and then ignored the room's re-offer
+as already handled; the tool waited out its timeout.
+
+**Considered and rejected:** An elicitation-style wait — halt the run, admit
+the answer as new input, resume — which costs one activation per browser step
+and makes an import of dozens of steps slow; the durable row plus the existing
+tool re-entry gives the same eviction safety. A new object or a WorkspaceDO
+relay, when the agent loop and the desktop's socket are already in the
+conversation's `SubstreamAgent`. Making send itself durable, when the room's
+re-offer exists to recover exactly this. Redacting outcomes or network bodies,
+and an egress filter on the page: by product decision nothing is redacted — the
+page already received what it shows, and the model reads it as it reads any
+page content; the boundary is the one tab on the work's own sites.
+
+**Consequences:** Only the conversation's creator answers; a future consumer
+keeps that rule unless it states whose desktop may act for its conversation. A
+consumer that ends its work on an answer must wait for the tool's
+`tool_completed` frame before closing its socket. Whatever a tab's page
+received can reach the model, so a consumer must choose its sites with that in
+mind.
+
+Shipped in #1058.

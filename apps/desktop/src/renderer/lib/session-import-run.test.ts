@@ -27,6 +27,21 @@ vi.mock('./realtime-socket', () => ({
   },
 }));
 
+/** A feed frame as the room sends it: sequenced, timestamped, and whole. */
+function wire(type: string, fields: Record<string, unknown>): string {
+  return JSON.stringify({ type, sequence: 1, occurredAt: '2026-10-01T00:00:00.000Z', ...fields });
+}
+
+/** A tool row as the harness reports it; only what a test names differs. */
+function invocation(fields: Record<string, unknown>) {
+  return {
+    id: '01900000-0000-7000-8000-000000000001', harnessRunId: '01900000-0000-7000-8000-000000000002',
+    toolCallId: 'c0', toolName: 'browser_evaluate', activityName: null, connectionId: null, plugin: null,
+    status: 'completed', inputSummary: '', outputSummary: null, startedAt: null, completedAt: null, error: null,
+    ...fields,
+  };
+}
+
 const source = { provider: 'claude' as const, url: 'https://claude.ai/chat/4f2b7c1e-9a3d-4e8b-b1c2-0d9e8f7a6b5c', sessionId: '4f2b7c1e-9a3d-4e8b-b1c2-0d9e8f7a6b5c' };
 
 function stored(messages: unknown) {
@@ -67,11 +82,14 @@ describe('assembling an import from what the agent stored', () => {
 });
 
 describe('running an import', () => {
-  function started(onSteps?: (steps: readonly SessionImportStep[]) => void) {
+  function started(
+    onSteps?: (steps: readonly SessionImportStep[]) => void,
+    options: { reservation?: Promise<{ workstreamId: string; substreamId: string }>; onStarted?: (run: { workstreamId: string }) => void } = {},
+  ) {
     const discards: string[] = [];
     const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
     const api = {
-      startSessionImport: async () => ({ workstreamId: 'w1', substreamId: 's1' }),
+      startSessionImport: () => options.reservation ?? Promise.resolve({ workstreamId: 'w1', substreamId: 's1' }),
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
       discardSessionImport: async (workstreamId: string) => { discards.push(workstreamId); },
       startSessionImportUpdate: unused,
@@ -84,6 +102,7 @@ describe('running an import', () => {
       api, bridge, tabId: 't1', sourceUrl: source.url,
       mode: { kind: 'create', title: 'Garden plan', spaceIds: [], clientMessageId: 'c1' },
       ...(onSteps ? { onSteps } : {}),
+      ...(options.onStarted ? { onStarted: options.onStarted } : {}),
     });
     return { run, discards };
   }
@@ -94,10 +113,10 @@ describe('running an import', () => {
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
     const socket = sockets[0]!;
     socket.emit('open');
-    socket.emit('message', JSON.stringify({ type: 'desktop_action_requested', request: { id: 'a1', action: { kind: 'session_import.fail', reason: 'page_unavailable' } } }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.fail', reason: 'page_unavailable' } } }));
     await vi.waitFor(() => expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action']));
     // The room has the answer once the tool completes; only then does the run end.
-    socket.emit('message', JSON.stringify({ type: 'tool_completed', invocation: { toolCallId: 'c9', toolName: 'import_fail', status: 'completed' } }));
+    socket.emit('message', wire('tool_completed', { invocation: invocation({ toolCallId: 'c9', toolName: 'import_fail', status: 'completed' }) }));
     await expect(run.done).resolves.toEqual({ kind: 'failed', reason: 'page_unavailable' });
     expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action', 'close']);
     await vi.waitFor(() => expect(discards).toEqual(['w1']));
@@ -109,7 +128,7 @@ describe('running an import', () => {
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
     const socket = sockets[0]!;
     socket.emit('open');
-    const request = JSON.stringify({ type: 'desktop_action_requested', request: { id: 'a1', action: { kind: 'session_import.fail', reason: 'page_unavailable' } } });
+    const request = wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.fail', reason: 'page_unavailable' } } });
     socket.dropNextSend = true;
     socket.emit('message', request);
     await new Promise((resolve) => { setTimeout(resolve, 20); });
@@ -117,7 +136,7 @@ describe('running an import', () => {
     // The room never got it, so it offers the action again; the same answer goes.
     socket.emit('message', request);
     await vi.waitFor(() => expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action']));
-    socket.emit('message', JSON.stringify({ type: 'tool_completed', invocation: { toolCallId: 'c9', toolName: 'import_fail', status: 'completed' } }));
+    socket.emit('message', wire('tool_completed', { invocation: invocation({ toolCallId: 'c9', toolName: 'import_fail', status: 'completed' }) }));
     await expect(run.done).resolves.toEqual({ kind: 'failed', reason: 'page_unavailable' });
   });
 
@@ -128,7 +147,7 @@ describe('running an import', () => {
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
     const socket = sockets[0]!;
     socket.emit('open');
-    const frame = (type: string, invocation: Record<string, unknown>) => socket.emit('message', JSON.stringify({ type, invocation }));
+    const frame = (type: string, fields: Record<string, unknown>) => socket.emit('message', wire(type, { invocation: invocation(fields) }));
     frame('tool_started', { toolCallId: 'c1', activityName: 'Reading the page outline', status: 'started' });
     frame('tool_completed', { toolCallId: 'c1', activityName: 'Reading the page outline', outputSummary: 'Read the page outline', status: 'completed' });
     frame('tool_started', { toolCallId: 'c2', activityName: null, status: 'started' });
@@ -149,7 +168,7 @@ describe('running an import', () => {
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
     const socket = sockets[0]!;
     socket.emit('open');
-    const status = (value: string) => socket.emit('message', JSON.stringify({ type: 'harness_status_changed', status: value }));
+    const status = (value: string) => socket.emit('message', wire('harness_status_changed', { status: value }));
     status('idle');
     const pending = Symbol('pending');
     await expect(Promise.race([run.done, new Promise((resolve) => { setTimeout(() => resolve(pending), 50); })])).resolves.toBe(pending);
@@ -166,5 +185,95 @@ describe('running an import', () => {
     await run.cancel();
     await expect(run.done).resolves.toEqual({ kind: 'cancelled' });
     expect(discards).toEqual(['w1']);
+  });
+
+  it('never reports a Channel whose import was cancelled before its reservation came back, and discards it', async () => {
+    sockets.length = 0;
+    let reserve!: (value: { workstreamId: string; substreamId: string }) => void;
+    const reported: string[] = [];
+    const { run, discards } = started(undefined, {
+      reservation: new Promise((resolve) => { reserve = resolve; }),
+      onStarted: ({ workstreamId }) => reported.push(workstreamId),
+    });
+    await run.cancel();
+    await expect(run.done).resolves.toEqual({ kind: 'cancelled' });
+    reserve({ workstreamId: 'w1', substreamId: 's1' });
+    await vi.waitFor(() => expect(discards).toEqual(['w1']));
+    expect(reported).toEqual([]);
+    expect(sockets).toHaveLength(0);
+  });
+
+  it('keeps an import that opened its Channel as imported when the agent gives up afterwards', async () => {
+    sockets.length = 0;
+    const discards: string[] = [];
+    const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
+    const api = {
+      startSessionImport: async () => ({ workstreamId: 'w1', substreamId: 's1' }),
+      getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
+      discardSessionImport: async (workstreamId: string) => { discards.push(workstreamId); },
+      completeSessionImport: async () => 'w1',
+      startSessionImportUpdate: unused,
+      updateImportedSession: unused,
+      importedSessionSource: unused,
+    } satisfies SessionImportApi;
+    const messages = [{ role: 'user', text: 'Plan the beds' }, { role: 'assistant', text: 'Two rows of tomatoes.' }]
+      .map((message, at) => ({ ...message, sourceMessageId: `m${at}` }));
+    // The page's script stores the messages it read, as `rally.store` reports them.
+    const data = JSON.stringify(messages);
+    const bridge = {
+      getEmbeddedBrowserState: async () => ({ tabs: [{ id: 't1', url: source.url, title: 'Garden plan' }] }),
+      commandEmbeddedBrowser: async () => ({ kind: 'value', value: { ok: true, value: 1, url: source.url, title: 'Garden plan', stored: [
+        { handle: 'messages', kind: 'json', name: 'messages', mimeType: 'application/json', size: data.length, data },
+      ] } }),
+    } as never;
+    const run = startSessionImportRun({
+      api, bridge, tabId: 't1', sourceUrl: source.url,
+      mode: { kind: 'create', title: 'Garden plan', spaceIds: [], clientMessageId: 'c1' },
+    });
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit('open');
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a0', action: { kind: 'browser.evaluate', script: 'return 1' } } }));
+    await vi.waitFor(() => expect(socket.log).toContain('send answer_desktop_action'));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.finish', title: 'Garden plan', messages: 'messages' } } }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a2', action: { kind: 'session_import.fail', reason: 'page_unavailable' } } }));
+    await vi.waitFor(() => expect(socket.log.filter((entry) => entry === 'send answer_desktop_action')).toHaveLength(3));
+    socket.emit('message', wire('tool_completed', { invocation: invocation({ toolCallId: 'c9', toolName: 'import_fail', status: 'completed' }) }));
+    await expect(run.done).resolves.toEqual({ kind: 'imported', workstreamId: 'w1' });
+    expect(discards).toEqual([]);
+  });
+
+  it('ends a run whose finish Rally refused with Rally’s last reason', async () => {
+    sockets.length = 0;
+    const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
+    const api = {
+      startSessionImport: async () => ({ workstreamId: 'w1', substreamId: 's1' }),
+      getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
+      discardSessionImport: async () => undefined,
+      completeSessionImport: async () => { throw new Error('This import key belongs to another channel'); },
+      startSessionImportUpdate: unused,
+      updateImportedSession: unused,
+      importedSessionSource: unused,
+    } satisfies SessionImportApi;
+    const data = JSON.stringify([{ role: 'user', text: 'Plan the beds', sourceMessageId: 'm0' }, { role: 'assistant', text: 'Two rows.', sourceMessageId: 'm1' }]);
+    const bridge = {
+      getEmbeddedBrowserState: async () => ({ tabs: [{ id: 't1', url: source.url, title: 'Garden plan' }] }),
+      commandEmbeddedBrowser: async () => ({ kind: 'value', value: { ok: true, value: 1, url: source.url, title: 'Garden plan', stored: [
+        { handle: 'messages', kind: 'json', name: 'messages', mimeType: 'application/json', size: data.length, data },
+      ] } }),
+    } as never;
+    const run = startSessionImportRun({
+      api, bridge, tabId: 't1', sourceUrl: source.url,
+      mode: { kind: 'create', title: 'Garden plan', spaceIds: [], clientMessageId: 'c1' },
+    });
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit('open');
+    socket.emit('message', wire('harness_status_changed', { status: 'running' }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a0', action: { kind: 'browser.evaluate', script: 'return 1' } } }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.finish', title: 'Garden plan', messages: 'messages' } } }));
+    await vi.waitFor(() => expect(socket.log.filter((entry) => entry === 'send answer_desktop_action')).toHaveLength(2));
+    socket.emit('message', wire('harness_status_changed', { status: 'completed' }));
+    await expect(run.done).resolves.toEqual({ kind: 'unfinished', refusal: 'This import key belongs to another channel' });
   });
 });

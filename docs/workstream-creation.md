@@ -156,11 +156,16 @@ Organization rejects (closing that socket for good) for a Channel it does not
 list yet.
 
 A create made in another window lists its row here the same way. Browser
-import does: the import window mints the id and tells main, which relays it to
-this window as `browser-import:progress`; `BrowserImportProgress` lists the row
-with `pendingOrigin: 'import'`, opens it on "Importing conversation…", and
-confirms it without a row when the import lands, or discards it and goes back
-when the import fails. See [session import](session-import.md).
+import does: the API reserves the Channel (`reserveImport`) and returns its id
+to the import window, which tells main, which relays it to this window as
+`browser-import:progress`; `BrowserImportProgress` lists the row with
+`pendingOrigin: 'import'`, opens it on "Importing conversation…", and confirms
+it without a row when the import lands, or discards it and goes back when the
+import fails. An import cancelled before its reservation comes back is never
+reported. A reservation that never opens has its create receipt set `failed` —
+by the import's discard, or by the import run's end when no discard arrived —
+and is archived; a `failed` receipt is never reused, and opening one is refused
+`409 workstream_create_discarded`. See [session import](session-import.md).
 
 The server claims the id with the create receipt, in one statement, only if no
 conversation already has it: the receipt's unique id covers receipt-path

@@ -26,9 +26,9 @@ import { useOpenRouterDouble, type ProviderCall } from "./helpers/openrouter-dou
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000cc0");
-const USER_ID = asUserId("00000000-0000-7000-8000-000000000cc1");
-const SESSION_ID = "00000000-0000-7000-8000-000000000cc2";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000f20");
+const USER_ID = asUserId("00000000-0000-7000-8000-000000000f21");
+const SESSION_ID = "00000000-0000-7000-8000-000000000f22";
 const CONVERSATION_ID = "0a1b2c3d-0000-4000-8000-00000000c0de";
 const SOURCE_URL = `https://chatgpt.com/c/${CONVERSATION_ID}`;
 
@@ -240,6 +240,49 @@ describe("a conversation import run", () => {
     });
     expect(admission.authorized).toBe(false);
   });
+
+  it("refuses to discard any conversation but the caller's own import, and leaves its agent running", async () => {
+    const spaceId = await personalSpace();
+    const run = await new SessionImportRunService(creationEnv(), AUTH)
+      .start({ sourceUrl: SOURCE_URL, title: "Kept", spaceIds: [spaceId], clientMessageId: crypto.randomUUID() });
+    const stopRequested = () => runInDurableObject(child(run.workstreamId, run.substreamId), (_instance, state) =>
+      state.storage.sql.exec<{ stop_requested_at: number | null }>(`SELECT stop_requested_at FROM substream_loops`).one().stop_requested_at);
+    // Another member of the Organization, naming the import's own child.
+    const other = new SessionImportRunService(creationEnv(), { ...AUTH, userId: asUserId("00000000-0000-7000-8000-000000000f23") });
+    await expect(other.discard({ workstreamId: run.workstreamId, substreamId: run.substreamId, clientMessageId: null }))
+      .rejects.toMatchObject({ code: "session_import_not_found" });
+    // The creator, naming the Channel's main conversation instead of the import.
+    await expect(new SessionImportRunService(creationEnv(), AUTH).discard({ workstreamId: run.workstreamId, substreamId: "0", clientMessageId: null }))
+      .rejects.toMatchObject({ code: "session_import_not_found" });
+    expect(await stopRequested()).toBeNull();
+  }, 60_000);
+
+  it("archives a new Channel its run ended without opening, with no discard from the desktop", async () => {
+    const spaceId = await personalSpace();
+    const clientMessageId = crypto.randomUUID();
+    const service = new SessionImportRunService(creationEnv(), AUTH);
+    const run = await service.start({ sourceUrl: SOURCE_URL, title: "Closed window", spaceIds: [spaceId], clientMessageId });
+    const agent = child(run.workstreamId, run.substreamId);
+    const desktop = await openDesktop(run.workstreamId, run.substreamId, 1);
+    const alarm = runDurableObjectAlarm(agent);
+    const evaluate = await desktop.nextAction("browser.evaluate");
+    desktop.answer(evaluate.id, { ok: true, result: { url: SOURCE_URL, title: "t", value: 1, stored: [] } });
+    // The finish is refused and nothing completes the import; the window is gone.
+    const finish = await desktop.nextAction("session_import.finish");
+    desktop.answer(finish.id, { ok: false, code: "import_rejected", message: "Rally refused the import." });
+    desktop.socket.close();
+    await alarm;
+    await expect.poll(() => runInDurableObject(agent, (_instance, state) =>
+      state.storage.sql.exec<{ status: string }>(`SELECT status FROM runs`).one().status), { timeout: 10_000 }).toBe("completed");
+
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ archived_at: number | null }>(
+      `SELECT archived_at FROM channels WHERE workstream_id = ?`, run.workstreamId).one().archived_at)).not.toBeNull();
+    await expect(service.complete(run.workstreamId, {
+      title: "Closed window", clientMessageId, spaceIds: [spaceId],
+      source: { provider: "chatgpt", url: SOURCE_URL, sessionId: CONVERSATION_ID },
+      content: { messages: [{ role: "user", text: "late", sourceMessageId: "m1" }] },
+    })).rejects.toMatchObject({ code: "workstream_create_discarded" });
+  }, 60_000);
 
   it("discarding a Channel that never opened archives it and retires its create key", async () => {
     const spaceId = await personalSpace();

@@ -583,14 +583,24 @@ becomes product-state repair authority.
 
 ### 2026-10-01 — Count the provider's charge on a bring-your-own-key account
 
-Every model call made with a bring-your-own-key OpenRouter key recorded a cost
-of 0: OpenRouter reported its own fee, which is zero, in `usage.cost`, and the
-provider's charge in `cost_details.upstream_inference_cost`, which the usage
-record dropped. Local development runs on such a key, so the column read zero
-for every model — the failure the paragraph above warns about, reached from a
-different direction. Chat usage now adds the two (`openRouterCallCostUsd`);
-reading `upstream_inference_cost` alone was rejected because a key that is not
-bring-your-own reports the same charge there and would count it twice.
+**What changed:** Chat usage on OpenRouter records `usage.cost` plus
+`cost_details.upstream_inference_cost` (`openRouterCallCostUsd`).
+
+**Why:** Every model call made with a bring-your-own-key OpenRouter key
+recorded a cost of 0: OpenRouter reports its own fee, which is zero, in
+`usage.cost`, and the provider's charge in `upstream_inference_cost`, which the
+usage record dropped. Local development runs on such a key, so the column read
+zero for every model — the failure the paragraph above warns about, reached
+from a different direction.
+
+**Considered and rejected:** Reading `upstream_inference_cost` alone, which a
+key that is not bring-your-own also reports and would count twice.
+
+**Consequences:** Embeddings still record OpenRouter's fee alone, because the
+SDK's embeddings usage carries neither field; a bring-your-own-key account
+under-reports them.
+
+Shipped in #1058.
 
 ### 2026-09-19 — Ask OpenRouter what a call cost, and record it for structured calls too
 

@@ -1,22 +1,30 @@
+import { z } from 'zod';
 import { MAX_STORED_FILE_BYTES } from './store';
+
+const PageStoredSchema = z.object({
+  handle: z.string().min(1),
+  kind: z.enum(['file', 'json']),
+  name: z.string(),
+  mimeType: z.string(),
+  size: z.number().int().nonnegative(),
+  data: z.string(),
+});
 
 /**
  * What page script answers. Electron replaces an error thrown in page script
  * with a generic message, so every outcome comes back as a value: the script's
  * own error text included, which is what lets the agent fix its script.
+ *
+ * Parsed, not cast: the script runs in the page's world, so the page's own
+ * code can shape what comes back.
  */
-export type PageScriptOutcome =
-  | { ok: true; value: unknown; stored: PageStored[]; url: string; title: string }
-  | { ok: false; code: 'script_error' | 'value_not_serializable' | 'file_too_large'; message: string };
+export const PageScriptOutcomeSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), value: z.unknown(), stored: z.array(PageStoredSchema), url: z.string(), title: z.string() }),
+  z.object({ ok: z.literal(false), code: z.enum(['script_error', 'value_not_serializable', 'file_too_large']), message: z.string() }),
+]);
 
-export interface PageStored {
-  handle: string;
-  kind: 'file' | 'json';
-  name: string;
-  mimeType: string;
-  size: number;
-  data: string;
-}
+export type PageScriptOutcome = z.infer<typeof PageScriptOutcomeSchema>;
+export type PageStored = z.infer<typeof PageStoredSchema>;
 
 /**
  * Wrap an agent's script as one page-script expression.

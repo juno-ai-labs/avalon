@@ -1367,7 +1367,7 @@ export class HostedParent {
       // one, and the desktop that answers its browser actions is theirs.
       // A Breakout being prepared is also `reserved`, and stays closed until
       // it is ready; only a hidden child, which has no preparation, admits.
-      const reservedFor = child?.status === "reserved" && child.preparing === 0
+      const reservedFor = child?.status === "reserved" && !child.preparing
         && child.created_by_user_id !== null && child.created_by_user_id === request.userId;
       return ConversationParentAuthorizeViewerResultSchema.parse({
         authorized: (child?.status === "ready" && child.version !== null) || reservedFor,
@@ -1457,6 +1457,40 @@ export class HostedParent {
       Date.now(), this.parentId, input.substreamId, input.createdByUserId,
     );
     return reserved;
+  }
+
+  /**
+   * Whether `substreamId` is a hidden child of this parent that `userId`
+   * reserved: the one kind of conversation whose agent its creator may stop
+   * by id. The main conversation, a Breakout (being prepared or ready) and
+   * another person's child are not.
+   */
+  ownsHiddenChild(input: { parentId: string; substreamId: string; userId: string }): boolean {
+    if (input.parentId !== this.parentId || input.substreamId === "0") return false;
+    const child = first(this.sql.exec<{ status: string; created_by_user_id: string | null; preparing: number }>(
+      `SELECT child.status, child.created_by_user_id,
+              EXISTS (SELECT 1 FROM parent_breakout_preparations preparation
+                       WHERE preparation.parent_id = child.parent_id
+                         AND preparation.substream_id = child.substream_id) AS preparing
+         FROM parent_children child
+        WHERE child.parent_id = ? AND child.substream_id = ? AND child.kind = 'child'`,
+      this.parentId, input.substreamId,
+    ));
+    return child?.status === "reserved" && !child.preparing && child.created_by_user_id === input.userId;
+  }
+
+  /** The hidden children `userId` reserved on this parent, as `ownsHiddenChild` counts them. */
+  hiddenChildren(input: { parentId: string; userId: string }): string[] {
+    if (input.parentId !== this.parentId) return [];
+    return [...this.sql.exec<{ substream_id: string }>(
+      `SELECT child.substream_id FROM parent_children child
+        WHERE child.parent_id = ? AND child.kind = 'child' AND child.status = 'reserved'
+          AND child.created_by_user_id = ?
+          AND NOT EXISTS (SELECT 1 FROM parent_breakout_preparations preparation
+                           WHERE preparation.parent_id = child.parent_id
+                             AND preparation.substream_id = child.substream_id)`,
+      this.parentId, input.userId,
+    )].map((row) => row.substream_id);
   }
 
   /** Reserve against current parent authority without a caller-side preflight RPC. */

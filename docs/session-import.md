@@ -12,9 +12,10 @@ choice. Importing a prior assistant answer never claims Rally executed it.
 | `packages/contracts/src/substream-content.ts` | Source content/files, resolved prepared conversations, initialization modes and import provenance. |
 | `apps/api/src/services/session-import.ts` | Which conversation a source URL names and which provider owns it (`browserConversationSource`, `sessionSourceUrlProvider`). |
 | `apps/api/src/services/session-import-run-service.ts` | An import run: reserve the Channel, launch the agent's hidden child, complete, discard. |
+| `apps/api/src/services/session-import-reclaim.ts` | Archive a new import's Channel its run ended without opening (the `session_import` profile's `ended` hook). |
 | `apps/api/src/services/session-import-files.ts` | Upload reconciliation of the files an import carries, unavailable outcomes, and trusted attribution. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | `reserveImport` / `openReservedImport`: the Channel is placed first and initialized when the import completes. |
-| `apps/api/src/durable-objects/hosted-parent.ts` | `reserveHiddenChild` (the agent's conversation) and `discardReservedMain` (archive a Channel that never opened). |
+| `apps/api/src/durable-objects/hosted-parent.ts` | `reserveHiddenChild` (the agent's conversation), `ownsHiddenChild` / `hiddenChildren` (which import children are the caller's), and `discardReservedMain` (archive a Channel that never opened). |
 | `packages/agent-harness/src/prompts/session-import.ts` | The import agent's system prompt and opening message. |
 | `apps/api/src/services/desktop-actions/session-import-plugin.ts` | `import_finish` and `import_fail`. The browser tools are [desktop actions](desktop-actions.md). |
 | `apps/api/src/services/resource-service.ts` | Existing verified upload, staged R2 cleanup and resource creation. |
@@ -57,8 +58,12 @@ returns the main window to where it was. The pending-row rule is in
    (`reserveImport`): it is listed from here on, its route is active, and its
    main conversation stays uninitialized, so opening it answers as unavailable
    until the import completes. The create key's history hash is
-   `session-import:<clientMessageId>`, so the reservation and the later open are
-   one request to the create receipt.
+   `session-import:<clientMessageId>:<source URL>`, so the reservation and the
+   later open are one request to the create receipt, and `complete` can open
+   the reservation only with the conversation it was reserved for. Replaying
+   the same create key is idempotent: the agent's child id is derived from the
+   reservation and key, so a replayed start finds the child it already launched
+   and starts nothing new.
 2. **Launch.** The service reserves a hidden child of the Channel
    (`reserveHiddenChild`: status `reserved`, in no listing, admitting only the
    importer), provisions it with the `session_import` [agent
@@ -66,7 +71,10 @@ returns the main window to where it was. The pending-row rule is in
    opening message (the URL, and in an update the source message ids to keep),
    and starts its run. The profile's run has the import prompt, the
    `session_import` model role, and exactly the browser plugin plus
-   `import_finish` / `import_fail` — no other Rally tool.
+   `import_finish` / `import_fail` — no other Rally tool. A launch that fails
+   retires the reservation it made, so no listed Channel is left that nothing
+   fills. An update (`POST /workstreams/:id/import/runs`) first stops the
+   caller's earlier import agents on that Channel, so one runs at a time.
 3. **Read.** The import window opens the child's socket and answers every
    [desktop action](desktop-actions.md) the agent asks for on the tab it was
    started from: page script, the page's accessibility outline, screenshots,
@@ -100,15 +108,32 @@ returns the main window to where it was. The pending-row rule is in
    inline bytes, and posts the ordinary import request: `POST
    /workstreams/:id/import/complete` initializes the reserved Channel with the
    history (`openReservedImport`), and an update posts to `POST
-   /workstreams/:id/import/update` as before. A refusal goes back to the agent
-   with the field or API code named, so it can fix the messages and finish again.
-   The main window then opens the Channel and the import window closes.
+   /workstreams/:id/import/update` as before. `complete` checks that the create
+   key's receipt names this Channel before it prepares or opens anything
+   (`session_import_channel_mismatch`). A refusal goes back to the agent with the
+   field or API code named, so it can fix the messages and finish again. Once the
+   Channel has opened, that ending is final: a later `import_fail` or repeated
+   finish cannot unlist it. The main window then opens the Channel and the import
+   window closes; if that hand-off fails, the window releases the modal and says
+   the conversation was imported.
 5. **Fail or cancel.** `import_fail` names one of three reasons, and the window
    shows Rally's own words for it. Cancel, or a failure, calls `POST
-   /workstreams/:id/import/discard`: the agent stops, and a Channel that never
-   opened has its create receipt retired (`failed`, code
+   /workstreams/:id/import/discard`. Discard reaches only a hidden import child
+   the caller reserved — never a Channel's main conversation (`0`), a Breakout,
+   or another person's import; anything else answers 404
+   `session_import_not_found` before any agent is stopped. The agent stops, and
+   a Channel that never opened has its create receipt retired (`failed`, code
    `session_import_discarded`) and is archived out of every listing
-   (`discardReservedMain`).
+   (`discardReservedMain`). A Cancel pressed before the reservation comes back
+   discards it when it does, without ever reporting it to the main window.
+6. **Reclaim.** The window's discard is not the only way out: a window that
+   closes or crashes mid-run sends none. So the `session_import` [agent
+   profile](agent-harness.md#agent-profiles)'s `ended` hook runs once the run's
+   outcome is durable, however it ended, and archives the Channel if its
+   receipt is still `reserved` (retired with `session_import_unfinished`). The
+   desktop opens the Channel inside the finish tool, before the run's final
+   turn, so a reservation still unopened at the end never will be; an update's
+   Channel has a completed receipt and is untouched.
 
 The agent decides what to copy: visible user and assistant text, citations as
 Markdown links, uploads and generated files, published artifacts; not
@@ -205,8 +230,13 @@ This provides an executable eval seam, not a scheduler or scoring database.
   Otherwise instructions planted in a page could reach the person's workspace.
   Guard: the Workers test asserts the run's exact tool names.
 - A Channel reserved for an import is either opened by `complete` or archived by
-  `discard`, never both: discard retires the create key before it archives, and
-  `create` refuses a retired key. Guard: the discard test.
+  `discard` or the run-end reclaim, never both: each retires the create key
+  before it archives, and opening refuses a retired key
+  (`workstream_create_discarded`), including one retired between `complete`'s
+  check and its write. Guard: the discard and run-end tests.
+- Discard stops only the caller's own hidden import child. Otherwise one member
+  could stop another's agent, or a Channel's own run, by naming it. Guard: the
+  Workers ownership test.
 - Bind owns settled execution state; Rally owns conversation facts and host restoration.
 
 ## Boundary
@@ -268,8 +298,11 @@ its web API or page costs latency, not a broken release; it is also
 non-deterministic, slower and more expensive than a fixed reader, and a run can
 end without finishing — the window then says so and offers to try again or
 cancel. Sign-in, CAPTCHAs, and provider policy can still prevent a read; the
-agent reports those as `sign_in_required` or `page_unavailable`. A run whose
-tab closes fails each action with `tab_closed`.
+agent reports those as `sign_in_required` or `page_unavailable`, and a
+conversation it can see but not read with its own message ids — or a finish
+Rally keeps refusing for a reason the stored messages cannot fix — as
+`unreadable`. A run that ends after Rally refused its finish shows Rally's last
+reason. A run whose tab closes fails each action with `tab_closed`.
 
 The desktop keeps each stored file only up to `MAX_STORED_FILE_BYTES`, the same
 25,000,000 bytes as the upload limit (`MAX_ATTACHMENT_BYTES` in
@@ -286,9 +319,11 @@ limits still apply. Full canonical replay is paged but assembled in memory; an
 oversized first provider request can fail before automatic compaction is
 available.
 
-A Channel reserved for an import is listed while the agent works. Opening it
-then shows the unavailable state, because its conversation is not initialized
-yet; the import window owns progress.
+A Channel reserved for an import is listed while the agent works, and the main
+window shows it on its "Importing conversation…" screen, which opens no socket
+because the conversation is not initialized yet. A context the main window
+sends to the import window during a run (another Space, another update) waits
+until the run ends: a run drives the tab, and nothing else may navigate it.
 
 HTML/code artifacts remain stored files; importing does not launch a site.
 
@@ -297,13 +332,15 @@ HTML/code artifacts remain stored files; importing does not launch a site.
 - `test-workers/session-import-run.test.ts`: an import end to end on real
   objects with the provider double as the model and the test as the desktop —
   reservation, the hidden child's profile and tools, actions answered over its
-  socket, completion, an answer kept across a lost waiter, admission, and
-  discard.
+  socket, completion, an answer kept across a lost waiter, admission, discard
+  and its ownership check, and a Channel archived when its run ends unopened.
 - `test/session-import.test.ts`: which conversation and provider a source URL names.
 - `test/desktop-action-tools.test.ts`: the import tools' finish and fail, and
   the profile lookup.
 - `apps/desktop/src/renderer/lib/session-import-run.test.ts`: assembling stored
-  messages and files into the import request, and the errors that name what to fix.
+  messages and files into the import request, the errors that name what to fix,
+  re-sent answers, Cancel before the reservation, and an opened Channel's ending
+  staying final.
 - `apps/desktop/src/renderer/screens/browser-import.test.tsx`: the sheet, the
   run it starts, and Rally's words for a failure.
 - `test-workers/conversation-creation.test.ts`: real upload/R2 bytes, role-specific
@@ -326,70 +363,58 @@ HTML/code artifacts remain stored files; importing does not launch a site.
 
 ### 2026-10-01 — Read conversations with an agent instead of fixed readers
 
-Importing moved from fixed readers — page script per provider route, and a
-server decoder per provider format — to an agent that reads the conversation in
-the person's browser through generic [desktop actions](desktop-actions.md). The
-pressure was churn: each reader depended on an unofficial web API and page
-format, and the changelog below is largely a record of repairing them after a
-provider changed one. An agent works the page out on each run, so a change
-costs a slower import rather than a broken one; the price is that imports are
-non-deterministic, slower and cost model tokens.
+**What changed:** An import is now an agent that reads the conversation in the
+person's own browser through generic [desktop actions](desktop-actions.md),
+running under the `session_import` agent profile in a hidden child of the
+Channel it imports into. The Channel is reserved first and opened by
+`complete`; a reservation that never opens is archived by discard or, when no
+discard arrives, by the profile's run-end hook. Provider knowledge lives in
+loadable skills, and the importable-URL table is `conversationSourceAt` in
+`@rally/contracts`. The window locks the page behind a progress modal while a
+run drives it. The retired `POST /workstreams/import` and its fixed readers are
+gone.
 
-The agent runs in the SubstreamAgent loop rather than a new object, in a hidden
-child of the Channel it imports into, so the Channel is reserved first and opens
-when the import completes (`reserveImport` / `openReservedImport`), and a
-reservation that never opens is archived (`discardReservedMain`). Two
-alternatives were rejected: creating an empty Channel up front would have needed
-a no-message initialization through the hottest creation path, and running the
-agent under a hidden system Sidekick would have needed a Sidekick hidden from
-every Sidekick list. Text and bytes never pass through the model's output: page
-script stores them with the desktop and the model hands over a handle, because
-regenerating a long conversation as output tokens would be slow, costly, and
-able to change what it copies. The import's identity — the session id and the
-ids an update keeps — comes from the URL and the checkpoint, never the model.
+**Why:** The fixed readers — page script per provider route and a server
+decoder per format — each depended on an unofficial web API or page shape, and
+the entries below are largely a record of repairing them after a provider
+changed one; they also could not reach private chats behind a page-held token,
+Codex task shares or Claude Code sessions. An agent works the page out on each
+run, so a provider change costs a slower import instead of a broken one.
+Without skills the agent re-derived each page and lost messages to lazy
+rendering (8 of 15 on one ChatGPT share; 47 of 48 on a claude.ai share where it
+dropped lines it judged to be narration). A person who clicked or navigated
+mid-run changed the page under the agent, so the page is locked rather than
+recovered from. The window and the API had parsed source URLs separately and
+already disagreed. Review of the first cut found that discard could stop any
+conversation's agent, that a start replay or a failed launch left a listed
+Channel nothing would fill, and that a closed window left its reservation
+listed forever; the ownership check, the derived child id, launch compensation
+and the run-end reclaim close those.
 
-Reading moved into skills the agent loads, and the URL table into
-`@rally/contracts`. Tested against eight real links, the skill-less agent
-re-derived each page per run and lost messages to lazy rendering; with the
-skills, every share imported its full count — including a 48-message claude.ai
-share it had imported as 47 by dropping lines it judged to be narration — and a
-dead task share failed cleanly. The window and the API had parsed source URLs
-separately and already disagreed; one table keeps them from drifting again.
-Codex task shares give messages no ids, so they are identified by share id and
-turn; that is safe only because a share never changes.
+**Considered and rejected:** Keeping per-provider readers (the churn above).
+Creating an empty Channel up front, which needs a no-message initialization
+through the hottest creation path. Running the agent under a hidden system
+Sidekick, which needs a Sidekick hidden from every Sidekick list. Having the
+model emit the transcript as output, which is slow, costly and able to change
+what it copies — page script stores text and bytes with the desktop and the
+model hands over a handle. Putting provider knowledge in the system prompt,
+which every run of every browser-bearing agent would pay for. Relying on the
+window's discard alone, which a crash never sends.
 
-The import tools no longer end the run themselves. `import_finish` and
-`import_fail` used to return `halt: "completed"`, which left a run with no
-final turn; terminalization refuses a completed run without one, so every
-import — successful ones included — ended `failed`, logged only as the generic
-`agent_loop_failed` because the loop read nothing but an error's `code`. They
-now return to the model, whose one-line reply is the final turn, the same way a
-Sidekick's submission does, and the loop names a code-shaped failure through
-`diagnosticErrorCode`. The window likewise treats a run that ends without a
-finish as unfinished once it has started, rather than only after its first
-step, so an agent that gives up at once no longer leaves the window waiting.
-`import_finish` refuses a conversation with no assistant reply — never what a
-provider shows — so a reader that dropped the replies, as one did with a Deep
-Research report held in a tool message's widget state, is told to look again
-rather than trusted. The window ends a run on the finish tool's
-`tool_completed` frame, not on sending its answer, and re-sends a stored answer
-to a re-offered action (see [desktop actions](desktop-actions.md)).
-Signed-in verification against the owners' own chats confirmed originals:
-claude.ai uploads byte-for-byte (a preview is taken only where claude.ai offers
-no original), ChatGPT's generated images at full size, and an artifact equal to
-its source apart from added citation links. Files a Claude Code session
-delivered were found on one run and not on the next; that remains open.
+**Consequences:** Imports are non-deterministic, slower and cost model tokens,
+and correctness against a real provider page is proved only in a real window
+against a real model. A future change must keep the agent's tool surface to its
+profile's plugins, keep the import's identity (session id, kept message ids,
+the source URL bound into the create key) out of the model's hands, keep the
+desktop's 25 MB store cap equal to the upload limit, keep the page unreachable
+to the person while a run drives it, and keep the Channel opening inside the
+finish tool — the run-end reclaim assumes a reservation still unopened at the
+end never will be. Codex task shares give messages no ids, so they are
+identified by share id and turn; that is safe only because a share never
+changes. Files a Claude Code session delivered were found on one run and not
+the next; that remains open.
 
-Progress moved from a step count in the toolbar into a modal that locks the
-window while the agent works. A person who clicked, scrolled or navigated the
-page mid-run changed what the agent was reading under it; locking the page is
-cheaper than teaching the agent to recover from that. The modal shows the page
-as a blurred capture because the page is a native view no CSS can blur.
-
-A future change must keep the agent's tool surface to its profile's plugins,
-keep identity out of the model's hands, keep the 25 MB store cap equal to
-the upload limit, and keep the page unreachable to the person while a run
-drives it.
+Shipped in #1058.
 
 ### 2026-10-01 — Read a shared ChatGPT conversation from the page that rendered it
 
