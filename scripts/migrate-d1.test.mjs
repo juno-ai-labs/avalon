@@ -43,6 +43,7 @@ import {
   applyMigrations,
 } from "./d1-baseline.mjs";
 import { buildBaseline, mergeIntoManifest } from "./create-d1-baseline.mjs";
+import { containerFreeConfig } from "./dev-regional-api.mjs";
 import {
   API_DIRECTORY,
   discoverRegions,
@@ -530,28 +531,10 @@ test("a new region config is discovered without any list being edited", () => {
   }
 });
 
-/**
- * The recipe's one edit: the `containers` block and nothing else.
- *
- * Textual rather than parse-and-re-serialize, because what the guide tells a
- * session to make is a copy of the file — everything else about it, including
- * the migratable D1 binding that makes discovery care, has to still be there or
- * the test below passes for the wrong reason.
- */
-function withoutContainersBlock(source) {
-  const start = source.indexOf('\n  "containers": [');
-  const end = start === -1 ? -1 : source.indexOf("\n  ],", start);
-  if (start === -1 || end === -1) {
-    throw new Error("wrangler.global.jsonc no longer has a containers block for this to remove");
-  }
-  return source.slice(0, start) + source.slice(end + "\n  ],".length);
-}
-
 test("the Docker-free scratch copy of a region config is not itself a region", () => {
-  // `docs/dev-environment.md` tells a session with no Docker daemon to run the
-  // regional stack against a copy of `wrangler.global.jsonc` with the
-  // `containers` block removed. The copy carries the same migratable D1
-  // binding, so the only thing keeping it out of the region list is its name:
+  // `pnpm dev:api:local` runs the regional stack against a copy of
+  // `wrangler.global.jsonc` with the `containers` block removed, written by
+  // `containerFreeConfig`. The copy carries the same migratable D1 binding, so the only thing keeping it out of the region list is its name:
   // `<name>` in `wrangler.<name>.jsonc` is a single segment, and this one has
   // two — the same reason `wrangler.artifacts.global.jsonc` and its siblings
   // are not regions. A session that named its copy `wrangler.devlocal-global.jsonc`
@@ -560,7 +543,7 @@ test("the Docker-free scratch copy of a region config is not itself a region", (
   const directory = mkdtempSync(join(tmpdir(), "avalon-scratch-"));
   try {
     const real = readFileSync(join(API_DIRECTORY, "wrangler.global.jsonc"), "utf8");
-    const scratch = withoutContainersBlock(real);
+    const scratch = containerFreeConfig(real);
     writeFileSync(join(directory, "wrangler.global.jsonc"), real, "utf8");
     writeFileSync(join(directory, "wrangler.global.scratch.jsonc"), scratch, "utf8");
 
