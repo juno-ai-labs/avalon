@@ -382,8 +382,17 @@ the import agent's hidden conversation and its Channel. `Modal` gained a `header
 **Why:** People report imports that came out wrong, and there was no way to say
 which run produced one. The hidden child is the id that names the run (its
 transcript is the agent's reasoning and tool calls); the Channel id names only
-the result. The path is not routed: building a page for it before anyone needs
-one would be guessing at what debugging wants.
+the result. The address carries the Channel too, as `c`, because the hidden
+child's object is named by both ids and nothing maps a hidden child back to its
+Channel.
+
+**Considered and rejected:** Routing `/i/` to a page now. Nobody has said what
+a debugging view should show, so building one would be guessing.
+
+**Consequences:** A future route for `/i/` must read `c` rather than look the
+Channel up, since no lookup from a hidden child to its Channel exists.
+
+Shipped in juno-ai-labs/avalon#1065.
 
 ### 2026-10-01 — Read conversations with an agent instead of fixed readers
 
