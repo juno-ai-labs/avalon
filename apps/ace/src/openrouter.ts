@@ -1,3 +1,4 @@
+import type { AgentModelRouting } from '@rally/contracts';
 import { z } from 'zod';
 
 const OpenRouterEndpointsResponseSchema = z.object({
@@ -65,4 +66,37 @@ export async function validateOpenRouterModel(modelId: string): Promise<OpenRout
 export async function validateOpenRouterModels(modelIds: string[]): Promise<OpenRouterModelValidation[]> {
   const uniqueModelIds = Array.from(new Set(modelIds.map((modelId) => modelId.trim())));
   return Promise.all(uniqueModelIds.map(validateOpenRouterModel));
+}
+
+export type RoutingValidation =
+  | { ok: true }
+  | { ok: false; code: 'openrouter_validation_unavailable'; message: string }
+  | { ok: false; code: 'invalid_openrouter_models'; message: string; invalidModelIds: string[] };
+
+/**
+ * The check every route-plan save makes before Flagship I/O, whether it comes
+ * from the Models page or the engineering MCP: every id must exist on
+ * OpenRouter with a serving endpoint, and an unreachable OpenRouter refuses
+ * the save rather than letting an unchecked id through.
+ */
+export async function validateRouting(routing: AgentModelRouting): Promise<RoutingValidation> {
+  let validations: OpenRouterModelValidation[];
+  try {
+    validations = await validateOpenRouterModels([routing.model, ...routing.fallbackModels]);
+  } catch {
+    return {
+      ok: false,
+      code: 'openrouter_validation_unavailable',
+      message: 'OpenRouter model validation is temporarily unavailable. No changes were saved.',
+    };
+  }
+  const invalidModelIds = validations.filter((validation) => !validation.valid)
+    .map((validation) => validation.modelId);
+  if (invalidModelIds.length === 0) return { ok: true };
+  return {
+    ok: false,
+    code: 'invalid_openrouter_models',
+    message: `OpenRouter does not recognize or currently route: ${invalidModelIds.join(', ')}`,
+    invalidModelIds,
+  };
 }

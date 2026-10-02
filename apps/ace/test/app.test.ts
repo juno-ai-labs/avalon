@@ -70,6 +70,29 @@ describe('Ace Hono application', () => {
     );
   });
 
+  it('answers a Flagship refusal on the page by its status, keeping Flagship\'s text off the log', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(
+      { success: false, errors: [{ message: 'token for customer@example.com expired' }] },
+      { status: 403 },
+    ));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const response = await worker.fetch!(new Request('https://ace.internal.rallywith.ai/api/flags/suggested-work-enabled', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Origin: 'https://ace.internal.rallywith.ai' },
+      body: JSON.stringify({ key: 'suggested-work-enabled', description: '', enabled: true, default_variation: 'off', rules: [] }),
+    }), env({ CLOUDFLARE_ACCOUNT_ID: 'account', FLAGSHIP_APP_ID: 'app', CLOUDFLARE_FLAGSHIP_API_TOKEN: 'secret' }), {
+      waitUntil: vi.fn(),
+    } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({ error: 'flagship_request_failed_403' });
+    expect(logged.mock.calls.map((call) => JSON.parse(String(call[0])))).toEqual([{
+      event: 'ace_request_failed',
+      path: '/api/flags/suggested-work-enabled',
+      error_code: 'flagship_request_failed_403',
+    }]);
+  });
+
   it('rejects a cross-origin write before it reaches Flagship', async () => {
     const cloudflare = vi.spyOn(globalThis, 'fetch');
     const response = await worker.fetch!(new Request(

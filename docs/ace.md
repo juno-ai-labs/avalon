@@ -35,6 +35,7 @@ until that deadline. Both generation actions share the current lifetime choice, 
 | `apps/ace/src/client/demos.tsx` | The Demos page: every preparation and its phases from real receipts, **New demo**, retry and abandon. |
 | `apps/ace/src/client/workspaces.tsx` | The workspaces tab: find any workspace and retire it behind a typed-id confirmation. |
 | `apps/ace/src/flagship.ts` | Flagship reads and writes plus the post-write change notification. |
+| `apps/ace/src/flag-administration.ts` | The `FlagAdministration` RPC entrypoint the engineering MCP's flag tools call; the same catalogs and write functions as the pages. See [`engineering-mcp.md`](engineering-mcp.md#feature-and-model-flags). |
 | `apps/ace/src/cloudflare-queue-admin.ts` | Active dead-letter discovery, realtime backlog metrics, and non-consuming message peeks through Cloudflare's REST API. |
 | `apps/ace/src/queues.ts` | Account-wide workspace enumeration and regional fan-out. |
 | `apps/ace/src/client/components/ui.tsx` | Ace's shared controls and panels; future pages extend these components. |
@@ -229,7 +230,9 @@ overlap.
   Flagship attributes. Breaking this sends personal data to the global
   targeting plane on every evaluation.
 - Ace is the write authority for its managed product flags and the ordinary
-  default-route editor for agent models. Direct product-flag dashboard or
+  default-route editor for agent models, from its pages and from the
+  engineering MCP, which writes only through Ace's `FlagAdministration`
+  entrypoint. Direct product-flag dashboard or
   Wrangler edits do not emit Avalon's Queue notification and leave connected
   clients stale until reconnect. Model changes need no notification because
   agents re-evaluate their flag on each run.

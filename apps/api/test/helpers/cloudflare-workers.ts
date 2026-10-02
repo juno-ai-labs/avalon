@@ -40,6 +40,17 @@ export class DurableObject<Env = unknown> {
   }
 }
 
+/** Ace's index exports a named entrypoint, and API tests import that index. */
+export class WorkerEntrypoint<Env = unknown> {
+  protected readonly ctx: ExecutionContext;
+  protected readonly env: Env;
+
+  constructor(ctx: ExecutionContext, env: Env) {
+    this.ctx = ctx;
+    this.env = env;
+  }
+}
+
 /**
  * Node-test stand-in for the runtime's custom-span API.
  *
