@@ -240,15 +240,20 @@ export function TitlePill({ level, variant = 'current' }: {
   </DropdownMenu.Portal> : null;
 
   if (level.iconAction && !level.onSelect) {
-    return <span className={clsx('title-pill is-split', `is-${variant}`)}>
+    // The trigger spans the whole pill, under the icon action, so the menu
+    // centres on the pill rather than on the part right of the icon. The body
+    // keeps the title clear of the icon and carries the hover wash.
+    return <span className={clsx('title-pill is-split has-icon-action', `is-${variant}`)}>
       <span className="title-pill-icon-action">{level.iconAction}</span>
       {menu
         ? <DropdownMenu.Root modal={false} onOpenChange={onOpenChange}>
           <DropdownMenu.Trigger aria-label={view ? `${level.label}, ${view.label}` : level.label} className="title-pill-menu-trigger has-title">
-            {crumbTitle}
-            {!view && level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
-            {crumb}
-            {chevron}
+            <span className="title-pill-menu-trigger-body">
+              {crumbTitle}
+              {!view && level.meta ? <span className="title-pill-meta">{level.meta}</span> : null}
+              {crumb}
+              {chevron}
+            </span>
           </DropdownMenu.Trigger>
           {menu}
         </DropdownMenu.Root>
