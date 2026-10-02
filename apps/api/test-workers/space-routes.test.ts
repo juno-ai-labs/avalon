@@ -21,7 +21,7 @@ import {
   waitOnExecutionContext,
 } from "cloudflare:test";
 import { SignJWT } from "jose";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asSpaceId,
@@ -43,6 +43,8 @@ import { SpaceService } from "../src/services/space-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { deliverEffectsToWorkspace } from "./helpers/conversation-effects";
+import { useOpenRouterDouble } from "./helpers/openrouter-double";
+import { useSelectedModel } from "./helpers/selected-model";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
@@ -357,31 +359,53 @@ describe("POST /spaces", () => {
   });
 });
 
-describe("POST /workstreams/import", () => {
+describe("conversation import routes", () => {
+  // Starting an import starts its agent. A run that ends before the import
+  // completes takes its unopened Channel back, so each test's agent waits on
+  // the model until the test is over, as a real one is mid-read when the
+  // desktop completes.
+  let release = () => {};
+  beforeEach(() => {
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    gate = held;
+  });
+  afterEach(() => release());
+  let gate: Promise<void> = Promise.resolve();
+  useSelectedModel();
+  useOpenRouterDouble(async () => {
+    await gate;
+    return { say: "Imported." };
+  });
+  const SOURCE_URL = "https://claude.ai/chat/0a1b2c3d-0000-4000-8000-00000000d200";
+  const SOURCE = { provider: "claude", url: SOURCE_URL, sessionId: "0a1b2c3d-0000-4000-8000-00000000d200" };
+
+  /** Reserve a Channel through the start route, then open it with `messages`. */
+  async function importChannel(title: string, clientMessageId: string, spaceIds: string[], messages: unknown[]) {
+    const started = await request("/workstreams/import/runs", OWNER_AUTH, { sourceUrl: SOURCE_URL, title, clientMessageId, spaceIds });
+    expect(started.status).toBe(201);
+    const { workstreamId } = started.body as { workstreamId: WorkstreamId };
+    return request(`/workstreams/${workstreamId}/import/complete`, OWNER_AUTH, {
+      title, source: SOURCE, content: { messages }, clientMessageId, spaceIds,
+    });
+  }
+
   it("rejects an imported title outside the Channel creation contract", async () => {
-    const imported = await request("/workstreams/import", OWNER_AUTH, {
+    const started = await request("/workstreams/import/runs", OWNER_AUTH, {
+      sourceUrl: SOURCE_URL,
       title: "x".repeat(181),
-      source: { provider: "claude", url: null },
-      content: { messages: [{ role: "user", text: "What did we learn?" }] },
       clientMessageId: "00000000-0000-7000-8000-00000000d204",
       spaceIds: [],
     });
 
-    expect(imported.status).toBe(400);
+    expect(started.status).toBe(400);
   });
 
   it("settles the chosen title and places imported history in the selected Space", async () => {
     const destination = await createSpace("personal", "Research");
-    const imported = await request("/workstreams/import", OWNER_AUTH, {
-      title: "Imported research",
-      source: { provider: "claude", url: null, sessionId: "research-session" },
-      content: { messages: [
-        { role: "user", text: "What did we learn?", sourceMessageId: "u1" },
-        { role: "assistant", text: "The selected result.", sourceMessageId: "a1" },
-      ] },
-      clientMessageId: "00000000-0000-7000-8000-00000000d205",
-      spaceIds: [destination.id],
-    });
+    const imported = await importChannel("Imported research", "00000000-0000-7000-8000-00000000d205", [destination.id], [
+      { role: "user", text: "What did we learn?", sourceMessageId: "u1" },
+      { role: "assistant", text: "The selected result.", sourceMessageId: "a1" },
+    ]);
     expect(imported.status).toBe(201);
     const workstream = (imported.body as {
       workstream: { id: WorkstreamId; title: string; titleStatus: string };
@@ -391,29 +415,9 @@ describe("POST /workstreams/import", () => {
       .toEqual([expect.objectContaining({ spaceId: destination.id, scope: "personal" })]);
   });
 
-  // The import window lists the Channel in the main window under this id
-  // before the create returns, so the Channel has to be created under it.
-  it("creates the Channel under the id the caller listed it under", async () => {
-    const listedId = "019a0000-0000-7000-8000-00000000d2a1";
-    const imported = await request("/workstreams/import", OWNER_AUTH, {
-      title: "Listed import",
-      source: { provider: "claude", url: null, sessionId: "listed-session" },
-      content: { messages: [{ role: "user", text: "Listed first", sourceMessageId: "u1" }] },
-      clientMessageId: "00000000-0000-7000-8000-00000000d2a2",
-      workstreamId: listedId,
-      spaceIds: [],
-    });
-
-    expect(imported.status).toBe(201);
-    expect((imported.body as { workstream: { id: string } }).workstream.id).toBe(listedId);
-  });
-
   it('rejects a different source before uploading its files', async () => {
-    const imported = await request('/workstreams/import', OWNER_AUTH, {
-      title: 'Source validation', source: { provider: 'claude', url: null, sessionId: 'original' },
-      content: { messages: [{ role: 'user', text: 'Original', sourceMessageId: 'u1' }] },
-      clientMessageId: '00000000-0000-7000-8000-00000000d206', spaceIds: [],
-    });
+    const imported = await importChannel('Source validation', '00000000-0000-7000-8000-00000000d206', [],
+      [{ role: 'user', text: 'Original', sourceMessageId: 'u1' }]);
     expect(imported.status).toBe(201);
     const workstreamId = (imported.body as { workstream: { id: string } }).workstream.id;
     const update = await request(`/workstreams/${workstreamId}/import/update`, OWNER_AUTH, {

@@ -1,6 +1,5 @@
-import type { SessionImportPreview } from '@rally/contracts';
-import { X } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { Check, CircleAlert, LoaderCircle, X } from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { BrowserImportContext } from '../../common/browser-import';
 import {
   EmbeddedBrowserNavigation,
@@ -12,9 +11,15 @@ import {
 } from '../components/embedded-browser-view';
 import { Button, DropdownSelect, IconButton, InlineError, Modal } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
-import { browserConversation, readBrowserConversation } from '../lib/browser-conversation-import';
+import { browserConversation, conversationAt } from '../lib/browser-conversation';
+import {
+  SESSION_IMPORT_FAILURE_COPY,
+  startSessionImportRun,
+  type SessionImportRun,
+  type SessionImportRunResult,
+  type SessionImportStep,
+} from '../lib/session-import-run';
 import { desktopBridge } from '../lib/platform';
-import { uuidV7 } from '../lib/telemetry';
 
 /** Where a person starts: the two providers whose signed-in chats can be read. */
 const PROVIDERS = [
@@ -23,29 +28,60 @@ const PROVIDERS = [
 ] as const;
 
 interface PendingImport {
-  preview: SessionImportPreview;
   clientMessageId: string;
-  /** Minted here so the main window can list the Channel before it exists. */
-  workstreamId: string;
 }
 
-/**
- * One create: the receipt key and the id it claims travel together. A retry of
- * an unchanged request keeps both; a changed one takes both anew, because a
- * failed attempt can leave its id reserved under its own key.
- */
-function requestIdentity(): Pick<PendingImport, 'clientMessageId' | 'workstreamId'> {
-  return { clientMessageId: crypto.randomUUID(), workstreamId: uuidV7() };
+/** What the window says when a run ends without importing. */
+function endedMessage(result: SessionImportRunResult): string | null {
+  if (result.kind === 'imported' || result.kind === 'cancelled') return null;
+  if (result.kind === 'failed') return SESSION_IMPORT_FAILURE_COPY[result.reason];
+  if (result.kind === 'unfinished') {
+    return result.refusal
+      ? `The import did not finish. Rally refused it: ${result.refusal}`
+      : 'The import did not finish. Try again, or cancel.';
+  }
+  return result.message;
+}
+
+/** How many of the latest steps the import modal lists by name; older ones fold into one line. */
+const LISTED_STEPS = 3;
+
+/** The agent's latest steps, newest last, under a count of the ones before them. */
+function ImportSteps({ steps }: { steps: readonly SessionImportStep[] }): React.JSX.Element {
+  if (steps.length === 0) {
+    return <p aria-live="polite" className="browser-import-steps-empty"><LoaderCircle aria-hidden="true" className="spin" size={14} />Starting the import…</p>;
+  }
+  const earlier = Math.max(0, steps.length - LISTED_STEPS);
+  return <ol aria-live="polite" className="browser-import-steps">
+    {earlier > 0 && <li className="is-earlier" key="earlier">
+      <Check aria-hidden="true" size={14} />
+      <span>{earlier} previous {earlier === 1 ? 'action' : 'actions'}</span>
+    </li>}
+    {steps.slice(earlier).map((step) => <li className={`is-${step.status}`} key={step.id}>
+      {step.status === 'running'
+        ? <LoaderCircle aria-label="In progress" className="spin" size={14} />
+        : step.status === 'failed'
+          ? <CircleAlert aria-label="Failed" size={14} />
+          : <Check aria-label="Done" size={14} />}
+      <span>{step.label}</span>
+    </li>)}
+    {/* Between tools the model is choosing what to do next; the list should not look stalled. */}
+    {steps.every((step) => step.status !== 'running') && <li className="is-running" key="deciding">
+      <LoaderCircle aria-label="In progress" className="spin" size={14} />
+      <span>Deciding the next step…</span>
+    </li>}
+  </ol>;
 }
 
 /**
  * The import window: the account's browser with Close and Import around it.
  *
- * Import reads the conversation the active tab is showing, previews it through
- * the ordinary import boundary, and asks only for what a Channel needs — its
- * name and Space — before creating it. The main window lists the Channel as
- * pending, under the id this window gives it, while the create runs; it then
- * opens the Channel and this window closes.
+ * Import asks only for what a Channel needs — its name and Space — and then
+ * starts Rally's import agent, which reads the conversation the active tab is
+ * showing through this window's browser while the person watches. The Channel
+ * is listed from the start and opens when the agent finishes; the main window
+ * then opens it and this window closes. Opened to update a Channel, the window
+ * goes to its recorded conversation and adds what changed instead.
  */
 export function BrowserImportWindow(): React.JSX.Element {
   const { api } = useAppSession();
@@ -53,19 +89,23 @@ export function BrowserImportWindow(): React.JSX.Element {
   const { state, active, error: browserError, command } = useEmbeddedBrowser();
   const pageRef = useRef<HTMLElement>(null);
   const addressRef = useRef<HTMLInputElement>(null);
-  useEmbeddedBrowserShortcuts({ state, command, addressRef });
+  const [run, setRun] = useState<SessionImportRun | null>(null);
+  // While the agent drives the page, no key may move it.
+  useEmbeddedBrowserShortcuts({ state, command, addressRef, enabled: run === null });
   const nameId = useId();
   const [darwin, setDarwin] = useState(false);
   const [context, setContext] = useState<BrowserImportContext | null>(null);
-  const [reading, setReading] = useState(false);
   const [pending, setPending] = useState<PendingImport | null>(null);
   const [name, setName] = useState('');
   const [spaceId, setSpaceId] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [steps, setSteps] = useState<readonly SessionImportStep[]>([]);
+  const [mirror, setMirror] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const [importFailure, setImportFailure] = useState<string | null>(null);
 
   const conversation = active ? browserConversation(active) : null;
+  const update = context?.update ?? null;
+  // An update reads only the conversation the Channel was imported from.
+  const updatable = update !== null && conversation !== null && conversation.url === conversationAt(update.sourceUrl, '')?.url;
   const starting = active === undefined || active.url === 'about:blank';
   useEmbeddedBrowserPlacement(pageRef, !starting && browserError === null);
 
@@ -80,73 +120,110 @@ export function BrowserImportWindow(): React.JSX.Element {
     return () => { live = false; unsubscribe(); };
   }, [bridge]);
 
+  // An update starts on the recorded conversation, in the tab already showing it.
+  // Once per recorded conversation, not on every page change after it.
+  const updateUrl = update?.sourceUrl ?? null;
+  const openedUpdate = useRef<string | null>(null);
+  useEffect(() => {
+    // A run drives the tab; a context that arrives during it waits for it to end.
+    if (!updateUrl || !active || run || openedUpdate.current === updateUrl) return;
+    openedUpdate.current = updateUrl;
+    if (active.url !== updateUrl) void command({ action: 'navigate', tabId: active.id, url: updateUrl });
+  }, [updateUrl, active, run, command]);
+
   // Main reuses an open window and replaces its context, so a choice the new
   // Spaces no longer hold, or a Space the new context locks away, moves to the
   // first one it offers. A different Space is a different Channel, so an open
   // sheet takes a new request identity with it.
   useEffect(() => {
     const offered = context?.spaces ?? [];
-    if (spaceId === '' || offered.some((space) => space.id === spaceId)) return;
+    if (run || spaceId === '' || offered.some((space) => space.id === spaceId)) return;
     setSpaceId(offered[0]?.id ?? '');
-    setPending((current) => current && { ...current, ...requestIdentity() });
-  }, [context, spaceId]);
+    setPending((current) => current && { ...current, clientMessageId: crypto.randomUUID() });
+  }, [context, spaceId, run]);
 
   // A failure names the chat it was about; it does not follow the person to the next one.
   useEffect(() => { setFailure(null); }, [conversation?.url]);
 
-  const beginImport = async (): Promise<void> => {
-    if (!conversation || !api || reading) return;
-    setReading(true);
+  // The run's modal covers the page, which main then parks out of the window
+  // at full size so the agent keeps working on it. What shows behind the blur
+  // is this capture of it, refreshed as each step ends.
+  const tabId = active?.id ?? null;
+  const capture = useCallback((): void => {
+    if (!tabId) return;
+    void bridge.commandEmbeddedBrowser({ action: 'screenshot', tabId }).then((result) => {
+      if (result.kind === 'screenshot') setMirror(`data:${result.mimeType};base64,${result.data}`);
+    }).catch(() => undefined);
+  }, [bridge, tabId]);
+  const settledSteps = steps.filter((step) => step.status !== 'running').length;
+  useEffect(() => { if (run) capture(); }, [run, settledSteps, capture]);
+
+  /**
+   * A new import's Channel, as the main window lists it: pending from the
+   * moment the API reserves it, confirmed when the import lands, and taken
+   * away on any other ending. An update's Channel already exists.
+   */
+  const reserved = useRef<string | null>(null);
+  const watch = (started: SessionImportRun): void => {
+    capture();
+    setRun(started);
+    setSteps([]);
+    void started.done.then(async (result) => {
+      const workstreamId = reserved.current;
+      reserved.current = null;
+      if (result.kind === 'imported') {
+        if (workstreamId) await bridge.reportBrowserImport({ phase: 'imported', workstreamId }).catch(() => undefined);
+        try {
+          await bridge.completeBrowserImport(result.workstreamId);
+          return;
+        } catch {
+          // The Channel is imported and listed; only opening it failed, so the
+          // window lets go of the page rather than holding the modal forever.
+          setRun(null);
+          setMirror(null);
+          setFailure('The conversation was imported, but Rally could not open it. Find it in your Channels.');
+          return;
+        }
+      }
+      if (workstreamId) void bridge.reportBrowserImport({ phase: 'failed', workstreamId }).catch(() => undefined);
+      setRun(null);
+      setMirror(null);
+      setFailure(endedMessage(result));
+    });
+  };
+
+  const beginImport = (): void => {
+    if (!conversation || !api || run) return;
     setFailure(null);
-    const url = conversation.url;
-    try {
-      const read = await readBrowserConversation(bridge, url, { tabId: active?.id });
-      const preview = await api.previewSessionImport({ kind: 'export', provider: read.provider, text: read.text, sourceUrl: url });
-      const spaces = context?.spaces ?? [];
-      setName(preview.title);
-      setSpaceId((current) => spaces.some((space) => space.id === current) ? current : spaces[0]?.id ?? '');
-      setImportFailure(null);
-      setPending({ preview, ...requestIdentity() });
-    } catch (error) {
-      setFailure(error instanceof Error ? error.message : 'The conversation could not be read.');
-    } finally {
-      setReading(false);
-    }
-  };
-
-  // A retry of the same request keeps its identity; a changed name or Space is
-  // a different Channel, which the creation receipt would refuse under the old one.
-  const renewRequest = (): void => {
-    setPending((current) => current && { ...current, ...requestIdentity() });
-  };
-
-  const createChannel = async (): Promise<void> => {
-    if (!pending || !api || saving || !name.trim() || !context?.spaces.some((space) => space.id === spaceId)) return;
-    setSaving(true);
-    setImportFailure(null);
-    const title = name.trim();
-    const { workstreamId } = pending;
-    let id: string;
-    try {
-      // Before the request, so the main window holds the Channel as pending.
-      await bridge.reportBrowserImport({ phase: 'importing', workstreamId, title, spaceId });
-      id = await api.importSession(pending.preview, pending.clientMessageId, { title, spaceIds: [spaceId], workstreamId });
-    } catch (error) {
-      void bridge.reportBrowserImport({ phase: 'failed', workstreamId }).catch(() => undefined);
-      setImportFailure(error instanceof Error ? error.message : 'The channel could not be created.');
-      setSaving(false);
+    if (update) {
+      if (!updatable || !active) return;
+      watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
+        mode: { kind: 'update', workstreamId: update.workstreamId }, onSteps: setSteps }));
       return;
     }
-    // A receipt reserved by a Worker from before `workstreamId` replays under
-    // the id that Worker minted. The announced row then names nothing: take it
-    // away, and the hand-off below opens the Channel under its real id.
-    if (id !== workstreamId) await bridge.reportBrowserImport({ phase: 'failed', workstreamId }).catch(() => undefined);
-    await bridge.completeBrowserImport(id).catch((error: unknown) => {
-      // The Channel exists; the main window must not keep waiting on it.
-      if (id === workstreamId) void bridge.reportBrowserImport({ phase: 'imported', workstreamId }).catch(() => undefined);
-      setImportFailure(error instanceof Error ? error.message : 'The channel was created but could not be opened.');
-      setSaving(false);
-    });
+    const spaces = context?.spaces ?? [];
+    setName(conversation.title);
+    setSpaceId((current) => spaces.some((space) => space.id === current) ? current : spaces[0]?.id ?? '');
+    setPending({ clientMessageId: crypto.randomUUID() });
+  };
+
+  // A changed name or Space is a different Channel, which the creation receipt
+  // would refuse under the old request identity.
+  const renewRequest = (): void => {
+    setPending((current) => current && { ...current, clientMessageId: crypto.randomUUID() });
+  };
+
+  const startChannel = (): void => {
+    if (!pending || !api || !conversation || !active || run || !name.trim() || !context?.spaces.some((space) => space.id === spaceId)) return;
+    setPending(null);
+    const title = name.trim();
+    watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
+      mode: { kind: 'create', title, spaceIds: [spaceId], clientMessageId: pending.clientMessageId },
+      onSteps: setSteps,
+      onStarted: ({ workstreamId }) => {
+        reserved.current = workstreamId;
+        void bridge.reportBrowserImport({ phase: 'importing', workstreamId, title, spaceId }).catch(() => undefined);
+      } }));
   };
 
   const spaces = context?.spaces ?? [];
@@ -158,14 +235,15 @@ export function BrowserImportWindow(): React.JSX.Element {
     <div className="browser-import-toolbar">
       <EmbeddedBrowserNavigation active={active} addressRef={addressRef} command={command} />
       {/* Import reads the foreground tab — the one this window is showing. */}
-      <Button className="button-primary" disabled={!conversation || !api || reading}
-        onClick={() => void beginImport()}
+      <Button className="button-primary" disabled={!conversation || !api || run !== null || (update !== null && !updatable)}
+        onClick={beginImport}
         title={conversation ? `Import “${conversation.title}”` : 'Open a Claude or ChatGPT chat to import it'}>
-        {reading ? 'Reading…' : 'Import'}
+        {update ? 'Import updates' : 'Import'}
       </Button>
     </div>
     {(failure ?? browserError) && <div className="browser-import-banner" role="alert">{failure ?? browserError}</div>}
     <main className="browser-import-page" ref={pageRef}>
+      {run && mirror && <img alt="" className="browser-import-mirror" src={mirror} />}
       {starting && <section aria-labelledby={`${nameId}-start`} className="browser-import-start">
         <h1 id={`${nameId}-start`}>Import a conversation</h1>
         <ol>
@@ -182,28 +260,36 @@ export function BrowserImportWindow(): React.JSX.Element {
       </section>}
     </main>
     <Modal
+      backdrop="blur"
+      description="Rally is reading this conversation in the page behind. It is locked until the import finishes."
+      dismissible={false}
+      footer={<Button onClick={() => void run?.cancel()}>Cancel</Button>}
+      onOpenChange={(open) => { if (!open) void run?.cancel(); }}
+      open={run !== null}
+      title={update ? 'Importing updates' : 'Importing conversation'}
+    >
+      <ImportSteps steps={steps} />
+    </Modal>
+    <Modal
       footer={<>
-        <Button disabled={saving} onClick={() => setPending(null)}>Cancel</Button>
-        <Button className="button-primary" disabled={saving || !name.trim() || !spaceId} onClick={() => void createChannel()}>
-          {saving ? 'Importing…' : 'Import'}
-        </Button>
+        <Button onClick={() => setPending(null)}>Cancel</Button>
+        <Button className="button-primary" disabled={!name.trim() || !spaceId} onClick={startChannel}>Import</Button>
       </>}
-      onOpenChange={(open) => { if (!open && !saving) setPending(null); }}
+      onOpenChange={(open) => { if (!open) setPending(null); }}
       open={pending !== null}
       title="Import channel"
     >
-      <form className="space-create-form" onSubmit={(event) => { event.preventDefault(); void createChannel(); }}>
+      <form className="space-create-form" onSubmit={(event) => { event.preventDefault(); startChannel(); }}>
         <label className="form-field">
           <span>Space</span>
-          <DropdownSelect ariaLabel="Space" disabled={saving || context?.spaceLocked === true} onValueChange={(value) => { setSpaceId(value); renewRequest(); }}
+          <DropdownSelect ariaLabel="Space" disabled={context?.spaceLocked === true} onValueChange={(value) => { setSpaceId(value); renewRequest(); }}
             options={spaces.map((space) => ({ label: space.name, value: space.id }))} value={spaceId} />
         </label>
         <label className="form-field" htmlFor={nameId}>
           <span>Name of channel</span>
-          <input autoFocus disabled={saving} id={nameId} maxLength={180} onChange={(event) => { setName(event.target.value); renewRequest(); }} required value={name} />
+          <input autoFocus id={nameId} maxLength={180} onChange={(event) => { setName(event.target.value); renewRequest(); }} required value={name} />
         </label>
         {spaces.length === 0 && <InlineError>There is no Space to import into. Create one in Rally first.</InlineError>}
-        {importFailure && <InlineError>{importFailure}</InlineError>}
       </form>
     </Modal>
   </div>;

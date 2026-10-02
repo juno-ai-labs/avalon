@@ -108,6 +108,15 @@ export const MANAGED_MODELS = [
     description: 'Orders admitted suggestions for one person, accounting for freshness and impressions before storing the visible set.',
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
+  {
+    rank: 7,
+    rankReason: 'On demand · conversation imports',
+    role: 'session_import',
+    key: 'agent-model-session-import',
+    label: 'Conversation import',
+    description: 'Drives the person\'s desktop browser (page script, page outline, screenshots, input) to read a ChatGPT or Claude conversation and its files into a new Channel. Must accept images.',
+    defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
 ] as const satisfies readonly ManagedModelDefinition[];
 
 export const ManagedModelRoleSchema = z.enum(AGENT_MODEL_ROLES);

@@ -111,24 +111,38 @@ as Google Chrome.
   users would expose one person's website sessions to another.
 - Native page bounds follow the rail and are hidden behind Rally overlays.
   Otherwise a guest page can paint above a dialog or outside the browser rail.
+- In a browser an agent drives — the import window's, `agentDriven` — every
+  tab records its page's network responses from creation through DevTools, and
+  copies Fetch and XHR bodies as each finishes, up to `NETWORK_BODY_BYTES_MAX`
+  (open: the team's number to set); a new document clears the record. The
+  rail's browser records nothing: a person's own browsing keeps no responses in
+  the main process. An agent reads the data a web app loaded instead of
+  rebuilding the request that loaded it, and reads it again after Chromium has
+  evicted its own copy. A tab under an open DevTools window records nothing,
+  because only one debugger can attach.
+- Hidden is parked, not collapsed: the active tab keeps its size outside the
+  window, without keyboard focus, and — in an agent-driven browser only —
+  unthrottled. An agent driving it reads,
+  captures and clicks the same page whether or not a Rally overlay covers it,
+  and the person cannot reach it while one does.
 
 ## Boundary
 
 The browser owns local website state, navigation, page inspection, and page
 input. The Rally renderer owns the controls and layout; it cannot receive a
-`WebContents` or an arbitrary IPC channel. The API agent loop does not yet call
-the browser. When that is added, a small typed desktop-action request and
-result can carry browser commands, then later a settings-page navigation action.
-That transport should identify the owning user and live desktop session and
-use the same main-process browser command path rather than introducing another
-page controller. Agent tool receipts and retry policy remain the harness's
-responsibility.
+`WebContents` or an arbitrary IPC channel. An API agent loop reaches the browser
+through [desktop actions](desktop-actions.md): a typed request on the
+conversation's socket that the window's renderer executes through this same
+`command()` path, on one tab, never through another page controller. Tool
+receipts and retry policy stay with the harness.
 
-Conversation reading, conversion, and re-import are owned by
-[session import](session-import.md). The browser supplies a signed-in page and
-two primitives the readers build on: page script (`evaluate`) and, for a file on
-an origin the page may not read, DevTools' network loader (`cdp`) with the tab's
-own session. It does not decide what a source conversation means.
+What a conversation import reads, and how, is owned by [session
+import](session-import.md): its agent drives this browser through those actions.
+The browser supplies the signed-in page and its primitives — page script
+(`evaluate`), the accessibility tree (`snapshot`), a screenshot sized in DIPs so
+its pixels are input coordinates, input, and DevTools' network loader (`cdp`)
+for a file on an origin the page may not read. It does not decide what a
+conversation means.
 
 ## Failure modes and limits
 
@@ -148,8 +162,11 @@ A page that calls `navigator.credentials.get({ publicKey })` without checking
 for `PublicKeyCredential` still waits forever.
 
 The native view cannot be layered under renderer dialogs, so the renderer hides
-it for dialogs and menus. Agent access has no transport yet; the command types
-alone do not make a browser action available to a model.
+it for dialogs and menus, and CSS — a blur, a scrim — cannot reach it. A surface
+that wants the page visible behind an overlay draws a capture of it instead, as
+the import window's run does. In the import window a parked active tab renders
+at full speed, so a covered page costs what a visible one does; the rail's
+throttles as Chromium does for any hidden page.
 
 ## Testing
 
@@ -193,6 +210,43 @@ that has not been tried in Rally, and a hang there would look like this one.
 Adding passkey support later means removing this flag in the same change.
 
 Shipped in #1056.
+
+### 2026-10-01 — Let an agent drive a tab: DIP screenshots, parked tabs, recorded network
+
+**What changed:** Screenshots are resized to the view's DIP bounds and return
+their size. A hidden active tab is parked outside the window at full size and
+without keyboard focus, instead of collapsed to 0×0. In a browser an agent
+drives (the import window's), tabs record their network responses from
+creation and keep Fetch and XHR bodies, cleared on a new document, and a
+parked tab is unthrottled.
+
+**Why:** The agent-to-desktop boundary this document planned now exists as
+[desktop actions](desktop-actions.md), and its first user clicks where a
+screenshot shows something. `capturePage` returns device pixels while
+`sendInputEvent` takes DIPs, so on a high-density display every click landed at
+twice the coordinates. A collapsed tab stalled the agent whenever a dialog —
+the import window's own progress modal included — covered the page. Chromium
+keeps a body only if recording began before the request, so recording cannot
+wait for an agent to ask, and it evicts its own copy, so Fetch and XHR bodies
+— where a web app's data arrives — are copied.
+
+**Considered and rejected:** An input-swallowing overlay view over the page,
+which needs a second renderer; parked, the page is unreachable for being out of
+the window. Recording in every browser, including the rail's: review found it
+kept every site's responses, auth included, in the main process during ordinary
+browsing, and a single-page app rarely starts a new document to clear them.
+Recording only the pinned tab once a run starts: Chromium keeps no body for a
+request made before recording began, and the page loads its conversation
+first.
+
+**Consequences:** The screenshot and input commands must stay in the same
+units. A new agent surface passes `agentDriven` or gets no network panel.
+`NETWORK_BODY_BYTES_MAX` is open; past it a body is listed but not copied. A
+parked agent-driven tab renders at full speed, so a covered page costs what a
+visible one does. A tab under an open DevTools window records nothing, because
+only one debugger can attach.
+
+Shipped in #1058.
 
 ### 2026-09-25 — Closing the only blank tab closes the rail
 

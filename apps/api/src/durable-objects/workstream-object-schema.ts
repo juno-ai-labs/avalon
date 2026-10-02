@@ -24,7 +24,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 70;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 71;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3391,6 +3391,31 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 70,
     description: "requeue every committed turn so its search rows carry an audience",
     statements: CONVERSATION_SEARCH_AUDIENCE_MIGRATION_STATEMENTS,
+  },
+  {
+    version: 71,
+    description: "desktop actions a conversation's tools ask of a person's desktop, and the agent profile a conversation runs",
+    statements: [
+      `CREATE TABLE desktop_actions (
+        action_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        action_json TEXT NOT NULL CHECK (json_valid(action_json)),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'answered', 'abandoned')),
+        outcome_json TEXT CHECK (outcome_json IS NULL OR json_valid(outcome_json)),
+        answered_by_user_id TEXT,
+        created_at INTEGER NOT NULL,
+        answered_at INTEGER,
+        UNIQUE (run_id, tool_call_id),
+        CHECK ((status = 'answered') = (outcome_json IS NOT NULL))
+      ) STRICT`,
+      // Only pending rows are read by status; every other read is by key.
+      `CREATE INDEX desktop_actions_pending ON desktop_actions (created_at, action_id)
+         WHERE status = 'pending'`,
+      // Null is the ordinary conversation. A profile replaces the run's system
+      // prompt, model role and tool surface; see `agent-profiles.ts`.
+      `ALTER TABLE workstream ADD COLUMN agent_profile TEXT`,
+    ],
   },
 ];
 

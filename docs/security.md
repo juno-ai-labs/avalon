@@ -119,10 +119,20 @@ same as desktop.
 - The main window and the import window may drive their own browser tabs,
   including page script and DevTools commands; no other window may. Those
   commands act with the person's website sign-ins, so a script injected into
-  either renderer would reach every site signed in there. The conversation
-  readers keep provider credentials inside the visited page, with one exception:
-  copying a claude.ai Artifact passes that Artifact's short-lived asset token
-  through the import window's renderer. See [`session-import.md`](session-import.md).
+  either renderer would reach every site signed in there. A conversation import
+  hands that capability to a model: its agent runs arbitrary page script in the
+  person's signed-in tab, reads the page's outline and screenshots, gives it
+  input, and lists and reads the network responses the tab received. Those
+  results — network bodies included — reach the model unredacted, by product
+  decision: the page already received them. The boundary is the tab: one tab,
+  with no other tab and no DevTools passthrough. Where that tab goes is not
+  restricted, by product decision: it may navigate to and load from any site
+  with the person's session, and there is no egress filter on the page. The
+  import window is the
+  one non-conversation window allowed to open a realtime socket, to the hidden
+  conversation its agent runs in, and it closes that socket when the window
+  navigates, crashes or closes. See [`desktop-actions.md`](desktop-actions.md)
+  and [`session-import.md`](session-import.md).
 - A strict Content Security Policy allows bundled content and the configured
   regional API only.
 - Markdown treats model, member, email, and attachment text as untrusted.
