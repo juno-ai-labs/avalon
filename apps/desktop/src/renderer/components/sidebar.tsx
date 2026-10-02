@@ -196,21 +196,33 @@ function compareRecent(left: WorkstreamSummary, right: WorkstreamSummary): numbe
   return recencyTimestamp(right) - recencyTimestamp(left) || compareAlphabeticalTitle(left, right);
 }
 
-/** The sort toggle's cycle: each order's label, how it is read aloud, its comparator, and what a click moves to. */
+type WorkstreamComparator = (left: WorkstreamSummary, right: WorkstreamSummary) => number;
+
+/**
+ * The sort toggle's cycle: each order's label, how it is read aloud, its
+ * comparator, and what a click moves to. `heldId` is the open Channel that was
+ * bold when the reader opened it; only Needs you reads it.
+ */
 const CHANNEL_SORTS: Record<SidebarChannelSort, {
   label: string;
   spoken: string;
-  compare: (left: WorkstreamSummary, right: WorkstreamSummary) => number;
+  compare: (heldId: string | null) => WorkstreamComparator;
   next: SidebarChannelSort;
 }> = {
-  alphabetical: { label: 'A–Z', spoken: 'A to Z', compare: compareAlphabeticalTitle, next: 'recent' },
-  recent: { label: 'Recent', spoken: 'by recent activity', compare: compareRecent, next: 'needs_you' },
-  // Every bold row first, then the rest, each half in Recent order.
+  alphabetical: { label: 'A–Z', spoken: 'A to Z', compare: () => compareAlphabeticalTitle, next: 'recent' },
+  recent: { label: 'Recent', spoken: 'by recent activity', compare: () => compareRecent, next: 'needs_you' },
+  // Every bold row first, then the rest, each half in Recent order. Opening a
+  // bold row reads it, and without the hold it would drop out from under the
+  // pointer while the reader is still in it; it stays until they move on.
   needs_you: {
     label: 'Needs you',
     spoken: 'by what needs you',
-    compare: (left, right) => Number(workstreamHasActivityForViewer(right)) - Number(workstreamHasActivityForViewer(left))
-      || compareRecent(left, right),
+    compare: (heldId) => {
+      const needsYou = (workstream: WorkstreamSummary): number => Number(
+        workstream.id === heldId || workstreamHasActivityForViewer(workstream),
+      );
+      return (left, right) => needsYou(right) - needsYou(left) || compareRecent(left, right);
+    },
     next: 'alphabetical',
   },
 };
@@ -1410,11 +1422,21 @@ export function Sidebar({
     () => orderPinnedWorkstreams(visibleWorkstreams, activeDragOrder ?? storedAllOrder),
     [activeDragOrder, storedAllOrder, visibleWorkstreams],
   );
+  // Taken once per opened Channel, while its row still shows what it was
+  // opened for: reading it clears the bold a moment later.
+  const [heldOpen, setHeldOpen] = useState<{ routeId: string | null; heldId: string | null }>({ routeId: null, heldId: null });
+  if (heldOpen.routeId !== routeWorkstreamId) {
+    const opened = visibleWorkstreams.find((workstream) => workstream.id === routeWorkstreamId);
+    setHeldOpen({
+      routeId: routeWorkstreamId,
+      heldId: opened !== undefined && workstreamHasActivityForViewer(opened) ? opened.id : null,
+    });
+  }
   const unpinnedWorkstreams = useMemo(() => (
     visibleWorkstreams
       .filter((workstream) => workstream.pinPosition === null)
-      .sort(CHANNEL_SORTS[channelSort].compare)
-  ), [channelSort, visibleWorkstreams]);
+      .sort(CHANNEL_SORTS[channelSort].compare(heldOpen.heldId))
+  ), [channelSort, heldOpen.heldId, visibleWorkstreams]);
   const displayedWorkstreams = useMemo(
     () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
     [pinnedWorkstreams, unpinnedWorkstreams],

@@ -64,7 +64,9 @@ there are pins to reorder.
 The toggle cycles the unpinned Channels through **A–Z** (case-insensitive),
 **Recent** (newest `lastActivityAt` first) and **Needs you** (bold rows first,
 then the rest, each newest first). Needs you reads
-`workstreamHasActivityForViewer`, the same input as the bold title. The choice
+`workstreamHasActivityForViewer`, the same input as the bold title; a Channel
+opened while bold stays in the bold half until the reader opens another, so
+reading it does not move it out from under the pointer. The choice
 is per device, in `rally.sidebar-channel-sort`. A row shows the glyph,
 the title and the last activity time. Under them it shows the names of the
 Channel's Spaces, without General; a Channel only in General has a one-line
