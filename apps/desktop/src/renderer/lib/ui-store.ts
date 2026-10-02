@@ -41,8 +41,9 @@ interface UiState {
 export const MIN_RAIL_WIDTH = 280;
 export const DEFAULT_RAIL_WIDTH = 320;
 /** GrokBot's compact rail and expanded-sidebar geometry. */
-export { COLLAPSED_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '@rally/ui/lib/sidebar-geometry';
+export { COLLAPSED_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, DEFAULT_SIDEBAR_WIDTH, SINGLE_SIDEBAR_DEFAULT_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, SIDEBAR_COLLAPSE_DRAG_THRESHOLD, SIDEBAR_EXPAND_DRAG_THRESHOLD } from '@rally/ui/lib/sidebar-geometry';
 import { clampSidebarWidth, loadSidebarWidth, saveSidebarPreference } from '@rally/ui/lib/sidebar-preferences';
+import { SINGLE_SIDEBAR_DEFAULT_WIDTH } from '@rally/ui/lib/sidebar-geometry';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const SIDEBAR_SPACE_FILTER_STORAGE_KEY = 'rally.sidebar-space-filter';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
@@ -99,7 +100,7 @@ function saveRailWidth(prefix: string, scope: string | null, width: number): voi
 
 export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
-  sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY),
+  sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
   sidebarSpaceFilter: loadSpaceFilter(),
   railOpen: false,
   railVariant: 'context',
