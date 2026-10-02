@@ -106,3 +106,30 @@ describe('sidebar width', () => {
     expect(fresh.getState().sidebarWidth).toBe(260);
   });
 });
+
+describe('sidebar channel sort', () => {
+  // Read as a restarted app would: the module is re-imported over storage the
+  // previous run left behind.
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.resetModules();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.resetModules();
+  });
+
+  it('starts A to Z on a device that never chose', async () => {
+    const { useUiStore: fresh } = await import('./ui-store');
+    expect(fresh.getState().sidebarChannelSort).toBe('alphabetical');
+  });
+
+  it('comes back to the order chosen before a restart', async () => {
+    const { useUiStore: first } = await import('./ui-store');
+    first.getState().setSidebarChannelSort('recent');
+
+    vi.resetModules();
+    const { useUiStore: restarted } = await import('./ui-store');
+    expect(restarted.getState().sidebarChannelSort).toBe('recent');
+  });
+});

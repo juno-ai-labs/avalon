@@ -17,7 +17,7 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { conversationNeedsViewer, type CreateSpaceRequest, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
-import { IconDots } from '@tabler/icons-react';
+import { IconArrowsSort, IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
@@ -28,7 +28,7 @@ import {
   consumeDeepLinkWorkstreamNavigation,
   useDeepLinkWorkstreamNavigation,
 } from '../lib/deep-link-navigation';
-import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
+import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, recencyTimestamp, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
 import { committedOrder, moveWithin, orderByStoredIds } from '../lib/personal-order';
 import { compareAlphabeticalName, compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
@@ -1058,6 +1058,8 @@ export function Sidebar({
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
   const selectedSpaceFilter = useUiStore((state) => state.sidebarSpaceFilter);
   const setSelectedSpaceFilter = useUiStore((state) => state.setSidebarSpaceFilter);
+  const channelSort = useUiStore((state) => state.sidebarChannelSort);
+  const setChannelSort = useUiStore((state) => state.setSidebarChannelSort);
   const downloadedUpdate = useDownloadedUpdate();
   // The sidebar never collapses: these stay false so the row and list motion
   // contracts that still take a layout flag read the one layout there is.
@@ -1365,11 +1367,16 @@ export function Sidebar({
     () => orderPinnedWorkstreams(visibleWorkstreams, activeDragOrder ?? storedAllOrder),
     [activeDragOrder, storedAllOrder, visibleWorkstreams],
   );
+  // Recent orders by the Channel's own last activity, not by when this reader
+  // last opened it: the row's time shows the same value, so the order and the
+  // times down the list agree. Ties fall back to A to Z.
   const unpinnedWorkstreams = useMemo(() => (
     visibleWorkstreams
       .filter((workstream) => workstream.pinPosition === null)
-      .sort(compareAlphabeticalTitle)
-  ), [visibleWorkstreams]);
+      .sort(channelSort === 'recent'
+        ? (left, right) => recencyTimestamp(right) - recencyTimestamp(left) || compareAlphabeticalTitle(left, right)
+        : compareAlphabeticalTitle)
+  ), [channelSort, visibleWorkstreams]);
   const displayedWorkstreams = useMemo(
     () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
     [pinnedWorkstreams, unpinnedWorkstreams],
@@ -2310,7 +2317,17 @@ export function Sidebar({
                 {pinnedWorkstreams.length > 0 && (
                   <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:channels">
                     <h2>Channels</h2>
-                    <span aria-hidden="true" className="sidebar-section-hint">A–Z</span>
+                    <button
+                      aria-label={channelSort === 'recent'
+                        ? 'Sorted by recent activity. Sort A to Z'
+                        : 'Sorted A to Z. Sort by recent activity'}
+                      className="sidebar-sort-toggle window-no-drag"
+                      onClick={() => setChannelSort(channelSort === 'recent' ? 'alphabetical' : 'recent')}
+                      type="button"
+                    >
+                      <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
+                      <span className="sidebar-section-hint">{channelSort === 'recent' ? 'Recent' : 'A–Z'}</span>
+                    </button>
                   </div>
                 )}
                 <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
