@@ -108,8 +108,8 @@ export const SessionImportRunSchema = z.strictObject({
   substreamId: z.string().min(1),
 });
 export const SessionImportDiscardRequestSchema = z.strictObject({
-  /** The import's hidden child; never a Channel's main conversation. */
-  substreamId: z.string().min(1).refine((id) => id !== "0", "The main conversation is not an import"),
+  /** The hidden child an import runs in; never the main conversation of a Channel. */
+  substreamId: z.string().min(1).refine((id) => id !== "0", "An import never runs in the main conversation"),
   /** The create key of a new import; null for an update, whose Channel stays. */
   clientMessageId: z.string().uuid().nullable(),
 });
