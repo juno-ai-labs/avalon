@@ -7644,6 +7644,146 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   width: 380px;
 }
 .title-pill-menu .menu-separator { background: var(--av-sys-color-border-subtle); margin: 8px 0; }
+
+/* ── Title menu levels ──────────────────────────────────────────────────────
+   The popout reshapes itself between its root and a level (People, Sidekicks,
+   Breakouts, More): the frame travels between the two sizes while the level's
+   rows arrive on a short stagger, sliding in from the side the move came from
+   and coming into focus. Quick enough to keep up with a click, slow enough to
+   read as the same surface changing rather than a new one appearing. */
+.title-pill-menu.menu-content { width: auto; }
+.title-menu-morph {
+  overflow: hidden;
+  transition: height 320ms cubic-bezier(.32, .72, 0, 1), width 320ms cubic-bezier(.32, .72, 0, 1);
+}
+.title-menu-view { display: flex; flex-direction: column; gap: 2px; width: 404px; }
+.title-menu-view:has(> .title-menu-scope) { width: 420px; }
+/* The breadcrumb already names the level, so its section heading would say it twice. */
+.title-menu-view > .title-menu-sidekicks .workstream-context-section h2 { display: none; }
+.title-menu-view > * { animation: title-menu-enter 300ms cubic-bezier(.2, .8, .2, 1) both; }
+.title-menu-view[data-direction='out'] > * { animation-name: title-menu-return; }
+.title-menu-view > :nth-child(2) { animation-delay: 22ms; }
+.title-menu-view > :nth-child(3) { animation-delay: 44ms; }
+.title-menu-view > :nth-child(4) { animation-delay: 66ms; }
+.title-menu-view > :nth-child(5) { animation-delay: 88ms; }
+.title-menu-view > :nth-child(6) { animation-delay: 110ms; }
+.title-menu-view > :nth-child(7) { animation-delay: 132ms; }
+.title-menu-view > :nth-child(n + 8) { animation-delay: 150ms; }
+@keyframes title-menu-enter {
+  from { filter: blur(3px); opacity: 0; transform: translate3d(10px, 0, 0); }
+  to { filter: none; opacity: 1; transform: none; }
+}
+@keyframes title-menu-return {
+  from { filter: blur(3px); opacity: 0; transform: translate3d(-10px, 0, 0); }
+  to { filter: none; opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .title-menu-morph { transition: none; }
+  .title-menu-view > * { animation: none; }
+}
+
+/* The pill as a breadcrumb: the conversation's title, quieter, then the level. */
+.title-pill-title.is-crumb-root { color: var(--av-sys-color-text-muted); cursor: pointer; font-weight: 500; transition: color 120ms ease; }
+.title-pill-title.is-crumb-root:hover { color: var(--av-sys-color-text-default); }
+.title-pill-crumb-separator { color: var(--av-sys-color-text-disabled); flex: none; }
+.title-pill-crumb { animation: title-menu-enter 240ms cubic-bezier(.2, .8, .2, 1) both; flex: none; }
+
+/* The root's most used actions, as tiles. */
+.title-menu-tiles { display: grid; gap: 8px; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; margin: 6px 0 8px; }
+.title-menu-tile {
+  align-items: center;
+  white-space: nowrap;
+  background: var(--av-sys-color-surface-sunken);
+  border-radius: 12px;
+  color: var(--av-sys-color-text-subtle);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font-size: 12.5px;
+  gap: 6px;
+  justify-content: center;
+  min-height: 70px;
+  outline: 0;
+  padding: 8px 4px;
+  text-align: center;
+  transition: background-color 120ms ease;
+  user-select: none;
+}
+.title-menu-tile > svg { color: var(--av-sys-color-text-default); }
+.title-menu-tile[data-highlighted] { background: color-mix(in srgb, var(--av-sys-color-surface-sunken) 88%, rgb(119 119 119)); color: var(--av-sys-color-text-default); }
+.title-menu-tile[data-disabled] { opacity: .42; }
+
+/* A row that opens a level: what it is, how much of it there is, and a chevron. */
+.title-pill-menu .menu-item.title-menu-level-row { font-size: 15px; gap: 12px; min-height: 46px; padding: 0 10px; }
+.title-menu-level-row > svg:first-child { color: var(--av-ref-color-neutral-11); flex: none; }
+.title-menu-level-meta { color: var(--av-sys-color-text-muted); flex: none; font-size: 13.5px; }
+.title-menu-level-chevron { color: var(--av-sys-color-text-disabled); flex: none; }
+
+/* People: who can see it, a search, who is in it, who could be. */
+.title-menu-scope {
+  align-items: center;
+  background: var(--av-sys-color-surface-sunken);
+  border-radius: 12px;
+  color: var(--av-ref-color-neutral-11);
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 12px 14px;
+}
+.title-menu-scope-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.title-menu-scope-title { color: var(--av-sys-color-text-default); font-size: 14.5px; }
+.title-menu-scope-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; }
+.title-menu-view:has(> .title-menu-scope) .title-menu-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
+.title-menu-person { align-items: center; display: flex; gap: 12px; min-height: 52px; padding: 4px 8px; }
+.title-menu-person .avatar { height: 34px; width: 34px; }
+.title-menu-person-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.title-menu-person-name { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 14.5px; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title-menu-person-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title-menu-person-present { background: var(--av-sys-color-success-base); border-radius: 50%; flex: none; height: 7px; width: 7px; }
+.title-menu-person-role { color: var(--av-sys-color-text-muted); flex: none; font-size: 13.5px; }
+.title-menu-add {
+  background: var(--av-sys-color-surface-raised);
+  border: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-strong);
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-accent-strong);
+  cursor: pointer;
+  flex: none;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  height: 32px;
+  padding: 0 14px;
+}
+.title-menu-add:hover:not(:disabled) { background: var(--av-sys-color-surface-sunken); }
+.title-menu-add:disabled { cursor: progress; opacity: .6; }
+.title-menu-error { color: var(--av-sys-color-danger-base); font-size: 12.5px; margin: 0 8px 6px; }
+
+/* More: the conversation's settings as switches, grouped, then its actions. */
+.title-menu-settings { background: var(--av-sys-color-surface-sunken); border-radius: 12px; margin-bottom: 8px; padding: 4px; }
+.title-pill-menu .menu-item.title-menu-switch-row { font-size: 14.5px; gap: 12px; min-height: 44px; padding: 0 10px; }
+.title-menu-switch {
+  background: var(--av-ref-color-line-4);
+  border-radius: var(--av-sys-size-radius-pill);
+  flex: none;
+  height: 22px;
+  position: relative;
+  transition: background-color 180ms ease;
+  width: 38px;
+}
+.title-menu-switch::after {
+  background: var(--av-sys-color-surface-raised);
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .18);
+  content: '';
+  height: 18px;
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transition: transform 220ms cubic-bezier(.32, .72, 0, 1);
+  width: 18px;
+}
+.title-menu-switch[data-checked] { background: var(--av-sys-color-text-default); }
+.title-menu-switch[data-checked]::after { transform: translateX(16px); }
 .title-pill-menu .menu-item { border-radius: 8px; font-size: 13.5px; min-height: 34px; padding: 0 8px; }
 .title-pill-menu .menu-item:not(.menu-item-danger) { color: var(--av-sys-color-text-default); }
 .title-pill-menu .menu-item:not(.menu-item-danger) > svg { color: var(--av-ref-color-neutral-11); flex: none; }

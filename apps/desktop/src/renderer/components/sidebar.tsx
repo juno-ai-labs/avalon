@@ -1675,6 +1675,19 @@ export function Sidebar({
     }
   };
 
+  // Lend the pin action to a Channel's menu. A ref keeps the registered
+  // function stable while it always runs against this render's rows.
+  const pinFromMenu = useRef<(workstreamId: string, pinned: boolean) => void>(() => undefined);
+  pinFromMenu.current = (workstreamId, pinned) => {
+    const workstream = workstreams.find((candidate) => candidate.id === workstreamId);
+    if (workstream) void togglePin(workstream, pinned);
+  };
+  const setPinChannel = useUiStore((state) => state.setPinChannel);
+  useEffect(() => {
+    setPinChannel((workstreamId, pinned) => pinFromMenu.current(workstreamId, pinned));
+    return () => setPinChannel(null);
+  }, [setPinChannel]);
+
   const markWorkstreamUnread = async (workstream: WorkstreamSummary): Promise<void> => {
     await onMarkWorkstreamUnread(workstream);
     reportTelemetryProductIntent({

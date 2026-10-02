@@ -623,6 +623,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const railScope = useUiStore((state) => state.railScope);
   const storeRailOpen = useUiStore((state) => state.railOpen);
   const closeRail = useUiStore((state) => state.closeRail);
+  const pinChannel = useUiStore((state) => state.pinChannel);
   const breakoutScope = openBreakoutId === null ? null : `${id}:${openBreakoutId}`;
   const breakoutOwnsRail = storeRailOpen && breakoutScope !== null && railScope === breakoutScope;
   const mainOwnsRail = storeRailOpen && railScope === id;
@@ -707,6 +708,11 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         onSidekickMenuOpen={context?.loadSidekickOptions}
         openSubstreamId={openBreakoutId}
         participantsPending={context === null && railParticipants === undefined}
+        people={context?.people}
+        pinned={pinChannel && row && !conversationScoped ? {
+          on: (row.spacePins ?? []).some((pin) => row.spaceIds.includes(pin.spaceId)),
+          onChange: (next) => pinChannel(id, next),
+        } : undefined}
         presentUserIds={context?.presentUserIds ?? []}
         renderAge={breakoutAge}
         sidekickFailure={context?.sidekickFailure}
@@ -761,6 +767,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         onRefreshSidekicks={context.refreshSidekicks}
         onSidekickMenuOpen={context.loadSidekickOptions}
         participants={context.detail.participants}
+        people={context.people}
         presentUserIds={context.presentUserIds}
         sidekickFailure={context.sidekickFailure}
         sidekicks={context.sidekicks}
