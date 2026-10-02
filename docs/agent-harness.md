@@ -543,7 +543,7 @@ of several. The seam covers the OpenRouter client and nothing else, so the
 seeded run is routed where the seam is: `demoSeedModelRoute` keeps the
 resolved primary model when it is not Azure-bound, otherwise takes the first
 unbound fallback, otherwise a fixed unbound id, and the run's config omits the
-Azure transport. Production's default `x-ai/grok-4.3` is Azure-first, and a
+Azure transport. An Azure-bound model such as `x-ai/grok-4.3` is tried there first, and a
 seeded run left on it would be answered by a live model, never by the seed.
 The id is only what the run records about itself, since the seam answers
 whatever name the request carries. A seed has one turn because a
