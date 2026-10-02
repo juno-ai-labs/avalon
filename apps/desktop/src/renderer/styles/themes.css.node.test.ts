@@ -174,6 +174,11 @@ describe('token references', () => {
     // states differently. The second is read by four rules, which is why it is
     // named rather than repeated.
     '--turn-width-cap', '--composer-width',
+    // The empty composer's height and the gap under it, and the insets the
+    // dividers between panels take from them and from the title pill: layout
+    // arithmetic shared by the dock, the capsule and the dividers.
+    '--composer-dock-gap', '--composer-capsule-height',
+    '--panel-divider-inset-top', '--panel-divider-inset-bottom',
     // The count wheel reverses its travel when the value decreases. This is
     // local animation geometry, independent of the selected theme.
     '--wheel-travel',
