@@ -1,7 +1,8 @@
+import { conversationSourceAt, type ConversationSourceProvider } from '@rally/contracts';
 import type { RallyDesktopBridge } from '../../common/desktop';
 import type { EmbeddedBrowserTab } from '../../common/embedded-browser';
 
-export type BrowserConversationProvider = 'chatgpt' | 'claude';
+export type BrowserConversationProvider = ConversationSourceProvider;
 
 export interface BrowserConversation {
   provider: BrowserConversationProvider;
@@ -12,28 +13,9 @@ export interface BrowserConversation {
   shared: boolean;
 }
 
-const uuid = '([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})';
-/** The conversation routes each provider's own web client shows: the person's own, and shared links. */
-const conversationRoutes: Array<{ provider: BrowserConversationProvider; hostname: string; path: RegExp; shared: boolean; fallbackTitle: string }> = [
-  { provider: 'chatgpt', hostname: 'chatgpt.com', path: new RegExp(`^/c/${uuid}/?$`, 'iu'), shared: false, fallbackTitle: 'ChatGPT conversation' },
-  { provider: 'chatgpt', hostname: 'chatgpt.com', path: new RegExp(`^/share/${uuid}/?$`, 'iu'), shared: true, fallbackTitle: 'Shared ChatGPT conversation' },
-  { provider: 'claude', hostname: 'claude.ai', path: new RegExp(`^/chat/${uuid}/?$`, 'iu'), shared: false, fallbackTitle: 'Claude conversation' },
-  { provider: 'claude', hostname: 'claude.ai', path: new RegExp(`^/share/${uuid}/?$`, 'iu'), shared: true, fallbackTitle: 'Shared Claude conversation' },
-];
-
 export function conversationAt(value: string, title: string): BrowserConversation | null {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'https:') return null;
-    for (const route of conversationRoutes) {
-      const match = url.hostname === route.hostname ? route.path.exec(url.pathname) : null;
-      if (match?.[1]) return { provider: route.provider, id: match[1].toLowerCase(), url: `${url.origin}${url.pathname.replace(/\/$/u, '')}`,
-        title: title || route.fallbackTitle, shared: route.shared };
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  const source = conversationSourceAt(value);
+  return source && { provider: source.provider, id: source.sessionId, url: source.url, title: title || source.fallbackTitle, shared: source.shared };
 }
 
 /** The importable conversation a browser tab is showing, if any. */

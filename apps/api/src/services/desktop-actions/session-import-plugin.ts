@@ -50,10 +50,12 @@ export function createSessionImportPlugin(
       const result = await runDesktopAction(executor, input, context, {
         kind: "session_import.finish", title: args.title, messages: args.messages,
       });
+      // Not a halt: the run ends on the model's own one-line reply, the
+      // durable final turn every completed run must have. A tool that halted
+      // here left none, and the run terminalized as `final_turn_required`.
       return {
         output: { imported: true, messages: result.messages },
         summary: `Imported ${result.messages} messages`,
-        halt: "completed",
       };
     },
   };
@@ -70,7 +72,7 @@ export function createSessionImportPlugin(
     execute: async (raw, context) => {
       const args = FailArgumentsSchema.parse(raw);
       await runDesktopAction(executor, input, context, { kind: "session_import.fail", reason: args.reason });
-      return { output: { stopped: true }, summary: "Stopped the import", halt: "completed" };
+      return { output: { stopped: true }, summary: "Stopped the import" };
     },
   };
   return {

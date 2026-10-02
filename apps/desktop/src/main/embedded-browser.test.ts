@@ -22,6 +22,10 @@ class FakeContents extends EventEmitter {
   getTitle = (): string => '';
   isLoading = (): boolean => false;
   isDestroyed = (): boolean => this.destroyed;
+  throttled = true;
+  setBackgroundThrottling = (throttled: boolean): void => { this.throttled = throttled; };
+  focused = false;
+  isFocused = (): boolean => this.focused;
   close = vi.fn(() => { this.destroyed = true; this.emit('destroyed'); });
 }
 
@@ -50,7 +54,7 @@ function hostWindow(zoom = 1) {
   const window = Object.assign(new EventEmitter(), {
     getContentSize: () => [1000, 800],
     isDestroyed: () => false,
-    webContents: { getZoomFactor: () => zoom },
+    webContents: { getZoomFactor: () => zoom, focus: vi.fn() },
     contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
   });
   return window;
@@ -129,19 +133,24 @@ describe('the local browser behind the rail and the import window', () => {
     expect(instance.state().activeTabId).toBe(instance.state().tabs[1]!.id);
   });
 
-  it('places only the active tab, in window points, and only while visible', async () => {
-    const { instance } = browser(1.25);
+  it('places the active tab in window points while visible, and parks it at full size, unfocused, while hidden', async () => {
+    const { instance, window } = browser(1.25);
     await instance.command({ action: 'open', url: 'https://a.example/' });
     await instance.command({ action: 'open', url: 'https://b.example/' });
     instance.setBounds({ x: 10, y: 40, width: 400, height: 300 });
+    // Hidden from the start: an agent can still drive a page of the rail's size.
     expect(electron.views.map((view) => view.bounds)).toEqual([
-      { x: 0, y: 0, width: 0, height: 0 }, { x: 0, y: 0, width: 0, height: 0 },
+      { x: 0, y: 0, width: 0, height: 0 }, { x: 100_000, y: 100_000, width: 500, height: 375 },
     ]);
+    expect(electron.views.map((view) => view.webContents.throttled)).toEqual([true, false]);
     instance.setVisible(true);
     expect(electron.views[1]!.bounds).toEqual({ x: 13, y: 50, width: 500, height: 375 });
     expect(electron.views[0]!.bounds).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+    // Covered by a Rally dialog while the person was typing in the page.
+    electron.views[1]!.webContents.focused = true;
     instance.setVisible(false);
-    expect(electron.views[1]!.bounds).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+    expect(electron.views[1]!.bounds).toEqual({ x: 100_000, y: 100_000, width: 500, height: 375 });
+    expect(window.webContents.focus).toHaveBeenCalledTimes(1);
   });
 
   it('reorders tabs, selects the closed tab’s neighbour, and leaves a blank tab after the last close', async () => {
