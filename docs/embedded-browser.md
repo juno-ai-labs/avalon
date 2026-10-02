@@ -111,6 +111,10 @@ as Google Chrome.
   users would expose one person's website sessions to another.
 - Native page bounds follow the rail and are hidden behind Rally overlays.
   Otherwise a guest page can paint above a dialog or outside the browser rail.
+- Hidden is parked, not collapsed: the active tab keeps its size outside the
+  window, unthrottled and without keyboard focus. An agent driving it reads,
+  captures and clicks the same page whether or not a Rally overlay covers it,
+  and the person cannot reach it while one does.
 
 ## Boundary
 
@@ -148,8 +152,10 @@ A page that calls `navigator.credentials.get({ publicKey })` without checking
 for `PublicKeyCredential` still waits forever.
 
 The native view cannot be layered under renderer dialogs, so the renderer hides
-it for dialogs and menus. Agent access has no transport yet; the command types
-alone do not make a browser action available to a model.
+it for dialogs and menus, and CSS — a blur, a scrim — cannot reach it. A surface
+that wants the page visible behind an overlay draws a capture of it instead, as
+the import window's run does. A parked active tab renders at full speed, so a
+covered page costs what a visible one does.
 
 ## Testing
 
@@ -203,6 +209,15 @@ while `sendInputEvent` takes DIPs, so on a high-density display every click
 landed at twice the coordinates. The screenshot command now resizes the capture
 to the view's DIP bounds and returns its width and height; a future change to
 either command must keep the two in the same units.
+
+Hiding the page used to collapse it to 0×0. That stalled an agent whenever a
+dialog covered the page — the import window's own progress modal included — so
+a hidden active tab is now parked outside the window at its full size, with
+background throttling off and keyboard focus moved back to Rally. The renderer
+keeps sending the page's real rectangle while it hides it. Parking rather than
+an input-swallowing overlay view was chosen because it needs no second
+renderer: the page is unreachable for being out of the window, and the
+renderer draws whatever should show behind its overlay.
 
 ### 2026-09-25 — Closing the only blank tab closes the rail
 

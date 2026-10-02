@@ -1,5 +1,5 @@
-import { X } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { Check, CircleAlert, LoaderCircle, X } from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { BrowserImportContext } from '../../common/browser-import';
 import {
   EmbeddedBrowserNavigation,
@@ -12,7 +12,13 @@ import {
 import { Button, DropdownSelect, IconButton, InlineError, Modal } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { browserConversation, conversationAt } from '../lib/browser-conversation';
-import { SESSION_IMPORT_FAILURE_COPY, startSessionImportRun, type SessionImportRun, type SessionImportRunResult } from '../lib/session-import-run';
+import {
+  SESSION_IMPORT_FAILURE_COPY,
+  startSessionImportRun,
+  type SessionImportRun,
+  type SessionImportRunResult,
+  type SessionImportStep,
+} from '../lib/session-import-run';
 import { desktopBridge } from '../lib/platform';
 
 /** Where a person starts: the two providers whose signed-in chats can be read. */
@@ -33,6 +39,36 @@ function endedMessage(result: SessionImportRunResult): string | null {
   return result.message;
 }
 
+/** How many of the latest steps the import modal lists by name; older ones fold into one line. */
+const LISTED_STEPS = 3;
+
+/** The agent's latest steps, newest last, under a count of the ones before them. */
+function ImportSteps({ steps }: { steps: readonly SessionImportStep[] }): React.JSX.Element {
+  if (steps.length === 0) {
+    return <p aria-live="polite" className="browser-import-steps-empty"><LoaderCircle aria-hidden="true" className="spin" size={14} />Starting the import…</p>;
+  }
+  const earlier = Math.max(0, steps.length - LISTED_STEPS);
+  return <ol aria-live="polite" className="browser-import-steps">
+    {earlier > 0 && <li className="is-earlier" key="earlier">
+      <Check aria-hidden="true" size={14} />
+      <span>{earlier} previous {earlier === 1 ? 'action' : 'actions'}</span>
+    </li>}
+    {steps.slice(earlier).map((step) => <li className={`is-${step.status}`} key={step.id}>
+      {step.status === 'running'
+        ? <LoaderCircle aria-label="In progress" className="spin" size={14} />
+        : step.status === 'failed'
+          ? <CircleAlert aria-label="Failed" size={14} />
+          : <Check aria-label="Done" size={14} />}
+      <span>{step.label}</span>
+    </li>)}
+    {/* Between tools the model is choosing what to do next; the list should not look stalled. */}
+    {steps.every((step) => step.status !== 'running') && <li className="is-running" key="deciding">
+      <LoaderCircle aria-label="In progress" className="spin" size={14} />
+      <span>Deciding the next step…</span>
+    </li>}
+  </ol>;
+}
+
 /**
  * The import window: the account's browser with Close and Import around it.
  *
@@ -49,15 +85,17 @@ export function BrowserImportWindow(): React.JSX.Element {
   const { state, active, error: browserError, command } = useEmbeddedBrowser();
   const pageRef = useRef<HTMLElement>(null);
   const addressRef = useRef<HTMLInputElement>(null);
-  useEmbeddedBrowserShortcuts({ state, command, addressRef });
+  const [run, setRun] = useState<SessionImportRun | null>(null);
+  // While the agent drives the page, no key may move it.
+  useEmbeddedBrowserShortcuts({ state, command, addressRef, enabled: run === null });
   const nameId = useId();
   const [darwin, setDarwin] = useState(false);
   const [context, setContext] = useState<BrowserImportContext | null>(null);
   const [pending, setPending] = useState<PendingImport | null>(null);
   const [name, setName] = useState('');
   const [spaceId, setSpaceId] = useState('');
-  const [run, setRun] = useState<SessionImportRun | null>(null);
-  const [progress, setProgress] = useState(0);
+  const [steps, setSteps] = useState<readonly SessionImportStep[]>([]);
+  const [mirror, setMirror] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
   const conversation = active ? browserConversation(active) : null;
@@ -102,15 +140,30 @@ export function BrowserImportWindow(): React.JSX.Element {
   // A failure names the chat it was about; it does not follow the person to the next one.
   useEffect(() => { setFailure(null); }, [conversation?.url]);
 
+  // The run's modal covers the page, which main then parks out of the window
+  // at full size so the agent keeps working on it. What shows behind the blur
+  // is this capture of it, refreshed as each step ends.
+  const tabId = active?.id ?? null;
+  const capture = useCallback((): void => {
+    if (!tabId) return;
+    void bridge.commandEmbeddedBrowser({ action: 'screenshot', tabId }).then((result) => {
+      if (result.kind === 'screenshot') setMirror(`data:${result.mimeType};base64,${result.data}`);
+    }).catch(() => undefined);
+  }, [bridge, tabId]);
+  const settledSteps = steps.filter((step) => step.status !== 'running').length;
+  useEffect(() => { if (run) capture(); }, [run, settledSteps, capture]);
+
   const watch = (started: SessionImportRun): void => {
+    capture();
     setRun(started);
-    setProgress(0);
+    setSteps([]);
     void started.done.then(async (result) => {
       if (result.kind === 'imported') {
         await bridge.completeBrowserImport(result.workstreamId);
         return;
       }
       setRun(null);
+      setMirror(null);
       setFailure(endedMessage(result));
     });
   };
@@ -121,7 +174,7 @@ export function BrowserImportWindow(): React.JSX.Element {
     if (update) {
       if (!updatable || !active) return;
       watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
-        mode: { kind: 'update', workstreamId: update.workstreamId }, onProgress: ({ steps }) => setProgress(steps) }));
+        mode: { kind: 'update', workstreamId: update.workstreamId }, onSteps: setSteps }));
       return;
     }
     const spaces = context?.spaces ?? [];
@@ -141,7 +194,7 @@ export function BrowserImportWindow(): React.JSX.Element {
     setPending(null);
     watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
       mode: { kind: 'create', title: name.trim(), spaceIds: [spaceId], clientMessageId: pending.clientMessageId },
-      onProgress: ({ steps }) => setProgress(steps) }));
+      onSteps: setSteps }));
   };
 
   const spaces = context?.spaces ?? [];
@@ -153,21 +206,15 @@ export function BrowserImportWindow(): React.JSX.Element {
     <div className="browser-import-toolbar">
       <EmbeddedBrowserNavigation active={active} addressRef={addressRef} command={command} />
       {/* Import reads the foreground tab — the one this window is showing. */}
-      {run
-        ? <>
-          <span aria-live="polite" className="browser-import-progress">
-            {progress === 0 ? 'Starting the import…' : `Reading the conversation… ${progress} ${progress === 1 ? 'step' : 'steps'}`}
-          </span>
-          <Button onClick={() => void run.cancel()}>Cancel</Button>
-        </>
-        : <Button className="button-primary" disabled={!conversation || !api || (update !== null && !updatable)}
-          onClick={beginImport}
-          title={conversation ? `Import “${conversation.title}”` : 'Open a Claude or ChatGPT chat to import it'}>
-          {update ? 'Import updates' : 'Import'}
-        </Button>}
+      <Button className="button-primary" disabled={!conversation || !api || run !== null || (update !== null && !updatable)}
+        onClick={beginImport}
+        title={conversation ? `Import “${conversation.title}”` : 'Open a Claude or ChatGPT chat to import it'}>
+        {update ? 'Import updates' : 'Import'}
+      </Button>
     </div>
     {(failure ?? browserError) && <div className="browser-import-banner" role="alert">{failure ?? browserError}</div>}
     <main className="browser-import-page" ref={pageRef}>
+      {run && mirror && <img alt="" className="browser-import-mirror" src={mirror} />}
       {starting && <section aria-labelledby={`${nameId}-start`} className="browser-import-start">
         <h1 id={`${nameId}-start`}>Import a conversation</h1>
         <ol>
@@ -183,6 +230,17 @@ export function BrowserImportWindow(): React.JSX.Element {
         </ol>
       </section>}
     </main>
+    <Modal
+      backdrop="blur"
+      description="Rally is reading this conversation in the page behind. It is locked until the import finishes."
+      dismissible={false}
+      footer={<Button onClick={() => void run?.cancel()}>Cancel</Button>}
+      onOpenChange={(open) => { if (!open) void run?.cancel(); }}
+      open={run !== null}
+      title={update ? 'Importing updates' : 'Importing conversation'}
+    >
+      <ImportSteps steps={steps} />
+    </Modal>
     <Modal
       footer={<>
         <Button onClick={() => setPending(null)}>Cancel</Button>

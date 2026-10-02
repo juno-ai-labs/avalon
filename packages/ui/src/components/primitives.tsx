@@ -698,6 +698,12 @@ interface ModalProps {
    * person to save them a reopen is the wrong trade.
    */
   dismissible?: boolean;
+  /**
+   * What sits between the dialog and the window. `blur` is the lightbox's
+   * frosted veil, for a dialog that holds the window while work happens behind
+   * it and should still show that work.
+   */
+  backdrop?: 'scrim' | 'blur';
 }
 
 export function Modal({
@@ -709,11 +715,12 @@ export function Modal({
   footer,
   initialFocusRef,
   dismissible = true,
+  backdrop = 'scrim',
 }: ModalProps): React.JSX.Element {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Overlay className={backdrop === 'blur' ? 'dialog-overlay is-blurred' : 'dialog-overlay'} />
         <Dialog.Content
           className="dialog-content"
           /* Escape belongs to the IME while it is composing: it abandons the

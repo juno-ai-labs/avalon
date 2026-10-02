@@ -195,8 +195,15 @@ describe("a conversation import run", () => {
     expect(new Set(provider.calls.flatMap((call) => call.toolNames))).toEqual(new Set([
       "browser_evaluate", "browser_snapshot", "browser_screenshot", "browser_click", "browser_scroll",
       "browser_type", "browser_press_key", "browser_navigate", "browser_load", "import_finish", "import_fail",
+      // The profile's skills, offered by Bind's own skill tools.
+      "load_skill", "read_skill_resource",
     ]));
     expect(JSON.stringify(provider.calls[1]!.messages.at(-1)?.content)).toContain("\\\"turns\\\":2");
+    // Finishing returns to the model, whose reply is the run's final turn, so the run completes.
+    await expect.poll(() => runInDurableObject(child(run.workstreamId, run.substreamId), (_instance, state) =>
+      state.storage.sql.exec<{ status: string; has_final_turn: number }>(
+        `SELECT status, final_turn_id IS NOT NULL AS has_final_turn FROM runs`).one()), { timeout: 10_000 })
+      .toEqual({ status: "completed", has_final_turn: 1 });
     desktop.socket.close();
   }, 60_000);
 

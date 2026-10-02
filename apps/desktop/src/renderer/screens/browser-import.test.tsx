@@ -24,6 +24,7 @@ const harness = vi.hoisted(() => {
       return () => undefined;
     }),
     completeBrowserImport: vi.fn(async () => undefined),
+    commandEmbeddedBrowser: vi.fn(async () => ({ kind: 'screenshot', mimeType: 'image/jpeg', data: 'cGFnZQ==', width: 800, height: 600 })),
   };
   return { api, bridge, state, startSessionImportRun, settle: (result: unknown) => settle(result) };
 });
@@ -73,7 +74,48 @@ describe('browser import window', () => {
       sourceUrl: 'https://claude.ai/chat/4f2b7c1e-9a3d-4e8b-b1c2-0d9e8f7a6b5c',
       mode: { kind: 'create', title: 'Launch plan', spaceIds: ['space-b'], clientMessageId: expect.any(String) },
     })));
-    expect(await screen.findByText('Starting the import…')).toBeInTheDocument();
+    const progress = await screen.findByRole('dialog', { name: 'Importing conversation' });
+    expect(within(progress).getByText('Starting the import…')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Import', hidden: true })).toBeDisabled();
+
+    // Each step is listed in the harness's words, then in the tool's summary of what it did.
+    const { onSteps } = (harness.startSessionImportRun.mock.calls[0] as unknown as [{ onSteps: (steps: unknown[]) => void }])[0];
+    await act(async () => {
+      onSteps([
+        { id: 'call-1', label: 'Read the page outline', status: 'done' },
+        { id: 'call-2', label: 'Running a script in the page', status: 'running' },
+      ]);
+    });
+    expect(within(progress).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'Read the page outline',
+      'Running a script in the page',
+    ]);
+    // Between tools, the model is deciding; the list says so rather than looking stalled.
+    await act(async () => {
+      onSteps([
+        { id: 'call-1', label: 'Read the page outline', status: 'done' },
+        { id: 'call-2', label: 'Ran a script in the page', status: 'done' },
+      ]);
+    });
+    expect(within(progress).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'Read the page outline',
+      'Ran a script in the page',
+      'Deciding the next step…',
+    ]);
+    // Past three, the oldest fold into a count so the latest stay in view.
+    await act(async () => {
+      onSteps(['outline', 'click', 'script-1', 'script-2', 'script-3'].map((id) => (
+        { id, label: id === 'outline' ? 'Read the page outline' : id === 'click' ? 'Clicked in the page' : 'Ran a script in the page', status: 'done' as const })));
+    });
+    expect(within(progress).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      '2 previous actions',
+      'Ran a script in the page',
+      'Ran a script in the page',
+      'Ran a script in the page',
+      'Deciding the next step…',
+    ]);
+    // Behind the blur is the page as the agent last left it.
+    await waitFor(() => expect(document.querySelector('.browser-import-mirror')).toHaveAttribute('src', 'data:image/jpeg;base64,cGFnZQ=='));
 
     // The agent reports the page asks for sign-in; the person reads Rally's words for it.
     await act(async () => { harness.settle({ kind: 'failed', reason: 'sign_in_required' }); });

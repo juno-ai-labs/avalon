@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { assemblePreview, startSessionImportRun, type SessionImportApi } from './session-import-run';
+import { assemblePreview, startSessionImportRun, type SessionImportApi, type SessionImportStep } from './session-import-run';
 import { DesktopActionStore } from './desktop-actions/store';
 
 /** One fake feed socket per run: records what this window sent and when it closed. */
@@ -58,7 +58,7 @@ describe('assembling an import from what the agent stored', () => {
 });
 
 describe('running an import', () => {
-  function started() {
+  function started(onSteps?: (steps: readonly SessionImportStep[]) => void) {
     const discards: string[] = [];
     const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
     const api = {
@@ -74,6 +74,7 @@ describe('running an import', () => {
     const run = startSessionImportRun({
       api, bridge, tabId: 't1', sourceUrl: source.url,
       mode: { kind: 'create', title: 'Garden plan', spaceIds: [], clientMessageId: 'c1' },
+      ...(onSteps ? { onSteps } : {}),
     });
     return { run, discards };
   }
@@ -87,6 +88,44 @@ describe('running an import', () => {
     socket.emit('message', JSON.stringify({ type: 'desktop_action_requested', request: { id: 'a1', action: { kind: 'session_import.fail', reason: 'page_unavailable' } } }));
     await expect(run.done).resolves.toEqual({ kind: 'failed', reason: 'page_unavailable' });
     expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action', 'close']);
+    await vi.waitFor(() => expect(discards).toEqual(['w1']));
+  });
+
+  it('lists each step in the harness’s words, then in what the tool did, once each', async () => {
+    sockets.length = 0;
+    const reported: Array<readonly SessionImportStep[]> = [];
+    const { run } = started((steps) => reported.push(steps));
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit('open');
+    const frame = (type: string, invocation: Record<string, unknown>) => socket.emit('message', JSON.stringify({ type, invocation }));
+    frame('tool_started', { toolCallId: 'c1', activityName: 'Reading the page outline', status: 'started' });
+    frame('tool_completed', { toolCallId: 'c1', activityName: 'Reading the page outline', outputSummary: 'Read the page outline', status: 'completed' });
+    frame('tool_started', { toolCallId: 'c2', activityName: null, status: 'started' });
+    frame('tool_completed', { toolCallId: 'c2', outputSummary: null, status: 'failed' });
+    // A resubscribed socket replays a step already listed.
+    frame('tool_started', { toolCallId: 'c1', activityName: 'Reading the page outline', status: 'started' });
+    expect(reported.at(-1)).toEqual([
+      { id: 'c1', label: 'Read the page outline', status: 'done' },
+      { id: 'c2', label: 'Working', status: 'failed' },
+    ]);
+    expect(reported[0]).toEqual([{ id: 'c1', label: 'Reading the page outline', status: 'running' }]);
+    await run.cancel();
+  });
+
+  it('ends a run that stops without importing as unfinished, even with no steps, but not on the idle status it opens on', async () => {
+    sockets.length = 0;
+    const { run, discards } = started();
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit('open');
+    const status = (value: string) => socket.emit('message', JSON.stringify({ type: 'harness_status_changed', status: value }));
+    status('idle');
+    const pending = Symbol('pending');
+    await expect(Promise.race([run.done, new Promise((resolve) => { setTimeout(() => resolve(pending), 50); })])).resolves.toBe(pending);
+    status('running');
+    status('completed');
+    await expect(run.done).resolves.toEqual({ kind: 'unfinished' });
     await vi.waitFor(() => expect(discards).toEqual(['w1']));
   });
 

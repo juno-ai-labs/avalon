@@ -50,13 +50,15 @@ describe("desktop action tools", () => {
     await expect(tool("browser_snapshot", undefined).execute({}, context)).rejects.toMatchObject({ code: "desktop_unavailable" });
   });
 
-  it("ends the run once the import finishes or fails", async () => {
+  it("returns to the model once the import finishes or fails, so the run ends on its reply", async () => {
     const executor: DesktopActionExecutor = async (input) => ({ ok: true,
       result: input.action.kind === "session_import.finish" ? { workstreamId: "p", messages: 4 } : {} });
-    await expect(tool("import_finish", executor).execute({ title: "Plan", messages: "h1" }, context))
-      .resolves.toMatchObject({ output: { imported: true, messages: 4 }, halt: "completed" });
-    await expect(tool("import_fail", executor).execute({ reason: "sign_in_required" }, context))
-      .resolves.toMatchObject({ halt: "completed" });
+    const finished = await tool("import_finish", executor).execute({ title: "Plan", messages: "h1" }, context);
+    expect(finished).toMatchObject({ output: { imported: true, messages: 4 }, summary: "Imported 4 messages" });
+    expect(finished).not.toHaveProperty("halt");
+    const failed = await tool("import_fail", executor).execute({ reason: "sign_in_required" }, context);
+    expect(failed).toMatchObject({ output: { stopped: true } });
+    expect(failed).not.toHaveProperty("halt");
   });
 });
 

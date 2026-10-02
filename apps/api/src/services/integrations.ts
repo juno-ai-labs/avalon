@@ -3464,7 +3464,7 @@ export async function runWorkstreamHarness(
       // nothing else. What a surface may *do* is settled by the tool loop, so
       // withholding a skill would only hide advice, never authority, and
       // a future general skill would be hidden along with it.
-      skills: profile ? [] : [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => ({ ...entry.skill,
+      skills: profile ? [...profile.skills] : [...BUILT_IN_SKILLS, ...sidekickCatalog.map((entry) => ({ ...entry.skill,
         recommended: sidekickSnapshot.recommendedRefs?.includes(entry.durableRef) ?? false,
       }))],
       // Built-in refs share this snapshot and pass through unchanged on retry.
