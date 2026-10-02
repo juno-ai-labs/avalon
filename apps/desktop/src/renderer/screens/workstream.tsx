@@ -371,18 +371,21 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     if (!api || substreamPending) return;
     const visit = routeRef.current.visit;
     const action = next ? 'make_public' : 'make_private';
-    ++menuOperation.current;
+    const operation = ++menuOperation.current;
     setSubstreamPending(true);
     void api.setWorkstreamScope(id, next ? 'workspace' : 'personal').then((updated) => {
       patchCachedWorkstream(queryClient, id, { scope: updated.scope, updatedAt: updated.updatedAt });
       reportParentAction(updated, action);
     }).catch((cause: unknown) => {
-      if (routeRef.current.visit !== visit) return;
+      // Not over a newer menu action, or after leaving for another conversation.
+      if (routeRef.current.visit !== visit || menuOperation.current !== operation) return;
       // A refusal (an organization-wide Space still holds it, say) names what
       // to change first; anything else is the action's own retry sentence.
       const fallback = workstreamSidebarFailureCopy[action];
       setSubstreamMenuFailure({ title: fallback.title, copy: spaceFailureSentence(cause, fallback.copy) });
-    }).finally(() => { if (routeRef.current.visit === visit) setSubstreamPending(false); });
+      // Selecting a Breakout changes the visit without the reset a new Channel
+      // gets, so the pending flag is released by Channel, not by visit.
+    }).finally(() => { if (routeRef.current.id === id) setSubstreamPending(false); });
   };
   const submitSubstreamRename = async (): Promise<void> => {
     const target = renameTarget;
