@@ -194,7 +194,8 @@ describe("a conversation import run", () => {
     // The run saw only its profile's tools, and the page's answer came back as the tool's result.
     expect(new Set(provider.calls.flatMap((call) => call.toolNames))).toEqual(new Set([
       "browser_evaluate", "browser_snapshot", "browser_screenshot", "browser_click", "browser_scroll",
-      "browser_type", "browser_press_key", "browser_navigate", "browser_load", "import_finish", "import_fail",
+      "browser_type", "browser_press_key", "browser_navigate", "browser_load", "browser_network_list", "browser_network_read",
+      "import_finish", "import_fail",
       // The profile's skills, offered by Bind's own skill tools.
       "load_skill", "read_skill_resource",
     ]));

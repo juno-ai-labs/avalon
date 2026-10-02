@@ -134,6 +134,16 @@ const LoadArgumentsSchema = z.strictObject({
   mimeType: z.string().min(1).optional().describe("Media type; defaults to what the server reports."),
 });
 
+const NetworkListArgumentsSchema = z.strictObject({
+  urlContains: z.string().min(1).optional().describe("Only responses whose URL contains this text, such as part of a path or the conversation's id."),
+  resourceType: z.string().min(1).optional().describe("Only responses of this kind: Fetch, XHR, Document, Script, Image, …"),
+});
+const NetworkReadArgumentsSchema = z.strictObject({
+  requestId: z.string().min(1).describe("A requestId from browser_network_list."),
+  offset: z.number().int().nonnegative().optional().describe("Where the returned text starts, in characters. Defaults to 0."),
+  length: z.number().int().positive().optional().describe("How many characters of the body to return. Leave it out to only place the body in the page."),
+});
+
 /**
  * The person's Rally browser, as tools: run page script, read the page's
  * outline, look at it, and give it input.
@@ -258,6 +268,52 @@ export function createBrowserPlugin(
     },
   };
 
+  const networkList: HarnessTool = {
+    definition: {
+      name: "browser_network_list",
+      description: "List the responses the page has received since it last navigated — URL, method, status, type, size — as a browser's network panel shows them. A web app's data usually arrives in a Fetch or XHR response.",
+      capability: "browser.page.read",
+      mode: "read",
+      idempotency: "safe",
+      inputSchema: inputSchema(NetworkListArgumentsSchema),
+    },
+    reenterable: true,
+    execute: async (raw, context) => {
+      const args = NetworkListArgumentsSchema.parse(raw);
+      const result = await runDesktopAction(executor, input, context, {
+        kind: "browser.network_list",
+        ...(args.urlContains ? { urlContains: args.urlContains } : {}),
+        ...(args.resourceType ? { resourceType: args.resourceType } : {}),
+      });
+      return { output: { responses: result.responses }, summary: `Listed ${result.responses.length} network responses` };
+    },
+  };
+
+  const networkRead: HarnessTool = {
+    definition: {
+      name: "browser_network_read",
+      description: "Read one response the page received. Its body is placed in the page as window.__rallyNetwork[requestId] — parsed when it is JSON — for browser_evaluate to work on; pass length to also get that many characters of it back here. Bodies of Fetch and XHR responses are kept, so they can be read again at any time.",
+      capability: "browser.page.read",
+      mode: "read",
+      idempotency: "safe",
+      inputSchema: inputSchema(NetworkReadArgumentsSchema),
+    },
+    reenterable: true,
+    execute: async (raw, context) => {
+      const args = NetworkReadArgumentsSchema.parse(raw);
+      const result = await runDesktopAction(executor, input, context, {
+        kind: "browser.network_read",
+        requestId: args.requestId,
+        ...(args.offset !== undefined ? { offset: args.offset } : {}),
+        ...(args.length !== undefined ? { length: args.length } : {}),
+      });
+      return {
+        output: { ...result, ...(result.text !== undefined ? { text: text(result.text) } : {}) },
+        summary: "Read a network response",
+      };
+    },
+  };
+
   return {
     canonicalId: BROWSER_PLUGIN_ID,
     modelId: "rally_browser",
@@ -284,6 +340,8 @@ export function createBrowserPlugin(
       input_("browser_navigate", "Open a URL in the tab. Only pages on the conversation's own site open.", NavigateArgumentsSchema,
         (args) => ({ kind: "browser.navigate", url: args.url }), "Opened a page"),
       load,
+      networkList,
+      networkRead,
     ],
   };
 }

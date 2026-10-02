@@ -57,6 +57,27 @@ export const DesktopActionSchema = z.discriminatedUnion("kind", [
     name: z.string().min(1).optional(),
     mimeType: z.string().min(1).optional(),
   }),
+  /**
+   * The responses the tab's page has received since it last navigated, as the
+   * browser recorded them. `urlContains` and `resourceType` narrow the list.
+   */
+  z.strictObject({
+    kind: z.literal("browser.network_list"),
+    urlContains: z.string().min(1).optional(),
+    resourceType: z.string().min(1).optional(),
+  }),
+  /**
+   * One recorded response's body: placed in the page as
+   * `window.__rallyNetwork[requestId]` (parsed when it is JSON) for page
+   * script to work on, and, when `length` is given, that many characters of
+   * its text from `offset` returned directly.
+   */
+  z.strictObject({
+    kind: z.literal("browser.network_read"),
+    requestId: z.string().min(1),
+    offset: z.number().int().nonnegative().optional(),
+    length: z.number().int().positive().optional(),
+  }),
   /** Hand the conversation the agent assembled to the desktop that started the import. */
   z.strictObject({ kind: z.literal("session_import.finish"), title: z.string().min(1), messages: z.string().min(1) }),
   z.strictObject({ kind: z.literal("session_import.fail"), reason: SessionImportFailureReasonSchema }),
@@ -82,6 +103,31 @@ export const DesktopActionResultSchemas = {
   "browser.key": PageSchema,
   "browser.navigate": PageSchema,
   "browser.load": z.strictObject({ stored: StoredRefSchema }),
+  "browser.network_list": z.strictObject({
+    responses: z.array(z.strictObject({
+      requestId: z.string(),
+      url: z.string(),
+      method: z.string(),
+      status: z.number().int(),
+      mimeType: z.string(),
+      resourceType: z.string(),
+      size: z.number().int().nonnegative().nullable(),
+      cached: z.boolean(),
+    })),
+  }),
+  "browser.network_read": z.strictObject({
+    /** The page expression that now holds the body. */
+    variable: z.string(),
+    mimeType: z.string(),
+    /** Characters of text, or bytes for a binary body. */
+    size: z.number().int().nonnegative(),
+    json: z.boolean(),
+    /** A JSON object's top-level keys, or an array's length, to orient the next script. */
+    keys: z.array(z.string()).optional(),
+    length: z.number().int().nonnegative().optional(),
+    /** The requested slice of the body's text. */
+    text: z.string().optional(),
+  }),
   "session_import.finish": z.strictObject({
     workstreamId: z.string().min(1),
     messages: z.number().int().nonnegative(),

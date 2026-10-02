@@ -125,6 +125,56 @@ export function createDesktopActionExecutor(options: DesktopActionExecutorOption
       });
       return { ok: true, result: { stored } };
     }
+    if (action.kind === 'browser.network_list') {
+      const result = await command({ action: 'network', tabId });
+      if (result.kind !== 'network') return failed('browser_command_failed', 'The page\'s network responses could not be read.');
+      const responses = result.responses.filter((response) =>
+        (!action.urlContains || response.url.includes(action.urlContains))
+        && (!action.resourceType || response.resourceType.toLowerCase() === action.resourceType.toLowerCase()));
+      return { ok: true, result: { responses } };
+    }
+    if (action.kind === 'browser.network_read') {
+      let body: { body: string; base64Encoded: boolean };
+      let mimeType: string;
+      try {
+        const listed = await command({ action: 'network', tabId });
+        mimeType = listed.kind === 'network' ? listed.responses.find((response) => response.requestId === action.requestId)?.mimeType ?? '' : '';
+        const result = await command({ action: 'response_body', tabId, requestId: action.requestId });
+        if (result.kind !== 'response_body') throw new Error('The response body could not be read.');
+        body = result;
+      } catch (error) {
+        return failed('browser_command_failed', error instanceof Error ? error.message : 'The response body could not be read.');
+      }
+      const textual = !body.base64Encoded || /^(text\/|application\/(json|xml|javascript)|[^;]*\+json)/u.test(mimeType);
+      const text = body.base64Encoded && textual
+        ? new TextDecoder().decode(Uint8Array.from(atob(body.body), (character) => character.charCodeAt(0)))
+        : body.body;
+      let parsed: unknown;
+      let json = false;
+      if (textual) {
+        try { parsed = JSON.parse(text); json = true; } catch { parsed = undefined; }
+      }
+      const variable = `window.__rallyNetwork[${JSON.stringify(action.requestId)}]`;
+      // The page received this body itself; handing it back to the page exposes nothing new.
+      const value = json ? text : JSON.stringify(textual ? text : body.body);
+      try {
+        await command({ action: 'evaluate', tabId, expression: `(() => { window.__rallyNetwork ??= {}; ${variable} = ${value}; return true; })()` });
+      } catch {
+        return failed('browser_command_failed', 'The response body could not be placed in the page.');
+      }
+      const size = textual ? text.length : Math.floor(body.body.length * 3 / 4);
+      const shape = json && parsed !== null && typeof parsed === 'object'
+        ? Array.isArray(parsed) ? { length: parsed.length } : { keys: Object.keys(parsed).slice(0, 50) }
+        : {};
+      const offset = action.offset ?? 0;
+      return {
+        ok: true,
+        result: {
+          variable, mimeType: mimeType || (json ? 'application/json' : ''), size, json, ...shape,
+          ...(action.length !== undefined ? { text: (textual ? text : body.body).slice(offset, offset + action.length) } : {}),
+        },
+      };
+    }
     if (action.kind === 'browser.navigate' && !siteAllows(action.url)) {
       return failed('origin_not_allowed', `${action.url} is not a site this work may open.`);
     }

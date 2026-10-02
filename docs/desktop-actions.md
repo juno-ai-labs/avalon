@@ -57,6 +57,24 @@ the description reaches the API and the model. A later action of the same work
 — the import's finish — reads them by handle. Screenshots are scaled to the
 page's size in DIPs, so a point read off the image is the point `click` sends.
 
+`browser.network_list` and `browser.network_read` are the browser's network
+panel. The [embedded browser](embedded-browser.md) records every response a
+tab's page receives, from its first request until it navigates to a new
+document, and copies each Fetch and XHR body as it finishes. The list returns
+each response's URL, method, status, type, size and whether its body was kept.
+A read places the body in the page as `window.__rallyNetwork[requestId]` —
+parsed when it is JSON — so page script works on it there, and returns its
+size, type and top-level keys; with `length` it also returns that slice of the
+body's text, from `offset`. Nothing is redacted: the page already received the
+body, and the model reads it as it reads any page content.
+
+A desktop keeps every answer it computed. The room offers an unanswered action
+again to each new subscription, so a desktop that is offered an action it has
+already answered sends the same answer again rather than ignoring it: that is
+how an answer that met a socket between connections still arrives. A consumer
+that ends its work on an answer should wait for the tool's `tool_completed`
+frame — the room has the answer then — before it closes its socket.
+
 ## Invariants
 
 - **The desktop decides where an action runs, not the model.** The executor is
@@ -149,3 +167,15 @@ per browser step would have made an import of dozens of steps slow, and the row
 alone gives eviction safety through the existing tool re-entry. A future
 consumer should keep the creator-only answer rule unless it states whose desktop
 may act for its conversation.
+
+The browser's network panel became two actions, and answers became re-sendable.
+Agents spent most of an import reconstructing the request that had loaded a
+conversation — a token here, a request body there — when the page had already
+received the response; reading recorded responses removes that step for every
+site at once, and keeping Fetch and XHR bodies lets an agent read one again
+after Chromium has let it go. Answers changed after ChatGPT imports lost their
+finish answer: the window sent it and closed its socket at once, a send that
+met the socket between connections was dropped, and the re-offered action was
+ignored as already handled, so the tool waited out its timeout. Re-sending a
+stored answer was chosen over making send itself durable, because the room's
+re-offer already exists to recover exactly this.
