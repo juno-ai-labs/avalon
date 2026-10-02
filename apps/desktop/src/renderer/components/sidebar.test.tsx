@@ -2189,6 +2189,42 @@ describe('pinned channels', () => {
     expect(screen.getByRole('button', { name: 'Sorted by what needs you. Sort A to Z' })).toHaveTextContent('Needs you');
   });
 
+  it('keeps the open Channel in the Needs you half it was opened from until the reader moves on', () => {
+    useUiStore.setState({ sidebarChannelSort: 'needs_you', sidebarSpaceFilter: TEST_SPACE_ID });
+    const rows = (openedRead: boolean): WorkstreamSummary[] => [
+      workstream('ws-quiet', 'Quiet newest', 'completed', '2026-07-31T20:00:00.000Z'),
+      workstream('ws-opened', 'Opened oldest', 'completed', '2026-07-01T20:00:00.000Z', { hasUnread: !openedRead }),
+      workstream('ws-waiting', 'Still waiting', 'completed', '2026-07-20T20:00:00.000Z', { hasUnread: true }),
+    ].map((stream) => placedIn(stream, TEST_SPACE_ID));
+    const sidebar = (openedRead: boolean): React.JSX.Element => (
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            spaces={[space(undefined, undefined, { channelCount: 3 })]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={rows(openedRead)}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>
+    );
+    const view = render(sidebar(false));
+    const channelTitles = (): string[] => [...screen.getByRole('region', { name: 'Channels' })
+      .querySelectorAll('[data-workstream-id] .sidebar-row-title-copy')]
+      .map((title) => title.textContent ?? '');
+    expect(channelTitles()).toEqual(['Still waiting', 'Opened oldest', 'Quiet newest']);
+
+    // Opening it reads it; the row stays where the reader clicked it.
+    fireEvent.click(screen.getByRole('link', { name: /Opened oldest/u }));
+    view.rerender(sidebar(true));
+    expect(channelTitles()).toEqual(['Still waiting', 'Opened oldest', 'Quiet newest']);
+
+    // Moving on releases it to the read half.
+    fireEvent.click(screen.getByRole('link', { name: /Still waiting/u }));
+    expect(channelTitles()).toEqual(['Still waiting', 'Quiet newest', 'Opened oldest']);
+  });
+
   it('shows an empty Pinned section that says how to pin, before anything is pinned', () => {
     renderWith([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
