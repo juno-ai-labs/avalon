@@ -42,7 +42,7 @@ function terminalFilter(options) {
   ].join("\n  AND ");
 }
 
-export function buildTerminalAnalyticsQueries(options) {
+function buildTerminalAnalyticsQueries(options) {
   const where = terminalFilter(options);
   return {
     overview: `SELECT

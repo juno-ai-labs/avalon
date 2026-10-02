@@ -1,14 +1,48 @@
 import { configuredRegions, regions } from "./regions.mjs";
 import { spawn } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { isEntryPoint } from './entry-point.mjs';
+import { parseWranglerConfig } from './wrangler-config.mjs';
 
-export function regionalApiCommands({ local }) {
+const scriptsDirectory = dirname(fileURLToPath(import.meta.url));
+const apiDirectory = join(scriptsDirectory, '..', 'apps', 'api');
+
+/**
+ * The region's main config without its `containers` block, for local mode.
+ *
+ * `--enable-containers=false` is ignored once more than one `--config` is
+ * passed (wrangler 4.126.0), so Wrangler still tries to build the crash
+ * symbolicator's image and dies without Docker. Only the block's absence stops
+ * it. Two name segments keep region discovery from reading the copy as a
+ * region, and it is rewritten on every start, so it cannot go stale.
+ */
+export function containerFreeConfig(source) {
+  const config = parseWranglerConfig(source);
+  delete config.containers;
+  return `${JSON.stringify(config, null, 2)}\n`;
+}
+
+function localMainConfig(region) {
+  return `wrangler.${region}.scratch.jsonc`;
+}
+
+function writeLocalMainConfigs() {
+  for (const region of configuredRegions) {
+    const source = readFileSync(join(apiDirectory, `wrangler.${region}.jsonc`), 'utf8');
+    writeFileSync(join(apiDirectory, localMainConfig(region)), containerFreeConfig(source));
+  }
+}
+
+function regionalApiCommands({ local }) {
   return configuredRegions.map((region, index) => ({
     name: region,
     arguments: ['--filter', '@rally/api', 'exec', '--', 'wrangler', 'dev',
       ...(local ? ['--local', '--enable-containers=false'] : []),
-      ...['', 'documents.', 'terminal.', ...(region === 'global' ? ['telemetry.'] : [])]
+      '--config', local ? localMainConfig(region) : `wrangler.${region}.jsonc`,
+      ...['documents.', 'terminal.', ...(region === 'global' ? ['telemetry.'] : [])]
         .flatMap((service) => ['--config', `wrangler.${service}${region}.jsonc`]),
       '--env-file', `.dev.vars.${region}`, '--persist-to', `.wrangler/state/${region}`,
       '--port', new URL(regions[region].localApiUrl).port,
@@ -61,12 +95,39 @@ function startRegion(specification) {
   return { child, readiness, exit, name: specification.name };
 }
 
+function openLocalAuthority() {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [join(scriptsDirectory, 'open-local-authority.mjs')], {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const writeLines = (stream, destination) => {
+      createInterface({ input: stream }).on('line', (line) => destination.write(`[open-authority] ${line}\n`));
+    };
+    writeLines(child.stdout, process.stdout);
+    writeLines(child.stderr, process.stderr);
+    child.once('error', (error) => {
+      process.stderr.write(`[open-authority] could not start: ${error.message}\n`);
+      resolve();
+    });
+    child.once('exit', (code, signal) => {
+      if (code !== 0) {
+        process.stderr.write(`[open-authority] failed (${signal ?? String(code)}); run \`pnpm db:open-authority\` by hand\n`);
+      }
+      resolve();
+    });
+  });
+}
+
 async function run() {
   const unknownArguments = process.argv.slice(2).filter((argument) => argument !== '--local');
   if (unknownArguments.length > 0) {
     throw new Error(`Unknown argument: ${unknownArguments[0]}`);
   }
-  const commands = regionalApiCommands({ local: process.argv.includes('--local') });
+  const local = process.argv.includes('--local');
+  if (local) writeLocalMainConfigs();
+  const commands = regionalApiCommands({ local });
   const running = [];
   let stopping = false;
   const stop = (signal = 'SIGTERM') => {
@@ -91,6 +152,10 @@ async function run() {
         throw new Error(`${region.name} Worker exited while ${next.name} was starting`);
       }))]);
     }
+    // A local stack serves nothing until its authority is open: the workspace
+    // socket answers 503 and the client waits on "Opening channels" forever.
+    // Idempotent, so every start runs it; a failure leaves the Workers up.
+    if (local && !stopping) await openLocalAuthority();
 
     const firstExit = await Promise.race(running.map(async (region) => ({
       region: region.name,
