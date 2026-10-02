@@ -364,32 +364,14 @@ export interface WorkstreamRowDrag {
 const NEW_STREAM_LABEL = 'New channel';
 
 /**
- * What the globe badge means, at the two granularities the two surfaces want.
- *
- * The badge's own tip is a pointer affordance and cannot be anything else: its
- * trigger is a `span` inside the row's link, and making it focusable would put
- * a tab stop on every public row between the link and the next one. So the
- * row's preview — which opens on focus as well as hover — names the scope too,
- * and a reader who never touches a pointer gets the answer by tabbing to the
- * row.
- *
- * They are not the same string, because the pointer path shows both at once:
- * resting on the badge means already resting on the row, so the card is always
- * up behind the tip, and one sentence printed twice a centimetre apart reads as
- * a bug. The card names the state in the words the rest of the app uses for it
- * — the visibility menu offers **Make public to workspace**, and a note's own
- * screen labels itself **Public to workspace** — and the tip, which is what a
- * reader points at the badge to get, spells out what that means.
- *
- * The third register is the badge's own name, which a screen reader reaches
- * through the badge's `aria-label` and the row's `aria-description`. It is
- * named here with the other two because the argument for keeping them distinct
- * is only checkable if they are read together — two of three getting a copy
- * edit is exactly the drift this is meant to prevent.
+ * How a public row says so. The row carries no badge: its glyph matches the
+ * design's plain mark, so the row's `aria-description` names the scope for a
+ * screen reader and its preview card, which opens on focus as well as hover,
+ * names it in the words the rest of the app uses — the visibility menu's
+ * **Make public to organization**.
  */
 const PUBLIC_SCOPE_NAME = 'Public channel';
 const PUBLIC_SCOPE_LABEL = 'Public to organization';
-const PUBLIC_SCOPE_EXPLANATION = 'Public — everyone in the organization can see this channel.';
 
 /**
  * The row itself gets deliberately terse when the sidebar becomes an icon
@@ -810,7 +792,6 @@ function WorkstreamRow({
             to={destination}
           >
             <ChannelRowContent id={workstream.id} title={workstream.title} appearance={workstream.appearance} naming={naming}
-              marks={workstream.scope === 'workspace' ? <PublicMarker /> : undefined}
               marker={marker === null ? undefined : <StatusDot compact status={marker} />}
               subtitle={spaceSubtitle}
               titlePrefix={workstream.systemKind ? <Cog aria-label="System channel" size={11} /> : undefined}
@@ -920,40 +901,6 @@ function WorkstreamRow({
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root></>
-  );
-}
-
-/**
- * The globe a work stream wears when its audience is the whole workspace.
- *
- * A 17px badge with no words is the one thing on the row a reader cannot work
- * out by looking, so the explanation is a tip rather than a label only a screen
- * reader reaches. It reads like the status dot beside it — the name, then the
- * sentence — because the two badges sit on the same glyph and answering the
- * same question two different ways is what makes a row need decoding.
- *
- * This tip is the pointer half of the answer; `PUBLIC_SCOPE_EXPLANATION` says
- * where the keyboard half lives and why it is not simply a `tabIndex` here.
- *
- * The row's own preview stays open behind it: the tip is a line above a badge
- * at the sidebar's left edge and the preview is a card off the row's right, so
- * the two never share the space. Radix would close one for the other, but the
- * preview drives its `open` itself and ignores the request.
- */
-function PublicMarker(): React.JSX.Element {
-  return (
-    <Tip
-      collisionPadding={8}
-      delayDuration={300}
-      disableHoverableContent
-      label={PUBLIC_SCOPE_EXPLANATION}
-      side="top"
-      sideOffset={8}
-    >
-      <span aria-label={PUBLIC_SCOPE_NAME} className="sidebar-workstream-public" role="img">
-        <Globe2 aria-hidden="true" size={11} />
-      </span>
-    </Tip>
   );
 }
 

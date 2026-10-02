@@ -7244,7 +7244,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .sidekick-section-list > li { align-items: center; display: flex; }
 .sidekick-section-list > li > .workstream-context-row { flex: 1; min-width: 0; }
 
-.sidebar-workstream-public { align-items: center; background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); display: flex; height: 17px; justify-content: center; position: absolute; right: -1px; top: -2px; width: 17px; }
 .sidebar-footer { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 56px; gap: 4px; margin-top: auto; padding: 8px 12px; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .app-shell .sidebar .sidebar-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .resizable-sidebar.is-compact .sidebar-footer { gap: 0; }

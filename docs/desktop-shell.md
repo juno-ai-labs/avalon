@@ -34,7 +34,8 @@ right panel.
 ### The sidebar
 
 One `ResizableSidebar` on the left, at the width in `useUiStore.sidebarWidth`
-(`rally.sidebar-width`), clamped to the shared minimum and maximum and to what
+(`rally.sidebar-width`; 340px, `SINGLE_SIDEBAR_DEFAULT_WIDTH`, until the person
+drags it), clamped to the shared minimum and maximum and to what
 the window leaves the conversation. Dragging below the minimum stops there.
 
 Its top bar holds the macOS window controls' inset and the host's actions. The
@@ -60,7 +61,9 @@ far edge (*Drag to reorder* when there are pins to reorder, *A–Z*); with no
 pins the list stands alone and has no heading. A row shows the glyph,
 the title and the last activity time. Under them it shows the names of the
 Channel's Spaces, without General; a Channel only in General has a one-line
-row. One dot at the leading edge shows the ranked marker from
+row. An unread row has a semibold title and its dot is red. A public Channel has no
+badge on its glyph; the row's description says so. One dot at the leading edge
+shows the ranked marker from
 [`workstream-markers.md`](workstream-markers.md), with `completed` left out. A
 Breakout needing this reader counts as unread on its Channel. The dot replaced
 the numeric badge.

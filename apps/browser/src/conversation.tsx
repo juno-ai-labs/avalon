@@ -19,7 +19,7 @@ import {
   SidebarRow,
   SidebarScroll,
 } from '@rally/ui/components/resizable-sidebar';
-import { DEFAULT_SIDEBAR_WIDTH } from '@rally/ui/lib/sidebar-geometry';
+import { SINGLE_SIDEBAR_DEFAULT_WIDTH } from '@rally/ui/lib/sidebar-geometry';
 import { browserSidebarVisible, browserSidebarWidth } from './sidebar-layout';
 import { MacDownloadLink } from './mac-download';
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
@@ -63,7 +63,7 @@ function sharedNavigationSpaces(directory: SharedNavigationDirectory | undefined
 
 /** The sidebar's preferred width, for this tab only; the window clamps it. */
 function useBrowserSidebarWidth(): [number, (requested: number) => void] {
-  const [width, setWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [width, setWidth] = useState(() => browserSidebarWidth(SINGLE_SIDEBAR_DEFAULT_WIDTH, window.innerWidth));
   const resize = useCallback((requested: number): void => {
     setWidth(browserSidebarWidth(requested, window.innerWidth));
   }, []);
