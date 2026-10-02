@@ -1674,11 +1674,6 @@ export function ConversationSurface({
     return true;
   }, [releaseTranscriptFollow, transcript, transcriptVirtualizer]);
   const handledScrollNonce = useRef<number | null>(null);
-  useEffect(() => {
-    if (scrollToTurn === null || handledScrollNonce.current === scrollToTurn.nonce) return;
-    // Held until the turn is in the loaded transcript; a later page retries.
-    if (revealTurn(scrollToTurn.turnId)) handledScrollNonce.current = scrollToTurn.nonce;
-  }, [revealTurn, scrollToTurn]);
 
   const loadOlderMessages = useCallback(async (): Promise<void> => {
     const generation = conversationGenerationRef.current;
@@ -1751,6 +1746,21 @@ export function ConversationSurface({
       if (activeConversationAddressRef.current === conversationAddress) setLoadingOlder(false);
     }
   }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, scrollTranscriptTo, transcriptQueryKey]);
+  useEffect(() => {
+    if (scrollToTurn === null || handledScrollNonce.current === scrollToTurn.nonce) return;
+    if (revealTurn(scrollToTurn.turnId)) {
+      handledScrollNonce.current = scrollToTurn.nonce;
+      return;
+    }
+    // An origin older than the loaded pages: page back toward it. Each page
+    // re-runs this, and reaching the oldest page ends the search.
+    if (loadingOlder || olderMessagesError || !orderedTranscript.data) return;
+    if (!adjacentTranscriptRange(orderedTranscript.data, 'older')) {
+      handledScrollNonce.current = scrollToTurn.nonce;
+      return;
+    }
+    void loadOlderMessages();
+  }, [loadOlderMessages, loadingOlder, olderMessagesError, orderedTranscript.data, revealTurn, scrollToTurn]);
 
   const nearHistoryEdge = useTranscriptHistory({
     scrollRef: transcriptRef,
