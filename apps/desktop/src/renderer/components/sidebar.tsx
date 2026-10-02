@@ -37,7 +37,7 @@ import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
 import { spaceFailureOf, spaceFailureSentence } from '../lib/space-failure-copy';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
-import { MIN_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
+import { MIN_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, type SidebarChannelSort, useUiStore } from '../lib/ui-store';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { layoutKey, useSemanticScroll } from '../lib/desktop-layout';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
@@ -170,6 +170,29 @@ function batchSubject(target: WorkstreamBatchTarget): string {
     : `${target.matchedCount} channels`;
   return workstreams;
 }
+
+/**
+ * How many of this Channel's conversations need this reader: its Breakouts,
+ * plus Main when the row shows Main. One count for the row's bold title, its
+ * dot, and the Needs you sort, so the three cannot disagree.
+ */
+function workstreamAttentionCount(workstream: WorkstreamSummary): number {
+  const mainVisible = !workstream.associativeSubstreamId || workstream.associativeSubstreamId === '0';
+  return (workstream.breakoutAttentionCount ?? 0)
+    + Number(mainVisible && conversationNeedsViewer(workstream));
+}
+
+/** Whether the row reads as unread: the input to its bold title. */
+function workstreamHasActivityForViewer(workstream: WorkstreamSummary): boolean {
+  return workstream.hasUnread === true || workstreamAttentionCount(workstream) > 0;
+}
+
+/** The sort toggle's cycle: each order's label, how it is read aloud, and what a click moves to. */
+const CHANNEL_SORTS: Record<SidebarChannelSort, { label: string; spoken: string; next: SidebarChannelSort }> = {
+  alphabetical: { label: 'A–Z', spoken: 'A to Z', next: 'recent' },
+  recent: { label: 'Recent', spoken: 'by recent activity', next: 'needs_you' },
+  needs_you: { label: 'Needs you', spoken: 'by what needs you', next: 'alphabetical' },
+};
 
 const sidebarWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
 const sidebarMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
@@ -492,9 +515,7 @@ function WorkstreamRow({
   const [managingAccess, setManagingAccess] = useState(false);
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
-  const mainVisible = !workstream.associativeSubstreamId || workstream.associativeSubstreamId === '0';
-  const attentionCount = (workstream.breakoutAttentionCount ?? 0)
-    + Number(mainVisible && conversationNeedsViewer(workstream));
+  const attentionCount = workstreamAttentionCount(workstream);
   const destination = `/workstreams/${workstream.id}${workstream.associativeSubstreamId && workstream.associativeSubstreamId !== '0'
     ? `?substream=${encodeURIComponent(workstream.associativeSubstreamId)}`
     : ''}`;
@@ -597,7 +618,7 @@ function WorkstreamRow({
   // sidebar leaves `completed` out: a finished run is the ordinary state.
   const rankedMarker = workstreamMarkerStatus({
     ...workstream,
-    hasUnread: workstream.hasUnread === true || attentionCount > 0,
+    hasUnread: workstreamHasActivityForViewer(workstream),
   });
   const marker = rankedMarker === 'completed' ? null : rankedMarker;
   return (
@@ -758,7 +779,7 @@ function WorkstreamRow({
               isActive && 'is-active',
               // Bold follows the dot's own unread input, so a row whose
               // Breakout needs this reader reads as unread in both.
-              (workstream.hasUnread || attentionCount > 0) && 'is-unread',
+              workstreamHasActivityForViewer(workstream) && 'is-unread',
               // Machinery the reader has opted into seeing. Dimmed rather than
               // badged, so it reads as one level below the work it sits beside
               // without adding another thing to decode.
@@ -1369,14 +1390,19 @@ export function Sidebar({
   );
   // Recent orders by the Channel's own last activity, not by when this reader
   // last opened it: the row's time shows the same value, so the order and the
-  // times down the list agree. Ties fall back to A to Z.
-  const unpinnedWorkstreams = useMemo(() => (
-    visibleWorkstreams
+  // times down the list agree. Ties fall back to A to Z. Needs you puts every
+  // bold row first, then the rest, each half in that same Recent order.
+  const unpinnedWorkstreams = useMemo(() => {
+    const byRecent = (left: WorkstreamSummary, right: WorkstreamSummary): number => (
+      recencyTimestamp(right) - recencyTimestamp(left) || compareAlphabeticalTitle(left, right)
+    );
+    return visibleWorkstreams
       .filter((workstream) => workstream.pinPosition === null)
-      .sort(channelSort === 'recent'
-        ? (left, right) => recencyTimestamp(right) - recencyTimestamp(left) || compareAlphabeticalTitle(left, right)
-        : compareAlphabeticalTitle)
-  ), [channelSort, visibleWorkstreams]);
+      .sort(channelSort === 'alphabetical' ? compareAlphabeticalTitle
+        : channelSort === 'recent' ? byRecent
+          : (left, right) => Number(workstreamHasActivityForViewer(right)) - Number(workstreamHasActivityForViewer(left))
+            || byRecent(left, right));
+  }, [channelSort, visibleWorkstreams]);
   const displayedWorkstreams = useMemo(
     () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
     [pinnedWorkstreams, unpinnedWorkstreams],
@@ -2318,16 +2344,14 @@ export function Sidebar({
                   <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:channels">
                     <h2>Channels</h2>
                     <button
-                      aria-label={channelSort === 'recent'
-                        ? 'Sorted by recent activity. Sort A to Z'
-                        : 'Sorted A to Z. Sort by recent activity'}
+                      aria-label={`Sorted ${CHANNEL_SORTS[channelSort].spoken}. Sort ${CHANNEL_SORTS[CHANNEL_SORTS[channelSort].next].spoken}`}
                       className="sidebar-sort-toggle window-no-drag"
-                      onClick={() => setChannelSort(channelSort === 'recent' ? 'alphabetical' : 'recent')}
+                      onClick={() => setChannelSort(CHANNEL_SORTS[channelSort].next)}
                       type="button"
                     >
                       {/* Text first, icon last: the icon keeps its place at
                           the edge while the label changes width. */}
-                      <span className="sidebar-section-hint">{channelSort === 'recent' ? 'Recent' : 'A–Z'}</span>
+                      <span className="sidebar-section-hint">{CHANNEL_SORTS[channelSort].label}</span>
                       <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
                     </button>
                   </div>
