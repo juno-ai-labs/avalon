@@ -701,6 +701,8 @@ interface ModalProps {
    * person to save them a reopen is the wrong trade.
    */
   dismissible?: boolean;
+  /** Controls at the header's right edge, before the close button: a dialog's own menu. */
+  headerActions?: ReactNode;
   /**
    * What sits between the dialog and the window. `blur` is the lightbox's
    * frosted veil, for a dialog that holds the window while work happens behind
@@ -718,6 +720,7 @@ export function Modal({
   footer,
   initialFocusRef,
   dismissible = true,
+  headerActions,
   backdrop = 'scrim',
 }: ModalProps): React.JSX.Element {
   return (
@@ -763,11 +766,14 @@ export function Modal({
               <Dialog.Title className="dialog-title">{title}</Dialog.Title>
               {description && <Dialog.Description className="dialog-description">{description}</Dialog.Description>}
             </div>
-            {dismissible && <Dialog.Close asChild>
-              <IconButton label="Close dialog" showTooltip={false}>
-                <X size={16} />
-              </IconButton>
-            </Dialog.Close>}
+            {(headerActions || dismissible) && <div className="dialog-header-actions">
+              {headerActions}
+              {dismissible && <Dialog.Close asChild>
+                <IconButton label="Close dialog" showTooltip={false}>
+                  <X size={16} />
+                </IconButton>
+              </Dialog.Close>}
+            </div>}
           </header>
           {children != null && <div className="dialog-body">{children}</div>}
           {footer && <footer className="dialog-footer">{footer}</footer>}

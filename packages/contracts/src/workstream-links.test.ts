@@ -11,6 +11,7 @@ import {
   workstreamCanonicalUrl,
   workstreamDeepLink,
   spaceCanonicalUrl,
+  sessionImportCanonicalUrl,
   sidekickCanonicalUrl,
   sidekickDeepLink,
   spaceDeepLink,
@@ -125,6 +126,13 @@ describe("canonical work-stream links", () => {
       .toEqual({ kind: "sidekick", sidekickId: WORKSTREAM_ID, target: { region: TARGET.region, workspaceId: WORKSPACE_ID } });
     expect(parseDesktopDeepLinkIntent(`rallywithai://sidekicks/${ENCODED_WORKSTREAM_ID}`)).toBeNull();
     expect(() => sidekickCanonicalUrl(WEB_BASE_URL, { ...sidekick, sidekickId: "not-a-sidekick" })).toThrow();
+  });
+
+  it("addresses an import under its Organization", () => {
+    const target = { region: TARGET.region, workspaceId: WORKSPACE_ID, importId: WORKSTREAM_ID };
+    expect(sessionImportCanonicalUrl(WEB_BASE_URL, target))
+      .toBe(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/i/${ENCODED_WORKSTREAM_ID}`);
+    expect(() => sessionImportCanonicalUrl(WEB_BASE_URL, { ...target, importId: "0" })).toThrow();
   });
 });
 
