@@ -46,7 +46,7 @@ new channel form, opened directly with `NewWorkstreamMenu trigger="direct"`).
 The web app has none of them; the Mac download link sits above its account
 menu.
 
-Under it, the Space pills. The round **New space** button leads, and its
+Under it, the Space pills, whose row fades at whichever edge has pills scrolled past it (the app's scroll-edge fade, on the inline axis). The round **New space** button, a folder with a plus, leads, and its
 right-click offers **Restore archived space**. Then **All**, then each Space in
 the person's saved order. **General has no pill.** It is where a Channel lives
 when nobody put it in a Space, and All already shows it. A pill filters the
