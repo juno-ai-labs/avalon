@@ -30,6 +30,12 @@ describe('browser conversations', () => {
     expect(providerSiteAllows('claude', 'https://evilclaude.ai/')).toBe(false);
     expect(providerSiteAllows('claude', 'http://claude.ai/')).toBe(false);
     expect(providerSiteAllows('claude', 'not a url')).toBe(false);
+    // Sign-in, but never the same company's API or billing consoles.
+    expect(providerSiteAllows('chatgpt', 'https://auth.openai.com/log-in')).toBe(true);
+    expect(providerSiteAllows('chatgpt', 'https://platform.openai.com/api-keys')).toBe(false);
+    expect(providerSiteAllows('chatgpt', 'https://openai.com/')).toBe(false);
+    expect(providerSiteAllows('claude', 'https://console.anthropic.com/settings/keys')).toBe(false);
+    expect(providerSiteAllows('claude', 'https://anthropic.com/')).toBe(false);
   });
 
   it('stops loading a file through the tab once it passes the byte budget, and closes the stream', async () => {
