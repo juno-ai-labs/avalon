@@ -130,6 +130,8 @@ export function startSessionImportRun(input: {
   mode: SessionImportMode;
   /** Every step so far, oldest first, each time one starts or ends. */
   onSteps?: (steps: readonly SessionImportStep[]) => void;
+  /** The run exists: for a new import, the API has reserved its Channel under this id. */
+  onStarted?: (run: { workstreamId: string }) => void;
 }): SessionImportRun {
   const conversation = conversationAt(input.sourceUrl, '');
   const provider: BrowserConversationProvider | null = conversation?.provider ?? null;
@@ -305,6 +307,7 @@ export function startSessionImportRun(input: {
         ? await input.api.startSessionImport({ sourceUrl: input.sourceUrl, title: input.mode.title, spaceIds: input.mode.spaceIds,
           clientMessageId: input.mode.clientMessageId })
         : await input.api.startSessionImportUpdate(input.mode.workstreamId);
+      input.onStarted?.({ workstreamId: run.workstreamId });
       if (cancelled) {
         await discard();
         return;
