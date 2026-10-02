@@ -128,8 +128,7 @@ same as desktop.
   with no other tab and no DevTools passthrough. Where that tab goes is not
   restricted, by product decision: it may navigate to and load from any site
   with the person's session, and there is no egress filter on the page. The
-  finish is refused while the tab shows a conversation other than the one the
-  person opened. The import window is the
+  import window is the
   one non-conversation window allowed to open a realtime socket, to the hidden
   conversation its agent runs in, and it closes that socket when the window
   navigates, crashes or closes. See [`desktop-actions.md`](desktop-actions.md)
