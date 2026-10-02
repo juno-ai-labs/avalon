@@ -27,6 +27,7 @@ import type { Env } from "../env";
 // the Terminal port reads this registry, and this registry only needs to know
 // the shape of what it stores.
 import type { TerminalOperationExecutor } from "../services/terminal/object-port";
+import type { DesktopActionExecutor } from "../services/desktop-actions/executor";
 
 /**
  * One authority's operations, as the object that owns them runs them.
@@ -72,6 +73,10 @@ export interface LocalWorkstreamAuthorities {
   terminal?: TerminalOperationExecutor;
   toolReceipt?: LocalAuthorityExecutor;
   residentContext?: LocalAuthorityExecutor;
+  // Has no wire path at all: the desktop answers on this object's own sockets,
+  // and the waiting tool must be in the same isolate that receives the answer.
+  // A run outside the object finds none and its browser tools refuse.
+  desktopAction?: DesktopActionExecutor;
 }
 
 export type WorkstreamAuthority = keyof LocalWorkstreamAuthorities;
@@ -83,7 +88,7 @@ export type WorkstreamAuthority = keyof LocalWorkstreamAuthorities;
  * executor answers by throwing a typed failure rather than returning one. The
  * exclusion is what lets a port read this registry without a cast.
  */
-export type ObjectPortAuthority = Exclude<WorkstreamAuthority, "terminal">;
+export type ObjectPortAuthority = Exclude<WorkstreamAuthority, "terminal" | "desktopAction">;
 
 /** The work stream a set of authorities belongs to. */
 export interface WorkstreamAuthorityScope {

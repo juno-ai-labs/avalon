@@ -156,6 +156,11 @@ function stringArgument(raw: unknown, key: string): string {
     : "";
 }
 
+/** A skill's slug as words, for a step a person reads: `reading-an-ai-chat` → "reading an AI chat". */
+function skillPhrase(name: string): string {
+  return name.replace(/[-_]+/gu, " ").replace(/\bai\b/gu, "AI").trim();
+}
+
 export async function createSkillRuntime(input: {
   skills: readonly HarnessSkill[];
   /**
@@ -288,8 +293,8 @@ export async function createSkillRuntime(input: {
             resources: resources ? codeSkillResourceRefs(resources.def).map((ref) => ref.path) : [],
           },
           summary: alreadyActive
-            ? `Skill ${summary.name} was already loaded`
-            : `Loaded skill ${summary.name}`,
+            ? `Already had the ${skillPhrase(summary.name)} instructions`
+            : `Loaded the ${skillPhrase(summary.name)} instructions`,
           // Bind's control signal: the loop calls activateSkills with this ref
           // before any later tool in the same batch runs. Omitted when the skill
           // is already loaded — the controller would absorb it, but the host

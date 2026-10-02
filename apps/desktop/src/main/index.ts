@@ -3003,7 +3003,7 @@ function embeddedBrowserFor(window: BrowserWindow): EmbeddedBrowser {
     if (window.isDestroyed()) return;
     window.webContents.focus();
     window.webContents.send('embedded-browser:focus-address');
-  });
+  }, window === browserImportWindow);
   embeddedBrowsers.set(window, { userId, browser });
   window.once('closed', () => embeddedBrowsers.delete(window));
   return browser;
@@ -3363,7 +3363,10 @@ function registerIpc(): void {
     apiBaseUrls: Object.values(runtimeConfig().api),
     assertSender: (event) => {
       assertTrustedIpcSender(event);
-      if (event.sender !== mainWindow?.webContents && event.sender !== sidekicksWindow?.webContents) {
+      // The import window holds its import agent's conversation socket: the
+      // agent's browser actions arrive on it and are answered from it.
+      if (event.sender !== mainWindow?.webContents && event.sender !== sidekicksWindow?.webContents
+        && event.sender !== browserImportWindow?.webContents) {
         throw new Error('Only Rally conversation windows can open realtime sockets');
       }
     },
@@ -4676,6 +4679,11 @@ async function openBrowserImportWindow(context: BrowserImportContext): Promise<v
     },
   });
   browserImportWindow = window;
+  const importWebContentsId = window.webContents.id;
+  window.webContents.on('render-process-gone', () => realtimeSocketBroker.closeOwner(importWebContentsId));
+  window.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) realtimeSocketBroker.closeOwner(importWebContentsId);
+  });
   // The renderer document is titled "Rally"; this window is named for its job.
   window.on('page-title-updated', (event) => event.preventDefault());
   installEditableTextMenu(window);
@@ -4683,6 +4691,7 @@ async function openBrowserImportWindow(context: BrowserImportContext): Promise<v
   window.setMenuBarVisibility(false);
   window.once('ready-to-show', () => window.show());
   window.on('closed', () => {
+    realtimeSocketBroker.closeOwner(importWebContentsId);
     if (browserImportWindow !== window) return;
     if (browserImportInFlight) relayBrowserImportProgress({ phase: 'failed', workstreamId: browserImportInFlight });
     browserImportWindow = null;

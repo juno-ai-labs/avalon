@@ -269,7 +269,12 @@ OpenRouter reports `usage.cost` only when the request carries `usage: {
 are priced from Rally's own rate card in `bind-runtime.ts` and the computed
 figure is written into `usage.cost` before the attempt is recorded. **A cost
 column that reads zero across a whole provider is a missing accounting flag,
-not a cheap week.**
+not a cheap week.** On a bring-your-own-key OpenRouter account the flag is not
+enough: `usage.cost` is only OpenRouter's own fee — often `0` — and the
+provider's charge arrives as `cost_details.upstream_inference_cost`
+(`is_byok: true`). `openRouterCallCostUsd` adds the two for chat calls; the
+SDK's embeddings usage carries neither field, so embeddings still record the
+fee alone.
 
 Every provider response that arrived was billed, whether or not Rally could
 use it, so every one owes a terminal `complete` diagnostic carrying its cost —
@@ -575,6 +580,27 @@ becomes product-state repair authority.
 
 
 ## Changelog
+
+### 2026-10-01 — Count the provider's charge on a bring-your-own-key account
+
+**What changed:** Chat usage on OpenRouter records `usage.cost` plus
+`cost_details.upstream_inference_cost` (`openRouterCallCostUsd`).
+
+**Why:** Every model call made with a bring-your-own-key OpenRouter key
+recorded a cost of 0: OpenRouter reports its own fee, which is zero, in
+`usage.cost`, and the provider's charge in `upstream_inference_cost`, which the
+usage record dropped. Local development runs on such a key, so the column read
+zero for every model — the failure the paragraph above warns about, reached
+from a different direction.
+
+**Considered and rejected:** Reading `upstream_inference_cost` alone, which a
+key that is not bring-your-own also reports and would count twice.
+
+**Consequences:** Embeddings still record OpenRouter's fee alone, because the
+SDK's embeddings usage carries neither field; a bring-your-own-key account
+under-reports them.
+
+Shipped in #1058.
 
 ### 2026-09-19 — Ask OpenRouter what a call cost, and record it for structured calls too
 

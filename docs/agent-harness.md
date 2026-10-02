@@ -483,7 +483,7 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships five skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Three are unowned and offered to every run: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The other two — `polling-for-events` below and `building-live-sites` above — each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin. The latter two of the unowned three are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships eight skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Three are unowned and offered to every run: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The other five each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The latter two of the unowned three are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
 `polling-for-events` is what a run reads when somebody asks to be told whenever something happens. Its first instruction is to *not* poll: most connectors declare events Rally can trigger on, so the skill sends the model to `plugin_inspect` before it reaches for a timer, and the interval is the fallback for what inspection rules out. It then carries the three things a model gets wrong unaided: the cadence floor (no `interval` trigger faster than every ten minutes, slower is fine, and the person's own stated cadence wins), the keyed memory table that stops a run re-reporting what the last one already saw, and the steer away from `resource_watch`, which a model reaches for when told to watch one document and which `SidekickDO` builds neither a schedule nor an evaluator for. It sets `ownerPlugin: "rally:sidekicks"` because the whole procedure is drafting a Sidekick, which also keeps it out of an automation occurrence's catalog — an occurrence is deliberately never given the drafting tools.
 
@@ -889,6 +889,33 @@ responsiveness while preserving Bind's ordered input acceptance, tool receipts,
 suspension, checkpoint and completion protections. Rally routes and persists
 messages through existing harness ports. Missing loop capabilities belong in
 the Bind runtime library, not a parallel loop or a runtime patch in Rally.
+
+### Agent profiles
+
+A conversation provisioned with an `agent_profile` (a column on its
+`workstream` row, set once by `provisionWorkstreamObject`) does one fixed job.
+`runWorkstreamHarness` reads it from the conversation's identity and, for a
+profiled run, replaces three things wholesale: the system prompt (the
+profile's, not the work-stream prompt), the model route (the profile's
+Flagship role, `resolveAgentModelRouting`), and the tool surface — exactly the
+profile's plugins as always-active core plugins, through `profileHarnessTools`,
+with no built-in or connector plugin and no plugin discovery. Its skill
+catalog is exactly the skills the profile names: a skill is instructions only,
+so naming one widens nothing a run can do. The
+registry is `apps/api/src/services/agent-profiles.ts`; `session_import`, the
+conversation importer, is its first entry, and its tools are [desktop
+actions](desktop-actions.md). A stored profile this Worker does not know fails
+the run as `agent_profile_unknown` rather than running with every tool.
+
+A profile may also name an `ended` hook: cleanup owed once a run of it has
+ended, failed or stopped. `SubstreamAgent` calls it right after
+`terminalizeHarnessAttempt`, which every executed run passes through — a normal
+return, a stop, and a host that threw alike — so the outcome is durable first, with the run's workspace, parent and — for a run a person
+started — user; a hook that throws is logged as
+`agent_profile_run_end_failed` with its code and does not change the run's
+outcome. `session_import` uses it to archive a Channel its run reserved and
+never opened ([session import](session-import.md)), the one cleanup a closed or
+crashed import window cannot send.
 
 ### Scoped durable memory
 
@@ -1409,6 +1436,39 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-01 — A conversation can be provisioned to do one fixed job
+
+**What changed:** A conversation can carry an agent profile, stored on it at
+provisioning, that fixes its run's system prompt, model role, whole tool
+surface, skill catalog and run-end cleanup. `session_import` is the first; it
+names three new browser-owned skills that read AI chats.
+
+**Why:** The conversation importer needed an agent loop whose only tools drive
+the person's browser, whose prompt is its own, and whose model must read
+screenshots. Nothing let a run narrow its tool surface: `defaultPluginIds` only
+preloads, and every run assembled the full built-in and connector set. Without
+the skills the importer re-derived each provider's page on every run — 9 of 19
+calls reverse-engineering ChatGPT's markup, a DOM read that silently dropped 8
+of 15 messages, a page script that sent the signed-in site's cookies to the
+model — and with them it read the page's own data in 6–14 calls. The run-end
+hook exists because an import's reserved Channel was otherwise left listed
+whenever its window closed without discarding it.
+
+**Considered and rejected:** A profile field on the activation, which any
+activation path could forget. A new Durable Object for the import, when the
+loop and its durability already live here. Provider reading knowledge in the
+system prompt, which every run would pay for in full; as skills a run pays for
+the catalog line until it loads one, and any browser-bearing run can use them.
+
+**Consequences:** A profile is fail-closed: an unknown stored profile is a
+failed run, never the default surface, and a future profile must keep it so. A
+profile cannot change under a running conversation. An `ended` hook runs after
+every executed run's terminalization, whatever its outcome, so it must be
+idempotent and cheap when there is nothing to do. A run cancelled before it ever
+executes reaches no terminalization and runs no hook.
+
+Shipped in #1058.
 
 ### 2026-09-27 — A run's result reaches a conversation only by conversation_post
 

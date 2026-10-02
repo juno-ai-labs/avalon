@@ -96,6 +96,7 @@ import {
   recordHarnessRunObservation,
 } from "../observability/harness-run-observability";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
+import { agentProfileFor, type AgentProfile } from "../services/agent-profiles";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   identityAttributes,
@@ -169,6 +170,8 @@ import { WorkstreamObjectStore } from "./workstream-object-storage";
 import type { SequencedSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
+import { WorkstreamDesktopActionStorage } from "./workstream-desktop-action-storage";
+import type { DesktopAction, DesktopActionOutcome } from "@rally/contracts/desktop-actions";
 import {
   type ToolReceiptOperationRequest,
   ToolReceiptOperationRequestSchema,
@@ -1007,6 +1010,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private resources!: WorkstreamResourceStorage;
   private identityRows!: WorkstreamIdentityStorage;
   private harnessRuns!: WorkstreamHarnessRunStorage;
+  private desktopActions!: WorkstreamDesktopActionStorage;
+  /**
+   * The tools in this isolate waiting on a desktop, by action id. Memory only:
+   * the action and its answer are durable rows, and a tool re-entered after
+   * eviction reads its answer there rather than from a waiter that is gone.
+   */
+  private readonly desktopActionWaiters = new Map<string, (outcome: DesktopActionOutcome) => void>();
   /** Schema, repositories, and identity required to admit and snapshot a feed. */
   private readonly storageReady: Promise<void>;
   private runtimeRecovery: Promise<void> | null = null;
@@ -1106,6 +1116,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.resources = new WorkstreamResourceStorage(state.storage);
       this.identityRows = new WorkstreamIdentityStorage(state.storage);
       this.harnessRuns = new WorkstreamHarnessRunStorage(state.storage);
+      this.desktopActions = new WorkstreamDesktopActionStorage(state.storage);
       await this.objectStore.waitUntilReady();
       this.semanticRealtimePending = this.objectStore.nextSemanticRealtimeDueAt() !== null;
       // Existing one-room-per-workstream objects become the main child during
@@ -3813,9 +3824,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         }
       } catch (error) {
         if (error instanceof RunOwnershipLostError) return;
+        // A plain Error whose message is itself a code — `final_turn_required`
+        // from terminalization — names the failure as well as an explicit
+        // `code` does; reading only `code` reported every such run as the
+        // generic `agent_loop_failed`.
         const code = error instanceof Error && "code" in error && typeof error.code === "string"
           ? error.code
-          : "agent_loop_failed";
+          : diagnosticErrorCode(error, "agent_loop_failed");
         const loop = this.loop.loop();
         if (loop?.status === "executing"
           && loop.active_execution_id === activation.execution.runId
@@ -4708,6 +4723,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       createToolReceiptObjectPort(executionEnv, input.workspaceId, input.parentId),
       terminalLoopFence,
     );
+    // After the outcome is durable and on every path that reached it — a
+    // completed run, a stopped one, and one whose host threw alike.
+    await this.endAgentProfileRun(executionEnv, input);
     if (outcome.finalTurnId) {
       await this.publishAgentRuntimeEvent({ type: "stream_completed", streamId: input.harnessRunId });
     }
@@ -4717,6 +4735,30 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       status: root,
     });
     return this.persistAgentRunForExternalSettlement(input, outcome);
+  }
+
+  /** The cleanup this conversation's agent profile owes once a run of it has ended. */
+  private async endAgentProfileRun(executionEnv: Env, input: WorkstreamWorkflowInput): Promise<void> {
+    let profile: AgentProfile | null;
+    try {
+      profile = agentProfileFor(this.identityRows.identity()?.agent_profile);
+    } catch {
+      // An unknown profile already failed the run with `agent_profile_unknown`.
+      return;
+    }
+    if (!profile?.ended) return;
+    await profile.ended(executionEnv, {
+      workspaceId: input.workspaceId,
+      parentId: input.parentId,
+      userId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
+    }).catch((error: unknown) => {
+      logWarn(this.env, "agent_profile_run_end_failed", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.parentId,
+        harness_run_id: input.harnessRunId,
+        error_code: diagnosticErrorCode(error, "agent_profile_run_end_failed"),
+      });
+    });
   }
 
   /**
@@ -5652,6 +5694,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       transcript: resident((body) => this.transcriptOperationOutcome(body)),
       toolReceipt: resident((body) => this.toolReceiptOperationOutcome(body)),
       residentContext: resident((body) => this.residentContextOperationOutcome(body)),
+      desktopAction: (request) => this.requestDesktopAction(request),
       terminal: (operation, args) => this.runTerminalOperation({
         workspaceId,
         workstreamId,
@@ -6099,7 +6142,115 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       await this.createSocketMessage(socket, attachment, parsed.data, requestReceivedAt);
       return;
     }
+    if (parsed.data.type === "answer_desktop_action") {
+      this.answerDesktopAction(socket, attachment, parsed.data.actionId, parsed.data.outcome);
+      return;
+    }
     await this.mutateSocketSubstream(socket, attachment, parsed.data);
+  }
+
+  /**
+   * Who may answer this conversation's desktop actions: the person it was
+   * created for. A desktop action runs in that person's own browser session,
+   * so an answer from anyone else is not theirs to give.
+   */
+  private answersDesktopActions(userId: string): boolean {
+    const creator = this.identityRows.identity()?.created_by_user_id ?? null;
+    return creator !== null && creator === userId;
+  }
+
+  /**
+   * Record a tool's desktop action, publish it, and wait for the answer.
+   *
+   * The row is written before the request is published, so an answer can
+   * never arrive for an action this object has no record of. A call whose
+   * earlier attempt was already answered returns that answer without asking
+   * again; one still pending is published again, because the desktop that
+   * received it before may have gone.
+   */
+  private async requestDesktopAction(input: {
+    runId: string;
+    toolCallId: string;
+    action: DesktopAction;
+    signal: AbortSignal;
+  }): Promise<DesktopActionOutcome> {
+    input.signal.throwIfAborted();
+    const recorded = this.desktopActions.request({
+      id: uuidV7(Date.now()),
+      runId: input.runId,
+      toolCallId: input.toolCallId,
+      action: input.action,
+      now: Date.now(),
+    });
+    if (recorded.status === "answered") return recorded.outcome;
+    const { request } = recorded;
+    return await new Promise<DesktopActionOutcome>((resolve, reject) => {
+      const stopWaiting = () => {
+        this.desktopActionWaiters.delete(request.id);
+        this.desktopActions.abandon(request.id);
+        reject(input.signal.reason instanceof Error ? input.signal.reason : new Error("desktop_action_abandoned"));
+      };
+      input.signal.addEventListener("abort", stopWaiting, { once: true });
+      this.desktopActionWaiters.set(request.id, (outcome) => {
+        input.signal.removeEventListener("abort", stopWaiting);
+        this.desktopActionWaiters.delete(request.id);
+        resolve(outcome);
+      });
+      // Published after the waiter exists, so an answer that comes back before
+      // this call returns still finds it.
+      void this.publishAgentRuntimeEvent({ type: "desktop_action_requested", request }).catch((error: unknown) => {
+        // The row is pending and is offered again to the next subscriber, so a
+        // lost publication delays the action rather than losing it.
+        logWarn(this.env, "desktop_action_publication_failed", {
+          workstream_id: this.objectStore.identity()?.parentId ?? null,
+          substream_id: this.externalSubstreamId(),
+          action_id: request.id,
+          reason: diagnosticErrorCode(error, "desktop_action_publication_failed"),
+        });
+      });
+    });
+  }
+
+  private answerDesktopAction(
+    socket: WebSocket,
+    attachment: SocketAttachment,
+    actionId: string,
+    answered: DesktopActionOutcome,
+  ): void {
+    if (!this.answersDesktopActions(attachment.userId)) {
+      this.sendError(socket, "desktop_action_forbidden", "Only the person this conversation works for can answer its desktop actions.");
+      return;
+    }
+    // Every answer is recorded before it is used; one the row cannot hold is
+    // recorded as a failure the model can act on rather than a write that throws.
+    const result = this.desktopActions.answer({
+      id: actionId,
+      outcome: answered,
+      answeredByUserId: attachment.userId,
+      now: Date.now(),
+    });
+    if (result.status === "unknown") {
+      this.sendError(socket, "desktop_action_not_found", "No desktop action has that id.");
+      return;
+    }
+    if (result.status === "answered") this.desktopActionWaiters.get(actionId)?.(result.outcome);
+  }
+
+  /**
+   * Offer a subscriber the actions still waiting on a desktop. Not sequenced
+   * events: each is a re-send of one already published, so it carries the
+   * subscriber's delivered sequence and a desktop acts on it by id.
+   */
+  private offerPendingDesktopActions(socket: WebSocket, userId: string, deliveredThrough: number): void {
+    if (!this.answersDesktopActions(userId)) return;
+    const occurredAt = new Date().toISOString();
+    const unreadable = (id: string, code: string, outcome: DesktopActionOutcome) => {
+      logWarn(this.env, "desktop_action_unreadable", { action_id: id, error_code: code });
+      this.desktopActionWaiters.get(id)?.(outcome);
+    };
+    for (const request of this.desktopActions.pending(unreadable)) {
+      socket.send(JSON.stringify({ type: "desktop_action_requested", request, sequence: deliveredThrough, occurredAt }));
+    }
   }
 
   private assertPrivateChildNotArchived(): void {
@@ -6113,7 +6264,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     socket: WebSocket,
     attachment: SocketAttachment,
     command: Exclude<z.infer<typeof ClientSocketEventSchema>,
-      { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" }>,
+      { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" | "answer_desktop_action" }>,
   ): Promise<void> {
     await inSpan("workstream.room.substream_command", {
       "rally.component": "substream_do",
@@ -6135,7 +6286,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     socket: WebSocket,
     attachment: SocketAttachment,
     command: Exclude<z.infer<typeof ClientSocketEventSchema>,
-      { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" }>,
+      { type: "subscribe" | "mark_opened" | "request_snapshot" | "load_transcript_range" | "create_message" | "answer_desktop_action" }>,
     span: TracedSpan,
   ): Promise<void> {
     try {
@@ -7863,6 +8014,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       subscribed: true,
     } satisfies SocketAttachment);
     if (preparedTicketId) this.deletePreparedSocketAdmission(preparedTicketId);
+    this.offerPendingDesktopActions(socket, attachment.userId, deliveredThrough);
     return true;
   }
 

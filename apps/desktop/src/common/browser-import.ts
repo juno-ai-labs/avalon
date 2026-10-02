@@ -1,3 +1,4 @@
+import { HttpsUrlSchema } from '@rally/contracts/url-schemas';
 import { z } from 'zod';
 
 /**
@@ -9,6 +10,14 @@ export const BrowserImportContextSchema = z.strictObject({
   spaces: z.array(z.strictObject({ id: z.string().min(1), name: z.string() })),
   /** Opened from one Space's channel list: import there and offer no other. */
   spaceLocked: z.boolean().optional(),
+  /**
+   * Opened to read a Channel's source conversation again: the window opens the
+   * recorded URL and adds what changed to that Channel instead of creating one.
+   */
+  update: z.strictObject({
+    workstreamId: z.string().min(1),
+    sourceUrl: HttpsUrlSchema,
+  }).optional(),
 });
 export type BrowserImportContext = z.infer<typeof BrowserImportContextSchema>;
 

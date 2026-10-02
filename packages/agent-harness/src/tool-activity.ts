@@ -268,6 +268,23 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   request_elicitation: REQUEST_ELICITATION_PROSE,
   [CONNECTOR_CONNECTION_STATE_WIRE_NAME]: CONNECTOR_CONNECTION_STATE_PROSE,
   [CONNECTOR_CONNECTION_CARD_WIRE_NAME]: CONNECTOR_CONNECTION_CARD_PROSE,
+  // Rally's browser and the conversation import: the import window lists
+  // these as its steps, so they read as what happened to the page.
+  browser_evaluate: { started: "Reading the page", settled: "Read the page", failed: "Could not read the page" },
+  browser_snapshot: { started: "Reading the page outline", settled: "Read the page outline", failed: "Could not read the page outline" },
+  browser_screenshot: { started: "Looking at the page", settled: "Looked at the page", failed: "Could not look at the page" },
+  browser_click: { started: "Clicking on the page", settled: "Clicked on the page", failed: "Could not click on the page" },
+  browser_scroll: { started: "Scrolling the page", settled: "Scrolled the page", failed: "Could not scroll the page" },
+  browser_type: { started: "Typing on the page", settled: "Typed on the page", failed: "Could not type on the page" },
+  browser_press_key: { started: "Pressing a key", settled: "Pressed a key", failed: "Could not press a key" },
+  browser_navigate: { started: "Opening a page", settled: "Opened a page", failed: "Could not open a page" },
+  browser_load: { started: "Downloading a file", settled: "Downloaded a file", failed: "Could not download a file" },
+  browser_network_list: { started: "Checking what the page loaded", settled: "Checked what the page loaded", failed: "Could not check what the page loaded" },
+  browser_network_read: { started: "Reading data the page loaded", settled: "Read data the page loaded", failed: "Could not read data the page loaded" },
+  import_finish: { started: "Saving the conversation to Rally", settled: "Saved the conversation to Rally", failed: "Could not save the conversation to Rally" },
+  import_fail: { started: "Stopping the import", settled: "Stopped the import", failed: "Could not stop the import" },
+  load_skill: { started: "Loading instructions", settled: "Loaded instructions", failed: "Could not load instructions" },
+  read_skill_resource: { started: "Reading instructions", settled: "Read instructions", failed: "Could not read instructions" },
   memory_search: {
     started: "Searching memory",
     settled: "Searched memory",

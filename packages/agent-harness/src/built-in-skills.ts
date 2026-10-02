@@ -1,4 +1,5 @@
 import { BUILDING_LIVE_SITES_SKILL } from "./building-live-sites-skill";
+import { READING_AI_CHATS_SKILLS } from "./reading-ai-chats-skills";
 import type { HarnessSkill } from "./index";
 
 export { BUILDING_LIVE_SITES_SKILL };
@@ -469,5 +470,8 @@ export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   // Offered only where the Terminal plugin is in scope, by its `ownerPlugin`:
   // the whole procedure ends in publishing a directory from a sandbox.
   BUILDING_LIVE_SITES_SKILL,
+  // Offered only where Rally's browser plugin is in scope: every step reads or
+  // drives a page open in it.
+  ...READING_AI_CHATS_SKILLS,
 ];
 

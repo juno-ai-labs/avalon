@@ -831,6 +831,12 @@ pre {
   z-index: 100;
 }
 
+/* The lightbox's veil: see `.attachment-lightbox-overlay`. */
+.dialog-overlay.is-blurred { backdrop-filter: blur(6px); background: var(--av-sys-color-scrim-veil); }
+@media (prefers-reduced-transparency: reduce) {
+  .dialog-overlay.is-blurred { backdrop-filter: none; background: var(--av-sys-color-scrim-solid); }
+}
+
 .dialog-content {
   animation: dialog-in 150ms ease-out;
   background: var(--av-sys-color-surface-elevated);
@@ -6043,6 +6049,13 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .window-drag .embedded-browser-tabs { -webkit-app-region: no-drag; }
 .browser-import-banner { background: var(--av-sys-color-surface-raised); border-bottom: 1px solid var(--av-sys-color-border-subtle); flex-shrink: 0; padding: 10px 16px; }
 .browser-import-page { flex: 1; min-height: 0; overflow: auto; position: relative; }
+/* What the parked page looked like after the agent's last step, under the run's blurred modal. */
+.browser-import-mirror { display: block; height: 100%; inset: 0; object-fit: cover; object-position: top left; position: absolute; width: 100%; }
+.browser-import-steps { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.browser-import-steps li, .browser-import-steps-empty { align-items: center; color: var(--av-sys-color-text-muted); display: flex; gap: 10px; line-height: 1.4; margin: 0; }
+.browser-import-steps li.is-running { color: var(--av-sys-color-text-default); }
+.browser-import-steps li.is-failed svg { color: var(--av-sys-color-danger-base); }
+.browser-import-steps svg, .browser-import-steps-empty svg { flex: 0 0 14px; }
 .browser-import-start { margin: 0 auto; max-width: 440px; padding: 12vh 24px 48px; }
 .browser-import-start h1 { font-size: 20px; font-weight: 500; margin: 0 0 22px; }
 .browser-import-start ol { counter-reset: import-step; display: grid; gap: 16px; list-style: none; margin: 0; padding: 0; }

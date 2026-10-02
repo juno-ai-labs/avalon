@@ -689,15 +689,24 @@ interface ModalProps {
   footer?: ReactNode;
   initialFocusRef?: RefObject<HTMLElement | null>;
   /**
-   * Refuse Escape and a click outside, leaving the footer as the only way out.
+   * Refuse Escape, a click outside and the header's close button, leaving the
+   * footer as the only way out, and open with focus on the dialog itself
+   * rather than its first button, so a stray Enter presses nothing.
    *
-   * For the dialog that shows a value exactly once — a generated signing secret
-   * that cannot be asked for again — where a stray click costs the
-   * administrator a delete-and-reconnect across two products. Everywhere else
+   * For a dialog whose accidental dismissal destroys something a reopen
+   * cannot bring back: a value shown exactly once — a generated signing secret
+   * that cannot be asked for again — or long-running work the dialog holds
+   * the window for, such as a conversation import minutes in. Everywhere else
    * an accidental dismissal costs a reopen, and taking Escape away from a
    * person to save them a reopen is the wrong trade.
    */
   dismissible?: boolean;
+  /**
+   * What sits between the dialog and the window. `blur` is the lightbox's
+   * frosted veil, for a dialog that holds the window while work happens behind
+   * it and should still show that work.
+   */
+  backdrop?: 'scrim' | 'blur';
 }
 
 export function Modal({
@@ -709,11 +718,12 @@ export function Modal({
   footer,
   initialFocusRef,
   dismissible = true,
+  backdrop = 'scrim',
 }: ModalProps): React.JSX.Element {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Overlay className={backdrop === 'blur' ? 'dialog-overlay is-blurred' : 'dialog-overlay'} />
         <Dialog.Content
           className="dialog-content"
           /* Escape belongs to the IME while it is composing: it abandons the
@@ -739,9 +749,13 @@ export function Modal({
           }}
           onOpenAutoFocus={(event) => {
             const initialFocus = initialFocusRef?.current;
-            if (!initialFocus) return;
-            event.preventDefault();
-            initialFocus.focus();
+            if (initialFocus) {
+              event.preventDefault();
+              initialFocus.focus();
+            } else if (!dismissible && event.currentTarget instanceof HTMLElement) {
+              event.preventDefault();
+              event.currentTarget.focus();
+            }
           }}
         >
           <header className="dialog-header">
@@ -749,11 +763,11 @@ export function Modal({
               <Dialog.Title className="dialog-title">{title}</Dialog.Title>
               {description && <Dialog.Description className="dialog-description">{description}</Dialog.Description>}
             </div>
-            <Dialog.Close asChild>
+            {dismissible && <Dialog.Close asChild>
               <IconButton label="Close dialog" showTooltip={false}>
                 <X size={16} />
               </IconButton>
-            </Dialog.Close>
+            </Dialog.Close>}
           </header>
           {children != null && <div className="dialog-body">{children}</div>}
           {footer && <footer className="dialog-footer">{footer}</footer>}

@@ -25,6 +25,25 @@ export interface EmbeddedBrowserBounds {
 }
 
 /**
+ * One response a tab's page received since it last navigated, as the network
+ * recorder saw it. `cached` says whether its body was kept: fetch and XHR
+ * responses are copied as they finish, so they read back after Chromium
+ * itself has let them go.
+ */
+export interface EmbeddedBrowserNetworkResponse {
+  requestId: string;
+  url: string;
+  method: string;
+  status: number;
+  mimeType: string;
+  /** Chromium's resource type: Document, Fetch, XHR, Script, Image, … */
+  resourceType: string;
+  /** Bytes received over the network, or null while the response is still loading. */
+  size: number | null;
+  cached: boolean;
+}
+
+/**
  * The browser executes commands in its own Chromium contents. No command
  * evaluates code in Electron's main process or receives Rally's preload.
  */
@@ -41,13 +60,17 @@ export type EmbeddedBrowserCommand =
   | { action: 'type'; tabId?: string; text: string }
   | { action: 'key'; tabId?: string; key: string }
   | { action: 'evaluate'; tabId?: string; expression: string }
-  | { action: 'cdp'; tabId?: string; method: string; params?: Record<string, unknown> };
+  | { action: 'cdp'; tabId?: string; method: string; params?: Record<string, unknown> }
+  | { action: 'network'; tabId?: string }
+  | { action: 'response_body'; tabId?: string; requestId: string };
 
 export type EmbeddedBrowserResult =
   | { kind: 'state'; state: EmbeddedBrowserState }
   | { kind: 'snapshot'; url: string; title: string; tree: unknown }
-  | { kind: 'screenshot'; mimeType: 'image/jpeg'; data: string }
-  | { kind: 'value'; value: unknown };
+  | { kind: 'screenshot'; mimeType: 'image/jpeg'; data: string; width: number; height: number }
+  | { kind: 'value'; value: unknown }
+  | { kind: 'network'; responses: EmbeddedBrowserNetworkResponse[] }
+  | { kind: 'response_body'; body: string; base64Encoded: boolean };
 
 const tabId = z.string().uuid();
 const target = { tabId: tabId.optional() };
@@ -68,6 +91,8 @@ export const EmbeddedBrowserCommandSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('key'), ...target, key: z.string() }),
   z.strictObject({ action: z.literal('evaluate'), ...target, expression: z.string() }),
   z.strictObject({ action: z.literal('cdp'), ...target, method: z.string(), params: z.record(z.string(), z.unknown()).optional() }),
+  z.strictObject({ action: z.literal('network'), ...target }),
+  z.strictObject({ action: z.literal('response_body'), ...target, requestId: z.string().min(1) }),
 ]);
 
 export function embeddedBrowserUrl(raw: string): string | null {
