@@ -258,10 +258,16 @@ alphabetically.
 cost a drag gesture that competed with clicking a pill and with dropping a
 Channel on one, plus an optimistic-preview path shared across four surfaces.
 
-**What a future change must respect:** The server still stores and serves the
-`organization` container order, and `PUT /workspace/order` still accepts it;
-the desktop just no longer reads or writes it. Bringing hand ordering back is a
-client change only.
+**Considered and rejected:** Deleting the `organization` order from the server
+and the socket payload. Shipped desktops still parse and send it, so removing
+it needs a coordinated cutover for no gain to this change.
+
+**Consequences:** The server still stores and serves the `organization`
+container order, and `PUT /workspace/order` still accepts it; the desktop just
+no longer reads or writes it. Bringing hand ordering back is a client change
+only.
+
+Shipped in #1061.
 
 ### 2026-10-01 — One sidebar, title pills, and Breakouts beside their Channel
 
