@@ -334,7 +334,8 @@ desktops parse `ordering` strictly and would drop a whole snapshot holding a
 kind they do not know; `workstream-pinning.md` owns it.
 
 That is the durable capability, not the current navigation policy. The desktop
-currently applies it only to the Organization's Space pills. Unpinned Channels
+applies none of the three today: the Space pills sort by name, case-insensitive,
+with **All** first. Unpinned Channels
 in the selected Space and Breakouts under a Channel ignore stored `space` and
 `channel` arrangements and sort by title with case-insensitive comparison.
 Pinned Channels remain manually ordered in their separate pinned section; an
@@ -416,13 +417,11 @@ alphabetical Channel list or the Channel menu's Breakouts.
 this person has arranged. A list rather than a map because the key is a *pair*,
 and a map would have to encode it into a string every reader parses back. The
 Organization's own list is in there too, although the Space directory beside it
-already arrives sorted by the same rows. That redundancy lets the Space pills
-apply one optimistic order and roll it back without relying on server
-serialization order. `space` and `channel` entries remain in the payload as
-compatibility data but are ignored by the desktop's alphabetical Channel list
-and the Channel menu's Breakouts. A write republishes the whole ordering to every socket this
-person holds, which is what makes a Space drag in one window move the list in
-another without a reload.
+already arrives sorted by the same rows. All three kinds remain in the payload
+as compatibility data; the desktop's Space pills, alphabetical Channel list and
+the Channel menu's Breakouts ignore them. A write republishes the whole ordering
+to every socket this person holds, so an arrangement made in one window reaches
+the others without a reload.
 
 **It republishes to that person's sockets and to nobody else's, and it still
 advances the Organization's one waterline.** The two look inconsistent and are
@@ -469,8 +468,8 @@ the team" above with what deciding it needs.
 `orderByStoredIds` puts the stored ids first in stored
 order, then everything the arrangement never mentioned in the order the list
 already had, and drops a stored id the list is not carrying. It is also what
-`orderPinnedWorkstreams` is built on, so the Space pills and pinned section keep
-one arrangement rule. A drag writes its arrangement locally
+`orderPinnedWorkstreams` is built on, so the pinned section keeps that one
+arrangement rule. A drag writes its arrangement locally
 first and drops it if the server refuses; the list then shows what the
 Organization holds, which is what this person's other windows are showing.
 
@@ -1311,11 +1310,9 @@ authority: its submenu is the visible Space directory, so this Space remains in
 the list as a keyboard-focusable disabled choice whose tooltip says that only
 its participants may add Channels. Existing placements use checked-item
 semantics, put their checkmark immediately before the Space name, and remain
-keyboard-focusable in the same list. The list uses the reader's stored
-Organization Space order, matching the Space pills rather than the directory's
-arrival order. While a reorder is being saved, the optimistic order is shared
-by the pills, Channel placement menus, and creation/import selectors so those
-surfaces do not briefly disagree.
+keyboard-focusable in the same list. The list sorts by name, case-insensitive,
+matching the Space pills rather than the directory's arrival order, and the
+creation and import selectors use the same order.
 The server still refuses either write by name; the disabled rows explain the
 boundary without pretending that a visible Space disappeared.
 
@@ -1463,8 +1460,8 @@ has no Space placement in a rolling-deploy response, the browser puts it in a
 local **Shared channels** fallback so an authority-safe conversation never
 becomes unreachable while its container metadata is not ready.
 
-**Only manually ordered lists advertise reordering.** Spaces and pinned
-Channels keep drag plus Alt with the up or down arrow. Ordinary Channels are alphabetical,
+**Only manually ordered lists advertise reordering.** Pinned Channels keep drag
+plus Alt with the up or down arrow. Space pills and ordinary Channels are alphabetical,
 and a Channel menu lists its Breakouts by latest activity; neither exposes a
 reorder gesture.
 An ordinary Channel can still be dragged onto a Space pill to move its placement or into the pinned section to pin it.
@@ -1763,7 +1760,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
 | `apps/api/test/client-contract.test.ts` | Which builds the cutover still answers: a browser build that declares nothing or declares an older contract is told to update; a native client that declares nothing is admitted. |
 | `packages/contracts/src/spaces.test.ts` | The closed schemas, the appearance registry, and the container address: a Space's and a Channel's need an id, the Organization's is refused one. |
-| `apps/desktop/src/renderer/components/space-pills.test.tsx` | The Space pills: order, General left out, filtering without navigating, Open and Archive space, Alt+Arrow reorder, New and Restore space, and dropping a Channel on a pill. |
+| `apps/desktop/src/renderer/components/space-pills.test.tsx` | The Space pills: order, General left out, filtering without navigating, A–Z order with no drag or Alt+Arrow reorder, Open and Archive space, New and Restore space, and dropping a Channel on a pill. |
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The **Needs attention** section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
