@@ -153,15 +153,25 @@ export function BrowserImportWindow(): React.JSX.Element {
   const settledSteps = steps.filter((step) => step.status !== 'running').length;
   useEffect(() => { if (run) capture(); }, [run, settledSteps, capture]);
 
+  /**
+   * A new import's Channel, as the main window lists it: pending from the
+   * moment the API reserves it, confirmed when the import lands, and taken
+   * away on any other ending. An update's Channel already exists.
+   */
+  const reserved = useRef<string | null>(null);
   const watch = (started: SessionImportRun): void => {
     capture();
     setRun(started);
     setSteps([]);
     void started.done.then(async (result) => {
+      const workstreamId = reserved.current;
+      reserved.current = null;
       if (result.kind === 'imported') {
+        if (workstreamId) await bridge.reportBrowserImport({ phase: 'imported', workstreamId }).catch(() => undefined);
         await bridge.completeBrowserImport(result.workstreamId);
         return;
       }
+      if (workstreamId) void bridge.reportBrowserImport({ phase: 'failed', workstreamId }).catch(() => undefined);
       setRun(null);
       setMirror(null);
       setFailure(endedMessage(result));
@@ -192,9 +202,14 @@ export function BrowserImportWindow(): React.JSX.Element {
   const startChannel = (): void => {
     if (!pending || !api || !conversation || !active || run || !name.trim() || !context?.spaces.some((space) => space.id === spaceId)) return;
     setPending(null);
+    const title = name.trim();
     watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
-      mode: { kind: 'create', title: name.trim(), spaceIds: [spaceId], clientMessageId: pending.clientMessageId },
-      onSteps: setSteps }));
+      mode: { kind: 'create', title, spaceIds: [spaceId], clientMessageId: pending.clientMessageId },
+      onSteps: setSteps,
+      onStarted: ({ workstreamId }) => {
+        reserved.current = workstreamId;
+        void bridge.reportBrowserImport({ phase: 'importing', workstreamId, title, spaceId }).catch(() => undefined);
+      } }));
   };
 
   const spaces = context?.spaces ?? [];

@@ -24,6 +24,7 @@ const harness = vi.hoisted(() => {
       return () => undefined;
     }),
     completeBrowserImport: vi.fn(async () => undefined),
+    reportBrowserImport: vi.fn(async () => undefined),
     commandEmbeddedBrowser: vi.fn(async () => ({ kind: 'screenshot', mimeType: 'image/jpeg', data: 'cGFnZQ==', width: 800, height: 600 })),
   };
   return { api, bridge, state, startSessionImportRun, settle: (result: unknown) => settle(result) };
@@ -117,8 +118,15 @@ describe('browser import window', () => {
     // Behind the blur is the page as the agent last left it.
     await waitFor(() => expect(document.querySelector('.browser-import-mirror')).toHaveAttribute('src', 'data:image/jpeg;base64,cGFnZQ=='));
 
+    // The API reserved the Channel: the main window lists it as importing.
+    const { onStarted } = (harness.startSessionImportRun.mock.calls[0] as unknown as [{ onStarted: (run: { workstreamId: string }) => void }])[0];
+    await act(async () => { onStarted({ workstreamId: 'w-reserved' }); });
+    expect(harness.bridge.reportBrowserImport).toHaveBeenLastCalledWith({ phase: 'importing', workstreamId: 'w-reserved', title: 'Launch plan', spaceId: 'space-b' });
+
     // The agent reports the page asks for sign-in; the person reads Rally's words for it.
     await act(async () => { harness.settle({ kind: 'failed', reason: 'sign_in_required' }); });
+    // The Channel will not open, so the main window takes its row away.
+    expect(harness.bridge.reportBrowserImport).toHaveBeenLastCalledWith({ phase: 'failed', workstreamId: 'w-reserved' });
     expect(await screen.findByRole('alert')).toHaveTextContent('Sign in to the conversation’s site in this window, then import again.');
     expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
   });
