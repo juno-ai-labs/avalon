@@ -1111,6 +1111,11 @@ Azure-first on `x-ai/grok-4.3`; `openai/gpt-5.6-terra` has no Azure binding, so
 they now reach OpenRouter alone. Ace never overwrites a flag that exists, so
 production keeps whatever each `agent-model-*` flag serves until someone edits
 it in Ace: changing these defaults moves only an absent or unreachable flag.
+Terra accepts image input on OpenRouter, which the import role needs. The
+2026-09-11 Sidekick delivery research recorded Terra failing a tool-calling turn
+with `completion_defect` three times in a row before the fallback served it;
+that fix is deferred, so a role moved onto Terra leans on its fallback for
+those turns.
 
 ### 2026-09-17 — Addressing leaves the model-flag catalog
 
