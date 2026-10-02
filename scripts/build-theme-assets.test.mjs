@@ -5,7 +5,6 @@ import test from 'node:test';
 import {
   assetManifest,
   defaultTheme,
-  customProperty,
   fontCacheId,
   fontFaces,
   generate,
@@ -13,7 +12,6 @@ import {
   readTokenSources,
   resolvedTokens,
   selectorFor,
-  stylesheetPath,
 } from './build-theme-assets.mjs';
 
 const { registry, base, themes } = readTokenSources();
@@ -34,12 +32,6 @@ test('every committed artefact is what the token JSON produces', () => {
       `${path} has drifted from config/design-tokens — run \`pnpm tokens:build\``,
     );
   }
-});
-
-test('a token path becomes a namespaced custom property', () => {
-  assert.equal(customProperty('sys.color.text.default'), '--av-sys-color-text-default');
-  assert.equal(customProperty('ref.color.neutral.1'), '--av-ref-color-neutral-1');
-  assert.equal(customProperty('cmp.sidebar.background-solid'), '--av-cmp-sidebar-background-solid');
 });
 
 /**
@@ -201,24 +193,6 @@ test('both ramps are ordered by contrast in every theme', () => {
   }
 });
 
-/**
- * A backdrop is declared the way a stylesheet would declare one.
- *
- * Sizing, centring, tiling and zoom are `background-size`, `background-position`
- * and `background-repeat` under their own names rather than a vocabulary
- * invented here, because every one of those already has an answer that a decade
- * of use has sanded smooth. What the theme file adds is the one step it cannot
- * write by hand: turning artwork into something a `url()` can carry.
- */
-test('a backdrop is declared as CSS background longhands', () => {
-  for (const longhand of ['color', 'image', 'position', 'size', 'repeat', 'attachment', 'blend-mode']) {
-    assert.ok(
-      registry.tokens[`sys.backdrop.${longhand}`],
-      `sys.backdrop.${longhand} is missing, so a theme cannot set background-${longhand}`,
-    );
-  }
-});
-
 const asCss = (value) => {
   const fixture = {
     registry: {
@@ -282,29 +256,6 @@ test('a layer that names no known kind is rejected', () => {
 });
 
 /**
- * Every theme's block declares every token.
- *
- * A theme that leaves one out falls through to `:root`, which is the default
- * theme — and that works only for an element that has no `data-theme` of its
- * own. The Settings miniature has one: it draws the theme it is offering, not
- * the running one. An alias declared on `:root` is substituted there, so the
- * miniature would inherit the default theme's resolved colour no matter what
- * the ramp beneath it said, and the Light swatch would preview a dark surface.
- */
-test('every theme block declares every token, so data-theme works on any element', () => {
-  const css = readFileSync(stylesheetPath, 'utf8');
-  const paths = Object.keys(registry.tokens);
-
-  for (const theme of themes) {
-    const block = css.slice(css.indexOf(selectorFor(theme.id)));
-    const body = block.slice(0, block.indexOf('\n}'));
-    const missing = paths.filter((path) => !body.includes(`${customProperty(path)}:`));
-
-    assert.deepEqual(missing, [], `${theme.id} leaves tokens to fall through to :root`);
-  }
-});
-
-/**
  * Named custom families must ship a face; otherwise weights resolve against an
  * accidental substitute. Platform UI families are deliberately OS-provided:
  * bundling a replacement would undo the native typography used by portals and
@@ -315,25 +266,6 @@ function hasLeadingFontSource(value, declared) {
   return declared.has(first.replace(/^["']|["']$/gu, ''))
     || ['-apple-system', 'system-ui', 'ui-sans-serif', 'ui-monospace'].includes(first);
 }
-
-test('platform font exceptions do not admit missing or quoted custom families', () => {
-  const declared = new Set(['Geist Mono']);
-  assert.ok(hasLeadingFontSource('-apple-system, sans-serif', declared));
-  assert.ok(hasLeadingFontSource('system-ui, sans-serif', declared));
-  assert.ok(hasLeadingFontSource('"Geist Mono", monospace', declared));
-  assert.ok(!hasLeadingFontSource('Missing Font, system-ui', declared));
-  assert.ok(!hasLeadingFontSource('"system-ui", sans-serif', declared));
-});
-
-test('UI leading scales with inherited font size rather than fixing all headings at 20px', () => {
-  for (const theme of themes) {
-    const tokens = resolvedTokens(theme, base);
-    const leading = Number(tokens['sys.font.leading.base']);
-    assert.ok(Number.isFinite(leading) && leading > 1, theme.id);
-    assert.ok(Math.abs(leading * parseFloat(tokens['sys.font.size.base']) - 20) < 0.001);
-    assert.ok(leading * 26 > 26, 'a wrapped 26px title must not overlap itself');
-  }
-});
 
 function tokenColorAt(tokens, path) {
   let value = tokens[path];

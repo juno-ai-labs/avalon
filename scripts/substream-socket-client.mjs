@@ -1,9 +1,9 @@
 import WebSocket from "ws";
 
 // This helper runs from the repository root with plain Node, which resolves no
-// workspace package and cannot import the TypeScript contracts source.
-// `scripts/socket-ticket-transport.test.mjs` keeps these copies pinned to the
-// public contract.
+// workspace package and cannot import the TypeScript contracts source, so
+// these are copies of the public contract's values. A drift fails the smoke
+// and e2e lanes that use this helper, at the socket handshake.
 export const SOCKET_TICKET_SUBPROTOCOL = "rally.ticket.v1";
 export const SOCKET_TICKET_QUERY_PARAM = "ticket";
 

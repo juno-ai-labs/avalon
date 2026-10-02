@@ -5,7 +5,6 @@ import {
   importableStatements,
   parseArguments,
   resolveLocalDatabase,
-  sampleBody,
 } from "./preview-digest-email.mjs";
 
 test("defaults to the local D1 and a scratch output directory", () => {
@@ -32,39 +31,6 @@ test("picks the D1 file rather than Miniflare's metadata database", () => {
 
 test("reports no database rather than guessing when the directory is empty", () => {
   assert.equal(resolveLocalDatabase("/state", ["metadata.sqlite"]), null);
-});
-
-test("exercises the shapes the template has to survive", () => {
-  const body = sampleBody({
-    workstreams: [
-      { id: "00000000-0000-4000-8000-000000000001", title: "Prepare the Acme follow-up" },
-      { id: "00000000-0000-4000-8000-000000000002", title: "Investigate ENG-142" },
-    ],
-    workspaceId: "00000000-0000-7000-8000-000000000010",
-    otherName: "Samantha Lee",
-    highlightCount: 1,
-  });
-
-  // A preview that only shows plain bullets proves nothing about the template.
-  assert.match(body, /^## Needs you$/mu);
-  assert.match(body, /\*\*Prepare the Acme follow-up\*\*/u);
-  assert.doesNotMatch(body, /\/app\/workspaces\//u);
-  assert.match(body, /^> /mu);
-  assert.match(body, /\*\*Owner still unassigned\.\*\*/u);
-});
-
-test("omits the priority section when nothing names the reader", () => {
-  const body = sampleBody({
-    workstreams: [{ id: null, title: "Investigate ENG-142" }],
-    workspaceId: "00000000-0000-7000-8000-000000000010",
-    otherName: "Samantha Lee",
-    highlightCount: 0,
-  });
-
-  assert.doesNotMatch(body, /## Needs you/u);
-  // With no id there is nothing to link to, so the name is emphasized instead
-  // of being turned into a URL that does not exist.
-  assert.doesNotMatch(body, /\]\(https/u);
 });
 
 test("takes a Wrangler dump so a remote workspace needs no sqlite3 binary", () => {

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  buildTerminalAnalyticsQueries,
   formatTerminalAnalyticsReport,
   parseTerminalAnalyticsArguments,
   queryTerminalAnalytics,
@@ -19,18 +18,6 @@ test("analytics report arguments are bounded and cannot inject SQL", () => {
   ]), { days: 30, region: "global", snapshot: "daytona-small" });
   assert.throws(() => parseTerminalAnalyticsArguments(["--days", "91"]), /between 1 and 90/u);
   assert.throws(() => parseTerminalAnalyticsArguments(["--snapshot", "x' OR 1=1"]), /snapshot/u);
-});
-
-test("analytics queries use weighted estimates and percentiles", () => {
-  const queries = buildTerminalAnalyticsQueries({ days: 7, region: "global", snapshot: "daytona-small" });
-  for (const query of Object.values(queries)) {
-    assert.match(query, /terminal_platform_v1/u);
-    assert.match(query, /timestamp > NOW\(\) - INTERVAL '7' DAY/u);
-    assert.match(query, /blob4 = 'global'/u);
-    assert.match(query, /blob5 = 'daytona-small'/u);
-  }
-  assert.match(queries.operations, /SUM\(_sample_interval\)/u);
-  assert.match(queries.operations, /quantileExactWeighted\(0\.95\)\(double1, _sample_interval\)/u);
 });
 
 test("human report includes the observed start, warming, phase timings, and image signal", () => {

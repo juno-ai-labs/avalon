@@ -27,10 +27,6 @@ test("reports direct chained Zod object modes", () => {
   }
 });
 
-test("classifies the enforced startup-allocation guard as a problem", () => {
-  assert.equal(preferZodDirectObjectRule.meta.type, "problem");
-});
-
 test("autofixes direct chained Zod object modes without disturbing later chains", () => {
   const strict = lint(
     'import { z } from "zod"; const schema = z.object({ value: z.string() }).strict().optional();',

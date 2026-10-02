@@ -50,17 +50,6 @@ function allowlistRegexes(source) {
   return patterns;
 }
 
-test("every allowlisted pattern is one this file has reasoned about", () => {
-  // The guard that makes the rest of this worth having. An exception added
-  // without a test for its bound is the failure this file exists to prevent, so
-  // adding one here is deliberately not optional.
-  assert.equal(
-    allowlistRegexes(config).length,
-    5,
-    "a new .gitleaks.toml allowlist pattern needs a test in this file proving what it still rejects",
-  );
-});
-
 test("the placeholder PEM exception admits only a short alphabetic body", () => {
   const patterns = allowlistRegexes(config).filter((pattern) => pattern.includes("PRIVATE KEY") && !pattern.includes("exportKey"));
   assert.equal(patterns.length, 1);

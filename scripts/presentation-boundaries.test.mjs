@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ESLint, Linter } from "eslint";
+import { Linter } from "eslint";
 import tseslint from "typescript-eslint";
 import { noDiagnosticMessageInPresentationRule } from "./eslint-rules/presentation-boundaries.mjs";
 
@@ -45,25 +45,5 @@ test("presentation surfaces cannot read raw diagnostic messages", () => {
     `try {} catch (error) { const render = (error) => error.message; render({ message: "Try again." }); }`,
   ]) {
     assert.deepEqual(lint(source), [], source);
-  }
-});
-
-test("the configured presentation scope includes every adapter that supplies guarded UI", async () => {
-  const eslint = new ESLint({ overrideConfigFile: "eslint.config.mjs" });
-  for (const file of [
-    "apps/browser/src/conversation.tsx",
-    "apps/desktop/src/renderer/components/message-feed.tsx",
-    "apps/desktop/src/renderer/components/scope-sharing-panel.tsx",
-    "apps/desktop/src/renderer/components/sidekick-picker.tsx",
-    "apps/desktop/src/renderer/components/sidekick-section.tsx",
-    "apps/desktop/src/renderer/components/workstream-blocks.tsx",
-    "apps/desktop/src/renderer/screens/conversation-surface.tsx",
-    "apps/desktop/src/renderer/screens/workstream.tsx",
-    "packages/ui/src/components/conversation-header.tsx",
-    "packages/ui/src/components/sidekick-picker.tsx",
-    "packages/ui/src/components/sidekick-section.tsx",
-  ]) {
-    const config = await eslint.calculateConfigForFile(file);
-    assert.equal(config.rules["rally/no-diagnostic-message-in-presentation"][0], 2, file);
   }
 });

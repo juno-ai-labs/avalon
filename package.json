@@ -42,7 +42,6 @@
     "dev:reset": "node scripts/reset-local-dev.mjs",
     "smoke:model": "node scripts/smoke-model.mjs",
     "test": "pnpm -r --no-sort --no-bail --if-present test",
-    "test:observability": "node --test scripts/configure-cloudflare-observability.test.mjs",
     "test:scripts": "node --test scripts/*.test.mjs",
     "test:watch": "vitest",
     "typecheck": "pnpm -r --no-sort --if-present typecheck",

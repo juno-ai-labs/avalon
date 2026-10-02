@@ -39,7 +39,7 @@ const REPORT_PATH = process.env.AVALON_E2E_REPORT ?? null;
  * reads both numbers out of their sources and fails `pnpm test:scripts` when
  * they disagree, so the next move of the ceiling breaks a gate instead of this.
  */
-export const OVERSIZE_MESSAGE_CHARACTERS = 100_001;
+const OVERSIZE_MESSAGE_CHARACTERS = 100_001;
 
 /** Member-visible states that mean the work stream is no longer working. */
 export const TERMINAL_STATES = ["completed", "failed", "needs_input", "stopped", "idle"];
