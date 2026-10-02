@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig, mergeConfig } from 'vitest/config';
 
 import viteConfig from './vite.config';
@@ -7,6 +8,12 @@ import viteConfig from './vite.config';
 // loads it, which would silently drop the React plugin these tests render
 // through.
 export default mergeConfig(viteConfig, defineConfig({
+  resolve: {
+    alias: {
+      // The Worker's RPC entrypoint extends a runtime-only base class.
+      'cloudflare:workers': fileURLToPath(new URL('./test/helpers/cloudflare-workers.ts', import.meta.url)),
+    },
+  },
   test: {
     // Ace had no `test` block anywhere, so it ran on Vitest's five-second
     // default while CI fans four package suites out onto one shared four-core
