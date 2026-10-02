@@ -282,7 +282,7 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   browser_network_list: { started: "Checking what the page loaded", settled: "Checked what the page loaded", failed: "Could not check what the page loaded" },
   browser_network_read: { started: "Reading data the page loaded", settled: "Read data the page loaded", failed: "Could not read data the page loaded" },
   import_finish: { started: "Saving the conversation to Rally", settled: "Saved the conversation to Rally", failed: "Could not save the conversation to Rally" },
-  import_fail: { started: "Stopping the import", settled: "Stopped the import", failed: "Could not stop the import" },
+  import_fail: { started: "Stopping the import run", settled: "Stopped the import run", failed: "Could not stop the import run" },
   load_skill: { started: "Loading instructions", settled: "Loaded instructions", failed: "Could not load instructions" },
   read_skill_resource: { started: "Reading instructions", settled: "Read instructions", failed: "Could not read instructions" },
   memory_search: {
