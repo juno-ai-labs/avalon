@@ -202,16 +202,9 @@ describe("space contracts", () => {
       container: { kind: "organization", id: SPACE_ID },
       itemIds: [],
     }).success).toBe(false);
-    // Exactly the four lists the product lets a person arrange.
+    // Exactly the three lists the product lets a person arrange.
     expect([...OrderedContainerKindSchema.options])
-      .toEqual(["organization", "space", "channel", "pinned"]);
-    // Pinned, like the organization, is one list per person and carries no id.
-    expect(ContainerOrderSchema.safeParse({ container: { kind: "pinned" }, itemIds: [CHANNEL_ID] }).success)
-      .toBe(true);
-    expect(ContainerOrderSchema.safeParse({
-      container: { kind: "pinned", id: SPACE_ID },
-      itemIds: [],
-    }).success).toBe(false);
+      .toEqual(["organization", "space", "channel"]);
     expect(ContainerOrderSchema.safeParse({
       container: { kind: "workstream", id: SPACE_ID },
       itemIds: [],

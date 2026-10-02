@@ -8,25 +8,34 @@ bring someone in, and how Rally behaves when the room gets busy.
 
 ## Who is in this Channel
 
-The people in a Channel are its **participants**. Their faces sit in a little
-stack of avatars in the top-right corner of the Channel's header.
+The people in a Channel are its **participants**. To see them, click the
+Channel's name in its title pill and choose **People**. (The row shows how many
+there are, and whether the Channel is **Public** or **Private**.)
 
-Some avatars carry a small marker. That means the person has this Channel open
-right now, so if you ask a question, someone may be there to answer it. This
-"who is here" marker shows in a Channel's main conversation, not in Breakouts.
-
-A Channel with a padlock **Private** badge beside its name is private: only its
-participants can open it. Who can see which Channels, and why, is explained in
+The list opens with who can read the Channel: **Private** (only people added
+here) or **Public to organization**. Then come the participants, each with
+their email and whether they are a **Member**, an **Admin** or a **Guest**. A
+small dot beside a name means that person has this Channel open right now, so
+if you ask a question, someone may be there to answer it. Who can see which
+Channels, and why, is explained in
 [Who can see what](../03-spaces-and-breakouts/04-who-can-see-what.md).
 
 ## Adding and removing people
 
-1. Click the avatar stack in the header (its label is **Manage channel
-   participants**, or **Manage breakout participants** in a Breakout).
-2. The **Add a participant** window lists the active members of your
-   Organization. Click a person to add them.
-3. To take someone out, click the **…** beside their name and choose **Remove
-   from main conversation** (or **Remove from breakout**).
+The quickest way is the menu itself:
+
+1. Click the Channel's name in its title pill and choose **Add people** (or
+   **People**).
+2. Type in **Add someone by name or email**, or pick from **Suggested**.
+3. Click **Add** beside the person.
+
+For the full list, click **Change** beside **Private** or **Public to
+organization** at the top of **People**. The **Add a participant** window lists
+the active members of your Organization; click a person to add them. To take
+someone out, click the **…** beside their name and choose **Remove from main
+conversation** (or **Remove from breakout**).
+
+A Breakout's title pill has the same **Add people** and **People**.
 
 A few rules:
 
@@ -121,5 +130,5 @@ exact date and time, in your own time zone. That is handy when "3 days ago" is
 not precise enough for a deadline. The tip appears for the mouse or trackpad
 only; you cannot reach it with the keyboard.
 
-Next: [Status dots and badges](06-status-dots-and-badges.md), so you can tell at a
+Next: [Status dots](06-status-dots-and-badges.md), so you can tell at a
 glance where you are needed.

@@ -10,14 +10,12 @@ assistant works out the details and writes them down.
 
 ## Start a new Sidekick
 
-There are three places to start one.
+There are two places to start one.
 
 - In the Sidekicks window, click **New Sidekick** at the top right. (Open the
-  window from the account menu at the bottom of the Spaces rail → **Sidekicks**.)
-- If you have no active Sidekicks yet, click the dashed hexagon labelled
-  **New Sidekick** near the bottom of the Spaces rail.
-- In the Channel sidebar of a Channel or Breakout, under **Sidekicks**, click **Add
-  Sidekick** → **Create new Sidekick**. This opens the Sidekicks window on a
+  window from the account menu at the bottom of the sidebar → **Sidekicks**.)
+- In a Channel or Breakout, click its name in the title pill, choose
+  **Sidekicks**, then **Add Sidekick** → **Create new Sidekick**. This opens the Sidekicks window on a
   new draft that starts as **Only you**; to get a Sidekick that belongs to
   the Channel, ask Rally in the Channel instead (see below).
 
@@ -76,7 +74,7 @@ saves at once, and the palette stays open while you try a few. Every window
 showing that Sidekick updates to match.
 
 A recognisable hexagon is worth a minute: it is how you spot the Sidekick in
-the sidebar, in the Sidekicks window and in Channel sidebars. Changing it
+the Sidekicks window and in a Channel's **Sidekicks** list. Changing it
 needs permission to manage the Sidekick; if you lack it, the palette shows an
 error and the hexagon goes back to how it was.
 
@@ -94,7 +92,7 @@ Rally first looks for a suitable Sidekick the Channel already has and reuses
 it. If there is none, it makes a small one owned by the Channel and passes
 your request to that Sidekick's drafting assistant. You see the work in the
 conversation under a **Sidekicks** row, and the new Sidekick appears in the
-Channel sidebar.
+Channel's **Sidekicks** list, in its title pill menu.
 
 A Sidekick made this way belongs to the Channel (its scope badge says
 **Channel**). If you asked from a Breakout, that Breakout becomes its home and

@@ -86,7 +86,7 @@ failed or was stopped, the card also shows a status badge, and the badge updates
 changes. Your team can see that the report is still cooking before anyone
 clicks.
 
-To get a link, use **Copy channel link** in Rally, as described in [Search and
+To get a link, use **Copy link** in the Channel's title pill menu in Rally, as described in [Search and
 links](../03-spaces-and-breakouts/06-search-and-links.md).
 
 - The card carries no content from the Channel. Opening the link still needs

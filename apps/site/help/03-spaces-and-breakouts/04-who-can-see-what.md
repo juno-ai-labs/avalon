@@ -12,11 +12,13 @@ for any Channel, and what happens the moment you change it.
 Every Channel is one of two things:
 
 - **Public to organization.** Everyone in your Organization can find it, open it
-  and read it. It wears a small globe in the Channels rail. Hover over the globe
-  and Rally explains that everyone in the Organization can see the Channel.
-- **Private.** Only the people listed as its participants can open it. The
-  Channel's header shows a padlock **Private** badge, as you saw in
-  [People in the room](../02-working-in-a-channel/05-people-in-the-room.md).
+  and read it. Hover over it in the sidebar and the card says **Public to
+  organization**.
+- **Private.** Only the people listed as its participants can open it.
+
+To check which one a Channel is, click its name in the title pill. The
+**People** row says **Public** or **Private**, as you saw in
+[People in the room](../02-working-in-a-channel/05-people-in-the-room.md).
 
 A new Channel takes its starting point from the Space you create it in. Start it
 in a Space open to the whole Organization and it begins public. Start it in a
@@ -43,8 +45,8 @@ Spaces and their audiences are set up as described in [Spaces](01-spaces.md).
 
 ## Manage access
 
-To see exactly who can read a Channel, and why, right-click it in the Channels
-rail and choose **Manage access**. The window opens with **Everyone listed here
+To see exactly who can read a Channel, and why, right-click it in the sidebar
+and choose **Manage access**. The window opens with **Everyone listed here
 can read** followed by the Channel's name, and lists every source of access:
 
 - **This channel.** The Channel's own setting, with a sentence such as **Only the
@@ -80,10 +82,10 @@ loaded.** Click **Try again**.
 
 ### Making a Channel public from the Channel itself
 
-You can also open a Channel up from inside it: right-click the main conversation
-row in the Channel sidebar and choose **Make public to organization**. That menu
-has no way back. To make the Channel private again, use **Manage access** in the
-Channels rail.
+You can also open a Channel up from inside it: click its name in the title
+pill, choose **More**, then **Make public to organization**. That menu has no
+way back. To make the Channel private again, use **Manage access** from the
+Channel's right-click menu in the sidebar.
 
 ### Breakouts are separate
 

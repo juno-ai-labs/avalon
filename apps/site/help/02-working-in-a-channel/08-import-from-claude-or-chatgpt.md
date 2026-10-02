@@ -15,10 +15,10 @@ message.
 You need the Rally app on your Mac for this, and at least one Space you are
 allowed to add Channels to.
 
-1. In the sidebar, open the new Channel menu (the **+**) and choose **Import
-   Channel from Claude or ChatGPT**. Or right-click an empty part of a Space's
-   list of Channels and choose it there, which puts the new Channel in that
-   Space.
+1. Click **Import from ChatGPT or Claude** (a cloud with a down arrow) at the
+   top of the sidebar. Or right-click an empty part of the Channel list and
+   choose **Import Channel from Claude or ChatGPT**. If you have a Space's pill
+   selected, the new Channel goes in that Space.
 2. A browser window opens, titled **Import a conversation**. It lists four
    steps. Click **claude.ai** or **chatgpt.com** to go there.
 3. Log in to your Claude or ChatGPT account in that window.
@@ -64,7 +64,8 @@ ChatGPT after importing, you can bring the new messages into the same Channel
 instead of importing a second copy.
 
 1. Open the imported Channel's main conversation (not a Breakout).
-2. In the header, click the cloud-download button, **Import updates**.
+2. Click the Channel's name in its title pill, choose **More**, then **Import
+   updates**.
 3. The **Import source updates** window says Rally will read the conversation
    again through its browser and add its updates to this Channel. Click
    **Import updates**. It says **Importing…** while it works.
