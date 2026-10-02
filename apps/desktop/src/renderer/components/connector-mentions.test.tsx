@@ -155,12 +155,28 @@ describe('connector connection resolution', () => {
     expect(mocks.openExternal).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth');
   });
 
-  it('omits connector setup and its discovery request in a lite collaboration host', () => {
+  it('shows the card without connector setup or its discovery request in a lite collaboration host', () => {
     mocks.setupEnabled = false;
-    const { container } = render(<ConnectorConnectionCard request={{ connectorId: 'slack', scope: 'personal' }} />);
-    expect(container).toBeEmptyDOMElement();
+    render(
+      <ConnectorConnectionsProvider connections={[{
+        id: 'connection-one',
+        modelPluginId: 'plugin_google',
+        connectorType: 'google',
+        displayName: 'Google Drive + Docs + Sheets',
+        scope: 'workspace',
+        status: 'reconnect_required',
+        capabilities: ['drive.read'],
+      }]}>
+        <ConnectorConnectionCard request={{ connectorId: 'google-drive-workspace', scope: 'workspace' }} />
+      </ConnectorConnectionsProvider>,
+    );
+    const action = screen.getByRole('button', { name: 'Open in desktop' });
+    expect(action).toBeDisabled();
+    expect(screen.getByText('Open this channel in Rally desktop to reconnect Google Drive + Docs + Sheets.')).toBeInTheDocument();
+    fireEvent.click(action);
     expect(mocks.getAvailableConnectorTypes).not.toHaveBeenCalled();
     expect(mocks.startProviderConnection).not.toHaveBeenCalled();
+    expect(mocks.reconnectConnection).not.toHaveBeenCalled();
   });
 
   it('restores a completed card from its durable result or legacy exact summary', () => {

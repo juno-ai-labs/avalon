@@ -113,7 +113,10 @@ The connector-connection tool is deliberately an opt-in exception to tool-row
 collapse. `ConversationSurface` enables it for the main message feed, where its
 validated input renders the interactive connector card. `MessageFeed` and
 `MessageBlock` default the feature off, so another transcript host cannot gain
-OAuth controls merely by reusing the renderer. The card follows the installed
+OAuth controls merely by reusing the renderer. The lite browser enables the
+feed but supplies no connector setup, because connector OAuth hands back to the
+desktop deep link; there the card still renders with its live state and a
+disabled **Open in desktop** action rather than disappearing. The card follows the installed
 Grok Bot connector-card geometry (column card, 16px radius, 12px padding, 40px
 provider mark, 12px header gap) while resolving color and typography through
 Rally tokens. The connection and pending states come from Rally's live queries

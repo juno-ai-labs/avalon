@@ -1480,6 +1480,16 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
 
+### 2026-10-02: The connection card shows in the lite browser
+
+**What changed:** In a host with no connector setup (the lite browser), `ConnectorConnectionCard` now renders the card with its live connected or reconnect state and a disabled **Open in desktop** action, instead of returning nothing. It makes no network call there.
+
+**Why:** The agent's reply points people at "the card above". In the browser that card was missing, so a person was told to use a control they could not see, and the run stalled.
+
+**Rejected:** Running connector OAuth from the browser. The callback always hands back to the desktop deep link, so the browser would land on an "Opening the Rally desktop app" page, and the start opens the provider after an `await`, which Safari's popup blocker refuses. Both need a change to the regional callback and the site handoff, and connector setup is outside the lite client's scope (`scope-invitations.md`).
+
+**What a future change must respect:** Giving the browser connector OAuth means supplying `connectorSetup` from the browser host and a browser return target for the callback; the card's desktop-only branch then stops being reached.
+
 ### 2026-09-28: The GitHub delivery message is sent as `v8`
 
 **What changed:** The receiver now sends `github_webhook_delivery_v1` with `contentType: "v8"`. A new workerd test, `test-workers/github-delivery-queue.test.ts`, sends a delivery through a real Queue and parses what the consumer receives.

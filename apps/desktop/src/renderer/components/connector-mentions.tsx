@@ -230,7 +230,12 @@ export function ConnectorConnectionCard({ latchedConnected = false, onConnected,
 }): React.JSX.Element | null {
   const collaboration = useOptionalCollaborationSession();
   const provider = connectorConnectionCardProvider(request);
-  if (!provider || !collaboration?.connectorSetup) return null;
+  if (!provider) return null;
+  // The lite browser has no connector setup: OAuth hands back to the desktop
+  // deep link. The card still shows, because the agent's reply points at it.
+  if (!collaboration?.connectorSetup) {
+    return <DesktopOnlyConnectorConnectionCard latchedConnected={latchedConnected} provider={provider} request={request} />;
+  }
   return (
     <ResolvedConnectorConnectionCard
       latchedConnected={latchedConnected}
@@ -239,6 +244,29 @@ export function ConnectorConnectionCard({ latchedConnected = false, onConnected,
       request={request}
       collaboration={collaboration}
       setup={collaboration.connectorSetup}
+    />
+  );
+}
+
+function DesktopOnlyConnectorConnectionCard({ latchedConnected, provider, request }: {
+  latchedConnected: boolean;
+  provider: OAuthConnectorProviderCatalogEntry;
+  request: ConnectorConnectionCardInput;
+}): React.JSX.Element {
+  const connections = useConnectorConnections();
+  const scopeState = connections === undefined
+    ? undefined
+    : connectorScopeStates(provider.provider, connections, ConnectorConnectionCardCatalog[request.connectorId].capabilityPrefixes)
+        .find((candidate) => candidate.scope === (request.scope === 'personal' ? 'you' : 'workspace'));
+  return (
+    <ConnectorConnectionCardView
+      connected={latchedConnected || scopeState?.status === 'healthy'}
+      desktopRequired
+      onConnect={() => undefined}
+      pending={false}
+      provider={provider}
+      reconnect={scopeState?.status === 'reconnect_required'}
+      request={request}
     />
   );
 }
@@ -374,6 +402,7 @@ export function ConnectorConnectionCardView({
   adminRequired,
   checkingAvailability,
   connected,
+  desktopRequired = false,
   error,
   onConnect,
   pending,
@@ -385,6 +414,8 @@ export function ConnectorConnectionCardView({
   adminRequired?: boolean;
   checkingAvailability?: boolean;
   connected: boolean;
+  /** The host cannot run connector OAuth; the action lives in Rally desktop. */
+  desktopRequired?: boolean;
   error?: string;
   onConnect: () => void;
   pending: boolean;
@@ -394,13 +425,15 @@ export function ConnectorConnectionCardView({
   unavailable?: boolean;
 }): React.JSX.Element {
   const actionLabel = reconnect ? 'Reconnect' : `Connect ${provider.name}`;
-  const buttonLabel = pending
-    ? 'Waiting…'
-    : adminRequired
-      ? 'Admin required'
-      : unavailable
-        ? checkingAvailability ? 'Checking…' : 'Unavailable'
-        : actionLabel;
+  const buttonLabel = desktopRequired
+    ? 'Open in desktop'
+    : pending
+      ? 'Waiting…'
+      : adminRequired
+        ? 'Admin required'
+        : unavailable
+          ? checkingAvailability ? 'Checking…' : 'Unavailable'
+          : actionLabel;
 
   return (
     <article
@@ -421,7 +454,7 @@ export function ConnectorConnectionCardView({
         ) : (
           <Button
             className="connector-connection-card-action button-primary"
-            disabled={adminRequired || unavailable || pending}
+            disabled={desktopRequired || adminRequired || unavailable || pending}
             onClick={onConnect}
             title={adminRequired ? 'Only an organization owner or admin can connect an organization account.' : undefined}
           >
@@ -430,6 +463,9 @@ export function ConnectorConnectionCardView({
           </Button>
         )}
       </div>
+      {!connected && desktopRequired
+        ? <InlineError>Open this channel in Rally desktop to {reconnect ? 'reconnect' : 'connect'} {provider.name}.</InlineError>
+        : null}
       {error ? <InlineError>{error}</InlineError> : null}
     </article>
   );
