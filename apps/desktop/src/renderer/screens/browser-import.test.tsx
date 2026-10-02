@@ -17,7 +17,8 @@ const harness = vi.hoisted(() => {
     cancel: vi.fn(async () => undefined),
   }));
   const bridge = {
-    getRuntimeConfig: vi.fn(async () => ({ platform: 'linux' })),
+    getRuntimeConfig: vi.fn(async () => ({ platform: 'linux', webBaseUrl: 'https://rallywith.ai' })),
+    copyText: vi.fn(async () => undefined),
     getBrowserImportContext: vi.fn(async () => state.context),
     onBrowserImportContextChanged: vi.fn((listener: () => void) => {
       state.contextChanged = listener;
@@ -47,7 +48,10 @@ vi.mock('../lib/session-import-run', async (actual) => ({
   ...await actual<typeof SessionImportRunModule>(),
   startSessionImportRun: harness.startSessionImportRun,
 }));
-vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api: harness.api }) }));
+vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
+  api: harness.api,
+  session: { workspace: { region: 'global', id: '00000000-0000-7000-8000-000000000009' } },
+}) }));
 vi.mock('../lib/platform', () => ({ desktopBridge: () => harness.bridge }));
 
 import { BrowserImportWindow } from './browser-import';
@@ -119,8 +123,8 @@ describe('browser import window', () => {
     await waitFor(() => expect(document.querySelector('.browser-import-mirror')).toHaveAttribute('src', 'data:image/jpeg;base64,cGFnZQ=='));
 
     // The API reserved the Channel: the main window lists it as importing.
-    const { onStarted } = (harness.startSessionImportRun.mock.calls[0] as unknown as [{ onStarted: (run: { workstreamId: string }) => void }])[0];
-    await act(async () => { onStarted({ workstreamId: 'w-reserved' }); });
+    const { onStarted } = (harness.startSessionImportRun.mock.calls[0] as unknown as [{ onStarted: (run: { workstreamId: string; substreamId: string }) => void }])[0];
+    await act(async () => { onStarted({ workstreamId: 'w-reserved', substreamId: 'c-agent' }); });
     expect(harness.bridge.reportBrowserImport).toHaveBeenLastCalledWith({ phase: 'importing', workstreamId: 'w-reserved', title: 'Launch plan', spaceId: 'space-b' });
 
     // The agent reports the page asks for sign-in; the person reads Rally's words for it.
@@ -129,5 +133,26 @@ describe('browser import window', () => {
     expect(harness.bridge.reportBrowserImport).toHaveBeenLastCalledWith({ phase: 'failed', workstreamId: 'w-reserved' });
     expect(await screen.findByRole('alert')).toHaveTextContent('Sign in to the conversation’s site in this window, then import again.');
     expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
+  });
+
+  it('copies the running import’s address for a bug report', async () => {
+    harness.state.context = { spaces: [{ id: 'space-a', name: 'Alpha' }] };
+    render(<Tooltip.Provider><BrowserImportWindow /></Tooltip.Provider>);
+    await waitFor(() => expect(harness.bridge.getBrowserImportContext).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Import channel' })).getByRole('button', { name: 'Import' }));
+    const progress = await screen.findByRole('dialog', { name: 'Importing conversation' });
+
+    // Before the API answers there is no import to name.
+    fireEvent.pointerDown(within(progress).getByRole('button', { name: 'More import actions' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: 'Copy import id' })).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+
+    const { onStarted } = (harness.startSessionImportRun.mock.lastCall as unknown as [{ onStarted: (run: { workstreamId: string; substreamId: string }) => void }])[0];
+    await act(async () => { onStarted({ workstreamId: '019fec70-fba0-7b0e-9f7a-3dd1ef56520f', substreamId: '00000000-0000-7000-8000-0000000000a9' }); });
+    fireEvent.pointerDown(within(progress).getByRole('button', { name: 'More import actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy import id' }));
+    await waitFor(() => expect(harness.bridge.copyText)
+      .toHaveBeenCalledWith('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Te/i/1111117Hxt1fAWDjN7WQ'));
   });
 });

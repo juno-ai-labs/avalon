@@ -1,4 +1,6 @@
-import { Check, CircleAlert, LoaderCircle, X } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { sessionImportCanonicalUrl } from '@rally/contracts/workstream-links';
+import { Check, CircleAlert, Copy, Ellipsis, LoaderCircle, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { BrowserImportContext } from '../../common/browser-import';
 import {
@@ -84,7 +86,7 @@ function ImportSteps({ steps }: { steps: readonly SessionImportStep[] }): React.
  * goes to its recorded conversation and adds what changed instead.
  */
 export function BrowserImportWindow(): React.JSX.Element {
-  const { api } = useAppSession();
+  const { api, session } = useAppSession();
   const bridge = desktopBridge();
   const { state, active, error: browserError, command } = useEmbeddedBrowser();
   const pageRef = useRef<HTMLElement>(null);
@@ -101,6 +103,8 @@ export function BrowserImportWindow(): React.JSX.Element {
   const [steps, setSteps] = useState<readonly SessionImportStep[]>([]);
   const [mirror, setMirror] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  // The running import's agent conversation, which a bad import is debugged from.
+  const [importId, setImportId] = useState<string | null>(null);
 
   const conversation = active ? browserConversation(active) : null;
   const update = context?.update ?? null;
@@ -168,6 +172,7 @@ export function BrowserImportWindow(): React.JSX.Element {
     capture();
     setRun(started);
     setSteps([]);
+    setImportId(null);
     void started.done.then(async (result) => {
       const workstreamId = reserved.current;
       reserved.current = null;
@@ -198,7 +203,8 @@ export function BrowserImportWindow(): React.JSX.Element {
     if (update) {
       if (!updatable || !active) return;
       watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
-        mode: { kind: 'update', workstreamId: update.workstreamId }, onSteps: setSteps }));
+        mode: { kind: 'update', workstreamId: update.workstreamId }, onSteps: setSteps,
+        onStarted: ({ substreamId }) => setImportId(substreamId) }));
       return;
     }
     const spaces = context?.spaces ?? [];
@@ -220,10 +226,18 @@ export function BrowserImportWindow(): React.JSX.Element {
     watch(startSessionImportRun({ api, bridge, tabId: active.id, sourceUrl: conversation.url,
       mode: { kind: 'create', title, spaceIds: [spaceId], clientMessageId: pending.clientMessageId },
       onSteps: setSteps,
-      onStarted: ({ workstreamId }) => {
+      onStarted: ({ workstreamId, substreamId }) => {
         reserved.current = workstreamId;
+        setImportId(substreamId);
         void bridge.reportBrowserImport({ phase: 'importing', workstreamId, title, spaceId }).catch(() => undefined);
       } }));
+  };
+
+  const copyImportId = (): void => {
+    const workspace = session?.workspace;
+    if (!importId || !workspace) return;
+    void bridge.getRuntimeConfig().then(({ webBaseUrl }) => bridge.copyText(sessionImportCanonicalUrl(webBaseUrl,
+      { region: workspace.region, workspaceId: workspace.id, importId }))).catch(() => undefined);
   };
 
   const spaces = context?.spaces ?? [];
@@ -264,6 +278,18 @@ export function BrowserImportWindow(): React.JSX.Element {
       description="Rally is reading this conversation in the page behind. It is locked until the import finishes."
       dismissible={false}
       footer={<Button onClick={() => void run?.cancel()}>Cancel</Button>}
+      headerActions={<DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <IconButton label="More import actions"><Ellipsis size={16} /></IconButton>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
+            <DropdownMenu.Item className="menu-item" disabled={!importId || !session?.workspace} onSelect={copyImportId}>
+              <Copy size={14} /> Copy import id
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>}
       onOpenChange={(open) => { if (!open) void run?.cancel(); }}
       open={run !== null}
       title={update ? 'Importing updates' : 'Importing conversation'}
