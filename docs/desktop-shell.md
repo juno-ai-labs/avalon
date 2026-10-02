@@ -171,7 +171,8 @@ stacks at the left of the Breakout's header, and pressing its title closes the
 panel to return to the split. Opening a Breakout while the Channel holds a
 panel closes that panel first. The split's width is device-local under
 `layoutKey(…, 'breakout-width')` and clamps both panes to the conversation
-minimum.
+minimum. A window too narrow for two minimums splits the panes evenly instead,
+and the pane's CSS cap allows that half, so the stored width is the drawn one.
 
 ### Web links
 
