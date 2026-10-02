@@ -323,4 +323,40 @@ describe('running an import', () => {
     socket.emit('message', wire('harness_status_changed', { status: 'completed' }));
     await expect(run.done).resolves.toEqual({ kind: 'unfinished', refusal: 'This import key belongs to another channel' });
   });
+
+  it('refuses to finish, or act, while the tab shows a conversation other than the one opened', async () => {
+    sockets.length = 0;
+    const completions: string[] = [];
+    const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
+    const api = {
+      startSessionImport: async () => ({ workstreamId: 'w1', substreamId: 's1' }),
+      getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
+      discardSessionImport: async () => undefined,
+      completeSessionImport: async (workstreamId: string) => { completions.push(workstreamId); return workstreamId; },
+      startSessionImportUpdate: unused,
+      updateImportedSession: unused,
+      importedSessionSource: unused,
+    } satisfies SessionImportApi;
+    const other = 'https://claude.ai/chat/00000000-1111-4222-8333-444444444444';
+    const bridge = {
+      getEmbeddedBrowserState: async () => ({ tabs: [{ id: 't1', url: other, title: 'Another chat' }] }),
+      commandEmbeddedBrowser: async () => ({ kind: 'value', value: { ok: true, value: 1, url: other, title: 'Another chat', stored: [] } }),
+    } as never;
+    startSessionImportRun({
+      api, bridge, tabId: 't1', sourceUrl: source.url,
+      mode: { kind: 'create', title: 'Garden plan', spaceIds: [], clientMessageId: 'c1' },
+    });
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit('open');
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a0', action: { kind: 'browser.navigate', url: other } } }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.finish', title: 'Garden plan', messages: 'messages' } } }));
+    const answers = () => socket.sent.filter((frame) => (frame as { type: string }).type === 'answer_desktop_action') as Array<{ actionId: string; outcome: { ok: boolean; code?: string } }>;
+    await vi.waitFor(() => expect(answers()).toHaveLength(2));
+    expect(answers().map((answer) => [answer.actionId, answer.outcome.ok, answer.outcome.code])).toEqual([
+      ['a0', false, 'origin_not_allowed'],
+      ['a1', false, 'import_rejected'],
+    ]);
+    expect(completions).toEqual([]);
+  });
 });

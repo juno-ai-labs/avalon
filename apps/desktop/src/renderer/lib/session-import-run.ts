@@ -136,6 +136,16 @@ export function startSessionImportRun(input: {
 }): SessionImportRun {
   const conversation = conversationAt(input.sourceUrl, '');
   const provider: BrowserConversationProvider | null = conversation?.provider ?? null;
+  /**
+   * Whether `url` shows a conversation other than the one the person opened.
+   * Such a page is off the import's sites, like another company's: whatever
+   * the agent read there would land under this conversation's identity. The
+   * skills never need one; files, sign-in and the API stay reachable.
+   */
+  const otherConversation = (url: string): boolean => {
+    const shown = conversationAt(url, '');
+    return shown !== null && shown.id !== conversation?.id;
+  };
   const store = new DesktopActionStore();
   let settle: (result: SessionImportRunResult) => void = () => undefined;
   const done = new Promise<SessionImportRunResult>((resolve) => { settle = resolve; });
@@ -176,11 +186,15 @@ export function startSessionImportRun(input: {
   const executor = createDesktopActionExecutor({
     bridge: input.bridge,
     tabId: input.tabId,
-    siteAllows: (url) => provider !== null && providerSiteAllows(provider, url),
+    siteAllows: (url) => provider !== null && providerSiteAllows(provider, url) && !otherConversation(url),
     store,
     handlers: {
       'session_import.finish': async (action): Promise<DesktopActionOutcome> => {
         if (!run || !conversation) return { ok: false, code: 'import_rejected', message: 'The import has not started.' };
+        const tab = (await input.bridge.getEmbeddedBrowserState()).tabs.find((candidate) => candidate.id === input.tabId);
+        if (tab && otherConversation(tab.url)) {
+          return { ok: false, code: 'import_rejected', message: `The tab shows another conversation (${tab.url}); go back to ${conversation.url} and read only that one.` };
+        }
         // A repeated finish after the Channel opened changes nothing, and is told so in the same words.
         if (imported) return { ok: true, result: imported };
         let preview: SessionImportPreview;
