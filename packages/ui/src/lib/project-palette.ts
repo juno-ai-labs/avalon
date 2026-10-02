@@ -1,4 +1,4 @@
-import { PALETTE_INK, PROJECT_COLOR_KEYS, type PaletteKey, type ProjectColorKey } from '@rally/contracts';
+import { PALETTE_INK, PALETTE_RING, PROJECT_COLOR_KEYS, type PaletteKey, type ProjectColorKey } from '@rally/contracts';
 import { serpentineRows } from './grid-layout';
 
 /**
@@ -49,4 +49,22 @@ export function glyphInk(color: PaletteKey): string {
   return PALETTE_INK[color] === 'white'
     ? 'var(--av-sys-color-palette-ink-light)'
     : 'var(--av-sys-color-palette-ink-dark)';
+}
+
+const PASTEL_KEYS: ReadonlySet<PaletteKey> = new Set(PALETTE_RING);
+
+/**
+ * How a mark in a palette hue is painted: its background and the icon on it.
+ *
+ * A mark — a Channel's or a Breakout's glyph, a Sidekick's hexagon, a Space's
+ * icon, a picker swatch — takes the hue's pastel pair, `project-tint` under
+ * `project-ink`, themed so each appearance has its own pair at one lightness.
+ * A person's colour is not a mark and keeps the hue itself (`personalColor`).
+ * `black` and the retired keys have no pastel pair; anything still storing one
+ * is drawn as before, the hue under its `PALETTE_INK`.
+ */
+export function markColors(color: PaletteKey): { tint: string; ink: string } {
+  return PASTEL_KEYS.has(color)
+    ? { tint: `var(--av-sys-color-project-tint-${color})`, ink: `var(--av-sys-color-project-ink-${color})` }
+    : { tint: `var(--av-sys-color-project-${color})`, ink: glyphInk(color) };
 }

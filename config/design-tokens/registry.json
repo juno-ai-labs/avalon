@@ -19,6 +19,8 @@
     "sys.color.danger": "Failure and destructive action.",
     "sys.color.palette-ink": "The two inks a palette fill can carry, absolute in both appearances. A fill does not change with the theme, so the ink over it must not either — the neutral ramp inverts and is the wrong source here. Which one a given fill takes is PALETTE_INK in @rally/contracts, not a judgement made in CSS.",
     "sys.color.project": "The semantic identity palette shared by projects, work streams, and personal accents. Stored color keys remain stable; each light/dark appearance defines its own values so shades can be tuned for contrast without changing saved choices.",
+    "sys.color.project-tint": "The background of a mark drawn in a palette hue — a Channel's or a Breakout's glyph, a Sidekick's hexagon, a picker swatch. Pastel rather than the hue itself, all at one lightness and chroma per appearance so none stands out, and each a pair with its `project-ink`. A person's own colour does not use it: avatars and accents keep `project` at full saturation.",
+    "sys.color.project-ink": "The icon on its `project-tint`, and the stroke of a mark drawn without one (a Breakout's bare mark, a Space's icon). Every ink clears WCAG text contrast on its tint: at least 4.5:1 in the light appearance and 7:1 in the dark.",
     "sys.color.workstream": "One colour per state a work stream can show a person in the sidebar and on the home screen. Every marker in the product draws from this group and nowhere else, so a state has one colour wherever it appears; which state wins when several are true at once is the client’s ordering, not the palette’s. Five of them are the run’s (`running`, `needs-input`, `completed`, `failed`, `stopped`) and three are the reader’s own (`unread`, `mentioned`, `unseen`), which is why they are one vocabulary: they compete for one dot.",
     "sys.color.scrim": "What sits between a layer and what it covers. `solid` hides the backdrop outright; `veil` is the same colour at half strength, for a layer that means to leave the window it covers legible behind it.",
     "sys.color.focus": "The colour of a focus indicator.",
@@ -320,6 +322,90 @@
       "$type": "color"
     },
     "sys.color.palette-ink.dark": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.rose": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.red": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.orange": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.amber": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.lime": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.green": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.emerald": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.cyan": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.blue": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.indigo": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.violet": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.purple": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.fuchsia": {
+      "$type": "color"
+    },
+    "sys.color.project-tint.pink": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.rose": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.red": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.orange": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.amber": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.lime": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.green": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.emerald": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.cyan": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.blue": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.indigo": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.violet": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.purple": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.fuchsia": {
+      "$type": "color"
+    },
+    "sys.color.project-ink.pink": {
       "$type": "color"
     },
     "sys.color.project.edge": {
