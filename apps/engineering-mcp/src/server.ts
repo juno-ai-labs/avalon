@@ -362,7 +362,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, (update) => tool(principal, "update_feature_flag", { flag_key: update.key }, async () =>
     administered(await env.FLAG_ADMINISTRATION.updateProductFlag({
-      actor: { subject: principal.subject, email: principal.email },
+      actor: { subject: principal.subject },
       update,
     }))));
 
@@ -379,7 +379,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   }, (update) => tool(principal, "update_model_flag", { agent_role: update.role }, async () =>
     administered(await env.FLAG_ADMINISTRATION.updateModelRouting({
-      actor: { subject: principal.subject, email: principal.email },
+      actor: { subject: principal.subject },
       update,
     }))));
 

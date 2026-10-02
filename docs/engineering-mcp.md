@@ -119,13 +119,6 @@ each flag controls.
 left out of the call are deleted. The tool description tells the client to read
 the flag first and send it back with its change.
 
-Ace answers `{ ok: false, code, message }` for a failure it can name: a schema
-rejection by field, a Flagship refusal by HTTP status, an unknown OpenRouter
-model, or a save that landed but whose client notification did not queue. The
-MCP logs the code and returns the message to the engineer. A Flagship refusal's
-message names only its HTTP status; Flagship's own error text is provider data
-and does not cross the RPC.
-
 The shared Durable Object base waits for the object's checked-in migrations,
 runs the supplied statement through `ctx.storage.sql.exec`, and returns column
 names, JSON-safe rows, and the platform's physical `rowsRead` and `rowsWritten`
@@ -267,11 +260,8 @@ generation fences admit only the current active authority. Existing Access tests
 signature, issuer, audience, cookie, and header verification because this
 Worker imports that one verifier rather than forking it.
 
-`apps/ace/test/flag-administration.test.ts` drives the entrypoint against a
-Flagship and OpenRouter double, the two APIs that cannot run here: the write
-reaches Flagship and queues the key, staged model variations and rules survive,
-and each refusal arrives under its code before any Flagship I/O. The MCP suite
-proves the tools forward the engineer's identity and surface Ace's refusal.
+`apps/ace/test/flag-administration.test.ts` drives the entrypoint against
+Flagship and OpenRouter doubles, the two APIs that cannot run here.
 
 The deployment workflow dry-runs the MCP bundle during verification and, after
 deployment, requires a non-browser `401` carrying an OAuth protected-resource

@@ -3,7 +3,7 @@ import type { Env } from '../src/env';
 import { FlagAdministration } from '../src/flag-administration';
 import { createTestEnv, createTestQueue } from './helpers/cloudflare-test';
 
-const actor = { subject: 'engineer-1', email: 'engineer@rallywith.ai' };
+const actor = { subject: 'engineer-1' };
 const flagshipBase = 'https://api.cloudflare.com/client/v4/accounts/account/flagship/apps/app/flags';
 
 function administration(overrides: Partial<Env> = {}): FlagAdministration {
@@ -99,6 +99,17 @@ describe('FlagAdministration', () => {
       message: expect.stringContaining('rules.0.serve_variation'),
     });
     expect(cloudflare).not.toHaveBeenCalled();
+  });
+
+  it('names a rejected field by its path and code, without echoing a caller-supplied key', async () => {
+    const result = await administration().updateProductFlag({
+      actor,
+      update: { ...liveArtifactsUpdate, 'customer@example.com': true },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).toContain('unrecognized_keys');
+    expect(JSON.stringify(result)).not.toContain('customer@example.com');
   });
 
   it('names a Flagship refusal by its status without forwarding its text', async () => {
