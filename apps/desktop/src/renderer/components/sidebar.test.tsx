@@ -4049,19 +4049,50 @@ describe('the sidebar Space filter', () => {
     expect(screen.getByRole('link', { name: 'Alpha' })).toHaveClass('is-active');
   });
 
-  it('filters to a picked Space even when the open Channel is not in it', () => {
-    render(
-      <MemoryRouter initialEntries={[`/workstreams/${alpha.id}`]}>
-        <Tooltip.Provider>
-          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[home, hiring, launch]}
-            workspace={workspace} workstreams={[alpha, bravo, charlie, delta]} />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
+  describe('a pill picked while a Channel is open', () => {
+    const empty = space('00000000-0000-7000-8000-0000000000f6', 'Empty');
 
-    selectSpace('Launch');
-    expect(pill('Launch')).toHaveAttribute('aria-pressed', 'true');
-    expect(channelTitles()).toEqual(['Charlie', 'Delta']);
+    function renderOpen(workstreamId: string): void {
+      function CurrentRoute(): React.JSX.Element {
+        return <output aria-label="Current route">{useLocation().pathname}</output>;
+      }
+      render(
+        <MemoryRouter initialEntries={[`/workstreams/${workstreamId}`]}>
+          <Tooltip.Provider>
+            <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[home, hiring, launch, empty]}
+              workspace={workspace} workstreams={[alpha, bravo, charlie, delta]} />
+            <CurrentRoute />
+          </Tooltip.Provider>
+        </MemoryRouter>,
+      );
+    }
+    const route = (): string | null => screen.getByRole('status', { name: 'Current route' }).textContent;
+
+    it('filters and opens the first Channel in that Space when the open one is not in it', async () => {
+      renderOpen(alpha.id);
+
+      selectSpace('Launch');
+      expect(pill('Launch')).toHaveAttribute('aria-pressed', 'true');
+      expect(channelTitles()).toEqual(['Charlie', 'Delta']);
+      await waitFor(() => expect(route()).toBe(`/workstreams/${charlie.id}`));
+      expect(pill('Launch')).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('opens the Space\'s dashboard when that Space holds no Channels', async () => {
+      renderOpen(alpha.id);
+
+      selectSpace('Empty');
+      await waitFor(() => expect(route()).toBe(`/spaces/${empty.id}`));
+      expect(pill('Empty')).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('stays on the open Channel when that Space holds it', () => {
+      renderOpen(delta.id);
+
+      selectSpace('Launch');
+      expect(channelTitles()).toEqual(['Charlie', 'Delta']);
+      expect(route()).toBe(`/workstreams/${delta.id}`);
+    });
   });
 
   describe('the header', () => {
