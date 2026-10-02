@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  desktopAppDataDirectory,
   liveDesktopLockHolder,
   localResetTargets,
   probeLocalWorker,
@@ -35,6 +36,13 @@ test("the reset clears Worker state and the desktop session but keeps browser si
       "/data/Rally Development/Cookies",
     ],
   );
+});
+
+test("the desktop data directory follows Electron's appData on each platform", () => {
+  assert.equal(desktopAppDataDirectory("darwin", {}, "/Users/a"), "/Users/a/Library/Application Support");
+  assert.equal(desktopAppDataDirectory("linux", {}, "/home/a"), "/home/a/.config");
+  assert.equal(desktopAppDataDirectory("linux", { XDG_CONFIG_HOME: "/x" }, "/home/a"), "/x");
+  assert.equal(desktopAppDataDirectory("win32", { APPDATA: "C:\\R" }, "C:\\Users\\a"), "C:\\R");
 });
 
 test("a lock left by a client that has exited does not block the reset", async () => {
