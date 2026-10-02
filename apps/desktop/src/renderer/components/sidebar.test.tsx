@@ -1373,12 +1373,12 @@ describe('Sidebar channel markers', () => {
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
     expect(screen.getByRole('menuitem', { name: 'Archive channel' })).toBeVisible();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add to space' }));
-    const generalOption = await screen.findByRole('menuitemcheckbox', { name: 'General' });
+    const generalOption = await screen.findByRole('menuitemcheckbox', { name: 'All' });
     const existing = screen.getByRole('menuitemcheckbox', { name: 'Hiring' });
     const available = screen.getByRole('menuitemcheckbox', { name: 'Launch' });
-    // The pills' A–Z order, with General — which has no pill — sorted among them.
+    // General first, named All like the first pill, then the pills' A–Z order.
     expect(screen.getAllByRole('menuitemcheckbox').map((option) => option.textContent))
-      .toEqual(['General', 'Hiring', 'Launch']);
+      .toEqual(['All', 'Hiring', 'Launch']);
     expect(generalOption).toHaveAttribute('aria-checked', 'true');
     expect(generalOption.firstElementChild).toHaveClass('nested-menu-check');
     expect(existing).toHaveAttribute('data-disabled');
@@ -1397,7 +1397,8 @@ describe('Sidebar channel markers', () => {
     );
   });
 
-  it('orders the new Channel Space picker like the Space pills', async () => {
+  it('starts the new Channel Space picker on All, then orders it like the Space pills', async () => {
+    const accounts = space('00000000-0000-7000-8000-0000000000f6', 'Accounts');
     const hiring = space();
     const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
     render(
@@ -1406,7 +1407,7 @@ describe('Sidebar channel markers', () => {
           <Sidebar
             {...defaultActions}
             onSignOut={vi.fn()}
-            spaces={[general(), launch, hiring]}
+            spaces={[general(), launch, accounts, hiring]}
             workspace={workspace}
             workstreams={[]}
           />
@@ -1414,15 +1415,15 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    expect(pillNames()).toEqual(['All', 'Hiring', 'Launch']);
+    expect(pillNames()).toEqual(['All', 'Accounts', 'Hiring', 'Launch']);
     fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
     const spacePicker = within(dialog).getByRole('combobox', { name: 'Space' });
-    expect(spacePicker).toHaveTextContent('General');
+    expect(spacePicker).toHaveTextContent('All');
     fireEvent.click(spacePicker);
     expect(screen.getAllByRole('option').map((option) => option.textContent))
-      .toEqual(['General', 'Hiring', 'Launch']);
+      .toEqual(['All', 'Accounts', 'Hiring', 'Launch']);
   });
 
   it('removes a channel from the space whose placement menu was opened', async () => {
@@ -1566,7 +1567,7 @@ describe('Sidebar channel markers', () => {
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add to space' }));
 
-    const generalOption = await screen.findByRole('menuitemcheckbox', { name: 'General' });
+    const generalOption = await screen.findByRole('menuitemcheckbox', { name: 'All' });
     const readOnly = screen.getByRole('menuitemcheckbox', { name: 'Theirs' });
     expect(readOnly).toHaveAttribute('data-disabled');
     expect(readOnly).toHaveAttribute('aria-disabled', 'true');
@@ -4129,7 +4130,7 @@ describe('the sidebar Space filter', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Import from ChatGPT or Claude' }));
       expect(openBrowserImport).toHaveBeenLastCalledWith({
         spaces: [
-          { id: home.id, name: 'General' },
+          { id: home.id, name: 'All' },
           { id: hiring.id, name: 'Hiring' },
           { id: launch.id, name: 'Launch' },
         ],
