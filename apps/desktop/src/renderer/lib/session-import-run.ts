@@ -162,6 +162,8 @@ export function startSessionImportRun(input: {
   let ending: SessionImportRunResult | null = null;
   /** Rally's own words the last time it refused the agent's finish. */
   let refusal: string | null = null;
+  /** The finish's answer once the Channel opened, repeated to a retried finish. */
+  let imported: { workstreamId: string; messages: number } | null = null;
   const finish = (result: SessionImportRunResult) => {
     if (finished) return;
     finished = true;
@@ -179,8 +181,8 @@ export function startSessionImportRun(input: {
     handlers: {
       'session_import.finish': async (action): Promise<DesktopActionOutcome> => {
         if (!run || !conversation) return { ok: false, code: 'import_rejected', message: 'The import has not started.' };
-        // A repeated finish after the Channel opened changes nothing.
-        if (ending?.kind === 'imported') return { ok: true, result: { workstreamId: run.workstreamId } };
+        // A repeated finish after the Channel opened changes nothing, and is told so in the same words.
+        if (imported) return { ok: true, result: imported };
         let preview: SessionImportPreview;
         try {
           const source = input.mode.kind === 'update'
@@ -210,7 +212,8 @@ export function startSessionImportRun(input: {
           return { ok: false, code: 'import_rejected', message: refusal };
         }
         ending = { kind: 'imported', workstreamId: run.workstreamId };
-        return { ok: true, result: { workstreamId: run.workstreamId, messages: preview.content.messages.length } };
+        imported = { workstreamId: run.workstreamId, messages: preview.content.messages.length };
+        return { ok: true, result: imported };
       },
       'session_import.fail': async (action) => {
         // An opened Channel stays the ending; a later give-up cannot unlist it.
@@ -279,7 +282,8 @@ export function startSessionImportRun(input: {
       started = true;
     } else if (frame.type === 'harness_status_changed' && ENDED.has(frame.status) && (started || steps.length > 0)) {
       // Finishing answers before the run ends; an end with no finish means the agent gave up.
-      void queue.then(() => finish(refusal ? { kind: 'unfinished', refusal } : { kind: 'unfinished' }));
+      // An opened Channel stays imported even when the finish's own tool row never completed.
+      void queue.then(() => finish(ending?.kind === 'imported' ? ending : refusal ? { kind: 'unfinished', refusal } : { kind: 'unfinished' }));
     }
   };
 

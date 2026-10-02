@@ -21,7 +21,7 @@ import {
   waitOnExecutionContext,
 } from "cloudflare:test";
 import { SignJWT } from "jose";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asSpaceId,
@@ -43,6 +43,8 @@ import { SpaceService } from "../src/services/space-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { deliverEffectsToWorkspace } from "./helpers/conversation-effects";
+import { useOpenRouterDouble } from "./helpers/openrouter-double";
+import { useSelectedModel } from "./helpers/selected-model";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
@@ -358,6 +360,22 @@ describe("POST /spaces", () => {
 });
 
 describe("conversation import routes", () => {
+  // Starting an import starts its agent. A run that ends before the import
+  // completes takes its unopened Channel back, so each test's agent waits on
+  // the model until the test is over, as a real one is mid-read when the
+  // desktop completes.
+  let release = () => {};
+  beforeEach(() => {
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    gate = held;
+  });
+  afterEach(() => release());
+  let gate: Promise<void> = Promise.resolve();
+  useSelectedModel();
+  useOpenRouterDouble(async () => {
+    await gate;
+    return { say: "Imported." };
+  });
   const SOURCE_URL = "https://claude.ai/chat/0a1b2c3d-0000-4000-8000-00000000d200";
   const SOURCE = { provider: "claude", url: SOURCE_URL, sessionId: "0a1b2c3d-0000-4000-8000-00000000d200" };
 

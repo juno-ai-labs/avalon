@@ -486,6 +486,20 @@ export class WorkstreamObjectCreationService {
       originResourceIds, requestHash, at,
     } = reserved;
 
+    // The claim that fences a discard: from here the receipt is `initialized`,
+    // which a discard or an import's run-end reclaim no longer fails, so the
+    // two cannot both win. A discard that won first is refused here, before
+    // anything opens. An `initialized` receipt is a create that stopped
+    // midway, which this retry finishes.
+    const claimed = await span.step("workstream.create.receipt.claim", () => this.env.DB.prepare(
+      `UPDATE workstream_create_receipts SET state = 'initialized', updated_at = ?
+        WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id = ?
+          AND request_hash = ? AND state IN ('reserved', 'initialized')`,
+    ).bind(new Date().toISOString(), this.auth.workspaceId, this.auth.userId, body.clientMessageId, requestHash).run());
+    if (Number(claimed.meta.changes ?? 0) === 0) {
+      throw new ApiError(409, "workstream_create_discarded", "This create was discarded; start a new one");
+    }
+
     await span.step("workstream.create.d1_rows.write", () => this.writeAnchorAndRoute(
       receipt.workstream_id, control.generation, at, "verified",
     ));
@@ -549,9 +563,8 @@ export class WorkstreamObjectCreationService {
     if (Number(activated.meta.changes ?? 0) !== 1) {
       throw new Error("workstream_create_route_activation_failed");
     }
-    // A receipt discarded while this create ran stays discarded: a failed
-    // receipt is never reused, so the create that lost the race says so
-    // instead of completing a Channel its discard has archived.
+    // The claim above keeps a discard from failing this receipt now; the
+    // guard stays so a receipt that is somehow `failed` is never revived.
     const completedReceipt = await span.step("workstream.create.receipt.complete", () => this.env.DB.prepare(
       `UPDATE workstream_create_receipts
           SET state = 'completed', message_id = ?, harness_run_id = ?,

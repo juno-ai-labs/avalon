@@ -29,6 +29,7 @@ async function withStorage(name: string, test: (actions: WorkstreamDesktopAction
 }
 
 const snapshot = { kind: "browser.snapshot" } as const;
+const ignore = () => undefined;
 
 describe("desktop action storage", () => {
   it("hands a re-entered call the answer already recorded, and keeps the first answer", async () => {
@@ -43,7 +44,7 @@ describe("desktop action storage", () => {
       // The same call re-entered under a new action id finds the first row and its answer.
       expect(actions.request({ id: "a2", runId: "r1", toolCallId: "c1", action: snapshot, now: 4 }))
         .toEqual({ status: "answered", outcome });
-      expect(actions.pending()).toEqual([]);
+      expect(actions.pending(ignore)).toEqual([]);
     });
   });
 
@@ -51,14 +52,14 @@ describe("desktop action storage", () => {
     await withStorage("desktop-action-storage-abandon", (actions) => {
       actions.request({ id: "a1", runId: "r1", toolCallId: "c1", action: snapshot, now: 1 });
       actions.abandon("a1");
-      expect(actions.pending()).toEqual([]);
+      expect(actions.pending(ignore)).toEqual([]);
       expect(actions.request({ id: "a9", runId: "r1", toolCallId: "c1", action: snapshot, now: 2 }))
         .toEqual({ status: "pending", request: { id: "a1", action: snapshot } });
-      expect(actions.pending()).toEqual([{ id: "a1", action: snapshot }]);
+      expect(actions.pending(ignore)).toEqual([{ id: "a1", action: snapshot }]);
     });
   });
 
-  it("records an answer its row cannot hold as too large, and skips a row it can no longer read", async () => {
+  it("records an answer its row cannot hold as too large, and answers a row it can no longer read with the field that failed", async () => {
     await withStorage("desktop-action-storage-limits", (actions, sql) => {
       // A large action leaves less room for its answer than the row limit alone.
       const script = "x".repeat(1_500_000);
@@ -76,7 +77,12 @@ describe("desktop action storage", () => {
       sql.exec(`INSERT INTO desktop_actions (action_id, run_id, tool_call_id, action_json, status, created_at)
                 VALUES ('old', 'r0', 'c0', '{"kind":"browser.retired"}', 'pending', 0)`);
       actions.request({ id: "a3", runId: "r1", toolCallId: "c3", action: snapshot, now: 4 });
-      expect(actions.pending()).toEqual([{ id: "a3", action: snapshot }]);
+      const unreadable: string[] = [];
+      expect(actions.pending((id, code) => unreadable.push(`${id} ${code}`))).toEqual([{ id: "a3", action: snapshot }]);
+      expect(unreadable).toEqual(["old desktop_action_invalid:kind:invalid_union"]);
+      // Answered, so its call — if one re-enters — fails at once instead of waiting out its timeout.
+      expect(actions.request({ id: "a4", runId: "r0", toolCallId: "c0", action: snapshot, now: 5 }))
+        .toMatchObject({ status: "answered", outcome: { ok: false, code: "invalid_action" } });
     });
   });
 });

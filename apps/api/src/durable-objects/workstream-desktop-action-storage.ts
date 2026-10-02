@@ -1,3 +1,4 @@
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   DesktopActionOutcomeSchema,
   DesktopActionSchema,
@@ -116,18 +117,27 @@ export class WorkstreamDesktopActionStorage {
 
   /**
    * Actions still waiting on a desktop, oldest first. A row this Worker can no
-   * longer read — an action kind a later Worker retired — is left out rather
-   * than failing every subscribe; its tool times out as any unanswered one does.
+   * longer read — an action kind a later Worker retired — is answered as
+   * `invalid_action` and handed to `unreadable` with the field that failed,
+   * rather than failing every subscribe or leaving its tool to time out.
    */
-  pending(): DesktopActionRequest[] {
+  pending(unreadable: (id: string, code: string, outcome: DesktopActionOutcome) => void): DesktopActionRequest[] {
     return this.sql.exec<{ action_id: string; action_json: string }>(
       `SELECT action_id, action_json FROM desktop_actions
         WHERE status = 'pending' ORDER BY created_at, action_id`,
     ).toArray().flatMap((row) => {
       let raw: unknown;
-      try { raw = JSON.parse(row.action_json); } catch { return []; }
+      try { raw = JSON.parse(row.action_json); } catch { raw = undefined; }
       const action = DesktopActionSchema.safeParse(raw);
-      return action.success ? [{ id: row.action_id, action: action.data }] : [];
+      if (action.success) return [{ id: row.action_id, action: action.data }];
+      const code = zodDiagnosticCode(action.error, "desktop_action") ?? "desktop_action_invalid";
+      const outcome: DesktopActionOutcome = { ok: false, code: "invalid_action", message: `This Worker cannot read the recorded action (${code}).` };
+      this.sql.exec(
+        `UPDATE desktop_actions SET status = 'answered', outcome_json = ?, answered_at = ? WHERE action_id = ? AND status = 'pending'`,
+        JSON.stringify(outcome), Date.now(), row.action_id,
+      );
+      unreadable(row.action_id, code, outcome);
+      return [];
     });
   }
 }
