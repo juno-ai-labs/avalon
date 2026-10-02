@@ -69,6 +69,8 @@ export function pageScript(body: string): string {
           return { handle, kind: 'file', name, mimeType, size: value.size };
         }
         const data = JSON.stringify(value === undefined ? null : value);
+        // Stored JSON crosses the same IPC and sits in the same store as a file, so it has the same limit.
+        if (data.length > maxFileBytes) throw new RallyStoreError(name + ' is larger than the ' + maxFileBytes + '-byte file limit.');
         pending.push({ handle, kind: 'json', name, mimeType: 'application/json', size: data.length, data });
         return { handle, kind: 'json', name, mimeType: 'application/json', size: data.length };
       },

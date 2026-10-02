@@ -38,6 +38,8 @@ describe('page script', () => {
     });
     await expect(run("return rally.store(new Response('x', { headers: { 'content-length': '999999999' } }), { name: 'video.mp4' });"))
       .resolves.toMatchObject({ ok: false, code: 'file_too_large', message: expect.stringContaining('video.mp4') });
+    await expect(run("return rally.store({ text: 'x'.repeat(25_000_001) }, { name: 'messages' });"))
+      .resolves.toMatchObject({ ok: false, code: 'file_too_large', message: expect.stringContaining('messages') });
     await expect(run('const value = {}; value.self = value; return value;'))
       .resolves.toMatchObject({ ok: false, code: 'value_not_serializable' });
   });
