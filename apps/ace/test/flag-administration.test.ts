@@ -101,7 +101,7 @@ describe('FlagAdministration', () => {
     expect(cloudflare).not.toHaveBeenCalled();
   });
 
-  it('names a Flagship refusal by its status', async () => {
+  it('names a Flagship refusal by its status without forwarding its text', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(
       { success: false, errors: [{ message: 'Authentication error' }] },
       { status: 403 },
@@ -112,7 +112,7 @@ describe('FlagAdministration', () => {
     expect(result).toEqual({
       ok: false,
       code: 'flagship_request_failed_403',
-      message: 'Flagship request failed (403): Authentication error',
+      message: 'Flagship refused the request with HTTP 403. Nothing was changed by this call.',
     });
   });
 

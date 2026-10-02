@@ -122,7 +122,9 @@ the flag first and send it back with its change.
 Ace answers `{ ok: false, code, message }` for a failure it can name: a schema
 rejection by field, a Flagship refusal by HTTP status, an unknown OpenRouter
 model, or a save that landed but whose client notification did not queue. The
-MCP logs the code and returns the message to the engineer.
+MCP logs the code and returns the message to the engineer. A Flagship refusal's
+message names only its HTTP status; Flagship's own error text is provider data
+and does not cross the RPC.
 
 The shared Durable Object base waits for the object's checked-in migrations,
 runs the supplied statement through `ctx.storage.sql.exec`, and returns column
@@ -328,11 +330,14 @@ token that can change every flag. Calling Ace's HTTP routes was also rejected:
 they sit behind a different Access audience and a same-origin check written for
 a browser.
 
-**What a future change has to respect:** Ace stays the one place that writes a
+**Consequences:** Ace stays the one place that writes a
 managed flag. A new flag kind is added to Ace's catalog and entrypoint first;
 this Worker only forwards. The MCP deploys from the API workflow and Ace from
 its own, so for the length of a rollout the flag tools can fail with a missing
-entrypoint until Ace is live.
+entrypoint until Ace is live. A Flagship refusal crosses the RPC as its status
+only; Flagship's own error text stays in Ace.
+
+Shipped in #1070.
 
 ### 2026-09-28 — Reach a Sidekick's run conversations
 
