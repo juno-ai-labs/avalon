@@ -107,13 +107,13 @@ and travels the popout's width and height between them over 320ms while the
 level's rows arrive on a 22ms stagger, sliding in from the side the move came
 from; reduced motion turns both off.
 
-- **Channel menu:** root header is the Space it lives in (with **Open space**)
-  and Archive is under the rows. People is the scope (with **Change**, which
+- **Channel menu:** root header is the Space it lives in (with **Open space**). People is the scope (with **Change**, which
   opens the full roster dialog), a search, the participants and suggestions
   to add inline (`TitleMenuPeople`). Sidekicks is the Sidekick section. Breakouts
   is the list, newest activity first, filtered past six. More is **Pinned in
   sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
-  Make public, Import updates, host extras and the Channel's artifacts.
+  Make public, Import updates, host extras, the Channel's artifacts, and
+  **Archive channel** last.
 - **Breakout menu:** root header is the Channel it belongs to (with **Show in
   channel**) and the message it started from. People and Sidekicks as above;
   More is Icon and color and Make public.
