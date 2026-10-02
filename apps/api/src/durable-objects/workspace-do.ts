@@ -4097,8 +4097,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 87,
   description: "let a person order the Pinned section under All",
-  // Widens `workspace_container_order`'s kind CHECK by rebuilding the table;
-  // see docs/workstream-pinning.md.
+  // A table of its own, not a new kind in `workspace_container_order`, so an
+  // older Worker never reads a row it cannot parse; see docs/workstream-pinning.md.
   statements: WORKSPACE_PINNED_ORDER_MIGRATION,
 }];
 
