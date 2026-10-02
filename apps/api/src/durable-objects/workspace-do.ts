@@ -722,6 +722,7 @@ import {
   spaceVisibleToViewerSql,
   SPACE_BOOTSTRAP_PAGE_SIZE,
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
+  WORKSPACE_PINNED_ORDER_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
@@ -4089,6 +4090,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `ALTER TABLE automation_directory ADD COLUMN owning_substream_id TEXT NOT NULL DEFAULT '0'`,
     ...SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS,
   ],
+}, {
+  version: 87,
+  description: "let a person order the Pinned section under All",
+  // Widens `workspace_container_order`'s kind CHECK by rebuilding the table;
+  // see docs/workstream-pinning.md.
+  statements: WORKSPACE_PINNED_ORDER_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
