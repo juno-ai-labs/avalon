@@ -155,7 +155,7 @@ not invent one. Peek does not lease, acknowledge, retry, or remove a message.
 Ace deliberately discards Cloudflare's returned purge reference, so this first
 Queues surface has no delete capability.
 
-`GET /api/models` reads the ten `agent-model-*` JSON flags. Ace hard-codes
+`GET /api/models` reads the seven `agent-model-*` JSON flags. Ace hard-codes
 the role catalog because Flagship knows only opaque keys: each entry explains
 the code path the model serves and carries the same checked-in route the API
 Worker uses when Flagship is unavailable. The suggested model list combines
@@ -378,6 +378,24 @@ When a save succeeds but clients do not change, inspect in order:
 Shared DB runtime sources and package exports are deployment inputs alongside
 contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only changes
 do not publish a new Ace bundle.
+
+### 2026-10-02 — Deploy stops re-creating retired model flags
+
+**What changed:** The deploy no longer ensures `agent-model-automation-compiler`
+or `agent-model-automation-result-disposition`, and it now retires
+`agent-model-activity-structured`, `agent-model-addressing-classifier` and
+`agent-model-hypersight`.
+
+**Why:** A merge on 2026-09-30 brought back the two automation `ensureModelFlag`
+calls after the step that retires them, so every deploy deleted both flags and
+created them again. The other three lost their roles earlier, but nothing
+deleted their flags, so they stayed in Flagship as dead keys a rollout could
+target.
+
+**Consequences:** A key in the retire list must not also appear in an ensure
+call; the second step wins and the flag survives every deploy.
+
+PR #1062.
 
 ### 2026-09-12 — Use the existing operator identity for connector maintenance
 
