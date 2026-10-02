@@ -2061,7 +2061,7 @@ describe('pinned channels', () => {
     window.localStorage.clear();
     markWorkstreamNavigation.mockReset();
     reportTelemetryProductIntent.mockReset();
-    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null, sidebarChannelSort: 'alphabetical' });
     scrollIntoView.mockClear();
     Element.prototype.scrollIntoView = scrollIntoView;
     vi.stubGlobal('ResizeObserver', class {
@@ -2146,13 +2146,94 @@ describe('pinned channels', () => {
     expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
   });
 
+  it('toggles the unpinned Channels between A to Z and most recent activity', () => {
+    renderWith([
+      pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0),
+      workstream('ws-old', 'alpha review', 'completed', '2026-07-01T20:00:00.000Z'),
+      workstream('ws-new', 'Zulu sync', 'completed', '2026-07-31T20:00:00.000Z'),
+      workstream('ws-mid', 'Bravo notes', 'completed', '2026-07-15T20:00:00.000Z'),
+    ]);
+    const channelTitles = (): string[] => [...screen.getByRole('region', { name: 'Channels' })
+      .querySelectorAll('[data-workstream-id] .sidebar-row-title-copy')]
+      .map((title) => title.textContent ?? '');
+
+    // Case-insensitive: the lowercase title still sorts first.
+    expect(channelTitles()).toEqual(['alpha review', 'Bravo notes', 'Zulu sync']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sorted A to Z. Sort by recent activity' }));
+    expect(channelTitles()).toEqual(['Zulu sync', 'Bravo notes', 'alpha review']);
+    expect(screen.getByRole('button', { name: 'Sorted by recent activity. Sort by what needs you' })).toHaveTextContent('Recent');
+    expect(window.localStorage.getItem('rally.sidebar-channel-sort')).toBe('recent');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sorted by recent activity. Sort by what needs you' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sorted by what needs you. Sort A to Z' }));
+    expect(channelTitles()).toEqual(['alpha review', 'Bravo notes', 'Zulu sync']);
+  });
+
+  it('sorts Needs you as the Channels with something for this reader, then the rest, each newest first', () => {
+    window.localStorage.setItem('rally.sidebar-channel-sort', 'needs_you');
+    useUiStore.setState({ sidebarChannelSort: 'needs_you' });
+    renderWith([
+      pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0),
+      workstream('ws-quiet-new', 'Quiet newest', 'completed', '2026-07-31T20:00:00.000Z'),
+      workstream('ws-unread-old', 'Unread oldest', 'completed', '2026-07-01T20:00:00.000Z', { hasUnread: true }),
+      workstream('ws-quiet-old', 'Quiet oldest', 'completed', '2026-07-02T20:00:00.000Z'),
+      // Read, but a Breakout needs this reader: the same input that bolds it.
+      { ...workstream('ws-breakout', 'Breakout waiting', 'completed', '2026-07-20T20:00:00.000Z'), breakoutAttentionCount: 1 },
+    ]);
+    const channelTitles = [...screen.getByRole('region', { name: 'Channels' })
+      .querySelectorAll('[data-workstream-id] .sidebar-row-title-copy')]
+      .map((title) => title.textContent ?? '');
+
+    expect(channelTitles).toEqual(['Breakout waiting', 'Unread oldest', 'Quiet newest', 'Quiet oldest']);
+    expect(screen.getByRole('button', { name: 'Sorted by what needs you. Sort A to Z' })).toHaveTextContent('Needs you');
+  });
+
+  it('keeps the open Channel in the Needs you half it was opened from until the reader moves on', () => {
+    useUiStore.setState({ sidebarChannelSort: 'needs_you', sidebarSpaceFilter: TEST_SPACE_ID });
+    const rows = (openedRead: boolean): WorkstreamSummary[] => [
+      workstream('ws-quiet', 'Quiet newest', 'completed', '2026-07-31T20:00:00.000Z'),
+      workstream('ws-opened', 'Opened oldest', 'completed', '2026-07-01T20:00:00.000Z', { hasUnread: !openedRead }),
+      workstream('ws-waiting', 'Still waiting', 'completed', '2026-07-20T20:00:00.000Z', { hasUnread: true }),
+    ].map((stream) => placedIn(stream, TEST_SPACE_ID));
+    const sidebar = (openedRead: boolean): React.JSX.Element => (
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            spaces={[space(undefined, undefined, { channelCount: 3 })]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={rows(openedRead)}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>
+    );
+    const view = render(sidebar(false));
+    const channelTitles = (): string[] => [...screen.getByRole('region', { name: 'Channels' })
+      .querySelectorAll('[data-workstream-id] .sidebar-row-title-copy')]
+      .map((title) => title.textContent ?? '');
+    expect(channelTitles()).toEqual(['Still waiting', 'Opened oldest', 'Quiet newest']);
+
+    // Opening it reads it; the row stays where the reader clicked it.
+    fireEvent.click(screen.getByRole('link', { name: /Opened oldest/u }));
+    view.rerender(sidebar(true));
+    expect(channelTitles()).toEqual(['Still waiting', 'Opened oldest', 'Quiet newest']);
+
+    // Moving on releases it to the read half.
+    fireEvent.click(screen.getByRole('link', { name: /Still waiting/u }));
+    expect(channelTitles()).toEqual(['Still waiting', 'Quiet newest', 'Opened oldest']);
+  });
+
   it('shows an empty Pinned section that says how to pin, before anything is pinned', () => {
     renderWith([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
     const section = screen.getByRole('region', { name: 'Pinned' });
     expect(within(section).getByText('Move a channel here to pin it')).toBeVisible();
     expect(within(section).queryByRole('link')).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
+    // The sort toggle lives in this heading, so it is there without pins too.
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Sorted A to Z. Sort by recent activity' })).toBeVisible();
   });
 
   it('renders pinned rows in their stored order rather than by activity', () => {
@@ -2542,15 +2623,15 @@ describe('pinned channels', () => {
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
 
       // The animated element is the one the Pinned section now renders, and it
-      // rises one slot from the second alphabetical row to the first pinned one,
-      // under the Pinned heading that was already there.
+      // rises two slots from the second alphabetical row to the first pinned
+      // one: past the row above it and past the Channels heading, which was
+      // already there because it carries the sort toggle.
       const moved = playedOn('workstream:ws-first');
       expect(moved).toBeDefined();
       expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(moved!.element);
-      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 48px)' }));
-      // The row it passed shifts down two slots: one for the pinned row above
-      // it and one for the Channels heading the list now has.
-      expect(playedOn('workstream:ws-recent')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
+      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
+      // The row it passed shifts down one slot, for the pinned row now above it.
+      expect(playedOn('workstream:ws-recent')?.keyframes).toEqual([{ transform: 'translate(0px, -48px)' }, { transform: 'translate(0px, 0px)' }]);
     });
 
     // `scrollIntoView` scrolls to the box as transformed, and the motion's first
