@@ -973,6 +973,29 @@ pre {
   border-right: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
 }
 
+/* The line between two side-by-side panels stops short of the window's top and
+   bottom rather than running edge to edge. It starts level with the title pill,
+   centred in the 64px header, and ends level with the top of an empty composer,
+   so the gap reads as part of the conversation's own frame. Every divider
+   between panels reads these two, so they move together. */
+:root {
+  --panel-divider-inset-top: 14px;
+  --panel-divider-inset-bottom: calc(var(--composer-dock-gap) + var(--composer-capsule-height));
+}
+.sidebar,
+.spaces-sidebar { border-right: 0; }
+.sidebar::after,
+.spaces-sidebar::after {
+  background: var(--av-cmp-sidebar-border);
+  bottom: var(--panel-divider-inset-bottom);
+  content: '';
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: var(--panel-divider-inset-top);
+  width: var(--av-sys-size-border-hairline);
+}
+
 /* Registered so the navigation's width can be transitioned rather than only
    swapped. An unregistered custom property is a token stream to the engine and
    interpolates by switching over at the halfway point, which is the cut this
@@ -5331,6 +5354,10 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 :root {
   --turn-width-cap: 640px;
   --composer-width: calc(var(--turn-width-cap) * .75);
+  /* The empty composer's height and the room under it. Named because the
+     dividers between panels end at the composer's top edge. */
+  --composer-dock-gap: 16px;
+  --composer-capsule-height: 44px;
 }
 
 /* Work-stream conversation refinement: continuous transcript, compact human turns,
@@ -5960,9 +5987,11 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .rail-surface.is-leaving .rail-surface-content { animation: rail-content-close 160ms ease forwards; }
 .rail-resizer { bottom: 0; justify-content: flex-start; right: calc(var(--rail-slot) - 10px); top: 0; width: 10px; }
 .rail-resizer > span {
+  align-self: stretch;
   background: color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent);
   border-radius: 0;
-  height: 100%;
+  height: auto;
+  margin: var(--panel-divider-inset-top) 0 var(--panel-divider-inset-bottom);
   transition: background-color 120ms ease;
   width: .5px;
 }
@@ -5970,7 +5999,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .rail-resizer:focus-visible > span,
 .rail-resizer.is-resizing > span {
   background: color-mix(in srgb, var(--av-sys-color-text-default) 20%, transparent);
-  height: 100%;
+  height: auto;
 }
 @keyframes rail-open { from { width: 0; } to { width: var(--rail-slot); } }
 .rail-resizer > .rail-resizer-limit { height: 0; pointer-events: none; position: fixed; visibility: hidden; width: var(--rail-max-slot); }
@@ -6249,7 +6278,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   background: none;
   bottom: auto;
   left: auto;
-  padding: 0 16px 16px;
+  padding: 0 16px var(--composer-dock-gap);
   pointer-events: none;
   position: relative;
   right: auto;
@@ -6359,7 +6388,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
      circle alone still measures 42px — 7px of padding either side of it — so
      this is the same geometry wherever no pill is shown. */
   grid-template-columns: auto minmax(0, 1fr) auto;
-  min-height: 44px;
+  min-height: var(--composer-capsule-height);
   /* `clip`, not `hidden`: the two paint the same, and only `hidden` is a scroll
      container. Stop parks outside the right edge and the input shell is
      translated across the flip to the wrapped layout, so under `hidden` this
@@ -8025,8 +8054,20 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    that opened it stays, the other is hidden but kept mounted. */
 .split-conversation { display: flex; height: 100%; min-width: 0; position: relative; }
 .split-conversation-pane { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; position: relative; }
-.split-conversation-pane.is-breakout { border-left: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle); flex: 0 0 var(--split-breakout-width, 50%); max-width: calc(100% - var(--conversation-min-width)); }
-.split-conversation-pane.is-breakout.is-alone { border-left: 0; flex: 1 1 0; max-width: none; }
+.split-conversation-pane.is-breakout { flex: 0 0 var(--split-breakout-width, 50%); max-width: calc(100% - var(--conversation-min-width)); }
+.split-conversation-pane.is-breakout::before {
+  background: var(--av-sys-color-border-subtle);
+  bottom: var(--panel-divider-inset-bottom);
+  content: '';
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  top: var(--panel-divider-inset-top);
+  width: var(--av-sys-size-border-hairline);
+  z-index: 1;
+}
+.split-conversation-pane.is-breakout.is-alone { flex: 1 1 0; max-width: none; }
+.split-conversation-pane.is-breakout.is-alone::before { content: none; }
 .split-conversation-pane[hidden] { display: none; }
 .split-conversation-pane > .conversation-layout { flex: 1; min-height: 0; }
 .split-conversation-resizer {
@@ -8042,11 +8083,11 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .split-conversation-resizer.is-resizing::after,
 .split-conversation-resizer:focus-visible::after {
   background: var(--av-sys-color-accent-tint);
-  bottom: 0;
+  bottom: var(--panel-divider-inset-bottom);
   content: '';
   left: 3px;
   position: absolute;
-  top: 0;
+  top: var(--panel-divider-inset-top);
   width: 2px;
 }
 .split-conversation.is-resizing { cursor: col-resize; user-select: none; }
