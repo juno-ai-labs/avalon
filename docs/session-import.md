@@ -78,10 +78,7 @@ returns the main window to where it was. The pending-row rule is in
 3. **Read.** The import window opens the child's socket and answers every
    [desktop action](desktop-actions.md) the agent asks for on the tab it was
    started from: page script, the page's accessibility outline, screenshots,
-   input, navigation and cross-site file loads, to any site. The finish is
-   refused while the tab shows a conversation other than the one the person
-   opened, so another conversation's messages are never saved under its
-   identity. The prompt points the agent at the JSON the page itself loads, because
+   input, navigation and cross-site file loads, to any site. The prompt points the agent at the JSON the page itself loads, because
    long conversations render lazily and a DOM read drops messages silently. Page
    script keeps bytes and the assembled messages with the desktop through
    `rally.store`; the model and the API see only handles.
