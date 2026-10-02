@@ -926,6 +926,8 @@ describe('Sidebar channel markers', () => {
     const marker = within(screen.getByRole('link', { name: /Wait for the deploy/u }))
       .getByRole('img', { name: accessibleTimerLabel });
     expect(marker).toHaveClass('sidebar-workstream-timer');
+    // On the second line, under the time, rather than in a column of its own.
+    expect(marker.closest('.channel-row-second')).not.toBeNull();
     expect(within(screen.getByRole('link', { name: /Deploy finished/u }))
       .queryByRole('img', { name: /Active timer/u })).not.toBeInTheDocument();
 

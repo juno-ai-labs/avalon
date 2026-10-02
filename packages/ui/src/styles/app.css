@@ -7519,11 +7519,14 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    Space under the title. */
 .single-sidebar .sidebar-scroll { padding-inline: 10px; }
 .single-sidebar .sidebar-list { gap: 2px; }
-/* Two columns, as the mockup's row: the glyph and the text. A third column
-   exists only for a row that has something trailing, so a quiet row does not
-   spend a gap on an empty one and its time sits on the row's right edge. */
+/* Two columns, as the mockup's row: the glyph and the text, so the time sits
+   on the row's right edge. Anything else the row shows, such as a scheduled
+   run's clock, rides the second line under the time. */
 .single-sidebar .sidebar-row.channel-row { border-radius: 12px; flex-basis: 54px; gap: 10px; grid-template-columns: 40px minmax(0, 1fr); height: 54px; min-height: 54px; }
-.single-sidebar .sidebar-row.channel-row:has(> .sidebar-workstream-timer) { grid-template-columns: 40px minmax(0, 1fr) auto; }
+.channel-row-second { align-items: center; display: flex; gap: 8px; min-width: 0; }
+.channel-row-second > .channel-row-subtitle { flex: 1; min-width: 0; text-overflow: ellipsis; }
+.channel-row-second-trailing { align-items: center; display: inline-flex; flex: none; }
+.channel-row-second-trailing .sidebar-workstream-timer { flex-basis: 14px; height: 14px; margin-left: 0; width: 14px; }
 /* Unread is said the mockup's way: a semibold title and a red dot. */
 .single-sidebar .channel-row.is-unread .sidebar-row-title { font-weight: 600; }
 .single-sidebar .channel-row-marker .status-unread .status-dot { background: var(--av-sys-color-danger-base); }

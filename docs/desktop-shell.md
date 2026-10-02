@@ -61,7 +61,10 @@ far edge (*Drag to reorder* when there are pins to reorder, *A–Z*); with no
 pins the list stands alone and has no heading. A row shows the glyph,
 the title and the last activity time. Under them it shows the names of the
 Channel's Spaces, without General; a Channel only in General has a one-line
-row. An unread row has a semibold title and its dot is red. A public Channel has no
+row. An unread row has a semibold title and its dot is red; the weight follows the
+same input as the dot, so a Channel whose Breakout needs this reader is bold
+too. A Channel with a scheduled run shows a small clock on the second line,
+under the time. A public Channel has no
 badge on its glyph; the row's description says so. One dot at the leading edge
 shows the ranked marker from
 [`workstream-markers.md`](workstream-markers.md), with `completed` left out. A

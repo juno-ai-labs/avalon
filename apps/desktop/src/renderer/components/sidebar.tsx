@@ -759,7 +759,9 @@ function WorkstreamRow({
             className={({ isActive }: { isActive: boolean }) => clsx(
               'workstream-row channel-row',
               isActive && 'is-active',
-              workstream.hasUnread && 'is-unread',
+              // Bold follows the dot's own unread input, so a row whose
+              // Breakout needs this reader reads as unread in both.
+              (workstream.hasUnread || attentionCount > 0) && 'is-unread',
               // Machinery the reader has opted into seeing. Dimmed rather than
               // badged, so it reads as one level below the work it sits beside
               // without adding another thing to decode.
@@ -795,14 +797,8 @@ function WorkstreamRow({
               marker={marker === null ? undefined : <StatusDot compact status={marker} />}
               subtitle={spaceSubtitle}
               titlePrefix={workstream.systemKind ? <Cog aria-label="System channel" size={11} /> : undefined}
-              time={<RelativeTime format={formatSidebarActivityTime} value={workstream.lastActivityAt} />} />
-            {/* The manual order is the whole point of the section, and a
-                pointer-only affordance leaves it unreadable to anyone not
-                looking at it. The position — and only the position — rides on
-                the row, because it is the part that differs per row; how to
-                change it is said once, on the section. */}
-            {drag && <span className="sr-only">{drag.position}</span>}
-            {workstream.nextPendingWakeup && (
+              time={<RelativeTime format={formatSidebarActivityTime} value={workstream.lastActivityAt} />}
+              subtitleTrailing={workstream.nextPendingWakeup ? (
               <Tip
                 align="center"
                 className="workstream-timer-tooltip"
@@ -820,10 +816,16 @@ function WorkstreamRow({
                   className="sidebar-workstream-timer"
                   role="img"
                 >
-                  <Clock aria-hidden="true" size={15} strokeWidth={1.7} />
+                  <Clock aria-hidden="true" size={13} strokeWidth={1.8} />
                 </span>
               </Tip>
-            )}
+              ) : undefined} />
+            {/* The manual order is the whole point of the section, and a
+                pointer-only affordance leaves it unreadable to anyone not
+                looking at it. The position — and only the position — rides on
+                the row, because it is the part that differs per row; how to
+                change it is said once, on the section. */}
+            {drag && <span className="sr-only">{drag.position}</span>}
                 </SidebarRow>
               </div>
             </Tooltip.Trigger>
