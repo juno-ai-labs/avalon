@@ -3,8 +3,8 @@ import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
-import { TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { WorkstreamGlyph, WorkstreamMark } from '@rally/ui/components/workstream-glyph';
+import { BreakoutPillIcon, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -21,7 +21,8 @@ import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-tra
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { useSpaceDirectories } from '../lib/use-space-directories';
-import { AppearancePicker } from '../components/appearance-picker';
+import { AppearancePicker, AppearanceSubmenu } from '../components/appearance-picker';
+import { IconPalette } from '@tabler/icons-react';
 import { RelativeTime } from '../components/relative-time';
 
 import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
@@ -50,6 +51,7 @@ export {
   WorkstreamErrorState,
   acceptedMessageOverlayDeliveryState,
   branchProvenance,
+  conversationReplyCount,
   conversationReadAcknowledgement,
   highestVisibleAttentionSequence,
   initialTranscriptAnchorIndex,
@@ -690,6 +692,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
       label: `Channel menu: ${title}`,
       ...(onSelect ? { onSelect } : {}),
+      // Beside an open Breakout the Channel's pill points at it.
+      ...(!onSelect && breakoutPaneOpen ? { chevron: 'right' as const } : {}),
       menu: <ChannelMenu
         actions={mainActions}
         addSidekick={(context || channelRail) && <SidekickPicker substreamId="0" workstreamId={id} />}
@@ -731,25 +735,27 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     const breakoutId = openBreakoutId ?? '';
     return {
       key: `breakout:${breakoutId}`,
-      icon: <WorkstreamMark appearance={selectedAppearance} id={breakoutId} size={20} />,
-      ...(conversationScoped ? {} : {
-        iconAction: <AppearancePicker
-          appearance={selectedAppearance}
-          id={breakoutId}
-          key={breakoutId}
-          label={`Change ${title} icon and color`}
-          onChange={context.setAppearance}
-          renderGlyph={(appearance) => <WorkstreamMark appearance={appearance} id={breakoutId} size={20} />}
-        />,
-      }),
+      // The design's Breakout mark: the arrow every Breakout chip and row
+      // wears. Its own icon and colour are chosen from the menu instead.
+      icon: <BreakoutPillIcon />,
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
       label: `Breakout menu: ${title}`,
+      ...(context.replyCount ? { meta: `${context.replyCount} ${context.replyCount === 1 ? 'reply' : 'replies'}` } : {}),
       menu: <BreakoutMenu
         actions={substreamActions}
+        appearance={conversationScoped ? undefined : <AppearanceSubmenu
+          appearance={selectedAppearance}
+          icon={<IconPalette aria-hidden="true" size={16} stroke={1.8} />}
+          id={breakoutId}
+          key={breakoutId}
+          label="Icon and color"
+          onChange={context.setAppearance}
+        />}
         breakout={{ substreamId: breakoutId, title }}
         channel={{ id, title: railTitle ?? '', appearance: channelAppearance }}
         onParticipants={context.openParticipantDialog}
         onShowInChannel={mainVisible ? () => showInChannel(openBreakoutMark?.originTurnId) : undefined}
+        origin={context.origin}
         addSidekick={<SidekickPicker substreamId={breakoutId} workstreamId={id} />}
         onOpenSidekick={(sidekickId) => void desktopBridge().openSidekicks(sidekickId)}
         onRefreshSidekicks={context.refreshSidekicks}
@@ -808,6 +814,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     />}
     sidebarScope={conversationScoped ? 'conversation' : 'workstream'}
     substreamId={openBreakoutId ?? '0'}
+    breakoutOrigin={{ turnId: openBreakoutMark?.originTurnId, channelTitle: railTitle ?? parent.data?.title ?? '' }}
     workstreamContext={conversationScoped ? undefined : parent.data}
   />;
 

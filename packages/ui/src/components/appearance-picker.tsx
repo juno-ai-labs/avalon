@@ -38,17 +38,12 @@ function settled(choice: PendingChoice, appearance: WorkstreamAppearance | undef
  * prop rather than a component this file picks: the caller owns its own
  * treatment, and this owns the choosing.
  */
-export function AppearancePicker({ id, appearance, label: triggerLabel, renderGlyph, onChange, triggerClassName }: {
-  id: string;
-  appearance?: WorkstreamAppearance;
-  /** The trigger's accessible name, and the popup's: "Change X icon and color". */
-  label: string;
-  /** The glyph, drawn from the appearance *including* choices not yet committed. */
-  renderGlyph: (appearance: WorkstreamAppearance) => React.ReactNode;
-  onChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
-  /** The trigger's frame, for a surface that draws its mark in a tile of its own. */
-  triggerClassName?: string;
-}): React.JSX.Element {
+/**
+ * The choosing itself, shared by the picker's own popup and by a menu that
+ * offers the same palette as a submenu: the selection with its pending
+ * previews, the save that needs no Save button, and the newest choice's error.
+ */
+function useAppearanceChoice(id: string, appearance: WorkstreamAppearance | undefined, onChange: (patch: WorkstreamAppearancePatch) => Promise<void>) {
   const [pending, setPending] = useState<PendingChoice[]>([]);
   const [error, setError] = useState<string | null>(null);
   const sequence = useRef(0);
@@ -79,7 +74,69 @@ export function AppearancePicker({ id, appearance, label: triggerLabel, renderGl
       }
     });
   };
-  return <DropdownMenu.Root onOpenChange={(value) => { open.current = value; setError(null); }}>
+  const onOpenChange = (value: boolean): void => { open.current = value; setError(null); };
+  return { selected, change, error, onOpenChange };
+}
+
+function AppearanceChoices({ selected, change, error }: Pick<ReturnType<typeof useAppearanceChoice>, 'selected' | 'change' | 'error'>): React.JSX.Element {
+  return <>
+    <DropdownMenu.Label className="appearance-picker-label">Color</DropdownMenu.Label>
+    <DropdownMenu.RadioGroup value={selected.color ?? ''} className="appearance-picker-colors" aria-label="Color">
+      {projectColorCells().map((color, cell) => (color === null
+        ? <span aria-hidden="true" className="appearance-picker-gap" key={`gap-${cell}`} />
+        : <DropdownMenu.RadioItem key={color} value={color} aria-label={label(color)} title={label(color)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ color }); }}>
+          <span className="appearance-picker-swatch" style={{ background: `var(--av-sys-color-project-${color})` }} />
+        </DropdownMenu.RadioItem>))}
+    </DropdownMenu.RadioGroup>
+    <DropdownMenu.Separator className="appearance-picker-divider" />
+    <DropdownMenu.Label className="appearance-picker-label">Icon</DropdownMenu.Label>
+    <DropdownMenu.RadioGroup value={selected.icon ?? ''} className="appearance-picker-icons" aria-label="Icon">
+      <IconCatalog renderIcon={(icon) => {
+        const Icon = WORKSTREAM_ICON_COMPONENTS[icon];
+        return <DropdownMenu.RadioItem key={icon} value={icon} aria-label={label(icon)} title={label(icon)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ icon }); }}>
+          <Icon size={20} strokeWidth={1.8} stroke={`var(--av-sys-color-project-${selected.color})`} />
+        </DropdownMenu.RadioItem>;
+      }} />
+    </DropdownMenu.RadioGroup>
+    {error && <p role="alert" className="appearance-picker-error">{error}</p>}
+  </>;
+}
+
+/**
+ * The same palette as a submenu of a menu that is already open, for a mark the
+ * surface does not draw as its own control, such as a Breakout's title pill.
+ */
+export function AppearanceSubmenu({ id, appearance, label: itemLabel, icon, onChange }: {
+  id: string;
+  appearance?: WorkstreamAppearance;
+  label: string;
+  icon?: React.ReactNode;
+  onChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
+}): React.JSX.Element {
+  const { selected, change, error, onOpenChange } = useAppearanceChoice(id, appearance, onChange);
+  return <DropdownMenu.Sub onOpenChange={onOpenChange}>
+    <DropdownMenu.SubTrigger className="menu-item title-menu-item">{icon}{itemLabel}</DropdownMenu.SubTrigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.SubContent className="menu-content appearance-picker-popup" sideOffset={8} collisionPadding={12} aria-label={itemLabel}>
+        <AppearanceChoices change={change} error={error} selected={selected} />
+      </DropdownMenu.SubContent>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Sub>;
+}
+
+export function AppearancePicker({ id, appearance, label: triggerLabel, renderGlyph, onChange, triggerClassName }: {
+  id: string;
+  appearance?: WorkstreamAppearance;
+  /** The trigger's accessible name, and the popup's: "Change X icon and color". */
+  label: string;
+  /** The glyph, drawn from the appearance *including* choices not yet committed. */
+  renderGlyph: (appearance: WorkstreamAppearance) => React.ReactNode;
+  onChange: (patch: WorkstreamAppearancePatch) => Promise<void>;
+  /** The trigger's frame, for a surface that draws its mark in a tile of its own. */
+  triggerClassName?: string;
+}): React.JSX.Element {
+  const { selected, change, error, onOpenChange } = useAppearanceChoice(id, appearance, onChange);
+  return <DropdownMenu.Root onOpenChange={onOpenChange}>
     <DropdownMenu.Trigger asChild>
       <button type="button" aria-label={triggerLabel} className={clsx('appearance-picker-trigger window-no-drag', triggerClassName)}>
         {renderGlyph(selected)}
@@ -87,25 +144,7 @@ export function AppearancePicker({ id, appearance, label: triggerLabel, renderGl
     </DropdownMenu.Trigger>
     <DropdownMenu.Portal>
       <DropdownMenu.Content className="menu-content appearance-picker-popup" align="start" sideOffset={8} collisionPadding={12} aria-label={triggerLabel}>
-        <DropdownMenu.Label className="appearance-picker-label">Color</DropdownMenu.Label>
-        <DropdownMenu.RadioGroup value={selected.color ?? ''} className="appearance-picker-colors" aria-label="Color">
-          {projectColorCells().map((color, cell) => (color === null
-            ? <span aria-hidden="true" className="appearance-picker-gap" key={`gap-${cell}`} />
-            : <DropdownMenu.RadioItem key={color} value={color} aria-label={label(color)} title={label(color)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ color }); }}>
-              <span className="appearance-picker-swatch" style={{ background: `var(--av-sys-color-project-${color})` }} />
-            </DropdownMenu.RadioItem>))}
-        </DropdownMenu.RadioGroup>
-        <DropdownMenu.Separator className="appearance-picker-divider" />
-        <DropdownMenu.Label className="appearance-picker-label">Icon</DropdownMenu.Label>
-        <DropdownMenu.RadioGroup value={selected.icon ?? ''} className="appearance-picker-icons" aria-label="Icon">
-          <IconCatalog renderIcon={(icon) => {
-            const Icon = WORKSTREAM_ICON_COMPONENTS[icon];
-            return <DropdownMenu.RadioItem key={icon} value={icon} aria-label={label(icon)} title={label(icon)} className="appearance-picker-choice" onSelect={(event) => { event.preventDefault(); change({ icon }); }}>
-              <Icon size={20} strokeWidth={1.8} stroke={`var(--av-sys-color-project-${selected.color})`} />
-            </DropdownMenu.RadioItem>;
-          }} />
-        </DropdownMenu.RadioGroup>
-        {error && <p role="alert" className="appearance-picker-error">{error}</p>}
+        <AppearanceChoices change={change} error={error} selected={selected} />
       </DropdownMenu.Content>
     </DropdownMenu.Portal>
   </DropdownMenu.Root>;

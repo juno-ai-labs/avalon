@@ -93,6 +93,7 @@
     "sys.color.workstream.stopped": "#8a6a4d",
     "sys.color.workstream.unread": "#2f7d55",
     "sys.color.workstream.mentioned": "#b83d7e",
+    "sys.color.workstream.news": "#e5332a",
     "sys.color.workstream.unseen": "#6f45c0",
     "sys.color.danger.tint": "rgba(195, 69, 63, 0.1)",
     "sys.color.scrim.default": "rgba(38, 36, 30, 0.34)",

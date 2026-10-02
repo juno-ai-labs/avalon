@@ -296,7 +296,10 @@ case of a settled work stream, did nothing. That is fixed rather than preserved:
 
 ### What the reader is shown of it
 
-Nothing. The frozen starting context is model-facing: the child's runs read it,
+Not the starting context. What the reader does see at the top of a Breakout
+is the Channel's own messages it started from, which people actually said
+([`desktop-shell.md`](desktop-shell.md#breakouts) owns that card). The frozen
+starting context is model-facing: the child's runs read it,
 `sendReady` waits for it to arrive before a substream can send, and the local
 cache declines to mirror a conversation whose context it cannot find — but no
 surface draws it. It was drawn once, under a **Context from the main

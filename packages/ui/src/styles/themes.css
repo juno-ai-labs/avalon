@@ -221,6 +221,7 @@
   --av-sys-color-workstream-stopped: #8a6a4d;
   --av-sys-color-workstream-unread: #2f7d55;
   --av-sys-color-workstream-mentioned: #b83d7e;
+  --av-sys-color-workstream-news: #e5332a;
   --av-sys-color-workstream-unseen: #6f45c0;
 
   /* Failure and destructive action. */
@@ -642,6 +643,7 @@
   --av-sys-color-workstream-stopped: #ab8a6d;
   --av-sys-color-workstream-unread: #74c48c;
   --av-sys-color-workstream-mentioned: #e585ad;
+  --av-sys-color-workstream-news: #f0675d;
   --av-sys-color-workstream-unseen: #a992e0;
 
   --av-sys-color-danger-tint: rgba(204, 122, 106, 0.14);

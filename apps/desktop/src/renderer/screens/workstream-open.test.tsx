@@ -537,10 +537,12 @@ describe('socket-first channel open', () => {
     return boot;
   }
 
-  /** A breakout starts from a message: the newest one's own action. */
+  /**
+   * A breakout starts from a message: Rally's newest reply shows the action as
+   * a line of its own rather than on hover.
+   */
   async function startBreakoutFromLatestMessage(): Promise<void> {
-    await waitFor(() => expect(screen.getAllByRole('button', { name: 'New breakout from this message' }).length).toBeGreaterThan(0));
-    fireEvent.click(screen.getAllByRole('button', { name: 'New breakout from this message' }).at(-1)!);
+    fireEvent.click(await screen.findByRole('button', { name: /Start a breakout from this message/u }));
   }
 
   /** The feed draws only the rows its window holds, so the window is given a size. */
@@ -786,10 +788,9 @@ describe('socket-first channel open', () => {
     }, childId);
 
     expect(await screen.findByRole('button', { name: 'Breakout menu: Private child' })).toBeInTheDocument();
-    const breakoutAppearance = screen.getByRole('button', { name: 'Change Private child icon and color' });
-    expect(breakoutAppearance.querySelector('.lucide-orbit')).not.toBeNull();
+    // The Breakout's pill wears the breakout arrow; its own icon is chosen from its menu.
+    expect(screen.queryByRole('button', { name: 'Change Private child icon and color' })).not.toBeInTheDocument();
     act(() => client.setQueryData(['workstream', workstreamId], { ...parent, appearance: { icon: 'heart', color: 'blue' } }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Change Private child icon and color' }).querySelector('.lucide-orbit')).not.toBeNull());
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Channel menu: Recovered channel' }), { button: 0, ctrlKey: false });
     expect(await screen.findByRole('menuitem', { name: /1 person$/u })).toBeInTheDocument();
@@ -836,7 +837,8 @@ describe('socket-first channel open', () => {
       cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
     }, childId);
 
-    fireEvent.keyDown(await screen.findByRole('button', { name: 'Change Private child icon and color' }), { key: 'Enter' });
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Breakout menu: Private child' }), { button: 0, ctrlKey: false });
+    fireEvent.keyDown(await screen.findByRole('menuitem', { name: 'Icon and color' }), { key: 'ArrowRight' });
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
     await waitFor(() => expect(childAppearance).toHaveBeenCalledWith({ color: 'purple' }));
     expect(mainAppearance).not.toHaveBeenCalled();
@@ -859,20 +861,12 @@ describe('socket-first channel open', () => {
 
     const channelTrigger = await screen.findByRole('button', { name: 'Change Recovered channel icon and color' });
     expect(channelTrigger.querySelector('.lucide-megaphone')).not.toBeNull();
-    // The Breakout pill owns its own deterministic fallback, not the Channel
-    // appearance carried by the parent row.
-    const breakoutTrigger = screen.getByRole('button', { name: 'Change Private child icon and color' });
-    const breakoutIconClass = breakoutTrigger.querySelector('svg')?.getAttribute('class');
-    expect(breakoutTrigger.querySelector('.lucide-rocket')).toBeNull();
-    expect(breakoutTrigger.querySelector('.lucide-megaphone')).toBeNull();
 
     // The receipt-time writer itself, not a hand-rolled cache poke: it writes
     // the row and deliberately leaves the detail alone.
     act(() => patchCachedWorkstreamAppearance(client, workstreamId, { icon: 'heart', color: 'blue' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Change Recovered channel icon and color' })
       .querySelector('.lucide-heart')).not.toBeNull());
-    expect(screen.getByRole('button', { name: 'Change Private child icon and color' }).querySelector('svg'))
-      .toHaveAttribute('class', breakoutIconClass);
   });
 
   it('manages the selected breakout roster without changing parent participants', async () => {
@@ -1143,7 +1137,7 @@ describe('socket-first channel open', () => {
       settle(queryClient, 'stopped');
       await screen.findByRole('status', { name: STOPPED_LABEL });
 
-      const composer = await screen.findByRole('textbox', { name: 'Message the channel' });
+      const composer = await screen.findByRole('textbox', { name: /^Message /u });
       fireEvent.change(composer, { target: { value: 'thanks, picking this up tomorrow' } });
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
       await waitFor(() => expect(createMessage).toHaveBeenCalled());
@@ -1413,7 +1407,7 @@ describe('socket-first channel open', () => {
     // The screen is not "Opening": the remembered conversation is on it.
     expect(screen.queryByText('Opening channel…')).not.toBeInTheDocument();
     expect(document.querySelector('.connecting-card')?.textContent ?? '').toContain('Connecting to Remembered channel…');
-    const composer = screen.getByLabelText('Message the channel');
+    const composer = screen.getByLabelText('Message Remembered channel');
     fireEvent.change(composer, { target: { value: 'Typed while connecting' } });
     // The button says why on its own label, for whoever cannot see the card.
     expect(screen.getByRole('button', { name: 'Send message, available once Rally connects' })).toBeDisabled();

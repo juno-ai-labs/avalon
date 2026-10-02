@@ -37,6 +37,8 @@ import { workstreamDraftKey } from '../lib/draft-keys';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { RelativeTime } from '../components/relative-time';
+import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
+import { formatDateTime } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { refreshPoppedOutArtifacts } from '../lib/popped-out-artifacts';
 import { layoutKey, readArtifactPanel, writeLayout } from '../lib/desktop-layout';
@@ -941,6 +943,24 @@ export interface ConversationHeaderContext {
   openArtifact?: (id: string, returnFocus: HTMLElement) => void;
   rename: (title: string) => Promise<void>;
   setAppearance: WorkstreamSocketConnection['setAppearance'];
+  /**
+   * How many messages this conversation holds, counted from its transcript
+   * once the whole of it is loaded. Undefined while older pages remain: a
+   * count of the loaded window would read as a total and be wrong.
+   */
+  replyCount?: number | undefined;
+  /** A Breakout's origin message, for its title menu's "Started from" card. */
+  origin?: { byline: string; text: string } | undefined;
+}
+
+/** Messages a person would call replies: what people and Rally said, one per turn. */
+export function conversationReplyCount(transcript: readonly Message[]): number {
+  const turns = new Set<string>();
+  for (const message of transcript) {
+    if (message.messageType !== 'text' || message.authorType === 'system') continue;
+    turns.add(`${message.authorType}:${message.transcriptTurnId ?? message.id}`);
+  }
+  return turns.size;
 }
 
 export interface ConversationSubstreamLaunch {
@@ -989,6 +1009,13 @@ export interface ConversationSurfaceProps {
   /** Bring this turn into view; a new nonce asks again for the same turn. */
   scrollToTurn?: { turnId: string; nonce: number } | null;
   /**
+   * A Breakout's origin in its Channel: the turn it started from, and the
+   * Channel's name for the card's byline. The messages themselves are read
+   * from the Channel's own transcript cache, which the Channel pane beside
+   * this one keeps current; nothing here fetches them.
+   */
+  breakoutOrigin?: { turnId: string | null | undefined; channelTitle: string } | undefined;
+  /**
    * Whether the `?turn=&sequence=` search target names this conversation. Two
    * conversations share the route when a Breakout is open beside its Channel,
    * and the target is only ever in one of them.
@@ -1035,6 +1062,7 @@ export function ConversationSurface({
   scrollToTurn = null,
   honorsSearchTarget = true,
   paneKey,
+  breakoutOrigin,
 }: ConversationSurfaceProps): React.JSX.Element {
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
   const parentDetailQueryKey = useMemo(() => workstreamDetailQueryKey(id, '0'), [id]);
@@ -1512,6 +1540,17 @@ export function ConversationSurface({
     id,
     visibleMembers,
   ), [id, visibleMembers, orderedTranscript.data]);
+  // The Channel's transcript, read from the cache its own pane keeps, for a
+  // Breakout's origin card. Subscribed rather than fetched.
+  const channelTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
+    queryKey: orderedTranscriptQueryKey(id, '0'),
+    queryFn: async () => undefined,
+    enabled: false,
+  });
+  const originTurnId = substreamId === '0' ? undefined : breakoutOrigin?.turnId;
+  const origin = useMemo(() => (originTurnId
+    ? breakoutOriginMessages(orderedTranscriptMessages(channelTranscript.data, id, visibleMembers), originTurnId)
+    : null), [channelTranscript.data, id, originTurnId, visibleMembers]);
   // The Channel sends counts for all of its conversations; this composer
   // shows only the agents started from the conversation it belongs to.
   const backgroundAgents = useQuery({
@@ -1539,6 +1578,12 @@ export function ConversationSurface({
     },
     [canonicalTranscript, transcriptOverlays.data],
   );
+  // Above every early return: a hook below one runs on some renders only.
+  const replyCount = useMemo(() => (
+    orderedTranscript.data && !adjacentTranscriptRange(orderedTranscript.data, 'older')
+      ? conversationReplyCount(transcript)
+      : undefined
+  ), [orderedTranscript.data, transcript]);
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
   // came back closed would shrink under a cache that still expects it open.
@@ -2682,6 +2727,11 @@ export function ConversationSurface({
         openArtifact: sidebarScope === 'workstream' ? sidebarCitations.openPreview : citations.openPreview,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
         setAppearance: socketConnection.setAppearance,
+        replyCount,
+        origin: origin ? {
+          byline: `Started from ${origin.origin.authorType === 'agent' ? 'Rally’s' : `${origin.origin.author?.name ?? 'a'}’s`} message · ${formatDateTime(origin.origin.createdAt)}`,
+          text: originExcerpt(origin.origin.text ?? ''),
+        } : undefined,
       })}
       {/* Focusable so the transcript can be scrolled from the keyboard at all.
           Chromium gives Page Up, Home, and the arrows to a scroller only when it
@@ -2772,7 +2822,13 @@ export function ConversationSurface({
           {olderMessagesError && <InlineError>{olderMessagesError}</InlineError>}
           {otherHistoryError && <InlineError>{otherHistoryError}</InlineError>}
           {/* No starting context here: it is what the child's runs read, not a
-              turn anybody said. `docs/substream-creation.md` has why. */}
+              turn anybody said. `docs/substream-creation.md` has why. The
+              origin card is the Channel's own messages, which people did say,
+              and only above the Breakout's first message, never above a
+              window that still has earlier pages to load. */}
+          {origin && breakoutOrigin && !olderTranscriptRange && (
+            <BreakoutOrigin channelTitle={breakoutOrigin.channelTitle} context={origin.context} origin={origin.origin} />
+          )}
           {/* Not while a run is going. A work stream opened the instant it was
               created has an empty transcript and an agent already working on
               it, and inviting the person to start it is both wrong and the
@@ -2853,7 +2909,12 @@ export function ConversationSurface({
             && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
           <WorkstreamComposer
             api={api ?? undefined}
-            placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : substreamId === '0' || displayedDetail.titleStatus === 'naming' ? 'Message the channel…' : `Reply in ${displayedDetail.title}`}
+            placeholder={parentKind === 'automation'
+              ? 'Ask your Sidekick…'
+              // A name still being chosen is not one to address yet.
+              : displayedDetail.titleStatus === 'naming' || !displayedDetail.title
+                ? 'Message the channel…'
+                : substreamId === '0' ? `Message ${displayedDetail.title}` : `Reply in ${displayedDetail.title}`}
             attachments={attachmentDraft.attachments}
             error={sendError
               ?? attachmentDraft.error
