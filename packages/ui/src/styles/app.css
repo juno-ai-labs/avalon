@@ -7473,17 +7473,19 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .sidebar-top-actions > .icon-button:hover:not(:disabled),
 .sidebar-top-action:hover:not(:disabled) { background: var(--av-sys-color-surface-raised-hover); }
 /* A downloaded update is the one action asking to be taken, so it trades the
-   neutral ring for a solid accent fill. */
+   neutral ring for a solid blue fill. Not `accent-base`: that is a mix of the
+   accent into `text-default`, so it reads navy in light and pastel in dark.
+   `project-blue` and `text-on-media` hold the same values in both themes. */
 .sidebar-top-actions > .sidebar-top-update {
-  background: var(--av-sys-color-accent-base);
+  background: var(--av-sys-color-project-blue);
   box-shadow: var(--av-cmp-composer-shadow);
-  color: var(--av-sys-color-accent-on);
+  color: var(--av-sys-color-text-on-media);
 }
 /* Hover is the shared wash over the same fill, and keeps the ink, rather than
    the neutral raised hover the rule above gives its siblings. */
 .sidebar-top-actions > .sidebar-top-update:hover:not(:disabled) {
-  background: var(--hover-layer), var(--av-sys-color-accent-base);
-  color: var(--av-sys-color-accent-on);
+  background: var(--hover-layer), var(--av-sys-color-project-blue);
+  color: var(--av-sys-color-text-on-media);
 }
 
 .space-pill-strip { align-items: center; display: flex; flex: 0 0 auto; gap: 6px; min-width: 0; padding: 0 14px 10px; }
