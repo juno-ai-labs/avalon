@@ -79,7 +79,7 @@ Execution snapshots optionally contain `recommendedRefs` for compatibility with
 previously admitted executions.
 
 `WorkspaceDO` keeps Main's reported `sidekick_attachments` per Channel in
-`channel_sidekick_attachments` (migration 82) for the Channel rail, applied
+`channel_sidekick_attachments` (migration 82) for the Channel menu's Sidekicks, applied
 from `sidekickAttachmentIds` on a directory effect. No conversation sends that
 field yet; emission follows in a later deploy, and the table stays empty until
 then.
@@ -477,7 +477,9 @@ SQL joins.
   mutation; a reservation is written at source version zero so the first real
   projection supersedes it. `workspace_container_order` is every list a person
   arranges by hand, keyed by the container it belongs to — the Organization's
-  Spaces, one Space's Channels, one Channel's Breakouts — and
+  Spaces, one Space's Channels and one Channel's Breakouts;
+  `workspace_pinned_order` (migration 87) is one person's order for the Pinned
+  section under All, kept apart so older Workers and clients never meet it — and
   `workspace_space_state` is the one waterline both directories share.
   `space_channel_memberships` is keyed by Space and Channel with **no**
   uniqueness on the Channel, because a Channel belongs to as many Spaces as it

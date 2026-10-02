@@ -46,10 +46,22 @@ stay a dense `0..n-1` run.
 
 The sidebar's **All** filter has no run of its own. Its Pinned section shows every
 Channel pinned in any Space: General's run first, then the rest by their first
-pin (`allPinPosition` in `sidebar.tsx`). Pinning there writes to General when the
-Channel is placed in General, and otherwise to its first Space. Unpinning there
-clears every Space that pins it. A drag rearranges All's section only while
-every row in it is a General pin, because only then is it one run.
+pin (`allPinPosition` in `sidebar.tsx`), unless the person has arranged All
+themselves: then the ids in their own order come first, in it, and any pin it
+does not name follows. Pinning there writes to General when the Channel is
+placed in General, and otherwise to its first Space. Unpinning there clears
+every Space that pins it. A drag or Alt+Arrow there saves that order whole
+(`PUT /workspace/pinned-order`), and a Channel's own menu pins and unpins by the
+same rule whatever the list is filtered to (`channelPinTargets`).
+
+The section is always drawn once the Organization is open. Empty, it is a
+dashed drop zone reading **Move a channel here to pin it**, which takes the
+accent while a Channel is being dragged; dropping one there pins it.
+
+All's order lives in `workspace_pinned_order` (WorkspaceDO migration 87) and
+reaches clients as `pinnedOrder` on the sidebar payload and the Space snapshot.
+It names Channels, not pins, and the read keeps only Channels the person can
+still list.
 [`desktop-shell.md`](desktop-shell.md) owns the filter.
 
 ### Ordering
@@ -437,25 +449,30 @@ placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
 
-### 2026-10-02 — All's Pinned section can keep an order of its own
+### 2026-10-02 — All's Pinned section keeps an order of its own, and is always there
 
-**What changed:** The per-person order store gains a `pinned` kind, addressed
-by the Organization like the Space order, and WorkspaceDO migration 87 rebuilds
-`workspace_container_order` to admit it. `reorderContainer` stores it, keeping
-only Channels the person can list and merging with what they already had, and
-the sidebar socket delivers it on `ordering`. The sidebar does not read it yet;
-until it does, All still drags only when every pin is a General pin.
+**What changed:** WorkspaceDO migration 87 adds `workspace_pinned_order`, one
+person's order for All's Pinned section. `reorderAllPinned` (`PUT
+/workspace/pinned-order`) stores it, keeping only Channels the person can list
+and merging with what they had; the sidebar payload and the Space snapshot
+carry it as `pinnedOrder`. The sidebar draws All's pins in that order, saves it
+on a drag or Alt+Arrow, always shows the section with a drop zone when it is
+empty, and lets any unpinned row be dragged into it under All.
 
 **Why:** All shows pins from several Spaces, and each Space keeps its own run,
 so All had no order a drag could write. Asked for a drag that is the same on
-every device, the order went into the store that already syncs Space, Channel
-and Breakout order rather than into this table: an All position is not a pin,
-and per-Space runs restart at zero so they cannot be interleaved. A device-only
-order was rejected because every other order in Rally follows the account.
+every device, the order follows the account as every other Rally order does; a
+device-only order was rejected. A first cut added a `pinned` kind to
+`workspace_container_order`. Review rejected it: shipped desktops parse
+`ordering` strictly and one entry of an unknown kind drops the whole snapshot,
+blanking their sidebar, and an older Worker after a rollback would fail to
+parse a stored `pinned` row. A separate table and a separate optional field are
+invisible to both.
 
-**Consequences:** Rows here name Channels, not pins. Unpinning does not remove
-a Channel's row, so pinning it again under All returns it to its old place
-rather than the end; the client draws only what is pinned.
+**Consequences:** Rows name Channels, not pins. Unpinning does not remove a
+Channel's row, so pinning it again under All returns it to its old place; the
+client draws only what is pinned. Any future order that older builds must not
+see takes the same route: its own field, never a new `OrderedContainer` kind.
 
 ### 2026-09-21 — Pins belong to Channel placements in Spaces
 

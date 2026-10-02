@@ -41,71 +41,45 @@ The sidebar can omit Main without inventing an accessible Main route. Browser
 participants and resources belong to the selected authorized conversation; desktop
 can continue supplying parent-owned workstream context. Directory appearance comes
 from canonical reads and preserves the existing Main-label boundary.
-In the desktop Spaces rail and the shared Breakout rail, private Spaces and the
-Main row of a private Channel omit the redundant scope subtitle. Public scope
-remains explicit, and the underlying access scope does not change.
-
-Every collapsible desktop hierarchy sidebar composes `SidebarCollapseFooter`.
-The primitive owns the expand/collapse control, accessible state, constrained
-state and motion destination. A footer with no leading content centers the
-toggle when compact; a footer with an account slot keeps the slot and toggle as
-one trailing control row. The browser Spaces hierarchy has no collapse control,
-so it composes the lower-level `SidebarFooter` with the same account-slot
-layout. Hosts provide labels, persistence and the optional leading content
-rather than rebuilding either layout. A host that keeps a sidebar's width and
-collapsed state across launches does it through `lib/sidebar-preferences.ts`
+Desktop and browser both mount the one non-collapsing `ResizableSidebar`
+(`collapsible={false}`) and compose the plain `SidebarFooter` with an account
+slot ([`desktop-shell.md`](desktop-shell.md)). `SidebarCollapseFooter` and the
+primitive's compact layout remain only for Sideline, the one host that still
+collapses. A host that keeps a sidebar's width (and, for Sideline, its
+collapsed state) across launches does it through `lib/sidebar-preferences.ts`
 under its own local-storage keys. A missing or unreadable width falls back to
 the default, a readable one is clamped to the sidebar's limits, a missing
 collapsed flag reads as expanded, and a refused write leaves the in-memory state
 standing.
 
-`SidebarRow` also owns the optional hierarchy count badge. A positive count is
-a trailing badge inside the row's padding when expanded and overlaps the mark's
-top-right corner when compact; zero renders nothing. Hosts supply the count and
-accessible label, while the shared row owns placement so Space and Channel
-hosts cannot drift.
+`SidebarRow` still accepts an optional count `badge`, but no host passes one:
+the Channel row's count badge was replaced by its unread treatment
+([`workstream-markers.md`](workstream-markers.md#channel-row)).
 
-`SpacePlacementList` marks itself `data-reorder-list`: a host's row finds the
+The desktop's pinned section marks itself `data-reorder-list`: a row finds the
 slots it is being measured against through that mark rather than by knowing
-whose list it is in, which is what lets the desktop's pinned section and a
-Space's placements share one row and one drag. Its `onDragEnd` callback takes a
-`cancelled` flag and reads the browser's `none` operation as a release nothing
-accepted, including Escape and release outside the list.
+whose list it is in. A drag's end reads the browser's `none` operation as a
+release nothing accepted, including Escape and release outside the list.
 
-The Breakout rail owns a different, host-neutral rule: Main first,
-case-insensitive fixed-locale alphabetical Breakouts, an unpublished creation
-after all named Breakouts, and **New breakout** last. Hosts provide directory
-rows and navigation callbacks, not an order or drag API. Exact title ties end
-with the stable Breakout id, so source activity and runtime locale cannot move a
-destination between visits or hosts.
-
-The Space components follow the same split, one step further. A `SpaceRow` draws
-the geometry, the accordion, an optional host-owned context menu and the motion
-keys, and takes the host's own navigation element as a slot — routing and which
-actions are admitted are host decisions under the Spaces PRD's design decision
-9, the way `NavigationRowContent` already treats a Channel row.
-`SpaceDashboardHeader` owns the rename *interaction*
+The shared Breakout rail, `SpaceRow` and `SpacePlacementList` were removed with
+the shell redesign. Breakouts are listed in the Channel title menu
+(`ChannelMenu`'s Breakouts level), newest activity first with
+`compareAlphabeticalTitle` breaking ties, and Spaces are drawn as
+`space-pills.tsx` pills. `SpaceDashboardHeader` owns the rename *interaction*
 (double-click, F2, Enter to commit, Escape to abandon, blur to commit) because
 that is presentation; the host only ever learns the committed name. Nothing here
 fetches, and no component infers a capability from an omitted prop: a Space with
-no audience control is a host that decided not to draw one.
-
-`SpaceRow` still requires the drag handlers, but carries no creation action and
-makes its context menu optional. Creation belongs to the host's global launcher,
-while row-local lifecycle actions belong only to a host with current authority;
-a reader who reaches a Space only through a Channel placed in it gets no menu
-([`spaces.md`](spaces.md#who-may-see-a-space-and-why)). The Space
+no audience control is a host that decided not to draw one. The Space
 dashboard's Channel and breakout entries are host-owned links, not shared
-removable rows; the landing page draws both at full width and keeps placement
-management in its owning surfaces.
+removable rows.
 
 The guest browser supplies its bounded sharing projection to the same
-`ResizableSidebar`, hierarchy headers, rows, scroll regions, collapse controls,
-and resize geometry as Electron. It still owns its browser routes, account
-menu, unsupported-width state and guest-only loading copy, and it omits
-management actions that the sharing projection cannot authorize. At the existing 920px
-responsive boundary and below, the host shows an unsupported-width state
-instead of presenting a compressed or partial hierarchy.
+`ResizableSidebar`, rows, scroll regions and resize geometry as Electron. It
+still owns its browser routes, account menu, unsupported-width state and
+guest-only loading copy, and it omits management actions that the sharing
+projection cannot authorize. At the existing 920px responsive boundary and
+below, the host shows an unsupported-width state instead of presenting a
+compressed or partial hierarchy.
 
 Theme application stamps the same `data-theme` attribute before rendering. Desktop
 installs the native theme reporter/broadcast adapter; browser and Sideline install system
@@ -136,7 +110,7 @@ this package does not create a second collaboration implementation.
 
 Omitted capabilities omit their controls. Loading, empty and error states must be
 supplied distinctly by host adapters; presentation cannot infer authority from a
-missing response. Sidebar and rail error contracts carry state, never transport,
+missing response. Sidebar and menu error contracts carry state, never transport,
 provider, or server messages: presentation owns stable product copy while rich
 failure details stay outside its contract. Shared browser-safe theme defaults
 apply before first render.
