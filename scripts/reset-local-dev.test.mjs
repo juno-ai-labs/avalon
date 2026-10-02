@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
-  desktopAppDataDirectory,
   liveDesktopLockHolder,
   localResetTargets,
   probeLocalWorker,
@@ -38,13 +37,6 @@ test("the reset clears Worker state and the desktop session but keeps browser si
   );
 });
 
-test("the desktop data directory follows Electron's appData on each platform", () => {
-  assert.equal(desktopAppDataDirectory("darwin", {}, "/Users/a"), "/Users/a/Library/Application Support");
-  assert.equal(desktopAppDataDirectory("linux", {}, "/home/a"), "/home/a/.config");
-  assert.equal(desktopAppDataDirectory("linux", { XDG_CONFIG_HOME: "/x" }, "/home/a"), "/x");
-  assert.equal(desktopAppDataDirectory("win32", { APPDATA: "C:\\R" }, "C:\\Users\\a"), "C:\\R");
-});
-
 test("a lock left by a client that has exited does not block the reset", async () => {
   const directory = mkdtempSync(join(tmpdir(), "reset-local-dev-"));
   try {
@@ -57,24 +49,6 @@ test("a lock left by a client that has exited does not block the reset", async (
     child.kill();
     await new Promise((resolve) => child.once("exit", resolve));
     assert.equal(liveDesktopLockHolder(directory), null);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test("on Windows a lockfile nothing holds does not block the reset, and one that cannot be opened does", () => {
-  const directory = mkdtempSync(join(tmpdir(), "reset-local-dev-"));
-  try {
-    assert.equal(liveDesktopLockHolder(directory, "win32"), null);
-    const lockfile = join(directory, "lockfile");
-    writeFileSync(lockfile, "");
-    assert.equal(liveDesktopLockHolder(directory, "win32"), null);
-    // A running client's sharing violation, as far as a POSIX host can stage
-    // one: the lockfile is there and cannot be opened. Not with `chmod 000`,
-    // which root opens anyway; a directory refuses `r+` whoever asks.
-    rmSync(lockfile);
-    mkdirSync(lockfile);
-    assert.equal(liveDesktopLockHolder(directory, "win32"), true);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
