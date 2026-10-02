@@ -359,6 +359,38 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
 ];
 
 /**
+ * Migration 87: let `workspace_container_order` hold the Pinned section under
+ * All (`container_kind = 'pinned'`).
+ *
+ * SQLite cannot widen a CHECK in place, so the table is rebuilt through a
+ * scratch copy, as migration 42's retirement graph was. Nothing references
+ * this table, so the drop cascades to nothing. The index is recreated because
+ * dropping the table took it with it.
+ */
+export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
+  `CREATE TABLE _space_copy_workspace_container_order AS
+     SELECT * FROM workspace_container_order`,
+  `DROP TABLE workspace_container_order`,
+  `CREATE TABLE workspace_container_order (
+    user_id TEXT NOT NULL,
+    container_kind TEXT NOT NULL CHECK (container_kind IN ('organization', 'space', 'channel', 'pinned')),
+    container_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, container_kind, container_id, item_id)
+  ) STRICT`,
+  `INSERT INTO workspace_container_order
+     (user_id, container_kind, container_id, item_id, position, created_at, updated_at)
+   SELECT user_id, container_kind, container_id, item_id, position, created_at, updated_at
+     FROM _space_copy_workspace_container_order`,
+  `DROP TABLE _space_copy_workspace_container_order`,
+  `CREATE INDEX workspace_container_order_position_idx
+    ON workspace_container_order(user_id, container_kind, container_id, position, item_id)`,
+];
+
+/**
  * The run states a conversation is live in on its own account.
  *
  * The `exact_state` vocabulary rather than the wire's, because this predicate
@@ -1027,7 +1059,8 @@ export class WorkspaceSpaceStorage {
     ).toArray();
     const byContainer = new Map<string, ContainerOrder>();
     for (const row of rows) {
-      if (row.container_kind === "organization" && row.container_id !== workspaceId) continue;
+      if ((row.container_kind === "organization" || row.container_kind === "pinned")
+        && row.container_id !== workspaceId) continue;
       const key = `${row.container_kind}:${row.container_id}`;
       const existing = byContainer.get(key);
       if (existing) existing.itemIds.push(row.item_id);
@@ -1039,7 +1072,7 @@ export class WorkspaceSpaceStorage {
         // the shape the reader is owed rather than a check it can fail.
         const kind = OrderedContainerKindSchema.parse(row.container_kind);
         byContainer.set(key, {
-          container: kind === "organization" ? { kind } : { kind, id: row.container_id },
+          container: kind === "organization" || kind === "pinned" ? { kind } : { kind, id: row.container_id },
           itemIds: [row.item_id],
         });
       }
@@ -1049,6 +1082,13 @@ export class WorkspaceSpaceStorage {
     for (const order of byContainer.values()) {
       if (order.container.kind === "organization") {
         visible.push({ ...order, itemIds: order.itemIds.filter((id) => visibleSpaces.has(id)) });
+        continue;
+      }
+      if (order.container.kind === "pinned") {
+        // A pin is on a placement and can outlive the reader's access to its
+        // Channel; the list only ever names what this sidebar can draw.
+        const listable = new Set(this.listableChannelIds(userId, order.itemIds));
+        visible.push({ ...order, itemIds: order.itemIds.filter((id) => listable.has(id)) });
         continue;
       }
       if (order.container.kind === "space") {
@@ -1108,12 +1148,13 @@ export class WorkspaceSpaceStorage {
       const requested = [...new Set(order.itemIds)];
       const stored = this.storableOrder(workspaceId, userId, order.container, requested, now);
       if (order.container.kind !== "organization") {
+        const containerId = order.container.kind === "pinned" ? workspaceId : order.container.id;
         this.storage.sql.exec(
           `DELETE FROM workspace_container_order
             WHERE user_id = ? AND container_kind = ? AND container_id = ?`,
           userId,
           order.container.kind,
-          order.container.id,
+          containerId,
         );
         for (const [position, itemId] of stored.entries()) {
           this.storage.sql.exec(
@@ -1122,7 +1163,7 @@ export class WorkspaceSpaceStorage {
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
             userId,
             order.container.kind,
-            order.container.id,
+            containerId,
             itemId,
             position,
             now,
@@ -1137,7 +1178,7 @@ export class WorkspaceSpaceStorage {
 
   /** Whether this viewer may name the container whose private order they write. */
   canArrange(userId: string, container: OrderedContainer): boolean {
-    if (container.kind === "organization") return true;
+    if (container.kind === "organization" || container.kind === "pinned") return true;
     if (container.kind === "space") return this.readable(userId, container.id) !== false;
     return this.listableChannelIds(userId, [container.id]).length > 0;
   }
@@ -1152,6 +1193,16 @@ export class WorkspaceSpaceStorage {
   ): string[] {
     if (container.kind === "organization") {
       return this.organizationOrder(workspaceId, userId, requestedIds, now);
+    }
+    if (container.kind === "pinned") {
+      // Only Channels this person can see; whether each is pinned right now is
+      // the client's to draw, since a pin and its position here move apart
+      // whenever one is unpinned on another device.
+      const listable = new Set(this.listableChannelIds(userId, requestedIds));
+      return mergedOrder(
+        requestedIds.filter((id) => listable.has(id)),
+        this.storedContainerOrder(userId, "pinned", workspaceId),
+      );
     }
     const stored = this.storedContainerOrder(userId, container.kind, container.id);
     if (container.kind !== "space") return mergedOrder(requestedIds, stored);

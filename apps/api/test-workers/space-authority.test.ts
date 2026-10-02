@@ -591,13 +591,13 @@ async function personalOrder(userId: string): Promise<PersonalOrder> {
 /** One container's stored item ids, or `null` when this person has no row for it. */
 function storedItemIds(
   ordering: PersonalOrder,
-  kind: "organization" | "space" | "channel",
+  kind: "organization" | "space" | "channel" | "pinned",
   containerId?: string,
 ): string[] | null {
-  // The Organization's entry carries no id, because a request is addressed to
-  // one Organization already; the other two are a pair.
-  return ordering.find((entry) => (entry.container.kind === "organization"
-    ? kind === "organization"
+  // The Organization's entry and All's pins carry no id, because a request is
+  // addressed to one Organization already; the other two are a pair.
+  return ordering.find((entry) => (entry.container.kind === "organization" || entry.container.kind === "pinned"
+    ? entry.container.kind === kind
     : entry.container.kind === kind && entry.container.id === containerId))?.itemIds ?? null;
 }
 
@@ -2101,6 +2101,31 @@ describe("WorkspaceDO space authority", () => {
     expect(storedItemIds(member, "organization")).toEqual([first, second]);
     expect(storedItemIds(member, "space", first)).toBeNull();
     expect(storedItemIds(member, "channel", CHANNEL_A)).toBeNull();
+  });
+
+  it("given pins across Spaces, when one person orders All's Pinned section, then it is theirs and names only what they can read", async () => {
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    // A member's personal Channel: the owner cannot read it, so it is not a
+    // row on their sidebar and not theirs to place.
+    await publishPersonalChannel(CHANNEL_C, MEMBER);
+
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "pinned" }, itemIds: [CHANNEL_B, CHANNEL_C, CHANNEL_A] },
+    })).resolves.toMatchObject({ ok: true, order: { container: { kind: "pinned" }, itemIds: [CHANNEL_B, CHANNEL_A] } });
+
+    // Delivered on the same field as every other order the sidebar draws.
+    expect(storedItemIds(await personalOrder(OWNER), "pinned")).toEqual([CHANNEL_B, CHANNEL_A]);
+    expect(storedItemIds(await personalOrder(MEMBER), "pinned")).toBeNull();
+
+    // A later drag names only what it moved; the rest keep their places.
+    await expect(workspace().reorderContainer({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      order: { container: { kind: "pinned" }, itemIds: [CHANNEL_A] },
+    })).resolves.toMatchObject({ ok: true, order: { itemIds: [CHANNEL_A, CHANNEL_B] } });
   });
 
   it("given a Space's Channels, when the order names one it does not hold or the viewer cannot read, then it is dropped", async () => {

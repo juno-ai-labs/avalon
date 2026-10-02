@@ -295,14 +295,14 @@ export type UpdateSpaceAudienceRequest = z.infer<typeof UpdateSpaceAudienceReque
 /**
  * What a person may arrange by hand, named by the thing that contains it.
  *
- * Three lists in the product are ordered per person — the Organization's
- * Spaces, the Channels placed in one Space, and the Breakouts under one
- * Channel — and they are one mechanism rather than three because the question
+ * Four lists in the product are ordered per person — the Organization's
+ * Spaces, the Channels placed in one Space, the Breakouts under one Channel,
+ * and the Channels pinned under **All** — and they are one mechanism because the question
  * each answers is identical: in what order does *this* person want the items of
  * *this* container. The kind says which list, the id says which container of
  * that kind, and the items are ids of whatever that container holds.
  *
- * **`organization` carries no id.** A request is already addressed to one
+ * **`organization` and `pinned` carry no id.** A request is already addressed to one
  * Organization — the authority reads the workspace from the caller's session
  * and writes the rows under it — so an id here would be a second answer to a
  * question already settled, and a wrong one would be *accepted*: the write
@@ -312,13 +312,18 @@ export type UpdateSpaceAudienceRequest = z.infer<typeof UpdateSpaceAudienceReque
  * to fill in correctly. The stored row still keys on the workspace id, because
  * a row wants to say what it is about; the wire does not have to be told.
  */
-export const OrderedContainerKindSchema = z.enum(["organization", "space", "channel"]);
+export const OrderedContainerKindSchema = z.enum(["organization", "space", "channel", "pinned"]);
 export type OrderedContainerKind = z.infer<typeof OrderedContainerKindSchema>;
 
 export const OrderedContainerSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("organization") }),
   z.strictObject({ kind: z.literal("space"), id: IdSchema }),
   z.strictObject({ kind: z.literal("channel"), id: IdSchema }),
+  // The Pinned section under **All**: every Channel this person pinned in any
+  // Space, in one order of their own. Each Space keeps its own pinned run; All
+  // draws from several, so it has no run to rearrange and keeps this list
+  // instead. Addressed like `organization`, by the request's own Organization.
+  z.strictObject({ kind: z.literal("pinned") }),
 ]);
 export type OrderedContainer = z.infer<typeof OrderedContainerSchema>;
 

@@ -423,12 +423,39 @@ rewrites every row of the run, and any intermediate state of that rewrite
 collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
+All's own order lives in the per-person order store, not here:
+`workspace_container_order` rows with `container_kind = 'pinned'`, keyed by the
+workspace id like the Organization's Space order (migration 87 widened that
+table's kind CHECK). The rows name Channels, not pins, and a write keeps only
+Channels the person can list. Whether a Channel is pinned stays this table's
+answer, so an unpinned Channel's row is simply not drawn.
+
 WorkspaceDO migration 66 drops the legacy `(user_id, workstream_id)` table and
 recreates it without copying rows. There is no authoritative answer for which
 Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
+
+### 2026-10-02 — All's Pinned section can keep an order of its own
+
+**What changed:** The per-person order store gains a `pinned` kind, addressed
+by the Organization like the Space order, and WorkspaceDO migration 87 rebuilds
+`workspace_container_order` to admit it. `reorderContainer` stores it, keeping
+only Channels the person can list and merging with what they already had, and
+the sidebar socket delivers it on `ordering`. The sidebar does not read it yet;
+until it does, All still drags only when every pin is a General pin.
+
+**Why:** All shows pins from several Spaces, and each Space keeps its own run,
+so All had no order a drag could write. Asked for a drag that is the same on
+every device, the order went into the store that already syncs Space, Channel
+and Breakout order rather than into this table: an All position is not a pin,
+and per-Space runs restart at zero so they cannot be interleaved. A device-only
+order was rejected because every other order in Rally follows the account.
+
+**Consequences:** Rows here name Channels, not pins. Unpinning does not remove
+a Channel's row, so pinning it again under All returns it to its old place
+rather than the end; the client draws only what is pinned.
 
 ### 2026-09-21 — Pins belong to Channel placements in Spaces
 
