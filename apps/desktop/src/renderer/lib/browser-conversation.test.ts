@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EmbeddedBrowserCommand, EmbeddedBrowserResult, EmbeddedBrowserTab } from '../../common/embedded-browser';
-import { browserConversation, loadThroughTab, providerSiteAllows } from './browser-conversation';
+import { browserConversation, loadThroughTab } from './browser-conversation';
 
 const tab = (id: string, title: string, url: string): EmbeddedBrowserTab => ({
   id, title, url, loading: false, canGoBack: false, canGoForward: false, favicon: null,
@@ -20,22 +20,6 @@ describe('browser conversations', () => {
       .toEqual({ provider: 'chatgpt', id: 'cx_6abef53d71248191a4b8dcde6233784d', url: 'https://chatgpt.com/s/cx_6abef53d71248191a4b8dcde6233784d', title: 'Shared ChatGPT task', shared: true });
     expect(browserConversation(tab('g', 'Fix the build', 'https://claude.ai/code/session_01TPsq6orNbtJsDTRQjwKLDs')))
       .toEqual({ provider: 'claude', id: 'session_01TPsq6orNbtJsDTRQjwKLDs', url: 'https://claude.ai/code/session_01TPsq6orNbtJsDTRQjwKLDs', title: 'Fix the build', shared: false });
-  });
-
-  it('allows an import only its own provider’s sites, over HTTPS', () => {
-    expect(providerSiteAllows('chatgpt', 'https://chatgpt.com/c/x')).toBe(true);
-    expect(providerSiteAllows('chatgpt', 'https://files.oaiusercontent.com/f')).toBe(true);
-    expect(providerSiteAllows('chatgpt', 'https://claude.ai/chat/x')).toBe(false);
-    expect(providerSiteAllows('claude', 'https://x.frame.claudeusercontent.com/a.html')).toBe(true);
-    expect(providerSiteAllows('claude', 'https://evilclaude.ai/')).toBe(false);
-    expect(providerSiteAllows('claude', 'http://claude.ai/')).toBe(false);
-    expect(providerSiteAllows('claude', 'not a url')).toBe(false);
-    // Sign-in, but never the same company's API or billing consoles.
-    expect(providerSiteAllows('chatgpt', 'https://auth.openai.com/log-in')).toBe(true);
-    expect(providerSiteAllows('chatgpt', 'https://platform.openai.com/api-keys')).toBe(false);
-    expect(providerSiteAllows('chatgpt', 'https://openai.com/')).toBe(false);
-    expect(providerSiteAllows('claude', 'https://console.anthropic.com/settings/keys')).toBe(false);
-    expect(providerSiteAllows('claude', 'https://anthropic.com/')).toBe(false);
   });
 
   it('stops loading a file through the tab once it passes the byte budget, and closes the stream', async () => {

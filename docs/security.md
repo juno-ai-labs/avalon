@@ -125,14 +125,11 @@ same as desktop.
   input, and lists and reads the network responses the tab received. Those
   results — network bodies included — reach the model unredacted, by product
   decision: the page already received them. The boundary is the tab: one tab,
-  held to named hosts of the provider's chat app, file and sign-in servers
-  (`PROVIDER_SITES` in `browser-conversation.ts`) — never the company's whole
-  domain, which in the same signed-in browser includes its API and billing
-  consoles — and to the one conversation the person opened: a page showing
-  another conversation is off those sites, and the finish is refused while the
-  tab shows one. There is no other tab and no DevTools passthrough; there is no egress filter on the page, and `browser_load` follows a
-  redirect from an allowed host with the tab's session, because the DevTools
-  loader neither reports nor refuses one (deferred with egress filtering). The import window is the
+  with no other tab and no DevTools passthrough. Where that tab goes is not
+  restricted, by product decision: it may navigate to and load from any site
+  with the person's session, and there is no egress filter on the page. The
+  finish is refused while the tab shows a conversation other than the one the
+  person opened. The import window is the
   one non-conversation window allowed to open a realtime socket, to the hidden
   conversation its agent runs in, and it closes that socket when the window
   navigates, crashes or closes. See [`desktop-actions.md`](desktop-actions.md)
