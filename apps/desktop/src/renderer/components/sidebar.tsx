@@ -2338,24 +2338,23 @@ export function Sidebar({
                    second "Channels" label only restates the level the rail
                    already represents and pushes its rows down. */
                 <>
-                {/* Named only when Pinned sits above it: alone, the list needs
-                    no heading, and with pins the two lists need telling apart. */}
-                {pinnedWorkstreams.length > 0 && (
-                  <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:channels">
-                    <h2>Channels</h2>
-                    <button
-                      aria-label={`Sorted ${CHANNEL_SORTS[channelSort].spoken}. Sort ${CHANNEL_SORTS[CHANNEL_SORTS[channelSort].next].spoken}`}
-                      className="sidebar-sort-toggle window-no-drag"
-                      onClick={() => setChannelSort(CHANNEL_SORTS[channelSort].next)}
-                      type="button"
-                    >
-                      {/* Text first, icon last: the icon keeps its place at
-                          the edge while the label changes width. */}
-                      <span className="sidebar-section-hint">{CHANNEL_SORTS[channelSort].label}</span>
-                      <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
-                    </button>
-                  </div>
-                )}
+                {/* Named whenever the list has rows, pinned or not: the heading
+                    carries the sort toggle, and a reader with no pins is the
+                    one who most needs Recent and Needs you to find their way. */}
+                <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:channels">
+                  <h2>Channels</h2>
+                  <button
+                    aria-label={`Sorted ${CHANNEL_SORTS[channelSort].spoken}. Sort ${CHANNEL_SORTS[CHANNEL_SORTS[channelSort].next].spoken}`}
+                    className="sidebar-sort-toggle window-no-drag"
+                    onClick={() => setChannelSort(CHANNEL_SORTS[channelSort].next)}
+                    type="button"
+                  >
+                    {/* Text first, icon last: the icon keeps its place at
+                        the edge while the label changes width. */}
+                    <span className="sidebar-section-hint">{CHANNEL_SORTS[channelSort].label}</span>
+                    <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
+                  </button>
+                </div>
                 <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
                   {unpinnedWorkstreams.map((workstream) => (
                     <Fragment key={workstream.id}>{renderWorkstream(
