@@ -7594,7 +7594,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-pill.is-split:has(> [data-state='open']) {
   /* Solid, as the design's #eee: the translucent hover wash let the header
      behind it through, so the pressed pill read as a tint rather than a fill. */
-  background: color-mix(in srgb, var(--av-sys-color-surface-raised) 90%, rgb(119 119 119));
+  background: color-mix(in srgb, var(--av-sys-color-surface-raised) 90%, var(--av-sys-color-text-disabled));
   box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong);
 }
 .title-pill.is-split > .title-pill-menu-trigger[data-state='open'] { background: transparent; }
@@ -7711,7 +7711,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   user-select: none;
 }
 .title-menu-tile > svg { color: var(--av-sys-color-text-default); }
-.title-menu-tile[data-highlighted] { background: color-mix(in srgb, var(--av-sys-color-surface-sunken) 88%, rgb(119 119 119)); color: var(--av-sys-color-text-default); }
+.title-menu-tile[data-highlighted] { background: color-mix(in srgb, var(--av-sys-color-surface-sunken) 88%, var(--av-sys-color-text-disabled)); color: var(--av-sys-color-text-default); }
 .title-menu-tile[data-disabled] { opacity: .42; }
 
 /* A row that opens a level: what it is, how much of it there is, and a chevron. */
@@ -7981,7 +7981,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    that opened it stays, the other is hidden but kept mounted. */
 .split-conversation { display: flex; height: 100%; min-width: 0; position: relative; }
 .split-conversation-pane { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; position: relative; }
-.split-conversation-pane.is-breakout { border-left: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle); flex: 0 0 var(--split-breakout-width, 50%); max-width: calc(100% - var(--conversation-min-width)); }
+.split-conversation-pane.is-breakout { border-left: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle); flex: 0 0 var(--split-breakout-width, 50%); max-width: max(50%, calc(100% - var(--conversation-min-width))); }
 .split-conversation-pane.is-breakout.is-alone { border-left: 0; flex: 1 1 0; max-width: none; }
 .split-conversation-pane[hidden] { display: none; }
 .split-conversation-pane > .conversation-layout { flex: 1; min-height: 0; }

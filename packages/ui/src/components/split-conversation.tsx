@@ -19,8 +19,13 @@ const KEYBOARD_STEP = 16;
  */
 export type SplitConversationMode = 'main' | 'split' | 'breakout';
 
-/** The narrowest either pane may be dragged to: the conversation minimum. */
+/**
+ * The Breakout's width, keeping both panes at least the conversation minimum.
+ * A container too narrow for two minimums splits evenly instead, which the
+ * pane's CSS cap allows, so the width reported is the width drawn.
+ */
 export function clampBreakoutWidth(requested: number, containerWidth: number): number {
+  if (containerWidth < 2 * SIDEBAR_CONTENT_MIN_WIDTH) return Math.round(containerWidth / 2);
   const max = Math.max(SIDEBAR_CONTENT_MIN_WIDTH, containerWidth - SIDEBAR_CONTENT_MIN_WIDTH);
   return Math.round(Math.max(SIDEBAR_CONTENT_MIN_WIDTH, Math.min(max, requested)));
 }
