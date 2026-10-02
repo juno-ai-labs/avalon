@@ -15,6 +15,8 @@ on:
       # touches only docs, the desktop app, or the site does not redeploy.
       - "apps/api/**"
       - "apps/engineering-mcp/**"
+      # The engineering MCP compiles Ace's flag-administration contract.
+      - "apps/ace/src/protocol.ts"
       - "packages/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"

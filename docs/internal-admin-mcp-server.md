@@ -123,7 +123,7 @@ cross-project connection:
 
 Restart Cursor, open **Customize**, find `rally-engineering`, and complete the
 OAuth sign-in. Cursor Desktop uses a localhost callback, which the Rally Access
-application admits through Dynamic Client Registration. Confirm the six tools
+application admits through Dynamic Client Registration. Confirm the tools
 appear under the server before making a query.
 
 Project configuration at `.cursor/mcp.json` also works, but do not commit OAuth
@@ -228,6 +228,10 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `run_substream_sql` | `workspaceId`, `workstreamId`, `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SubstreamAgent. |
 | `run_sidekick_sql` | `workspaceId`, `sidekickId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SidekickDO — the Sidekick itself, not its conversation. |
 | `run_artifact_sql` | `workspaceId`, `artifactId`, `sql`, optional `bindings` | Runs arbitrary SQLite in ArtifactHostDO — the artifact's supervisor, not its facet. |
+| `list_feature_flags` | None | Lists Ace's managed product flags with their live Flagship definitions. |
+| `update_feature_flag` | `key`, `description`, `enabled`, `default_variation`, `rules` | Replaces a managed product flag's whole definition through Ace and notifies connected clients. |
+| `list_model_flags` | None | Lists each agent role's model flag with its default and live route. |
+| `update_model_flag` | `role`, `routing` | Replaces an agent role's default route plan through Ace after checking each model id on OpenRouter. |
 
 SQL results include `columns`, JSON-safe `rows`, `rowsRead`, and `rowsWritten`.
 BLOB values are returned as `{ "type": "blob", "base64": "..." }`.
@@ -246,6 +250,10 @@ maintenance; it is not a domain-level count of changed records.
 - The server intentionally has no repository-defined row, statement, or query
   timeout. Add a narrow predicate before selecting a potentially large product
   table.
+
+- Read a flag with `list_feature_flags` before `update_feature_flag`, and send
+  every rule back. The update replaces the whole definition, so a rule left out
+  is deleted for everyone it reached.
 
 - The server audits the Access actor, tool, target IDs, and success or failure,
   but deliberately does not log SQL text, bindings, result rows, or SQLite error

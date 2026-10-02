@@ -235,3 +235,30 @@ export const ManagedFlagUpdateSchema = z.object({
 });
 
 export type ManagedFlagUpdate = z.infer<typeof ManagedFlagUpdateSchema>;
+
+/**
+ * The private RPC Ace exports as `FlagAdministration` for the engineering MCP
+ * (`docs/engineering-mcp.md`). It is the same managed catalogs and the same
+ * write functions as the Ace pages, so a flag changed from either place is
+ * validated, written and fanned out once, by one Worker. Only a Worker holding
+ * the Service Binding can call it; the caller passes the verified Access
+ * identity of the engineer it acts for, which Ace records on every write.
+ */
+export interface FlagAdministrationActor {
+  subject: string;
+}
+
+export type FlagAdministrationResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; code: string; message: string };
+
+/** A catalog entry beside Flagship's live definition, `null` when not provisioned. */
+export type ManagedProductFlagState = (typeof MANAGED_FLAGS)[number] & { flag: unknown };
+export type ManagedModelFlagState = (typeof MANAGED_MODELS)[number] & { flag: unknown };
+
+export interface FlagAdministrationRpc {
+  listProductFlags(): Promise<FlagAdministrationResult<ManagedProductFlagState[]>>;
+  updateProductFlag(input: { actor: FlagAdministrationActor; update: unknown }): Promise<FlagAdministrationResult<unknown>>;
+  listModelFlags(): Promise<FlagAdministrationResult<ManagedModelFlagState[]>>;
+  updateModelRouting(input: { actor: FlagAdministrationActor; update: unknown }): Promise<FlagAdministrationResult<unknown>>;
+}

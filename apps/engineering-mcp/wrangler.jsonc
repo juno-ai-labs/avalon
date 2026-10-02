@@ -18,6 +18,11 @@
       "binding": "GLOBAL_INSPECTION",
       "service": "avalon-api-global",
       "entrypoint": "EngineeringInspectionBridge"
+    },
+    {
+      "binding": "FLAG_ADMINISTRATION",
+      "service": "avalon-ace",
+      "entrypoint": "FlagAdministration"
     }
   ],
   "observability": { "enabled": true, "head_sampling_rate": 1 }

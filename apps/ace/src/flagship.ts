@@ -1,4 +1,5 @@
 import { ProductFeatureFlagKeySchema, type ProductFeatureFlagKey } from '@rally/contracts';
+import { platformErrorCode } from '@rally/contracts/platform-diagnostics';
 import { z } from 'zod';
 import type { Env } from './env';
 import {
@@ -23,6 +24,50 @@ function endpoint(env: Env, suffix = ''): string {
     + `/flagship/apps/${encodeURIComponent(env.FLAGSHIP_APP_ID)}/flags${suffix}`;
 }
 
+/** Flagship refused or failed a request; the status is what a log can name. */
+export class FlagshipRequestError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = 'FlagshipRequestError';
+  }
+}
+
+/**
+ * Flagship accepted the write but the key-only change notification did not
+ * queue. Saving again is safe and repairs the notification.
+ */
+export class FlagChangeNotificationError extends Error {
+  constructor(cause: unknown) {
+    super(
+      'Flagship saved the flag, but the change notification to connected clients failed. Save the same definition again to notify them.',
+      { cause },
+    );
+    this.name = 'FlagChangeNotificationError';
+  }
+}
+
+/**
+ * The code and caller-safe message for a Flagship failure Ace can name, or
+ * `null`. Flagship's own error text stays in Ace: only its status crosses, to
+ * the Ace page and to the engineering MCP alike.
+ */
+export function flagshipFailure(error: unknown): { code: string; message: string } | null {
+  if (error instanceof FlagshipRequestError) {
+    return {
+      code: `flagship_request_failed_${error.status}`,
+      message: `Flagship refused the request with HTTP ${error.status}. Nothing was changed by this call.`,
+    };
+  }
+  if (error instanceof FlagChangeNotificationError) {
+    const platform = platformErrorCode(error.cause);
+    return {
+      code: platform ? `flag_change_notification_failed:${platform}` : 'flag_change_notification_failed',
+      message: error.message,
+    };
+  }
+  return null;
+}
+
 async function request(env: Env, path: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(endpoint(env, path), {
     ...init,
@@ -35,7 +80,10 @@ async function request(env: Env, path: string, init?: RequestInit): Promise<unkn
   const body = await response.json().catch(() => null) as { result?: unknown; errors?: Array<{ message?: string }> } | null;
   if (!response.ok) {
     const detail = body?.errors?.map((error) => error.message).filter(Boolean).join('; ');
-    throw new Error(`Flagship request failed (${response.status})${detail ? `: ${detail}` : ''}`);
+    throw new FlagshipRequestError(
+      response.status,
+      `Flagship request failed (${response.status})${detail ? `: ${detail}` : ''}`,
+    );
   }
   return body?.result;
 }
@@ -70,10 +118,14 @@ export async function updateManagedFlag(
   });
   // Flagship configuration propagates asynchronously. Carry only the key, and
   // let every WorkspaceDO evaluate after the documented propagation window.
-  await env.PRODUCT_FLAG_CHANGE_QUEUE.send(
-    { kind: 'flagship_product_flag_changed', flagKey: parsedKey },
-    { delaySeconds: FLAGSHIP_PROPAGATION_DELAY_SECONDS },
-  );
+  try {
+    await env.PRODUCT_FLAG_CHANGE_QUEUE.send(
+      { kind: 'flagship_product_flag_changed', flagKey: parsedKey },
+      { delaySeconds: FLAGSHIP_PROPAGATION_DELAY_SECONDS },
+    );
+  } catch (error) {
+    throw new FlagChangeNotificationError(error);
+  }
   return result;
 }
 
