@@ -44,7 +44,14 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
 }
 
 /** Guest browser hierarchy; canonical Channel owners still decide every label released. */
-export async function listSharedNavigationDirectory(env: Env, workspaceId: WorkspaceId, userId: UserId, includeAttention = false) {
+/**
+ * `includeShellFields` adds each Breakout's `originTurnId` and each Space's
+ * `systemRole`. Released desktops parse this read strictly and reject keys
+ * they do not know, so only a client that asks for them gets them.
+ */
+export async function listSharedNavigationDirectory(
+  env: Env, workspaceId: WorkspaceId, userId: UserId, includeAttention = false, includeShellFields = false,
+) {
   const relationship = await readWorkspaceRelationship(env.DB, workspaceId, userId);
   if (relationship?.status !== "active") {
     return SharedNavigationDirectorySchema.parse({ spaces: [], workstreams: [] });
@@ -74,5 +81,19 @@ export async function listSharedNavigationDirectory(env: Env, workspaceId: Works
     || current.revision !== relationship.revision) {
     return SharedNavigationDirectorySchema.parse({ spaces: [], workstreams: [] });
   }
-  return SharedNavigationDirectorySchema.parse({ spaces, workstreams });
+  if (includeShellFields) return SharedNavigationDirectorySchema.parse({ spaces, workstreams });
+  return SharedNavigationDirectorySchema.parse({
+    spaces: spaces.map((space) => withoutKey(space, "systemRole")),
+    workstreams: workstreams.map((workstream) => ({
+      ...workstream,
+      conversations: workstream.conversations.map((conversation) => withoutKey(conversation, "originTurnId")),
+    })),
+  });
+}
+
+/** A copy of `value` without `key`, so the parse sees the old shape exactly. */
+function withoutKey<T extends object, K extends keyof T>(value: T, key: K): Omit<T, K> {
+  const copy = { ...value };
+  delete copy[key];
+  return copy;
 }

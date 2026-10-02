@@ -286,6 +286,8 @@ it("applies committed grants to the grant directory in the same object even when
   expect(await listSharedDirectory(env, workspaceId, recipientId)).toEqual({ workstreams: [{
     parentId, title: null, archived: false, conversations: [{ substreamId: childId, title: "Shared breakout", archived: false }],
   }] });
+  // A released desktop asks without `shell` and parses strictly: it must get
+  // exactly the keys it knows, or it rejects the whole read.
   expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({
     spaces: [
       { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", workstreamIds: [parentId] },
@@ -293,6 +295,14 @@ it("applies committed grants to the grant directory in the same object even when
     ],
     workstreams: [{ parentId, title: "Private parent", scope: "personal", archived: false,
       conversations: [{ substreamId: childId, title: "Shared breakout", scope: "personal", archived: false }] }],
+  });
+  expect(await listSharedNavigationDirectory(env, workspaceId, recipientId, false, true)).toEqual({
+    spaces: [
+      { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", systemRole: null, workstreamIds: [parentId] },
+      { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", scope: "workspace", systemRole: null, workstreamIds: [parentId] },
+    ],
+    workstreams: [{ parentId, title: "Private parent", scope: "personal", archived: false,
+      conversations: [{ substreamId: childId, title: "Shared breakout", scope: "personal", archived: false, originTurnId: null }] }],
   });
   expect((await listSharedNavigationDirectory(env, workspaceId, recipientId, true))
     .workstreams[0]?.conversations[0]?.needsAttention).toBe(false);
@@ -351,17 +361,17 @@ it("shows every containing Space when a guest has shared Breakouts, reading ever
   });
 
   const calls: string[] = [];
-  expect(await listSharedNavigationDirectory(countingEnv(calls), workspaceId, recipientId)).toEqual({
+  expect(await listSharedNavigationDirectory(countingEnv(calls), workspaceId, recipientId, false, true)).toEqual({
     spaces: [
-      { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", workstreamIds: [parentId] },
-      { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", scope: "workspace", workstreamIds: [secondParentId] },
-      { id: privateSpaceId, name: "Private planning", iconKey: "star", colorKey: "red", scope: "personal", workstreamIds: [parentId] },
+      { id: firstSpaceId, name: "Product", iconKey: "rocket", colorKey: "violet", scope: "workspace", systemRole: null, workstreamIds: [parentId] },
+      { id: secondSpaceId, name: "Research", iconKey: "lightbulb", colorKey: "teal", scope: "workspace", systemRole: null, workstreamIds: [secondParentId] },
+      { id: privateSpaceId, name: "Private planning", iconKey: "star", colorKey: "red", scope: "personal", systemRole: null, workstreamIds: [parentId] },
     ],
     workstreams: [
       { parentId, title: "Private parent", scope: "personal", archived: false,
-        conversations: [{ substreamId: childId, title: "Shared breakout", scope: "personal", archived: false }] },
+        conversations: [{ substreamId: childId, title: "Shared breakout", scope: "personal", archived: false, originTurnId: null }] },
       { parentId: secondParentId, title: "Research channel", scope: "personal", archived: false,
-        conversations: [{ substreamId: secondChildId, title: "Research breakout", scope: "personal", archived: false }] },
+        conversations: [{ substreamId: secondChildId, title: "Research breakout", scope: "personal", archived: false, originTurnId: null }] },
     ],
   });
   // Two shared Channels, one read for both of them: the round trips do not
@@ -376,7 +386,7 @@ it("answers a batch read Channel by Channel, withholding one while releasing the
     userId: recipientId, membershipIncarnation: recipientId })).toEqual([
     null,
     { parentId: secondParentId, title: "Research channel", scope: "personal", archived: false,
-      conversations: [{ substreamId: secondChildId, title: "Research breakout", scope: "personal", archived: false }] },
+      conversations: [{ substreamId: secondChildId, title: "Research breakout", scope: "personal", archived: false, originTurnId: null }] },
   ]);
 });
 
@@ -409,14 +419,14 @@ it("releases canonical Channel and shared conversation labels without granting M
   await room().mutateScopeGrant(mutation());
   expect(await readSharedWorkstream(room(), request)).toEqual({ parentId, title: "Private parent", scope: "personal", archived: false,
     appearance: { icon: "briefcase", color: "blue" },
-    conversations: [{ substreamId: childId, title: "Visible child", scope: "personal", archived: false,
+    conversations: [{ substreamId: childId, title: "Visible child", scope: "personal", archived: false, originTurnId: null,
       appearance: { icon: "star", color: "red" } }] });
   expect(await readSharedWorkstream(room(), { ...request, membershipIncarnation: "replacement" })).toBeNull();
   await room().mutateScopeGrant(mutation(main));
   expect(await readSharedWorkstream(room(), request)).toEqual({ parentId, title: "Private parent", scope: "personal", archived: false,
     appearance: { icon: "briefcase", color: "blue" },
     conversations: [{ substreamId: "0", title: "Main", scope: "personal", archived: false,
-      appearance: { icon: "briefcase", color: "blue" } }, { substreamId: childId, title: "Visible child", scope: "personal", archived: false,
+      appearance: { icon: "briefcase", color: "blue" } }, { substreamId: childId, title: "Visible child", scope: "personal", archived: false, originTurnId: null,
       appearance: { icon: "star", color: "red" } }] });
   await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId));
   expect(await readSharedWorkstream(room(), request)).toBeNull();
@@ -442,12 +452,12 @@ it("opts guest navigation into attention for each granted Breakout without relea
   expect(await room().mutateScopeGrant(mutation(sibling))).toMatchObject({ status: "committed" });
   const request = { workspaceId, parentId, userId: recipientId, membershipIncarnation: recipientId };
   expect((await readSharedWorkstream(room(), request))?.conversations).toEqual([
-    { substreamId: childId, title: "Shared breakout", scope: "personal", archived: false },
-    { substreamId: siblingId, title: "Second shared breakout", scope: "personal", archived: false },
+    { substreamId: childId, title: "Shared breakout", scope: "personal", archived: false, originTurnId: null },
+    { substreamId: siblingId, title: "Second shared breakout", scope: "personal", archived: false, originTurnId: null },
   ]);
   expect((await readSharedWorkstream(room(), { ...request, includeAttention: true }))?.conversations).toEqual([
-    { substreamId: childId, title: "Shared breakout", scope: "personal", archived: false, needsAttention: false },
-    { substreamId: siblingId, title: "Second shared breakout", scope: "personal", archived: false, needsAttention: true },
+    { substreamId: childId, title: "Shared breakout", scope: "personal", archived: false, originTurnId: null, needsAttention: false },
+    { substreamId: siblingId, title: "Second shared breakout", scope: "personal", archived: false, originTurnId: null, needsAttention: true },
   ]);
 });
 

@@ -359,6 +359,26 @@ export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
 ];
 
 /**
+ * Migration 87: each person's order for **All**'s Pinned section.
+ *
+ * A table of its own rather than a fourth `container_kind` in
+ * `workspace_container_order`, so a Worker from before it never reads a row it
+ * cannot parse — a rollback stays safe. One Organization per object, so the
+ * rows key on the person alone.
+ */
+export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
+  `CREATE TABLE workspace_pinned_order (
+    user_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, item_id)
+  ) STRICT`,
+  `CREATE INDEX workspace_pinned_order_position_idx
+    ON workspace_pinned_order(user_id, position, item_id)`,
+];
+
+/**
  * The run states a conversation is live in on its own account.
  *
  * The `exact_state` vocabulary rather than the wire's, because this predicate
@@ -1133,6 +1153,51 @@ export class WorkspaceSpaceStorage {
       this.advanceWaterline(now);
       return ContainerOrderSchema.parse({ container: order.container, itemIds: stored });
     });
+  }
+
+  /**
+   * This person's order for **All**'s Pinned section, naming only Channels
+   * they can still list. A Channel they lost leaves its row behind, harmless,
+   * and is simply not named; a pin it never named is the client's to place.
+   */
+  readPinnedOrder(userId: string): string[] {
+    const stored = this.storedPinnedOrder(userId);
+    const listable = new Set(this.listableChannelIds(userId, stored));
+    return stored.filter((id) => listable.has(id));
+  }
+
+  /**
+   * Put All's Pinned section in the order this person asked for, and answer
+   * with what was stored: the Channels they can list, each once, then any
+   * stored id the request did not name, so a pin outside the client's loaded
+   * page keeps its place. Whether each is pinned right now is the client's to
+   * draw, since a pin and its place here move apart whenever one is unpinned
+   * on another device.
+   */
+  writePinnedOrder(userId: string, requestedIds: readonly string[], now: number): string[] {
+    const requested = [...new Set(requestedIds)];
+    const listable = new Set(this.listableChannelIds(userId, requested));
+    const stored = mergedOrder(requested.filter((id) => listable.has(id)), this.storedPinnedOrder(userId));
+    this.storage.transactionSync(() => {
+      this.storage.sql.exec(`DELETE FROM workspace_pinned_order WHERE user_id = ?`, userId);
+      for (const [position, itemId] of stored.entries()) {
+        this.storage.sql.exec(
+          `INSERT INTO workspace_pinned_order (user_id, item_id, position, updated_at) VALUES (?, ?, ?, ?)`,
+          userId,
+          itemId,
+          position,
+          now,
+        );
+      }
+    });
+    return this.readPinnedOrder(userId);
+  }
+
+  private storedPinnedOrder(userId: string): string[] {
+    return this.storage.sql.exec<{ item_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT item_id FROM workspace_pinned_order WHERE user_id = ? ORDER BY position, item_id`,
+      userId,
+    ).toArray().map((row) => row.item_id);
   }
 
   /** Whether this viewer may name the container whose private order they write. */
@@ -1950,10 +2015,11 @@ export class WorkspaceSpaceStorage {
         title: string;
         appearance_json: string | null;
         scope: "personal" | "workspace";
+        system_role: "general" | null;
         created_at: number;
         workstream_id: string;
       } & Record<string, SqlStorageValue>>(
-        `SELECT space.space_id, space.title, space.appearance_json, space.scope, space.created_at,
+        `SELECT space.space_id, space.title, space.appearance_json, space.scope, space.system_role, space.created_at,
                 membership.workstream_id
            FROM space_channel_memberships membership
            JOIN spaces space ON space.space_id = membership.space_id
@@ -1980,6 +2046,7 @@ export class WorkspaceSpaceStorage {
             iconKey: icon && SPACE_ICON_KEY_SET.has(icon) ? icon : SPACE_ICON_FALLBACK,
             colorKey: color && SPACE_COLOR_KEY_SET.has(color) ? color : SPACE_COLOR_FALLBACK,
             scope: row.scope,
+            systemRole: row.system_role,
           }),
           workstreamIds: [row.workstream_id],
         });

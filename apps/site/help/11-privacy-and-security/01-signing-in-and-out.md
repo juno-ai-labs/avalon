@@ -39,7 +39,7 @@ sign in with a different Google account.
 
 There are two ways:
 
-- Click your avatar and name at the bottom of the Spaces rail to open the
+- Click your avatar and name at the bottom of the sidebar to open the
   account menu (the one from the
   [tour of the window](../01-getting-started/04-a-tour-of-the-window.md)), then
   choose **Log out**. (Some older layouts call it **Sign out**.)

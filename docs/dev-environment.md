@@ -254,7 +254,24 @@ that is expected and does not block local work.
 `pnpm dev:browser` builds the client, then watches source changes while Wrangler
 serves port 8794. Set the API's `BROWSER_APP_ORIGIN` to the exact local browser
 origin (for example `http://localhost:8794`) and use that same hostname in Chrome.
+Add the same origin to `ALLOWED_ORIGINS` in `.env.local` and re-run
+`pnpm env:sync`: every conversation socket checks it, so without it a signed-in
+tab opens each conversation to **Channel could not be opened** and the Worker
+logs `socket_origin_forbidden`.
 The host uses the local Global service binding; the regional API must be running.
+
+The development seed gives its people no verified email, so email sign-in
+refuses them with `verified_identity_required`. Link one in the local database
+before signing in as them:
+
+```bash
+pnpm --filter @rally/api exec -- wrangler d1 execute avalon-global --local \
+  --persist-to .wrangler/state/global --config wrangler.global.jsonc --command \
+  "INSERT OR IGNORE INTO user_verified_emails (email, user_id, verified_at)
+     SELECT email, id, '2026-01-01T00:00:00.000Z' FROM users WHERE email = 'adam@avalon.local';
+   INSERT OR IGNORE INTO user_login_identities (provider, subject, user_id, verified_at)
+     SELECT 'email', email, id, '2026-01-01T00:00:00.000Z' FROM users WHERE email = 'adam@avalon.local';"
+```
 
 The `dev` script passes `--local-upstream localhost:8794`. Without it, `wrangler
 dev` takes its upstream from the production Custom Domain route in
@@ -344,6 +361,11 @@ await page.getByText('Use local development account').click();
 await page.screenshot({ path: '/tmp/avalon.png' });
 await browser.close();
 ```
+
+A change to `packages/ui/src/styles/app.css` can reach the window stale: the
+desktop's `styles/app.css` only `@import`s it, and Vite can re-serve the old
+inlined copy after an edit. When a computed style disagrees with the file,
+`touch apps/desktop/src/renderer/styles/app.css` to rebuild it.
 
 **Every visible change must be looked at in a real window before it is called
 done.** A passing component test asserts on the DOM, which says nothing about

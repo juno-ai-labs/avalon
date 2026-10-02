@@ -28,7 +28,7 @@ properties without knowing which appearance is active.
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting, drawn with the shared `SegmentedControl` from `components/primitives.tsx`. |
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
 | `packages/contracts/src/palette.ts` | The palette keys and `PALETTE_INK` — which of the two absolute inks each fill carries, and the reasoning behind the rule that picks it. Which keys a Space, Channel, Project or person may hold is in `spaces.ts` and `projects.ts`, which draw from it. |
-| `apps/desktop/src/renderer/lib/project-palette.ts` | `glyphInk()`, resolving that table to the `palette-ink` token a glyph paints its symbol in. |
+| `packages/ui/src/lib/project-palette.ts` | `markColors()`, the pastel `project-tint`/`project-ink` pair a mark of a hue is painted in, and `glyphInk()`, resolving `PALETTE_INK` to the `palette-ink` token for the fills that have no pair. `apps/desktop/src/renderer/lib/project-palette.ts` only re-exports it. |
 | `apps/desktop/src/renderer/styles/palette.css.node.test.ts` | Recomputes the table from the tokens, and pins the WCAG 2 shortfall and the APCA ties. |
 
 ## How it works
@@ -117,6 +117,14 @@ serves it through `rally-font://`.
   saturated mid-tones, and the resulting shortfall against that standard is
   recorded rather than fixed — see the 2026-09-10 changelog entry for what is
   accepted and why.
+- **A mark is painted in its hue's pastel pair, a person in the hue itself.**
+  Channel and Breakout glyphs, Sidekick hexagons, Space icons and picker
+  swatches take `project-tint` under `project-ink` (`markColors()`), themed per
+  appearance, every ink at least 5.3:1 on its tint in light and 7.25:1 in dark,
+  and each family at one OKLab lightness so no hue stands out.
+  `palette.css.node.test.ts` holds both. A person's colour — avatar, presence,
+  bubble, accent — keeps `project` at full saturation. `black` and the retired
+  keys have no pair and keep their fill under `PALETTE_INK`.
 - **Both palette inks are absolute.** A fill does not change with the
   appearance, so the ink over it must not either. `palette-ink-light`,
   `palette-ink-dark` and the fills themselves live in `base.json`, where an
@@ -127,9 +135,7 @@ serves it through `rally-font://`.
   beside the rule — not a literal on that one selector. Overriding each
   consumer in turn is what let `sys.space.group.gap` keep a retired theme's
   60px in the one place nobody had overridden; the value that survives that
-  process is the one nobody argued for. `margin-top: 0` on the compact rail is
-  allowed because it hides the headings the gap spaces, which is a decision
-  rather than an escape.
+  process is the one nobody argued for.
 - **A rule that names a token is not proof the token reaches it.** Check for a
   shorthand later in `app.css` that shadows the longhand on the same element —
   `.sidebar-primary-actions` (`app.css:703`) names `sys.space.group.gap` and has
@@ -214,6 +220,32 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-10-02 — Marks take a pastel pair; people keep the hue
+
+**What changed:** Two themed token families, `sys.color.project-tint.<key>` and
+`sys.color.project-ink.<key>`, give each of the fourteen ring hues a pastel
+background and the icon on it, in light and dark. `markColors()` resolves a key
+to that pair, and every mark draws from it: Channel and Breakout glyphs and
+bare marks, Sidekick hexagons, Space icons, and the appearance picker's swatches
+(the tint with an ink dot) and icon strokes. People's colours are unchanged.
+
+**Why:** The full hues as solid fills were loud in a sidebar of forty rows, and
+asked for a calmer set. The pairs were chosen as a set: one lightness and
+chroma per appearance, so no hue stands out, and every ink clears body-text
+contrast on its tint (5.3–5.9:1 light, about 7.3–7.4:1 dark), which the APCA
+table for the full fills could not promise. People were left saturated on
+purpose: a person's colour is how they are told apart at a glance, and it is
+their own choice.
+
+**Considered and rejected:** Retuning `sys.color.project` itself. That token is
+also every person's colour, so it would have muted people along with marks.
+
+**Consequences:** Stored keys are unchanged; only drawing changed. `black` and
+the retired keys have no pair, so a mark that still stores one keeps its old
+fill under `PALETTE_INK`, which therefore still governs those and every person.
+A new ring hue needs both pairs in both appearances, and the palette test will
+fail until it has them.
 
 ### 2026-09-25 — `cmp.row.hint-gap` is retired
 

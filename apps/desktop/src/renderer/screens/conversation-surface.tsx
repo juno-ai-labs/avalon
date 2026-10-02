@@ -35,6 +35,11 @@ import { ApiError, type MentionIdentity } from '../lib/api';
 import { useChannelRail } from '../lib/channel-rails';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
+import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
+import type { TitleMenuPeople } from '@rally/ui/components/conversation-menus';
+import { RelativeTime } from '../components/relative-time';
+import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
+import { formatDateTime } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { refreshPoppedOutArtifacts } from '../lib/popped-out-artifacts';
 import { layoutKey, readArtifactPanel, writeLayout } from '../lib/desktop-layout';
@@ -101,9 +106,6 @@ import { ArtifactSidebar, InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
-import { SidebarSkeletonRows } from '../components/sidebar-skeleton';
-import { useWorkstreamSidebarGeometry } from '@rally/ui/components/workstream-sidebar';
-import { SidebarHorizontalLine, SidebarScroll, SidebarTitleHeader } from '@rally/ui/components/resizable-sidebar';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
@@ -152,45 +154,10 @@ export function workspaceMemberFromSession(session: ClientSession | null): Works
  * The shape of a conversation while its first socket snapshot is in flight.
  *
  * This is the real conversation geometry, not a centered interstitial. Keeping
- * the channel rail, header, feed and composer in place makes opening feel like
- * content arriving into an already-open room and prevents the whole pane from
- * being redrawn around the snapshot.
+ * the header, feed and composer in place makes opening feel like content
+ * arriving into an already-open room and prevents the whole pane from being
+ * redrawn around the snapshot.
  */
-function ConversationOpeningSidebar(): React.JSX.Element {
-  const { compact, sidebarRef, width } = useWorkstreamSidebarGeometry();
-  return (
-    <aside
-      aria-hidden="true"
-      className={clsx('resizable-sidebar workstream-context-sidebar conversation-opening-sidebar', compact && 'is-compact')}
-      ref={sidebarRef}
-      style={{ flexBasis: width }}
-    >
-      <SidebarTitleHeader
-        className="workstream-context-toolbar window-drag conversation-opening-sidebar-header"
-        icon={<span className="skeleton-bar skeleton-title-mark" />}
-        title={<span className="skeleton-bar skeleton-title-line" />}
-      />
-      <SidebarScroll className="workstream-context-scroll conversation-opening-sidebar-scroll">
-        {/* The main conversation and its Breakouts, then the participants
-            section under its rule: the rail's own order, with no group
-            headings because the real rail has none above its rows. */}
-        <SidebarSkeletonRows count={3} />
-        <section className="workstream-context-section">
-          <SidebarHorizontalLine />
-          <h2><span className="skeleton-bar skeleton-section-label" /></h2>
-          <div className="sidebar-row workstream-context-row skeleton-row">
-            <span className="skeleton-avatar-stack">
-              <span className="skeleton-bar" />
-              <span className="skeleton-bar" />
-              <span className="skeleton-bar" />
-            </span>
-          </div>
-        </section>
-      </SidebarScroll>
-    </aside>
-  );
-}
-
 /**
  * The feed, header and composer placeholders, and the status that says what is
  * opening. The status lives here rather than on the layout so that a rail drawn
@@ -216,14 +183,10 @@ function ConversationOpeningFeed({ label, parentKind, caption = false }: {
             <span className="skeleton-bar conversation-opening-header-title" />
           </header>
         ) : (
-          <header className="grokbot-workstream-header window-drag conversation-opening-header">
-            <div className="grokbot-conversation-title conversation-opening-channel-title">
-              <span className="skeleton-bar conversation-opening-header-mark" />
-              <span className="skeleton-bar conversation-opening-header-title" />
-            </div>
-            <div className="grokbot-header-actions">
-              <span className="skeleton-bar conversation-opening-header-action" />
-            </div>
+          <header className="title-pill-header window-drag conversation-opening-header">
+            <div className="title-pill-ancestors" />
+            <div className="title-pill-current"><span className="skeleton-bar title-pill-skeleton" /></div>
+            <div className="title-pill-trailing" />
           </header>
         )}
         <div className="transcript-scroll">
@@ -279,17 +242,14 @@ function ConversationOpeningFeed({ label, parentKind, caption = false }: {
 export function ConversationOpeningSkeleton({
   label,
   parentKind,
-  sidebar = false,
   caption = false,
 }: {
   label: string;
   parentKind: ConversationParentKind;
-  sidebar?: boolean;
   caption?: boolean;
 }): React.JSX.Element {
   return (
     <div className="conversation-layout conversation-opening-skeleton">
-      {sidebar && <ConversationOpeningSidebar />}
       <ConversationOpeningFeed caption={caption} label={label} parentKind={parentKind} />
     </div>
   );
@@ -980,8 +940,30 @@ export interface ConversationHeaderContext {
   openParticipantDialog: () => void;
   openResource: (resourceId: string, returnFocus: HTMLElement) => void;
   openRail: (variant: RailVariant) => void;
+  /** Open one of this conversation's artifacts in its own right panel. */
+  openArtifact?: (id: string, returnFocus: HTMLElement) => void;
   rename: (title: string) => Promise<void>;
   setAppearance: WorkstreamSocketConnection['setAppearance'];
+  /**
+   * How many messages this conversation holds, counted from its transcript
+   * once the whole of it is loaded. Undefined while older pages remain: a
+   * count of the loaded window would read as a total and be wrong.
+   */
+  replyCount?: number | undefined;
+  /** A Breakout's origin message, for its title menu's "Started from" card. */
+  origin?: { byline: string; text: string } | undefined;
+  /** Adding people to this conversation from inside its title menu. */
+  people?: TitleMenuPeople | undefined;
+}
+
+/** Messages a person would call replies: what people and Rally said, one per turn. */
+export function conversationReplyCount(transcript: readonly Message[]): number {
+  const turns = new Set<string>();
+  for (const message of transcript) {
+    if (message.messageType !== 'text' || message.authorType === 'system') continue;
+    turns.add(`${message.authorType}:${message.transcriptTurnId ?? message.id}`);
+  }
+  return turns.size;
 }
 
 export interface ConversationSubstreamLaunch {
@@ -1019,6 +1001,34 @@ export interface ConversationSurfaceProps {
    * Called only while `renderSidebar`'s context does not exist.
    */
   renderOpeningSidebar?: () => React.ReactNode;
+  /**
+   * This Channel's Breakouts, for the chips under each origin message and the
+   * tick bar down the feed's leading edge. Main only; a Breakout passes none.
+   */
+  breakouts?: readonly BreakoutMark[] | undefined;
+  /** The Breakout open beside this conversation, if any. */
+  openBreakoutId?: string | null;
+  onOpenBreakout?: (substreamId: string) => void;
+  /** Bring this turn into view; a new nonce asks again for the same turn. */
+  scrollToTurn?: { turnId: string; nonce: number } | null;
+  /**
+   * A Breakout's origin in its Channel: the turn it started from, and the
+   * Channel's name for the card's byline. The messages themselves are read
+   * from the Channel's own transcript cache, which the Channel pane beside
+   * this one keeps current; nothing here fetches them.
+   */
+  breakoutOrigin?: { turnId: string | null | undefined; channelTitle: string } | undefined;
+  /**
+   * Whether the `?turn=&sequence=` search target names this conversation. Two
+   * conversations share the route when a Breakout is open beside its Channel,
+   * and the target is only ever in one of them.
+   */
+  honorsSearchTarget?: boolean;
+  /**
+   * Tells two surfaces of one conversation apart — the Channel and the launch
+   * surface writing a Breakout from it — so each owns its own right panel.
+   */
+  paneKey?: string;
   renderSidebar?: (context: ConversationHeaderContext & {
     /** This room's Sidekicks; `undefined` until both lists behind it answer. */
     sidekicks: SidekickRow[] | undefined;
@@ -1049,6 +1059,13 @@ export function ConversationSurface({
   renderSidebar,
   onStartSubstream,
   substreamLaunch,
+  breakouts,
+  openBreakoutId = null,
+  onOpenBreakout,
+  scrollToTurn = null,
+  honorsSearchTarget = true,
+  paneKey,
+  breakoutOrigin,
 }: ConversationSurfaceProps): React.JSX.Element {
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
   const parentDetailQueryKey = useMemo(() => workstreamDetailQueryKey(id, '0'), [id]);
@@ -1059,7 +1076,7 @@ export function ConversationSurface({
   const openFirstWorkstream = useOpenFirstWorkstream();
   const [searchParams, setSearchParams] = useSearchParams();
   const searchSequence = Number(searchParams.get('sequence'));
-  const searchTurnId = Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
+  const searchTurnId = honorsSearchTarget && Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
 
   const requestedSearch = useRef<string | null>(null);
 
@@ -1078,6 +1095,23 @@ export function ConversationSurface({
   const railScope = useUiStore((state) => state.railScope);
   const setRailLeaving = useUiStore((state) => state.setRailLeaving);
   const setRailScope = useUiStore((state) => state.setRailScope);
+  // The right slot belongs to one conversation at a time. A Channel and its
+  // open Breakout are both on screen, so the slot is scoped to the
+  // conversation that opened it rather than to the Channel: each pane opens,
+  // closes and fades only its own panel.
+  const railScopeKey = `${substreamId === '0' ? id : `${id}:${substreamId}`}${paneKey ? `#${paneKey}` : ''}`;
+  const claimRail = useCallback((): void => {
+    if (useUiStore.getState().railScope !== railScopeKey) setRailScope(railScopeKey);
+  }, [railScopeKey, setRailScope]);
+  const openOwnRail = useCallback((variant: RailVariant = 'context'): void => {
+    claimRail();
+    openRail(variant);
+  }, [claimRail, openRail]);
+  const closeOwnRail = useCallback((): void => {
+    if (useUiStore.getState().railScope === railScopeKey) closeRail();
+  }, [closeRail, railScopeKey]);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const layoutElement = useCallback(() => layoutRef.current, []);
   const setRailVariant = useUiStore((state) => state.setRailVariant);
   const setRailWidth = useUiStore((state) => state.setRailWidth);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1160,18 +1194,23 @@ export function ConversationSurface({
     const savedPanel = readArtifactPanel(artifactPanelKey);
     setArtifactSidebar(savedPanel);
     setResourceDialogOpen(false);
-    setRailScope(id);
+    // Claimed on arrival when there is a panel to restore, or when nobody holds
+    // the slot; a Breakout opening beside its Channel must not take a panel
+    // the Channel has open.
+    if (savedPanel || useUiStore.getState().railScope === null) setRailScope(railScopeKey);
     if (savedPanel) useUiStore.getState().openRail('context');
     restoredPanelKey.current = artifactPanelKey;
     return () => {
       restoredPanelKey.current = null;
-      closeRail();
-      inspect(null);
-      setRailScope(null);
+      if (useUiStore.getState().railScope === railScopeKey) {
+        closeRail();
+        inspect(null);
+        setRailScope(null);
+      }
     };
-  }, [artifactPanelKey, closeRail, id, inspect, setRailScope]);
+  }, [artifactPanelKey, closeRail, inspect, railScopeKey, setRailScope]);
   // Only a Channel draws the browser rail; a Sidekick's links stay external.
-  useBrowserRailLinks(parentKind === 'workstream');
+  useBrowserRailLinks(parentKind === 'workstream', layoutElement, claimRail);
 
   useLayoutEffect(() => {
     activeConversationAddressRef.current = conversationAddress;
@@ -1347,8 +1386,8 @@ export function ConversationSurface({
       : routedDetail;
     if (!resourceOwner || resourceOwner.resources.some((resource) => resource.id === artifactSidebar.resourceId)) return;
     setArtifactSidebar(null);
-    closeRail();
-  }, [artifactSidebar, closeRail, id, routedDetail, workstreamContext]);
+    closeOwnRail();
+  }, [artifactSidebar, closeOwnRail, id, routedDetail, workstreamContext]);
   useEffect(() => {
     if (!routedDetail) return;
     const controller = new AbortController();
@@ -1421,7 +1460,7 @@ export function ConversationSurface({
   // from laying out, or starting a fade for, a panel belonging to the stream
   // just left; every path that opens the rail writes the store, and each is
   // honoured from the moment the scope names this stream.
-  const railOpen = (railVariant === 'browser' || Boolean(artifactSidebar)) && storeRailOpen && railScope === id;
+  const railOpen = (railVariant === 'browser' || Boolean(artifactSidebar)) && storeRailOpen && railScope === railScopeKey;
   useEffect(() => {
     if (restoredPanelKey.current !== artifactPanelKey) return;
     // A link opened in the browser covers the artifact panel rather than
@@ -1433,7 +1472,7 @@ export function ConversationSurface({
   }, [artifactPanelKey, artifactSidebar, railOpen, railVariant]);
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
-  const railLeaving = useRailExitFade(railOpen, id);
+  const railLeaving = useRailExitFade(railOpen, railScopeKey);
   const isGuest = session?.workspace?.accessClass === 'guest';
   const members = useQuery({
     queryKey: ['workspace-members'],
@@ -1504,6 +1543,17 @@ export function ConversationSurface({
     id,
     visibleMembers,
   ), [id, visibleMembers, orderedTranscript.data]);
+  // The Channel's transcript, read from the cache its own pane keeps, for a
+  // Breakout's origin card. Subscribed rather than fetched.
+  const channelTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
+    queryKey: orderedTranscriptQueryKey(id, '0'),
+    queryFn: async () => undefined,
+    enabled: false,
+  });
+  const originTurnId = substreamId === '0' ? undefined : breakoutOrigin?.turnId;
+  const origin = useMemo(() => (originTurnId
+    ? breakoutOriginMessages(orderedTranscriptMessages(channelTranscript.data, id, visibleMembers), originTurnId)
+    : null), [channelTranscript.data, id, originTurnId, visibleMembers]);
   // The Channel sends counts for all of its conversations; this composer
   // shows only the agents started from the conversation it belongs to.
   const backgroundAgents = useQuery({
@@ -1531,6 +1581,12 @@ export function ConversationSurface({
     },
     [canonicalTranscript, transcriptOverlays.data],
   );
+  // Above every early return: a hook below one runs on some renders only.
+  const replyCount = useMemo(() => (
+    orderedTranscript.data && !adjacentTranscriptRange(orderedTranscript.data, 'older')
+      ? conversationReplyCount(transcript)
+      : undefined
+  ), [orderedTranscript.data, transcript]);
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
   // came back closed would shrink under a cache that still expects it open.
@@ -1601,6 +1657,23 @@ export function ConversationSurface({
     });
   }, [conversationAddress, feedLive, id, loadTranscriptRange, orderedTranscript.data, releaseTranscriptFollow,
     searchSequence, searchTurnId, setSearchParams, transcript, transcriptVirtualizer]);
+
+  // Breakouts placed in this feed: chips under each origin turn, and the tick
+  // bar's order, which follows the turns as they are loaded.
+  const breakoutChips = useMemo(() => breakouts && onOpenBreakout && breakouts.length > 0
+    ? { byTurn: breakoutsByOrigin(breakouts), openSubstreamId: openBreakoutId, onOpen: onOpenBreakout }
+    : undefined, [breakouts, onOpenBreakout, openBreakoutId]);
+  const tickBreakouts = useMemo(() => breakouts && breakouts.length > 0
+    ? orderBreakoutsForTicks(breakouts, transcript.flatMap((message) => message.transcriptTurnId ?? []))
+    : [], [breakouts, transcript]);
+  const revealTurn = useCallback((turnId: string): boolean => {
+    const index = transcript.findIndex((message) => message.transcriptTurnId === turnId);
+    if (index < 0) return false;
+    releaseTranscriptFollow();
+    transcriptVirtualizer.scrollToIndex(index, { align: 'center' });
+    return true;
+  }, [releaseTranscriptFollow, transcript, transcriptVirtualizer]);
+  const handledScrollNonce = useRef<number | null>(null);
 
   const loadOlderMessages = useCallback(async (): Promise<void> => {
     const generation = conversationGenerationRef.current;
@@ -1673,6 +1746,21 @@ export function ConversationSurface({
       if (activeConversationAddressRef.current === conversationAddress) setLoadingOlder(false);
     }
   }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, scrollTranscriptTo, transcriptQueryKey]);
+  useEffect(() => {
+    if (scrollToTurn === null || handledScrollNonce.current === scrollToTurn.nonce) return;
+    if (revealTurn(scrollToTurn.turnId)) {
+      handledScrollNonce.current = scrollToTurn.nonce;
+      return;
+    }
+    // An origin older than the loaded pages: page back toward it. Each page
+    // re-runs this, and reaching the oldest page ends the search.
+    if (loadingOlder || olderMessagesError || !orderedTranscript.data) return;
+    if (!adjacentTranscriptRange(orderedTranscript.data, 'older')) {
+      handledScrollNonce.current = scrollToTurn.nonce;
+      return;
+    }
+    void loadOlderMessages();
+  }, [loadOlderMessages, loadingOlder, olderMessagesError, orderedTranscript.data, revealTurn, scrollToTurn]);
 
   const nearHistoryEdge = useTranscriptHistory({
     scrollRef: transcriptRef,
@@ -1898,9 +1986,11 @@ export function ConversationSurface({
   // The shell needs to know whether the inspector is still fading out so it
   // reserves the same width for that final frame.
   useLayoutEffect(() => {
+    // Only the pane whose panel is fading speaks for the slot.
+    if (!railLeaving && useUiStore.getState().railScope !== railScopeKey) return undefined;
     setRailLeaving(railLeaving);
     return () => setRailLeaving(false);
-  }, [railLeaving, setRailLeaving]);
+  }, [railLeaving, railScopeKey, setRailLeaving]);
 
   const stop = useMutation({
     mutationFn: () => socketConnection.stopHarness(),
@@ -2463,7 +2553,6 @@ export function ConversationSurface({
       <ConversationOpeningSkeleton
         label={openingLabel}
         parentKind={parentKind}
-        sidebar={renderSidebar !== undefined}
       />
     );
   }
@@ -2580,7 +2669,7 @@ export function ConversationSurface({
 
   return (
     <ConnectorConnectionsProvider connections={visibleConnections}>
-    <div className="conversation-layout">
+    <div className="conversation-layout" ref={layoutRef}>
       {renderSidebar?.({
         sidekicks: sidekickRows,
         loadSidekickOptions,
@@ -2591,7 +2680,7 @@ export function ConversationSurface({
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
         openParticipantDialog: () => { setParticipantDialogSubstreamId(sidebarScope === 'workstream' ? '0' : substreamId); setParticipantDialogOpen(true); },
         openResource: sidebarScope === 'workstream' ? openWorkstreamResourceDetails : openResourceDetails,
-        openRail,
+        openRail: openOwnRail,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
         setAppearance: socketConnection.setAppearance,
         openArtifact: sidebarScope === 'workstream' ? sidebarCitations.openPreview : citations.openPreview,
@@ -2647,9 +2736,27 @@ export function ConversationSurface({
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
         openParticipantDialog: () => { setParticipantDialogSubstreamId(substreamId); setParticipantDialogOpen(true); },
         openResource: openResourceDetails,
-        openRail,
+        openRail: openOwnRail,
+        openArtifact: sidebarScope === 'workstream' ? sidebarCitations.openPreview : citations.openPreview,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
         setAppearance: socketConnection.setAppearance,
+        replyCount,
+        people: parentKind === 'workstream' ? {
+          candidates: visibleMembers,
+          onAdd: (member) => {
+            removeParticipant.reset();
+            addParticipant.mutate({ member, target: substreamId });
+          },
+          adding: addParticipant.isPending,
+          error: addParticipant.error
+            ? refusalMessage(addParticipant.error) ?? 'That person couldn’t be added.'
+            : undefined,
+          currentUserId: session?.user.id,
+        } : undefined,
+        origin: origin ? {
+          byline: `Started from ${origin.origin.authorType === 'agent' ? 'Rally’s' : `${origin.origin.author?.name ?? 'a'}’s`} message · ${formatDateTime(origin.origin.createdAt)}`,
+          text: originExcerpt(origin.origin.text ?? ''),
+        } : undefined,
       })}
       {/* Focusable so the transcript can be scrolled from the keyboard at all.
           Chromium gives Page Up, Home, and the arrows to a scroller only when it
@@ -2658,6 +2765,17 @@ export function ConversationSurface({
           a streaming turn, which is the whole thing the follow is built around.
           `log` rather than `region`: the content is appended over time and a
           screen reader should treat it that way. */}
+      {tickBreakouts.length > 0 && onOpenBreakout && <BreakoutTickBar
+        breakouts={tickBreakouts}
+        onOpen={(breakout) => {
+          onOpenBreakout(breakout.substreamId);
+          if (breakout.originTurnId) revealTurn(breakout.originTurnId);
+        }}
+        openSubstreamId={openBreakoutId}
+        renderAge={(breakout) => breakout.lastActivityAt
+          ? <RelativeTime value={breakout.lastActivityAt} />
+          : null}
+      />}
       <div
         aria-label="Transcript"
         className={clsx('transcript-scroll', transcriptDrop.dragging && 'is-file-dragging')}
@@ -2729,7 +2847,13 @@ export function ConversationSurface({
           {olderMessagesError && <InlineError>{olderMessagesError}</InlineError>}
           {otherHistoryError && <InlineError>{otherHistoryError}</InlineError>}
           {/* No starting context here: it is what the child's runs read, not a
-              turn anybody said. `docs/substream-creation.md` has why. */}
+              turn anybody said. `docs/substream-creation.md` has why. The
+              origin card is the Channel's own messages, which people did say,
+              and only above the Breakout's first message, never above a
+              window that still has earlier pages to load. */}
+          {origin && breakoutOrigin && !olderTranscriptRange && (
+            <BreakoutOrigin channelTitle={breakoutOrigin.channelTitle} context={origin.context} origin={origin.origin} />
+          )}
           {/* Not while a run is going. A work stream opened the instant it was
               created has an empty transcript and an agent already working on
               it, and inviting the person to start it is both wrong and the
@@ -2759,6 +2883,7 @@ export function ConversationSurface({
               onAnswerElicitation={answerElicitation}
               onOpenAttachment={setAttachmentPreview}
               onStartSubstream={parentKind === 'workstream' && substreamId === '0' ? onStartSubstream : undefined}
+              {...(breakoutChips ? { breakoutChips } : {})}
               {...(api ? { onAcceptDraft: (automationId: string) => {
                 acceptProposedAutomation.mutate(automationId);
               } } : {})}
@@ -2809,7 +2934,12 @@ export function ConversationSurface({
             && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
           <WorkstreamComposer
             api={api ?? undefined}
-            placeholder={parentKind === 'automation' ? 'Ask your Sidekick…' : 'Message the channel…'}
+            placeholder={parentKind === 'automation'
+              ? 'Ask your Sidekick…'
+              // A name still being chosen is not one to address yet.
+              : displayedDetail.titleStatus === 'naming' || !displayedDetail.title
+                ? 'Message the channel…'
+                : substreamId === '0' ? `Message ${displayedDetail.title}` : `Reply in ${displayedDetail.title}`}
             attachments={attachmentDraft.attachments}
             error={sendError
               ?? attachmentDraft.error
@@ -2861,7 +2991,7 @@ export function ConversationSurface({
               ...(resourcePreview.workstreamScoped ? { workstreamScoped: true } : {}),
             });
             setResourcePreview(null);
-            openRail('context');
+            openOwnRail('context');
           },
         }}
         dropTarget={railDrop}
@@ -2894,7 +3024,7 @@ export function ConversationSurface({
 
       {railVariant === 'browser' && (railOpen || railLeaving) && window.rally && <EmbeddedBrowserRail
         leaving={railLeaving}
-        onClose={artifactSidebar ? () => setRailVariant('context') : closeRail}
+        onClose={artifactSidebar ? () => setRailVariant('context') : closeOwnRail}
         onResize={setRailWidth}
         width={railWidth}
       />}
@@ -2902,7 +3032,7 @@ export function ConversationSurface({
       {railVariant === 'context' && artifactSidebarResource && (railOpen || railLeaving) && <ArtifactSidebar
         leaving={railLeaving}
         {...(api ? { loadResourceContent } : {})}
-        onClose={closeRail}
+        onClose={closeOwnRail}
         onResize={setRailWidth}
         resource={artifactSidebarResource}
         {...(siteArtifacts ? { siteArtifacts } : {})}

@@ -37,8 +37,8 @@ socket hooks' first frame.
 | `apps/desktop/src/renderer/App.tsx` | Mounts the scope provider above the workspace socket provider. |
 | `apps/desktop/src/renderer/components/connecting-card.tsx` | The floating card, connecting, waiting for a connection, or failed with a retry, and the always-mounted slot that is its live region. |
 | `apps/desktop/src/renderer/components/substream-launch.tsx` | Carries the parent's card and send gate while a substream is branched off a seed. |
-| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Reads the seed marker: shows the card, gates sending, and holds range loads and read acknowledgements until the feed is live. Takes the host's opening rail while the first snapshot is in flight. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` (`renderOpeningSidebar`) | Draws the Channel rail from the directory row and the Channel's breakout list while the conversation has no detail yet. |
+| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Reads the seed marker: shows the card, gates sending, and holds range loads and read acknowledgements until the feed is live. |
+| `apps/desktop/src/renderer/screens/workstream.tsx` (`useChannelRail`) | Feeds the Channel title-pill menu's people, Sidekicks and artifacts from the Channel's rail while the conversation has no detail yet. |
 | `apps/desktop/src/renderer/screens/space-dashboard.tsx` | Shows the card over a Space painted from the seeded directory. |
 | `apps/desktop/src/renderer/components/workstream-composer.tsx` | `sendBlocked`: everything but sending. |
 
@@ -130,7 +130,7 @@ dials. If the work-stream list is still empty, the cached lists go straight
 into the query-cache entries the sidebar, the landing route, and the Space
 dashboard read: `['workstreams']` through `setCachedWorkstreams`, `['automations']`,
 `['spaces']`, `['spaces-inactive']`, and `['personal-order']` — the compatible
-ordering payload whose Organization entry arranges the Space rail. They go in directly,
+ordering payload whose Organization entry arranges the Space pills. They go in directly,
 not through the versioned receivers, because a seed has no waterline and must
 not move a ledger; the ledgers stay at their empty state, which is what lets
 the socket's first subscribe answer apply over the seed whatever version it
@@ -149,10 +149,10 @@ refetch, which is what retires a seeded row for a work stream archived while
 the device was away.
 
 The ordering *is* on the row, and it did not move the version. Without it a cold
-launch paints the manually arranged Space rail in the directory's serialization
+launch paints the manually arranged Space pills in the directory's serialization
 order and reshuffles it a moment later — the visible flicker the seed exists to
 prevent. Legacy Space- and Channel-container entries remain in the shape but are
-ignored by alphabetical desktop Channel and shared React Breakout rails. A version 3 row written
+ignored by the alphabetical Channel list and the Channel menu's Breakouts. A version 3 row written
 before it existed has no `ordering` key, and `parse` reads that absence as an
 empty arrangement: the natural order for one launch, corrected by the first
 payload. Bumping to version 4 to avoid that would have dropped every cached row
@@ -172,14 +172,14 @@ next launch with nothing failing.
 
 **Each listed Channel's breakout list is on the row too**, under `breakouts`,
 keyed by Channel id and holding only the Channels the row keeps. A cold launch
-seeds them into the `workstream-children` entries the Channel rail reads, so a
-Channel's breakouts paint when its sidebar row does. They go in with no state
+seeds them into the `workstream-children` entries the Channel menu and the
+Breakout ticks read, so a Channel's breakouts paint when its sidebar row does. They go in with no state
 version and no waterline, so the first live row for each Channel replaces its
 list whatever its numbers say, and a seed prunes nothing from the disk. A row
 written before the key existed reads as no lists, which is how every Channel
 waited before, for one launch; that absence has a correct reading, so the
 version did not move. A single Channel's list this build cannot read is left
-out alone, since it costs that Channel's rail its placeholder and nothing else.
+out alone, since it costs that Channel's menu its opening Breakouts and nothing else.
 
 `spacesReady` is deliberately **not** on the row. It is the Organization's
 current cutover state rather than something the device last saw, and a
@@ -205,12 +205,14 @@ row: any change to any of them schedules one write, coalesced over
 `LOCAL_CACHE_WRITE_COALESCE_MS`. Until that payload has landed the mirror
 observes and writes nothing, so the seed never persists itself.
 
-### What a Channel's rail paints before its conversation answers
+### What a Channel's menu shows before its conversation answers
 
-The Channel rail lists only what the workspace socket carries, so it draws from
-the directory row, the breakout list and the Channel's rail while the
-conversation's snapshot is in flight (`renderOpeningSidebar` in
-`screens/workstream.tsx`). A rail is the Channel's people, its owned,
+The Channel sidebar and its `renderOpeningSidebar` paint were removed with the
+shell redesign ([`desktop-shell.md`](desktop-shell.md)); no host passes either
+any more. The record kept the name: a Channel's *rail* is now what its title-pill
+menu reads while the conversation's snapshot is in flight (`useChannelRail` in
+`screens/workstream.tsx`), and the menu's Breakouts come from the breakout list.
+A rail is the Channel's people, its owned,
 recommended and attached Sidekicks, and its Channel resources, which the
 workspace socket sends with each Space's Channel rows ahead of need
 (`lib/channel-rails.ts`; the protocol is in
@@ -391,7 +393,7 @@ Nothing else evicts, and nothing expires.
   having vouched for it.
 - **A seeded breakout list holds no version.** Break it and the first live
   row for a Channel, numbered below what the device remembered from a room
-  rebuilt since, is dropped, and the rail shows breakouts that are gone.
+  rebuilt since, is dropped, and the Channel menu shows breakouts that are gone.
 - **Hydration lands only in empty caches.** Break it and a read that lands
   after the live snapshot puts the older state back over it.
 - **A seed moves no ledger.** The waterline ledgers stay untouched by

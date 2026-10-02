@@ -2,7 +2,6 @@ import { fireEvent, render } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it } from 'vitest';
 import { PROJECT_COLOR_RING, type WorkstreamAppearance } from '@rally/contracts';
-import { glyphInk } from '../lib/project-palette';
 import { Plus } from 'lucide-react';
 import { AutomationGlyph, HexagonGlyph, resolveWorkstreamAppearance, SIDEKICK_RUNNING_MARKER, WorkstreamGlyph, WorkstreamMark, workstreamAppearance, type ResolvableAppearance } from './workstream-glyph';
 
@@ -35,25 +34,30 @@ describe('workstreamAppearance', () => {
 
     expect(glyph.querySelector('.workstream-glyph-icon')).toHaveClass('lucide-megaphone');
     expect(mark.querySelector('.workstream-mark')).toHaveClass('lucide-megaphone');
-    expect(mark.querySelector('.workstream-mark')).toHaveStyle({ color: 'var(--av-sys-color-project-blue)' });
+    // The bare mark is drawn in the hue's ink; the glyph paints its tint.
+    expect(mark.querySelector('.workstream-mark')).toHaveStyle({ color: 'var(--av-sys-color-project-ink-blue)' });
     expect(glyph.querySelector('.workstream-glyph-shape')?.getAttribute('style'))
-      .toContain('var(--av-sys-color-project-blue)');
+      .toContain('var(--av-sys-color-project-tint-blue)');
   });
 
   it('inks a glyph from the colour it is actually painted, not the one the id generates', () => {
-    // `launch-room` generates `lime`, one of the three fills that still take
-    // black ink, and the saved colour is `black`, which takes white. That pair
-    // is what tells the two apart: the glyph resolves one appearance now, and
-    // inking off the wrong half of it would put black on a near-black fill.
+    // `launch-room` generates `lime`, which has a pastel pair, and the saved
+    // colour is `black`, which has none and keeps its fill under white ink.
+    // That pair is what tells the two apart: the glyph resolves one appearance
+    // now, and inking off the wrong half of it would put the wrong ink down.
     const saved = { icon: null, color: 'black' } satisfies WorkstreamAppearance;
     const generated = render(<WorkstreamGlyph id="launch-room" />).container;
     const stored = render(<WorkstreamGlyph appearance={saved} id="launch-room" />).container;
 
     expect(resolveWorkstreamAppearance('launch-room').colorKey).not.toBe('black');
     expect(generated.querySelector<HTMLElement>('.workstream-glyph')?.style.getPropertyValue('--glyph-ink'))
-      .toBe('var(--av-sys-color-palette-ink-dark)');
+      .toBe('var(--av-sys-color-project-ink-lime)');
     expect(stored.querySelector<HTMLElement>('.workstream-glyph')?.style.getPropertyValue('--glyph-ink'))
       .toBe('var(--av-sys-color-palette-ink-light)');
+    expect(stored.querySelector('.workstream-glyph-shape')).toHaveStyle({ background: 'var(--av-sys-color-project-black)' });
+    // With no fill behind it, the same mark is drawn in the hue, not the white ink.
+    const bare = render(<WorkstreamMark appearance={saved} id="launch-room" />).container;
+    expect(bare.querySelector('.workstream-mark')).toHaveStyle({ color: 'var(--av-sys-color-project-black)' });
   });
 
   it('falls back to a drawable icon rather than blanking the window on a key it does not know', () => {
@@ -83,7 +87,7 @@ describe('workstreamAppearance', () => {
     // one cost up to 19 Lc and put five fills under the floor. Asserted exactly,
     // so re-introducing any gradient or mix fails here.
     expect(container.querySelector('.workstream-glyph-shape')).toHaveStyle({
-      background: 'var(--av-sys-color-project-lime)',
+      background: 'var(--av-sys-color-project-tint-lime)',
     });
   });
 });
@@ -99,7 +103,7 @@ describe('HexagonGlyph', () => {
 
     const shape = identity.querySelector('.automation-glyph-shape');
     expect(shape?.getAttribute('d')).toBe(slot.querySelector('.automation-glyph-shape')?.getAttribute('d'));
-    expect(shape).toHaveAttribute('fill', 'var(--av-sys-color-project-lime)');
+    expect(shape).toHaveAttribute('fill', 'var(--av-sys-color-project-tint-lime)');
     expect(slot.querySelector('.automation-glyph-shape')).toHaveAttribute('fill', 'none');
   });
 
@@ -111,12 +115,13 @@ describe('HexagonGlyph', () => {
     // suite would stay green — the tests above only cover the action tile's.
     const { container } = render(<AutomationGlyph id="launch-room" />);
     const glyph = container.querySelector<HTMLElement>('.automation-glyph');
-    const { color, colorKey, Icon } = resolveWorkstreamAppearance('launch-room');
+    const { tint, ink, Icon } = resolveWorkstreamAppearance('launch-room');
 
-    expect(container.querySelector('.automation-glyph-shape')).toHaveAttribute('fill', color);
-    expect(glyph?.style.getPropertyValue('--glyph-ink')).toBe(glyphInk(colorKey));
-    // `lime` takes black ink, so this is the pairing a transposition breaks.
-    expect(glyph?.style.getPropertyValue('--glyph-ink')).toBe('var(--av-sys-color-palette-ink-dark)');
+    // A Sidekick's hexagon takes the same pastel pair a Channel's glyph does.
+    expect(container.querySelector('.automation-glyph-shape')).toHaveAttribute('fill', tint);
+    expect(glyph?.style.getPropertyValue('--glyph-ink')).toBe(ink);
+    expect(tint).toBe('var(--av-sys-color-project-tint-lime)');
+    expect(ink).toBe('var(--av-sys-color-project-ink-lime)');
     expect(container.querySelector('svg svg')).toHaveClass(render(<Icon />).container.querySelector('svg')?.getAttribute('class') ?? '');
   });
 

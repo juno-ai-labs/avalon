@@ -226,6 +226,10 @@ export const ListVisiblePrivateChildrenResultSchema = z.strictObject({
     createdByUserId: UserIdSchema,
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
+    /** The Main transcript turn the breakout was branched through; null when it was not branched from a turn. */
+    originTurnId: z.string().min(1).nullable().optional(),
+    /** Epoch milliseconds, like `createdAt`; absent until the breakout's directory state has arrived. */
+    lastActivityAt: z.number().int().nonnegative().optional(),
   })),
 });
 

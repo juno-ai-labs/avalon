@@ -4,7 +4,7 @@ description: Create Spaces to group related Channels, and decide who belongs in 
 ---
 
 A Space holds a set of related Channels and decides who can see them. You met
-the Spaces rail in [A tour of the window](../01-getting-started/04-a-tour-of-the-window.md).
+the Space pills in [A tour of the window](../01-getting-started/04-a-tour-of-the-window.md#the-space-pills).
 This page is about making Spaces, looking after them, and putting them away when
 the work is done.
 
@@ -12,7 +12,8 @@ the work is done.
 
 Every Organization starts with one Space, **General**. Everyone in the
 Organization can see it, and it is where Channels land when they have nowhere
-more specific to go.
+more specific to go. General has no pill in the sidebar, since **All** already
+shows its Channels, and a Channel's row never names it.
 
 General is a little different from the Spaces you make yourself:
 
@@ -23,10 +24,9 @@ General is a little different from the Spaces you make yourself:
 
 ## Create a Space
 
-1. Click the **+** at the top of the Spaces rail (its tooltip reads **New
-   channel or space**), or right-click an empty part of the Spaces rail.
-2. Choose **Create New Space**.
-3. In **Create a new space**, type a **Name of space** and click **Create**.
+1. Click **New space**, the round button with a folder and a plus at the start
+   of the Space pills.
+2. In **Create a new space**, type a **Name of space** and click **Create**.
 
 Rally opens the new Space's page straight away. A new Space starts private to
 its participants, which at that moment means you, with a blue briefcase for an
@@ -40,14 +40,17 @@ cannot.
 
 ## The Space page
 
-Click a Space in the rail and the middle of the window shows its page. A Space
+Clicking a Space's pill only narrows the Channel list. To open the Space's own
+page, right-click its pill and choose **Open space**, or open any of its
+Channels, click the Channel's name in its title pill and click **Open space**
+beside the Space's name. The Space's page fills the window. A Space
 has no conversation of its own. Its page is the answer to one question: what in
 here needs me?
 
 Across the top sit the Space's controls:
 
 - **The icon.** Click it to open **Space icon and color**, and pick an icon and a
-  colour. They show in the rail, so pick something you can spot at a glance.
+  colour. They show wherever the Space is named, so pick something you can spot at a glance.
 - **The name.** Double-click it to rename the Space. From the keyboard, focus
   the name and press <kbd>F2</kbd> or <kbd>Return</kbd>. Press <kbd>Return</kbd>
   to save or <kbd>Esc</kbd> to cancel; clicking away also saves. Names can be up
@@ -78,10 +81,10 @@ Each row has a status dot, the Channel's name (a Breakout shows which Channel it
 is in), a preview of the latest activity and a time. Click a row to open it. The
 list keeps itself up to date as messages arrive and runs finish, and a **Load
 more** button appears at the bottom when there are a lot. The dots are explained
-in [Status dots and badges](../02-working-in-a-channel/06-status-dots-and-badges.md).
+in [Status dots](../02-working-in-a-channel/06-status-dots-and-badges.md).
 
 Once you have read something and Rally has finished, it drops off the list. The
-list is for things waiting on you. Every Channel is still in the Channels rail
+list is for things waiting on you. Every Channel is still in the sidebar
 and in search. When nothing is waiting, the page
 says **Nothing here needs you right now**, which is the nicest thing a piece of
 software can say to you. A Space with no Channels at all says **No channels
@@ -94,7 +97,7 @@ Every Space has an **audience**, chosen from the menu under its name:
 | Audience | Who can see the Space and its Channels |
 | --- | --- |
 | **Space participants** | Only the people listed as the Space's participants. |
-| **Everyone in the organization** | Everyone in the Organization. The Space is labelled **Public space** in the rail, and **Organization space** in the card you see when you hover it. |
+| **Everyone in the organization** | Everyone in the Organization. |
 
 The audience covers every Channel in the Space as well as the Space's page. A
 Channel in an Organization-wide Space can be seen and found by
@@ -145,7 +148,7 @@ participants if you narrow it later.
 
 ### Spaces you can see but not change
 
-Sometimes a Space appears in your rail even though you are not one of its
+Sometimes a Space appears in your sidebar even though you are not one of its
 participants. That happens when someone added you to a Channel that lives in a
 private Space. Rally shows you the Space's name, icon and colour so the Channel
 has somewhere to sit, but nothing else: no audience, no participants and no
@@ -153,15 +156,16 @@ other Channels. You cannot edit or archive it.
 
 ## Archive and restore a Space
 
-When a project is finished, archive its Space to take it out of the rail.
+When a project is finished, archive its Space to take its pill out of the
+sidebar.
 
-1. Right-click the Space in the rail and choose **Archive space**, or click
+1. Right-click the Space's pill and choose **Archive space**, or click
    **Archive space** on its page.
 2. Rally asks **Archive space?** Click **Archive space** to confirm.
 
 What archiving does and does not do:
 
-- The Space leaves the rail. Its Channels are not archived. They keep their
+- The Space's pill leaves the sidebar. Its Channels are not archived. They keep their
   artifacts, resources and Sidekicks, and they stay in every other Space they
   belong to.
 - Every Channel must live in at least one Space, so a Channel whose only home is
@@ -171,9 +175,9 @@ What archiving does and does not do:
 - General cannot be archived, and neither can a Space you only see through one
   of its Channels. The menu item does not appear for them.
 
-To bring a Space back, click the **Restore archived space** button at the top of
-the Spaces rail. It only appears while at least one archived Space exists. Pick
-the Space from the list. If you have an archived Space's page open, its
+To bring a Space back, right-click **New space** at the start of the Space
+pills and choose **Restore archived space**. It only works while at least one
+archived Space exists. Pick the Space from the list. If you have an archived Space's page open, its
 **Restore space** button does the same.
 
 > [!NOTE]

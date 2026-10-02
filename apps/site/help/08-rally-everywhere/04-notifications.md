@@ -12,7 +12,7 @@ situations:
 
 That is the whole list. Rally finishing a job, a teammate posting, a Sidekick
 running: none of those send you a notification. For those, look at the
-[status dots and badges](../02-working-in-a-channel/06-status-dots-and-badges.md)
+[status dots](../02-working-in-a-channel/06-status-dots-and-badges.md)
 in the app, or let the [digest](05-the-digest.md) round them up for you.
 
 ## How a notification reaches you

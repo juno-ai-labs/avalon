@@ -1,100 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { browserAccountHome, browserRailVisibility, browserSidebarLayout } from '../src/sidebar-layout';
+import { browserSidebarVisible, browserSidebarWidth } from '../src/sidebar-layout';
 
-describe('browserSidebarLayout', () => {
-  it('protects the conversation and compact Breakout rail at a narrow desktop width', () => {
-    expect(browserSidebarLayout({
-      channelOpen: true,
-      channelsCollapsed: false,
-      channelsPreferredWidth: 400,
-      channelsVisible: true,
-      spacesCollapsed: false,
-      spacesPreferredWidth: 400,
-      spacesVisible: true,
-      viewportWidth: 921,
-    })).toEqual({
-      channelsAvailableWidth: 88,
-      channelsConstrained: true,
-      channelsWidth: 88,
-      spacesAvailableWidth: 321,
-      spacesConstrained: false,
-      spacesWidth: 321,
-    });
+describe('browserSidebarWidth', () => {
+  it('keeps the preferred width when the window holds it beside the conversation', () => {
+    expect(browserSidebarWidth(320, 1_200)).toBe(320);
   });
 
-  it('leaves both preferred widths expanded when the complete hierarchy fits', () => {
-    expect(browserSidebarLayout({
-      channelOpen: true,
-      channelsCollapsed: false,
-      channelsPreferredWidth: 280,
-      channelsVisible: true,
-      spacesCollapsed: false,
-      spacesPreferredWidth: 280,
-      spacesVisible: true,
-      viewportWidth: 1_200,
-    })).toMatchObject({
-      channelsConstrained: false,
-      channelsWidth: 280,
-      spacesConstrained: false,
-      spacesWidth: 280,
-    });
+  it('gives the conversation its minimum before the sidebar its preference', () => {
+    expect(browserSidebarWidth(400, 760)).toBe(336);
   });
 
-  it('gives a hidden rail no width and hands its space to the rail that remains', () => {
-    expect(browserSidebarLayout({
-      channelOpen: true,
-      channelsCollapsed: false,
-      channelsPreferredWidth: 400,
-      channelsVisible: true,
-      spacesCollapsed: false,
-      spacesPreferredWidth: 400,
-      spacesVisible: false,
-      viewportWidth: 921,
-    })).toEqual({
-      channelsAvailableWidth: 409,
-      channelsConstrained: false,
-      channelsWidth: 400,
-      spacesAvailableWidth: 321,
-      spacesConstrained: false,
-      spacesWidth: 0,
-    });
-    expect(browserSidebarLayout({
-      channelOpen: true,
-      channelsCollapsed: false,
-      channelsPreferredWidth: 280,
-      channelsVisible: false,
-      spacesCollapsed: false,
-      spacesPreferredWidth: 280,
-      spacesVisible: false,
-      viewportWidth: 1_200,
-    })).toMatchObject({ channelsWidth: 0, spacesWidth: 0 });
+  it('stays within the shared minimum and maximum', () => {
+    expect(browserSidebarWidth(120, 1_600)).toBe(240);
+    expect(browserSidebarWidth(900, 1_600)).toBe(400);
+    expect(browserSidebarWidth(320, 500)).toBe(240);
   });
 });
 
-describe('browserRailVisibility', () => {
-  it('keeps both rails until the directory answers', () => {
-    expect(browserRailVisibility(undefined)).toEqual({ channels: true, spaces: true });
+describe('browserSidebarVisible', () => {
+  it('stays while the directory has not answered', () => {
+    expect(browserSidebarVisible(undefined)).toBe(true);
   });
 
-  it('hides a rail that would list exactly one row', () => {
-    expect(browserRailVisibility({ spaceCount: 1, channelCount: 1 })).toEqual({ channels: false, spaces: false });
-    expect(browserRailVisibility({ spaceCount: 1, channelCount: 3 })).toEqual({ channels: true, spaces: false });
-    expect(browserRailVisibility({ spaceCount: 2, channelCount: 2 })).toEqual({ channels: true, spaces: true });
+  it('leaves a lone shared Channel to open on its own', () => {
+    expect(browserSidebarVisible({ spaceCount: 1, channelCount: 1 })).toBe(false);
+    expect(browserSidebarVisible({ spaceCount: 0, channelCount: 1 })).toBe(false);
   });
 
-  it('keeps both rails when there is nothing to list, so the empty state shows', () => {
-    expect(browserRailVisibility({ spaceCount: 0, channelCount: 0 })).toEqual({ channels: true, spaces: true });
-  });
-});
-
-describe('browserAccountHome', () => {
-  it('puts the account menu and download in the leftmost rail shown', () => {
-    expect(browserAccountHome({ spaces: true, channels: true })).toBe('spaces');
-    expect(browserAccountHome({ spaces: true, channels: false })).toBe('spaces');
-    expect(browserAccountHome({ spaces: false, channels: true })).toBe('channels');
-  });
-
-  it('falls back to the conversation when a guest has neither outer rail', () => {
-    expect(browserAccountHome(browserRailVisibility({ spaceCount: 1, channelCount: 1 }))).toBe('conversation');
+  it('draws the sidebar when there is a Channel or a Space to choose', () => {
+    expect(browserSidebarVisible({ spaceCount: 1, channelCount: 2 })).toBe(true);
+    expect(browserSidebarVisible({ spaceCount: 2, channelCount: 1 })).toBe(true);
+    expect(browserSidebarVisible({ spaceCount: 0, channelCount: 0 })).toBe(true);
   });
 });

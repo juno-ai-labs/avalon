@@ -650,6 +650,10 @@ import {
   WorkspaceSpaceBootstrapFinalizeResultSchema,
   WorkspaceSpaceBootstrapSettleRequestSchema,
   WorkspaceContainerOrderResultSchema,
+  WorkspacePinnedOrderRequestSchema,
+  WorkspacePinnedOrderResultSchema,
+  type WorkspacePinnedOrderRequest,
+  type WorkspacePinnedOrderResult,
   WorkspaceSpaceListRequestSchema,
   WorkspaceSpaceMembersRequestSchema,
   WorkspaceSpaceMembersResultSchema,
@@ -722,6 +726,7 @@ import {
   spaceVisibleToViewerSql,
   SPACE_BOOTSTRAP_PAGE_SIZE,
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
+  WORKSPACE_PINNED_ORDER_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
@@ -4089,6 +4094,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `ALTER TABLE automation_directory ADD COLUMN owning_substream_id TEXT NOT NULL DEFAULT '0'`,
     ...SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS,
   ],
+}, {
+  version: 87,
+  description: "let a person order the Pinned section under All",
+  // A table of its own, not a new kind in `workspace_container_order`, so an
+  // older Worker never reads a row it cannot parse; see docs/workstream-pinning.md.
+  statements: WORKSPACE_PINNED_ORDER_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -8375,6 +8386,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const result = WorkspaceContainerOrderResultSchema.parse({
       ok: true,
       order: storage.writeOrder(request.workspaceId, request.userId, request.order),
+    });
+    this.publishSpaceSnapshot(request.userId);
+    return result;
+  }
+
+  /**
+   * Save this person's order for **All**'s Pinned section and answer with what
+   * was stored, republishing it to their other sessions as `reorderContainer`
+   * does. Anyone who may arrange their own lists may arrange this one.
+   */
+  async reorderAllPinned(input: WorkspacePinnedOrderRequest): Promise<WorkspacePinnedOrderResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspacePinnedOrderRequestSchema, input, "reorder_all_pinned");
+    this.assertWorkspace(request.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    if (refusal) return { ok: false, code: refusal };
+    const result = WorkspacePinnedOrderResultSchema.parse({
+      ok: true,
+      itemIds: this.spaceStorage().writePinnedOrder(request.userId, request.itemIds, Date.now()),
     });
     this.publishSpaceSnapshot(request.userId);
     return result;
@@ -15698,12 +15728,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private spacesFor(attachment: WorkspaceSocketAttachment): {
     spaces: SpaceSnapshot;
     ordering: PersonalOrder;
+    pinnedOrder: string[];
     spacesReady: boolean;
   } {
     if (attachment.accessClass === "guest") {
       return {
         spaces: { active: { waterline: 0, items: [] }, inactive: { waterline: 0, items: [] } },
         ordering: [],
+        pinnedOrder: [],
         spacesReady: true,
       };
     }
@@ -15716,6 +15748,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return {
       spaces: { active, inactive: spaces.listInactive(attachment.userId) },
       ordering: spaces.readOrders(attachment.workspaceId, attachment.userId),
+      pinnedOrder: spaces.readPinnedOrder(attachment.userId),
       spacesReady: spaces.bootstrapStatus().ready,
     };
   }

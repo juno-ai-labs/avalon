@@ -44,6 +44,26 @@ Unpinning issues `DELETE /workstreams/:id/pin?spaceId=...`, removes
 only that placement's row, and rewrites that Space's survivors so the positions
 stay a dense `0..n-1` run.
 
+The sidebar's **All** filter has no run of its own. Its Pinned section shows every
+Channel pinned in any Space: General's run first, then the rest by their first
+pin (`allPinPosition` in `sidebar.tsx`), unless the person has arranged All
+themselves: then the ids in their own order come first, in it, and any pin it
+does not name follows. Pinning there writes to General when the Channel is
+placed in General, and otherwise to its first Space. Unpinning there clears
+every Space that pins it. A drag or Alt+Arrow there saves that order whole
+(`PUT /workspace/pinned-order`), and a Channel's own menu pins and unpins by the
+same rule whatever the list is filtered to (`channelPinTargets`).
+
+The section is always drawn once the Organization is open. Empty, it is a
+dashed drop zone reading **Move a channel here to pin it**, which takes the
+accent while a Channel is being dragged; dropping one there pins it.
+
+All's order lives in `workspace_pinned_order` (WorkspaceDO migration 87) and
+reaches clients as `pinnedOrder` on the sidebar payload and the Space snapshot.
+It names Channels, not pins, and the read keeps only Channels the person can
+still list.
+[`desktop-shell.md`](desktop-shell.md) owns the filter.
+
 ### Ordering
 
 Positions are unique and ascending per person and Space, and `unpin` and `reorderPins`
@@ -415,12 +435,44 @@ rewrites every row of the run, and any intermediate state of that rewrite
 collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
+All's own order lives in the per-person order store, not here:
+`workspace_container_order` rows with `container_kind = 'pinned'`, keyed by the
+workspace id like the Organization's Space order (migration 87 widened that
+table's kind CHECK). The rows name Channels, not pins, and a write keeps only
+Channels the person can list. Whether a Channel is pinned stays this table's
+answer, so an unpinned Channel's row is simply not drawn.
+
 WorkspaceDO migration 66 drops the legacy `(user_id, workstream_id)` table and
 recreates it without copying rows. There is no authoritative answer for which
 Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
+
+### 2026-10-02 — All's Pinned section keeps an order of its own, and is always there
+
+**What changed:** WorkspaceDO migration 87 adds `workspace_pinned_order`, one
+person's order for All's Pinned section. `reorderAllPinned` (`PUT
+/workspace/pinned-order`) stores it, keeping only Channels the person can list
+and merging with what they had; the sidebar payload and the Space snapshot
+carry it as `pinnedOrder`. The sidebar draws All's pins in that order, saves it
+on a drag or Alt+Arrow, always shows the section with a drop zone when it is
+empty, and lets any unpinned row be dragged into it under All.
+
+**Why:** All shows pins from several Spaces, and each Space keeps its own run,
+so All had no order a drag could write. Asked for a drag that is the same on
+every device, the order follows the account as every other Rally order does; a
+device-only order was rejected. A first cut added a `pinned` kind to
+`workspace_container_order`. Review rejected it: shipped desktops parse
+`ordering` strictly and one entry of an unknown kind drops the whole snapshot,
+blanking their sidebar, and an older Worker after a rollback would fail to
+parse a stored `pinned` row. A separate table and a separate optional field are
+invisible to both.
+
+**Consequences:** Rows name Channels, not pins. Unpinning does not remove a
+Channel's row, so pinning it again under All returns it to its old place; the
+client draws only what is pinned. Any future order that older builds must not
+see takes the same route: its own field, never a new `OrderedContainer` kind.
 
 ### 2026-09-21 — Pins belong to Channel placements in Spaces
 

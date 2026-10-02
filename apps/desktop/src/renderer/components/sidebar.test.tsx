@@ -10,10 +10,10 @@ import {
   consumeDeepLinkWorkstreamNavigation,
   markDeepLinkWorkstreamNavigation,
 } from '../lib/deep-link-navigation';
-import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { installWindowActivationTracking } from '../lib/window-activation';
-import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
+import { allPinPosition, channelPinTargets, REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
 
 const copyText = vi.hoisted(() => vi.fn());
 const openSettings = vi.hoisted(() => vi.fn());
@@ -31,6 +31,8 @@ const workstreamSocketOpenContext = vi.hoisted(() => vi.fn((workstreamId: string
   void workstreamId;
   return { state: 'cold' };
 }));
+const updateStatus = vi.hoisted(() => ({ current: { kind: 'idle' } as { kind: string; version?: string } }));
+const installDownloadedUpdate = vi.hoisted(() => vi.fn(async () => undefined));
 const applicationSettings = vi.hoisted(() => ({
   current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
   listeners: new Set<(settings: unknown) => void>(),
@@ -47,7 +49,8 @@ vi.mock('../lib/platform', () => ({
       applicationSettings.listeners.add(listener);
       return () => applicationSettings.listeners.delete(listener);
     },
-    getUpdateStatus: () => Promise.resolve({ kind: 'idle' }),
+    getUpdateStatus: () => Promise.resolve(updateStatus.current),
+    installDownloadedUpdate,
     onUpdateStatusChanged: () => () => undefined,
   }),
   desktopServicesAvailable: () => false,
@@ -91,16 +94,6 @@ const defaultActions = {
   onReorderPinnedWorkstreams: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
   onRunAutomation: async (): Promise<void> => undefined,
-};
-
-const automation: AutomationSummary = {
-  id: 'automation-1',
-  name: 'Daily product brief',
-  description: 'A brief every morning.',
-  scope: 'you',
-  status: 'active',
-  nextRunAt: '2026-08-01T16:00:00.000Z',
-  updatedAt: '2026-07-20T09:00:00.000Z',
 };
 
 function workstream(
@@ -180,6 +173,43 @@ function placedIn(target: WorkstreamSummary, ...spaceIds: string[]): WorkstreamS
   return { ...target, spaceIds };
 }
 
+/** One Space filter in the strip at the top of the sidebar. */
+function pill(name: string): HTMLElement {
+  return within(screen.getByRole('group', { name: 'Spaces' })).getByRole('button', { name });
+}
+
+/** The status a Channel row's dot names, or null when the row has none. */
+function markerOf(title: string): string | null {
+  const link = screen.getByRole('link', { name: new RegExp(`^${title}`, 'u') });
+  return link.querySelector('.channel-row-marker')?.textContent ?? null;
+}
+
+/** The pills in the strip, in the order they are drawn. */
+function pillNames(): string[] {
+  return within(screen.getByRole('group', { name: 'Spaces' })).getAllByRole('button')
+    .map((item) => item.textContent ?? '');
+}
+
+/**
+ * A drag payload that keeps what the source writes, as the browser's does, so
+ * a drop reads back the types the dragged row actually set.
+ */
+function recordingDataTransfer() {
+  const data = new Map<string, string>();
+  return {
+    dropEffect: 'none',
+    effectAllowed: 'all',
+    get types(): string[] { return [...data.keys()]; },
+    getData: (type: string): string => data.get(type) ?? '',
+    setData: (type: string, value: string): void => { data.set(type, value); },
+  };
+}
+
+/** Filter the Channel list to one Space, as a click on its pill does. */
+function selectSpace(name: string): void {
+  fireEvent.click(pill(name));
+}
+
 describe('Sidebar channel markers', () => {
   beforeEach(() => {
     const reset = markDeepLinkWorkstreamNavigation('__test_reset__');
@@ -195,7 +225,7 @@ describe('Sidebar channel markers', () => {
     workstreamSocketOpenContext.mockReset().mockReturnValue({ state: 'cold' });
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
-    useUiStore.setState({ sidebarOpen: false, sidebarCollapsed: false, sidebarWidth: 300 });
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
       unobserve(): void {}
@@ -208,8 +238,7 @@ describe('Sidebar channel markers', () => {
       createdAt: '2026-07-01T00:00:00.000Z', lastAccessedAt: '2026-08-02T00:00:00.000Z' };
     const noisy = { ...workstream('noisy', 'New shared activity', 'completed', '2099-01-01T00:00:00.000Z'),
       createdAt: '2026-07-20T00:00:00.000Z', lastAccessedAt: null };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions}
-      automations={[]} onSignOut={vi.fn()} workspace={workspace}
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace}
       workstreams={[noisy, visited]} /></Tooltip.Provider></MemoryRouter>);
     const links = screen.getAllByRole('link').map((link) => link.textContent);
     expect(links.findIndex((text) => text?.includes('Last visited')))
@@ -218,24 +247,24 @@ describe('Sidebar channel markers', () => {
 
   it('keeps the unsent new channel out of the sidebar', () => {
     render(<MemoryRouter initialEntries={['/workstreams/new']}><Tooltip.Provider>
-      <Sidebar {...defaultActions} conversationOnly automations={[]} onSignOut={vi.fn()}
-        workspace={workspace} workstreams={[]} />
+      <Sidebar {...defaultActions} onSignOut={vi.fn()}
+        spaces={[general()]} workspace={workspace} workstreams={[]} />
     </Tooltip.Provider></MemoryRouter>);
 
     expect(screen.queryByLabelText('New channel draft')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'New channel' })).toHaveAttribute('aria-haspopup', 'menu');
+    expect(screen.queryByRole('link', { name: /New channel/u })).not.toBeInTheDocument();
   });
 
   it('marks sidebar creation telemetry only when the Channel setup is submitted', async () => {
     const onCreateChannel = vi.fn(async () => undefined);
     render(<MemoryRouter><Tooltip.Provider>
-      <Sidebar {...defaultActions} automations={[]} onCreateChannel={onCreateChannel}
+      <Sidebar {...defaultActions} onCreateChannel={onCreateChannel}
         onSignOut={vi.fn()} spaces={[general()]} workspace={workspace} workstreams={[]} />
     </Tooltip.Provider></MemoryRouter>);
-    const launcher = screen.getAllByRole('button', { name: 'New channel or space' })[0];
-    if (!launcher) throw new Error('New channel launcher missing');
-    fireEvent.keyDown(launcher, { key: 'ArrowDown' });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel' }));
+    // The header's New channel opens the form directly, with no menu between.
+    const launcher = screen.getByRole('button', { name: 'New channel' });
+    expect(launcher).not.toHaveAttribute('aria-haspopup');
+    fireEvent.click(launcher);
     expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
 
     const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
@@ -246,80 +275,13 @@ describe('Sidebar channel markers', () => {
     expect(markSurfaceEntrypoint).toHaveBeenCalledWith('sidebar_new');
   });
 
-  it('reduces the GrokBot shell navigation to channels', () => {
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[automation]}
-            conversationOnly
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[workstream('stream-visible', 'Customer launch', 'completed')]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('Customer launch')).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Sidekick shortcuts' })).toContainElement(screen.getByText('Daily product brief'));
-    expect(screen.queryByText('Meeting notes')).not.toBeInTheDocument();
-    expect(screen.queryByText('New automation')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Search organization' })).toBeInTheDocument();
-    const titlebar = document.querySelector('.sidebar-titlebar');
-    const commandbar = document.querySelector('.sidebar-commandbar');
-    expect(titlebar).not.toBeNull();
-    expect(commandbar).not.toBeNull();
-    expect(titlebar).toContainElement(screen.getByRole('button', { name: 'New channel' }));
-    expect(commandbar).toContainElement(screen.getByRole('button', { name: 'Search organization' }));
-    expect(commandbar?.querySelector('.sidebar-new-button')).toBeNull();
-  });
-
-  // The plus is the whole of this control in the titlebar and in the rail: an
-  // icon with no words beside it, whose name a pointer can only read from a
-  // tooltip. It is the link's own name as well, so both readers get the same
-  // sentence, and it says work stream in the GrokBot shell too — that shell
-  // presents a conversation as a chat, but the route this opens still starts a
-  // work stream.
-  it('names the plus New channel in the titlebar, the rail, and the GrokBot shell', () => {
-    function Navigation(props: { compact?: boolean; conversationOnly?: boolean }) {
-      return <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} {...props} />;
-    }
-    const { rerender } = render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
-
-    const titlebar = document.querySelector('.sidebar-titlebar');
-    expect(titlebar).not.toBeNull();
-    const create = within(titlebar as HTMLElement).getByRole('button', { name: 'New channel' });
-    // Both links are tooltip triggers, and Radix's Slot string-merges the
-    // child's `className`: hand it `NavLink`'s callback form and the class
-    // arrives at the DOM as that callback's source text, leaving the control
-    // unstyled while every other assertion here still passes. Only a real
-    // window shows that, and a window is not a gate the next change runs.
-    expect(create).toHaveClass('sidebar-new-button');
-    fireEvent.focus(create);
-    expect(screen.getByRole('tooltip')).toHaveTextContent('New channel');
-
-    rerender(<MemoryRouter><Tooltip.Provider><Navigation compact /></Tooltip.Provider></MemoryRouter>);
-    const commandbar = document.querySelector('.sidebar-commandbar');
-    expect(commandbar).not.toBeNull();
-    const rail = within(commandbar as HTMLElement).getByRole('button', { name: 'New channel' });
-    expect(rail).toHaveClass('sidebar-new-button', 'sidebar-rail-new-button');
-    fireEvent.focus(rail);
-    expect(screen.getByRole('tooltip')).toHaveTextContent('New channel');
-
-    rerender(<MemoryRouter><Tooltip.Provider><Navigation conversationOnly /></Tooltip.Provider></MemoryRouter>);
-    fireEvent.focus(screen.getByRole('button', { name: 'New channel' }));
-    expect(screen.getByRole('tooltip')).toHaveTextContent('New channel');
-  });
-
   afterEach(() => vi.unstubAllGlobals());
 
   it('resizes from the keyboard and exposes its constrained width', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -335,133 +297,44 @@ describe('Sidebar channel markers', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
   });
 
-  it('temporarily caps Spaces to the available hierarchy width without replacing its saved preference', () => {
-    const hiring = space();
-    useUiStore.getState().setSpacesSidebarWidth(400);
-    const { container } = render(
-      <div className="workspace-shell">
-        <MemoryRouter>
-          <Tooltip.Provider>
-            <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
-              spacesAvailableWidth={300} workspace={workspace} workstreams={[]} />
-          </Tooltip.Provider>
-        </MemoryRouter>
-      </div>,
-    );
-
-    expect(screen.getByRole('separator', { name: 'Resize spaces sidebar' })).toHaveAttribute('aria-valuenow', '300');
-    expect(container.querySelector<HTMLElement>('.workspace-shell')?.style.getPropertyValue('--spaces-sidebar-width')).toBe('300px');
-    expect(useUiStore.getState().spacesSidebarWidth).toBe(400);
-  });
-
-  it('preserves the expanded preference while navigation is forced compact', () => {
-    useUiStore.getState().setSidebarCollapsed(false);
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const toggle = screen.getByRole('button', { name: 'Expand channels' });
-    expect(toggle).toBeDisabled();
-    fireEvent.click(toggle);
-    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
-    fireEvent.keyDown(resizer, { key: 'ArrowRight' });
-    fireEvent.doubleClick(resizer);
-    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
-    expect(useUiStore.getState().sidebarWidth).toBe(300);
-    expect(localStorage.getItem('rally.sidebar-collapsed')).toBe('false');
-  });
-
-  it('toggles the saved navigation preference from the footer and right edge', () => {
-    useUiStore.getState().setSidebarCollapsed(false);
-    function Navigation() {
-      const compact = useUiStore((state) => state.sidebarCollapsed);
-      return <Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />;
-    }
-    render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse channels' }));
-    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Expand channels' }));
-    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
-    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
-    fireEvent.doubleClick(edge);
-    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
-    fireEvent.doubleClick(edge);
-    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
-  });
-
-  // The divider is the only control in the sidebar with no words on it, and the
-  // double-click that collapses it has been reachable only by guessing. The
-  // hint is where both are written down, so which of collapse and expand it
-  // names has to follow the state the next double-click would leave behind.
-  it('names the drag and the double-click on the divider, in the direction the next one goes', () => {
-    useUiStore.getState().setSidebarCollapsed(false);
-    function Navigation() {
-      const compact = useUiStore((state) => state.sidebarCollapsed);
-      return <Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />;
-    }
-    render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
-    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
-    expect(edge.querySelector('svg')).toHaveAttribute('width', '11');
-    expect(edge.querySelector('svg')).toHaveAttribute('height', '11');
-    expect(edge.querySelector('svg')).toHaveAttribute('stroke-width', '2');
-
-    fireEvent.focus(edge);
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to collapse');
-
-    fireEvent.doubleClick(edge);
-    fireEvent.blur(edge);
-    fireEvent.focus(edge);
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Double-click or Enter to expand');
-  });
-
-  // The hint is read on focus as well as on hover, so the reader most likely to
-  // be looking at it is the one who cannot double-click. Enter is the ARIA
-  // authoring practices' key for a splitter's own action, and it has to do what
-  // the same handle's double-click does, under the same guard.
-  it('collapses and expands from Enter on the divider, and refuses it while the window holds navigation compact', () => {
-    useUiStore.getState().setSidebarCollapsed(false);
-    function Navigation() {
-      const compact = useUiStore((state) => state.sidebarCollapsed);
-      return <Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />;
-    }
-    const view = render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
-    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
-
-    fireEvent.keyDown(edge, { key: 'Enter' });
-    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
-    fireEvent.keyDown(edge, { key: 'Enter' });
-    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
-
-    view.unmount();
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize navigation' }), { key: 'Enter' });
-    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
-  });
-
-  // `compact` is `collapsed || constrained`, so it cannot say which of the two
-  // is holding the sidebar in the rail. Somebody who collapsed navigation and
-  // then narrowed the window is held by both, and expanding is impossible: the
-  // hint must not offer it, and the toggle must not quietly rewrite the saved
-  // preference to expanded for a widening that may never come.
-  it('does not offer to expand, or discard the saved preference, while the window holds an already-collapsed sidebar compact', () => {
-    useUiStore.getState().setSidebarCollapsed(true);
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-
-    expect(screen.getByRole('button', { name: 'Expand channels' })).toBeDisabled();
-
-    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
-    fireEvent.focus(edge);
-    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Double-click');
-
-    fireEvent.doubleClick(edge);
-    fireEvent.keyDown(edge, { key: 'Enter' });
-    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
-  });
-
   // Same as the work-stream divider: the press must not open what the hover
   // delay has not yet opened. A hint riding beside the edge for the length of
   // the drag covers the transcript the drag is revealing.
+  it('never collapses: the edge stops at the minimum width and offers no toggle', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
+    resizer.setPointerCapture = vi.fn();
+    vi.spyOn(screen.getByRole('complementary', { name: 'Rally navigation' }), 'getBoundingClientRect')
+      .mockReturnValue({ bottom: 900, height: 900, left: 0, right: 300, toJSON: () => ({}), top: 0, width: 300, x: 0, y: 0 });
+
+    fireEvent.focus(resizer);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
+    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Double-click');
+    fireEvent.blur(resizer);
+
+    fireEvent.doubleClick(resizer);
+    fireEvent.keyDown(resizer, { key: 'Enter' });
+    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+    expect(resizer).toHaveAttribute('aria-valuemin', '240');
+
+    fireEvent.pointerDown(resizer, { button: 0, clientX: 300, pointerId: 5 });
+    fireEvent.pointerMove(window, { clientX: 60, pointerId: 5 });
+    fireEvent.pointerUp(window, { pointerId: 5 });
+    expect(resizer).toHaveAttribute('aria-valuenow', '240');
+
+    for (let step = 0; step < 4; step += 1) fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
+    expect(resizer).toHaveAttribute('aria-valuenow', '240');
+    expect(screen.queryByRole('button', { name: /Expand|Collapse/u })).not.toBeInTheDocument();
+  });
+
   it('keeps the hint shut through a grab that never waited for it', () => {
-    useUiStore.getState().setSidebarCollapsed(false);
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     const edge = screen.getByRole('separator', { name: 'Resize navigation' });
     edge.setPointerCapture = vi.fn();
     expect(screen.queryByRole('tooltip')).toBeNull();
@@ -476,81 +349,14 @@ describe('Sidebar channel markers', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
-  // A window too narrow to hold the expanded sidebar pins it compact and
-  // disables the footer toggle, and the double-click on the divider is guarded
-  // by the same condition. The hint is the only place that shortcut is written
-  // down, so it has to stop offering what the handle would refuse to do.
-  it('stops naming the double-click while the window holds navigation compact', () => {
-    useUiStore.getState().setSidebarCollapsed(false);
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact constrained conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-
-    fireEvent.focus(screen.getByRole('separator', { name: 'Resize navigation' }));
-
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
-    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Double-click');
-  });
-
-  // The width animates because the width itself is transitioned, and a drag
-  // takes that transition off for the length of the gesture. A double-click is
-  // two grabs of the same handle, so the second release has to have put it back
-  // before the toggle lands — otherwise the sidebar jumps to its collapsed
-  // width and the animation is missing on exactly the gesture that asks for it,
-  // with nothing else to say so.
-  it('leaves the resize suppression off when a double-click on the edge toggles', () => {
-    useUiStore.getState().setSidebarCollapsed(false);
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const edge = screen.getByRole('separator', { name: 'Resize navigation' });
-    edge.setPointerCapture = vi.fn();
-    const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
-
-    for (const pointerId of [7, 8]) {
-      fireEvent.pointerDown(edge, { button: 0, clientX: 300, pointerId });
-      expect(navigation).toHaveClass('is-resizing');
-      fireEvent.pointerUp(window, { pointerId });
-    }
-
-    expect(navigation).not.toHaveClass('is-resizing');
-    fireEvent.doubleClick(edge);
-    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
-    expect(navigation).not.toHaveClass('is-resizing');
-  });
-
-  // The handle is drawn at the sidebar's trailing edge, so while a collapse is
-  // still travelling that edge is ahead of the width the state holds. Taking the
-  // offset from the state leaves the drag wrong by whatever the animation had
-  // left to run — and wrong for its whole length, not just the first frame.
-  it('grabs the edge where it is drawn rather than where it is heading', () => {
-    useUiStore.getState().setSidebarCollapsed(true);
-    function Navigation() {
-      const compact = useUiStore((state) => state.sidebarCollapsed);
-      return <Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />;
-    }
-    render(<MemoryRouter><Tooltip.Provider><Navigation /></Tooltip.Provider></MemoryRouter>);
-    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
-    resizer.setPointerCapture = vi.fn();
-    // Mid-collapse: heading for the 96px rail, still drawn at 184px.
-    layOutPanelAt(184);
-
-    fireEvent.pointerDown(resizer, { button: 0, clientX: 185, pointerId: 4 });
-    fireEvent.pointerMove(window, { clientX: 305, pointerId: 4 });
-
-    // 120px of pointer travel from a 184px edge is a 304px sidebar. Measured
-    // from the 96px target instead, the same travel asks for 216px — under the
-    // 220px expand threshold, so the sidebar would not have moved at all.
-    expect(resizer).toHaveAttribute('aria-valuenow', '304');
-    fireEvent.pointerUp(window, { pointerId: 4 });
-  });
-
   // Held arrow keys are the keyboard's drag: the same width written over and
-  // over. Animating each step leaves the edge behind the width the collapse
-  // threshold is judged against, so the sidebar snaps to the rail at a width
-  // the reader never saw. The suppression lasts exactly as long as the key.
-  it('suppresses the collapse animation while an arrow key is held', () => {
-    useUiStore.getState().setSidebarCollapsed(false);
+  // over. Animating each step leaves the edge behind the width being written.
+  // The suppression lasts exactly as long as the key.
+  it('suppresses the width animation while an arrow key is held', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -572,9 +378,9 @@ describe('Sidebar channel markers', () => {
     expect(navigation).not.toHaveClass('is-resizing');
   });
 
-  it('names compact links and connects their hover descriptions to the link', async () => {
-    const item = workstream('compact-preview', 'Named compact destination', 'completed');
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[item]} /></Tooltip.Provider></MemoryRouter>);
+  it('connects a row\'s hover description to its link', async () => {
+    const item = workstream('compact-preview', 'Named destination', 'completed');
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[item]} /></Tooltip.Provider></MemoryRouter>);
     const link = screen.getByRole('link', { name: item.title });
     fireEvent.pointerEnter(link.closest('[data-workstream-id]')!);
     await waitFor(() => expect(link).toHaveAttribute('aria-describedby', `workstream-preview-${item.id}`));
@@ -588,7 +394,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[hovered]}
@@ -619,15 +424,14 @@ describe('Sidebar channel markers', () => {
     );
   });
 
-  it('shows a last-change timestamp only for unread rows and no participant stacks or Command hints', () => {
+  it('shows the last activity time on every row and no participant stacks or Command hints', () => {
     const read = { ...workstream('read-row', 'Read destination', 'completed'), participantUserIds: ['user-1'] };
     const unread = { ...workstream('unread-row', 'Unread destination', 'completed'), hasUnread: true, preview: 'Do not display this preview' };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[read, unread]} /></Tooltip.Provider></MemoryRouter>);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[read, unread]} /></Tooltip.Provider></MemoryRouter>);
     const readLink = screen.getByRole('link', { name: read.title });
     const unreadLink = screen.getByRole('link', { name: new RegExp(unread.title, 'u') });
-    expect(readLink.querySelector('time')).toBeNull();
+    expect(readLink.querySelector('time')).toHaveAttribute('datetime', read.lastActivityAt);
     expect(unreadLink.querySelector('time')).toHaveAttribute('datetime', unread.lastActivityAt);
-    expect(unreadLink.querySelector('.sidebar-row-activity')).toContainElement(unreadLink.querySelector('time'));
     expect(screen.queryByText(unread.preview)).not.toBeInTheDocument();
     expect(document.querySelector('.sidebar-workstream-facepile')).toBeNull();
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
@@ -651,7 +455,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[described]}
@@ -681,7 +484,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[hiring, company]}
             workspace={workspace}
@@ -691,30 +493,31 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    selectSpace('Hiring');
     expect(screen.getAllByRole('link', { name: /Ship the launch/u })).toHaveLength(1);
-    fireEvent.click(screen.getByRole('link', { name: 'Company' }));
+    selectSpace('Company');
     const row = screen.getByRole('link', { name: /Ship the launch/u });
     expect(row).toHaveClass('sidebar-row', 'workstream-row');
     expect(row.querySelector('.sidebar-row-title')).toHaveTextContent('Ship the launch');
-    expect(row.querySelector('.sidebar-row-activity')).toBeNull();
+    expect(within(row).getByText('Hiring, Company')).toBeInTheDocument();
   });
 
-  it('falls back once when a Space route is absent from the active directory', () => {
+  it('falls back to All when a Space route is absent from the active directory', () => {
     const hiring = space();
     render(
       <MemoryRouter initialEntries={['/spaces/archived-space']}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[hiring]}
             workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('heading', { name: 'Hiring' })).toBeVisible();
+    expect(pill('All')).toHaveAttribute('aria-pressed', 'true');
+    expect(pill('Hiring')).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('adds one history entry when a Space is selected', () => {
+  it('filters by a Space pill without navigating or adding a history entry', () => {
     const hiring = space();
     function HistoryProbe() {
       const location = useLocation();
@@ -727,88 +530,19 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter initialEntries={['/starting-point']}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[hiring]}
             workspace={workspace} workstreams={[]} />
           <HistoryProbe />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
-    expect(screen.getByRole('status', { name: 'Current route' })).toHaveTextContent(`/spaces/${hiring.id}`);
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    selectSpace('Hiring');
+    expect(pill('Hiring')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('status', { name: 'Current route' })).toHaveTextContent('/starting-point');
   });
 
-  it('keeps Spaces expanded until a Channel in the selected Space is opened', () => {
-    const hiring = space();
-    const target = placedIn(workstream('hiring-plan', 'Hiring plan', 'completed'), hiring.id);
-    render(
-      <MemoryRouter initialEntries={['/starting-point']}>
-        <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
-            workspace={workspace} workstreams={[target]} />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
-    expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).not.toHaveClass('is-compact');
-
-    fireEvent.click(screen.getByRole('link', { name: /Hiring plan/u }));
-    expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).toHaveClass('is-compact');
-  });
-
-  it('preserves a manually collapsed Channels sidebar when a Space is selected', () => {
-    const hiring = space();
-    useUiStore.getState().setSidebarCollapsed(true);
-    function Navigation() {
-      const compact = useUiStore((state) => state.sidebarCollapsed);
-      return <Sidebar {...defaultActions} automations={[]} compact={compact} onSignOut={vi.fn()}
-        spaces={[hiring]} workspace={workspace} workstreams={[]} />;
-    }
-    render(
-      <MemoryRouter initialEntries={['/starting-point']}>
-        <Tooltip.Provider>
-          <Navigation />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
-
-    expect(screen.getByRole('complementary', { name: 'Rally navigation' })).toHaveClass('is-compact');
-    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
-    expect(localStorage.getItem('rally.sidebar-collapsed')).toBe('true');
-  });
-
-  it('collapses only the Spaces sidebar when the same Channel is re-entered', () => {
-    const hiring = space();
-    const target = placedIn(workstream('route-reset', 'Route reset', 'completed'), hiring.id);
-    function Navigation() {
-      const compact = useUiStore((state) => state.sidebarCollapsed);
-      return <Sidebar {...defaultActions} automations={[]} compact={compact} onSignOut={vi.fn()}
-        spaces={[hiring]} workspace={workspace} workstreams={[target]} />;
-    }
-    render(
-      <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
-        <Tooltip.Provider>
-          <Navigation />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Expand spaces' }));
-    expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).not.toHaveClass('is-compact');
-    expect(screen.getByRole('complementary', { name: 'Rally navigation' })).not.toHaveClass('is-compact');
-
-    fireEvent.click(screen.getByRole('link', { name: /Route reset/u }));
-    expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).toHaveClass('is-compact');
-    expect(screen.getByRole('complementary', { name: 'Rally navigation' })).not.toHaveClass('is-compact');
-  });
-
-  it('centers the containing Space and active Channel when a deep link opens', async () => {
+  it('centers the active Channel when a deep link opens', async () => {
     const other = space('00000000-0000-7000-8000-0000000000a1', 'Other');
     const hiring = space('00000000-0000-7000-8000-0000000000a2', 'Hiring');
     const target = placedIn(workstream('deep-linked-channel', 'Deep linked', 'completed'), hiring.id);
@@ -822,24 +556,27 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()}
+          <Sidebar {...defaultActions} onSignOut={vi.fn()}
             spaces={[other, hiring]} workspace={workspace} workstreams={[target, neighbor]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(scrolled).toHaveLength(2));
-    expect(scrolled.map((row) => row.getAttribute('data-space-id')).filter(Boolean)).toEqual([hiring.id]);
+    // Under All the Channel is already in the list, so only its row moves;
+    // no pill is revealed because no filter was chosen.
+    await waitFor(() => expect(scrolled).toHaveLength(1));
+    expect(scrolled.map((row) => row.getAttribute('data-space-id')).filter(Boolean)).toEqual([]);
     expect(scrolled.map((row) => row.getAttribute('data-workstream-id')).filter(Boolean)).toEqual([target.id]);
     for (const call of vi.mocked(Element.prototype.scrollIntoView).mock.calls) {
       expect(call[0]).toEqual({ block: 'center', behavior: 'auto' });
     }
+    expect(pill('All')).toHaveAttribute('aria-pressed', 'true');
 
     markDeepLinkWorkstreamNavigation(target.id);
-    await waitFor(() => expect(scrolled).toHaveLength(4));
+    await waitFor(() => expect(scrolled).toHaveLength(2));
 
     fireEvent.click(screen.getByRole('link', { name: /Ordinary navigation/u }));
-    expect(scrolled).toHaveLength(4);
+    expect(scrolled).toHaveLength(2);
   });
 
   it('waits for the live Space hierarchy before consuming a deep-link reveal', async () => {
@@ -850,7 +587,7 @@ describe('Sidebar channel markers', () => {
     const view = render(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[]}
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[]}
             spacesReady={false} workspace={workspace} workstreams={[target]} />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -860,13 +597,13 @@ describe('Sidebar channel markers', () => {
     view.rerender(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[hiring]}
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[hiring]}
             spacesReady workspace={workspace} workstreams={[target]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
   });
 
   it('loads directory pages until a deep-linked Channel can reveal its hierarchy', async () => {
@@ -879,7 +616,7 @@ describe('Sidebar channel markers', () => {
     const view = render(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} hasMoreWorkstreams onLoadMoreWorkstreams={onLoadMoreWorkstreams}
+          <Sidebar {...defaultActions} hasMoreWorkstreams onLoadMoreWorkstreams={onLoadMoreWorkstreams}
             onSignOut={vi.fn()} spaces={[hiring]} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -890,7 +627,7 @@ describe('Sidebar channel markers', () => {
     view.rerender(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} hasMoreWorkstreams onLoadMoreWorkstreams={onLoadMoreWorkstreams}
+          <Sidebar {...defaultActions} hasMoreWorkstreams onLoadMoreWorkstreams={onLoadMoreWorkstreams}
             onSignOut={vi.fn()} spaces={[hiring]} workspace={workspace} workstreams={[firstPage]} />
         </Tooltip.Provider>
       </MemoryRouter>,
@@ -900,13 +637,13 @@ describe('Sidebar channel markers', () => {
     view.rerender(
       <MemoryRouter initialEntries={[`/workstreams/${target.id}`]}>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onLoadMoreWorkstreams={onLoadMoreWorkstreams}
+          <Sidebar {...defaultActions} onLoadMoreWorkstreams={onLoadMoreWorkstreams}
             onSignOut={vi.fn()} spaces={[hiring]} workspace={workspace} workstreams={[firstPage, target]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
   });
 
   it('cancels a pending deep-link reveal when navigation leaves its route', async () => {
@@ -924,7 +661,7 @@ describe('Sidebar channel markers', () => {
           setItems([target, neighbor]);
           navigate(`/workstreams/${target.id}`);
         }}>Open restored channel</button>
-        <Sidebar {...defaultActions} automations={[]} loading onSignOut={vi.fn()}
+        <Sidebar {...defaultActions} loading onSignOut={vi.fn()}
           spaces={[hiring]} workspace={workspace} workstreams={items} />
       </>;
     }
@@ -947,7 +684,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[active]}
@@ -969,7 +705,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -1002,7 +738,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -1038,7 +774,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             loading
             onSignOut={vi.fn()}
             spaces={[]}
@@ -1049,18 +784,12 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    // The Space rail reserves four tiles while its directory arrives; the
-    // Channel rail seven glyph rows, ungrouped as the list under a Space is.
-    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(11);
-    expect(container.querySelectorAll('.skeleton-row-mark.is-tile')).toHaveLength(4);
+    // The Channel list holds seven glyph rows, ungrouped as the list under a
+    // Space is; the pill strip draws no pills until its directory arrives.
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(7);
     expect(container.querySelectorAll('.skeleton-row-mark.is-glyph')).toHaveLength(7);
     expect(container.querySelector('.skeleton-group-label')).toBeNull();
-    // The Channel rail is headed by its Space's placeholder, never New.
-    expect(container.querySelector('.channels-sidebar .skeleton-title-header')).not.toBeNull();
-    expect(container.querySelector('.channels-sidebar .sidebar-titlebar .sidebar-new-button')).toBeNull();
-    // The mobile close control stays reachable while the Space loads.
-    expect(within(container.querySelector<HTMLElement>('.channels-sidebar .skeleton-title-header')!)
-      .getByRole('button', { name: 'Close navigation' })).toBeInTheDocument();
+    expect(within(screen.getByRole('group', { name: 'Spaces' })).queryAllByRole('button')).toHaveLength(0);
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
     expect(screen.getByText('Loading your spaces and channels')).toBeInTheDocument();
@@ -1074,7 +803,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             loading={false}
             onSignOut={vi.fn()}
             spaces={[]}
@@ -1086,7 +814,6 @@ describe('Sidebar channel markers', () => {
     );
 
     expect(container.querySelectorAll('.skeleton-row')).toHaveLength(0);
-    expect(container.querySelector('.skeleton-title-header')).toBeNull();
     expect(screen.getByText('Launch brief')).toBeInTheDocument();
   });
 
@@ -1094,7 +821,7 @@ describe('Sidebar channel markers', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -1102,13 +829,12 @@ describe('Sidebar channel markers', () => {
     expect(screen.queryByRole('region', { name: 'Get started with Rally' })).not.toBeInTheDocument();
   });
 
-  it('leaves channel glyphs whole across run and attention states', () => {
+  it('leaves channel glyphs whole and shows one ranked marker per row', () => {
     render(
       <MemoryRouter initialEntries={['/workstreams/input']}>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[
@@ -1128,24 +854,29 @@ describe('Sidebar channel markers', () => {
     );
 
     expect(document.querySelectorAll('.workstream-row-status')).toHaveLength(0);
-    expect(document.querySelectorAll('.workstream-row .status-dot')).toHaveLength(0);
-    expect(screen.getByRole('link', { name: /Board decision/u })).toHaveAccessibleDescription(/1 conversation needs attention/u);
-    expect(screen.getByRole('link', { name: /Completed mention/u })).toHaveAccessibleDescription(/1 conversation needs attention/u);
-    expect(screen.getByRole('link', { name: /Completed unseen/u })).toHaveAccessibleDescription(/1 conversation needs attention/u);
-    expect(within(screen.getByRole('link', { name: /Missing sidebar row/u })).queryByText('1')).not.toBeInTheDocument();
+    // One ranked dot per row; a finished run is the ordinary state and has none.
+    expect(markerOf('Board decision')).toBe('Needs input');
+    expect(markerOf('Pricing restructure')).toBe('Running');
+    expect(markerOf('Monday review')).toBe('Running');
+    expect(markerOf('Missing sidebar row')).toBeNull();
+    expect(markerOf('Completed unread')).toBe('Unread');
+    expect(markerOf('Completed mention')).toBe('You were mentioned');
+    expect(markerOf('Completed unseen')).toBe('New to you');
+    expect(markerOf('Scheduled mention')).toBe('You were mentioned');
+    expect(screen.getByRole('link', { name: 'Board decision, 1 conversation needs attention' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Completed mention, 1 conversation needs attention' })).toBeInTheDocument();
+    expect(within(screen.getByRole('link', { name: /Missing sidebar row/u })).queryByText(/needs attention/u)).not.toBeInTheDocument();
     expect(document.querySelector('.sidebar-automation-marker')).toBeNull();
     expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
     expect(document.querySelector('.brand-lockup')).toBeNull();
-    expect(document.querySelector('.sidebar-titlebar')).not.toBeNull();
   });
 
-  it('counts Main and Breakout attention together on a Channel row and omits zero', () => {
+  it('counts Main and Breakout attention together on a Channel row and marks Breakout news as unread', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[
@@ -1159,11 +890,14 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    const launch = screen.getByRole('link', { name: 'Launch' });
-    expect(launch).toHaveAccessibleDescription(/3 conversations need attention/u);
-    expect(within(launch).getByText('3')).toHaveAttribute('aria-hidden', 'true');
-    expect(screen.getByRole('link', { name: 'Shared channel' })).toHaveAccessibleDescription(/1 conversation needs attention/u);
-    expect(within(screen.getByRole('link', { name: 'Roadmap' })).queryByText('0')).not.toBeInTheDocument();
+    const launch = screen.getByRole('link', { name: 'Launch, 3 conversations need attention' });
+    // The count is not drawn as a badge any more; a Breakout's news is the
+    // row's unread marker.
+    expect(within(launch).queryByText('3')).not.toBeInTheDocument();
+    expect(markerOf('Launch')).toBe('Unread');
+    expect(screen.getByRole('link', { name: 'Shared channel, 1 conversation needs attention' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Roadmap' })).toBeInTheDocument();
+    expect(markerOf('Roadmap')).toBeNull();
   });
 
   it('shows the next active timer and its brief prompt in a tooltip', async () => {
@@ -1180,7 +914,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[waiting, workstream('finished', 'Deploy finished', 'completed')]}
@@ -1193,6 +926,8 @@ describe('Sidebar channel markers', () => {
     const marker = within(screen.getByRole('link', { name: /Wait for the deploy/u }))
       .getByRole('img', { name: accessibleTimerLabel });
     expect(marker).toHaveClass('sidebar-workstream-timer');
+    // On the second line, under the time, rather than in a column of its own.
+    expect(marker.closest('.channel-row-second')).not.toBeNull();
     expect(within(screen.getByRole('link', { name: /Deploy finished/u }))
       .queryByRole('img', { name: /Active timer/u })).not.toBeInTheDocument();
 
@@ -1215,7 +950,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[naming, workstream('named', 'Board decision', 'needs_input')]}
@@ -1253,7 +987,6 @@ describe('Sidebar channel markers', () => {
           <Tooltip.Provider>
             <Sidebar
               {...defaultActions}
-              automations={[]}
               onSignOut={vi.fn()}
               workspace={workspace}
               workstreams={[naming, undated]}
@@ -1291,7 +1024,6 @@ describe('Sidebar channel markers', () => {
           <Tooltip.Provider>
             <Sidebar
               {...defaultActions}
-              automations={[]}
               onSignOut={vi.fn()}
               workspace={workspace}
               workstreams={[
@@ -1345,7 +1077,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onApplyWorkstreamBatch={onApplyWorkstreamBatch}
             onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
             onSignOut={vi.fn()}
@@ -1394,7 +1125,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onApplyWorkstreamBatch={onApplyWorkstreamBatch}
             onPreviewWorkstreamBatch={vi.fn(async () => ({ matchedCount: 20, matchedNoteCount: 0 }))}
             onSignOut={vi.fn()}
@@ -1434,7 +1164,6 @@ describe('Sidebar channel markers', () => {
           <Tooltip.Provider>
             <Sidebar
               {...defaultActions}
-              automations={[]}
               onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
               onSignOut={vi.fn()}
               workspace={workspace}
@@ -1468,285 +1197,10 @@ describe('Sidebar channel markers', () => {
     }
   });
 
-  // Search sits above the scroll box in both layouts, so it stays fixed
-  // however far the list is scrolled. The rail's New work stream row arrives
-  // above it with the compact toggle and leaves with the expand, and is marked
-  // so the list motion shows it doing so; the titlebar's own is hidden in the
-  // rail rather than unmounted, so it can fade with the layout.
-  it('keeps search above the scroll box in both layouts, with the rail\'s New channel row inserted above it', async () => {
-    const onOpenSearch = vi.fn();
-    const view = (compact: boolean): React.JSX.Element => (
-      <MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onOpenSearch={onOpenSearch} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>
-    );
-    const { rerender } = render(view(true));
-    const search = screen.getByRole('button', { name: 'Search organization' });
-    const create = screen.getByRole('button', { name: 'New channel' });
-    expect(screen.getByRole('navigation')).not.toContainElement(search);
-    const bar = search.closest('.sidebar-commandbar');
-    expect(bar).not.toBeNull();
-    expect(bar).toContainElement(create);
-    expect(create.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(create).toHaveAttribute('data-motion-key', 'action:new');
-    expect(create).toHaveAttribute('data-motion-insert');
-    fireEvent.focus(search);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Search');
-    expect(search).not.toHaveAttribute('aria-describedby');
-    fireEvent.blur(search);
-    fireEvent.click(search);
-    expect(onOpenSearch).toHaveBeenCalledOnce();
-    expect(create).toHaveAttribute('aria-haspopup', 'menu');
-
-    rerender(view(false));
-    expect(screen.getByRole('navigation')).not.toContainElement(screen.getByRole('button', { name: 'Search organization' }));
-    const [titlebarCreate, ...others] = screen.getAllByRole('button', { name: 'New channel' });
-    expect(others).toEqual([]);
-    expect(titlebarCreate?.closest('.sidebar-titlebar')).not.toBeNull();
-    expect(bar?.querySelector('[data-motion-key="action:new"]')).toBeNull();
-    const expandedSearch = screen.getByRole('button', { name: 'Search organization' });
-    fireEvent.focus(expandedSearch);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Search');
-    expect(expandedSearch).not.toHaveAttribute('aria-describedby');
-  });
-
-  it.each([false, true])('shows only enabled standalone Sidekicks and opens their library detail (compact=%s)', (compact) => {
-    const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
-    const excluded = [
-      { ...automation, id: 'paused', name: 'Paused helper', status: 'paused' as const },
-      { ...automation, id: 'draft', name: 'Draft helper', status: 'draft' as const },
-      { ...automation, id: 'room', name: 'Room helper', scope: 'workstream' as const },
-    ];
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[{ ...automation, loadable: true }, shared, ...excluded]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
-    // Below the list and above the account row in both layouts: the rail keeps
-    // the strip where the full sidebar has it rather than folding it into the
-    // scrolling list.
-    expect(strip.closest('.sidebar-scroll')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Open account menu' })).toBeVisible();
-    expect(within(strip).getAllByRole('button')).toHaveLength(2);
-    for (const item of excluded) expect(screen.queryByText(item.name)).toBeNull();
-    // Running says so with a play in the success colour, drawn into the hexagon
-    // rather than laid over it. The dot this replaced said only "a state is
-    // true here", and inherited the work-stream marker's radius on the way, so
-    // what a person actually saw was an unnamed dark square.
-    const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Organization' });
-    const marker = tile.querySelector('.automation-glyph-marker');
-    expect(marker).toHaveClass('lucide-play');
-    expect(marker).toHaveAttribute('fill', 'var(--av-sys-color-success-base)');
-    // The state reaches a screen reader through that name and nowhere else. The
-    // tile used to also render a visually hidden "Active", which read as the
-    // accessibility path while contributing nothing: `aria-label` on a button
-    // replaces its contents in the accessible name, so the span was never
-    // announced. Queried above by the exact name, so a second source for the
-    // state has to keep the name right rather than appending to it.
-    expect(tile.querySelector('.sr-only')).toBeNull();
-    fireEvent.click(within(strip).getByRole('button', { name: 'Team brief, Active · Organization' }));
-    expect(openSidekicks).toHaveBeenCalledWith('shared');
-    // The Sidekicks window is a separate renderer with its own copy of the
-    // telemetry module, and its surface mounts no route observer, so a marker
-    // set here reaches nothing and is left for this window's next navigation to
-    // consume as `sidebar_automation`.
-    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
-    expect(screen.queryByRole('link', { name: /Daily product brief/u })).toBeNull();
-  });
-
-  it('reads a truncated tile through the renderer\'s own tooltip, and its play through a second', async () => {
-    const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
-    const tile = within(strip).getByRole('button', { name: 'Team brief, Active · Organization' });
-
-    // One tooltip language per slot. `title` is the desktop's own: a different
-    // delay, a different type, no theme, and nothing at all on keyboard focus —
-    // which is the whole cost here, because the caption is ellipsized at 80px
-    // and the rail drops it, so the tooltip is how the tile is read.
-    expect(tile).not.toHaveAttribute('title');
-
-    fireEvent.pointerMove(tile, { pointerType: 'mouse' });
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Team brief · Organization');
-    // Not the state: every tile in this strip is active, the play in the corner
-    // reports it, and the tile's one line is better spent on which Sidekick it
-    // is. A screen reader still gets the state, out of the accessible name
-    // asserted above.
-    expect(screen.getByRole('tooltip')).not.toHaveTextContent('Active');
-
-    fireEvent.pointerMove(tile.querySelector('.automation-glyph-marker')!.parentElement!, { pointerType: 'mouse' });
-    await waitFor(
-      () => expect(screen.getByRole('tooltip')).toHaveTextContent('in service and waiting on its triggers'),
-    );
-    // And only that one, because there is only one: the tile has a single
-    // tooltip slot and the pointer decides what it says.
-    expect(screen.getAllByRole('tooltip')).toHaveLength(1);
-  });
-
-  /** The strip with one workspace Sidekick, and the tile that carries its play. */
-  function renderStripTile(): HTMLElement {
-    const shared = { ...automation, loadable: false, id: 'shared', name: 'Team brief', scope: 'workspace' as const };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} conversationOnly automations={[shared]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const strip = screen.getByRole('region', { name: 'Sidekick shortcuts' });
-    return within(strip).getByRole('button', { name: 'Team brief, Active · Organization' });
-  }
-
-  /** The marker's hover target: the `<g>` the hexagon wraps its play in. */
-  function playTarget(tile: HTMLElement): HTMLElement {
-    return tile.querySelector('.automation-glyph-marker')!.parentElement as HTMLElement;
-  }
-
-  it('opens on keyboard focus, which is the whole of what the native tooltip could not do', async () => {
-    const tile = renderStripTile();
-
-    // The reason this rail took `Tip` at all. A `title` draws nothing for a
-    // reader who arrives by Tab, on the one row whose caption is ellipsized at
-    // 80px and dropped outright by the rail.
-    act(() => { tile.focus(); });
-
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Team brief · Organization');
-  });
-
-  it('says what the play means to a reader who cannot rest a pointer on it', () => {
-    const tile = renderStripTile();
-
-    // The marker is drawn inside `aria-hidden` artwork and its target is a
-    // non-focusable `<g>`, so the sentence reaches assistive technology only
-    // because the tile carries it. Giving the target a tab stop instead would
-    // put one inside every tile in the strip.
-    expect(tile).toHaveAccessibleDescription('Active — in service and waiting on its triggers.');
-    expect(playTarget(tile)).not.toHaveAttribute('tabindex');
-  });
-
-  it('answers for the play when the pointer reaches it inside the tile tooltip\'s own delay', () => {
-    // The path a pointer actually takes: across the tile, onto the play, before
-    // the tile's 450ms is up. Two tooltips cannot resolve this between them —
-    // a Radix root tells every other root to close the moment it *decides* to
-    // open, so the tile's pending open closed the play's explanation on its way
-    // to being refused, and the tile showed nothing at all. One root has one
-    // answer, and it is the one the pointer is on.
-    vi.useFakeTimers();
-    try {
-      const tile = renderStripTile();
-
-      fireEvent.pointerMove(tile, { pointerType: 'mouse' });
-      // Short of 450ms: the tile's open is pending, and nothing is up yet.
-      act(() => { vi.advanceTimersByTime(120); });
-      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
-
-      fireEvent.pointerMove(playTarget(tile), { pointerType: 'mouse' });
-      // Each advance flushes on its own, the way separate timers land in a
-      // browser. Advancing straight past both at once lets a tooltip mount
-      // after an event it should have heard, which reads as a pass for a race
-      // that is still there.
-      act(() => { vi.advanceTimersByTime(400); });
-      act(() => { vi.advanceTimersByTime(2_000); });
-
-      expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent))
-        .toEqual(['Active — in service and waiting on its triggers.']);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('swaps its answer both ways as the pointer moves between the tile and its play', () => {
-    // No second delay on the way in and no gap on the way out: the slot is
-    // already open, so it re-labels rather than closing and waiting again.
-    vi.useFakeTimers();
-    try {
-      const tile = renderStripTile();
-
-      fireEvent.pointerMove(tile, { pointerType: 'mouse' });
-      act(() => { vi.advanceTimersByTime(600); });
-      expect(screen.getByRole('tooltip')).toHaveTextContent('Team brief · Organization');
-
-      fireEvent.pointerMove(playTarget(tile), { pointerType: 'mouse' });
-      act(() => { vi.advanceTimersByTime(50); });
-      expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent))
-        .toEqual(['Active — in service and waiting on its triggers.']);
-
-      // And back, which two roots could not do: the tile's trigger opens once
-      // per pointer entry, so a tooltip it had given up would not return until
-      // the pointer left the tile and came back.
-      fireEvent.pointerLeave(playTarget(tile));
-      fireEvent.pointerMove(tile, { pointerType: 'mouse' });
-      act(() => { vi.advanceTimersByTime(50); });
-      expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent))
-        .toEqual(['Team brief · Organization']);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it.each([false, true])('offers making the first Sidekick where the shortcuts would be (compact=%s)', (compact) => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} compact={compact} conversationOnly automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    // Named for what it holds: an offer to make one, not shortcuts to any.
-    const strip = screen.getByRole('region', { name: 'Sidekicks' });
-    expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
-    // The same tile a Sidekick gets, so it sheds its caption and shrinks to the
-    // rail's square with them rather than keeping a shape of its own.
-    const create = within(strip).getByRole('button', { name: 'New Sidekick' });
-    expect(create).toHaveClass('automation-tile');
-    expect(create.querySelector('.sidekick-new-glyph')).not.toBeNull();
-    // No lifecycle marker: there is no Sidekick yet to have one, so the hexagon
-    // is drawn whole rather than with a state cut out of it.
-    expect(create.querySelector('.automation-glyph-marker')).toBeNull();
-    expect(create.querySelector('mask')).toBeNull();
-    expect(within(strip).getAllByRole('button')).toHaveLength(1);
-    fireEvent.click(create);
-    expect(openSidekicks).toHaveBeenCalledWith('new');
-    // Strands a marker in this window otherwise; see the Sidekick tile above.
-    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
-  });
-
-  it('drops the new-Sidekick tile once one is enabled, and names the strip for the shortcuts it holds', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[automation]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    expect(within(screen.getByRole('region', { name: 'Sidekick shortcuts' })).queryByRole('button', { name: 'New Sidekick' })).toBeNull();
-    expect(screen.queryByRole('region', { name: 'Sidekicks' })).toBeNull();
-  });
-
-  it('waits for the organization answer before saying an organization has no Sidekicks', () => {
-    // The array itself carries the wait, so no caller has to remember a flag.
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={undefined} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
-  });
-
-  it('keeps the new-Sidekick slot for drafts and resumes the most recently updated standalone draft', () => {
-    const olderDraft = { ...automation, id: 'automation-draft-older', status: 'draft' as const };
-    const newerDraft = { ...olderDraft, id: 'automation-draft-newer', updatedAt: '2026-07-21T09:00:00.000Z' };
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[olderDraft, newerDraft]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const strip = screen.getByRole('region', { name: 'Sidekicks' });
-    const create = within(strip).getByRole('button', { name: 'New Sidekick' });
-    fireEvent.click(create);
-    expect(openSidekicks).toHaveBeenCalledWith(newerDraft.id);
-    expect(screen.queryByRole('region', { name: 'Sidekick shortcuts' })).toBeNull();
-  });
-
-  it('keeps the new-Sidekick slot for paused Sidekicks and starts a new draft', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, status: 'paused' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
-    fireEvent.click(create);
-    expect(openSidekicks).toHaveBeenCalledWith('new');
-  });
-
-  it('does not resume an organization draft whose management authority is unknown', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workspace', status: 'draft' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
-    fireEvent.click(create);
-    expect(openSidekicks).toHaveBeenCalledWith('new');
-  });
-
-  it('keeps the new-Sidekick slot when only a channel-owned Sidekick exists', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[{ ...automation, scope: 'workstream' }]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
-    const create = within(screen.getByRole('region', { name: 'Sidekicks' })).getByRole('button', { name: 'New Sidekick' });
-    fireEvent.click(create);
-    expect(openSidekicks).toHaveBeenCalledWith('new');
-  });
-
   it('manages Sidekicks through the library instead of listing them in the sidebar', () => {
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[automation]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} /></Tooltip.Provider></MemoryRouter>);
     expect(screen.queryByRole('region', { name: 'Automations' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'New automation' })).toBeNull();
-    // Scoped to the actions row: the titlebar's plus is a second way to the
-    // same place and now carries the same name.
-    const actions = document.querySelector('.sidebar-primary-actions');
-    expect(actions).not.toBeNull();
-    expect(within(actions as HTMLElement).getByRole('button', { name: 'New channel' })).toHaveAttribute('aria-haspopup', 'menu');
   });
 
   it('archives a channel from the menu once the confirmation is accepted', async () => {
@@ -1757,7 +1211,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onArchiveWorkstream={onArchiveWorkstream}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -1804,7 +1257,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onArchiveWorkstream={onArchiveWorkstream}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -1851,12 +1303,12 @@ describe('Sidebar channel markers', () => {
       render(
         <MemoryRouter>
           <Tooltip.Provider>
-            <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()}
+            <Sidebar {...defaultActions} onSignOut={vi.fn()}
               spaces={[general(), hiring]} workspace={workspace} workstreams={[target]} />
           </Tooltip.Provider>
         </MemoryRouter>,
       );
-      fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+      selectSpace('Hiring');
 
       // A row keeps its own menu.
       fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
@@ -1902,7 +1354,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             ordering={[{
               container: { kind: 'organization' },
@@ -1916,14 +1367,11 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    const sidebarOrder = within(screen.getByRole('navigation', { name: 'Spaces' }))
-      .getAllByRole('link')
-      .map((link) => link.getAttribute('aria-label'));
-    expect(sidebarOrder).toEqual(['Launch', 'Hiring', 'General']);
+    expect(pillNames()).toEqual(['All', 'Launch', 'Hiring']);
 
     // The row lives under the Space that holds it; there is no second, flat
     // list of the same Channel to reach it through.
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    selectSpace('Hiring');
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u })!, { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
@@ -1932,8 +1380,9 @@ describe('Sidebar channel markers', () => {
     const generalOption = await screen.findByRole('menuitemcheckbox', { name: 'General' });
     const existing = screen.getByRole('menuitemcheckbox', { name: 'Hiring' });
     const available = screen.getByRole('menuitemcheckbox', { name: 'Launch' });
+    // The pills' order, with General — which has no pill — in its stored place.
     expect(screen.getAllByRole('menuitemcheckbox').map((option) => option.textContent))
-      .toEqual(sidebarOrder);
+      .toEqual(['Launch', 'Hiring', 'General']);
     expect(generalOption).toHaveAttribute('aria-checked', 'true');
     expect(generalOption.firstElementChild).toHaveClass('nested-menu-check');
     expect(existing).toHaveAttribute('data-disabled');
@@ -1960,7 +1409,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             ordering={[{
               container: { kind: 'organization' },
@@ -1974,19 +1422,15 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    const sidebarOrder = within(screen.getByRole('navigation', { name: 'Spaces' }))
-      .getAllByRole('link')
-      .map((link) => link.getAttribute('aria-label'));
-    const launcher = screen.getByRole('button', { name: 'New channel or space' });
-    fireEvent.keyDown(launcher, { key: 'ArrowDown' });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel' }));
+    expect(pillNames()).toEqual(['All', 'Launch', 'Hiring']);
+    fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
     const spacePicker = within(dialog).getByRole('combobox', { name: 'Space' });
     expect(spacePicker).toHaveTextContent('Launch');
     fireEvent.click(spacePicker);
     expect(screen.getAllByRole('option').map((option) => option.textContent))
-      .toEqual(sidebarOrder);
+      .toEqual(['Launch', 'Hiring', 'General']);
   });
 
   it('keeps Add to space aligned with an in-flight Space reorder', async () => {
@@ -2006,7 +1450,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onReorderContainer={onReorderContainer}
             onSignOut={vi.fn()}
             ordering={[{
@@ -2021,27 +1464,24 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.keyDown(screen.getByRole('link', { name: 'Launch' }), {
+    fireEvent.keyDown(pill('Launch'), {
       altKey: true,
-      key: 'ArrowDown',
+      key: 'ArrowRight',
     });
     await waitFor(() => expect(onReorderContainer).toHaveBeenCalledWith({
       container: { kind: 'organization' },
       itemIds: [hiring.id, launch.id, general().id],
     }));
-    const sidebarOrder = within(screen.getByRole('navigation', { name: 'Spaces' }))
-      .getAllByRole('link')
-      .map((link) => link.getAttribute('aria-label'));
-    expect(sidebarOrder).toEqual(['Hiring', 'Launch', 'General']);
+    expect(pillNames()).toEqual(['All', 'Hiring', 'Launch']);
 
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    selectSpace('Hiring');
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
       clientX: 120,
       clientY: 90,
     });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Add to space' }));
     expect(screen.getAllByRole('menuitemcheckbox').map((option) => option.textContent))
-      .toEqual(sidebarOrder);
+      .toEqual(['Hiring', 'Launch', 'General']);
 
     finishReorder?.();
     await waitFor(() => expect(onReorderContainer).toHaveBeenCalledOnce());
@@ -2063,7 +1503,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onRemoveChannelFromSpace={onRemoveChannelFromSpace}
             onSignOut={vi.fn()}
             spaces={[launch, hiring]}
@@ -2074,7 +1513,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    selectSpace('Hiring');
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
       clientX: 120,
       clientY: 90,
@@ -2101,7 +1540,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onRemoveChannelFromSpace={onRemoveChannelFromSpace}
             onSignOut={vi.fn()}
             spaces={[hiring]}
@@ -2112,7 +1550,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    selectSpace('Hiring');
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
       clientX: 120,
       clientY: 90,
@@ -2136,7 +1574,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onRemoveChannelFromSpace={onRemoveChannelFromSpace}
             onSignOut={vi.fn()}
             spaces={[hiring]}
@@ -2147,7 +1584,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    selectSpace('Hiring');
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
       clientX: 120,
       clientY: 90,
@@ -2177,7 +1614,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[general(), reached]}
             workspace={workspace}
@@ -2187,7 +1623,6 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('link', { name: 'General' }));
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u })!, { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
@@ -2220,7 +1655,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[hiring]}
             workspace={workspace}
@@ -2230,7 +1664,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    selectSpace('Hiring');
     fireEvent.contextMenu(screen.getByRole('link', { name: /Digest/u }), { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
@@ -2239,76 +1673,37 @@ describe('Sidebar channel markers', () => {
     expect(screen.queryByRole('menuitem', { name: 'Remove from space' })).not.toBeInTheDocument();
   });
 
-  it('moves a channel from the center sidebar to the space its row was dropped on', () => {
+  it('moves a channel from the selected Space to the pill its row was dropped on', () => {
     const onMoveChannelToSpace = vi.fn(async () => undefined);
     const hiring = space();
-    const home = general();
-    const target = placedIn(workstream('drag-to-space', 'Quarterly planning', 'completed'), home.id);
+    const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
+    const target = placedIn(workstream('drag-to-space', 'Quarterly planning', 'completed'), launch.id);
     render(
       <MemoryRouter>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onMoveChannelToSpace={onMoveChannelToSpace}
             onSignOut={vi.fn()}
-            spaces={[home, hiring]}
+            spaces={[general(), launch, hiring]}
             workspace={workspace}
             workstreams={[target]}
           />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
+    selectSpace('Launch');
 
     const row = document.querySelector(`[data-workstream-id="${target.id}"]`);
+    if (!(row instanceof HTMLElement)) throw new Error('channel row missing');
     expect(row).toHaveAttribute('draggable', 'true');
-    const item = screen.getByRole('link', { name: 'Hiring' });
-    if (!(item instanceof HTMLElement)) throw new Error('space row missing');
-    fireEvent.drop(item, {
-      dataTransfer: {
-        dropEffect: 'none',
-        getData: (type: string) => type === 'application/x-rally-workstream-id'
-          ? target.id
-          : type === 'application/x-rally-channel-source-space-id' ? home.id : '',
-      },
-    });
+    // The payload the row itself writes is the one the pill reads back.
+    const transfer = recordingDataTransfer();
+    fireEvent.dragStart(row, { dataTransfer: transfer });
+    fireEvent.dragEnter(pill('Hiring'), { dataTransfer: transfer });
+    fireEvent.drop(pill('Hiring'), { dataTransfer: transfer });
 
-    expect(onMoveChannelToSpace).toHaveBeenCalledWith(home.id, hiring.id, target.id);
-  });
-
-  // Every Channel belongs to at least one Space and the section is drawn in
-  // every shell, so a row is always draggable onto something.
-  it('given the conversation-only sidebar, then the Spaces and selected-Space Channels are still drawn', () => {
-    const target = placedIn(workstream('drag-conversation-only', 'Quarterly planning', 'completed'), general().id);
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[]}
-            conversationOnly
-            onSignOut={vi.fn()}
-            spaces={[general()]}
-            workspace={workspace}
-            workstreams={[target]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByRole('complementary', { name: 'Spaces sidebar' })).toBeVisible();
-    expect(screen.getByRole('link', { name: 'General' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'General' })).toHaveClass('sidebar-title');
-    const header = screen.getByRole('heading', { name: 'General' }).closest('.sidebar-header');
-    expect(header).toHaveClass('sidebar-row');
-    const titleIcon = header?.querySelector('.sidebar-title-header-icon');
-    expect(titleIcon?.querySelector('svg')).toHaveAttribute('width', '20');
-    expect(titleIcon?.querySelector('svg')).toHaveAttribute('height', '20');
-    expect(titleIcon?.nextElementSibling).toBe(screen.getByRole('heading', { name: 'General' }));
-    expect(header?.nextElementSibling).toHaveClass('sidebar-horizontal-line', 'sidebar-header-line');
-    expect(screen.getByRole('navigation', { name: 'Channels' })).toHaveClass('sidebar-scroll');
-    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Quarterly planning/u })).toHaveClass('sidebar-row');
+    expect(onMoveChannelToSpace).toHaveBeenCalledWith(launch.id, hiring.id, target.id);
   });
 
   // The section is showing its opening card and no rows, so there is nothing to
@@ -2324,8 +1719,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
-            conversationOnly
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[target]}
@@ -2334,7 +1727,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByRole('heading', { name: 'Spaces' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Spaces' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
     expect(screen.queryByText('No spaces yet')).not.toBeInTheDocument();
     expect(document.querySelector(`[data-workstream-id="${target.id}"]`))
@@ -2353,7 +1746,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[general()]}
             spacesReady={false}
@@ -2364,7 +1756,8 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/Rally is opening this organization/u)).toBeVisible();
+    expect(screen.getByText('Opening this organization…')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /General/u })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
     expect(document.querySelector(`[data-workstream-id="${target.id}"]`))
@@ -2383,10 +1776,9 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onRetrySpaces={onRetrySpaces}
             onSignOut={vi.fn()}
-            spaces={[general()]}
+            spaces={[general(), space()]}
             spacesOutOfDate
             workspace={workspace}
             workstreams={[]}
@@ -2395,7 +1787,7 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('link', { name: /General/u })).toBeVisible();
+    expect(pill('Hiring')).toBeVisible();
     expect(screen.queryByText('These spaces may be out of date.')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(onRetrySpaces).toHaveBeenCalled();
@@ -2410,7 +1802,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[hiring, launch]}
             workspace={workspace}
@@ -2420,9 +1811,9 @@ describe('Sidebar channel markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    selectSpace('Hiring');
     expect(screen.getByRole('link', { name: /Quarterly planning/u })).toHaveAttribute('href', `/workstreams/${target.id}`);
-    fireEvent.click(screen.getByRole('link', { name: 'Launch' }));
+    selectSpace('Launch');
     expect(screen.getByRole('link', { name: /Quarterly planning/u })).toHaveAttribute('href', `/workstreams/${target.id}`);
   });
 
@@ -2435,7 +1826,6 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onMarkWorkstreamUnread={onMarkWorkstreamUnread}
             onRenameWorkstream={onRenameWorkstream}
             onSignOut={vi.fn()}
@@ -2479,7 +1869,7 @@ describe('private channels', () => {
     window.localStorage.clear();
     markWorkstreamNavigation.mockReset();
     reportTelemetryProductIntent.mockReset();
-    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
       unobserve(): void {}
@@ -2495,7 +1885,6 @@ describe('private channels', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={streams}
@@ -2516,28 +1905,6 @@ describe('private channels', () => {
     const row = screen.getByRole('link', { name: /Digest/u });
     expect(screen.queryByLabelText('Private channel')).not.toBeInTheDocument();
     expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
-  });
-
-  it('explains the public badge on hover without displacing the row preview', async () => {
-    renderWith([workstream('00000000-4000-4000-8000-00000000002f', 'Launch', 'completed')]);
-    const row = screen.getByRole('link', { name: 'Launch' });
-    expect(row).toHaveAccessibleDescription('Public channel');
-    const globe = within(row).getByRole('img', { name: 'Public channel' });
-    fireEvent.pointerEnter(row.closest('[data-workstream-id]')!);
-    await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('Launch'), { timeout: 5_000 });
-
-    // The badge is the smallest thing on the row and the only one whose meaning
-    // has to be guessed, so it answers for itself. Radix asks every other open
-    // tooltip to close when one opens; the preview drives its own `open` and
-    // stays, which is what keeps the two explanations from taking turns.
-    fireEvent.pointerMove(globe, { pointerType: 'mouse' });
-    await waitFor(
-      () => expect(screen.getAllByRole('tooltip').map((tip) => tip.textContent)).toEqual(
-        expect.arrayContaining([expect.stringContaining('everyone in the organization can see this channel')]),
-      ),
-      { timeout: 5_000 },
-    );
-    expect(screen.getByRole('tooltip', { name: /Launch/u })).toBeInTheDocument();
   });
 
   it('reaches a keyboard reader through the row preview the globe tip cannot', async () => {
@@ -2578,7 +1945,9 @@ describe('private channels', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Launch/u });
-    expect(row.querySelector('.sidebar-workstream-public')).not.toBeNull();
+    // Said in the row's description rather than as a badge on its glyph.
+    expect(row).toHaveAccessibleDescription('Public channel');
+    expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
     expect(screen.queryByLabelText('Private channel')).not.toBeInTheDocument();
     expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
   });
@@ -2627,7 +1996,7 @@ describe('channel rows after an application switch', () => {
   let stopTracking: (() => void) | null = null;
 
   beforeEach(() => {
-    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     // The app installs this once per window, in `App`. These render the sidebar
     // alone, so the tracking is installed alongside it.
     stopTracking = installWindowActivationTracking();
@@ -2644,7 +2013,6 @@ describe('channel rows after an application switch', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={streams}
@@ -2755,7 +2123,7 @@ describe('pinned channels', () => {
     window.localStorage.clear();
     markWorkstreamNavigation.mockReset();
     reportTelemetryProductIntent.mockReset();
-    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     scrollIntoView.mockClear();
     Element.prototype.scrollIntoView = scrollIntoView;
     vi.stubGlobal('ResizeObserver', class {
@@ -2780,13 +2148,15 @@ describe('pinned channels', () => {
       onReorderPinnedWorkstreams: (spaceId: string, workstreamIds: string[]) => Promise<void>;
     }> = {},
   ): void {
+    // Filtered to the one Space these rows are pinned in, whose pinned run the
+    // section draws and a drag rearranges.
+    useUiStore.setState({ sidebarSpaceFilter: TEST_SPACE_ID });
     render(
       <MemoryRouter>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
             {...actions}
-            automations={[]}
             spaces={[space(undefined, undefined, { channelCount: streams.length })]}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -2834,14 +2204,17 @@ describe('pinned channels', () => {
     // Once, not twice: the recent list keeps only what is not pinned.
     expect(screen.getAllByRole('link', { name: /Launch tracking/u })).toHaveLength(1);
     expect(within(section).queryByRole('link', { name: /Quarterly planning/u })).not.toBeInTheDocument();
-    expect(screen.getByRole('separator', { name: 'Pinned and unpinned channels' })).toBeVisible();
+    // With pins above it, the rest of the list is named.
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
   });
 
-  it('shows no Pinned section until something is pinned', () => {
+  it('shows an empty Pinned section that says how to pin, before anything is pinned', () => {
     renderWith([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
-    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('separator', { name: 'Pinned and unpinned channels' })).not.toBeInTheDocument();
+    const section = screen.getByRole('region', { name: 'Pinned' });
+    expect(within(section).getByText('Move a channel here to pin it')).toBeVisible();
+    expect(within(section).queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
   });
 
   it('renders pinned rows in their stored order rather than by activity', () => {
@@ -2851,7 +2224,7 @@ describe('pinned channels', () => {
     ]);
 
     expect(pinnedRowTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
-    expect(screen.queryByRole('separator', { name: 'Pinned and unpinned channels' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
   });
 
   it('does not navigate behind an open modal dialog', async () => {
@@ -3062,7 +2435,6 @@ describe('pinned channels', () => {
       <MemoryRouter><Tooltip.Provider>
         <Sidebar
           {...defaultActions}
-          automations={[]}
           onReorderPinnedWorkstreams={onReorderPinnedWorkstreams}
           onSignOut={vi.fn()}
           spaces={[launch, hiring]}
@@ -3075,10 +2447,11 @@ describe('pinned channels', () => {
       </Tooltip.Provider></MemoryRouter>,
     );
 
+    selectSpace('Launch');
     fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
     expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(launch.id, ['ws-b', 'ws-a']);
 
-    fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+    selectSpace('Hiring');
     expect(pinnedRowTitles()).toEqual([
       expect.stringContaining('Alpha'),
       expect.stringContaining('Bravo'),
@@ -3148,7 +2521,6 @@ describe('pinned channels', () => {
       return (
         <Sidebar
           {...defaultActions}
-          automations={[]}
           onPinWorkstream={async (workstream, spaceId, pinned) => {
             pins.push(`${pinned ? 'pin' : 'unpin'}:${workstream.id}`);
             await Promise.resolve();
@@ -3227,19 +2599,20 @@ describe('pinned channels', () => {
         workstream('ws-recent', 'Quarterly planning', 'completed'),
       ]);
 
-      fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+      fireEvent.contextMenu(screen.getByRole('link', { name: /Roadmap review/u }), { clientX: 120, clientY: 90 });
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
 
       // The animated element is the one the Pinned section now renders, and it
-      // leaves and returns one row above its alphabetical slot, under the new
-      // Pinned heading.
-      const moved = playedOn('workstream:ws-recent');
+      // rises one slot from the second alphabetical row to the first pinned one,
+      // under the Pinned heading that was already there.
+      const moved = playedOn('workstream:ws-first');
       expect(moved).toBeDefined();
       expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(moved!.element);
-      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, -48px)' }));
-      // The remaining alphabetical row shifts down one slot under Pinned.
-      expect(playedOn('workstream:ws-first')?.keyframes).toEqual([{ transform: 'translate(0px, -48px)' }, { transform: 'translate(0px, 0px)' }]);
+      expect(moved!.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 48px)' }));
+      // The row it passed shifts down two slots: one for the pinned row above
+      // it and one for the Channels heading the list now has.
+      expect(playedOn('workstream:ws-recent')?.keyframes).toEqual([{ transform: 'translate(0px, -96px)' }, { transform: 'translate(0px, 0px)' }]);
     });
 
     // `scrollIntoView` scrolls to the box as transformed, and the motion's first
@@ -3298,12 +2671,13 @@ describe('pinned channels', () => {
       );
       render(
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} spaces={[launch, hiring]} workspace={workspace} workstreams={[member]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[launch, hiring]} workspace={workspace} workstreams={[member]} />
         </Tooltip.Provider></MemoryRouter>,
       );
+      selectSpace('Launch');
       expect(screen.getByRole('link', { name: /Roadmap review/u })
         .closest('[data-motion-scope]')).toHaveAttribute('data-motion-scope', `space:${launch.id}`);
-      fireEvent.click(screen.getByRole('link', { name: 'Hiring' }));
+      selectSpace('Hiring');
       expect(screen.getAllByRole('link', { name: /Roadmap review/u })).toHaveLength(1);
       expect(screen.getByRole('link', { name: /Roadmap review/u })
         .closest('[data-motion-scope]')).toHaveAttribute('data-motion-scope', `space:${hiring.id}`);
@@ -3319,7 +2693,7 @@ describe('pinned channels', () => {
       const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
       const view = (streams: WorkstreamSummary[]): React.JSX.Element => (
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
         </Tooltip.Provider></MemoryRouter>
       );
       // jsdom has no `TransitionEvent`, so the property name goes on by hand.
@@ -3362,7 +2736,7 @@ describe('pinned channels', () => {
       const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
       const view = (streams: WorkstreamSummary[]): React.JSX.Element => (
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
         </Tooltip.Provider></MemoryRouter>
       );
       const layoutEvent = (type: string): Event => {
@@ -3385,31 +2759,6 @@ describe('pinned channels', () => {
       expect(playedOn('workstream:ws-yesterday')).toBeDefined();
     });
 
-    // `transitionrun` arrives with the first frame after the toggle, and a
-    // render can land before it. The toggle raises the hold itself, and a
-    // frame later — jsdom runs no transitions, so nothing is travelling — the
-    // sidebar releases it and the next move plays.
-    it('raises the hold from the toggle itself, and releases it a frame later when nothing travels', async () => {
-      const today = workstream('ws-today', 'Roadmap review', 'completed', '2026-08-01T09:00:00.000Z');
-      const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
-      const view = (compact: boolean, streams: WorkstreamSummary[]): React.JSX.Element => (
-        <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} compact={compact} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
-        </Tooltip.Provider></MemoryRouter>
-      );
-      const { rerender } = render(view(false, [today, yesterday]));
-      rerender(view(true, [today, yesterday]));
-      const touched = { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' };
-      rerender(view(true, [today, touched]));
-      // The rail's New work stream row arriving is the one thing that plays: no row moved.
-      expect(animate.mock.calls.map(([element]) => (element as HTMLElement).dataset.motionKey)).toEqual(['action:new']);
-      await act(() => new Promise<void>((resolve) => { requestAnimationFrame(() => resolve()); }));
-      // The touched row goes back to Yesterday and the other climbs two
-      // slots past it: a move, and it plays.
-      rerender(view(true, [today, yesterday]));
-      expect(playedOn('workstream:ws-today')?.keyframes[0]).toEqual(expect.objectContaining({ transform: 'translate(0px, 96px)' }));
-    });
-
     // A row leaves one recency group for another whenever it is touched — its
     // heading changes from Yesterday to Today — and the two groups are separate
     // subtrees, so the row is remounted. It is still one row to the reader, and
@@ -3419,14 +2768,14 @@ describe('pinned channels', () => {
       const yesterday = workstream('ws-yesterday', 'Quarterly planning', 'completed', '2026-07-31T09:00:00.000Z');
       const { rerender } = render(
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[today, yesterday]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[today, yesterday]} />
         </Tooltip.Provider></MemoryRouter>,
       );
       expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['Today', 'Yesterday']);
 
       rerender(
         <MemoryRouter><Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[today, { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' }]} />
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[today, { ...yesterday, lastActivityAt: '2026-08-01T11:00:00.000Z' }]} />
         </Tooltip.Provider></MemoryRouter>,
       );
 
@@ -3530,7 +2879,7 @@ describe('pinned channels', () => {
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
     const scrolled = scrollIntoView.mock.instances[0] as Element;
     expect(scrolled).toHaveAttribute('data-workstream-id', 'ws-pinned');
-    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Pinned' })).getByText('Move a channel here to pin it')).toBeVisible();
   });
 
   // The shell discards a pin response a later one has superseded, so the action
@@ -3547,7 +2896,6 @@ describe('pinned channels', () => {
       return (
         <Sidebar
           {...defaultActions}
-          automations={[]}
           onPinWorkstream={async () => {
             await Promise.resolve();
             setStreams((current) => current.map((item) => ({
@@ -3589,7 +2937,6 @@ describe('pinned channels', () => {
           }])} type="button">Bring it back</button>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onPinWorkstream={async () => {
               await Promise.resolve();
               setStreams([]);
@@ -3632,7 +2979,6 @@ describe('pinned channels', () => {
           }])} type="button">Let it land</button>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             // Reports applied, but the list does not follow — the shape of a
             // response overtaken by a change from another device.
             onPinWorkstream={async () => true}
@@ -3678,6 +3024,8 @@ describe('pinned channels', () => {
         }),
       },
     );
+    // Opening on the filter brings its pill into view; only the row is at issue.
+    scrollIntoView.mockClear();
 
     fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
@@ -3760,7 +3108,7 @@ describe('Sidebar channel paging', () => {
     window.localStorage.clear();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
-    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
       unobserve(): void {}
@@ -3783,7 +3131,6 @@ describe('Sidebar channel paging', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[workstream('one', 'Launch brief', 'completed')]}
@@ -3822,7 +3169,7 @@ describe('Sidebar channel paging', () => {
   it('opens organization search without loading sidebar pages', () => {
     const onOpenSearch = vi.fn();
     const onLoadMoreWorkstreams = vi.fn();
-    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} automations={[]}
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions}
       onSignOut={vi.fn()} workspace={workspace} workstreams={[]} hasMoreWorkstreams
       onOpenSearch={onOpenSearch} onLoadMoreWorkstreams={onLoadMoreWorkstreams} /></Tooltip.Provider></MemoryRouter>);
     fireEvent.click(screen.getByRole('button', { name: 'Search organization' }));
@@ -3870,7 +3217,7 @@ describe('the sidebar without a recency list', () => {
     window.localStorage.clear();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
-    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
       unobserve(): void {}
@@ -3882,10 +3229,11 @@ describe('the sidebar without a recency list', () => {
     const hiring = space(undefined, undefined, { channelCount: 2 });
     const member = placedIn(workstream('first-space-page', 'First page', 'completed'), hiring.id);
     const onLoadMoreWorkstreams = vi.fn();
+    useUiStore.setState({ sidebarSpaceFilter: hiring.id });
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} hasMoreWorkstreams
+          <Sidebar {...defaultActions} hasMoreWorkstreams
             onLoadMoreWorkstreams={onLoadMoreWorkstreams} onSignOut={vi.fn()} spaces={[hiring]}
             workspace={workspace} workstreams={[member]} />
         </Tooltip.Provider>
@@ -3906,7 +3254,6 @@ describe('the sidebar without a recency list', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[]}
@@ -3944,7 +3291,7 @@ describe('the sidebar without a recency list', () => {
     for (const launcher of screen.getAllByRole('button', { name: 'New channel' })) expect(launcher).toBeDisabled();
   });
 
-  it('given a channel in no visible space, then the selected Space rail does not mix it in', () => {
+  it('given a channel in no visible space, then a Space filter leaves it out and All shows it', () => {
     const hiring = space();
     const placed = placedIn(today, hiring.id);
     // Readable, and every one of its Spaces is somebody else's personal one:
@@ -3955,10 +3302,15 @@ describe('the sidebar without a recency list', () => {
       workstream('ws-elsewhere', 'Quarterly planning', 'completed'),
       '00000000-0000-7000-8000-0000000000ff',
     );
+    useUiStore.setState({ sidebarSpaceFilter: hiring.id });
     renderSidebar({ spaces: [hiring], workstreams: [placed, elsewhere] });
 
     expect(screen.getByRole('link', { name: /Roadmap review/u })).toBeVisible();
     expect(screen.queryByRole('link', { name: /Quarterly planning/u })).not.toBeInTheDocument();
+
+    // All is every Channel the reader holds, wherever it is placed.
+    selectSpace('All');
+    expect(screen.getByRole('link', { name: /Quarterly planning/u })).toBeVisible();
   });
 
   it('given every channel placed where the reader can see it, then there is no Other channels section', () => {
@@ -3985,6 +3337,7 @@ describe('the sidebar without a recency list', () => {
   it('given Channels loaded a Space at a time, when the Space on screen has not answered, then it waits rather than saying it is empty', () => {
     const hiring = space();
     const onViewSpace = vi.fn();
+    useUiStore.setState({ sidebarSpaceFilter: hiring.id });
     renderSidebar({ spaces: [hiring], workstreams: [], loadedSpaceIds: new Set(), onViewSpace });
 
     expect(onViewSpace).toHaveBeenLastCalledWith(hiring.id);
@@ -4000,6 +3353,7 @@ describe('the sidebar without a recency list', () => {
     const hiring = space();
     const launching = { ...placedIn(workstream('ws-launch', 'Launch plan', 'running'), hiring.id), pending: true as const };
     const elsewhere = { ...placedIn(workstream('ws-else', 'Elsewhere', 'running'), '00000000-0000-7000-8000-0000000000ff'), pending: true as const };
+    useUiStore.setState({ sidebarSpaceFilter: hiring.id });
     renderSidebar({ spaces: [hiring], workstreams: [launching, elsewhere] });
 
     const row = screen.getByLabelText('Creating Launch plan');
@@ -4038,7 +3392,8 @@ describe('the sidebar without a recency list', () => {
     // rail remains the temporary route to every Channel.
     expect(screen.queryByRole('link', { name: 'General' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Roadmap review/u })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'New channel' })).not.toBeInTheDocument();
+    // Nowhere to create one yet: the server would refuse it until opening ends.
+    expect(screen.getByRole('button', { name: 'New channel' })).toBeDisabled();
   });
 
   // The section above already holds it, and a row in both would take its order
@@ -4047,6 +3402,7 @@ describe('the sidebar without a recency list', () => {
   it('given an impossible unplaced pinned channel after opening, then it is not mixed into the selected Space', () => {
     const hiring = space();
     const unplaced = { ...pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0), spaceIds: [] };
+    useUiStore.setState({ sidebarSpaceFilter: hiring.id });
     renderSidebar({ spaces: [hiring], workstreams: [unplaced] });
 
     expect(screen.queryByRole('link', { name: /Launch tracking/u })).not.toBeInTheDocument();
@@ -4060,9 +3416,7 @@ describe('the sidebar without a recency list', () => {
       ordering: [{ container: { kind: 'organization' }, itemIds: [second.id, first.id] }],
     });
 
-    const section = screen.getByRole('navigation', { name: 'Spaces' });
-    expect(within(section).getAllByRole('link').map((link) => link.textContent))
-      .toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
+    expect(pillNames()).toEqual(['All', 'Bravo', 'Alpha']);
   });
 });
 
@@ -4071,7 +3425,9 @@ describe('alphabetical channels inside a space', () => {
     window.localStorage.clear();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
-    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    // Every case here is about the list under one Space, so that Space is
+    // the filter the sidebar opens on.
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: hiring.id });
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
       unobserve(): void {}
@@ -4116,7 +3472,6 @@ describe('alphabetical channels inside a space', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onSignOut={vi.fn()}
             spaces={[hiring, launch]}
             workspace={workspace}
@@ -4153,7 +3508,6 @@ describe('alphabetical channels inside a space', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[]}
             onMoveChannelToSpace={async () => undefined}
             onSignOut={vi.fn()}
             spaces={[hiring, launch]}
@@ -4168,9 +3522,10 @@ describe('alphabetical channels inside a space', () => {
   }
 
   function placementTitles(): string[] {
-    const list = document.querySelector(`[data-motion-scope="space:${hiring.id}"]`);
+    const list = document.querySelector(`:not(section)[data-motion-scope="space:${hiring.id}"]`);
     if (!list) throw new Error('The space has no placement list');
-    return within(list as HTMLElement).getAllByRole('link').map((row) => row.textContent ?? '');
+    return within(list as HTMLElement).getAllByRole('link')
+      .map((row) => row.querySelector('.sidebar-row-title-copy')?.textContent ?? '');
   }
 
   function dragTarget(name: RegExp): HTMLElement {
@@ -4192,7 +3547,7 @@ describe('alphabetical channels inside a space', () => {
     });
 
     expect(placementTitles()).toEqual(['Åland', 'alpha', 'Alpha', 'Bravo', 'Same', 'Same', 'Zulu']);
-    const list = document.querySelector(`[data-motion-scope="space:${hiring.id}"]`);
+    const list = document.querySelector(`:not(section)[data-motion-scope="space:${hiring.id}"]`);
     expect([...list?.querySelectorAll<HTMLElement>('[data-workstream-id]') ?? []]
       .map((row) => row.dataset.workstreamId)).toEqual([
       accented.id,
@@ -4213,7 +3568,7 @@ describe('alphabetical channels inside a space', () => {
     renderSidebar({ onMoveChannelToSpace, onReorderContainer });
 
     const transfer = channelTransfer();
-    const target = screen.getByRole('link', { name: 'Launch' });
+    const target = pill('Launch');
     fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
     fireEvent.drop(target, { dataTransfer: transfer });
     fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: transfer });
@@ -4228,7 +3583,7 @@ describe('alphabetical channels inside a space', () => {
     const transfer = channelTransfer();
 
     fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
-    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    fireEvent.drop(pill('Launch'), { dataTransfer: transfer });
 
     await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
       .toHaveTextContent(`/workstreams/${bravo.id}`));
@@ -4239,7 +3594,7 @@ describe('alphabetical channels inside a space', () => {
     const transfer = channelTransfer();
 
     fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
-    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    fireEvent.drop(pill('Launch'), { dataTransfer: transfer });
 
     await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
       .toHaveTextContent(`/workstreams/${alpha.id}`));
@@ -4250,7 +3605,7 @@ describe('alphabetical channels inside a space', () => {
     const transfer = channelTransfer();
 
     fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
-    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    fireEvent.drop(pill('Launch'), { dataTransfer: transfer });
 
     await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
       .toHaveTextContent(`/spaces/${hiring.id}`));
@@ -4266,7 +3621,7 @@ describe('alphabetical channels inside a space', () => {
     const transfer = channelTransfer();
 
     fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
-    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    fireEvent.drop(pill('Launch'), { dataTransfer: transfer });
     await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
       .toHaveTextContent(`/workstreams/${bravo.id}`));
 
@@ -4285,7 +3640,7 @@ describe('alphabetical channels inside a space', () => {
     const transfer = channelTransfer();
 
     fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
-    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    fireEvent.drop(pill('Launch'), { dataTransfer: transfer });
     await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
       .toHaveTextContent(`/workstreams/${bravo.id}`));
     fireEvent.click(screen.getByRole('button', { name: 'Test query change' }));
@@ -4304,7 +3659,6 @@ describe('alphabetical channels inside a space', () => {
       revealNext = () => setRows([bravo]);
       return <Sidebar
         {...defaultActions}
-        automations={[]}
         loadingMoreWorkstreams
         onMoveChannelToSpace={async () => undefined}
         onSignOut={vi.fn()}
@@ -4327,7 +3681,7 @@ describe('alphabetical channels inside a space', () => {
     const transfer = channelTransfer();
 
     fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
-    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    fireEvent.drop(pill('Launch'), { dataTransfer: transfer });
     expect(screen.getByRole('status', { name: 'Current route' }))
       .toHaveTextContent(`/workstreams/${alpha.id}`);
 
@@ -4346,7 +3700,7 @@ describe('alphabetical channels inside a space', () => {
     const transfer = channelTransfer();
 
     fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: transfer });
-    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    fireEvent.drop(pill('Launch'), { dataTransfer: transfer });
     await waitFor(() => expect(screen.getByRole('status', { name: 'Current route' }))
       .toHaveTextContent(`/workstreams/${bravo.id}`));
     fireEvent.click(screen.getByRole('button', { name: 'Test back' }));
@@ -4384,7 +3738,7 @@ describe('alphabetical channels inside a space', () => {
     fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: transfer });
     fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: transfer });
     expect(pinnedTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
-    fireEvent.drop(screen.getByRole('link', { name: 'Launch' }), { dataTransfer: transfer });
+    fireEvent.drop(pill('Launch'), { dataTransfer: transfer });
     fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: transfer });
 
     await waitFor(() => expect(onMoveChannelToSpace).toHaveBeenCalledWith(hiring.id, launch.id, bravo.id));
@@ -4403,17 +3757,18 @@ describe('alphabetical channels inside a space', () => {
     expect(placementTitles()).toEqual(['Alpha', 'Bravo']);
   });
 
-  it('reveals Pinned for the first channel drag and pins the dropped channel', async () => {
+  it('wakes the empty Pinned drop zone for a channel drag and pins the dropped channel', async () => {
     const onPinWorkstream = vi.fn(async () => true);
     renderSidebar({ onPinWorkstream, workstreams: [alpha, bravo] });
     const transfer = channelTransfer();
     const source = dragTarget(/Bravo/u);
 
-    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
+    const pinnedTarget = screen.getByRole('region', { name: 'Pinned' });
+    const zone = within(pinnedTarget).getByText('Move a channel here to pin it').parentElement!;
+    expect(zone).not.toHaveClass('is-armed');
     fireEvent.dragStart(source, { dataTransfer: transfer });
     expect(transfer.getData('application/x-rally-workstream-id')).toBe(bravo.id);
-    const pinnedTarget = screen.getByRole('region', { name: 'Pinned' });
-    expect(within(pinnedTarget).getByText('Drop channel here to pin')).toHaveClass('pinned-empty-drop-surface');
+    expect(zone).toHaveClass('is-armed');
     fireEvent.dragOver(pinnedTarget, { dataTransfer: transfer });
     fireEvent.drop(pinnedTarget, { dataTransfer: transfer });
     fireEvent.dragEnd(source, { dataTransfer: transfer });
@@ -4421,18 +3776,19 @@ describe('alphabetical channels inside a space', () => {
     await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(bravo, hiring.id, true));
   });
 
-  it('hides the empty Pinned drop surface when the Channel drag is cancelled', () => {
+  it('settles the empty Pinned drop zone when the Channel drag is cancelled', () => {
     renderSidebar({ workstreams: [alpha, bravo] });
     const transfer = channelTransfer('none');
     const source = dragTarget(/Bravo/u);
+    const zone = screen.getByText('Move a channel here to pin it').parentElement!;
 
     fireEvent.dragStart(source, { dataTransfer: transfer });
-    expect(screen.getByText('Drop channel here to pin')).toBeInTheDocument();
+    expect(zone).toHaveClass('is-armed');
 
     fireEvent.dragEnd(source, { dataTransfer: transfer });
 
-    expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Drop channel here to pin')).not.toBeInTheDocument();
+    expect(zone).not.toHaveClass('is-armed');
+    expect(screen.getByRole('region', { name: 'Pinned' })).toContainElement(zone);
   });
 
   it('offers placement removal for a pinned Channel in the selected Space', async () => {
@@ -4448,4 +3804,371 @@ describe('alphabetical channels inside a space', () => {
     await waitFor(() => expect(onRemoveChannelFromSpace).toHaveBeenCalledWith(hiring.id, alpha.id));
   });
 
+});
+
+describe('the sidebar Space filter', () => {
+  const home = general();
+  const hiring = space();
+  const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
+  const alpha = placedIn(workstream('ws-alpha', 'Alpha', 'completed'), home.id);
+  const bravo = placedIn(workstream('ws-bravo', 'Bravo', 'completed'), home.id, hiring.id);
+  const charlie = placedIn(workstream('ws-charlie', 'Charlie', 'completed'), hiring.id, launch.id);
+  const delta = placedIn(workstream('ws-delta', 'Delta', 'completed'), launch.id);
+  const openBrowserImport = vi.fn(async () => undefined);
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
+    updateStatus.current = { kind: 'idle' };
+    installDownloadedUpdate.mockClear();
+    openBrowserImport.mockClear();
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function renderFiltered(props: Partial<React.ComponentProps<typeof Sidebar>> = {}): void {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            onSignOut={vi.fn()}
+            spaces={[home, hiring, launch]}
+            workspace={workspace}
+            workstreams={[alpha, bravo, charlie, delta]}
+            {...props}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+  }
+
+  /** The Channel rows on screen, by title, in the order they are drawn. */
+  function channelTitles(): string[] {
+    return [...screen.getByRole('navigation', { name: 'Channels' }).querySelectorAll('[data-workstream-id] .sidebar-row-title-copy')]
+      .map((title) => title.textContent ?? '');
+  }
+
+  /** The titles in the Pinned section, in order. */
+  function pinnedTitles(): string[] {
+    return [...screen.getByRole('region', { name: 'Pinned' }).querySelectorAll('.sidebar-row-title-copy')]
+      .map((title) => title.textContent ?? '');
+  }
+
+  it('lists every Channel under All and only the selected Space\'s under its pill', () => {
+    renderFiltered();
+
+    expect(pill('All')).toHaveAttribute('aria-pressed', 'true');
+    expect(channelTitles()).toEqual(['Alpha', 'Bravo', 'Charlie', 'Delta']);
+
+    selectSpace('Hiring');
+    expect(pill('Hiring')).toHaveAttribute('aria-pressed', 'true');
+    expect(channelTitles()).toEqual(['Bravo', 'Charlie']);
+    expect(useUiStore.getState().sidebarSpaceFilter).toBe(hiring.id);
+
+    selectSpace('Launch');
+    expect(channelTitles()).toEqual(['Charlie', 'Delta']);
+
+    selectSpace('All');
+    expect(channelTitles()).toEqual(['Alpha', 'Bravo', 'Charlie', 'Delta']);
+    expect(useUiStore.getState().sidebarSpaceFilter).toBeNull();
+  });
+
+  it('draws no General pill, and a stored General filter reads as All', () => {
+    useUiStore.setState({ sidebarSpaceFilter: home.id });
+    renderFiltered();
+
+    expect(pillNames()).toEqual(['All', 'Hiring', 'Launch']);
+    expect(pill('All')).toHaveAttribute('aria-pressed', 'true');
+    expect(channelTitles()).toEqual(['Alpha', 'Bravo', 'Charlie', 'Delta']);
+  });
+
+  it('names a Channel\'s Spaces under its title, leaving General out', () => {
+    renderFiltered();
+
+    const subtitle = (title: string): string | null => screen.getByRole('link', { name: title })
+      .querySelector('.channel-row-subtitle')?.textContent ?? null;
+    expect(subtitle('Alpha')).toBeNull();
+    expect(within(screen.getByRole('link', { name: 'Alpha' })).queryByText(/General/u)).not.toBeInTheDocument();
+    expect(subtitle('Bravo')).toBe('Hiring');
+    expect(subtitle('Charlie')).toBe('Hiring, Launch');
+    expect(subtitle('Delta')).toBe('Launch');
+  });
+
+  it('marks a Channel whose only news is in a Breakout as unread', () => {
+    renderFiltered({ workstreams: [{ ...alpha, breakoutAttentionCount: 1 }, bravo] });
+
+    expect(markerOf('Alpha')).toBe('Unread');
+    expect(screen.getByRole('link', { name: 'Alpha, 1 conversation needs attention' })).toBeInTheDocument();
+    expect(markerOf('Bravo')).toBeNull();
+  });
+
+  it('shows every pin under All, General\'s run first and the rest after', () => {
+    renderFiltered({
+      workstreams: [
+        { ...alpha, spacePins: [{ spaceId: home.id, position: 1 }] },
+        { ...bravo, spacePins: [{ spaceId: home.id, position: 0 }] },
+        { ...charlie, spacePins: [{ spaceId: launch.id, position: 0 }] },
+        delta,
+      ],
+    });
+
+    expect(pinnedTitles()).toEqual(['Bravo', 'Alpha', 'Charlie']);
+    expect(channelTitles().slice(3)).toEqual(['Delta']);
+
+    selectSpace('Launch');
+    expect(pinnedTitles()).toEqual(['Charlie']);
+  });
+
+  it('pins under All in General when the Channel lives there, and in its first Space otherwise', async () => {
+    const onPinWorkstream = vi.fn(async () => true);
+    renderFiltered({ onPinWorkstream });
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: 'Bravo' }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    await waitFor(() => expect(onPinWorkstream).toHaveBeenLastCalledWith(expect.objectContaining({ id: bravo.id }), home.id, true));
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: 'Charlie' }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    await waitFor(() => expect(onPinWorkstream).toHaveBeenLastCalledWith(expect.objectContaining({ id: charlie.id }), hiring.id, true));
+    expect(onPinWorkstream).toHaveBeenCalledTimes(2);
+  });
+
+  it('unpins under All from every Space that pins the Channel', async () => {
+    const onPinWorkstream = vi.fn<(target: WorkstreamSummary, spaceId: string, pinned: boolean) => Promise<boolean>>(async () => true);
+    renderFiltered({
+      onPinWorkstream,
+      workstreams: [{ ...charlie, spacePins: [{ spaceId: hiring.id, position: 0 }, { spaceId: launch.id, position: 3 }] }],
+    });
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /^Charlie/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
+
+    await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledTimes(2));
+    expect(onPinWorkstream.mock.calls.map(([, spaceId, pinned]) => [spaceId, pinned]))
+      .toEqual([[hiring.id, false], [launch.id, false]]);
+  });
+
+  it('reorders All\'s pins as General\'s run while every pin is General\'s', async () => {
+    const onReorderPinnedWorkstreams = vi.fn(async () => undefined);
+    renderFiltered({
+      onReorderPinnedWorkstreams,
+      workstreams: [
+        { ...alpha, spacePins: [{ spaceId: home.id, position: 0 }] },
+        { ...bravo, spacePins: [{ spaceId: home.id, position: 1 }] },
+      ],
+    });
+
+    fireEvent.keyDown(screen.getByRole('link', { name: /^Bravo/u }), { key: 'ArrowUp', altKey: true });
+
+    await waitFor(() => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(home.id, [bravo.id, alpha.id]));
+  });
+
+  it('does not reorder All\'s pins once one belongs to another Space', () => {
+    const onReorderPinnedWorkstreams = vi.fn(async () => undefined);
+    renderFiltered({
+      onReorderPinnedWorkstreams,
+      workstreams: [
+        { ...alpha, spacePins: [{ spaceId: home.id, position: 0 }] },
+        { ...charlie, spacePins: [{ spaceId: launch.id, position: 0 }] },
+      ],
+    });
+
+    fireEvent.keyDown(screen.getByRole('link', { name: /^Charlie/u }), { key: 'ArrowUp', altKey: true });
+
+    expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
+    expect(pinnedTitles()).toEqual(['Alpha', 'Charlie']);
+  });
+
+  it('draws All\'s pins in the person\'s own order, and Alt+Arrow saves it whole across Spaces', async () => {
+    const onReorderAllPinned = vi.fn(async () => undefined);
+    const onReorderPinnedWorkstreams = vi.fn(async () => undefined);
+    renderFiltered({
+      allPinnedOrder: [charlie.id, alpha.id],
+      onReorderAllPinned,
+      onReorderPinnedWorkstreams,
+      workstreams: [
+        { ...alpha, spacePins: [{ spaceId: home.id, position: 0 }] },
+        { ...bravo, spacePins: [{ spaceId: home.id, position: 1 }] },
+        { ...charlie, spacePins: [{ spaceId: launch.id, position: 0 }] },
+      ],
+    });
+
+    // Named ids first in the person's order; Bravo, never ordered, follows.
+    expect(pinnedTitles()).toEqual(['Charlie', 'Alpha', 'Bravo']);
+
+    fireEvent.keyDown(screen.getByRole('link', { name: /^Bravo/u }), { key: 'ArrowUp', altKey: true });
+
+    await waitFor(() => expect(onReorderAllPinned).toHaveBeenCalledWith([charlie.id, bravo.id, alpha.id]));
+    expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
+  });
+
+  it('pins a Channel dropped on the Pinned section under All', async () => {
+    const onPinWorkstream = vi.fn(async () => true);
+    renderFiltered({ onPinWorkstream, onReorderAllPinned: vi.fn(async () => undefined) });
+    // jsdom has no DataTransfer; the row reads and writes only these.
+    const data = new Map<string, string>();
+    const transfer = {
+      dropEffect: 'move',
+      effectAllowed: '',
+      types: [] as string[],
+      setData: (type: string, value: string) => { data.set(type, value); transfer.types.push(type); },
+      getData: (type: string) => data.get(type) ?? '',
+    };
+    const source = screen.getByRole('link', { name: 'Charlie' }).closest<HTMLElement>('.sidebar-context-target')!;
+
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    const pinnedSection = screen.getByRole('region', { name: 'Pinned' });
+    fireEvent.dragOver(pinnedSection, { dataTransfer: transfer });
+    fireEvent.drop(pinnedSection, { dataTransfer: transfer });
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+
+    await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(expect.objectContaining({ id: charlie.id }), hiring.id, true));
+  });
+
+  it('widens a Space filter to All when the open Channel is not in that Space', () => {
+    useUiStore.setState({ sidebarSpaceFilter: launch.id });
+    render(
+      <MemoryRouter initialEntries={[`/workstreams/${alpha.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[home, hiring, launch]}
+            workspace={workspace} workstreams={[alpha, bravo, charlie, delta]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(pill('All')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('link', { name: 'Alpha' })).toHaveClass('is-active');
+  });
+
+  describe('the header', () => {
+    it('opens organization search', () => {
+      const onOpenSearch = vi.fn();
+      renderFiltered({ onOpenSearch });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Search organization' }));
+      expect(onOpenSearch).toHaveBeenCalledOnce();
+    });
+
+    it('imports into any writable Space under All, and only the selected one under its pill', () => {
+      vi.stubGlobal('rally', { openBrowserImport });
+      const reached = space('00000000-0000-7000-8000-0000000000f4', 'Theirs', { reach: 'through_channel', participants: [] });
+      renderFiltered({ spaces: [home, hiring, launch, reached] });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Import from ChatGPT or Claude' }));
+      expect(openBrowserImport).toHaveBeenLastCalledWith({
+        spaces: [
+          { id: home.id, name: 'General' },
+          { id: hiring.id, name: 'Hiring' },
+          { id: launch.id, name: 'Launch' },
+        ],
+      });
+
+      selectSpace('Hiring');
+      fireEvent.click(screen.getByRole('button', { name: 'Import from ChatGPT or Claude' }));
+      expect(openBrowserImport).toHaveBeenLastCalledWith({
+        spaces: [{ id: hiring.id, name: 'Hiring' }],
+        spaceLocked: true,
+      });
+    });
+
+    it('offers no import outside the desktop host', () => {
+      renderFiltered();
+
+      expect(screen.queryByRole('button', { name: 'Import from ChatGPT or Claude' })).not.toBeInTheDocument();
+    });
+
+    it('offers a restart only once an update has been downloaded', async () => {
+      updateStatus.current = { kind: 'downloaded', version: '2.4.0' };
+      renderFiltered();
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Restart to update to Rally 2.4.0' }));
+      expect(installDownloadedUpdate).toHaveBeenCalledOnce();
+    });
+
+    it('draws no restart while no update is ready', async () => {
+      renderFiltered();
+      await act(async () => undefined);
+
+      expect(screen.queryByRole('button', { name: /Restart to update/u })).not.toBeInTheDocument();
+    });
+
+    it('starts a channel in the selected Space from New channel', async () => {
+      const onCreateChannel = vi.fn(async () => undefined);
+      renderFiltered({ onCreateChannel });
+      selectSpace('Launch');
+
+      fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Start a new channel' });
+      expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('Launch');
+      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Roadmap' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+      await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'Roadmap', spaceId: launch.id }));
+    });
+  });
+});
+
+describe('channelPinTargets', () => {
+  const channel = { spaceIds: ['general', 'space-x'], spacePins: [{ spaceId: 'general', position: 0 }] };
+  const active = new Set(['general', 'space-x']);
+
+  it('unpins every Space that pins the Channel when asked as All, which is how its menu asks', () => {
+    // Filtered to Space X while pinned only in General: the menu reads it as
+    // pinned, so its unpin must clear General rather than write to X.
+    expect(channelPinTargets(channel, false, { activeSpaceIds: active, generalSpaceId: 'general', selectedSpaceId: null }))
+      .toEqual(['general']);
+  });
+
+  it('pins under a Space filter in that Space, and under All in General first', () => {
+    const unpinned = { spaceIds: ['general', 'space-x'], spacePins: [] };
+    expect(channelPinTargets(unpinned, true, { activeSpaceIds: active, generalSpaceId: 'general', selectedSpaceId: 'space-x' }))
+      .toEqual(['space-x']);
+    expect(channelPinTargets(unpinned, true, { activeSpaceIds: active, generalSpaceId: 'general', selectedSpaceId: null }))
+      .toEqual(['general']);
+  });
+});
+
+describe('allPinPosition', () => {
+  const generalId = '00000000-0000-7000-8000-0000000000f0';
+
+  it('is the General pin\'s position when General pins the Channel', () => {
+    expect(allPinPosition({
+      spaceIds: [generalId, TEST_SPACE_ID],
+      spacePins: [{ spaceId: TEST_SPACE_ID, position: 0 }, { spaceId: generalId, position: 4 }],
+    }, generalId)).toBe(4);
+  });
+
+  it('places a pin outside General after every General pin, by its lowest position', () => {
+    const outside = allPinPosition({
+      spaceIds: [TEST_SPACE_ID, 'space-b'],
+      spacePins: [{ spaceId: TEST_SPACE_ID, position: 5 }, { spaceId: 'space-b', position: 2 }],
+    }, generalId);
+    const generalPin = allPinPosition({ spaceIds: [generalId], spacePins: [{ spaceId: generalId, position: 999 }] }, generalId);
+
+    expect(outside).toBe(1_000_002);
+    expect(generalPin).toBe(999);
+    expect(generalPin!).toBeLessThan(outside!);
+  });
+
+  it('is null for a Channel pinned nowhere, or only in a Space it has left', () => {
+    expect(allPinPosition({ spaceIds: [generalId], spacePins: [] }, generalId)).toBeNull();
+    expect(allPinPosition({ spaceIds: [generalId] }, generalId)).toBeNull();
+    expect(allPinPosition({
+      spaceIds: [generalId],
+      spacePins: [{ spaceId: TEST_SPACE_ID, position: 0 }],
+    }, generalId)).toBeNull();
+  });
+
+  it('reads every pin as outside General when there is no General', () => {
+    expect(allPinPosition({
+      spaceIds: [TEST_SPACE_ID],
+      spacePins: [{ spaceId: TEST_SPACE_ID, position: 3 }],
+    }, null)).toBe(1_000_003);
+  });
 });

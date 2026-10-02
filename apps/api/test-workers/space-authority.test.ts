@@ -588,6 +588,15 @@ async function personalOrder(userId: string): Promise<PersonalOrder> {
   return sidebar.ordering;
 }
 
+/** All's Pinned order as this person's sidebar payload carries it. */
+async function pinnedOrder(userId: string): Promise<string[]> {
+  ticketSequence += 1;
+  const { socket, sidebar } = await connectViewer(userId, `e${ticketSequence.toString(16)}`);
+  socket.close();
+  if (!sidebar.pinnedOrder) throw new Error("workspace sidebar answered without a pinned order");
+  return sidebar.pinnedOrder;
+}
+
 /** One container's stored item ids, or `null` when this person has no row for it. */
 function storedItemIds(
   ordering: PersonalOrder,
@@ -597,7 +606,7 @@ function storedItemIds(
   // The Organization's entry carries no id, because a request is addressed to
   // one Organization already; the other two are a pair.
   return ordering.find((entry) => (entry.container.kind === "organization"
-    ? kind === "organization"
+    ? entry.container.kind === kind
     : entry.container.kind === kind && entry.container.id === containerId))?.itemIds ?? null;
 }
 
@@ -2101,6 +2110,52 @@ describe("WorkspaceDO space authority", () => {
     expect(storedItemIds(member, "organization")).toEqual([first, second]);
     expect(storedItemIds(member, "space", first)).toBeNull();
     expect(storedItemIds(member, "channel", CHANNEL_A)).toBeNull();
+  });
+
+  it("given pins across Spaces, when one person orders All's Pinned section, then it is theirs and names only what they can read", async () => {
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    // A member's personal Channel: the owner cannot read it, so it is not a
+    // row on their sidebar and not theirs to place.
+    await publishPersonalChannel(CHANNEL_C, MEMBER);
+
+    await expect(workspace().reorderAllPinned({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      itemIds: [CHANNEL_B, CHANNEL_C, CHANNEL_A],
+    })).resolves.toEqual({ ok: true, itemIds: [CHANNEL_B, CHANNEL_A] });
+
+    // Delivered on its own field, beside `ordering` and never inside it: a
+    // shipped client drops a whole ordering that holds a kind it does not know.
+    expect(await pinnedOrder(OWNER)).toEqual([CHANNEL_B, CHANNEL_A]);
+    expect(await pinnedOrder(MEMBER)).toEqual([]);
+    expect((await personalOrder(OWNER)).map((entry) => entry.container.kind)).not.toContain("pinned");
+
+    // A later drag names only what it moved; the rest keep their places.
+    await expect(workspace().reorderAllPinned({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      itemIds: [CHANNEL_A],
+    })).resolves.toEqual({ ok: true, itemIds: [CHANNEL_A, CHANNEL_B] });
+  });
+
+  it("given a stored Pinned order, when its reader stops being a participant in one Channel, then the read drops only that Channel", async () => {
+    await publishChannel(CHANNEL_A, null);
+    await publishChannel(CHANNEL_B, null);
+    // Personal, so the owner reads it only while they are its participant.
+    await publishPersonalChannel(CHANNEL_C, OWNER);
+
+    await expect(workspace().reorderAllPinned({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      itemIds: [CHANNEL_B, CHANNEL_C, CHANNEL_A],
+    })).resolves.toEqual({ ok: true, itemIds: [CHANNEL_B, CHANNEL_C, CHANNEL_A] });
+
+    // The stored row outlives the access: nothing rewrites the order when a
+    // participant leaves, so the read is the only place it can be withheld.
+    await publishViewerRow(CHANNEL_C, OWNER, 2, { isParticipant: false });
+
+    expect(await pinnedOrder(OWNER)).toEqual([CHANNEL_B, CHANNEL_A]);
   });
 
   it("given a Space's Channels, when the order names one it does not hold or the viewer cannot read, then it is dropped", async () => {

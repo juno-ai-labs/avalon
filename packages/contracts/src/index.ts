@@ -23,7 +23,7 @@ import {
 } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
-import { PersonalOrderSchema, SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
+import { PersonalOrderSchema, PinnedOrderSchema, SpaceIdSchema, SpaceSnapshotSchema } from "./spaces";
 import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
@@ -524,6 +524,10 @@ export const WorkstreamPrivateChildSchema = z.strictObject({
   createdByUserId: UserIdSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
+  /** The Main transcript turn the breakout was branched through; null when it was not branched from a turn. */
+  originTurnId: z.string().min(1).nullable().optional(),
+  /** When the breakout last had activity; absent until its directory state has arrived. */
+  lastActivityAt: TimestampSchema.optional(),
 });
 
 /**
@@ -2546,6 +2550,14 @@ export const WorkspaceSidebarSchema = z.strictObject({
    */
   ordering: PersonalOrderSchema.optional(),
   /**
+   * This viewer's order for **All**'s Pinned section: Channel ids, first to
+   * last. Its own field rather than a fourth kind in `ordering`, because a
+   * shipped client reads an order kind it does not know as a malformed
+   * ordering and drops the payload, while it ignores a key it does not know.
+   * Absent from a server that predates it, which reads as no order.
+   */
+  pinnedOrder: PinnedOrderSchema.optional(),
+  /**
    * False while the Organization has not finished creating General and placing
    * every Channel in it.
    *
@@ -2731,6 +2743,8 @@ export const WorkspaceSpaceSnapshotEventSchema = z.strictObject({
    * that sends this event is a server that has the ordering.
    */
   ordering: PersonalOrderSchema,
+  /** All's Pinned order, beside `ordering` for the reason the sidebar payload gives. */
+  pinnedOrder: PinnedOrderSchema.optional(),
   spacesReady: z.boolean(),
 });
 
