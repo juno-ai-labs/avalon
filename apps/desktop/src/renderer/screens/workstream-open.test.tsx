@@ -275,7 +275,7 @@ describe('socket-first channel open', () => {
       cache.setQueryData(['workstream', workstreamId], boot);
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
     });
-    const label = action === 'make_public' ? ['More', 'Make public to organization'] : action === 'rename' ? 'Rename' : 'Archive channel';
+    const label = action === 'make_public' ? ['More', 'Make public to organization'] : action === 'rename' ? 'Rename' : ['More', 'Archive channel'];
     await mainMenu(label);
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed parent' } });
     if (action !== 'make_public') fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
@@ -322,7 +322,7 @@ describe('socket-first channel open', () => {
     // Re-enter the child after archiving it: the directory fixture remains so
     // this isolates the row target from the currently selected conversation.
     act(() => navigateInTest(`/workstreams/${workstreamId}?substream=${childId}`));
-    await mainMenu(action === 'rename' ? 'Rename' : 'Archive channel');
+    await mainMenu(action === 'rename' ? 'Rename' : ['More', 'Archive channel']);
     if (action === 'rename') fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Renamed parent' } });
     fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
     await waitFor(() => expect(action === 'rename' ? api.renameWorkstream : api.archiveWorkstream)
