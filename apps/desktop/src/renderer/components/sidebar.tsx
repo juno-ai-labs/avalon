@@ -1,5 +1,5 @@
 import { ShareConversationDialog } from './scope-sharing-panel';
-import { useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
+import { useOptionalCollaborationSession } from '../lib/collaboration-session';
 import { IconPin, IconShare2 } from '@tabler/icons-react';
 import { ChannelRowContent, NavigationRowContent } from '@rally/ui/components/navigation';
 import {
@@ -63,12 +63,11 @@ interface SidebarProps {
    *
    * Absent is not empty: an empty directory is an Organization whose Spaces
    * have not been made yet, which still has a **Spaces** heading and a **New
-   * space**. No directory at all is the guest shell, where Space discovery is
-   * deferred — the host decides that, per the PRD's design decision 9, rather
-   * than this component inferring it from a refusal.
+   * space**. No directory at all is a shell with no active workspace; the
+   * host decides that rather than this component inferring it from a refusal.
    */
   spaces?: SpaceSummary[];
-  /** Associative ancestor metadata is navigation-only and exposes no Space writes. */
+  /** The Spaces are listed but not this person's to change: a guest's. */
   spacesReadOnly?: boolean;
   inactiveSpaces?: SpaceSummary[];
   /** False while the Organization has not finished its one-time cutover. */
@@ -1108,7 +1107,6 @@ export function Sidebar({
   loadingMoreWorkstreams = false,
   onLoadMoreWorkstreams,
 }: SidebarProps): React.JSX.Element {
-  const { guest } = useShellCapabilities();
   const debugEnabled = useDebugEnabled();
   const location = useLocation();
   const navigate = useNavigate();
@@ -1533,8 +1531,7 @@ export function Sidebar({
     selectedSpaceId,
   ]);
   // Whether this session has the hierarchy at all. A host that hands over no
-  // directory is the guest shell, where Space discovery is deferred — see
-  // `spaces` above — and that shell keeps the flat, time-grouped list this
+  // directory (no active workspace) keeps the flat, time-grouped list this
   // section has always drawn. Every other session reads its Channels under the
   // Space each one lives in.
   const spacesEnabled = spaces !== undefined;
@@ -1603,8 +1600,8 @@ export function Sidebar({
    */
   const [groupedAtMs, setGroupedAtMs] = useState(() => Date.now());
   useEffect(() => {
-    // Only the guest shell groups by time, so only the guest shell needs a
-    // timer that fires when a row crosses a boundary.
+    // Only a shell without Spaces groups by time, so only it needs a timer
+    // that fires when a row crosses a boundary.
     if (spacesEnabled) return;
     const now = new Date();
     const next = nextRecencyBoundary([
@@ -2187,10 +2184,9 @@ export function Sidebar({
           {downloadedUpdate !== null && <IconButton className="sidebar-top-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
             <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
           </IconButton>}
-          {/* Search reads the whole Organization, and its route refuses a guest. */}
-          {!guest && <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
+          <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
             <IconSearch aria-hidden="true" size={16} stroke={1.9} />
-          </IconButton>}
+          </IconButton>
           {!spacesReadOnly && openBrowserImport && <IconButton
             disabled={importSpaces.length === 0}
             label="Import from ChatGPT or Claude"
@@ -2381,9 +2377,9 @@ export function Sidebar({
             placements are Spaces this reader cannot see. The time-grouped
             recency list is gone for them — every Channel is in a Space, so the
             hierarchy above says where everything lives, and a second list of
-            the same rows ordered by time was the same sidebar twice. The guest
-            shell has no hierarchy to say it with and keeps that list exactly as
-            it was.
+            the same rows ordered by time was the same sidebar twice. A shell
+            without Spaces has no hierarchy to say it with and keeps that list
+            exactly as it was.
 
             Absent, rather than an empty heading, when a member has nothing
             unplaced — which is the ordinary state, and the state the product
@@ -2547,7 +2543,6 @@ export function Sidebar({
           closeable.
         */}
         {/* <OnboardingChecklist /> */}
-        {/* Brought back, it would be a footer item rather than drawn here. */}
 
         {footerItems && <SidebarFooterItems>{footerItems}</SidebarFooterItems>}
         <SidebarHorizontalLine className="sidebar-footer-line" />

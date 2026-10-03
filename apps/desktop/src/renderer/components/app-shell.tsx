@@ -19,7 +19,7 @@ import type { RallyApi } from '../lib/api';
 import { workstreamRecencyAt } from '../lib/format';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { openLink } from '../lib/browser-rail-links';
-import { conversationDirectoryQueryKey } from '../lib/conversation-directory';
+import { conversationDirectoryQueryKey, mainOmitted } from '../lib/conversation-directory';
 import { desktopBridge } from '../lib/platform';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { uuidV7 } from '../lib/telemetry';
@@ -392,94 +392,39 @@ export function applyPinnedWorkstreamsIfCurrent(
 const WORKSPACE_ENTER_MS = 320;
 
 /**
- * Whether the active workspace shell has a Space rail.
- *
- * Guests receive an associative, read-only directory instead of the member
- * socket directory: only Spaces that contain a Channel they may read, and only
- * each ancestor's presentation metadata. A session without an active workspace
- * never mounts this shell; null remains enabled for the legacy startup frame.
+ * Whether the active workspace shell has a Space rail. A session without an
+ * active workspace never mounts this shell; null remains enabled for the
+ * legacy startup frame.
  */
 export function spacesEnabledForSession(session: ClientSession | null): boolean {
   return session === null || session.workspace !== undefined;
 }
 
-/** Adapt the metadata-only guest directory to the existing navigation rails. */
-export function associativeSpacesForSidebar(directory: SharedNavigationDirectory | undefined): SpaceSummary[] {
-  return directory?.spaces.map((space) => ({
-    id: space.id,
-    name: space.name,
-    iconKey: space.iconKey,
-    colorKey: space.colorKey,
-    scope: space.scope,
-    status: 'active',
-    systemRole: null,
-    revision: 1,
-    reach: 'through_channel',
-    participants: [],
-    channelCount: space.workstreamIds.length,
-    defaultResourceIds: [],
-    defaultSidekickIds: [],
-    createdAt: '1970-01-01T00:00:00.000Z',
-    updatedAt: '1970-01-01T00:00:00.000Z',
-  })) ?? [];
-}
-
 /**
- * The Channel rail: the member directory's rows, then every Channel the
- * conversation directory adds, each drawn from live socket state where there
- * is some.
+ * The Channel rail: the socket's rows, the same list for a member and a guest.
  *
- * A guest's rail is the conversation directory alone. A member's is the member
- * directory plus any Channel they reach only through its conversations, which
- * opens on the first conversation it lists rather than on Main.
+ * The workspace socket lists a Channel when any conversation in it is this
+ * person's to open (see `docs/listing-rules.md`). Where Main is not one of
+ * them, the conversation directory says which are, and the row opens on the
+ * first it lists rather than on Main. The directory adds no rows of its own.
  */
 export function associativeWorkstreamsForSidebar(
   directory: SharedNavigationDirectory | undefined,
   workstreams: readonly WorkstreamSummary[] | undefined,
-  includeMemberDirectory = false,
 ): WorkstreamSummary[] {
   if (!workstreams) return [];
-  if (!directory) return includeMemberDirectory ? [...workstreams] : [];
-  const live = new Map(workstreams.map((item) => [item.id, item]));
-  const placements = new Map<string, string[]>();
-  for (const space of directory.spaces) {
-    for (const workstreamId of space.workstreamIds) {
-      const current = placements.get(workstreamId) ?? [];
-      current.push(space.id);
-      placements.set(workstreamId, current);
-    }
+  if (!directory) return [...workstreams];
+  const entryPoints = new Map<string, WorkstreamSummary['associativeSubstreamId']>();
+  for (const entry of directory.workstreams) {
+    if (!mainOmitted(entry)) continue;
+    const first = entry.conversations.find((item) => !item.archived) ?? entry.conversations[0];
+    if (first) entryPoints.set(entry.parentId, first.substreamId);
   }
-  const associative = directory.workstreams.flatMap((metadata) => {
-    const first = metadata.conversations.find((item) => !item.archived) ?? metadata.conversations[0];
-    if (!first) return [];
-    const workstream = live.get(metadata.parentId);
-    // A member row the member directory already lists stays as it is.
-    if (includeMemberDirectory && workstream) return [];
-    return [{
-      ...(workstream ?? {
-        id: metadata.parentId,
-        title: metadata.title ?? first.title,
-        titleStatus: 'settled' as const,
-        harnessStatus: 'completed' as const,
-        latestAttentionSequenceNumber: 0,
-        readThroughSequenceNumber: 0,
-        manualUnreadFromSequenceNumber: null,
-        manualUnreadGeneration: 0,
-        hasUnread: false,
-        firstUnreadSequenceNumber: null,
-        lastActivityAt: '1970-01-01T00:00:00.000Z',
-        scope: metadata.scope,
-        participantUserIds: [],
-        participantExtraCount: 0,
-        nextPendingWakeup: null,
-        pinPosition: null,
-        ...(metadata.appearance ? { appearance: metadata.appearance } : {}),
-      }),
-      associativeSubstreamId: first.substreamId,
-      spaceIds: placements.get(metadata.parentId) ?? [],
-    }];
+  if (entryPoints.size === 0) return [...workstreams];
+  return workstreams.map((workstream) => {
+    const associativeSubstreamId = entryPoints.get(workstream.id);
+    return associativeSubstreamId ? { ...workstream, associativeSubstreamId } : workstream;
   });
-  return includeMemberDirectory ? [...workstreams, ...associative] : associative;
 }
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
@@ -503,15 +448,14 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
-      // Search reads the whole Organization, and its route refuses a guest.
-      if (api && !guestSession && (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyF' && !event.isComposing) {
+      if (api && (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyF' && !event.isComposing) {
         event.preventDefault();
         setSearchOpen(true);
       }
     };
     window.addEventListener('keydown', openSearch);
     return () => window.removeEventListener('keydown', openSearch);
-  }, [api, guestSession]);
+  }, [api]);
   const searchIdentity = `${workspace.id}:${workspace.currentUser.id}`;
   const [searchPreview, setSearchPreview] = useState<{ identity: string; preview: AttachmentPreview } | null>(null);
   const navigate = useNavigate();
@@ -585,30 +529,18 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryKey: conversationDirectoryQueryKey(workspace.id),
     queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal),
     enabled: Boolean(api),
-    // A guest's whole rail is this read, refreshed on focus. A member's rail is
-    // the socket's; this read adds to it and is refreshed by the socket's own
-    // signals — a Channel's tombstone, a listed Channel's metadata frame —
-    // rather than by a request on every focus.
-    refetchOnWindowFocus: guestSession ? 'always' : false,
+    // Says which conversation a Channel the socket lists opens on when Main is
+    // not this person's. Refreshed by the socket's own signals — a Channel's
+    // tombstone, a listed Channel's metadata frame — not on every focus.
+    refetchOnWindowFocus: false,
   });
-  const associativeSpaces = useMemo(
-    () => associativeSpacesForSidebar(associativeNavigation.data),
-    [associativeNavigation.data],
-  );
   const sidebarWorkstreams = useMemo(
-    () => associativeWorkstreamsForSidebar(associativeNavigation.data, workstreams.data, !guestSession),
-    [associativeNavigation.data, guestSession, workstreams.data],
+    () => associativeWorkstreamsForSidebar(associativeNavigation.data, workstreams.data),
+    [associativeNavigation.data, workstreams.data],
   );
-  const visibleSpaces = useMemo(() => {
-    if (guestSession) return associativeSpaces;
-    // A member also sees the Spaces a conversation-only Channel sits in, as
-    // the placement the guest rail gives it, where the member rail has none.
-    const memberSpaces = spaces.data?.items ?? [];
-    const listed = new Set(memberSpaces.map((space) => space.id));
-    return [...memberSpaces, ...associativeSpaces.filter((space) => !listed.has(space.id))];
-  }, [associativeSpaces, guestSession, spaces.data?.items]);
-  const visibleInactiveSpaces = guestSession ? [] : inactiveSpaces.data?.items ?? [];
-  const spacesReady = guestSession ? !associativeNavigation.isPending : socketSpacesReady;
+  const visibleSpaces = spaces.data?.items ?? [];
+  const visibleInactiveSpaces = inactiveSpaces.data?.items ?? [];
+  const spacesReady = socketSpacesReady;
   const pinnedOrder = usePinnedOrder();
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
@@ -650,7 +582,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       name: workspace.name,
       slug: workspace.id,
       region: workspace.region,
-      role: session?.workspace?.role ?? 'member',
+      role: session?.workspace ? session.workspace.role : 'member',
+      ...(session?.workspace?.accessClass === 'guest' ? { accessClass: 'guest' as const } : {}),
       createdAt: new Date(0).toISOString(),
     };
   const knownWorkspaces = workspaceDirectory.data?.workspaces.length
@@ -667,8 +600,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   ));
   // Attention is read with each workspace's own stored credential, so only the
   // rows this device holds one for can answer. A row discovery listed that was
-  // never opened here has none, and asking would fail the whole batch.
-  const attentionWorkspaces = backgroundWorkspaces.filter((candidate) => candidate.credentialStored === true);
+  // never opened here has none, and asking would fail the whole batch. A guest
+  // relationship is refused the attention route, so its row shows no count.
+  const attentionWorkspaces = backgroundWorkspaces.filter((candidate) => (
+    candidate.credentialStored === true && candidate.accessClass !== 'guest'
+  ));
   const attentionWorkspaceKeys = attentionWorkspaces.map((candidate) => (
     desktopWorkspaceIdentityKey(candidate.region, candidate.id)
   ));
@@ -770,7 +706,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         accountMenu={(
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}
-            activeUsage={(
+            // The meter reads `/workspace/usage`, which refuses a guest.
+            activeUsage={guestSession ? null : (
               <OrganizationUsageMenuItem
                 api={api ?? null}
                 onSelect={() => { void desktopBridge().openSettings('workspace'); }}
@@ -858,7 +795,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // in-flight request to report. The sidebar is waiting exactly while it
         // has no list yet — which also keeps the skeletons up rather than
         // claiming an empty workspace when the socket cannot connect.
-        loading={workstreams.data === undefined || (guestSession && associativeNavigation.isPending)}
+        loading={workstreams.data === undefined}
         spaces={spacesEnabled ? visibleSpaces : undefined}
         spacesReadOnly={guestSession}
         inactiveSpaces={visibleInactiveSpaces}
@@ -866,8 +803,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // The rows on screen are the last ones the socket delivered and the
         // connection is down. They stay, marked out of date, with the one retry
         // there is: a list nothing fetches has nothing to refetch.
-        spacesOutOfDate={guestSession ? associativeNavigation.isError : workspaceSocketState === 'unavailable'}
-        onRetrySpaces={guestSession ? () => { void associativeNavigation.refetch(); } : reconnect}
+        spacesOutOfDate={workspaceSocketState === 'unavailable'}
+        onRetrySpaces={reconnect}
         onArchiveWorkstream={async (workstream) => {
           // Thrown rather than returned, unlike the handlers around it. The
           // sidebar treats this promise resolving as the archive having

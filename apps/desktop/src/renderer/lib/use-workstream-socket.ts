@@ -1,5 +1,6 @@
 import { useConversationAdmission } from './conversation-admission';
-import { conversationScopedChannelIds, useConversationDirectory } from './conversation-directory';
+import { mainReachable, useConversationDirectory } from './conversation-directory';
+import { useCachedWorkstreamSummary } from './use-workstreams-query';
 import { safeParseSocketEvent } from "@rally/contracts";
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import {
@@ -734,8 +735,10 @@ export function useWorkstreamSocket(
   // Main of a Channel this person reaches only through some of its
   // conversations is not theirs to open; every Main feed, pooled or direct,
   // passes here.
-  const conversationScoped = conversationScopedChannelIds(useConversationDirectory());
-  const mainOutOfReach = parentKind === 'workstream' && substreamId === '0' && conversationScoped.has(parentId);
+  const row = useCachedWorkstreamSummary(parentId);
+  const conversationDirectory = useConversationDirectory();
+  const mainOutOfReach = parentKind === 'workstream' && substreamId === '0'
+    && mainReachable(row, conversationDirectory, parentId) === false;
   enabled = enabled && !mainOutOfReach;
   const admissionAllowed = useConversationAdmission();
   const localCacheScope = useLocalCacheScope();

@@ -56,7 +56,7 @@ afterEach(() => {
  * `protectedApi` mounts in `apps/api/src/app.ts`; a family added there belongs
  * here too.
  */
-const MEMBER_ONLY = /\/browser\/api\/[^/]+\/(workspace\/(?!socket$)|workspaces|workstreams|sideline|work-opportunities|projects|spaces|digest|push-devices|connections|favicons|search|speech|realtime)/u;
+const MEMBER_ONLY = /\/browser\/api\/[^/]+\/(workspace\/(?!socket$)|workspaces|workstreams|sideline|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime)/u;
 
 // Full entry, the shell members use, API and socket hooks. Only browser
 // transport boundaries are substituted, so a guest exercises the same tree.
@@ -77,7 +77,10 @@ it('opens a guest in the shared shell without asking for anything a guest is ref
     }], workstreams: [{ parentId: parent, title: 'Shared parent', scope: 'personal', archived: false,
       conversations: [{ substreamId: child, title: 'Shared child conversation', scope: 'personal', archived: false }] }] });
     if (path.endsWith('/workspace/socket')) return workspaceTicket();
-    if (path.endsWith('/socket')) return Response.json({ url: 'wss://api.rallywith.ai/socket/conversations/' + parent + '/' + child, ticket: 'fixture-ticket' });
+    if (path.endsWith('/socket')) {
+      const substream = /\/substreams\/([^/]+)\/socket$/u.exec(path)?.[1] ?? '0';
+      return Response.json({ url: 'wss://api.rallywith.ai/socket/conversations/' + parent + '/' + substream, ticket: 'fixture-ticket' });
+    }
     if (path.endsWith('/sidekicks') || path.endsWith('/recommended-sidekicks')) return Response.json({ items: [] });
     if (path.endsWith('/feature-flags')) return Response.json({ liveArtifactsEnabled: false });
     return Response.json({ error: { message: 'Unexpected request: ' + path } }, { status: 404 });
@@ -86,10 +89,11 @@ it('opens a guest in the shared shell without asking for anything a guest is ref
   const view = render(<BrowserEntry renderCollaboration={(region, session, onSignOut, onRevalidate) =>
     <BrowserShell region="global" session={cookieClientSession(region, session)} onSignOut={onSignOut} onRevalidate={onRevalidate} />} />);
   try {
-    // One feed: the directory lists only the Breakout, so Main is not this
-    // guest's and no Main socket may be opened for it, even briefly.
-    await waitFor(() => expect(feedSockets()).toHaveLength(1));
-    const socket = feedSockets()[0]!;
+    // The directory lists only the Breakout, so Main is not this guest's: by
+    // the time it has arrived, the Breakout's is the one feed held open.
+    const live = () => feedSockets().filter((socket) => socket.readyState !== BrowserSocket.CLOSED);
+    await waitFor(() => expect(live().map((socket) => new URL(socket.url).pathname.split('/').slice(-2))).toEqual([[parent, child]]));
+    const socket = live()[0]!;
     await act(async () => { socket.open(); });
     await screen.findByRole('button', { name: /Breakout menu: Shared child conversation/u });
     const previousSelections = selections;
@@ -97,7 +101,7 @@ it('opens a guest in the shared shell without asking for anything a guest is ref
     await waitFor(() => expect(selections).toBeGreaterThan(previousSelections));
     await act(async () => { await Promise.resolve(); });
     expect(socket.readyState).toBe(BrowserSocket.OPEN);
-    expect(feedSockets()).toHaveLength(1);
+    expect(live()).toEqual([socket]);
     expect(workspaceSockets()).toHaveLength(1);
     // Neither the introduction nor the Organization's setup stands in front
     // of a guest, and nothing they are refused was asked for.

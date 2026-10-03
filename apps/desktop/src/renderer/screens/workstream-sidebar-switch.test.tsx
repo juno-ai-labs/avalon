@@ -67,6 +67,9 @@ import { useUiStore } from '../lib/ui-store';
 import type { WorkstreamBoot, WorkstreamDetail } from '../lib/types';
 import type * as CollaborationSessionModule from '../lib/collaboration-session';
 import type { ClientSession } from '@rally/contracts/client-session';
+import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
+import type { SubstreamId } from '@rally/contracts';
+import { conversationDirectoryQueryKey } from '../lib/conversation-directory';
 
 const firstWorkstreamId = '00000000-0000-7000-8000-000000000801';
 const secondWorkstreamId = '00000000-0000-7000-8000-000000000802';
@@ -131,10 +134,11 @@ function WorkstreamRouteControls(): React.JSX.Element {
   );
 }
 
-function renderScreen(child = false): QueryClient {
+function renderScreen(child = false, directory?: SharedNavigationDirectory): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
+  if (directory) queryClient.setQueryData(conversationDirectoryQueryKey(undefined), directory);
   seedWorkstream(queryClient, firstWorkstreamId, 'First channel');
   seedWorkstream(queryClient, secondWorkstreamId, 'Second channel');
   if (child) {
@@ -184,9 +188,15 @@ describe('the right sidebar does not follow a channel switch', () => {
 
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it('does not show or retain Main for a guest opening a child', async () => {
+  it('does not show or retain Main for somebody whose conversations leave it out', async () => {
     session.current = { user: { id: 'guest', email: 'guest@example.test' }, workspace: { id: 'workspace', region: 'global', accessClass: 'guest' } };
-    renderScreen(true);
+    renderScreen(true, {
+      spaces: [],
+      workstreams: [{
+        parentId: firstWorkstreamId, title: 'First channel', scope: 'personal', archived: false,
+        conversations: [{ substreamId: 'child' as SubstreamId, title: 'Shared child', scope: 'personal', archived: false }],
+      }],
+    });
     await screen.findByRole('button', { name: 'Breakout menu: Shared child' });
     expect(screen.queryByRole('button', { name: /^Channel menu:/u })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Close breakout' })).not.toBeInTheDocument();

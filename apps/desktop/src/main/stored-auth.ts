@@ -254,6 +254,24 @@ export function storedProfileForCredential(
   )) ?? null;
 }
 
+/** Whether the credential this device would use now is a guest's. */
+export function activeStoredCredentialIsGuest(auth: StoredAuthSet | null, profiles: StoredProfileSet | null): boolean {
+  const active = auth ? activeStoredCredential(auth) : null;
+  return active !== null && storedCredentialIsGuest(profiles, active);
+}
+
+/**
+ * Whether a stored credential is a guest's. A guest is refused the member-only
+ * routes (workspace attention, the Channel list), so background work that
+ * asks them skips these credentials rather than fail on them. A credential with
+ * no cached profile (the profile file is unreadable, or has not been written
+ * yet) counts as a member's, so its background calls can be refused until the
+ * profile is written.
+ */
+export function storedCredentialIsGuest(profiles: StoredProfileSet | null, auth: StoredAuth): boolean {
+  return profiles ? storedProfileForCredential(profiles, auth)?.workspace?.accessClass === 'guest' : false;
+}
+
 export function selectStoredWorkspace(auth: StoredAuthSet, workspaceId: string, region: Region): StoredAuthSet {
   if (!storedWorkspaceCredential(auth, workspaceId, region)) {
     throw new Error('The selected organization credential is not stored');

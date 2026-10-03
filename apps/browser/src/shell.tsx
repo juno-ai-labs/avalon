@@ -9,7 +9,7 @@ import { WorkspaceApp } from '../../desktop/src/renderer/App';
 import { AccountOnboardingGate } from '../../desktop/src/renderer/screens/guided-onboarding';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
 import { AppSessionValueProvider, type AppSessionValue } from '../../desktop/src/renderer/lib/app-session';
-import { shellCapabilities, type ConnectorSetupCapability, type PendingConnectorOAuth } from '../../desktop/src/renderer/lib/collaboration-session';
+import { type ConnectorSetupCapability, type PendingConnectorOAuth } from '../../desktop/src/renderer/lib/collaboration-session';
 import { clearWorkspaceDrafts } from '../../desktop/src/renderer/lib/draft-cache';
 import { FaviconApiProvider } from '../../desktop/src/renderer/lib/favicon-api';
 import { clearWorkspaceLocalCache } from '../../desktop/src/renderer/lib/local-cache';
@@ -123,11 +123,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     clearDeepLinkError: () => undefined,
   }), [api, getAccountOnboarding, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
   const createSidekick = useCallback(() => desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET), []);
-  // Starting a connection and authoring a Sidekick are a member's: their
-  // routes refuse a guest, so a guest's shell is handed neither and offers
-  // neither. Existing connectors and attached Sidekicks still work.
-  const { guest } = shellCapabilities({ host: 'browser', session });
-  return <AppSessionValueProvider value={value} connectorSetup={guest ? null : connectorSetup} createSidekick={guest ? null : createSidekick}>
+  return <AppSessionValueProvider value={value} connectorSetup={connectorSetup} createSidekick={createSidekick}>
     <FaviconApiProvider>
       <AccountOnboardingGate><WorkspaceApp /></AccountOnboardingGate>
     </FaviconApiProvider>

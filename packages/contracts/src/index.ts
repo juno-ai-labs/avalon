@@ -699,6 +699,12 @@ export const WorkstreamSchema = z.object({
   /** Breakouts under this Channel that currently need this viewer. */
   breakoutAttentionCount: z.number().int().nonnegative().optional(),
   /**
+   * Set when this viewer is listed the Channel only through a Breakout, so
+   * Main is not theirs to open and the row's Main fields are emptied
+   * (`docs/listing-rules.md`). Absent means Main is this viewer's.
+   */
+  mainWithheld: z.literal(true).optional(),
+  /**
    * The breakouts this viewer may open, on workspace-socket rows only.
    *
    * This and the two fields below are what the Channel control socket added to

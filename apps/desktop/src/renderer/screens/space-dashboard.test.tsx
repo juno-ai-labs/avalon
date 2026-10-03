@@ -2,6 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { CollaborationSessionProvider } from '../lib/collaboration-session';
 import { SpaceSummarySchema, asSpaceId, type SpaceSummary } from '@rally/contracts';
 import { uuidToBase58 } from '@rally/contracts/uuid-base58';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -122,7 +123,7 @@ function Location(): React.JSX.Element {
  * re-render — the socket is a module-level double, so a reconnect is a change
  * to that double followed by a render rather than an event.
  */
-function renderSpace(summary = hiring, options: { ready?: boolean } = {}): {
+function renderSpace(summary = hiring, options: { ready?: boolean; guest?: boolean } = {}): {
   queryClient: QueryClient;
   rerender: () => void;
 } {
@@ -135,10 +136,16 @@ function renderSpace(summary = hiring, options: { ready?: boolean } = {}): {
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[`/spaces/${summary.id}`]}>
-          <Routes>
-            <Route element={<SpaceDashboardScreen workspace={workspace} />} path="/spaces/:spaceId" />
-            <Route element={<Location />} path="*" />
-          </Routes>
+          <CollaborationSessionProvider api={null} session={options.guest ? {
+            user: { id: 'guest', email: 'guest@example.test', name: 'Guest' },
+            workspace: { id: workspace.id, name: 'Design', region: 'global', role: null, accessClass: 'guest' },
+            expiresAt: '2099-01-01T00:00:00.000Z', apiBaseUrl: 'https://api.rallywith.ai',
+          } : null}>
+            <Routes>
+              <Route element={<SpaceDashboardScreen workspace={workspace} />} path="/spaces/:spaceId" />
+              <Route element={<Location />} path="*" />
+            </Routes>
+          </CollaborationSessionProvider>
         </MemoryRouter>
       </QueryClientProvider>
     </Tooltip.Provider>
@@ -307,6 +314,18 @@ describe('the Space dashboard', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
 
     await waitFor(() => expect(api.listSpaceChannels).toHaveBeenCalledWith(hiring.id, 'page-2', expect.anything()));
+  });
+
+  // A guest opens a Space the listing rules give them on the same screen,
+  // read-only: its writes and the member directory are a member's.
+  it('shows a guest the Space and its Channels, and nothing to change or the member directory', async () => {
+    api.listSpaceChannels.mockResolvedValue({ items: [channelRow()], nextCursor: null });
+    renderSpace(makeSpace({ reach: 'participant' }), { guest: true });
+
+    expect(await screen.findByRole('link', { name: /Ship the launch/u })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Archive space' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Change icon and color for Hiring' })).not.toBeInTheDocument();
+    expect(api.getWorkspaceMembers).not.toHaveBeenCalled();
   });
 
   it('opens the channel icon and color picker from the space icon and saves each choice on click', async () => {

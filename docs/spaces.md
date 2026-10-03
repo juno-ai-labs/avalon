@@ -26,7 +26,7 @@ them; the product design is in
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/spaces.ts` | Space ids, the appearance registry, scope, status, system role, summaries, request shapes, `ChannelAccessSources`, and the closed `SpaceErrorCode` union. |
-| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 63) and the synchronous transactions over them, including the compatibility-capable `workspace_container_order`; the dashboard's conversation page with its live-for-viewer and Channel-visibility SQL; the three ways a Space is visible (`spaceVisibleToViewerSql`, `spaceReachedThroughChannelSql`, `spaceReachSql`, and the `reach`/`canEdit` pair derived from them); the reads a dashboard nudge is addressed with; and the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
+| `apps/api/src/durable-objects/workspace-space-storage.ts` | WorkspaceDO's Space tables (migration 63) and the synchronous transactions over them, including the compatibility-capable `workspace_container_order`; the dashboard's conversation page with its live-for-viewer and Channel-visibility SQL; `spaceReachSql` and the `reach`/`canEdit` pair, which render the listing rules in [`listing-rules.md`](listing-rules.md); the reads a dashboard nudge is addressed with; and the `SPACE_CHANNEL_PAGE_SIZE` and `SPACE_BOOTSTRAP_PAGE_SIZE` page bounds. |
 | `apps/api/src/durable-objects/workspace-breakout-storage.ts` | The breakout directory and viewer projections (migration 65), and the generation-fenced applies over them. |
 | `packages/contracts/src/conversation-attention.ts` | `conversationNeedsViewer`, the one definition of "this conversation still needs you", and the `HarnessStatus` vocabulary it reads. |
 | `apps/api/src/durable-objects/workspace-space-protocol.ts` | Strict RPC requests and results, the Queue message shapes, and the `kind` that makes a resource and a Sidekick default one mechanism. |
@@ -854,10 +854,10 @@ one would hold a second answer to a question the socket already answers, and the
 two would disagree across a mutation.
 
 Both payloads are shaped for the viewer in two ways beyond ordering. **A guest
-is sent nothing**: both directories empty and `spacesReady` true, because a
-guest holds explicit Channel grants and no Organization-wide discovery, and is
-not waiting on a cutover. The relationship is read at accept time and pinned on
-the socket attachment, because nothing re-asks on the way out — an open socket
+gets the same directories by the same rules**, with Organization-wide scope
+admitting nobody: the Spaces they take part in or reach through a Channel they
+may list ([`listing-rules.md`](listing-rules.md)). The relationship is read at
+accept time and pinned on the socket attachment, because nothing re-asks on the way out — an open socket
 is closed by the access-revocation queue rather than by a publisher querying D1
 again. And a Channel's `spaceIds` name only the Spaces *that* viewer may see,
 which is the section below.
@@ -865,17 +865,15 @@ which is the section below.
 ### Who may see a Space, and why
 
 **Three ways, and the third is what makes the hierarchy true of every Channel a
-person can read.** `spaceVisibleToViewerSql` is the one text; every query that
-decides this renders it.
+person can read.** `spaceListedSql` in `listing-rules.ts` is the one text;
+every query that decides this renders it.
 
 1. The Space's scope is `workspace`, so every active member of the Organization
-   reaches it.
+   reaches it. A guest never does.
 2. This person is one of its participants.
-3. This person can see a Channel placed in it — an **active** membership whose
-   Channel directory row is not archived and passes
-   `channelVisibleToViewerSql`, the Channel directory's own
-   `scope = 'workspace' OR is_participant` test. A breakout is visible only
-   through its parent Channel, so "or a breakout" reduces to this.
+3. This person may list a Channel placed in it — an **active** membership whose
+   Channel directory row is not archived and passes `channelListedSql`: its
+   Main is theirs to open, or a Breakout in it is.
 
 The third exists because without it a Channel in somebody's participants-only
 Space is drawn under no Space at all for every *other* reader of that Channel.
@@ -1218,10 +1216,8 @@ Space only if its viewer can see that Space. A Channel id never leaves the
 publisher; only the Spaces it is placed in do. That keeps two people's fast
 exchange in a private Channel off every other member's dashboard, and keeps a
 personal Space's id from reaching somebody who only shares a Channel with its
-owner. A guest is sent no Space socket snapshot. The cookie-scoped browser
-instead asks `/sharing/navigation` for the smaller, canonically admitted
-projection described below; that request does not subscribe the guest to Space
-events or turn the member directory into guest discovery.
+owner. A guest's socket carries the Space snapshot the listing rules give
+them, and the same nudges.
 
 **"Can see that Space" is the wrong address for a membership, because of the
 third clause.** Somebody who reaches a Space only through one Channel in it
@@ -1269,12 +1265,10 @@ Channel belongs to at least one Space, so a sidebar without it cannot say where
 anything lives. General is in the directory like any other Space and the section
 has no case for it.
 
-The desktop member shell is handed the full Space directory. Guests in both the
-desktop and browser hosts use the separate read-only `/sharing/navigation`
-hierarchy: only canonically authorized Channels, Breakouts, their containment,
-and each ancestor's name, icon, colour and public/private scope. It never
-exposes the full member directory, Space participants, defaults, content or any
-Space write capability.
+Every shell, member or guest, on either host, is handed the socket's Space
+directory. A guest's holds only the Spaces the listing rules give them, each a
+`through_channel` or `participant` summary, and the sidebar draws it read-only:
+no Space write is a guest's.
 
 A placement is not a copy. The rows under an expanded Space are the Channel list
 the sections below already render, filtered by the Channel's own `spaceIds`, and
@@ -1444,21 +1438,15 @@ channels". The state it describes is a brand-new Organization: **Spaces →
 General → No channels**, and without it nothing under that, which reads as a
 sidebar that has stopped talking rather than one that is empty.
 
-**A member's sidebar adds the same bounded hierarchy for any Channel they reach
-only through its conversations** — a Breakout of a Channel they cannot read —
-after the member directory's own Channels, and it lists the Spaces those
-Channels sit in beside the member Space directory. Such a Channel opens on its
-first listed conversation and never on Main, and the Channel socket pool does
-not hold its Main.
+**A Channel reached only through a Breakout is a socket row like any other**,
+for a member or a guest. The conversation directory (`/sharing/navigation`)
+adds no rows; it says which conversation such a row opens on. It opens on the
+first one listed and never on Main, and the Channel socket pool does not hold
+its Main.
 
-**Both guest hosts get the bounded read-only hierarchy.** Neither guest is
-handed the member Space directory. They use `/sharing/navigation` to draw Space,
-pills and Channel rows from canonically admitted Channels only. Selecting a
-Space filters the Channel list; in Electron the read-only row is a
-button rather than a link to the member Space dashboard. If an admitted Channel
-has no Space placement in a rolling-deploy response, the browser puts it in a
-local **Shared channels** fallback so an authority-safe conversation never
-becomes unreachable while its container metadata is not ready.
+**A guest's Spaces are read-only.** Selecting one filters the Channel list, and
+its dashboard opens as it does for a member, with nothing to change and no
+member directory: Space writes and `/workspace/members` stay a member's.
 
 **Only manually ordered lists advertise reordering.** Pinned Channels keep drag
 plus Alt with the up or down arrow. Space pills and ordinary Channels are alphabetical,
@@ -1479,13 +1467,12 @@ An ordinary Channel can still be dragged onto a Space pill to move its placement
   into a child object or D1 would give two objects an answer to "does this
   Channel have another Space", which is the question both the final-membership
   and the archive refusals turn on.
-- **Every full-directory or mutating Space RPC a person can reach rechecks
-  active Organization membership and refuses a guest.** A guest holds explicit
-  Channel grants and no Organization-wide discovery. The one viewer-scoped
-  read exception, `listSharedNavigationSpaces`, first re-intersects caller IDs
-  with that relationship's grant candidates, then applies the ordinary Space
-  visibility predicate; it returns only marks and admitted containment. The
-  other exceptions have no person on the request: `recordSpaceIntentReceipt`,
+- **Every mutating Space RPC, and the member walk, rechecks active
+  Organization membership and refuses a guest.** The reads (`spaceSummary`,
+  `listSpaceChannels`, `channelSpaces`) take the caller's relationship and
+  apply the listing rules, which give a guest no Organization-wide reach.
+  `listSharedNavigationSpaces` first re-intersects caller IDs with that
+  relationship's grant candidates. The other exceptions have no person on the request: `recordSpaceIntentReceipt`,
   `spaceBootstrapStatus` and the default-target settlements are server-to-server,
   and each says so where it is defined.
 - **A Space's retired conversation is not addressable as a Channel.** Every
@@ -1685,7 +1672,8 @@ written open.
 **The third visibility clause is a correlated existence test, and nothing
 bounds what it scans.** `spaceReachedThroughChannelSql` is an `EXISTS` over
 `space_channel_memberships` for one Space, with a directory lookup and a viewer
-lookup per candidate row. `list()` renders the clause twice — once in
+lookup per candidate row, and, once Breakouts are projected, a Breakout
+existence test per Channel whose Main the viewer cannot open. `list()` renders the clause twice — once in
 `visibleSpaceIds` and once in `directory()` — and `spacesFor` runs `list()` per
 socket, which `publishSpaceSnapshot` does for every subscribed socket on every
 Space write in the Organization. So a publication costs
@@ -1764,7 +1752,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/desktop/src/renderer/screens/space-dashboard.test.tsx` | The **Needs attention** section; the absence of Resources, Sidekicks, **Add channel**, the new-Channel plus, row **Remove**, and their data dependencies; the two empty states; the refetch after a reconnect and the one it does not do for the connection it opened on; the blocked-archive copy; General's protections; that one refusal appears once; and that a refused participant roster leaves the dialog open with its sentence in it. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | That a dashboard nudge invalidates the named Spaces' pages and no others. |
 | `apps/desktop/src/renderer/components/manage-access-dialog.test.tsx` | The sources, the never-claims-private rule, the withheld narrowing control, and each actionable refusal. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The single sidebar: the All filter and the pills it sits beside, the Space subtitle with General left out, pins under All, associative read-only guest hierarchy, and the rows' markers. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The single sidebar: the All filter and the pills it sits beside, the Space subtitle with General left out, pins under All, a guest's read-only Spaces, and the rows' markers. |
 | `apps/desktop/src/renderer/lib/browser-collaboration.test.tsx` | The cookie-scoped browser's single sidebar and split Breakout pane; selected-Space filtering and accessibility state; multi-Space route stability; active-before-archived selection; and the local fallback that keeps an admitted Channel reachable when no visible Space is returned. |
 | `apps/desktop/src/renderer/lib/personal-order.test.ts` | The one arrangement rule: stored ids first, the rest in their natural order, an id the list does not carry dropped, an empty arrangement as the identity, and a container addressed by both halves of its key. |
 
