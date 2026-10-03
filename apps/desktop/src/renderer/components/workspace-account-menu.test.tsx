@@ -497,4 +497,13 @@ describe('organization account menu', () => {
     await waitFor(() => expect(props.onDeclineInvitation).toHaveBeenCalledWith(invite));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Join Invited Studio' })).not.toBeInTheDocument());
   });
+
+  it.each([true, false])('shows the active organization\'s usage with organizations enabled=%s', async (enabled) => {
+    renderMenu({ enabled, activeUsage: <span>72% left this week</span> });
+    openMenu();
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).getAllByText('72% left this week')).toHaveLength(1);
+    // Under the active row when the list is shown; on its own when it is not.
+    expect(within(menu).queryByText('Organizations') !== null).toBe(enabled);
+  });
 });
