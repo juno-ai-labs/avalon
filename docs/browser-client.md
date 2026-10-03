@@ -1,9 +1,9 @@
 # Browser client
 
-The browser client provides email entry for shared collaboration. A guest gets
-the shared conversation screen described below; an Organization member gets the
-desktop shell, as described in [Member shell](#member-shell). The guest path has
-no setup or onboarding. Email entry, invitation acceptance and canonical conversation links
+The browser client provides email and Google sign-in for shared collaboration. A
+guest gets the shared conversation screen described below; an Organization
+member gets the desktop shell, as described in [Member shell](#member-shell). The
+guest path has no setup or onboarding. Sign-in, invitation acceptance and canonical conversation links
 activate the workspace and mount the shared conversation screen. Local API and
 Chrome journeys cover guest entry, feed, upload/reload, multiple workstreams,
 promotion and membership removal. Production mail delivery and deployed stateful
@@ -15,7 +15,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
 | `apps/browser/src/mac-download.tsx` | The Mac app download, pinned above the account menu in the sidebar, or floating with it when there is no sidebar. |
-| `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, invitation acceptance, session restore and workspace list. |
+| `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, Google sign-in, invitation acceptance, session restore and workspace list. |
 | `apps/browser/src/invitation.ts` | Tokenized and addressed invitation fragments, and exact canonical scope destinations. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/workspace.tsx` | The signed-in application's one lazy boundary; picks the guest or member shell. |
@@ -164,29 +164,33 @@ loading, failed or empty. Its width is the reader's preference clamped by
 
 ### Google sign-in
 
-The entry offers **Continue with Google** under the email form, except on an
-invitation page, where leaving for Google would drop the invitation held only in
-the page's memory. `POST /browser/google/start` stores the OAuth state with no
-desktop attempt and a return path on the browser host, and sets a ten-minute
-HttpOnly `<cookie>-google-<state>` cookie holding the same state; one cookie per
-state, so two tabs signing in at once keep their own bindings. Google returns
-to `/regional/<region>/browser/google/callback` on the browser host, which the
-Worker forwards like any `/browser/*` request; the API host could not set the
-browser's host-only cookie. The callback requires the state cookie to match the
-`state` query before it touches the stored state, so a link to someone else's
-callback cannot sign this browser in as them. It then exchanges the code, links
-the Google identity to the same user an email sign-in with that verified address
-reaches, registers a browser session, sets the cookie and redirects to the
-return path. A declined or failed sign-in returns with `#google_error=<code>`,
-which the entry reads, removes from history and explains: `google_oauth_denied`
-only when the person declined, `google_oauth_failed` for any other Google error,
-and `google_sign_in_failed` when the exchange or ID token check threw, which the
-log names.
+The entry offers **Continue with Google** under the email form.
+`POST /browser/google/start` stores a `browser_identity` OAuth state with a
+return path on the browser host and sets an HttpOnly session cookie
+`<cookie>-google-<state>` holding the same state. The callback checks that
+cookie, claims the state, exchanges the code through the same path the desktop flow
+uses, registers a browser session, sets the cookie and redirects to the return
+path. A failure returns with `#google_error=<code>`, which the signed-out screen
+shows until the person starts an email sign-in. Four choices shape it:
 
-Each callback accepts only its own kind of state: the browser callback refuses a
-desktop row (one with a desktop attempt) without consuming it, and the desktop
-callback refuses a browser row. The redirect URI must be registered on Google's identity OAuth
-client; see the PRD's provider configuration.
+- **Hidden on invitation pages.** The invitation credential lives only in the
+  page's memory, so leaving for Google would lose it.
+- **The callback is on the browser host.** Google returns to
+  `/regional/<region>/browser/google/callback`, which the Worker forwards like
+  any `/browser/*` request. Only a response on that host can set its host-only
+  cookie, and an API-hosted callback would have to hand the page a Rally
+  credential in a URL instead.
+- **Cookie before state.** The callback compares the state cookie with the
+  `state` query before it touches the stored row, so a link to someone else's
+  callback cannot sign this browser in as them, and cannot burn their state.
+  There is one cookie per state, so two tabs signing in at once keep their own.
+- **Row kinds do not mix.** Browser rows have `purpose = 'browser_identity'`
+  and desktop rows `purpose = 'identity'`. Each callback claims only its own
+  purpose, so a state that reaches the wrong callback is refused without being
+  consumed.
+
+The redirect URI must be registered on Google's identity OAuth client; the
+[runbook](runbook.md#provider-configuration) lists it.
 
 ### Member shell
 
@@ -361,6 +365,10 @@ the clicked conversation and shows only email input and submission feedback.
   arbitrary URLs, internal API routes or ordinary authentication endpoints.
 - Workspace membership is still checked by the regional API; a workspace list
   item or URL does not grant access to any conversation.
+- A Google callback completes only when this browser's state cookie matches the
+  `state` query.
+- Browser and desktop Google states do not mix: each callback claims only rows
+  of its own `purpose`.
 
 ## Boundary
 
@@ -416,7 +424,24 @@ policy before testing real authentication. Development does not send emails.
 Missing built HTML returns 503. Unknown regional/API paths return 404. API errors
 remain visible in the form and retries preserve the active operation. This module
 introduces no new authentication TTL or attempt count; those remain explicit
-policy in [email-login.md](email-login.md).
+policy in [email-login.md](email-login.md). Google sign-in reuses the desktop
+flow's ten-minute OAuth state expiry, and its state cookie is a session cookie.
+
+`POST /browser/google/start` answers 422 `invalid_return_uri` for a return path
+that leaves the browser host. Every other Google failure is a redirect to the
+browser host with `#google_error=<code>`:
+
+| Code | Meaning |
+| --- | --- |
+| `google_state_mismatch` | No state, or no matching state cookie in this browser. |
+| `invalid_oauth_state` | The state is unknown, expired, already used, or a desktop one. |
+| `google_oauth_denied` | The person declined at Google. |
+| `google_oauth_failed` | Google returned any other error. |
+| `google_token_exchange_failed`, `google_identity_missing` | Google's token endpoint refused the code or returned no ID token. |
+| `google_id_token_invalid` | The ID token did not verify; the log names JOSE's reason. |
+| `google_identity_invalid` | The token lacks a subject or email, or the email is not verified. |
+| `google_oauth_not_configured`, `global_identity_required` | Google identity is not configured, or this is not the Global deployment. |
+| `google_sign_in_failed` | Anything else that threw; the log names the cause. |
 
 Current limitations: the entry restores the configured deployment's identity,
 not a cross-deployment session set. Only Global is configured today. A guest tab
@@ -479,10 +504,9 @@ Substream Archive stays in the right-click menu, away from the header Share cont
 
 ### 2026-10-03 — Sign in with Google in the browser
 
-**What changed:** The entry has a Google button. New `/browser/google/start`
-and `/browser/google/callback` routes run Google identity sign-in for a tab and
-set the browser cookie; the Google code exchange is shared with the desktop
-flow.
+**What changed:** The entry has a Google button, backed by new
+`/browser/google/start` and `/browser/google/callback` routes that share the
+desktop flow's Google code exchange.
 
 **Why:** Members sign in to the Mac app with Google; the browser offered only
 email ([PRD](PRDs/2026-10-03_full-browser-client/prd.md), goal 2).
@@ -490,12 +514,16 @@ email ([PRD](PRDs/2026-10-03_full-browser-client/prd.md), goal 2).
 **Considered and rejected:** An API-hosted callback that redirects with a Rally
 login ticket for the page to redeem, which puts a Rally credential in a URL. A
 schema column for a browser binding, where a double-submitted state cookie does
-the same job with no migration.
+the same job with no migration. Telling browser rows from desktop rows by a
+missing desktop attempt: a separate `purpose` keeps the two apart in both
+directions, again with no migration.
 
 **Consequences:** Production needs
 `https://app.rallywith.ai/regional/global/browser/google/callback` registered on
 the identity OAuth client before the button works there. Google identity stays
-Global; the route refuses other deployments.
+Global; the route refuses other deployments. An ID token that fails to verify is
+now `google_id_token_invalid` on the desktop callback too, where it used to be
+an unhandled error.
 
 Shipped in #1078. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
