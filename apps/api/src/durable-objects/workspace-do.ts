@@ -6140,18 +6140,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         && parsed.data.foregroundWorkstreamId !== null) {
         const now = Date.now();
         const workstreamId = parsed.data.foregroundWorkstreamId;
-        // The presence check above has already found this Channel listed for
-        // this viewer, so its row is theirs to be sent.
-        const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
-          `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
-          currentAttachment.userId, currentAttachment.userId, workstreamId,
-        ).one();
         // Opening a Channel is the moment its Main is about to be read. The
         // Channel control socket used to start this wake; a desktop that no
         // longer opens one says it here instead, ahead of its feed ticket.
         // Somebody listed the Channel only through a Breakout opens that
         // Breakout, not Main, so Main is not theirs to wake.
-        if (mainOpenFor(row, viewerOf(currentAttachment).accessClass)) this.wakeMainConversation(workstreamId);
+        if (this.mainOpenable(viewerOf(currentAttachment), workstreamId)) this.wakeMainConversation(workstreamId);
         this.state.storage.transactionSync(() => {
           this.state.storage.sql.exec(
             `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
@@ -6161,6 +6155,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           );
           this.advanceDirectoryVersion(now);
         });
+        // The presence check above has already found this Channel listed for
+        // this viewer, so its row is theirs to be sent.
+        const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+          `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
+          currentAttachment.userId, currentAttachment.userId, workstreamId,
+        ).one();
         const payload = JSON.stringify(WorkspaceWorkstreamRecencyEventSchema.parse({
           type: "workspace_workstream_recency",
           directoryWaterline: this.directoryWaterline(),
@@ -6437,7 +6437,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * keeps the frame equal to the one face pile the renderer can paint.
    */
   private broadcastPresence(excluding?: WebSocket): void {
-    const sockets: Array<{ socket: WebSocket; attachment: WorkspaceSocketAttachment }> = [];
+    const sockets: Array<{ socket: WebSocket; attachment: WorkspaceSocketAttachment; inMain: boolean }> = [];
     for (const socket of this.state.getWebSockets()) {
       if (socket === excluding) continue;
       const attachment = readAttachment(socket);
@@ -6457,18 +6457,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }
         continue;
       }
-      sockets.push({ socket, attachment });
+      sockets.push({
+        socket,
+        attachment,
+        // Somebody listed the Channel only through a Breakout is not in Main's
+        // audience: they neither join its face pile nor see who is in it.
+        inMain: contributesPresence(attachment)
+          && this.mainOpenable(viewerOf(attachment), attachment.foregroundWorkstreamId),
+      });
     }
     const presentUsers = new Map<string, Set<string>>();
-    for (const { attachment } of sockets) {
-      if (attachment.applicationState !== "foreground" || attachment.foregroundWorkstreamId === null) continue;
+    for (const { attachment, inMain } of sockets) {
+      if (!inMain || attachment.foregroundWorkstreamId === null) continue;
       const users = presentUsers.get(attachment.foregroundWorkstreamId) ?? new Set<string>();
       users.add(attachment.userId);
       presentUsers.set(attachment.foregroundWorkstreamId, users);
     }
     const occurredAt = new Date().toISOString();
-    for (const { socket, attachment } of sockets) {
-      if (!contributesPresence(attachment)) continue;
+    for (const { socket, attachment, inMain } of sockets) {
+      if (!inMain || !contributesPresence(attachment)) continue;
       const workstreamId = attachment.foregroundWorkstreamId;
       const userIds = [...(presentUsers.get(workstreamId) ?? [])]
         .filter((userId) => userId !== attachment.userId);
@@ -13888,7 +13895,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (changed) await this.publishDirectorySync(request.workspaceId);
     return { items: mapDirectoryWorkstreams(
       this.state.storage.sql,
-      this.pinnedDirectoryRows(request.userId, true, request.spaceId),
+      this.pinnedDirectoryRows(member(request.userId), true, request.spaceId),
       request.workspaceId,
       this.spaceStorage(),
       member(request.userId),
@@ -13917,7 +13924,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (changed) await this.publishDirectorySync(request.workspaceId);
     return { items: mapDirectoryWorkstreams(
       this.state.storage.sql,
-      this.pinnedDirectoryRows(request.userId, true, request.spaceId),
+      this.pinnedDirectoryRows(member(request.userId), true, request.spaceId),
       request.workspaceId,
       this.spaceStorage(),
       member(request.userId),
@@ -13938,7 +13945,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.publishDirectorySync(request.workspaceId);
     return { items: mapDirectoryWorkstreams(
       this.state.storage.sql,
-      this.pinnedDirectoryRows(request.userId, true, request.spaceId),
+      this.pinnedDirectoryRows(member(request.userId), true, request.spaceId),
       request.workspaceId,
       this.spaceStorage(),
       member(request.userId),
@@ -15175,7 +15182,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!cursor) {
       const selected = new Set(rows.map((row) => row.workstream_id));
       const supplemental = [
-        ...this.pinnedDirectoryRows(request.userId, request.includeSystem),
+        ...this.pinnedDirectoryRows({ userId: request.userId, accessClass }, request.includeSystem),
         ...this.runningDirectoryRows({ userId: request.userId, accessClass }, request.includeSystem),
       ];
       for (const row of supplemental) {
@@ -15227,7 +15234,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().map((row) => automationSummary(row, this.invalidAppearanceReporter(workspaceId)));
   }
 
-  private pinnedDirectoryRows(userId: string, includeSystem: boolean, spaceId?: string): WorkspaceDirectoryRow[] {
+  private pinnedDirectoryRows(viewer: Viewer, includeSystem: boolean, spaceId?: string): WorkspaceDirectoryRow[] {
     return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL
@@ -15237,15 +15244,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               AND (?3 IS NULL OR pin.space_id = ?3)
          )
          AND (? = 1 OR directory.system_kind IS NULL)
-         -- Pins are a member's; a Channel they pinned is listed by the same rule.
-         AND ${this.channelListedFor("member")}
+         -- A pin is kept through a change of relationship, so a pinned Channel
+         -- is listed by this viewer's rule as it is now, not when it was pinned.
+         AND ${this.channelListedFor(viewer.accessClass)}
        ORDER BY (
          SELECT MIN(pin.position) FROM workspace_workstream_pins pin
           WHERE pin.user_id = ?2 AND pin.workstream_id = directory.workstream_id
             AND (?3 IS NULL OR pin.space_id = ?3)
        ), directory.workstream_id`,
-      userId,
-      userId,
+      viewer.userId,
+      viewer.userId,
       spaceId ?? null,
       includeSystem ? 1 : 0,
     ).toArray();
@@ -15291,6 +15299,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         AND viewer.authority_generation = directory.authority_generation
        WHERE directory.workstream_id = ? AND directory.archived_at IS NULL
          AND ${this.channelListedFor(viewer.accessClass)}`,
+      viewer.userId,
+      workstreamId,
+    ).toArray().length === 1;
+  }
+
+  /**
+   * Whether this viewer may open a Channel's Main. A Channel's face pile is
+   * Main's audience, so presence asks this rather than whether it is listed.
+   */
+  private mainOpenable(viewer: Viewer, workstreamId: string): boolean {
+    return this.state.storage.sql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM channels directory
+       LEFT JOIN channel_viewers viewer
+         ON viewer.workstream_id = directory.workstream_id
+        AND viewer.user_id = ?
+        AND viewer.authority_generation = directory.authority_generation
+       WHERE directory.workstream_id = ? AND directory.archived_at IS NULL
+         AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}`,
       viewer.userId,
       workstreamId,
     ).toArray().length === 1;

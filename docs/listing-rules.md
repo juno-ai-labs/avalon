@@ -58,6 +58,8 @@ description, email address, author, run state, unread position, activity time,
 wake-up and roster. Its per-viewer state keeps the person's Breakouts and drops
 Main's agents and rail waterline. The rail (`channelRails`) answers only
 somebody who may open Main, and foregrounding the Channel does not wake Main.
+Presence is Main's audience too: someone listed only through a Breakout neither
+joins the Channel's face pile nor is told who is in it.
 Each of these asks `mainOpenableSql` or its TypeScript form `mainOpenFor`, not
 `channelListedSql`.
 
@@ -154,8 +156,9 @@ question.
 Using the Channel rule for everything a Channel row carries. Security review
 found that it handed somebody listed only through a Breakout Main's roster,
 resources, email address and wake-up preview, and let them wake Main. Rows,
-rails and the wake now ask the Main rule; only existence and Space reach ask
-the Channel rule.
+rails, the wake and presence now ask the Main rule; only existence and Space
+reach ask the Channel rule. Pinned rows are listed by the viewer's rule as it
+is now, because a pin outlives a member's demotion to guest.
 
 **Consequences:** This reverses the Spaces PRD's non-goal "Guest access to
 Spaces is deferred"
