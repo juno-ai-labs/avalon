@@ -64,6 +64,8 @@ describe("the web subscription variant", () => {
   it("accepts a subscription on each known push service", () => {
     for (const endpoint of [
       "https://fcm.googleapis.com/fcm/send/abc",
+      "https://fcm.googleapis.com/wp/abc",
+      "https://updates.push.services.mozilla.com/wpush/v1/abc",
       "https://updates.push.services.mozilla.com/wpush/v2/abc",
       "https://web.push.apple.com/abc",
       "https://wns2-par02p.notify.windows.com/w/?token=abc",
@@ -78,6 +80,11 @@ describe("the web subscription variant", () => {
       "https://user:pass@fcm.googleapis.com/fcm/send/abc",
       "https://fcm.googleapis.com:8443/fcm/send/abc",
       "http://fcm.googleapis.com/fcm/send/abc",
+      // Known hosts, but credential-gated APIs rather than subscriptions.
+      "https://fcm.googleapis.com/v1/projects/p/messages:send",
+      "https://wns2-par02p.notify.windows.com/?token=abc",
+      "https://updates.push.services.mozilla.com/other/abc",
+      "https://web.push.apple.com/a/b",
     ]) expect(RegisterPushDeviceRequestSchema.safeParse({ ...web, endpoint }).success).toBe(false);
     expect(isWebPushServiceUrl("not a url")).toBe(false);
   });

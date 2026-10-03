@@ -123,13 +123,17 @@ registration already checks their shape. A device with any other transport is
 rejected rather than sent to APNs.
 
 A subscription endpoint is a URL the Worker POSTs to, so only known push
-services are accepted: `fcm.googleapis.com`, `updates.push.services.mozilla.com`,
-`web.push.apple.com` and any `*.notify.windows.com`, over HTTPS, with no
-userinfo and the default port. The contract refuses any other endpoint at
+services are accepted, each at its subscription path: `fcm.googleapis.com`
+(`/fcm/send/…`, `/wp/…`), `updates.push.services.mozilla.com` (`/wpush/v1|v2/…`),
+`web.push.apple.com` (one segment) and any `*.notify.windows.com` (`/w/`), over
+HTTPS, with no userinfo and the default port. The path matters because the same
+hosts serve credential-gated APIs whose `401` would otherwise read as a refused
+VAPID key. The contract refuses any other endpoint at
 registration, and the transport checks again before each send and retires a
 stored row that fails. The request does not follow redirects; a `3xx` is a
-rejection. Only an allowlisted push service can report a credential failure, so
-a hostile endpoint cannot pause a batch or notify operations. No request
+rejection. Only a subscription URL on an allowlisted push service can report a
+credential failure, so a member's chosen endpoint cannot pause a batch or
+notify operations. No request
 timeout is set; that number is the team's to choose.
 
 The service worker shows the title and body. Its `tag` is the intent's collapse
@@ -258,7 +262,9 @@ which one browser origin with one subscription cannot hold.
 both. One VAPID key pair serves every region; rotating it retires each subscription at
 its next push (`403`), and the browser re-subscribes under the new key on its
 next visit. A new browser push
-service needs its host added to the allowlist before its users can subscribe.
+service, or a new subscription path on a known one, needs adding to the
+allowlist before its users can subscribe; until then the browser reports
+notifications as unsupported.
 
 Shipped in #1081. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
