@@ -551,7 +551,7 @@ on Global. Email-only identities stay in Global; only a Google identity is
 linked across deployments. Region-addressed invitations still need their own
 routing in a second deployment.
 
-Shipped in the pull request for this change. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
+Shipped in #1083. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
 ### 2026-10-03 — Connect Gmail and Drive from the browser
 
