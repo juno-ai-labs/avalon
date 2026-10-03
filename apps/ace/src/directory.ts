@@ -2,6 +2,7 @@ import { configuredRegions } from "@rally/contracts/regions";
 import { regionalDatabase } from "./regional-api";
 import type { Region } from "@rally/contracts/regions";
 import { RegionSchema } from "@rally/contracts/regions";
+import { PlanIdSchema } from "@rally/contracts/usage";
 import { z } from 'zod';
 import type { Env } from './env';
 
@@ -17,6 +18,7 @@ export const DirectoryWorkspaceSchema = z.strictObject({
   id: z.string().uuid(),
   name: z.string(),
   slug: z.string(),
+  plan: PlanIdSchema,
   region: RegionSchema,
 });
 export type DirectoryWorkspace = z.infer<typeof DirectoryWorkspaceSchema>;
@@ -58,11 +60,11 @@ async function workspaces(
   // By id as well as by name or slug: the retirement form asks the operator to
   // paste the workspace id, and the id is often what they were handed.
   const result = await db.prepare(
-    `SELECT id, name, slug FROM workspaces
+    `SELECT id, name, slug, plan FROM workspaces
       WHERE name LIKE ? ESCAPE '\\' OR slug LIKE ? ESCAPE '\\' OR id = ?
       ORDER BY name`,
-  ).bind(like(query), like(query), query).all<{ id: string; name: string; slug: string }>();
-  return (result.results ?? []).map((row) => ({ ...row, region }));
+  ).bind(like(query), like(query), query).all<{ id: string; name: string; slug: string; plan: string }>();
+  return (result.results ?? []).map((row) => ({ ...row, plan: PlanIdSchema.parse(row.plan), region }));
 }
 
 export async function searchUsers(env: Env, query: string): Promise<DirectoryUser[]> {

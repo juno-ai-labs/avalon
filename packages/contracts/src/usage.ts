@@ -212,3 +212,8 @@ export function deriveOrganizationUsage(input: {
     },
   };
 }
+
+/** An operator moving an Organization to a plan, from Ace (PRD non-goal 5). */
+export const WorkspacePlanChangeSchema = z.strictObject({ plan: PlanIdSchema });
+export const WorkspacePlanResultSchema = z.strictObject({ workspaceId: z.string().uuid(), plan: PlanIdSchema });
+export type WorkspacePlanResult = z.infer<typeof WorkspacePlanResultSchema>;

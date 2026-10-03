@@ -18,7 +18,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function seed(): { database: DatabaseSync; env: { DB: D1Database } } {
+function seed(): { database: DatabaseSync; env: { DB: D1Database; AVALON_REGION: string } } {
   const database = migratedSqliteDatabase();
   databases.push(database);
   database.prepare(
@@ -29,7 +29,7 @@ function seed(): { database: DatabaseSync; env: { DB: D1Database } } {
     `INSERT INTO workspaces(id, name, slug, region, created_by_user_id, created_at, updated_at)
      VALUES (?, 'Juno Labs', 'juno', 'global', ?, ?, ?)`,
   ).run(WORKSPACE, OWNER, CREATED, CREATED);
-  return { database, env: { DB: sqliteD1(database) } };
+  return { database, env: { DB: sqliteD1(database), AVALON_REGION: "global" } };
 }
 
 function event(eventId: string, overrides: Partial<UsageEvent> = {}): UsageEvent {

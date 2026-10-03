@@ -181,3 +181,32 @@ describe("the workspace retirement route", () => {
     expect(after.abandoned_at).toBe(row.abandoned_at);
   });
 });
+
+describe("the workspace plan route", () => {
+  const headers = { authorization: `Bearer ${DEMOS_TOKEN}`, "content-type": "application/json" };
+
+  it("moves a workspace this region owns to a plan and refuses one it does not", async () => {
+    const { env, app, database } = fixture({ workspaceRegion: "global" });
+    const moved = await app.request(`/internal/workspaces/${WORKSPACE_ID}/plan`, {
+      method: "POST", headers, body: JSON.stringify({ plan: "growth" }),
+    }, env);
+    expect(moved.status).toBe(200);
+    await expect(moved.json()).resolves.toEqual({ workspaceId: WORKSPACE_ID, plan: "growth" });
+    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE_ID)).toEqual({ plan: "growth" });
+
+    const invalid = await app.request(`/internal/workspaces/${WORKSPACE_ID}/plan`, {
+      method: "POST", headers, body: JSON.stringify({ plan: "enterprise" }),
+    }, env);
+    expect(invalid.status).toBe(400);
+  });
+
+  it("refuses a workspace the other region owns, even though its row is in the table", async () => {
+    const { env, app, database } = fixture({ workspaceRegion: "enterprise" });
+    const response = await app.request(`/internal/workspaces/${WORKSPACE_ID}/plan`, {
+      method: "POST", headers, body: JSON.stringify({ plan: "growth" }),
+    }, env);
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "workspace_not_found" } });
+    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE_ID)).toEqual({ plan: "starter" });
+  });
+});
