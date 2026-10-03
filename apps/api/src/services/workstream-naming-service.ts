@@ -370,6 +370,7 @@ async function generateName(env: Env, input: {
   try {
     const { result } = await runStructuredInference(env, {
       role: "workstream_naming",
+      activity: "channel_naming",
       context: {
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,

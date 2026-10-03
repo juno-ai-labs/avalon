@@ -9,6 +9,7 @@ import {
   captureStreamingInferenceAttempt,
   captureStreamingInferenceRequest,
 } from "./inference-lakehouse";
+import { emitInferenceUsage } from "./usage-metering";
 
 type AgentInferenceSource = "workstream" | "inline_child";
 
@@ -57,6 +58,8 @@ export interface AgentInferenceLogContext {
   requestReceivedAt?: number;
   /** Only the first durable attempt owns the user-request-to-dispatch SLO row. */
   inferenceStartEligible?: boolean;
+  /** What this run's attempts are metered as. Compaction attempts are metered separately. */
+  usage?: { activity: "agent_run" | "sidekick_run" | "session_import"; sidekickId?: string };
 }
 
 export interface AgentInferenceLogger {
@@ -173,6 +176,22 @@ export function createAgentInferenceLogger(
     },
     onAttempt: (attempt) => {
       defer(captureStreamingInferenceAttempt(env, context, attempt));
+      if (context.usage) {
+        emitInferenceUsage(env, defer, {
+          eventId: `inf:${attempt.inferenceRequestId}`,
+          workspaceId: context.workspaceId,
+          // A compaction summary runs through the same routed turn, under a
+          // turn ID the harness marks as compaction.
+          activity: attempt.turnId.includes(":compaction:") ? "context_compaction" : context.usage.activity,
+          costCents: attempt.costCents,
+          model: attempt.model,
+          refs: {
+            ...(context.userId ? { userId: context.userId } : {}),
+            ...(context.workstreamId ? { workstreamId: context.workstreamId, substreamId: context.substreamId ?? "0" } : {}),
+            ...(context.usage.sidekickId ? { sidekickId: context.usage.sidekickId } : {}),
+          },
+        });
+      }
       if (!attempt.success && attempt.disposition !== "cancelled") {
         logStructuredEvent(env, "warn", "agent_inference_attempt_failed", {
           request_id: context.requestId,
