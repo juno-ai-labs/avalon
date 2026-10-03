@@ -130,8 +130,7 @@ export function SidebarHorizontalLine({ className, ...props }: ComponentPropsWit
 /**
  * Rows at the bottom of a sidebar, above the line over its footer:
  * always on screen, never scrolled away with the list. The host decides what
- * goes here (the browser's Mac app download today; tips or tutorials later)
- * and the sidebar owns only where it sits. Each child is a `SidebarRow`, so a
+ * goes here and the sidebar owns only where it sits. Each child is a `SidebarRow`, so a
  * compact rail collapses it to the same lone tile a Space row becomes.
  */
 export function SidebarFooterItems({ className, ...props }: ComponentPropsWithoutRef<'div'>): React.JSX.Element {

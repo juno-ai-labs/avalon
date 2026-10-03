@@ -361,7 +361,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     const workspace = session.workspace;
     const visit = routeRef.current.visit;
     const operation = ++menuOperation.current;
-    if (!linkSpaceId) { setSubstreamMenuFailure('copy_link'); return; }
     void copyWorkstreamLink({ region: workspace.region, workspaceId: workspace.id }, linkSpaceId, id, target.substreamId).catch(() => {
       if (routeRef.current.visit === visit && menuOperation.current === operation) {
         setSubstreamMenuFailure('copy_link');

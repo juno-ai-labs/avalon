@@ -126,6 +126,22 @@ export function workstreamCanonicalUrl(webBaseUrl: string, target: WorkstreamLin
   return new URL(path, webBaseUrl).toString();
 }
 
+/**
+ * A shareable link for a Channel no Space holds for its reader, such as a
+ * guest's Channel outside every Space they can see. It names the Organization
+ * and the Channel, and `parseWorkstreamLinkPathTarget` reads it back.
+ */
+export function workstreamAddressedUrl(
+  webBaseUrl: string,
+  target: { region: string; workspaceId: string; workstreamId: string; substreamId?: string },
+): string {
+  if (!isWorkspaceTarget(target) || !isWorkstreamId(target.workstreamId) || (target.substreamId && !isWorkstreamId(target.substreamId))) {
+    throw new Error("A Channel link requires a region, Organization UUID, and Channel UUID");
+  }
+  const path = `/app/workspaces/${target.region}/${target.workspaceId}/workstreams/${target.workstreamId}${target.substreamId ? `/substreams/${target.substreamId}` : ""}`;
+  return new URL(path, webBaseUrl).toString();
+}
+
 /** The canonical URL for a Space dashboard. */
 export function spaceCanonicalUrl(webBaseUrl: string, target: SpaceLinkTarget): string {
   if (!isWorkspaceTarget(target) || !isWorkstreamId(target.spaceId)) {
