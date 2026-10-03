@@ -13,6 +13,8 @@ import {
   sessionFromStoredState,
   sessionsShareBinding,
   storedAuthFromSession,
+  storedCredentialIsGuest,
+  storedProfileForCredential,
   storedProfileFromSession,
 } from './stored-auth';
 
@@ -142,6 +144,23 @@ describe('plural desktop authentication storage', () => {
     expect(activeStoredCredential(enterprise.auth)).toMatchObject({
       binding: { workspaceId: enterpriseSession.workspace.id, region: 'enterprise' },
     });
+  });
+
+  it('stores a guest relationship beside a membership and restores it as a guest', () => {
+    const guestSession = {
+      ...enterpriseSession,
+      workspace: { ...enterpriseSession.workspace, role: null, accessClass: 'guest' as const },
+    };
+    const member = mergeStoredSession(null, null, session, 'global');
+    const both = mergeStoredSession(member.auth, member.profiles, guestSession, 'enterprise');
+    // Through the encrypted file's round trip: the set is parsed whole on load.
+    const auth = parseStoredAuthSet(JSON.parse(JSON.stringify(both.auth)))!;
+    const profiles = parseStoredProfileSet(JSON.parse(JSON.stringify(both.profiles)))!;
+
+    const active = activeStoredCredential(auth)!;
+    expect(sessionFromStoredState(active, storedProfileForCredential(profiles, active)!, guestSession.apiBaseUrl)?.workspace)
+      .toMatchObject({ id: guestSession.workspace.id, role: null, accessClass: 'guest' });
+    expect(auth.workspaces.map((credential) => storedCredentialIsGuest(profiles, credential))).toEqual([false, true]);
   });
 
   it('attaches a missing account credential without changing the active legacy organization', () => {

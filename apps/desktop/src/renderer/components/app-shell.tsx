@@ -650,7 +650,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       name: workspace.name,
       slug: workspace.id,
       region: workspace.region,
-      role: session?.workspace?.role ?? 'member',
+      role: session?.workspace ? session.workspace.role : 'member',
+      ...(session?.workspace?.accessClass === 'guest' ? { accessClass: 'guest' as const } : {}),
       createdAt: new Date(0).toISOString(),
     };
   const knownWorkspaces = workspaceDirectory.data?.workspaces.length
@@ -667,8 +668,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   ));
   // Attention is read with each workspace's own stored credential, so only the
   // rows this device holds one for can answer. A row discovery listed that was
-  // never opened here has none, and asking would fail the whole batch.
-  const attentionWorkspaces = backgroundWorkspaces.filter((candidate) => candidate.credentialStored === true);
+  // never opened here has none, and asking would fail the whole batch. A guest
+  // relationship is refused the attention route, so its row shows no count.
+  const attentionWorkspaces = backgroundWorkspaces.filter((candidate) => (
+    candidate.credentialStored === true && candidate.accessClass !== 'guest'
+  ));
   const attentionWorkspaceKeys = attentionWorkspaces.map((candidate) => (
     desktopWorkspaceIdentityKey(candidate.region, candidate.id)
   ));

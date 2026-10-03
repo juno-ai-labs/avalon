@@ -297,9 +297,9 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
            w.placement_affinity, m.role, m.access_class
          FROM workspace_members m
          JOIN workspaces w ON w.id = m.workspace_id
-         WHERE m.user_id = ? AND m.status = 'active' AND m.access_class = 'member' AND w.region = ?
+         WHERE m.user_id = ? AND m.status = 'active' AND w.region = ?
            AND w.abandoned_at IS NULL
-         ORDER BY m.joined_at, w.created_at, w.id`,
+         ORDER BY m.access_class = 'guest', m.joined_at, w.created_at, w.id`,
       ).bind(user.id, this.env.AVALON_REGION).all<Record<string, unknown>>(),
       this.env.DB.prepare(
         `SELECT i.id, i.workspace_id, w.name AS workspace_name,
@@ -314,6 +314,9 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          ORDER BY i.created_at DESC LIMIT 100`,
       ).bind(identity.email, nowIso(), this.env.AVALON_REGION).all<InvitationDiscoveryRow>(),
     ]);
+    // Memberships before guest relationships: a device with nothing selected
+    // opens the first one, and that should be the person's own Organization
+    // rather than one they were shared into earlier.
     const memberships = (workspaceResult.results ?? []).map(mapWorkspace);
     // Two workspaces a member holds but is not offered: the demo template, and a
     // demo still being prepared. Both are withheld from the list rather than
@@ -616,7 +619,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     const membership = await this.env.DB.prepare(
       `SELECT 1 AS present FROM workspace_members m
        JOIN workspaces w ON w.id = m.workspace_id
-       WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active' AND m.access_class = 'member'
+       WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active'
          AND w.region = ? AND w.abandoned_at IS NULL`,
     ).bind(userId, workspaceId, this.env.AVALON_REGION).first<{ present: number }>();
     if (!membership) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
