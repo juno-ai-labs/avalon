@@ -570,6 +570,8 @@ browser client frames.
 owns frames an artifact. The desktop still composites. Changing who may frame
 an artifact is a change to `allowBrowserFraming` and this document together.
 
+Shipped in #1082. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
+
 ### 2026-09-21 — Receipt drift cannot block a live page
 
 **What changed:** ArtifactHostDO no longer needs a one-off compatible receipt.
