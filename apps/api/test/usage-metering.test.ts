@@ -4,6 +4,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { consumeUsageQueue } from "../src/queues/usage-consumer";
 import { applyUsageBatch, readOrganizationUsage, setWorkspacePlan } from "../src/services/usage-metering";
+import type { Env } from "../src/env";
+import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, migratedUsageSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const OWNER = "01900000-0000-7000-8000-000000000001";
@@ -162,5 +164,40 @@ describe("consumeUsageQueue", () => {
     expect(retried).toEqual(["elsewhere"]);
     expect(usage.prepare(`SELECT event_id, activity, organization_pays, workstream_id FROM usage_events`).all())
       .toEqual([{ event_id: "inf:good", activity: "agent_run", organization_pays: 1, workstream_id: "ws-1" }]);
+  });
+
+  it("sends the whole batch to the lakehouse before D1, so a failed send leaves D1 untouched", async () => {
+    const { usage, env } = seed();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const acked: string[] = [];
+    const queued = (id: string, body: unknown) => ({
+      id, timestamp: new Date(RECEIVED), body, attempts: 1,
+      ack: () => { acked.push(id); }, retry: vi.fn(),
+    }) satisfies Message<unknown>;
+    const batch = (): MessageBatch<unknown> => ({
+      queue: "avalon-global-usage",
+      messages: [queued("one", event("inf:one", { costMicrousd: 2_000_000 })), queued("again", event("inf:one", { costMicrousd: 2_000_000 }))],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      retryAll: vi.fn(), ackAll: vi.fn(),
+    });
+    const consumerEnv = (send: (records: unknown[]) => Promise<void>) => ({
+      ...env, APP_ENV: "test" as const, LOG_LEVEL: "error" as const,
+      USAGE_LAKEHOUSE: createCloudflareTestBinding<NonNullable<Env["USAGE_LAKEHOUSE"]>>({ send }),
+    });
+
+    await expect(consumeUsageQueue(batch(), consumerEnv(async () => { throw new Error("pipeline_unavailable"); }), () => Date.parse(RECEIVED)))
+      .rejects.toThrow("pipeline_unavailable");
+    expect(acked).toEqual([]);
+    expect(usage.prepare(`SELECT COUNT(*) AS count FROM usage_events`).get()).toEqual({ count: 0 });
+
+    const sent: unknown[] = [];
+    await consumeUsageQueue(batch(), consumerEnv(async (records) => { sent.push(...records); }), () => Date.parse(RECEIVED));
+    // Both copies reach R2, where readers deduplicate; D1 counts one.
+    expect(sent).toEqual([
+      expect.objectContaining({ event_id: "inf:one", workspace_id: WORKSPACE, activity: "agent_run", cost_microusd: 2_000_000, organization_pays: true, received_at: RECEIVED, workstream_id: "ws-1", sidekick_id: null }),
+      expect.objectContaining({ event_id: "inf:one" }),
+    ]);
+    expect(usage.prepare(`SELECT COUNT(*) AS count FROM usage_events`).get()).toEqual({ count: 1 });
   });
 });
