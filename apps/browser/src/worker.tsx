@@ -1,5 +1,11 @@
 import { isConfiguredRegion, regionConfiguration } from "@rally/contracts/regions";
 
+/** The service binding for a deployment, `<bindingPrefix>_API`, when this Worker has one. */
+function regionalApi(env: object, bindingPrefix: string): Fetcher | null {
+  const binding: unknown = Reflect.get(env, `${bindingPrefix}_API`);
+  return typeof binding === "object" && binding !== null && "fetch" in binding && typeof binding.fetch === "function" ? binding as Fetcher : null;
+}
+
 const unavailable = () => new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
 
 export default {
@@ -9,7 +15,11 @@ export default {
     if (regional) {
       const region = regional[1]!;
       const path = regional[2]!;
-      if (!isConfiguredRegion(region) || region !== "global") return unavailable();
+      if (!isConfiguredRegion(region)) return unavailable();
+      // One service binding per deployment, named from config/regions.json. A
+      // configured region whose binding this Worker lacks is not reachable yet.
+      const api = regionalApi(env, regionConfiguration(region).bindingPrefix);
+      if (!api) return unavailable();
       const socket = path.startsWith("/socket/");
       if (!path.startsWith("/browser/") && !socket) return unavailable();
       if (socket && (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket")) return unavailable();
@@ -26,7 +36,7 @@ export default {
         forwarded.headers.delete("Cookie");
         forwarded.headers.delete("Authorization");
       }
-      const upstreamResponse = await env.GLOBAL_API.fetch(forwarded);
+      const upstreamResponse = await api.fetch(forwarded);
       if (socket) return upstreamResponse;
       // Resource bytes can also be opened as a document on this cookie origin.
       // Sandbox that document without altering streamed XHR/blob consumers.

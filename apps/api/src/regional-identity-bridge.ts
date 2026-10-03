@@ -8,6 +8,7 @@ import {
   regionalCreateSchema,
   regionalDeclineSchema,
   serializeRegionalRpcResult,
+  type BrowserRegistration,
   type RegionalRpcResult,
 } from "./services/platform-onboarding-service";
 import { parseRpcInput } from "./lib/rpc-contracts";
@@ -32,6 +33,12 @@ export class RegionalIdentityBridge extends WorkerEntrypoint<Env> {
   activate(input: unknown): Promise<RegionalRpcResult<Session>> {
     return serializeRegionalRpcResult(() => new RegionalOnboardingService(this.env).activate(
       parseRpcInput(regionalActivateSchema, input, "activate"),
+    ));
+  }
+
+  activateBrowser(input: unknown): Promise<RegionalRpcResult<BrowserRegistration>> {
+    return serializeRegionalRpcResult(() => new RegionalOnboardingService(this.env).activateBrowser(
+      parseRpcInput(regionalActivateSchema, input, "activateBrowser"),
     ));
   }
 

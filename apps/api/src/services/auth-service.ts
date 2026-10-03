@@ -706,6 +706,12 @@ export class AuthService {
     return this.createSession(await this.loadIdentity(userId, workspaceId));
   }
 
+  /** Issues a region-local identity session, bound to no workspace, for a
+   * browser registration the Global control plane has already admitted. */
+  async createIdentitySession(userId: string): Promise<Session> {
+    return this.createSession(await this.loadIdentity(userId, null));
+  }
+
   /** Only a successfully consumed mailbox challenge can resume this session. */
   async resumeEmailLogin(receipt: { challengeId:string;redemptionId:string }): Promise<Session> {
     const row = await this.env.DB.prepare(`SELECT user_id,session_id,session_secret_encrypted,redeemed_at

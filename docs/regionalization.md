@@ -28,6 +28,10 @@ deployment has to give that link its own routing again rather than offering its
 token to every deployment in turn ([`scope-invitations.md`](scope-invitations.md)). It does not change when a client switches workspaces.
 
 Discovery visits configured deployments through the existing named RPC bridges.
+The browser client uses the same bridge: Global's `/browser/workspace/activate`
+asks a deployment to register its own browser session (`activateBrowser`) and
+sets that deployment's cookie, and the browser host forwards each region to a
+`<bindingPrefix>_API` service binding ([`browser-client.md`](browser-client.md#other-deployments)).
 Provider ingresses use their existing opaque route directories to select a
 configured binding. Product repositories continue using the deployment's bound
 storage. Configuration lookup replaces special cases; it does not add an
