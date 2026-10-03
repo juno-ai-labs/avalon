@@ -3,7 +3,7 @@ import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema } from "@rally/contracts/regions";
-import { BrowserSessionSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
+import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
 import { browserRequest, BrowserApiError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 import { ScopeInvitationResultSchema, ScopeInvitationPreviewSchema, SharedNavigationDirectorySchema, type ScopeInvitationSummary } from "@rally/contracts/scope-grants";
@@ -14,6 +14,13 @@ import { parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/
 import { WorkspaceIdSchema } from "@rally/contracts";
 
 const initialRegion = configuredRegions[0]!;
+
+/** What a failed Google sign-in says, by the code the callback returned with. */
+function googleSignInError(code: string): string {
+  if (code === "google_oauth_denied") return "Google sign-in was cancelled.";
+  if (code === "google_state_mismatch" || code === "invalid_oauth_state") return "That Google sign-in expired. Try again.";
+  return "Google sign-in did not complete. Try again or use your email.";
+}
 
 /** An account change wipes drafts and, for the member shell, the transcript cache. */
 async function clearAllDrafts(): Promise<void> {
@@ -40,6 +47,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from `error`, which the session read clears when it finds no session.
+  const [googleNotice, setGoogleNotice] = useState<string | null>(null);
   const issuance = useRef<{ email: string; id: string; redemptionId: string } | null>(null);
   const sessionRead = useRef(0);
   const sessionUser = useRef<string | null>(null);
@@ -57,6 +66,11 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       : workspaceTarget?.success ? workspaceTarget.data : null;
     if (target?.region && ConfiguredRegionSchema.safeParse(target.region).success) setDestination(target);
     const fragment = new URLSearchParams(location.hash.slice(1));
+    const googleError = fragment.get("google_error");
+    if (googleError) {
+      history.replaceState(null, "", location.pathname);
+      setGoogleNotice(googleSignInError(googleError));
+    }
     const selectedRegion = ConfiguredRegionSchema.safeParse(target?.region ?? fragment.get("region") ?? initialRegion);
     const selected = selectedRegion.success ? selectedRegion.data : initialRegion;
     setRegion(selected);
@@ -212,7 +226,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setGoogleNotice(null);
     try {
       if (proof) await redeem({ challengeId: proof.challengeId, redemptionId: proof.redemptionId, credential: proof.credential, method: "magic" });
       else if (challenge) await redeem({ challengeId: challenge.id, redemptionId: challenge.redemptionId, method: "otp", credential: code.trim() });
@@ -226,6 +240,19 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to continue. Please try again."); }
     finally { setBusy(false); }
+  }
+
+  async function continueWithGoogle() {
+    if (busy) return;
+    setBusy(true); setError(null); setGoogleNotice(null);
+    try {
+      const returnPath = location.pathname.startsWith("/app/") ? location.pathname : "/";
+      const { url } = await browserRequest(region, "/google/start", BrowserGoogleStartedSchema, { returnPath });
+      location.assign(url);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to start Google sign-in. Try again.");
+      setBusy(false);
+    }
   }
 
   async function signOut() {
@@ -307,8 +334,12 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
           <button disabled={busy || checking} type="submit">{busy ? "Please wait…" : proof || challenge ? "Continue" : "Email me a sign-in link"}</button>
           {challenge && <button className="secondary" type="button" disabled={busy} onClick={() => { issuance.current = null; setChallenge(null); setCode(""); setError(null); }}>Use another email or request a new code</button>}
         </form>
+        {/* Leaving for Google would drop an invitation held only in this page's memory. */}
+        {!proof && !challenge && !invitation && <button className="secondary" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}>Continue with Google</button>}
       </>}
-      {error && <p className="error" role="alert">{error}</p>}
+      {/* A Google failure belongs to the signed-out screen it returned to, not to a later one. */}
+      {(error ?? (!session && !proof && !challenge ? googleNotice : null)) &&
+        <p className="error" role="alert">{error ?? googleNotice}</p>}
     </section>
   </main>;
 }
