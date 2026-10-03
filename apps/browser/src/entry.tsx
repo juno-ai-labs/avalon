@@ -226,7 +226,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setGoogleNotice(null);
     try {
       if (proof) await redeem({ challengeId: proof.challengeId, redemptionId: proof.redemptionId, credential: proof.credential, method: "magic" });
       else if (challenge) await redeem({ challengeId: challenge.id, redemptionId: challenge.redemptionId, method: "otp", credential: code.trim() });
@@ -337,7 +337,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         {/* Leaving for Google would drop an invitation held only in this page's memory. */}
         {!proof && !challenge && !invitation && <button className="secondary" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}>Continue with Google</button>}
       </>}
-      {(error ?? googleNotice) && <p className="error" role="alert">{error ?? googleNotice}</p>}
+      {/* A Google failure belongs to the signed-out screen it returned to, not to a later one. */}
+      {(error ?? (!session && !proof && !challenge ? googleNotice : null)) &&
+        <p className="error" role="alert">{error ?? googleNotice}</p>}
     </section>
   </main>;
 }

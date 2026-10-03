@@ -326,10 +326,12 @@ never exposes desktop session tokens in browser JSON. The same-origin browser
 host serves the lite client with shared collaboration components and ticketed sockets.
 
 Google identity OAuth uses state and PKCE. The desktop starts it with POST, then
-opens only the provider URL containing opaque state. Every identity and connector
-callback is completed by the owning regional server before the temporary
+opens only the provider URL containing opaque state. Every desktop identity and
+connector callback is completed by the owning regional server before the temporary
 `/auth/desktop/` page receives an exact custom-protocol target in its URL
-fragment. The page applies `no-store`/`no-referrer`, removes the fragment
+fragment. The browser client's Google callback is the exception: it lands on the
+browser host, requires a state cookie matching `state`, and sets the browser
+session cookie directly; see [browser-client.md](browser-client.md#google-sign-in). The page applies `no-store`/`no-referrer`, removes the fragment
 immediately, and never renders or logs the target. Connector consent is a separate
 incremental flow whose durable attempt result lets the desktop reconcile success,
 denial, failure, or expiry even if the custom-protocol notification is lost. OAuth

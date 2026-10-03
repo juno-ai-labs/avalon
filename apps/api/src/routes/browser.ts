@@ -7,6 +7,7 @@ import { ScopeInvitationLinkCredentialSchema, ScopeInvitationPreviewSchema } fro
 import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
 import type { Env, HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
+import { browserOrigin } from "../lib/browser-origin";
 import { logEvent } from "../observability/logger";
 import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { zValidator } from "../middleware/validation";
@@ -17,17 +18,6 @@ import { UNAVAILABLE_INVITATION, describeScopeInvitation } from "../services/sco
 import { startEmailLogin, deliverEmailLogin, redeemEmailLogin, EmailLoginStartSchema,
   EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
 
-function browserOrigin(env: Env): URL {
-  let origin: URL;
-  try { origin = new URL(env.BROWSER_APP_ORIGIN ?? ""); }
-  catch { throw new ApiError(503,"browser_configuration_required","Browser access is not configured"); }
-  if (origin.origin !== env.BROWSER_APP_ORIGIN ||
-    !(origin.protocol === "https:" || (env.APP_ENV === "development" && origin.protocol === "http:"))) {
-    throw new ApiError(503,"browser_configuration_required","Browser access is not configured");
-  }
-  return origin;
-}
-
 function cookieOptions(env: Env) {
   const secure = browserOrigin(env).protocol === "https:";
   return { name:`${secure ? "__Host-" : ""}rally-browser-${env.AVALON_REGION}`,
@@ -35,16 +25,17 @@ function cookieOptions(env: Env) {
 }
 
 /**
- * Binds a Google sign-in to the tab that started it. The OAuth state is also
- * stored server-side; the callback requires this cookie to carry the same
+ * Binds a Google sign-in to the browser that started it. The OAuth state is
+ * also stored server-side; the callback requires this cookie to carry the same
  * value, so a link to someone else's callback cannot sign this browser in as
- * them.
+ * them. It is a session cookie: the stored state's own expiry bounds the
+ * sign-in.
  */
 function googleStateCookie(env: Env, state: string) {
   const cookie = cookieOptions(env);
   // One cookie per state, so two tabs signing in at once do not overwrite each
   // other. The state is base64url, which a cookie name may carry.
-  return { name:`${cookie.name}-google-${state}`,attributes:{ ...cookie.attributes,maxAge:600 } };
+  return { name:`${cookie.name}-google-${state}`,attributes:cookie.attributes };
 }
 
 function credential(c: Context<HonoAppEnv>): string {
@@ -92,11 +83,13 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     setCookie(c,binding.name,state,binding.attributes);
     return c.json(BrowserGoogleStartedSchema.parse({ url }));
   });
-  routes.get("/google/callback",zValidator("query",z.object({ code:z.string().optional(),state:z.string().min(1),error:z.string().optional() })),async (c) => {
+  routes.get("/google/callback",zValidator("query",z.object({ code:z.string().optional(),state:z.string().optional(),error:z.string().optional() })),async (c) => {
     const query = c.req.valid("query");
     const origin = browserOrigin(c.env).origin;
     const failed = (code: string) => c.redirect(`${origin}/#google_error=${encodeURIComponent(code)}`,302);
-    if (!/^[A-Za-z0-9_-]+$/u.test(query.state)) return failed("google_state_mismatch");
+    // A callback this browser cannot tie to a sign-in it started, including one
+    // with no state at all, still lands on a page that says what happened.
+    if (!query.state || !/^[A-Za-z0-9_-]+$/u.test(query.state)) return failed("google_state_mismatch");
     const binding = googleStateCookie(c.env,query.state);
     const bound = getCookie(c,binding.name);
     if (!bound || bound !== query.state) return failed("google_state_mismatch");
@@ -117,11 +110,11 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
       return c.redirect(returnUrl,302);
     } catch (error) {
       if (error instanceof ApiError) {
-        logEvent(c,"warn","browser_google_sign_in_failed",{ code:error.code });
+        logEvent(c,"warn","browser_google_sign_in_failed",{ code:error.code,...(error.diagnosticCode ? { cause:error.diagnosticCode } : {}) });
         return failed(error.code);
       }
-      // A token exchange or ID token check that threw: name it in the log and
-      // send the person back to a page that says sign-in failed.
+      // Anything else that threw, such as a fetch or D1 failure: name it in the
+      // log and send the person back to a page that says sign-in failed.
       const code: unknown = error instanceof Error && "code" in error ? error.code : undefined;
       const cause = typeof code === "string" ? code : error instanceof Error ? error.name : "unknown";
       logEvent(c,"error","browser_google_sign_in_failed",{ code:"google_sign_in_failed",cause:codeShaped(cause) });
