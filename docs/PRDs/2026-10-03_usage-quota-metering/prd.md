@@ -280,8 +280,8 @@ Organization paid for at the time, which the current map cannot tell it.
 
 **Decided:** `usage_events` and `usage_rollups` live in a separate D1
 database, `USAGE_DB`, not in the regional `DB`. D1 keeps events for 90 days
-from receipt and the weekly totals for good. Every event is also sent, before
-D1 sees it, to a Pipeline that writes the Iceberg table `avalon.usage_events`
+from receipt and the weekly totals for good. Every event is also sent, after
+D1 has applied it, to a Pipeline that writes the Iceberg table `avalon.usage_events`
 in R2, which keeps it for good and is read with Basin SQL.
 
 **Why:** D1's 10 GB limit is per database. At about 12,000 events a day and 391
@@ -296,6 +296,22 @@ not recommend aggregations for latency-sensitive reads past 1M documents.
 **Changes:** Supersedes design decision 3's single D1 ledger and the "kept, not
 pruned" history in the data model. Goal 8 now rests on the lakehouse for
 history older than 90 days.
+
+### 2026-10-03: D1 before the lakehouse, and an event counts once by its insert
+
+**Decided:** The consumer writes D1 first and the lakehouse second, and an
+event's rollup increment runs only if its `usage_events` insert added a row.
+`workspaces.plan` carries no CHECK.
+
+**Why:** With the lakehouse first, a Pipelines outage stalled the meter and,
+past the retries, lost the events from both stores. Gating the increment on the
+insert makes "counted once" hold even if two batches overlap, rather than
+resting on `max_concurrency: 1`. The plan set is a moving product decision and
+SQLite cannot alter a CHECK; `PlanIdSchema` checks the value on every read.
+
+**Changes:** Events in the dead-letter queue after a lakehouse outage are in D1
+but not R2 until replayed. Supersedes the DDL's CHECK on `plan` in
+[`design.md`](design.md).
 
 ## Key design decisions
 

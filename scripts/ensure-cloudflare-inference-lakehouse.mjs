@@ -230,9 +230,9 @@ function assertDistinctPinnedStreamIds(manifests) {
  * how a stream gets created; a deploy refuses it, because binding a stream
  * that does not exist would fail every send at runtime instead of here.
  */
-export const UNPROVISIONED_STREAM_ID = '0'.repeat(32);
+const UNPROVISIONED_STREAM_ID = '0'.repeat(32);
 
-export function assertStreamsProvisioned(manifests) {
+function assertStreamsProvisioned(manifests) {
   for (const manifest of manifests) {
     for (const regionName of LAKEHOUSE_REGIONS) {
       if (manifest.regions[regionName].streamId === UNPROVISIONED_STREAM_ID) {

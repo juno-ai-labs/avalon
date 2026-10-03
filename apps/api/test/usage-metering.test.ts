@@ -5,7 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { consumeUsageQueue } from "../src/queues/usage-consumer";
 import { applyUsageBatch, pruneUsageEvents, readOrganizationUsage, setWorkspacePlan } from "../src/services/usage-metering";
 import type { Env } from "../src/env";
-import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
+import { Hono } from "hono";
+import type { HonoAppEnv } from "../src/env";
+import { requireAuth } from "../src/middleware/auth";
+import { errorHandler } from "../src/middleware/errors";
+import { workspaceRoutes } from "../src/routes/workspace";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, migratedUsageSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const OWNER = "01900000-0000-7000-8000-000000000001";
@@ -18,6 +23,7 @@ const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 /** The regional database holds the workspace; the usage database holds the ledger. */
@@ -74,6 +80,18 @@ describe("applyUsageBatch", () => {
       organization_microusd: 2_000_000,
       rally_microusd: 0,
     }]);
+  });
+
+  it("counts an event once when two batches carrying it overlap", async () => {
+    const { usage, env } = seed();
+    // Both batches read the ledger before either writes, as two consumers
+    // would if max_concurrency were ever raised.
+    await Promise.all([
+      applyUsageBatch(env, [event("inf:shared")], RECEIVED),
+      applyUsageBatch(env, [event("inf:shared")], RECEIVED),
+    ]);
+
+    expect(rollups(usage)).toEqual([expect.objectContaining({ organization_microusd: 1_000_000 })]);
   });
 
   it("splits a week that crosses the monthly anniversary into two rows", async () => {
@@ -164,6 +182,37 @@ describe("readOrganizationUsage", () => {
   });
 });
 
+describe("GET /workspace/usage", () => {
+  it("answers any member the Organization's meter and refuses someone outside it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-10-03T00:00:00.000Z") });
+    const { database, env } = seed();
+    const MEMBER = "01900000-0000-7000-8000-000000000002";
+    const OUTSIDER = "01900000-0000-7000-8000-000000000003";
+    for (const [id, email] of [[MEMBER, "member@example.test"], [OUTSIDER, "outsider@example.test"]] as const) {
+      database.prepare(
+        `INSERT INTO users(id, google_subject, email, name, created_at, updated_at) VALUES (?, ?, ?, 'Someone', ?, ?)`,
+      ).run(id, `google-${id}`, email, CREATED, CREATED);
+    }
+    database.prepare(
+      `INSERT INTO workspace_members(workspace_id, user_id, role, status, joined_at) VALUES (?, ?, 'member', 'active', ?)`,
+    ).run(WORKSPACE, MEMBER, CREATED);
+    await applyUsageBatch(env, [event("inf:spent", { costMicrousd: 15_000_000 })], RECEIVED);
+    const app = new Hono<HonoAppEnv>();
+    app.use("*", requireAuth);
+    app.route("/workspace", workspaceRoutes);
+    app.onError(errorHandler);
+    const routeEnv = createTestEnv({ ...env, APP_ENV: "development", RALLY_DEV_AUTH: "true" });
+    const read = (userId: string) => app.request("/workspace/usage", {
+      headers: { "x-rally-dev-user-id": userId, "x-rally-dev-workspace-id": WORKSPACE },
+    }, routeEnv);
+
+    const member = await read(MEMBER);
+    expect(member.status).toBe(200);
+    await expect(member.json()).resolves.toMatchObject({ plan: "starter", quotaRemainingPercent: 70, overage: { amountMicrousd: 0, billed: false } });
+    expect((await read(OUTSIDER)).status).toBe(401);
+  });
+});
+
 describe("consumeUsageQueue", () => {
   it("applies valid events, acks an unreadable one and retries one from another region", async () => {
     const { usage, env } = seed();
@@ -198,7 +247,7 @@ describe("consumeUsageQueue", () => {
       .toEqual([{ event_id: "inf:good", activity: "agent_run", organization_pays: 1, workstream_id: "ws-1" }]);
   });
 
-  it("sends the whole batch to the lakehouse before D1, so a failed send leaves D1 untouched", async () => {
+  it("applies the batch to D1 before the lakehouse, and a failed send retries it without counting twice", async () => {
     const { usage, env } = seed();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -220,8 +269,9 @@ describe("consumeUsageQueue", () => {
 
     await expect(consumeUsageQueue(batch(), consumerEnv(async () => { throw new Error("pipeline_unavailable"); }), () => Date.parse(RECEIVED)))
       .rejects.toThrow("pipeline_unavailable");
+    // The meter is current even while Pipelines is down; the batch is not acked.
     expect(acked).toEqual([]);
-    expect(usage.prepare(`SELECT COUNT(*) AS count FROM usage_events`).get()).toEqual({ count: 0 });
+    expect(usage.prepare(`SELECT COUNT(*) AS count FROM usage_events`).get()).toEqual({ count: 1 });
 
     const sent: unknown[] = [];
     await consumeUsageQueue(batch(), consumerEnv(async (records) => { sent.push(...records); }), () => Date.parse(RECEIVED));
@@ -230,7 +280,8 @@ describe("consumeUsageQueue", () => {
       expect.objectContaining({ event_id: "inf:one", workspace_id: WORKSPACE, activity: "agent_run", cost_microusd: 2_000_000, organization_pays: true, received_at: RECEIVED, workstream_id: "ws-1", sidekick_id: null }),
       expect.objectContaining({ event_id: "inf:one" }),
     ]);
-    expect(usage.prepare(`SELECT COUNT(*) AS count FROM usage_events`).get()).toEqual({ count: 1 });
+    expect(acked.sort()).toEqual(["again", "one"]);
+    expect(usage.prepare(`SELECT organization_microusd FROM usage_rollups`).all()).toEqual([{ organization_microusd: 2_000_000 }]);
   });
 });
 
