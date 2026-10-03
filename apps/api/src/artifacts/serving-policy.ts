@@ -47,11 +47,11 @@ import { rallyHeaderAliases } from "@rally/contracts/http-headers";
  * `img-src` gains `data:` for the same reason: a model embedding a small inline
  * image is ordinary, and `'self'` alone would drop it silently.
  *
- * `frame-ancestors` is `'none'` rather than an allowlist of Rally surfaces,
- * because nothing Rally owns ever frames an artifact: the rail preview is a
- * top-level `WebContentsView` and the pop-out is a window. An allowlist here
- * would be a standing invitation to reintroduce the `<iframe>` that design
- * deliberately rejects.
+ * `frame-ancestors` is `'none'` here. The desktop never frames an artifact:
+ * its rail preview is a top-level `WebContentsView` and the pop-out is a
+ * window. The one exception, the browser client's inline preview, is added by
+ * `allowBrowserFraming` in `index.ts` for exactly `BROWSER_APP_ORIGIN`, so the
+ * default stays closed wherever that is unset.
  */
 export const ARTIFACT_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",

@@ -65,6 +65,13 @@ export interface SiteResourceDetailProps {
     popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<boolean>;
     copyText: (text: string) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
+    /**
+     * Set by a browser host: preview in a sandboxed `<iframe>` with these
+     * `sandbox` tokens instead of a composited view. The artifact host is a
+     * different registrable domain and allows exactly the browser origin to
+     * frame it, so the page runs in its own origin, never the app's.
+     */
+    frameSandbox?: string;
   };
 }
 
@@ -102,6 +109,8 @@ export function SiteResourceDetail({
    * that is about to work.
    */
   const [previewShown, setPreviewShown] = React.useState<boolean | null>(null);
+  // The browser host's preview: the freshly minted URL, rendered as a frame.
+  const [frameUrl, setFrameUrl] = React.useState<string | null>(null);
   /**
    * The site's stored rows, in place of the page.
    *
@@ -215,6 +224,10 @@ export function SiteResourceDetail({
         // this detail. Its cleanup has already closed the native view by then,
         // so presenting here would resurrect an ownerless old preview.
         if (cancelled) return false;
+        if (surface.frameSandbox !== undefined) {
+          setFrameUrl(navigation.openUrl);
+          return true;
+        }
         return await surface.present({
           artifactId: navigation.artifactId,
           url: navigation.openUrl,
@@ -229,6 +242,7 @@ export function SiteResourceDetail({
       .catch(() => { if (!cancelled) setPreviewShown(false); });
     return () => {
       cancelled = true;
+      setFrameUrl(null);
       void surface.close();
     };
   }, [access, measure, mintAccess, paneCorner, showingData, surface]);
@@ -239,7 +253,7 @@ export function SiteResourceDetail({
     // Nothing to track while the data view has the pane: the composited view is
     // already torn down, and this effect would go on re-querying the document
     // on every scroll and mutation to move something that is not there.
-    if (previewShown !== true || showingData) return undefined;
+    if (previewShown !== true || showingData || surface.frameSandbox !== undefined) return undefined;
     const update = (): void => {
       const bounds = measure();
       if (bounds) void surface.setBounds(bounds);
@@ -341,6 +355,15 @@ export function SiteResourceDetail({
               composited view covers it. This placeholder is what a person sees
               where no view can be composited — a browser build, or a refused URL.
             */}
+            {frameUrl && surface.frameSandbox !== undefined && (
+              <iframe
+                className="site-detail-frame"
+                sandbox={surface.frameSandbox}
+                src={frameUrl}
+                title={title}
+                referrerPolicy="no-referrer"
+              />
+            )}
             {access && previewShown === false && (
               <EmptyState
                 description="Open it in your browser to see the live page."

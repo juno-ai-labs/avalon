@@ -57,11 +57,11 @@ warmed pinned Channel shows no loading state.
 
 ## Phase 6: inline artifact preview
 
-- [ ] Artifact `frame-ancestors` names `BROWSER_APP_ORIGIN`; `X-Frame-Options`
+- [x] Artifact `frame-ancestors` names `BROWSER_APP_ORIGIN`; `X-Frame-Options`
       dropped.
-- [ ] Partitioned framed viewer cookie; public fallback.
-- [ ] Shell `frame-src`; sandbox `allow-same-origin allow-scripts allow-forms`.
-- [ ] `live-web-artifacts.md` records the exception.
+- [x] Partitioned framed viewer cookie; public fallback.
+- [x] Shell `frame-src`; sandbox `allow-same-origin allow-scripts allow-forms`.
+- [x] `live-web-artifacts.md` records the exception.
 
 **Gate:** a live artifact previews inline in the rail.
 

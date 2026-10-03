@@ -14,5 +14,7 @@
     "run_worker_first": true
   },
   "services": [{ "binding": "GLOBAL_API", "service": "avalon-api-global" }],
+  // The domain artifacts are served from; the shell lets the preview frame it.
+  "vars": { "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com" },
   "observability": { "enabled": true }
 }

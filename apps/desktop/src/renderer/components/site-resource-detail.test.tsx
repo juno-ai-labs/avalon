@@ -127,6 +127,16 @@ describe('showing a live artifact in the rail', () => {
     expect(props.openArtifact).toHaveBeenCalledOnce();
   });
 
+  it('frames the artifact in a browser host instead of asking a main process to composite it', async () => {
+    const { props } = setup({ surface: surface({ frameSandbox: 'allow-scripts allow-same-origin allow-forms' }) }, { strict: true });
+    const frame = await screen.findByTitle('Offsite RSVP');
+    expect(frame.tagName).toBe('IFRAME');
+    expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+    expect(frame.getAttribute('src')).toMatch(/__rally\/open#code-\d+$/u);
+    expect(props.surface.present).not.toHaveBeenCalled();
+    expect(screen.queryByText('Preview unavailable here')).toBeNull();
+  });
+
   it('remints and replaces the native preview when a new version is published', async () => {
     const openArtifact = mintingAccess();
     const { props, rerender } = setup({ openArtifact, version: 4 });

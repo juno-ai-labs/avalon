@@ -320,8 +320,10 @@ Main's participant list or resource inventory to expose these controls.
 ### Shared site resources
 
 The shared conversation surface uses the platform adapter for site actions in
-Chrome as well as Electron. Chrome opens the freshly authorized artifact URL in
-a separate tab; it does not need an Electron preview or an embedded iframe.
+Chrome as well as Electron. A guest opens the freshly authorized artifact URL in
+a separate tab. A member previews it inline in a sandboxed iframe, which the
+shell's `frame-src https://*.<ARTIFACT_SERVING_DOMAIN>` allows; see
+[`live-web-artifacts.md`](live-web-artifacts.md).
 Artifact open, error, and data routes accept the guest workspace relationship
 and use the existing canonical resource authorization in `ArtifactOpenService`.
 Public artifact content retains its existing anonymous serving rules; the guest
