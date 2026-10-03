@@ -1,7 +1,7 @@
 import "../../../tests/isolated-region";
 import type { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceRetirementResultSchema } from "@rally/contracts";
 
@@ -33,6 +33,7 @@ const NOW = "2026-09-08T12:00:00.000Z";
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
+  vi.useRealTimers();
 });
 
 /** A workspace row in the region the test names, so the door's row read has something to find. */
@@ -69,7 +70,7 @@ function emptyWorkspaceObjects(calls: string[]): Env["WORKSPACE_DOS"] {
   return binding;
 }
 
-function fixture(options: { workspaceRegion?: string; objectCalls?: string[] } = {}): { env: Env; app: Hono<HonoAppEnv>; database: DatabaseSync } {
+function fixture(options: { workspaceRegion?: string; objectCalls?: string[] } = {}): { env: Env; app: Hono<HonoAppEnv>; database: DatabaseSync; usageDatabase: DatabaseSync } {
   const database = migratedSqliteDatabase();
   const usageDatabase = migratedUsageSqliteDatabase();
   databases.push(database, usageDatabase);
@@ -96,7 +97,7 @@ function fixture(options: { workspaceRegion?: string; objectCalls?: string[] } =
   const app = new Hono<HonoAppEnv>();
   app.route("/internal/workspaces", workspaceOperatorRoutes);
   app.onError(errorHandler);
-  return { env, app, database };
+  return { env, app, database, usageDatabase };
 }
 
 const confirmed = (workspaceId: string) => JSON.stringify({ confirmWorkspaceId: workspaceId });
@@ -187,19 +188,46 @@ describe("the workspace retirement route", () => {
 describe("the workspace plan route", () => {
   const headers = { authorization: `Bearer ${DEMOS_TOKEN}`, "content-type": "application/json" };
 
-  it("moves a workspace this region owns to a plan and refuses one it does not", async () => {
-    const { env, app, database } = fixture({ workspaceRegion: "global" });
+  it("admits only the demos role, and only from the demo secret", async () => {
+    const { env, app } = fixture({ workspaceRegion: "global" });
+    const attempt = (token?: string) => app.request(`/internal/workspaces/${WORKSPACE_ID}/plan`, {
+      method: "POST",
+      headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), "content-type": "application/json" },
+      body: JSON.stringify({ plan: "growth" }),
+    }, env);
+    expect((await attempt()).status).toBe(401);
+    expect((await attempt(SUPPORT_TOKEN)).status).toBe(401);
+    expect((await attempt(MISFILED_SUPPORT_TOKEN)).status).toBe(403);
+  });
+
+  it("moves a workspace to a plan and re-prices the current week at once", async () => {
+    // Weeks run from the workspace's creation, Tuesdays at 12:00.
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-09-10T00:00:00.000Z") });
+    const { env, app, database, usageDatabase } = fixture({ workspaceRegion: "global" });
+    usageDatabase.prepare(
+      `INSERT INTO usage_rollups (workspace_id, week_start, period_start, quota_microusd, organization_microusd, rally_microusd)
+       VALUES (?, ?, ?, 50000000, 1000000, 0)`,
+    ).run(WORKSPACE_ID, NOW, NOW);
     const moved = await app.request(`/internal/workspaces/${WORKSPACE_ID}/plan`, {
       method: "POST", headers, body: JSON.stringify({ plan: "growth" }),
     }, env);
     expect(moved.status).toBe(200);
     await expect(moved.json()).resolves.toEqual({ workspaceId: WORKSPACE_ID, plan: "growth" });
     expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE_ID)).toEqual({ plan: "growth" });
+    expect(usageDatabase.prepare(`SELECT quota_microusd FROM usage_rollups`).all()).toEqual([{ quota_microusd: 125_000_000 }]);
+  });
 
-    const invalid = await app.request(`/internal/workspaces/${WORKSPACE_ID}/plan`, {
-      method: "POST", headers, body: JSON.stringify({ plan: "enterprise" }),
-    }, env);
-    expect(invalid.status).toBe(400);
+  it("refuses a request that does not name exactly one known plan for a workspace id", async () => {
+    const { env, app, database } = fixture({ workspaceRegion: "global" });
+    const send = (path: string, body: string) => app.request(path, { method: "POST", headers, body }, env);
+    const plan = `/internal/workspaces/${WORKSPACE_ID}/plan`;
+    for (const body of [JSON.stringify({ plan: "enterprise" }), JSON.stringify({}), JSON.stringify({ plan: "growth", seats: 3 }), "not json"]) {
+      expect((await send(plan, body)).status).toBe(400);
+    }
+    expect((await send("/internal/workspaces/not-a-uuid/plan", JSON.stringify({ plan: "growth" }))).status).toBe(400);
+    const missing = await send(`/internal/workspaces/${OTHER_ID}/plan`, JSON.stringify({ plan: "growth" }));
+    expect(missing.status).toBe(404);
+    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE_ID)).toEqual({ plan: "starter" });
   });
 
   it("refuses a workspace the other region owns, even though its row is in the table", async () => {

@@ -221,27 +221,6 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
-### 2026-10-03: `cmp.meter` gives the shared Meter its own track and fills
-
-**What changed:** `cmp.meter.track`, `cmp.meter.fill` and
-`cmp.meter.fill-warning` are new. The fill is `sys.color.brand.base` and the
-warning fill `sys.color.warning.base`. The track is `sys.color.surface.sunken`
-in dark and `ref.color.neutral.5` in light.
-
-**Why:** The usage quota PRD asks for the brand fill on a sunken track. In
-light a settings card is `ref.color.neutral.3`, the same `#f3f3f3` as the
-sunken surface, so the empty part of a meter drawn on a card vanished. Dark's
-sunken fill already reads as a recess on the card and in a menu.
-
-**Considered and rejected:** Darkening `sys.color.surface.sunken` in light,
-which every other sunken surface reads.
-
-**Consequences:** `fill` sits in `base.json`, since the brand does not change
-with the appearance. `fill-warning` has to be set in both appearance files,
-because a base token may alias only base tokens and the warning colour is an
-appearance token. The chartreuse fill is faint on the light track; the meter's
-text carries the value, so the bar is never the only place it is read.
-
 ### 2026-10-02 — Marks take a pastel pair; people keep the hue
 
 **What changed:** Two themed token families, `sys.color.project-tint.<key>` and

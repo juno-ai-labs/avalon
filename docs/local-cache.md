@@ -10,8 +10,8 @@ on screen immediately; a small floating card says the live connection is on its
 way, and the composer accepts a draft but does not send until it has arrived.
 
 Nothing in the cache is authoritative. A cached value is a *seed*: it paints,
-and that is all it does. The socket's first frame replaces it whatever its
-version numbers say, it never completes an opening, it never fences a snapshot,
+and that is all it does. The socket's first frame (or, for the one REST-backed
+slice, `usage`, the next answer) replaces it whatever its version numbers say, it never completes an opening, it never fences a snapshot,
 and it is never written back. Read this before changing what a screen paints
 before its socket answers, adding a surface that should, or touching the
 socket hooks' first frame.
@@ -345,11 +345,7 @@ request is in flight. The row is held beside the query rather than written
 into it, so an answer already in memory from earlier in the session always
 wins over the disk without a check. Each answer is written back whole, under
 the epoch read before the request, so a sign-out during the request drops the
-write. The row's `fetchedAt` is what **as of 2:14 PM** names when the device is
-offline and the row is all there is. A failed request is the PRD's error state
-even over a row: Settings says usage is unavailable with **Try again**, and the
-menu hides its line. `docs/PRDs/2026-10-03_usage-quota-metering/prd.md` owns
-the states.
+write. The PRD owns what each state shows.
 
 ### What leaves the cache
 
@@ -409,9 +405,10 @@ Nothing else evicts, and nothing expires.
 - **A remembered Space is read-only until the directory is live.** Break it
   and a rename made under the card writes the seed's icon, colour, or audience
   over what another client changed while the device was away.
-- **Only socket-delivered state is persisted.** The conversation mirror writes
-  only while the feed source is `socket_snapshot`; the directory mirror only
-  after the first subscribe answer. Break it and a seed, or a launch surface's
+- **Only state the server delivered is persisted.** The conversation mirror
+  writes only while the feed source is `socket_snapshot`; the directory mirror
+  only after the first subscribe answer; the usage slice only a
+  `GET /workspace/usage` answer. Break it and a seed, or a launch surface's
   optimistic turn, becomes what the next launch paints, with no live frame
   having vouched for it.
 - **A seeded breakout list holds no version.** Break it and the first live
@@ -583,17 +580,14 @@ scrolling.
 
 ## Changelog
 
-### 2026-10-03: Usage is the first slice without a socket
+### 2026-10-03 — Usage is the first slice without a socket (#1086)
 
 **What changed:** A `usage` slice holds the last `GET /workspace/usage` answer
-per Organization, with the time it arrived. Settings → Organization → Usage and
-the Organization menu paint it while their request is in flight, and show it
-labelled **as of** when the device is offline.
+per Organization, with the time it arrived.
 
 **Why:** The usage quota PRD asks for the cached value right away and a
-background refresh when either surface opens. Without a row, every open of
-the menu starts with no line and grows one a moment later, and an offline
-reader sees nothing at all.
+background refresh when either surface opens; without a row an offline reader
+sees nothing.
 
 **Considered and rejected:** Seeding the query cache from the row, the way the
 directory and conversation slices do. Those need it because socket hooks read

@@ -279,7 +279,8 @@ app.post('/api/workspaces/:workspaceId/plan', async (c) => {
   const workspaceId = UuidSchema.safeParse(c.req.param('workspaceId'));
   const body = PlanRequestSchema.safeParse(await c.req.json().catch(() => null));
   if (!workspaceId.success || !body.success) {
-    return c.json({ error: 'invalid_plan_request', message: 'The request needs the region and a plan.' }, 400);
+    const refused = !workspaceId.success ? zodDiagnosticCode(workspaceId.error, 'workspace_id') : zodDiagnosticCode(body.error, 'plan_request');
+    return c.json({ error: 'invalid_plan_request', message: `The request needs the region and a plan (${refused}).` }, 400);
   }
   try {
     const result = await changeWorkspacePlan(c.env, { region: body.data.region, workspaceId: workspaceId.data, plan: body.data.plan });

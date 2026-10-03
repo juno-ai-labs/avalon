@@ -107,6 +107,15 @@ describe("dispatching a queue batch", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("carries usage while maintenance refuses product work", async () => {
+    // An unreadable usage event is acknowledged by the usage consumer, so
+    // reaching it proves the meter is dispatched before maintenance.
+    await expect(worker.queue?.(
+      batchOf("avalon-global-usage", { invalid: true }),
+      contractComplete,
+    )).resolves.toBeUndefined();
+  });
+
   it("carries product flag notifications while maintenance refuses product work", async () => {
     // An unreadable message is poison and is acknowledged. Reaching that
     // consumer proves the configuration path is dispatched before maintenance.
