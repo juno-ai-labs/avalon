@@ -15,7 +15,7 @@ export const WEB_PUSH_TTL_SECONDS = 24 * 60 * 60;
 export const WEB_PUSH_PAYLOAD_BYTES = 3_900;
 
 export interface WebPushOutcome {
-  outcome: "sent" | "skipped" | "unregistered" | "rejected" | "transient";
+  outcome: "sent" | "skipped" | "unregistered" | "rejected" | "provider_auth_failed" | "transient";
   status?: number;
   reason?: string;
 }
@@ -101,8 +101,15 @@ export async function sendWebPush(env: Env, device: PushDevice, payload: string,
   if (!device.web_push_p256dh || !device.web_push_auth) return { outcome: "rejected", reason: "subscription_keys_missing" };
   const bytes = new TextEncoder().encode(payload);
   if (bytes.byteLength > WEB_PUSH_PAYLOAD_BYTES) return { outcome: "rejected", reason: "payload_too_large" };
+  let body: Uint8Array<ArrayBuffer>;
   try {
-    const body = await encryptWebPushPayload(bytes, { p256dh: device.web_push_p256dh, auth: device.web_push_auth });
+    body = await encryptWebPushPayload(bytes, { p256dh: device.web_push_p256dh, auth: device.web_push_auth });
+  } catch {
+    // Keys that are not a P-256 point never will be: retire the subscription
+    // rather than retrying it until the queue gives up.
+    return { outcome: "unregistered", reason: "subscription_keys_invalid" };
+  }
+  try {
     const response = await fetch(device.token, {
       method: "POST",
       headers: {
@@ -119,6 +126,9 @@ export async function sendWebPush(env: Env, device: PushDevice, payload: string,
     if (response.status >= 200 && response.status < 300) return { outcome: "sent", status: response.status };
     // RFC 8030 §7.3: the subscription is gone; the browser will not receive again.
     if (response.status === 404 || response.status === 410) return { outcome: "unregistered", status: response.status, reason: "subscription_expired" };
+    // RFC 8292 §4: the push service refused our VAPID credentials. That is the
+    // deployment's fault, not the device's, and every browser is affected.
+    if (response.status === 401 || response.status === 403) return { outcome: "provider_auth_failed", status: response.status, reason: `push_service_${response.status}` };
     return { outcome: response.status === 429 || response.status >= 500 ? "transient" : "rejected", status: response.status, reason: `push_service_${response.status}` };
   } catch {
     return { outcome: "transient", reason: "request_failed" };

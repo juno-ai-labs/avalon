@@ -6,13 +6,16 @@ import { reset, runInDurableObject, createMessageBatch, createExecutionContext, 
 import { beforeEach, expect, it, vi } from 'vitest';
 import { asUserId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
 import migration from '../../../packages/db/migrations/0107_user_push_devices.sql?raw';
+import webPushMigration from '../../../packages/db/migrations/0117_web_push_device_keys.sql?raw';
 import { workspaceDOName } from '../src/durable-objects/names';
 import { deliverPush, consumePushDeliveryQueue } from '../src/queues/push-delivery-consumer';
 import { splitSqlStatements } from '../src/lib/sql-statements';
 import { registerPushDevice } from '../src/services/push-device-service';
 import { clearFlagTargetingAttributeCache } from '../src/services/flag-targeting-attributes';
 import { createTestEnv } from '../test/helpers/cloudflare-test';
-import type { ApnsOutcome } from '../src/services/push/apns-transport';
+import type { ApnsOutcome, PushPayloads } from '../src/services/push/apns-transport';
+
+const payloads = (send: { mock: { calls: unknown[][] } }) => send.mock.calls.map((call) => call[2] as PushPayloads);
 
 // No runs or model calls: only the real workspace intent/directory read and D1 delivery writes.
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-00000000f101');
@@ -48,7 +51,7 @@ beforeEach(async () => {
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role)
       VALUES (?, ?, 'active', 'member')`).bind(workspaceId, userId),
     env.DB.prepare(`INSERT INTO sessions VALUES ('session', ?, NULL, '2099-01-01')`).bind(userId),
-    ...splitSqlStatements(migration).map(sql => env.DB.prepare(sql)),
+    ...[migration, webPushMigration].flatMap(splitSqlStatements).map(sql => env.DB.prepare(sql)),
   ]);
   await workspace().initializeWorkspace(workspaceId, 'wnam');
   await runInDurableObject(workspace(), (_instance, state) => {
@@ -132,7 +135,7 @@ it('sets the APNs badge to unread and needs-input work streams in this workspace
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
   expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   expect(send).toHaveBeenCalledTimes(2);
-  expect(send.mock.calls.map((call) => JSON.parse(String(call.at(2))).aps.badge)).toEqual([2, 2]);
+  expect(payloads(send).map((payload) => JSON.parse(payload.apns).aps.badge)).toEqual([2, 2]);
 });
 it('reduces person mention Markdown before sending an APNs alert', async () => {
   const intentId = 'mention:markdown';
@@ -144,10 +147,12 @@ it('reduces person mention Markdown before sending an APNs alert', async () => {
 
   expect(await deliverPush(pushEnv(), message(intentId), send)).toBe(true);
 
-  expect(send.mock.calls.map((call) => JSON.parse(String(call.at(2))).aps.alert.body)).toEqual([
+  expect(payloads(send).map((payload) => JSON.parse(payload.apns).aps.alert.body)).toEqual([
     'Please ask @Alex Todorovic and @Adam Juhasz to review this.',
     'Please ask @Alex Todorovic and @Adam Juhasz to review this.',
   ]);
+  // A browser gets the same reduced text, without the APNs envelope.
+  expect(JSON.parse(payloads(send)[0]!.web)).toMatchObject({ body: 'Please ask @Alex Todorovic and @Adam Juhasz to review this.' });
 });
 it('disables devices Apple reports unregistered', async () => {
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'unregistered', timestamp: Date.now() + 1000 }));

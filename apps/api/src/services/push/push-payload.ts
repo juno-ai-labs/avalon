@@ -32,13 +32,17 @@ export function renderWebPushPayload(input: {
   title: string; body: string; threadKey: string; data: PushNotificationData; maxBytes: number;
 }): string {
   const characters = Array.from(input.body);
+  const title = Array.from(input.title);
+  let titleLength = title.length;
   const encode = (length: number) => JSON.stringify({
-    title: input.title,
+    title: title.slice(0, titleLength).join("") + (titleLength < title.length ? "…" : ""),
     body: characters.slice(0, length).join("") + (length < characters.length ? "…" : ""),
     tag: input.threadKey,
     rally: input.data,
   });
+  // The body gives way first, then the title, as in the APNs alert.
   let length = Math.min(characters.length, PUSH_BODY_PREVIEW_CHARACTERS);
   while (length > 0 && new TextEncoder().encode(encode(length)).byteLength > input.maxBytes) length--;
+  while (titleLength > 0 && new TextEncoder().encode(encode(length)).byteLength > input.maxBytes) titleLength--;
   return encode(length);
 }
