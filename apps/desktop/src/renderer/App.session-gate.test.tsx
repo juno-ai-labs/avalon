@@ -12,6 +12,7 @@ import {
   markWorkstreamFeedOpenStarted,
   workstreamFeedOpenAttemptId,
 } from './lib/telemetry';
+import type * as CollaborationSessionModule from './lib/collaboration-session';
 
 const sessionState = vi.hoisted(() => ({
   api: {
@@ -33,10 +34,14 @@ const sessionState = vi.hoisted(() => ({
   surrenderActiveWorkspace: vi.fn(),
 }));
 
-vi.mock('./lib/collaboration-session', () => ({
-  useCollaborationSession: () => sessionState,
-  useOptionalCollaborationSession: () => sessionState,
-}));
+vi.mock('./lib/collaboration-session', async (importOriginal) => {
+  const actual = await importOriginal<typeof CollaborationSessionModule>();
+  return {
+    useCollaborationSession: () => sessionState,
+    useOptionalCollaborationSession: () => sessionState,
+    useShellCapabilities: () => actual.shellCapabilities({ host: 'desktop', session: sessionState.session }),
+  };
+});
 vi.mock('./lib/app-session', () => ({
   AppSessionProvider: ({ children }: { children: React.ReactNode }) => children,
   useAppSession: () => sessionState,

@@ -7,6 +7,7 @@ import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { layoutKey, readLayout } from '../lib/desktop-layout';
 import { useAppSession } from '../lib/app-session';
+import { useShellCapabilities } from '../lib/collaboration-session';
 
 /** Resolve only the default route; live list updates never replace an open conversation. */
 export function WorkstreamLandingScreen(): React.JSX.Element {
@@ -15,6 +16,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   const spaces = spaceDirectories.active.data;
   const inactiveSpaces = spaceDirectories.inactive.data;
   const { session } = useAppSession();
+  const { guest } = useShellCapabilities();
   const { state, sidebarConnect, loadedSpaceIds } = useWorkspaceSocket();
   const routeState: unknown = useLocation().state;
   const savedRoute = routeState == null && session?.workspace && session.user
@@ -79,7 +81,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
       return <Navigate replace state={savedBreakout ? { restoredBreakout: savedBreakout } : undefined}
         to={`/workstreams/${encodeURIComponent(savedChannelId)}${savedBreakout ? `?substream=${encodeURIComponent(savedBreakout)}` : ''}`} />;
     }
-    if (savedSpaceId !== null && session?.workspace?.accessClass !== 'guest') {
+    if (savedSpaceId !== null && !guest) {
       if (awaitingSpace) return <LoadingState label="Opening spaces…" />;
       if (spaces?.items.some((row) => row.id === savedSpaceId)) return <Navigate replace to={`/spaces/${encodeURIComponent(savedSpaceId)}`} />;
     }
@@ -90,7 +92,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   // Space directory, and nothing to start from.
   const general = spaces?.items.find((row) => row.systemRole === 'general');
   if (general) return <Navigate replace to={`/spaces/${encodeURIComponent(general.id)}`} />;
-  if (!spaces && session?.workspace?.accessClass !== 'guest' && state !== 'unavailable'
+  if (!spaces && !guest && state !== 'unavailable'
     && sidebarConnect?.spacesLive !== false) return <LoadingState label="Opening spaces…" />;
   return <EmptyState title="No channels yet" description="Channels shared with you appear in the sidebar." />;
 }

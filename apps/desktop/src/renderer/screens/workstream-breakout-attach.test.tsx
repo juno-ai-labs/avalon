@@ -14,10 +14,14 @@ const api = vi.hoisted(() => ({
 const session = vi.hoisted(() => ({ current: null as unknown }));
 const retainedSocket = vi.hoisted(() => vi.fn());
 
-vi.mock('../lib/collaboration-session', () => ({
-  useOptionalCollaborationSession: () => null,
-  useCollaborationSession: () => ({ api, session: session.current }),
-}));
+vi.mock('../lib/collaboration-session', async (importOriginal) => {
+  const actual = await importOriginal<typeof CollaborationSessionModule>();
+  return {
+    useOptionalCollaborationSession: () => null,
+    useCollaborationSession: () => ({ api, session: session.current }),
+    useShellCapabilities: () => actual.shellCapabilities({ host: 'desktop', session: session.current as ClientSession | null }),
+  };
+});
 
 vi.mock('../lib/use-client-feature-flags', () => ({
   useClientFeatureFlags: () => ({ data: {} }),
@@ -62,6 +66,8 @@ vi.mock('../lib/use-transcript-follow', () => ({
 import { WorkstreamScreen } from './workstream';
 import { useUiStore } from '../lib/ui-store';
 import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type * as CollaborationSessionModule from '../lib/collaboration-session';
+import type { ClientSession } from '@rally/contracts/client-session';
 
 const channelId = '00000000-0000-7000-8000-000000000801';
 

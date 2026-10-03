@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { DesktopPendingWorkspaceInvitation, DesktopWorkspaceSummary, RallyRegion } from '../../common/desktop';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER, type AccountActionProgress } from '../lib/app-session';
+import { useShellCapabilities } from '../lib/collaboration-session';
 import type { WorkspaceMember } from '../lib/types';
 import { uuidV7 } from '../lib/telemetry';
 import { Button, Modal } from './primitives';
@@ -120,6 +121,9 @@ export function WorkspaceAccountMenu({
   onSwitchWorkspace,
   presentation = 'workspace',
 }: WorkspaceAccountMenuProps): React.JSX.Element {
+  // A guest attaches the Sidekicks a conversation offers; the library is for
+  // members, who author them.
+  const { guest } = useShellCapabilities();
   const [invitation, setInvitation] = useState<DesktopPendingWorkspaceInvitation | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const downloadedUpdate = useDownloadedUpdate();
@@ -224,10 +228,10 @@ export function WorkspaceAccountMenu({
             )}
             {presentation === 'grok' && (
               <>
-                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSidekicks()}>
+                {!guest && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSidekicks()}>
                   <IconHexagons aria-hidden="true" />
                   <span>Sidekicks</span>
-                </DropdownMenu.Item>
+                </DropdownMenu.Item>}
                 <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
                   <IconSettings aria-hidden="true" />
                   <span>Settings</span>
@@ -351,9 +355,9 @@ export function WorkspaceAccountMenu({
                   <small>Organization</small>
                 </DropdownMenu.Label>
                 <DropdownMenu.Separator className="menu-separator" />
-                <DropdownMenu.Item asChild className="menu-item">
+                {!guest && <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={() => void desktopBridge().openSidekicks()} type="button">Sidekicks</button>
-                </DropdownMenu.Item>
+                </DropdownMenu.Item>}
                 <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={onOpenSettings} type="button"><IconSettings size={14} /> Settings…</button>
                 </DropdownMenu.Item>

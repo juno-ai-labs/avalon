@@ -13,6 +13,7 @@ import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue, FINISH_SIGN_IN_IN_BROWSER } from './lib/app-session';
+import { useShellCapabilities } from './lib/collaboration-session';
 import { localCacheScope } from './lib/local-cache';
 import { FaviconApiProvider } from './lib/favicon-api';
 import { LocalCacheScopeProvider } from './lib/local-cache-scope';
@@ -46,6 +47,7 @@ import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/gui
 import { NewWorkstreamScreen } from './screens/new-workstream';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
 import { SpaceDashboardScreen } from './screens/space-dashboard';
+import { SharedSpaceLanding } from './screens/shared-space-landing';
 import { SidekicksWindow, SidekicksWindowRedirect } from './screens/sidekicks-library';
 import { BrowserImportWindow } from './screens/browser-import';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
@@ -208,10 +210,11 @@ export function WorkspaceApp(): React.JSX.Element {
   // viewer's own role — see `lib/use-workspace.ts` for why the session's copy
   // is no longer good enough for a gate.
   const workspace = useWorkspaceQuery({ api, session });
+  const { guest } = useShellCapabilities();
   useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api && session?.workspace),
+    enabled: Boolean(api && session?.workspace && !guest),
     staleTime: Number.POSITIVE_INFINITY,
   });
 
@@ -269,7 +272,7 @@ export function WorkspaceApp(): React.JSX.Element {
       {mainSurface ? <HashRouter useTransitions={false}>
         <WorkstreamSocketResumeProvider scope={scope}>
           <WorkspaceOnboardingJourney workspace={workspace.error ? null : workspace.data ?? null}>
-            <WorkspaceWorkstreamSockets api={workspace.error ? null : api} enabled={session?.workspace?.accessClass !== 'guest'}>
+            <WorkspaceWorkstreamSockets api={workspace.error ? null : api} enabled={!guest}>
               <BrowserImportProgress />
               {content}
             </WorkspaceWorkstreamSockets>
@@ -288,6 +291,7 @@ function SettingsSurfaceTelemetry(): React.JSX.Element {
 
 function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api } = useAppSession();
+  const { guest } = useShellCapabilities();
   useEffect(() => {
     if (!api || new URLSearchParams(window.location.search).has('surface')) return;
     const controller = new AbortController();
@@ -328,7 +332,7 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
                 its destination resolves, rather than on the landing route,
                 which would open an unrelated conversation first. */}
             <Route element={<LoadingState label="Opening…" />} path="/opening" />
-            <Route element={<SpaceDashboardScreen workspace={workspace} />} path="/spaces/:spaceId" />
+            <Route element={guest ? <SharedSpaceLanding /> : <SpaceDashboardScreen workspace={workspace} />} path="/spaces/:spaceId" />
             <Route element={<NewWorkstreamScreen workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
             {/* Projects are gone and their ids mean nothing here; the landing
                 route picks whatever this person should be looking at instead of
