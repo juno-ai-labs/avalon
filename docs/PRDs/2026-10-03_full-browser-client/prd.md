@@ -9,6 +9,7 @@
 > [guest sharing in the browser](../2026-09-16_guest-sharing-browser/prd.md).
 > Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
+> Build plan: [`plan.md`](plan.md).
 > Current host: [`browser-client.md`](../../browser-client.md),
 > [`browser-sessions.md`](../../browser-sessions.md).
 
