@@ -4,7 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { consumeUsageQueue } from "../src/queues/usage-consumer";
 import { applyUsageBatch, readOrganizationUsage, setWorkspacePlan } from "../src/services/usage-metering";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { migratedSqliteDatabase, migratedUsageSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const OWNER = "01900000-0000-7000-8000-000000000001";
 const WORKSPACE = "01900000-0000-7000-8000-0000000000aa";
@@ -18,9 +18,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function seed(): { database: DatabaseSync; env: { DB: D1Database; AVALON_REGION: string } } {
+/** The regional database holds the workspace; the usage database holds the ledger. */
+function seed(): { database: DatabaseSync; usage: DatabaseSync; env: { DB: D1Database; USAGE_DB: D1Database; AVALON_REGION: string } } {
   const database = migratedSqliteDatabase();
-  databases.push(database);
+  const usage = migratedUsageSqliteDatabase();
+  databases.push(database, usage);
   database.prepare(
     `INSERT INTO users(id, google_subject, email, name, created_at, updated_at)
      VALUES (?, 'google-owner', 'owner@example.test', 'Owner', ?, ?)`,
@@ -29,7 +31,7 @@ function seed(): { database: DatabaseSync; env: { DB: D1Database; AVALON_REGION:
     `INSERT INTO workspaces(id, name, slug, region, created_by_user_id, created_at, updated_at)
      VALUES (?, 'Juno Labs', 'juno', 'global', ?, ?, ?)`,
   ).run(WORKSPACE, OWNER, CREATED, CREATED);
-  return { database, env: { DB: sqliteD1(database), AVALON_REGION: "global" } };
+  return { database, usage, env: { DB: sqliteD1(database), USAGE_DB: sqliteD1(usage), AVALON_REGION: "global" } };
 }
 
 function event(eventId: string, overrides: Partial<UsageEvent> = {}): UsageEvent {
@@ -56,14 +58,14 @@ function rollups(database: DatabaseSync): unknown[] {
 
 describe("applyUsageBatch", () => {
   it("counts an event once when two copies arrive in one batch and again later", async () => {
-    const { database, env } = seed();
+    const { usage, env } = seed();
     const first = await applyUsageBatch(env, [event("inf:a"), event("inf:a"), event("inf:b")], RECEIVED);
     const replay = await applyUsageBatch(env, [event("inf:a")], RECEIVED);
 
     expect(first).toMatchObject({ applied: 2, duplicates: 1 });
     expect(replay).toMatchObject({ applied: 0, duplicates: 1 });
-    expect(database.prepare(`SELECT COUNT(*) AS count FROM usage_events`).get()).toEqual({ count: 2 });
-    expect(rollups(database)).toEqual([{
+    expect(usage.prepare(`SELECT COUNT(*) AS count FROM usage_events`).get()).toEqual({ count: 2 });
+    expect(rollups(usage)).toEqual([{
       week_start: "2026-10-01T09:00:00.000Z",
       period_start: "2026-10-01T09:00:00.000Z",
       quota_microusd: 50_000_000,
@@ -73,13 +75,13 @@ describe("applyUsageBatch", () => {
   });
 
   it("splits a week that crosses the monthly anniversary into two rows", async () => {
-    const { database, env } = seed();
+    const { usage, env } = seed();
     await applyUsageBatch(env, [
       event("inf:before", { occurredAt: "2026-10-30T12:00:00.000Z", costMicrousd: 40_000_000 }),
       event("inf:after", { occurredAt: "2026-11-01T12:00:00.000Z", costMicrousd: 20_000_000 }),
     ], RECEIVED);
 
-    expect(rollups(database)).toEqual([
+    expect(rollups(usage)).toEqual([
       { week_start: "2026-10-29T09:00:00.000Z", period_start: "2026-10-01T09:00:00.000Z", quota_microusd: 50_000_000, organization_microusd: 40_000_000, rally_microusd: 0 },
       { week_start: "2026-10-29T09:00:00.000Z", period_start: "2026-11-01T09:00:00.000Z", quota_microusd: 50_000_000, organization_microusd: 20_000_000, rally_microusd: 0 },
     ]);
@@ -130,7 +132,7 @@ describe("readOrganizationUsage", () => {
 
 describe("consumeUsageQueue", () => {
   it("applies valid events, acks an unreadable one and retries one from another region", async () => {
-    const { database, env } = seed();
+    const { usage, env } = seed();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -158,7 +160,7 @@ describe("consumeUsageQueue", () => {
 
     expect(acked.sort()).toEqual(["good", "unreadable"]);
     expect(retried).toEqual(["elsewhere"]);
-    expect(database.prepare(`SELECT event_id, activity, organization_pays, workstream_id FROM usage_events`).all())
+    expect(usage.prepare(`SELECT event_id, activity, organization_pays, workstream_id FROM usage_events`).all())
       .toEqual([{ event_id: "inf:good", activity: "agent_run", organization_pays: 1, workstream_id: "ws-1" }]);
   });
 });

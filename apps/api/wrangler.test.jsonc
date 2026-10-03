@@ -49,6 +49,11 @@
       "database_id": "00000000-0000-0000-0000-000000000004"
     },
     {
+      "binding": "USAGE_DB",
+      "database_name": "avalon-global-usage",
+      "database_id": "00000000-0000-0000-0000-000000000006"
+    },
+    {
       "binding": "PLATFORM_DB",
       "database_name": "avalon-platform-runtime-tests",
       "database_id": "00000000-0000-0000-0000-000000000002"

@@ -98,7 +98,7 @@ function placeholders(count: number): string {
  * the result does not depend on the order events arrive in.
  */
 export async function applyUsageBatch(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "DB" | "USAGE_DB">,
   events: readonly UsageEvent[],
   receivedAt: string,
 ): Promise<UsageBatchOutcome> {
@@ -111,7 +111,7 @@ export async function applyUsageBatch(
   if (unique.size === 0) return outcome;
 
   const ids = [...unique.keys()];
-  const seen = await env.DB.prepare(
+  const seen = await env.USAGE_DB.prepare(
     `SELECT event_id FROM usage_events WHERE event_id IN (${placeholders(ids.length)})`,
   ).bind(...ids).all<{ event_id: string }>();
   for (const row of seen.results) {
@@ -153,7 +153,7 @@ export async function applyUsageBatch(
     if (organizationPays) delta.organizationMicrousd += event.costMicrousd;
     else delta.rallyMicrousd += event.costMicrousd;
     deltas.set(key, delta);
-    statements.push(env.DB.prepare(
+    statements.push(env.USAGE_DB.prepare(
       `INSERT INTO usage_events (event_id, workspace_id, activity, occurred_at, cost_microusd, organization_pays,
          model, user_id, workstream_id, substream_id, sidekick_id, received_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -169,7 +169,7 @@ export async function applyUsageBatch(
   for (const delta of deltas.values()) {
     // A new row takes the current plan's quota; an existing row keeps its own,
     // which only a plan change rewrites.
-    statements.push(env.DB.prepare(
+    statements.push(env.USAGE_DB.prepare(
       `INSERT INTO usage_rollups (workspace_id, week_start, period_start, quota_microusd, organization_microusd, rally_microusd)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (workspace_id, week_start, period_start) DO UPDATE SET
@@ -178,7 +178,7 @@ export async function applyUsageBatch(
     ).bind(delta.workspaceId, delta.weekStart, delta.periodStart, delta.quotaMicrousd,
       delta.organizationMicrousd, delta.rallyMicrousd));
   }
-  if (statements.length > 0) await env.DB.batch(statements);
+  if (statements.length > 0) await env.USAGE_DB.batch(statements);
   return outcome;
 }
 
@@ -195,14 +195,14 @@ async function workspacePlan(env: Pick<Env, "DB">, workspaceId: string): Promise
  * starts (a week that straddles the boundary) up to now.
  */
 export async function readOrganizationUsage(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "DB" | "USAGE_DB">,
   workspaceId: string,
   nowMs: number,
 ): Promise<OrganizationUsage | null> {
   const workspace = await workspacePlan(env, workspaceId);
   if (!workspace) return null;
   const period = usagePeriod(workspace.createdAtMs, nowMs);
-  const rows = await env.DB.prepare(
+  const rows = await env.USAGE_DB.prepare(
     `SELECT week_start, period_start, quota_microusd, organization_microusd
        FROM usage_rollups WHERE workspace_id = ? AND week_start >= ?`,
   ).bind(workspaceId, new Date(period.start - WEEK_MS).toISOString())
@@ -223,9 +223,13 @@ export async function readOrganizationUsage(
 /**
  * Move an Organization to a plan. The new quota applies to the current week at
  * once (PRD decision 12); past weeks keep the quota they had.
+ *
+ * The plan and the ledger are in two databases, so the two writes are not one
+ * transaction. Both are idempotent: if the second fails the operator sees the
+ * error in Ace and saves again.
  */
 export async function setWorkspacePlan(
-  env: Pick<Env, "DB" | "AVALON_REGION">,
+  env: Pick<Env, "DB" | "USAGE_DB" | "AVALON_REGION">,
   workspaceId: string,
   plan: PlanId,
   nowMs: number,
@@ -238,12 +242,10 @@ export async function setWorkspacePlan(
   const workspace = await workspacePlan(env, workspaceId);
   if (!workspace) return false;
   const weekStart = new Date(usageWeekStart(workspace.createdAtMs, nowMs)).toISOString();
-  await env.DB.batch([
-    env.DB.prepare(`UPDATE workspaces SET plan = ?, updated_at = ? WHERE id = ?`)
-      .bind(plan, new Date(nowMs).toISOString(), workspaceId),
-    env.DB.prepare(`UPDATE usage_rollups SET quota_microusd = ? WHERE workspace_id = ? AND week_start = ?`)
-      .bind(weeklyQuotaMicrousd(plan), workspaceId, weekStart),
-  ]);
+  await env.DB.prepare(`UPDATE workspaces SET plan = ?, updated_at = ? WHERE id = ?`)
+    .bind(plan, new Date(nowMs).toISOString(), workspaceId).run();
+  await env.USAGE_DB.prepare(`UPDATE usage_rollups SET quota_microusd = ? WHERE workspace_id = ? AND week_start = ?`)
+    .bind(weeklyQuotaMicrousd(plan), workspaceId, weekStart).run();
   return true;
 }
 

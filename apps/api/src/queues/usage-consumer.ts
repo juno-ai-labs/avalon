@@ -19,7 +19,7 @@ export function isUsageQueue(queue: string): boolean {
  */
 export async function consumeUsageQueue(
   batch: MessageBatch<unknown>,
-  env: Pick<Env, "DB" | "AVALON_REGION" | "APP_ENV" | "LOG_LEVEL">,
+  env: Pick<Env, "DB" | "USAGE_DB" | "AVALON_REGION" | "APP_ENV" | "LOG_LEVEL">,
   now: () => number = Date.now,
 ): Promise<void> {
   const accepted: { message: Message<unknown>; event: UsageEvent }[] = [];

@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results } from "./cloudflare-test";
 import { databaseFromSnapshot } from "./migrated-schema";
 import { migratedSchemaSnapshot } from "./migrated-schema-snapshots";
@@ -7,6 +7,19 @@ import { migratedSchemaSnapshot } from "./migrated-schema-snapshots";
 /** Applies every checked-in migration to a fresh regional D1 database. */
 export function migratedSqliteDatabase(): DatabaseSync {
   return databaseFromSnapshot(migratedSchemaSnapshot("regional"));
+}
+
+/**
+ * The usage ledger database (`USAGE_DB`), from its own checked-in migrations,
+ * on a connection of its own so a test cannot join it to the regional schema.
+ */
+export function migratedUsageSqliteDatabase(): DatabaseSync {
+  const database = new DatabaseSync(":memory:");
+  const root = new URL("../../../../packages/db/usage-migrations/", import.meta.url);
+  for (const file of readdirSync(root).filter((name) => name.endsWith(".sql")).sort()) {
+    database.exec(readFileSync(new URL(file, root), "utf8"));
+  }
+  return database;
 }
 
 /**
