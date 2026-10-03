@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { logError } from '../../common/logger';
 import { PcmSpeechPlayer } from '../lib/pcm-speech-player';
+import { useShellCapabilities } from '../lib/collaboration-session';
 
 interface SpeechPlaybackContextValue {
   activeMessageId: string | null;
@@ -98,6 +99,9 @@ export function SpeechPlaybackProvider({ api, children, createPlayer = createPcm
   return <SpeechPlaybackContext.Provider value={value}>{children}</SpeechPlaybackContext.Provider>;
 }
 
+/** `null` for a guest too: Speak reads `POST /speech`, which refuses a guest. */
 export function useSpeechPlayback(): SpeechPlaybackContextValue | null {
-  return useContext(SpeechPlaybackContext);
+  const value = useContext(SpeechPlaybackContext);
+  const { guest } = useShellCapabilities();
+  return guest ? null : value;
 }

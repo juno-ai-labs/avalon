@@ -45,7 +45,7 @@ function entry(id: string, title: string, lastActivityAt = LAST_ACTIVITY): MenuB
   return { id, title, lastActivityAt };
 }
 
-function harness(available?: () => boolean): Harness {
+function harness(available?: () => boolean | Promise<boolean>): Harness {
   let now = 1_000_000;
   const requestJson = vi.fn<MenuBarContentDependencies['requestJson']>();
   const onChange = vi.fn();
@@ -268,6 +268,18 @@ describe('menu bar content', () => {
     // not held on an empty cache for another fifteen seconds.
     await subject.store.refreshIfStale(15_000);
     expect(subject.requestJson).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks nothing at launch when the stored workspace is a guest\'s', async () => {
+    // Read from storage, so the answer is asynchronous and no session exists yet.
+    subject = harness(async () => false);
+    respond(subject.requestJson, { '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]) });
+
+    await subject.store.refresh();
+    await subject.store.refreshIfStale(0);
+
+    expect(subject.requestJson).not.toHaveBeenCalled();
+    expect(subject.store.content()).toEqual({ recents: [], pinned: [] });
   });
 
   it('empties the menu and asks nothing while a guest workspace is active', async () => {
