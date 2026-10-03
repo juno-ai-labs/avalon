@@ -218,11 +218,15 @@ parses, plans and seeds, then leaves the demo in **Waiting for workspace**
 until the wait runs out. The skill today has the author run tests and copy the
 failing diff.
 
-The check does that work. It always replaces the presenter's entry with what
-`demoIdleViewerExpectation` derives, which is already the answer the
-checked-in pack is held to by test, and says it did. The presenter never acts,
-so their flags have one right answer, and there is nothing to refuse. An entry
-for a cast member, whose flags depend on what they did, is kept as written.
+The check does that work. When the presenter never acts in a room's main
+conversation, which is true of every pack this repository has shipped, the
+check replaces the presenter's entry with what `demoIdleViewerExpectation`
+derives (already the answer the checked-in pack is held to by test) and says
+it did. Their flags have one right answer, so there is nothing to refuse. A
+pack in which the presenter does act is still accepted, but their flags then
+depend on what they did, so the pack must state them, as it does for any cast
+member it verifies; a pack that leaves them out is refused with a code naming
+`expect`. An entry for a cast member is kept as written.
 
 ### The flow and its states
 
@@ -280,7 +284,8 @@ so it may only close what demo preparation opened.
 
 ### Errors
 
-Every refusal names the field it rejected and says what to do next, per
+Every refusal names the field it rejected, by path, and says what to do next
+in a fixed sentence per code that never echoes pack text back, per
 [naming a schema failure](../../naming-a-schema-failure.md). Shipped refusals
 keep their shipped codes, so Ace and the MCP report the same failure the same
 way. The full list is in [design.md](design.md#failures).
@@ -343,9 +348,11 @@ does not supersede it.
    "what was this demo made from" has one answer. **Rejected:** storing the pack
    JSON on the operation row, which would duplicate it per demo and leave saved
    scenarios as a second store.
-5. **`expect` for the presenter is derived by the server, always.** It is the
+5. **`expect` for an idle presenter is derived by the server.** It is the
    step most likely to be wrong and the one whose failure costs a demo rather
-   than a test, and it has one right answer, so the check overwrites it.
+   than a test, and while the presenter never acts it has one right answer, so
+   the check overwrites it. A presenter who acts is stated by the pack, like
+   any verified cast member.
    **Rejected:** keeping it author-written, which hands a model the one task
    the skill already moved to the test suite; and refusing a wrong entry,
    which makes the model do work the server already did.
@@ -370,8 +377,10 @@ does not supersede it.
    wrote and started it. The record is only as trustworthy as the Demo MCP
    Worker, which is the one caller that can reach the entrypoint and the one
    place the Access assertion is verified.
-10. **Shipped shapes and codes, unchanged.** The MCP returns the shipped
-    `DemoOperationStatusSchema` with optional additions, takes the shipped
+10. **Shipped shapes and codes, unchanged.** The MCP returns every field of the
+    shipped `DemoOperationStatusSchema`, with its own additions defined in the
+    MCP's contract rather than on the shipped schema, which Ace parses
+    strictly and which therefore does not change. It takes the shipped
     cast entry (a user ID or `{ name }`) and the shipped company name, and
     keeps every shipped error code. **Rejected:** an MCP-specific status shape,
     an `{ email }` cast form and a separate Organization name, each a second
@@ -392,7 +401,9 @@ Phase 1:
 - **`demo_scenario_revisions`**: `id`, `scenario_id` (null for an unnamed
   revision, which every new operation makes), `revision` (null when unnamed), `pack_json`
   (the normalized pack, with derived `expect`), `content_hash` (SHA-256 of
-  `pack_json`), `saved_by_subject`, `saved_by_email`, `created_at`. Unnamed
+  `pack_json`), `saved_by_subject`, `saved_by_email`, `created_at`, and in
+  phase 2 a `request_key`, unique with `saved_by_subject`, so a repeated save
+  returns the revision it wrote. Unnamed
   revisions are unique by `content_hash`, so storing one twice writes nothing.
   Immutable: no update path.
 - **`demo_operations`** gains `scenario_revision_id` (set on every new row),
