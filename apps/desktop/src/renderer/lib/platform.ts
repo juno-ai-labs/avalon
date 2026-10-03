@@ -232,9 +232,20 @@ const browserBridge: RallyDesktopBridge = {
       document.removeEventListener('visibilitychange', report);
     };
   },
-  onPowerStateChanged() {
-    // A browser tab is told nothing about sleep; its socket rides it out.
-    return () => undefined;
+  onPowerStateChanged(listener) {
+    // A tab is told nothing about the machine sleeping, but Chromium freezes a
+    // hidden tab and resumes it later, and its sockets may not survive. The
+    // Page Lifecycle events stand in for main's suspend and resume, so the
+    // workspace socket closes cleanly and dials again rather than waiting on a
+    // heartbeat. Browsers without them never fire either.
+    const suspended = (): void => listener('suspended');
+    const resumed = (): void => listener('resumed');
+    document.addEventListener('freeze', suspended);
+    document.addEventListener('resume', resumed);
+    return () => {
+      document.removeEventListener('freeze', suspended);
+      document.removeEventListener('resume', resumed);
+    };
   },
   async getUpdateStatus() {
     return { kind: 'idle' } as const;

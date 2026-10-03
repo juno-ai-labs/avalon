@@ -31,9 +31,12 @@ The lite browser host forwards same-origin ticketed upgrades through a configure
 regional API service binding. It returns the source upgrade directly, without
 accepting a socket or relaying frames. The shared API client maps browser ticket
 URLs to that route and preserves the ticket subprotocol. This implements the
-transport boundary; the browser opens a standalone feed for the visible
+transport boundary. A guest tab opens a standalone feed for the visible
 conversation, plus one workspace socket per tab that it reads only for
-`workspace_reach_changed`. See [browser-client.md](browser-client.md).
+`workspace_reach_changed`. A member tab runs the desktop shell and so opens the
+same set the desktop does — the full workspace socket and the proactive feed
+swarm — over native `WebSocket`s, with presence from page visibility and focus.
+See [browser-client.md](browser-client.md).
 
 Sideline's main process holds one workspace socket for the signed-in operator
 over Node's `ws`, presenting `app://sideline`, and reads only the same event
@@ -667,9 +670,16 @@ move the workspace synchronization socket or dictation transport into Node.
 - **The main window's socket goes while Settings or Sidekicks is open:** that
   window dials its own and refetches once each way; see
   [the Organization-sync relay](#one-workspace-socket-per-desktop-the-organization-sync-relay).
-- **Browser development opens a large set:** it remains subject to Chromium's
-  connection scheduling because only packaged Electron routes these three socket
-  kinds through Node.
+- **A browser member tab opens the swarm one handshake at a time:** with no Node
+  broker, Chromium's same-endpoint scheduling serializes it, and each ticket is a
+  cookie resolve and a token mint through the browser adapter. Every open tab
+  holds its own swarm; nothing coordinates tabs, by product decision
+  ([PRD](PRDs/2026-10-03_full-browser-client/prd.md), decision 3). A tab
+  Chromium freezes reports `suspended` through the Page Lifecycle `freeze`
+  event and `resumed` on `resume`, so the workspace socket closes and redials as
+  the desktop does around sleep. The feed swarm does not listen for either: a
+  feed socket that died while frozen is found by its 45 to 55 second heartbeat,
+  which is also the desktop's behaviour around sleep.
 
 ## Testing
 
@@ -777,6 +787,23 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-10-03 — A frozen browser tab redials its workspace socket
+
+**What changed:** The browser bridge reports Page Lifecycle `freeze` and
+`resume` as `suspended` and `resumed`.
+
+**Why:** A tab Chromium froze otherwise found its dead workspace socket only by
+heartbeat, so a member returning to a background tab saw stale Organization
+state for up to a minute.
+
+**Considered and rejected:** Treating `visibilitychange` as suspend, which
+would drop the socket every time a tab is hidden for a moment.
+
+**Consequences:** Only the workspace socket redials on resume; the feed swarm
+still relies on its heartbeat, as on the desktop.
+
+Shipped in #1080. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
 ### 2026-09-26 — The Sidekicks window consumes the relay, and old follow-up shapes are no longer read
 

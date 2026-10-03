@@ -41,11 +41,19 @@ General, in a real browser window, and a guest still sees the guest shell.
 
 ## Phase 4: realtime parity
 
-- [ ] Each tab opens the desktop feed set over native sockets.
-- [ ] Presence published from page visibility and focus.
+- [x] Each tab opens the desktop feed set over native sockets.
+- [x] Presence published from page visibility and focus.
 
 **Gate:** another member sees the browser member as present; switching to a
 warmed pinned Channel shows no loading state.
+
+Checked in headless Chromium on the local stack: a second member received
+`workspace_presence`, and switching back to a warmed Channel showed its
+transcript 120 ms later with no loading state. The seed has no pinned Channel,
+so a recent one stood in. Chromium here does not deliver `freeze` and `resume`
+through `Page.setWebLifecycleState`, so those events were dispatched in the
+page: the workspace socket redialed with one new `subscribe`, and the feed
+sockets stayed open.
 
 ## Phase 5: Web Push
 
