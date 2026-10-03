@@ -275,3 +275,22 @@ export function emitInferenceUsage(
     costMicrousd: costCentsToMicrousd(costCents),
   });
 }
+
+/**
+ * How long `usage_events` rows stay in D1. Three months, as asked for when the
+ * ledger was split into D1 and R2; every row is in the usage lakehouse for
+ * good, so this only bounds the D1 copy. It must stay longer than the usage
+ * queue's message retention (at most 14 days), or a redelivery could find its
+ * row pruned and be counted twice.
+ */
+export const USAGE_EVENTS_D1_RETENTION_DAYS = 90;
+
+/**
+ * Delete `usage_events` rows received before the retention window. Runs on the
+ * scheduled tick; the rollups are kept, so the meter never reads these rows.
+ */
+export async function pruneUsageEvents(env: Pick<Env, "USAGE_DB">, nowMs: number): Promise<number> {
+  const cutoff = new Date(nowMs - USAGE_EVENTS_D1_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const result = await env.USAGE_DB.prepare(`DELETE FROM usage_events WHERE received_at < ?`).bind(cutoff).run();
+  return result.meta.changes ?? 0;
+}
