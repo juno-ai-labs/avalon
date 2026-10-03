@@ -1,5 +1,7 @@
 import { clearAllDrafts as clearAllDraftsOnly } from '../../desktop/src/renderer/lib/draft-cache';
 import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
+import { ChevronRight, KeyRound, LoaderCircle, Mail } from "lucide-react";
+import { Button, ConnectorMark, InlineError, RallyMark } from "@rally/ui/components/primitives";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema, IDENTITY_REGION } from "@rally/contracts/regions";
@@ -348,34 +350,36 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     </div>;
   }
 
-  if (checking && !session && !proof) return <main className="entry" aria-busy="true"><p role="status">Opening Rally…</p></main>;
+  if (checking && !session && !proof) return <main className="onboarding-shell entry"><div className="boot-mark" role="status" aria-label="Opening Rally"><RallyMark /></div></main>;
 
-  return <main className="entry"><a className="wordmark" href="/">Rally</a>
-    <section className="entry-card" aria-busy={busy || checking}>
+  const failure = error ?? (!session && !proof && !challenge ? googleNotice : null);
+  return <main className="onboarding-shell signin-shell entry">
+    <section className="signin-card entry-card" aria-busy={busy || checking}>
+      <a className="entry-mark" href="/" aria-label="Rally"><RallyMark className="signin-mark" /></a>
       {session && !proof ? <>
-        <h1>{accepted ? "You’re ready to collaborate" : invitation ? "Join the shared work" : "Your shared work"}</h1><p>Signed in as {session.user.email}</p>
-        {accepted ? <nav aria-label="Shared conversations">{accepted.targets.map((target, index) =>
-          <a className="workspace-link" key={`${target.parentId}:${target.kind}:${target.kind === "conversation" ? target.substreamId : ""}`} href={invitationTargetPath(location.origin, region, target, acceptedSpaceIds[target.parentId])}>{target.kind === "workstream" ? "Open channel" : target.substreamId === "0" ? "Open main conversation" : `Open shared breakout${accepted.targets.length > 1 ? ` ${index + 1}` : ""}`}<span aria-hidden="true">→</span></a>)}</nav>
-          : invitation ? <><p>Accept this invitation using the email address it was sent to.</p><button disabled={busy} onClick={() => { void acceptInvitation(); }}>{busy ? "Joining…" : "Accept invitation"}</button></>
-          : workspaces.length ? <nav aria-label="Organizations">{workspaces.map((workspace) =>
-          <a className="workspace-link" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}>{workspace.name}<span aria-hidden="true">→</span></a>)}</nav>
-          : <p>Open the invitation you received to join a shared conversation.</p>}
-        <button className="secondary" disabled={busy} onClick={() => { void signOut(); }}>Sign out</button>
+        <h1>{accepted ? "You’re ready to collaborate" : invitation ? "Join the shared work" : "Your shared work"}</h1>
+        <p className="signed-in-identity">Signed in as {session.user.email}</p>
+        {accepted ? <nav className="signin-choice-list" aria-label="Shared conversations">{accepted.targets.map((target, index) =>
+          <a className="signin-choice" key={`${target.parentId}:${target.kind}:${target.kind === "conversation" ? target.substreamId : ""}`} href={invitationTargetPath(location.origin, region, target, acceptedSpaceIds[target.parentId])}><span className="signin-choice-name">{target.kind === "workstream" ? "Open channel" : target.substreamId === "0" ? "Open main conversation" : `Open shared breakout${accepted.targets.length > 1 ? ` ${index + 1}` : ""}`}</span><ChevronRight aria-hidden="true" size={16} /></a>)}</nav>
+          : invitation ? <><p className="entry-lead">Accept this invitation using the email address it was sent to.</p><Button className="button-primary signin-button" disabled={busy} onClick={() => { void acceptInvitation(); }}>{busy && <LoaderCircle aria-hidden="true" className="spin" size={16} />}{busy ? "Joining…" : "Accept invitation"}</Button></>
+          : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) =>
+          <a className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ChevronRight aria-hidden="true" size={16} /></a>)}</nav>
+          : <p className="entry-lead">Open the invitation you received to join a shared conversation.</p>}
+        <button className="text-button onboarding-signout" disabled={busy} onClick={() => { void signOut(); }} type="button">Sign out</button>
       </> : <>
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
-        <p>{proof ? "Continue to your shared conversations." : challenge ? `Enter the code sent to ${email}, or open the sign-in link in that email.` : invitation ? "Sign in with the email address that received this invitation." : "Sign in to collaborate with your team."}</p>
+        <p>{proof ? "Continue to your shared conversations." : challenge ? `Enter the code sent to ${email}, or open the sign-in link in that email.` : invitation ? "Sign in with the email address that received this invitation." : "Your team, your work, and Rally. All in one place."}</p>
         <form onSubmit={(event) => { void submit(event); }}>
-          {!proof && (challenge ? <label>Sign-in code<input key="otp" autoComplete="one-time-code" inputMode="numeric" required value={code} onChange={(event) => setCode(event.target.value)} /></label>
-            : <label>Email<input key="email" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>)}
-          <button disabled={busy || checking} type="submit">{busy ? "Please wait…" : proof || challenge ? "Continue" : "Email me a sign-in link"}</button>
-          {challenge && <button className="secondary" type="button" disabled={busy} onClick={() => { issuance.current = null; setChallenge(null); setCode(""); setError(null); }}>Use another email or request a new code</button>}
+          {!proof && (challenge ? <label className="onboarding-field"><span>Sign-in code</span><span className="onboarding-input-wrap"><KeyRound aria-hidden="true" size={16} /><input key="otp" autoComplete="one-time-code" inputMode="numeric" required value={code} onChange={(event) => setCode(event.target.value)} /></span></label>
+            : <label className="onboarding-field"><span>Email</span><span className="onboarding-input-wrap"><Mail aria-hidden="true" size={16} /><input key="email" type="email" autoComplete="email" placeholder="you@company.com" required value={email} onChange={(event) => setEmail(event.target.value)} /></span></label>)}
+          <Button className="button-primary signin-button" disabled={busy || checking} type="submit">{busy && <LoaderCircle aria-hidden="true" className="spin" size={16} />}{busy ? "Please wait…" : proof || challenge ? "Continue" : "Email me a sign-in link"}</Button>
+          {challenge && <button className="text-button onboarding-signout" type="button" disabled={busy} onClick={() => { issuance.current = null; setChallenge(null); setCode(""); setError(null); }}>Use another email or request a new code</button>}
         </form>
         {/* Leaving for Google would drop an invitation held only in this page's memory. */}
-        {!proof && !challenge && !invitation && <button className="secondary" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}>Continue with Google</button>}
+        {!proof && !challenge && !invitation && <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>}
       </>}
       {/* A Google failure belongs to the signed-out screen it returned to, not to a later one. */}
-      {(error ?? (!session && !proof && !challenge ? googleNotice : null)) &&
-        <p className="error" role="alert">{error ?? googleNotice}</p>}
+      {failure && <InlineError>{failure}</InlineError>}
     </section>
   </main>;
 }
