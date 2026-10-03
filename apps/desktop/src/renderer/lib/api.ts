@@ -3,6 +3,7 @@ import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationR
 import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
 import { SessionImportRunSchema, type SessionImportPreview } from "@rally/contracts";
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
+import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
@@ -996,6 +997,19 @@ export class RallyApi {
     return this.request('/onboarding/account', {
       method: 'PATCH', body: UpdateAccountOnboardingSchema.parse(input), schema: AccountOnboardingSchema,
     });
+  }
+
+/** The VAPID key this browser subscribes with; a 404 means Web Push cannot send here. */
+  async getWebPushConfiguration(signal?: AbortSignal): Promise<{ publicKey: string }> {
+    return this.request('/push-devices/web-push', { schema: WebPushConfigurationSchema, signal });
+  }
+
+  async registerPushDevice(installationId: string, input: RegisterPushDeviceRequest): Promise<void> {
+    await this.requestVoid(`/push-devices/${encodeURIComponent(installationId)}`, { method: 'PUT', body: input });
+  }
+
+  async deletePushDevice(installationId: string): Promise<void> {
+    await this.requestVoid(`/push-devices/${encodeURIComponent(installationId)}`, { method: 'DELETE' });
   }
 
   async leaveWorkspace(workspaceId: string, expectedOutcome: WorkspaceDepartureOutcome): Promise<WorkspaceDeparture> {

@@ -20,6 +20,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/workspace.tsx` | The signed-in application's one lazy boundary; picks the guest or member shell. |
 | `apps/browser/src/member-shell.tsx` | The desktop shell for members over the cookie session: the browser's `AppSessionValue`. |
+| `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications and opens their links on this origin. |
 | `apps/browser/src/conversation.tsx` | Browser router and providers for the shared feed, and the tab's one workspace socket for membership nudges; no desktop background socket pool. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
@@ -231,8 +232,9 @@ carries `host: "browser"`, which surfaces use to tell the Mac app from a tab.
 Account onboarding is identity-scoped, so it goes through the `_` workspace of
 the cookie adapter. Anything only the Mac app can do (accepting a workspace
 invitation from the desktop flow, creating a workspace, desktop sign-in)
-rejects with "Available in the Mac app." In Settings, Application shows only
-Appearance and names the Mac app for the rest.
+rejects with "Available in the Mac app." In Settings, Application shows
+Appearance and names the Mac app for the rest, and Notifications offers
+"In this browser".
 
 The desktop shell routes by hash. Before its router mounts, the member shell
 rewrites a canonical Channel or Space link into the workspace path plus the hash
@@ -249,8 +251,10 @@ checks; the adapter adds no permission of its own. The rest of `onboarding`
 stays out: creating, activating or joining a workspace there answers with a
 bearer session, and a browser holds only its HttpOnly cookie.
 
-Connector setup, Google sign-in, Web Push, inline artifact preview and other
-deployments are later phases of
+Web Push ships in this phase: a member can turn on notifications for this
+browser, delivered as described in
+[push-notifications.md](push-notifications.md#web-push-for-browser-members).
+Inline artifact preview and other deployments are later phases of
 [the full browser client PRD](PRDs/2026-10-03_full-browser-client/plan.md).
 
 ### Shared collaboration transport
@@ -363,6 +367,11 @@ desktop dependency because it consumes the existing collaboration implementation
 `@rally/ui` remains presentation-only. Cross-host renderer tests stay in the
 existing desktop jsdom harness rather than creating another test runner.
 
+The host serves the push service worker at `/sw.js` from the root, with
+`Cache-Control: no-cache` so a changed worker is picked up, and the shell's CSP
+allows `worker-src 'self'` so the member shell can register it. The worker
+caches nothing and answers no requests.
+
 Forwarded HTTP responses retain their streaming bodies but add document sandbox
 CSP and `nosniff`: an uploaded HTML or SVG navigated on the cookie origin must
 never execute as the application. Socket upgrades remain untouched. The shell
@@ -470,7 +479,9 @@ not a cross-deployment session set. Only Global is configured today. A guest tab
 owns one selected-conversation subscription, with no desktop background swarm; a
 member tab runs the desktop's feed swarm over native sockets.
 Production routing/configuration, external mailbox delivery and deployed stateful
-artifact serving remain release checks.
+artifact serving remain release checks. Signing in over an existing cookie does
+not revoke the earlier session, so anything bound to it, such as a Web Push
+device, stays live until that session ends.
 
 ## Testing
 

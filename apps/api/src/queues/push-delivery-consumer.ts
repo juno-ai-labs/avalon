@@ -10,12 +10,28 @@ import { logInfo, logWarn } from "../observability/logger";
 import { notificationDeliveryContext } from "../services/conversation-effect-service";
 import { pushEnabled } from "../services/push-delivery-service";
 import { livePushDevices } from "../services/push-device-service";
-import { sendApns } from "../services/push/apns-transport";
-import { renderPushPayload, pushCollapseId } from "../services/push/push-payload";
+import { sendApns, type ApnsOutcome } from "../services/push/apns-transport";
+import type { PushDevice } from "../services/push-device-service";
+import { renderPushPayload, renderWebPushPayload, pushCollapseId, type PushPayloads } from "../services/push/push-payload";
+import { sendWebPush, WEB_PUSH_PAYLOAD_BYTES, type WebPushOutcome } from "../services/push/web-push-transport";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
 import { canonicalWorkstreamUrl } from "../services/workstream-link-service";
 
-export async function deliverPush(env: Env, message: PushDeliveryMessage, send: typeof sendApns = sendApns, providerFailed: (reason: string) => void = () => {}): Promise<boolean> {
+/** One send per device, to the transport the device registered with. */
+export type PushSend = (env: Env, device: PushDevice, payload: PushPayloads, collapseId: string) => Promise<ApnsOutcome | WebPushOutcome>;
+const sendByTransport: PushSend = async (env, device, payload, collapseId) => {
+  if (device.transport === "apns") return sendApns(env, device, payload.apns, collapseId);
+  if (device.transport === "webpush") return sendWebPush(env, device, payload.web, collapseId);
+  return { outcome: "rejected", reason: "unknown_transport" };
+};
+
+/**
+ * A transport whose deployment credential the provider refused, with the
+ * reason. Its devices wait for a retry; the other transport keeps sending.
+ */
+export type ProviderFaults = Map<PushDevice["transport"], string>;
+
+export async function deliverPush(env: Env, message: PushDeliveryMessage, send: PushSend = sendByTransport, faults: ProviderFaults = new Map()): Promise<boolean> {
   if (message.region !== env.AVALON_REGION) throw new Error("Push queue region mismatch");
   if (!await pushEnabled(env, { userId: message.recipientUserId, workspaceId: message.workspaceId })) return true;
   const id = asWorkspaceId(message.workspaceId);
@@ -43,12 +59,13 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
   }));
   const url = await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
     workstreamId: row.workstreamId, ...(childId ? { substreamId: childId } : {}) });
-  const payload = renderPushPayload({ title, body, threadKey: row.workstreamId, badge: attention.unreadAndNeedsInputCount, data: {
-    v: 1, kind: row.notificationKind, region: env.AVALON_REGION, workspaceId: row.workspaceId,
-    url,
-  } });
-  const db = workspaceRegionalDatabase(env);
+  const data = { v: 1 as const, kind: row.notificationKind, region: env.AVALON_REGION, workspaceId: row.workspaceId, url };
   const collapseId = await pushCollapseId(row.workspaceId, row.intentId);
+  const payload: PushPayloads = {
+    apns: renderPushPayload({ title, body, threadKey: row.workstreamId, badge: attention.unreadAndNeedsInputCount, data }),
+    web: renderWebPushPayload({ title, body, collapseId, data, maxBytes: WEB_PUSH_PAYLOAD_BYTES }),
+  };
+  const db = workspaceRegionalDatabase(env);
   const devices = await livePushDevices(env, row.recipientUserId);
   if (!devices.length) logInfo(env, "push_delivery_skipped", { intent_id: row.intentId, reason: "no_live_devices" });
   let complete = true;
@@ -56,6 +73,8 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
     const receipt = await db.prepare(`SELECT 1 FROM push_delivery_receipts WHERE workspace_id = ? AND intent_id = ? AND device_id = ?`)
       .bind(row.workspaceId, row.intentId, device.id).first();
     if (receipt) continue;
+    // A refused credential fails every device on that transport alike.
+    if (faults.has(device.transport)) { complete = false; continue; }
     const result = await send(env, device, payload, collapseId);
     const at = new Date().toISOString();
     if (result.outcome === "sent") {
@@ -63,34 +82,42 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
         db.prepare(`INSERT OR IGNORE INTO push_delivery_receipts VALUES (?, ?, ?, ?)`).bind(row.workspaceId, row.intentId, device.id, at),
         db.prepare(`UPDATE user_push_devices SET last_delivery_at = ?, last_failure_code = NULL WHERE id = ?`).bind(at, device.id),
       ]);
-    } else if (result.outcome === "bad_token" || (result.outcome === "unregistered" && result.timestamp !== undefined && result.timestamp >= Date.parse(device.last_seen_at))) {
+    } else if (result.outcome === "bad_token" || (result.outcome === "unregistered" && (device.transport === "webpush"
+      // A browser subscription the push service has dropped never comes back; APNs dates its answer.
+      || ("timestamp" in result && result.timestamp !== undefined && result.timestamp >= Date.parse(device.last_seen_at))))) {
       await db.prepare(`UPDATE user_push_devices SET disabled_at = ?, disabled_reason = ? WHERE id = ? AND token = ? AND last_seen_at = ?`)
         .bind(at, result.outcome, device.id, device.token, device.last_seen_at).run();
     } else if (["transient", "provider_auth_failed", "provider_token_throttled"].includes(result.outcome)) complete = false;
-    const providerFault = result.outcome === "provider_auth_failed" || result.outcome === "provider_token_throttled";
-    if (providerFault) providerFailed(result.reason ?? result.outcome);
+    if (result.outcome === "provider_auth_failed" || result.outcome === "provider_token_throttled") {
+      faults.set(device.transport, result.reason ?? result.outcome);
+    }
     if (result.outcome !== "sent" && result.outcome !== "skipped") {
       await db.prepare(`UPDATE user_push_devices SET last_failure_code = ? WHERE id = ? AND token = ?`)
         .bind(result.reason ?? result.outcome, device.id, device.token).run();
     }
     logInfo(env, "push_delivery_terminal", { intent_id: row.intentId, device_id: device.id, ...result });
-    if (providerFault) break;
   }
   return complete;
 }
-export async function consumePushDeliveryQueue(batch: MessageBatch<unknown>, env: Env, send: typeof sendApns = sendApns): Promise<void> {
-  let providerFailure: string | undefined;
+/**
+ * Once a transport's credential is refused, the rest of the batch skips that
+ * transport's devices and retries those messages; the other transport's
+ * devices are still sent. One ops notice per refused transport.
+ */
+export async function consumePushDeliveryQueue(batch: MessageBatch<unknown>, env: Env, send: PushSend = sendByTransport): Promise<void> {
+  const faults: ProviderFaults = new Map();
   for (const message of batch.messages) {
-    if (providerFailure) { message.retry(); continue; }
     try {
-      if (await deliverPush(env, PushDeliveryMessageSchema.parse(message.body), send, (reason) => { providerFailure = reason; })) message.ack();
+      if (await deliverPush(env, PushDeliveryMessageSchema.parse(message.body), send, faults)) message.ack();
       else message.retry();
     } catch {
       logWarn(env, "push_delivery_failed", { message_id: message.id });
       message.retry();
     }
   }
-  if (providerFailure) await notifyOps(env, {
-    event: "push_provider_auth_failed", summary: "Apple push provider authentication needs attention.", fields: { reason: providerFailure },
+  for (const [transport, reason] of faults) await notifyOps(env, {
+    event: "push_provider_auth_failed",
+    summary: transport === "apns" ? "APNs provider authentication needs attention (the APNs key)." : "Web Push authentication needs attention (the VAPID key).",
+    fields: { transport, reason },
   });
 }

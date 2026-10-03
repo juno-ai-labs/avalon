@@ -9,6 +9,33 @@ export const APNS_TOPICS = {
   ios: "ai.rallywith.ios",
 } as const;
 const token = z.string().regex(/^[0-9a-f]+$/i);
+
+/**
+ * The push services browsers subscribe through. A subscription endpoint is a
+ * URL the Worker later POSTs to, so only these are accepted: at
+ * registration, and again before each send. Chrome and Edge on FCM, Firefox on
+ * Mozilla autopush, Safari on Apple, and Edge on Windows on WNS. Each is held
+ * to the path its subscription URLs take: the same hosts also serve
+ * credential-gated APIs (FCM's HTTP v1, WNS app channels), whose `401` must not
+ * read as this deployment's VAPID key being refused.
+ */
+const WEB_PUSH_SERVICES: ReadonlyArray<{ host: string | RegExp; path: RegExp }> = [
+  { host: "fcm.googleapis.com", path: /^\/(?:fcm\/send|wp)\/[^/]+$/u },
+  { host: "updates.push.services.mozilla.com", path: /^\/wpush\/v[12]\/[^/]+$/u },
+  { host: "web.push.apple.com", path: /^\/[^/]+$/u },
+  // WNS hands out per-region hosts.
+  { host: /^[a-z0-9-]+\.notify\.windows\.com$/u, path: /^\/w\/$/u },
+];
+
+/** A subscription URL on a known push service: HTTPS, no userinfo, the default port, its own path shape. */
+export function isWebPushServiceUrl(value: string): boolean {
+  let url: URL;
+  try { url = new URL(value); } catch { return false; }
+  if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
+  return WEB_PUSH_SERVICES.some(({ host, path }) =>
+    (typeof host === "string" ? url.hostname === host : host.test(url.hostname)) && path.test(url.pathname));
+}
+
 const appVersion = z.string();
 export const RegisterPushDeviceRequestSchema = z.discriminatedUnion("platform", [
   z.object({
@@ -27,7 +54,19 @@ export const RegisterPushDeviceRequestSchema = z.discriminatedUnion("platform", 
     token,
     appVersion,
   }),
+  // A browser's Web Push subscription, as `PushSubscription.toJSON()` gives it.
+  z.object({
+    platform: z.literal("web"),
+    transport: z.literal("webpush"),
+    endpoint: HttpsUrlSchema.refine(isWebPushServiceUrl, "Expected a known Web Push service URL"),
+    // RFC 8291: an uncompressed P-256 point (65 bytes, leading 0x04, so "B")
+    // and a 16-byte auth secret, each unpadded base64url.
+    keys: z.object({ p256dh: z.string().regex(/^B[A-Za-z0-9_-]{86}$/u), auth: z.string().regex(/^[A-Za-z0-9_-]{22}$/u) }),
+    appVersion,
+  }),
 ]);
+/** What a browser needs to subscribe: the server's VAPID public key. */
+export const WebPushConfigurationSchema = z.object({ publicKey: z.string().min(80).max(100) });
 export type RegisterPushDeviceRequest = z.infer<typeof RegisterPushDeviceRequestSchema>;
 export const PushDeliveryMessageSchema = z.object({
   region: RegionSchema,

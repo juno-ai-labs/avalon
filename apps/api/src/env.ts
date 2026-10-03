@@ -97,6 +97,12 @@ export interface Env {
   PUSH_DELIVERY_QUEUE?: Queue;
   APNS_AUTH_KEY?: string;
   APNS_KEY_ID?: string;
+  /** Web Push VAPID public key, the base64url 65-byte uncompressed P-256 point. */
+  WEB_PUSH_VAPID_PUBLIC_KEY?: string;
+  /** Web Push VAPID private key, the base64url `d` of the same P-256 key. Secret. */
+  WEB_PUSH_VAPID_PRIVATE_KEY?: string;
+  /** The `sub` claim push services contact about this sender, e.g. `mailto:ops@…`. */
+  WEB_PUSH_SUBJECT?: string;
   CONNECTOR_POLL_WORKFLOW: Workflow;
   CONNECTOR_EVENT_WORKFLOW: Workflow;
   WORK_OPPORTUNITY_WORKFLOW: Workflow;
