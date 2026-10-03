@@ -392,11 +392,14 @@ when it next comes on screen. A whole walk that fails leaves the directory
 query in error, and the sidebar stops waiting on the Spaces it did not reach.
 
 A guest is sent no Spaces, no Channel rows and no automations: the connect
-snapshot's lists are empty, `list_workstreams` answers an empty page, and every
-`workspace_workstream_state` frame to them carries `workstream: null`. Those
-lists follow member rules (every Organization-public Channel, every workspace
-automation), and a guest's rail is the grant-scoped `shared-navigation`
-directory instead.
+snapshot's lists are empty, `list_workstreams` answers an empty page, and no
+`workspace_workstream_state` frame reaches them, not even a tombstone, whose id
+alone would name a Channel. Those lists follow member rules (every
+Organization-public Channel, every workspace automation), and a guest's rail is
+the grant-scoped `shared-navigation` directory instead. For the same reason a
+guest's `set_presence` foreground is dropped (no recency, no presence either
+way, and no close for a Channel this object cannot check), and `channel_rails`
+answers a guest only for a Channel they take part in.
 
 For a member, the sidebar keeps the first page, and the desktop keeps
 `list_workstreams` paging, while an Organization is still opening
@@ -991,8 +994,10 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 ### 2026-10-03 — A guest's workspace socket carries no member directory
 
 **What changed:** WorkspaceDO sends a guest's socket no Channel rows (connect
-snapshot, `list_workstreams` pages, `workspace_workstream_state` frames) and no
-sidebar automations.
+snapshot, `list_workstreams` pages, `workspace_workstream_state` frames,
+tombstones included) and no sidebar automations. A guest's `set_presence`
+foreground is dropped, and `channel_rails` answers a guest only for a Channel
+they take part in.
 
 **Why:** Those lists follow member rules, so a guest received every
 Organization-public Channel's title, description, email address and activity,
@@ -1002,11 +1007,17 @@ how the gap surfaced (security review on #1088).
 
 **Considered and rejected:** Filtering on the client, which leaves the data on
 the wire; and sending guests the Channels they participate in, which the
-shell does not need, since a guest's rail is `shared-navigation`.
+shell does not need, since a guest's rail is `shared-navigation`. Checking a
+guest's foreground against their grants: this object's visibility check
+follows member rules, and a Breakout-only guest's Channel fails it, which
+closed their socket.
 
 **Consequences:** Anything a guest's shell shows about a Channel comes from
-`shared-navigation` or the conversation's own socket. A new list on the
-workspace socket must decide what a guest gets before it ships.
+`shared-navigation`, the conversation's own socket, or a rail for a Channel
+they take part in. A guest's sidebar times and unread marks refresh with
+`shared-navigation` (focus, reach changes) rather than live. Members see no
+workspace-level presence for a guest. A new list or message on the workspace
+socket must decide what a guest gets before it ships.
 
 Shipped in #1088.
 
