@@ -804,6 +804,8 @@ multiplexed socket — each recorded in the PRD.
 handshaken in turn. If the first-frame watch or ticket volume shows strain, the
 cheapest reversal is the navigation-shaped set for browser tabs only.
 
+Shipped in #1080. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
+
 ### 2026-09-26 — The Sidekicks window consumes the relay, and old follow-up shapes are no longer read
 
 **What changed:** The Sidekicks window now consumes the main window's

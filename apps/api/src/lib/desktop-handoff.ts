@@ -40,13 +40,15 @@ export function browserConnectorCompletionUrl(env: Pick<Env, "BROWSER_APP_ORIGIN
 }
 
 export function desktopHandoffUrl(
-  env: Pick<Env, "PUBLIC_WEB_BASE_URL">,
+  env: Pick<Env, "PUBLIC_WEB_BASE_URL" | "BROWSER_APP_ORIGIN">,
   target: string | URL,
 ): string {
-  // A browser target is already a page on the browser host; only a desktop
-  // deep link needs the site's handoff page to open the app.
+  // The browser's completion page is already on the browser host and goes
+  // straight there. Every other target is a desktop deep link, which needs the
+  // site's handoff page to open the app; no other web URL passes through.
   const parsed = new URL(target.toString());
-  if (parsed.protocol === "https:" || parsed.protocol === "http:") return parsed.toString();
+  const completion = browserConnectorCompletionUrl(env);
+  if (completion && `${parsed.origin}${parsed.pathname}` === completion) return parsed.toString();
   const handoff = new URL("/auth/desktop/", env.PUBLIC_WEB_BASE_URL);
   handoff.hash = new URLSearchParams({ target: target.toString() }).toString();
   return handoff.toString();

@@ -34,7 +34,7 @@ General, in a real browser window, and a guest still sees the guest shell.
 - [x] Browser return target for connector OAuth, accepted only under
       `BROWSER_APP_ORIGIN`.
 - [x] Browser `ConnectorSetupCapability`: popup, polling, completion page.
-- [x] `browser-connectable-capabilities` flag provisioned by Ace; other
+- [x] `browser-connectable-capabilities` flag, falling back to the launch set; other
       connectors disabled with "Download the Mac app to connect this."
 
 **Gate:** Gmail and Drive connect from the browser in both scopes.
