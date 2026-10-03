@@ -6050,9 +6050,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // fence the older command before it can restore stale presence.
       const currentAttachment = readAttachment(socket);
       if (!currentAttachment || parsed.data.revision <= currentAttachment.presenceRevision) return;
+      // A guest's foreground is not the workspace's to know: the Channels this
+      // object can check follow member rules, and a guest's own (a shared
+      // Breakout, say) are not among them. Their foreground is dropped, so a
+      // guest records no recency, contributes no presence and is sent none.
+      const foregroundWorkstreamId = currentAttachment.accessClass === "guest" ? null : parsed.data.foregroundWorkstreamId;
       if (!currentAttachment.subscribed
-        || (parsed.data.foregroundWorkstreamId !== null
-          && !this.directoryVisible(currentAttachment.userId, parsed.data.foregroundWorkstreamId))) {
+        || (foregroundWorkstreamId !== null
+          && !this.directoryVisible(currentAttachment.userId, foregroundWorkstreamId))) {
         this.closeSocket(socket, currentAttachment, {
           code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
           reason: "Invalid workspace presence",
@@ -6064,18 +6069,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         return;
       }
       const presenceChanged = currentAttachment.applicationState !== parsed.data.applicationState
-        || currentAttachment.foregroundWorkstreamId !== parsed.data.foregroundWorkstreamId;
+        || currentAttachment.foregroundWorkstreamId !== foregroundWorkstreamId;
       socket.serializeAttachment({
         ...currentAttachment,
         presenceRevision: parsed.data.revision,
         applicationState: parsed.data.applicationState,
-        foregroundWorkstreamId: parsed.data.foregroundWorkstreamId,
+        foregroundWorkstreamId: foregroundWorkstreamId,
       } satisfies WorkspaceSocketAttachment);
       if (presenceChanged) this.broadcastPresence();
       if (presenceChanged && parsed.data.applicationState === "foreground"
-        && parsed.data.foregroundWorkstreamId !== null) {
+        && foregroundWorkstreamId !== null) {
         const now = Date.now();
-        const workstreamId = parsed.data.foregroundWorkstreamId;
+        const workstreamId = foregroundWorkstreamId;
         // Opening a Channel is the moment its Main is about to be read. The
         // Channel control socket used to start this wake; a desktop that no
         // longer opens one says it here instead, ahead of its feed ticket.
@@ -15307,6 +15312,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
+      // A guest is sent no Channel rows, not even a tombstone: its id would
+      // name a Channel the member directory lists and the guest was not shared.
+      if (attachment.accessClass === "guest") continue;
       const accessClass = attachment.accessClass ?? "member";
       const key = `${attachment.userId}:${accessClass}`;
       const person = people.get(key);
