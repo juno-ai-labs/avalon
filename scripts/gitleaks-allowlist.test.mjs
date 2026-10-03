@@ -51,7 +51,8 @@ function allowlistRegexes(source) {
 }
 
 test("the placeholder PEM exception admits only a short alphabetic body", () => {
-  const patterns = allowlistRegexes(config).filter((pattern) => pattern.includes("PRIVATE KEY") && !pattern.includes("exportKey"));
+  // Source templates (`${…}` interpolations) are separate exceptions, tested below.
+  const patterns = allowlistRegexes(config).filter((pattern) => pattern.includes("PRIVATE KEY") && !pattern.includes(String.raw`\$\{`));
   assert.equal(patterns.length, 1);
   const allowlist = new RegExp(patterns[0], "u");
 
@@ -76,6 +77,19 @@ test("the placeholder PEM exception admits only a short alphabetic body", () => 
   // enough to fit the ceiling passes, because at 39 characters and no digits it
   // carries no key material — it is a header fragment, not a key.
   assert.match(String.raw`-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----`, allowlist);
+});
+
+test("the generated-key template exception admits only the interpolation source", () => {
+  const patterns = allowlistRegexes(config).filter((pattern) => pattern.includes("PRIVATE KEY") && pattern.includes("pkcs8\\}"));
+  assert.equal(patterns.length, 1);
+  const allowlist = new RegExp(patterns[0], "u");
+  // Built from parts so this file does not itself read as a key to Gitleaks.
+  const pem = (body) => ["-----BEGIN PRIVATE", " KEY-----\\n", body, "\\n-----END PRIVATE KEY-----"].join("");
+  // The source line a test writes around a key it generates at run time.
+  assert.match(pem("${" + "pkcs8}"), allowlist);
+  // Never the key itself, once interpolated.
+  assert.doesNotMatch(pem(`${"MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ".repeat(4)}0+/=`), allowlist);
+  assert.doesNotMatch(pem("pkcs8"), allowlist);
 });
 
 test("the Access audience exception admits exactly one reviewed identifier", () => {

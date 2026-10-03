@@ -59,10 +59,11 @@ import { ThemePicker } from '../components/theme-picker';
 import { DigestSettings } from '../components/digest-settings';
 import { useAppSession } from '../lib/app-session';
 import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
-import { ApiError } from '../lib/api';
+import { ApiError, type RallyApi } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { desktopBridge } from '../lib/platform';
 import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOAD_URL, useConnectorStartAvailable } from '../lib/browser-connectors';
+import { disableWebPush, enableWebPush, webPushState } from '../lib/web-push';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useEscapeClosesWindow } from '../lib/window-escape';
 import type {
@@ -123,6 +124,35 @@ const installedConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   'generic_webhook',
   'x',
 ]);
+
+/** Settings → Notifications in a browser tab: this browser's Web Push subscription. */
+function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Element {
+  const queryClient = useQueryClient();
+  const state = useQuery({ queryKey: ['web-push-state'], queryFn: () => webPushState(api), staleTime: 0 });
+  const update = useMutation({
+    mutationFn: (enabled: boolean) => enabled ? enableWebPush(api) : disableWebPush(api),
+    onSuccess: (next) => queryClient.setQueryData(['web-push-state'], next),
+  });
+  const current = state.data;
+  return (
+    <section className="settings-pane">
+      <div className="settings-pane-heading"><h2>In this browser</h2></div>
+      <div className="settings-list-card">
+        <SettingToggle setting={settings.pushNotifications}
+          checked={current === 'on'}
+          disabled={!current || current === 'unsupported' || current === 'unavailable' || current === 'denied' || update.isPending}
+          onChange={(event) => update.mutate(event.currentTarget.checked)}
+          role="switch" />
+      </div>
+      {current === 'unsupported' && <p className="settings-section-copy">This browser cannot show Rally notifications.</p>}
+      {current === 'unavailable' && <p className="settings-section-copy">Browser notifications are not available yet.</p>}
+      {current === 'denied' && <p className="settings-section-copy">Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on.</p>}
+      {state.error && <InlineError>{state.error.message}</InlineError>}
+      {/* A browser's own subscribe() error names its internals, not anything the member can act on. */}
+      {update.error && <InlineError>{update.error instanceof ApiError ? update.error.message : 'Rally could not change notifications in this browser. Try again.'}</InlineError>}
+    </section>
+  );
+}
 
 function ConnectorButton({
   label,
@@ -1286,7 +1316,10 @@ export function WorkspaceSettingsScreen({
               </section>
             )}
 
-            {activeSection === 'notifications' && featureFlags.data?.pushNotificationsEnabled && (
+            {activeSection === 'notifications' && featureFlags.data?.pushNotificationsEnabled && browserHost && api && (
+              <BrowserNotificationsSetting api={api} />
+            )}
+            {activeSection === 'notifications' && featureFlags.data?.pushNotificationsEnabled && !browserHost && (
               <section className="settings-pane">
                 <div className="settings-pane-heading"><h2>On this Mac</h2></div>
                 <SettingToggle setting={settings.pushNotifications}

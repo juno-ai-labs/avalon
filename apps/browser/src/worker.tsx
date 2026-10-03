@@ -36,6 +36,15 @@ export default {
       return response;
     }
     if (url.pathname.startsWith("/assets/")) return env.ASSETS.fetch(request);
+    if (url.pathname === "/sw.js") {
+      // The push service worker, served from the root so its scope covers /app/.
+      // Revalidated on every check so a deploy reaches open browsers.
+      const worker = await env.ASSETS.fetch(request);
+      const response = new Response(worker.body, worker);
+      response.headers.set("Cache-Control", "no-cache");
+      response.headers.set("X-Content-Type-Options", "nosniff");
+      return response;
+    }
     if (!["GET", "HEAD"].includes(request.method)) return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     if (!(url.pathname === "/" || url.pathname === "/login/email" || url.pathname === "/invite" || url.pathname === "/connections/complete" || url.pathname.startsWith("/app/"))) return unavailable();
     const index = new URL("/index.html", url.origin);
@@ -48,7 +57,7 @@ export default {
     const socketOrigin = `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}`;
     // Shared dialogs inject scroll-lock CSS and components use dynamic styles,
     // matching the desktop renderer's style policy. Scripts remain self-only.
-    response.headers.set("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ${socketOrigin}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
+    response.headers.set("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ${socketOrigin}; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
     return response;
   },
 } satisfies ExportedHandler<Cloudflare.Env>;

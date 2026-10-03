@@ -17,6 +17,15 @@ it("serves the private SPA shell with built assets and no setup", async () => {
   expect(script.headers.get("content-type")).toContain("javascript");
 });
 
+it("serves the push service worker from the root and lets the shell register it", async () => {
+  const worker = await exports.default.fetch("https://browser.example.test/sw.js");
+  expect(worker.status).toBe(200);
+  expect(worker.headers.get("content-type")).toContain("javascript");
+  expect(worker.headers.get("cache-control")).toBe("no-cache");
+  const shell = await exports.default.fetch("https://browser.example.test/");
+  expect(shell.headers.get("content-security-policy")).toContain("worker-src 'self'");
+});
+
 it("serves the shell for the page a connector authorization returns to, and nothing beside it", async () => {
   const complete = await exports.default.fetch("https://browser.example.test/connections/complete?status=connected&provider=google");
   expect(complete.status).toBe(200);
