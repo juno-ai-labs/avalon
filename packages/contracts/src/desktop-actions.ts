@@ -36,7 +36,50 @@ export const SESSION_IMPORT_FAILURE_REASONS = [
 export const SessionImportFailureReasonSchema = z.enum(SESSION_IMPORT_FAILURE_REASONS);
 export type SessionImportFailureReason = z.infer<typeof SessionImportFailureReasonSchema>;
 
+/** Model-reported observations, not an independent browser attestation. */
+export const SessionImportVerificationSchema = z.strictObject({
+  branch: z.strictObject({
+    complete: z.literal(true).describe("The selected history reaches its established beginning, without missing ancestors or unresolved pagination."),
+    basis: z.string().trim().min(1).describe("How you established selection and completeness from the current source; do not assume an array is linear."),
+  }),
+  page: z.strictObject({
+    messageCount: z.number().int().positive().describe("Messages accounted for by the rendered conversation, after resolving any grouping of source messages into turns."),
+    firstSourceMessageId: z.string().min(1),
+    lastSourceMessageId: z.string().min(1),
+    sampledSourceMessageIds: z.array(z.string().min(1)).min(1).describe("Assistant messages whose entire content was compared against the page and confirmed represented, including a long or structured reply when present. Opening-prefix matches alone do not qualify."),
+    basis: z.string().trim().min(1).describe("What you observed on the page, including lazy loading, grouped turns, and expansions when relevant. Counts copied from the extraction are not page observations."),
+  }),
+  fileCount: z.number().int().nonnegative().describe("Files and documents observed on the selected history, counted once, including explicitly unavailable ones."),
+});
+export type SessionImportVerification = z.infer<typeof SessionImportVerificationSchema>;
+
+/** Check the report against the payload before any import write. */
+export function verifySessionImport(
+  messages: readonly { role: string; sourceMessageId?: string; files?: readonly unknown[] }[],
+  verification: SessionImportVerification,
+): void {
+  if (verification.page.messageCount !== messages.length) {
+    throw new Error('verification.page.messageCount does not match the stored messages. Resolve missing messages or explain and account for grouped turns before finishing.');
+  }
+  if (verification.page.firstSourceMessageId !== messages[0]?.sourceMessageId) {
+    throw new Error('verification.page.firstSourceMessageId does not match the first stored message. Recheck the selected beginning.');
+  }
+  if (verification.page.lastSourceMessageId !== messages.at(-1)?.sourceMessageId) {
+    throw new Error('verification.page.lastSourceMessageId does not match the last stored message. Recheck the selected ending.');
+  }
+  const samples = verification.page.sampledSourceMessageIds;
+  if (new Set(samples).size !== samples.length || samples.some((id) => !messages.some((message) => message.sourceMessageId === id && message.role === 'assistant'))) {
+    throw new Error('verification.page.sampledSourceMessageIds must name distinct stored assistant replies actually compared with the page.');
+  }
+  if (verification.fileCount !== messages.reduce((count, message) => count + (message.files?.length ?? 0), 0)) {
+    throw new Error('verification.fileCount does not match the stored files, including unavailable files. Resolve missing or duplicated files before finishing.');
+  }
+}
+
 export const DesktopActionSchema = z.discriminatedUnion("kind", [
+  /** Persistent, isolated browser orchestration. Page evaluation is a separate operation. */
+  z.strictObject({ kind: z.literal("browser.script"), code: z.string().min(1), title: z.string().optional() }),
+  z.strictObject({ kind: z.literal("browser.script_reset") }),
   /** An async function body run in the page, with the `rally` helper in scope. */
   z.strictObject({ kind: z.literal("browser.evaluate"), script: z.string().min(1) }),
   z.strictObject({ kind: z.literal("browser.snapshot") }),
@@ -80,7 +123,7 @@ export const DesktopActionSchema = z.discriminatedUnion("kind", [
     length: z.number().int().positive().optional(),
   }),
   /** Hand the conversation the agent assembled to the desktop that started the import. */
-  z.strictObject({ kind: z.literal("session_import.finish"), title: z.string().min(1), messages: z.string().min(1) }),
+  z.strictObject({ kind: z.literal("session_import.finish"), title: z.string().min(1), messages: z.string().min(1), verification: SessionImportVerificationSchema }),
   z.strictObject({ kind: z.literal("session_import.fail"), reason: SessionImportFailureReasonSchema }),
 ]);
 export type DesktopAction = z.infer<typeof DesktopActionSchema>;
@@ -90,6 +133,11 @@ const PageSchema = z.strictObject({ url: z.string(), title: z.string() });
 
 /** One result shape per action kind; the server parses it against the kind it asked for. */
 export const DesktopActionResultSchemas = {
+  "browser.script": z.strictObject({ output: z.array(z.union([
+    z.strictObject({ type: z.literal("text"), text: z.string() }),
+    z.strictObject({ type: z.literal("image"), mimeType: z.literal("image/jpeg"), data: z.string().min(1), width: z.number().int().positive(), height: z.number().int().positive() }),
+  ])), error: z.string().optional() }),
+  "browser.script_reset": z.strictObject({}),
   "browser.evaluate": PageSchema.extend({ value: z.unknown(), stored: z.array(StoredRefSchema) }),
   "browser.snapshot": PageSchema.extend({ outline: z.string() }),
   "browser.screenshot": PageSchema.extend({

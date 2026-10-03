@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizePageText } from './page-text';
 import { MAX_STORED_FILE_BYTES } from './store';
 
 const PageStoredSchema = z.object({
@@ -42,6 +43,7 @@ export function pageScript(body: string): string {
   return `(async () => {
     const maxFileBytes = ${MAX_STORED_FILE_BYTES};
     const pending = [];
+    const stores = [];
     let sequence = 0;
     class RallyStoreError extends Error {}
     const base64 = (blob) => new Promise((resolve, reject) => {
@@ -51,35 +53,50 @@ export function pageScript(body: string): string {
       reader.readAsDataURL(blob);
     });
     const rally = Object.freeze({
-      async store(value, options = {}) {
-        const name = typeof options.name === 'string' && options.name ? options.name : 'file';
-        const handle = 'h' + Date.now().toString(36) + '-' + (sequence += 1).toString(36) + '-' + Math.random().toString(36).slice(2, 8);
-        if (value instanceof Response) {
-          const declared = Number(value.headers.get('content-length'));
-          if (declared > maxFileBytes) throw new RallyStoreError(name + ' is larger than the ' + maxFileBytes + '-byte file limit.');
-          value = await value.blob();
+      normalizeText: ${normalizePageText.toString()},
+      store(value, options = {}) {
+        const operation = (async () => {
+          const name = typeof options.name === 'string' && options.name ? options.name : 'file';
+          const handle = 'h' + Date.now().toString(36) + '-' + (sequence += 1).toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+          if (value instanceof Response) {
+            const declared = Number(value.headers.get('content-length'));
+            if (declared > maxFileBytes) throw new RallyStoreError(name + ' is larger than the ' + maxFileBytes + '-byte file limit.');
+            value = await value.blob();
+          }
+          if (typeof value === 'string' && typeof options.mimeType === 'string' && options.mimeType !== 'application/json') {
+            value = new Blob([value], { type: options.mimeType });
+          }
+          if (value instanceof Blob) {
+            if (value.size > maxFileBytes) throw new RallyStoreError(name + ' is larger than the ' + maxFileBytes + '-byte file limit.');
+            const mimeType = typeof options.mimeType === 'string' && options.mimeType ? options.mimeType : value.type || 'application/octet-stream';
+            pending.push({ handle, kind: 'file', name, mimeType, size: value.size, data: await base64(value) });
+            return { handle, kind: 'file', name, mimeType, size: value.size };
+          }
+          const data = JSON.stringify(value === undefined ? null : value);
+          // Stored JSON crosses the same IPC and sits in the same store as a file, so it has the same limit, in UTF-8 bytes.
+          const size = new TextEncoder().encode(data).byteLength;
+          if (size > maxFileBytes) throw new RallyStoreError(name + ' is larger than the ' + maxFileBytes + '-byte file limit.');
+          pending.push({ handle, kind: 'json', name, mimeType: 'application/json', size, data });
+          return { handle, kind: 'json', name, mimeType: 'application/json', size };
+        })();
+        // Observe every store immediately, and drain it before serializing an
+        // answer. An unawaited Blob must not outlive the call that owns its bytes.
+        stores.push(operation.then(() => ({ ok: true }), error => ({ ok: false, error })));
+        const unawaited = () => { throw new Error('rally.store is asynchronous. Use await rally.store(...) before reading or returning its reference.'); };
+        for (const field of ['handle', 'kind', 'name', 'mimeType', 'size']) {
+          Object.defineProperty(operation, field, { get: unawaited });
         }
-        if (typeof value === 'string' && typeof options.mimeType === 'string' && options.mimeType !== 'application/json') {
-          value = new Blob([value], { type: options.mimeType });
-        }
-        if (value instanceof Blob) {
-          if (value.size > maxFileBytes) throw new RallyStoreError(name + ' is larger than the ' + maxFileBytes + '-byte file limit.');
-          const mimeType = typeof options.mimeType === 'string' && options.mimeType ? options.mimeType : value.type || 'application/octet-stream';
-          pending.push({ handle, kind: 'file', name, mimeType, size: value.size, data: await base64(value) });
-          return { handle, kind: 'file', name, mimeType, size: value.size };
-        }
-        const data = JSON.stringify(value === undefined ? null : value);
-        // Stored JSON crosses the same IPC and sits in the same store as a file, so it has the same limit, in UTF-8 bytes.
-        const size = new TextEncoder().encode(data).byteLength;
-        if (size > maxFileBytes) throw new RallyStoreError(name + ' is larger than the ' + maxFileBytes + '-byte file limit.');
-        pending.push({ handle, kind: 'json', name, mimeType: 'application/json', size, data });
-        return { handle, kind: 'json', name, mimeType: 'application/json', size };
+        Object.defineProperty(operation, 'toJSON', { value: unawaited });
+        return operation;
       },
     });
     try {
       const value = await (async (rally) => {
 ${body}
       })(rally);
+      const failures = await Promise.all(stores);
+      const failure = failures.find(result => !result.ok);
+      if (failure) throw failure.error;
       let serialized;
       try {
         serialized = JSON.stringify(value === undefined ? null : value);
@@ -93,6 +110,8 @@ ${body}
         code: error instanceof RallyStoreError ? 'file_too_large' : 'script_error',
         message: String(error && (error.stack || error.message) || error),
       };
+    } finally {
+      await Promise.all(stores);
     }
   })()`;
 }

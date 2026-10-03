@@ -37,7 +37,7 @@ describe("structured inference telemetry lifecycle", () => {
       }),
     }), {
       role: "workstream_naming",
-      routing: { model: "test/model", fallbackModels: [] },
+      routing: { model: "test/model", fallbackModels: [], reasoningEffort: "medium" },
       context: { workspaceId: "workspace-1" },
       messages: [{ role: "user", content: "Return the decision" }],
       schemaName: "deferral_test",
@@ -62,6 +62,8 @@ describe("structured inference telemetry lifecycle", () => {
       await vi.waitFor(() => expect(put).toHaveBeenCalled());
       await vi.waitFor(() => expect(inferenceSettled).toBe(true));
       expect(deferred.length).toBeGreaterThanOrEqual(2);
+      const request = fetcher.mock.calls[0] as unknown as [RequestInfo, RequestInit];
+      expect(JSON.parse(String(request[1].body)).reasoning).toEqual({ effort: "medium" });
 
       let archiveSettled = false;
       void Promise.all(deferred).then(() => { archiveSettled = true; });

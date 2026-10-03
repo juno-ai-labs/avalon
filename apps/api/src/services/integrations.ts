@@ -3342,6 +3342,7 @@ export async function runWorkstreamHarness(
         apiKey: seedProvider ? env.OPENROUTER_API_KEY || DEMO_SEED_PROVIDER_KEY : env.OPENROUTER_API_KEY,
         primaryModel: seedRoute ? seedRoute.model : modelRouting.model,
         fallbackModels: seedRoute ? seedRoute.fallbackModels : modelRouting.fallbackModels,
+        ...(!seedRoute && modelRouting.reasoningEffort ? { reasoningEffort: modelRouting.reasoningEffort } : {}),
         appName: "Rally",
         ...(seedRoute ? {} : azureInferenceConfig(env)),
         ...runLimits,
@@ -8645,6 +8646,7 @@ async function loadToolInvocation(
     toolName: receipt.toolName,
     activityName: toolActivityName({
       toolName: receipt.toolName,
+      arguments: parseJson(receipt.inputJson, {}),
       // `ambiguous` keeps settled wording on purpose: the write may well have
       // landed, and the row carries its own "could not confirm" warning. Only a
       // definite failure gets failure prose.

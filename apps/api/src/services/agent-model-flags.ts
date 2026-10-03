@@ -1,3 +1,4 @@
+import { describeZodIssues, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_ROLES,
@@ -172,10 +173,8 @@ async function resolveAgentModelRoutingForSubject(
       flag_key: flagKey,
       workspace_id: context.workspaceId,
       variant: details.variant,
-      validation_issues: parsed.error.issues.map((issue) => ({
-        path: issue.path.join(".") || "(root)",
-        code: issue.code,
-      })),
+      validation_issues: describeZodIssues(parsed.error),
+      error_code: zodDiagnosticCode(parsed.error, "agent_model_flag"),
       model: fallback.model,
     });
     return fallback;
@@ -196,7 +195,7 @@ async function resolveAgentModelRoutingForSubject(
     attributes: Object.keys(attributes).sort().join(","),
     model: parsed.data.model,
   });
-  return { model: parsed.data.model, fallbackModels: parsed.data.fallbackModels };
+  return parsed.data;
 }
 
 /**

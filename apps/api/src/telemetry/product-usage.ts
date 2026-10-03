@@ -66,6 +66,11 @@ export function resourceTelemetryEventId(resourceId: string, namespace: number):
   return `${normalized.slice(0, -1)}${final.toString(16)}`;
 }
 
+/** Deterministic import runs are UUIDv8; telemetry context requires UUIDv7. */
+export function runTelemetryOperationId(runId: string): string {
+  return runId[14] === '7' ? runId : resourceTelemetryEventId(runId, 15);
+}
+
 interface ProductTelemetryInput<TName extends TelemetryEventName> {
   workspaceId: WorkspaceId;
   userId?: UserId;

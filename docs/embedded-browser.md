@@ -181,7 +181,24 @@ WebAuthn being off has no unit test, since a mocked `WebContentsView` cannot
 show whether Electron honors the flag. On macOS or Linux, evaluate
 `typeof PublicKeyCredential` in a guest tab and expect `'undefined'`.
 
+The model-facing orchestration realm and its handles are owned by
+[browser script runtime](browser-script-runtime.md). This browser owns the
+run-to-realm map and disposes associated realms when tabs or the browser close.
+
 ## Changelog
+
+### 2026-10-02 — Own disposable browser script realms beside pinned tabs
+
+**What changed:** The native browser maps executor-owned runtime IDs to one pinned
+tab and disposes those isolated realms on reset, tab close or browser teardown.
+
+**Why:** Models need persistent orchestration handles without moving execution
+into Rally's authenticated renderer or losing bindings when a provider page
+navigates. Tab ownership belongs here; the API cannot select another native tab.
+
+**Consequences:** Keep native tab and runtime lifetimes linked. The model-facing
+subset and realm internals live in [browser script runtime](browser-script-runtime.md),
+while this module continues to own signed-in tabs, input and recorded responses.
 
 ### 2026-10-01 — Turn WebAuthn off in visited pages on macOS and Linux
 

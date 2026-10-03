@@ -742,8 +742,10 @@ Inference defaults that belong to a model rather than to one task live in the
 harness's canonical-model defaults registry. Models absent from that registry
 send no reasoning control and therefore retain the provider default. Omission
 accepts the registry setting when present; an explicit task/run effort,
-including structured inference's `none`, overrides it. `x-ai/grok-4.6` and
-`google/gemini-3.8-flash` currently default to `low` everywhere: routed
+including structured inference's `none`, overrides it. Model flags may carry
+`reasoningEffort` (`low`, `medium`, or `high`) for the entire route, taking
+precedence over the registry but below explicit task settings. `x-ai/grok-4.6` and
+`google/gemini-3.8-flash`, and `openai/gpt-6.1-sol` currently default to `low` everywhere: routed
 work-stream turns and direct structured or streaming OpenRouter calls all
 resolve the setting after the actual primary or fallback model is selected.
 Tool-bearing Chat Completions requests also opt in to parallel tool calls on
@@ -1436,6 +1438,17 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-02 — Sol low is the default primary model
+
+The checked-in Global Worker and development environment now select
+`openai/gpt-6.1-sol`; the canonical model registry gives Sol low reasoning
+unless a caller explicitly overrides it. The same local conversation imported
+correctly in 68.8 seconds at a reported $0.145 with low reasoning, compared
+with 158.6 seconds and $0.357 at the provider default. These individual trials
+motivated the reversible default change; they are not a general benchmark.
+Existing Flagship targeting can override the primary model, and explicit
+reasoning settings continue to override the registry.
 
 ### 2026-10-01 — A conversation can be provisioned to do one fixed job
 

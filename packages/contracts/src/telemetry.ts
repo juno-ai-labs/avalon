@@ -397,6 +397,31 @@ export const TELEMETRY_EVENTS = {
     priority: "normal",
     regionalRetention: "90-days",
   }),
+  desktop_action_phase: event({
+    ...common,
+    name: "desktop_action_phase",
+    definition: "A content-free desktop phase of one durable action requested by an agent.",
+    productQuestion: "Did a slow desktop action reach the renderer, wait in its queue, execute in the browser, or wait to send its answer?",
+    sources: ["desktop-renderer"],
+    authoritativeSource: "desktop-renderer",
+    category: "diagnostic",
+    identityScopes: ["workspace-user"],
+    properties: deferredZodSchema(() => z.strictObject({
+      actionId: uuidV7Id,
+      phase: z.enum([
+        "received", "reoffered", "execution_started", "browser_state_requested", "browser_state_received",
+        "browser_command_requested", "browser_command_completed", "execution_completed", "execution_failed",
+        "answer_sent", "answer_deferred", "run_ended",
+      ]),
+      elapsedMs: z.number().int().nonnegative(),
+      windowVisible: z.boolean(),
+    })),
+    propertyClassifications: {
+      actionId: "operational", phase: "diagnostic", elapsedMs: "diagnostic", windowVisible: "operational",
+    },
+    priority: "normal",
+    regionalRetention: "90-days",
+  }),
   workspace_socket_handshake: event({
     ...common,
     name: "workspace_socket_handshake",

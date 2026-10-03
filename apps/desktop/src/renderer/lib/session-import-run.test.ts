@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { assemblePreview, startSessionImportRun, type SessionImportApi, type SessionImportStep } from './session-import-run';
-import { DesktopActionStore } from './desktop-actions/store';
+import { DesktopActionStore } from '../../common/desktop-actions/store';
+import type { RallyDesktopBridge } from '../../common/desktop';
+
+const actionPhases = vi.hoisted(() => [] as Array<{ actionId: string; phase: string; elapsedMs: number }>);
+// The main-owned telemetry transport cannot run in jsdom; execution is real.
+vi.mock('./telemetry', () => ({ reportTelemetryProductIntent: (intent: { actionId: string; phase: string; elapsedMs: number }) => actionPhases.push(intent) }));
 
 /** One fake feed socket per run: records what this window sent and when it closed. */
 const sockets = vi.hoisted(() => [] as Array<{ log: string[]; sent: unknown[]; dropNextSend: boolean; emit(type: string, data?: string): void }>);
@@ -45,6 +50,12 @@ function invocation(fields: Record<string, unknown>) {
   };
 }
 
+const verification = {
+  branch: { complete: true as const, basis: 'Selected leaf reaches the root.' },
+  page: { messageCount: 2, firstSourceMessageId: 'm0', lastSourceMessageId: 'm1', sampledSourceMessageIds: ['m1'], basis: 'Both rendered turns compared.' },
+  fileCount: 0,
+};
+
 const source = { provider: 'claude' as const, url: 'https://claude.ai/chat/4f2b7c1e-9a3d-4e8b-b1c2-0d9e8f7a6b5c', sessionId: '4f2b7c1e-9a3d-4e8b-b1c2-0d9e8f7a6b5c' };
 
 function stored(messages: unknown) {
@@ -87,7 +98,12 @@ describe('assembling an import from what the agent stored', () => {
 describe('running an import', () => {
   function started(
     onSteps?: (steps: readonly SessionImportStep[]) => void,
-    options: { reservation?: Promise<{ workstreamId: string; substreamId: string }>; onStarted?: (run: { workstreamId: string; substreamId: string }) => void } = {},
+    options: {
+      reservation?: Promise<{ workstreamId: string; substreamId: string }>;
+      onStarted?: (run: { workstreamId: string; substreamId: string }) => void;
+      bridge?: Pick<RallyDesktopBridge, 'getEmbeddedBrowserState' | 'commandEmbeddedBrowser'>;
+      completeSessionImport?: SessionImportApi['completeSessionImport'];
+    } = {},
   ) {
     const discards: string[] = [];
     const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
@@ -96,11 +112,11 @@ describe('running an import', () => {
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
       discardSessionImport: async (workstreamId: string) => { discards.push(workstreamId); },
       startSessionImportUpdate: unused,
-      completeSessionImport: unused,
+      completeSessionImport: options.completeSessionImport ?? unused,
       updateImportedSession: unused,
       importedSessionSource: unused,
     } satisfies SessionImportApi;
-    const bridge = { getEmbeddedBrowserState: async () => ({ tabs: [] }), commandEmbeddedBrowser: async () => undefined } as never;
+    const bridge = options.bridge ?? { getEmbeddedBrowserState: async () => ({ tabs: [] }), commandEmbeddedBrowser: async () => undefined } as never;
     const run = startSessionImportRun({
       api, bridge, tabId: 't1', sourceUrl: source.url,
       mode: { kind: 'create', title: 'Garden plan', spaceIds: [], clientMessageId: 'c1' },
@@ -110,25 +126,92 @@ describe('running an import', () => {
     return { run, discards };
   }
 
+  it('ends a failed run while its browser command is blocked, skips queued work, and traces the boundary', async () => {
+    sockets.length = 0;
+    actionPhases.length = 0;
+    const entered = Promise.withResolvers<void>();
+    const command = Promise.withResolvers<Awaited<ReturnType<RallyDesktopBridge['commandEmbeddedBrowser']>>>();
+    const bridge = {
+      getEmbeddedBrowserState: async () => ({ activeTabId: 't1', tabs: [{
+        id: 't1', url: source.url, title: 'Chat', loading: false, canGoBack: false, canGoForward: false, favicon: null,
+      }] }),
+      commandEmbeddedBrowser: async () => { entered.resolve(); return await command.promise; },
+    } satisfies Pick<RallyDesktopBridge, 'getEmbeddedBrowserState' | 'commandEmbeddedBrowser'>;
+    const { run, discards } = started(undefined, { bridge });
+    await vi.waitFor(() => expect(sockets).toHaveLength(1), { timeout: 5_000 });
+    const socket = sockets[0]!;
+    socket.emit('open');
+    socket.emit('message', wire('harness_status_changed', { status: 'running' }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a0', action: { kind: 'browser.evaluate', script: 'return 1' } } }));
+    await entered.promise;
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.fail', reason: 'unreadable' } } }));
+    const ended = vi.fn();
+    void run.done.then(ended);
+    socket.emit('message', wire('harness_status_changed', { status: 'failed' }));
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledWith({ kind: 'unfinished' }), { timeout: 5_000 });
+    expect(socket.log).toEqual(['send subscribe', 'close']);
+    expect(discards).toEqual(['w1']);
+    expect(actionPhases.filter(p => p.actionId === 'a0').map(p => p.phase)).toEqual([
+      'received', 'execution_started', 'browser_state_requested', 'browser_state_received', 'browser_command_requested', 'run_ended',
+    ]);
+    command.resolve({ kind: 'value', value: { ok: true, value: 1, stored: [], url: source.url, title: 'Chat' } });
+    await vi.waitFor(() => expect(actionPhases.some(p => p.actionId === 'a0' && p.phase === 'execution_completed')).toBe(true), { timeout: 5_000 });
+    expect(socket.log).toEqual(['send subscribe', 'close']);
+    expect(actionPhases.filter(p => p.actionId === 'a1').map(p => p.phase)).toEqual(['received', 'run_ended']);
+  });
+
+  it('waits only for an import commit already in flight when the server run ends', async () => {
+    sockets.length = 0;
+    const entered = Promise.withResolvers<void>();
+    const commit = Promise.withResolvers<string>();
+    const data = JSON.stringify([{ role: 'assistant', text: 'Ready.', sourceMessageId: 'm1' }]);
+    const bridge = {
+      getEmbeddedBrowserState: async () => ({ activeTabId: 't1', tabs: [{
+        id: 't1', url: source.url, title: 'Chat', loading: false, canGoBack: false, canGoForward: false, favicon: null,
+      }] }),
+      commandEmbeddedBrowser: async () => ({ kind: 'value' as const, value: { ok: true, value: null, url: source.url, title: 'Chat', stored: [
+        { handle: 'messages', kind: 'json', name: 'messages', mimeType: 'application/json', size: data.length, data },
+      ] } }),
+    } satisfies Pick<RallyDesktopBridge, 'getEmbeddedBrowserState' | 'commandEmbeddedBrowser'>;
+    const { run, discards } = started(undefined, { bridge, completeSessionImport: async () => { entered.resolve(); return await commit.promise; } });
+    await vi.waitFor(() => expect(sockets).toHaveLength(1), { timeout: 5_000 });
+    const socket = sockets[0]!;
+    socket.emit('open');
+    socket.emit('message', wire('harness_status_changed', { status: 'running' }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a0', action: { kind: 'browser.evaluate', script: 'return 1' } } }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.finish', title: 'Chat', messages: 'messages', verification: { ...verification, page: { ...verification.page, messageCount: 1, firstSourceMessageId: 'm1' } } } } }));
+    await entered.promise;
+    const ended = vi.fn();
+    void run.done.then(ended);
+    socket.emit('message', wire('harness_status_changed', { status: 'failed' }));
+    await Promise.resolve();
+    expect(ended).not.toHaveBeenCalled();
+    expect(discards).toEqual([]);
+    commit.resolve('w1');
+    await expect(run.done).resolves.toEqual({ kind: 'imported', workstreamId: 'w1' });
+    expect(discards).toEqual([]);
+    expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action', 'send answer_desktop_action', 'close']);
+  });
+
   it('answers the agent’s fail before closing its socket, and discards the Channel that will not open', async () => {
     sockets.length = 0;
     const { run, discards } = started();
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    await vi.waitFor(() => expect(sockets).toHaveLength(1), { timeout: 5_000 });
     const socket = sockets[0]!;
     socket.emit('open');
     socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.fail', reason: 'page_unavailable' } } }));
-    await vi.waitFor(() => expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action']));
+    await vi.waitFor(() => expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action']), { timeout: 5_000 });
     // The room has the answer once the tool completes; only then does the run end.
     socket.emit('message', wire('tool_completed', { invocation: invocation({ toolCallId: 'c9', toolName: 'import_fail', status: 'completed' }) }));
     await expect(run.done).resolves.toEqual({ kind: 'failed', reason: 'page_unavailable' });
     expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action', 'close']);
-    await vi.waitFor(() => expect(discards).toEqual(['w1']));
+    await vi.waitFor(() => expect(discards).toEqual(['w1']), { timeout: 5_000 });
   });
 
   it('answers a re-offered action again when its first answer never reached the room', async () => {
     sockets.length = 0;
     const { run } = started();
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    await vi.waitFor(() => expect(sockets).toHaveLength(1), { timeout: 5_000 });
     const socket = sockets[0]!;
     socket.emit('open');
     const request = wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.fail', reason: 'page_unavailable' } } });
@@ -138,7 +221,7 @@ describe('running an import', () => {
     expect(socket.log).toEqual(['send subscribe']);
     // The room never got it, so it offers the action again; the same answer goes.
     socket.emit('message', request);
-    await vi.waitFor(() => expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action']));
+    await vi.waitFor(() => expect(socket.log).toEqual(['send subscribe', 'send answer_desktop_action']), { timeout: 5_000 });
     socket.emit('message', wire('tool_completed', { invocation: invocation({ toolCallId: 'c9', toolName: 'import_fail', status: 'completed' }) }));
     await expect(run.done).resolves.toEqual({ kind: 'failed', reason: 'page_unavailable' });
   });
@@ -147,7 +230,7 @@ describe('running an import', () => {
     sockets.length = 0;
     const reported: Array<readonly SessionImportStep[]> = [];
     const { run } = started((steps) => reported.push(steps));
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    await vi.waitFor(() => expect(sockets).toHaveLength(1), { timeout: 5_000 });
     const socket = sockets[0]!;
     socket.emit('open');
     const frame = (type: string, fields: Record<string, unknown>) => socket.emit('message', wire(type, { invocation: invocation(fields) }));
@@ -168,7 +251,7 @@ describe('running an import', () => {
   it('ends a run that stops without importing as unfinished, even with no steps, but not on the idle status it opens on', async () => {
     sockets.length = 0;
     const { run, discards } = started();
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    await vi.waitFor(() => expect(sockets).toHaveLength(1), { timeout: 5_000 });
     const socket = sockets[0]!;
     socket.emit('open');
     const status = (value: string) => socket.emit('message', wire('harness_status_changed', { status: value }));
@@ -178,13 +261,13 @@ describe('running an import', () => {
     status('running');
     status('completed');
     await expect(run.done).resolves.toEqual({ kind: 'unfinished' });
-    await vi.waitFor(() => expect(discards).toEqual(['w1']));
+    await vi.waitFor(() => expect(discards).toEqual(['w1']), { timeout: 5_000 });
   });
 
   it('ends a cancelled import as cancelled, after discarding its Channel', async () => {
     sockets.length = 0;
     const { run, discards } = started();
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    await vi.waitFor(() => expect(sockets).toHaveLength(1), { timeout: 5_000 });
     await run.cancel();
     await expect(run.done).resolves.toEqual({ kind: 'cancelled' });
     expect(discards).toEqual(['w1']);
@@ -201,7 +284,7 @@ describe('running an import', () => {
     await run.cancel();
     await expect(run.done).resolves.toEqual({ kind: 'cancelled' });
     reserve({ workstreamId: 'w1', substreamId: 's1' });
-    await vi.waitFor(() => expect(discards).toEqual(['w1']));
+    await vi.waitFor(() => expect(discards).toEqual(['w1']), { timeout: 5_000 });
     expect(reported).toEqual([]);
     expect(sockets).toHaveLength(0);
   });
@@ -241,14 +324,14 @@ describe('running an import', () => {
       api, bridge, tabId: 't1', sourceUrl: source.url,
       mode: { kind: 'create', title: 'Garden plan', spaceIds: [], clientMessageId: 'c1' },
     });
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    await vi.waitFor(() => expect(sockets).toHaveLength(1), { timeout: 5_000 });
     const socket = sockets[0]!;
     socket.emit('open');
     socket.emit('message', wire('desktop_action_requested', { request: { id: 'a0', action: { kind: 'browser.evaluate', script: 'return 1' } } }));
-    await vi.waitFor(() => expect(socket.log).toContain('send answer_desktop_action'));
-    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.finish', title: 'Garden plan', messages: 'messages' } } }));
+    await vi.waitFor(() => expect(socket.log).toContain('send answer_desktop_action'), { timeout: 5_000 });
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.finish', title: 'Garden plan', messages: 'messages', verification } } }));
     socket.emit('message', wire('desktop_action_requested', { request: { id: 'a2', action: { kind: 'session_import.fail', reason: 'page_unavailable' } } }));
-    await vi.waitFor(() => expect(socket.log.filter((entry) => entry === 'send answer_desktop_action')).toHaveLength(3));
+    await vi.waitFor(() => expect(socket.log.filter((entry) => entry === 'send answer_desktop_action')).toHaveLength(3), { timeout: 5_000 });
     socket.emit('message', wire('tool_completed', { invocation: invocation({ toolCallId: 'c9', toolName: 'import_fail', status: 'completed' }) }));
     await expect(run.done).resolves.toEqual({ kind: 'imported', workstreamId: 'w1' });
     expect(discards).toEqual([]);
@@ -278,17 +361,25 @@ describe('running an import', () => {
       api, bridge, tabId: 't1', sourceUrl: source.url,
       mode: { kind: 'create', title: 'Garden plan', spaceIds: [], clientMessageId: 'c1' },
     });
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    await vi.waitFor(() => expect(sockets).toHaveLength(1), { timeout: 5_000 });
     const socket = sockets[0]!;
     socket.emit('open');
     socket.emit('message', wire('harness_status_changed', { status: 'running' }));
     socket.emit('message', wire('desktop_action_requested', { request: { id: 'a0', action: { kind: 'browser.evaluate', script: 'return 1' } } }));
-    const finish = (id: string) => wire('desktop_action_requested', { request: { id, action: { kind: 'session_import.finish', title: 'Garden plan', messages: 'messages' } } });
+    const finish = (id: string) => wire('desktop_action_requested', { request: { id, action: { kind: 'session_import.finish', title: 'Garden plan', messages: 'messages', verification } } });
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'bad', action: {
+      kind: 'session_import.finish', title: 'Garden plan', messages: 'messages',
+      verification: { ...verification, page: { ...verification.page, messageCount: 3 } },
+    } } }));
+    await vi.waitFor(() => expect(socket.sent).toContainEqual({ type: 'answer_desktop_action', actionId: 'bad', outcome: {
+      ok: false, code: 'invalid_conversation', message: 'verification.page.messageCount does not match the stored messages. Resolve missing messages or explain and account for grouped turns before finishing.',
+    } }), { timeout: 5_000 });
+    expect(completions).toEqual([]);
     socket.emit('message', finish('a1'));
     // The tool timed out on the server before the first answer landed, and the agent tried again.
     socket.emit('message', finish('a2'));
     const finishAnswers = () => socket.sent.filter((frame) => ['a1', 'a2'].includes((frame as { actionId?: string }).actionId ?? ''));
-    await vi.waitFor(() => expect(finishAnswers()).toHaveLength(2));
+    await vi.waitFor(() => expect(finishAnswers()).toHaveLength(2), { timeout: 5_000 });
     expect(finishAnswers()).toEqual([
       { type: 'answer_desktop_action', actionId: 'a1', outcome: { ok: true, result: { workstreamId: 'w1', messages: 2 } } },
       { type: 'answer_desktop_action', actionId: 'a2', outcome: { ok: true, result: { workstreamId: 'w1', messages: 2 } } },
@@ -321,13 +412,13 @@ describe('running an import', () => {
       api, bridge, tabId: 't1', sourceUrl: source.url,
       mode: { kind: 'create', title: 'Garden plan', spaceIds: [], clientMessageId: 'c1' },
     });
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    await vi.waitFor(() => expect(sockets).toHaveLength(1), { timeout: 5_000 });
     const socket = sockets[0]!;
     socket.emit('open');
     socket.emit('message', wire('harness_status_changed', { status: 'running' }));
     socket.emit('message', wire('desktop_action_requested', { request: { id: 'a0', action: { kind: 'browser.evaluate', script: 'return 1' } } }));
-    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.finish', title: 'Garden plan', messages: 'messages' } } }));
-    await vi.waitFor(() => expect(socket.log.filter((entry) => entry === 'send answer_desktop_action')).toHaveLength(2));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'a1', action: { kind: 'session_import.finish', title: 'Garden plan', messages: 'messages', verification } } }));
+    await vi.waitFor(() => expect(socket.log.filter((entry) => entry === 'send answer_desktop_action')).toHaveLength(2), { timeout: 5_000 });
     socket.emit('message', wire('harness_status_changed', { status: 'completed' }));
     await expect(run.done).resolves.toEqual({ kind: 'unfinished', refusal: 'This import key belongs to another channel' });
   });
