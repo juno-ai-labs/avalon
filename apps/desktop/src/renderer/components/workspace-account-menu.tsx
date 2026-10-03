@@ -19,9 +19,11 @@ import { RelativeTime } from './relative-time';
 export interface WorkspaceAccountMenuProps {
   activeWorkspace: DesktopWorkspaceSummary;
   /**
-   * Drawn under the active Organization's row and nowhere else. It is a slot so
-   * the menu stays presentational: the host supplies the usage read, and the
-   * slot mounts with the menu's content, so opening the menu refreshes it.
+   * The active Organization's usage meter: under its row when the Organizations
+   * list is shown, and on its own when it is not, so every member sees it
+   * whichever way the multiple-Organizations flag resolves. It is a slot so the
+   * menu stays presentational: the host supplies the usage read, and the slot
+   * mounts with the menu's content, so opening the menu refreshes it.
    */
   activeUsage?: ReactNode;
   attention: Record<string, WorkspaceAttention | undefined>;
@@ -241,6 +243,7 @@ export function WorkspaceAccountMenu({
                 </DropdownMenu.Item>
               </>
             )}
+            {!enabled && activeUsage && <div className="workspace-usage-standalone">{activeUsage}</div>}
             {enabled && (
               <>
                 <DropdownMenu.Label className="menu-label workspace-menu-section">Organizations</DropdownMenu.Label>
