@@ -195,8 +195,9 @@ model-routing control, or the owning execution object's operational
 as proof that a model call committed product state.
 
 Usage quotas and overage read the separate D1 usage ledger, which the same call
-sites feed through `emitInferenceUsage`, not this projection. See
-[usage metering](usage-metering.md).
+sites feed through `emitInferenceUsage`, not this projection. The usage ledger
+has its own lakehouse, `avalon.usage_events`, provisioned by the same script
+from `config/usage-lakehouse.json`. See [usage metering](usage-metering.md).
 
 ## Failure modes and limits
 

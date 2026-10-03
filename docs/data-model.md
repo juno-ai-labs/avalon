@@ -1258,10 +1258,12 @@ not reach.
 ## Usage metering
 
 Migration 0117 adds `workspaces.plan` (`starter` or `growth`, default
-`starter`), the append-only `usage_events` ledger keyed by `event_id`, and
-`usage_rollups`, one row per workspace per quota week and monthly period with
-the week's quota and the Organization-paid and Rally-paid totals. Overage is
-not stored; it is derived on read. See [usage metering](usage-metering.md).
+`starter`). The ledger itself is in a separate D1 database, `USAGE_DB`, with
+its own migrations in `packages/db/usage-migrations/`: `usage_events`, one row
+per metered call keyed by `event_id` and kept 90 days, and `usage_rollups`,
+one row per workspace per quota week and monthly period, kept for good. Every
+event is also in the Iceberg table `avalon.usage_events` in R2. Overage is not
+stored; it is derived on read. See [usage metering](usage-metering.md).
 
 ## Push devices
 
