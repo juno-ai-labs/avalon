@@ -47,7 +47,7 @@ import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/gui
 import { NewWorkstreamScreen } from './screens/new-workstream';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
 import { SpaceDashboardScreen } from './screens/space-dashboard';
-import { SharedSpaceLanding } from './screens/shared-space-landing';
+import { SharedLanding } from './screens/shared-landing';
 import { SidekicksWindow, SidekicksWindowRedirect } from './screens/sidekicks-library';
 import { BrowserImportWindow } from './screens/browser-import';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
@@ -254,7 +254,7 @@ export function WorkspaceApp(): React.JSX.Element {
   return (
     // Named above the socket provider so the directory it seeds and the
     // conversations every feed hook below it seeds belong to this workspace.
-    <LocalCacheScopeProvider scope={localCacheScope(session!.user.id, session!.workspace!.region, session!.workspace!.id)}>
+    <LocalCacheScopeProvider scope={localCacheScope(session!.user.id, session!.workspace!.region, session!.workspace!.id, guest ? 'guest' : 'member')}>
     <WorkspaceSocketProvider
       key={scope}
       api={api!}
@@ -327,13 +327,14 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
       <TelemetryRouteObserver />
         <AppShell workspace={workspace}>
           <Routes>
-            <Route element={<WorkstreamLandingScreen />} path="/" />
+            <Route element={guest ? <SharedLanding /> : <WorkstreamLandingScreen />} path="/" />
             {/* Inert: a deep link that changes organization parks here while
                 its destination resolves, rather than on the landing route,
                 which would open an unrelated conversation first. */}
             <Route element={<LoadingState label="Opening…" />} path="/opening" />
-            <Route element={guest ? <SharedSpaceLanding /> : <SpaceDashboardScreen workspace={workspace} />} path="/spaces/:spaceId" />
-            <Route element={<NewWorkstreamScreen workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
+            <Route element={guest ? <SharedLanding /> : <SpaceDashboardScreen workspace={workspace} />} path="/spaces/:spaceId" />
+            {/* Starting a Channel is a member's; a guest who lands here goes home. */}
+            <Route element={guest ? <Navigate replace to="/" /> : <NewWorkstreamScreen workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
             {/* Projects are gone and their ids mean nothing here; the landing
                 route picks whatever this person should be looking at instead of
                 a dead screen naming an object that no longer exists. */}

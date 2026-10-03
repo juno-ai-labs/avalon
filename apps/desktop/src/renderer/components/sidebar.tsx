@@ -1,5 +1,5 @@
 import { ShareConversationDialog } from './scope-sharing-panel';
-import { useOptionalCollaborationSession } from '../lib/collaboration-session';
+import { useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { IconPin, IconShare2 } from '@tabler/icons-react';
 import { ChannelRowContent, NavigationRowContent } from '@rally/ui/components/navigation';
 import {
@@ -915,13 +915,15 @@ function WorkstreamRow({
               ? <><PinOff aria-hidden="true" size={16} /> Unpin</>
               : <><Pin aria-hidden="true" size={16} /> Pin</>}
           </ContextMenu.Item>}
-          <ContextMenu.Item className="menu-item" onSelect={() => onMarkUnread(workstream)}>
+          {/* A read-only (guest) sidebar keeps Share, whose route takes a guest;
+              the rest act through the member-only Channel routes. */}
+          {!spacesReadOnly && <ContextMenu.Item className="menu-item" onSelect={() => onMarkUnread(workstream)}>
             <EyeOff aria-hidden="true" size={16} /> Mark as unread
-          </ContextMenu.Item>
+          </ContextMenu.Item>}
           <ContextMenu.Item className="menu-item" disabled={!collaboration?.api} onSelect={() => setSharing(true)}><IconShare2 aria-hidden="true" size={16} stroke={1.8} /> Share</ContextMenu.Item>
-          <ContextMenu.Item className="menu-item" onSelect={() => onRename(workstream)}>
+          {!spacesReadOnly && <ContextMenu.Item className="menu-item" onSelect={() => onRename(workstream)}>
             <Pencil aria-hidden="true" size={16} /> Rename
-          </ContextMenu.Item>
+          </ContextMenu.Item>}
           {spaceOptions.length > 0 && (
             <ContextNestedMenu
               icon={<FolderPlus aria-hidden="true" size={16} />}
@@ -934,13 +936,13 @@ function WorkstreamRow({
               and every active Space that holds it, so the row cannot say
               whether it is private without reading those sources — which is
               what the dialog does. */}
-          {isProductChannel && (
+          {isProductChannel && !spacesReadOnly && (
             <ContextMenu.Item className="menu-item" onSelect={() => setManagingAccess(true)}>
               <Globe2 aria-hidden="true" size={16} /> Manage access
             </ContextMenu.Item>
           )}
           {debugEnabled && workstream.spaceIds.length > 0 && <CopyWorkstreamLinkItem workstreamId={workstream.id} spaceId={[...workstream.spaceIds].sort()[0]!} workspace={workspace} />}
-          <ContextMenu.Separator className="menu-separator" />
+          {!spacesReadOnly && <ContextMenu.Separator className="menu-separator" />}
           {removablePlacement && (
             <ContextMenu.Item
               className="menu-item"
@@ -954,9 +956,9 @@ function WorkstreamRow({
               bare "Archive" under Mark as unread and Rename reads as archiving
               the messages rather than removing the work stream from everyone's
               sidebar for good. */}
-          <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onArchive(workstream)}>
+          {!spacesReadOnly && <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onArchive(workstream)}>
             <Archive aria-hidden="true" size={16} /> Archive channel
-          </ContextMenu.Item>
+          </ContextMenu.Item>}
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root></>
@@ -1110,6 +1112,7 @@ export function Sidebar({
   loadingMoreWorkstreams = false,
   onLoadMoreWorkstreams,
 }: SidebarProps): React.JSX.Element {
+  const { guest } = useShellCapabilities();
   const debugEnabled = useDebugEnabled();
   const location = useLocation();
   const navigate = useNavigate();
@@ -2188,9 +2191,8 @@ export function Sidebar({
           {downloadedUpdate !== null && <IconButton className="sidebar-top-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
             <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
           </IconButton>}
-          {/* A guest's sidebar is read-only and their reach is a few
-              conversations, which the Organization's search does not serve. */}
-          {!spacesReadOnly && <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
+          {/* Search reads the whole Organization, and its route refuses a guest. */}
+          {!guest && <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
             <IconSearch aria-hidden="true" size={16} stroke={1.9} />
           </IconButton>}
           {!spacesReadOnly && openBrowserImport && <IconButton
@@ -2508,6 +2510,7 @@ export function Sidebar({
                         debugEnabled={debugEnabled}
                         key={item.id}
                         pinPending={pinPendingWorkstreamId === item.workstream.id}
+                        spacesReadOnly={spacesReadOnly}
                         spaces={placementSpaces}
                         workspace={workspace}
                         workstream={item.workstream}

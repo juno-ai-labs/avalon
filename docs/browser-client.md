@@ -582,7 +582,11 @@ Channel opens directly either way.
 family. Turning the shared shell off for guests is now a revert, not a
 switch. The Mac app still withholds guest workspaces in platform discovery
 (see [`multiple-workspaces.md`](multiple-workspaces.md)); lifting that is a
-separate change that has to audit Electron-only surfaces.
+separate change that has to audit Electron-only surfaces. A guest's transcript
+cache sits in its own scope (`localCacheScope(…, 'guest')`), so one shared in
+after being removed as a member never hydrates what they cached as a member.
+
+Shipped in #1088.
 
 ### 2026-10-03 — The entry draws the desktop sign-in card
 

@@ -1479,25 +1479,24 @@ export function ConversationSurface({
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
   const railLeaving = useRailExitFade(railOpen, railScopeKey);
-  const isGuest = guest;
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api && !isGuest),
+    enabled: Boolean(api && !guest),
     staleTime: 60_000,
   });
   const connections = useQuery({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),
-    enabled: Boolean(api && !isGuest),
+    enabled: Boolean(api && !guest),
     // OAuth completion publishes the workspace socket's
     // `connector_connections` topic. Its invalidation refetches this active
     // query, which lets an in-feed connection card become Connected without a
     // focus heuristic or polling loop.
     staleTime: 60_000,
   });
-  const visibleMembers = isGuest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
-  const visibleConnections = isGuest ? routedDetail?.connections : connections.data;
+  const visibleMembers = guest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
+  const visibleConnections = guest ? routedDetail?.connections : connections.data;
   const availableResources = useInfiniteQuery({
     queryKey: ['resources', debouncedResourceSearch],
     queryFn: ({ pageParam, signal }) => api!.listResources({
