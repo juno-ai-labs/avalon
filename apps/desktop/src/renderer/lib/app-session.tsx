@@ -585,6 +585,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     return departure;
   }, [bridge, queryClient, session?.workspace]);
 
+  const getAccountOnboarding = useCallback(() => bridge.getAccountOnboarding(), [bridge]);
+  const updateAccountOnboarding = useCallback((input: UpdateAccountOnboarding) => bridge.updateAccountOnboarding(input), [bridge]);
   const refreshSession = useCallback(async (): Promise<DesktopSession> => {
     const nextSession = await bridge.refreshSession();
     // Through `applySession` like every other session writer, so the ref
@@ -1234,8 +1236,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       createDevelopmentSession,
       finishWorkspaceSetup,
       refreshSession,
-      getAccountOnboarding: () => bridge.getAccountOnboarding(),
-      updateAccountOnboarding: (input) => bridge.updateAccountOnboarding(input),
+      getAccountOnboarding,
+      updateAccountOnboarding,
       reconnectAccountIdentity,
       abandonAccountSignIn,
       signOut,
@@ -1254,6 +1256,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       declineInvitation,
       leaveWorkspace,
       deepLinkError,
+      getAccountOnboarding,
+      updateAccountOnboarding,
       exchangingTicket,
       finishWorkspaceSetup,
       getOnboardingState,
