@@ -3,7 +3,7 @@ import type { UsageEvent } from "@rally/contracts/usage";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { consumeUsageQueue } from "../src/queues/usage-consumer";
-import { applyUsageBatch, readOrganizationUsage, setWorkspacePlan } from "../src/services/usage-metering";
+import { applyUsageBatch, pruneUsageEvents, readOrganizationUsage, setWorkspacePlan } from "../src/services/usage-metering";
 import type { Env } from "../src/env";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, migratedUsageSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -199,5 +199,22 @@ describe("consumeUsageQueue", () => {
       expect.objectContaining({ event_id: "inf:one" }),
     ]);
     expect(usage.prepare(`SELECT COUNT(*) AS count FROM usage_events`).get()).toEqual({ count: 1 });
+  });
+});
+
+describe("pruneUsageEvents", () => {
+  it("deletes rows received before the 90-day window and keeps newer rows and the rollups", async () => {
+    const { usage, env } = seed();
+    await applyUsageBatch(env, [event("inf:old")], "2026-07-01T00:00:00.000Z");
+    await applyUsageBatch(env, [event("inf:edge")], "2026-07-05T00:00:00.000Z");
+    await applyUsageBatch(env, [event("inf:new")], "2026-09-30T00:00:00.000Z");
+
+    // 90 days before 2026-10-03T00:00Z is 2026-07-05T00:00Z.
+    expect(await pruneUsageEvents(env, Date.parse("2026-10-03T00:00:00.000Z"))).toBe(1);
+
+    expect(usage.prepare(`SELECT event_id FROM usage_events ORDER BY event_id`).all())
+      .toEqual([{ event_id: "inf:edge" }, { event_id: "inf:new" }]);
+    expect(usage.prepare(`SELECT organization_microusd FROM usage_rollups`).all())
+      .toEqual([{ organization_microusd: 3_000_000 }]);
   });
 });

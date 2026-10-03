@@ -16,6 +16,7 @@ import {
 } from "./queues/inference-lakehouse-consumer";
 import { consumeMigrationCommandQueue } from "./queues/migration-command-consumer";
 import { consumeUsageQueue, isUsageQueue } from "./queues/usage-consumer";
+import { pruneUsageEvents } from "./services/usage-metering";
 import {
   consumeProductFeatureFlagQueue,
   isProductFeatureFlagQueue,
@@ -201,6 +202,7 @@ export default {
         recoverEmailLoginDeliveries(env),
         purgeExpiredEmailLoginChallenges(env),
         purgeExpiredLinkPayloads(env.DB),
+        pruneUsageEvents(env, Date.now()),
         processTelemetry(env),
       ]);
     })());
