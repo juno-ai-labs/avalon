@@ -13,7 +13,7 @@ call site (DO or Worker)            usage consumer (regional Worker)        D1 `
 cost known  ──ctx.waitUntil──▶  USAGE_QUEUE  ──batch ≤100, ≤60 s──▶  dedupe, apply payer map,
             (never awaited)       + DLQ          max_concurrency 1         split quota vs overage
                                                                           ──▶ usage_weeks / usage_months
-desktop  ──GET /workspaces/:id/usage──▶  API Worker  ──one indexed read──▶  usage_weeks, usage_months, workspaces
+desktop  ──GET /usage (workspace auth)──▶  API Worker  ──one indexed read──▶  usage_weeks, usage_months, workspaces
 ```
 
 Four parts, each usable on its own:
@@ -48,16 +48,15 @@ interface UsageEvent {
   activity: MeteredActivity;
   occurredAt: string;         // ISO instant the call finished
   costMicrousd: number;       // integer, >= 0
-  costSource: 'provider' | 'rate_card';
   model: string | null;
-  refs: {                     // for a later breakdown; not used today
+  refs: {                     // stored on usage_events for a later breakdown
     userId?: string; workstreamId?: string; substreamId?: string;
-    sidekickId?: string; inferenceRequestId?: string;
+    sidekickId?: string;
   };
 }
 ```
 
-There is no `costSource: 'unpriced'`. An activity Rally cannot price yet is a
+There is no zero-cost placeholder. An activity Rally cannot price yet is a
 gap to close (see **Gaps to close**), not a zero to record.
 
 ### The payer map
@@ -132,7 +131,7 @@ emitUsage(env, waitUntil, event): void
 
 | Setting | Value | Source |
 | --- | --- | --- |
-| Queue / DLQ | `avalon-global-usage` / `avalon-global-usage-dlq` | Naming convention |
+| Queue / DLQ | `avalon-global-usage` / `avalon-global-usage-dead-letter` | The `-dead-letter` convention the other queues in `wrangler.global.jsonc` use |
 | Binding | `USAGE_QUEUE` | One name in every region |
 | `max_batch_size` | 100 | Platform maximum (Queues limits, 2026-10-03) |
 | `max_batch_timeout` | 60 s | Platform maximum. The PRD tolerates minutes. |
@@ -145,16 +144,15 @@ of 5,000 a second. Today's volume is a few events per agent turn, orders of
 magnitude below either. If the consumer ever falls behind, the backlog grows
 and the meter lags. That is the failure the PRD says it can live with.
 
-Cost: three operations per message at $0.40 per million beyond the included
-million. Ten million events a month costs about $12.
-
 ## Consumer
 
 `apps/api/src/queues/usage-consumer.ts`. One run per batch:
 
 1. Parse each message with the Zod schema. Ack and log any that are invalid;
    retrying will not fix them.
-2. Select the event IDs already in `usage_events_seen`. Drop those messages.
+2. Drop repeated `eventId`s within the batch, keeping the first. Then select
+   the IDs already in `usage_events` and drop those messages too. Without the
+   in-batch step, two copies in one batch would both be applied.
 3. Read each affected Organization's `plan` and `created_at` from `workspaces`,
    and its current `usage_weeks` row for each week the batch touches.
 4. For each event, in arrival order:
@@ -167,7 +165,8 @@ million. Ten million events a month costs about $12.
      `overage = max(0, cost − room)`. Add `cost − overage` to
      `organization_microusd`, and add `overage` to both
      `usage_weeks.overage_microusd` and `usage_months.overage_microusd`.
-5. Write everything in one `DB.batch()`: insert the seen IDs, then upsert the
+5. Write everything in one `DB.batch()`: insert the events with
+   `ON CONFLICT (event_id) DO NOTHING` as a safety net, then upsert the
    rollups with `ON CONFLICT … DO UPDATE SET x = x + excluded.x`. A D1 batch is
    one transaction, so a crash leaves nothing half applied, and the redelivery
    is dropped at step 2.
@@ -178,14 +177,17 @@ million. Ten million events a month costs about $12.
 `organization_microusd` holds only usage inside the quota. The week's total
 Organization-paid spend is `organization_microusd + overage_microusd`.
 
-**Pruning.** On each run, the consumer deletes `usage_events_seen` rows older
-than the queue's message retention. Once a message's retention has passed, it
-cannot be redelivered. Retention is read from one constant beside the binding,
-which cites the configured value. It is a platform setting, not a new limit.
+**Retention.** `usage_events` is kept. It is the history the PRD exists to
+collect, and the only per-event source a Stripe sink could replay from. Its
+growth meets D1's per-database size limit long before anything else does. When
+that comes close, moving closed months to the inference lakehouse's R2 is the
+next step, and that is a decision to make then, not now.
 
 ## Read path
 
-`GET /workspaces/:workspaceId/usage`, any member role:
+`GET /usage` on the workspace-auth router, so the Organization comes from
+`getWorkspaceAuth(c)` and the existing membership check applies. Any member role
+may call it:
 
 ```ts
 {
@@ -212,18 +214,33 @@ The client caches the last response per Organization in the
 [local cache](../../local-cache.md). It renders the cached value first and
 refreshes when the Usage section or the Organization menu opens.
 
+## Setting a plan
+
+Ace's workspaces tab, which already finds any workspace and retires it, gains a
+plan control: Starter or Growth. It writes `workspaces.plan` through the same
+regional path the retire action uses. There is no customer-facing control.
+
 ## DDL sketch
 
 ```sql
 ALTER TABLE workspaces ADD COLUMN plan TEXT NOT NULL DEFAULT 'starter'
   CHECK (plan IN ('starter', 'growth'));
 
-CREATE TABLE usage_events_seen (
+CREATE TABLE usage_events (
   event_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
+  activity TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  cost_microusd INTEGER NOT NULL,
+  model TEXT,
+  user_id TEXT,
+  workstream_id TEXT,
+  substream_id TEXT,
+  sidekick_id TEXT,
   received_at TEXT NOT NULL
 );
-CREATE INDEX usage_events_seen_received_at ON usage_events_seen (received_at);
+CREATE INDEX usage_events_workspace_occurred
+  ON usage_events (workspace_id, occurred_at);
 
 CREATE TABLE usage_weeks (
   workspace_id TEXT NOT NULL,
@@ -242,9 +259,9 @@ CREATE TABLE usage_months (
 );
 ```
 
-The rollups are small: one row per Organization per week and one per month.
-They are kept indefinitely, because they are the history the PRD exists to
-collect.
+The rollups are small, one row per Organization per week and one per month,
+and they are what the read path uses. `usage_events` is the history behind
+them.
 
 ## Gaps to close
 
@@ -267,7 +284,7 @@ Rate cards extend the existing `INFERENCE_PRICING_CACHE` and
 
 - **Node suite, real migrations:** the consumer applied to a batch with a
   duplicate, a split event, a Rally-paid activity and two weeks. Assert the
-  rollup rows against literals. Prove it can fail by removing the dedupe select.
+  rollup rows against literals. Prove it can fail by removing the in-batch dedupe.
 - **Unit:** week and period boundaries, including month-end clamping and
   daylight-saving weeks. Payer map exhaustiveness is enforced by typecheck and
   needs no test.
@@ -282,3 +299,4 @@ this subsystem. [`data-model.md`](../../data-model.md) gains the tables.
 [`inference-lakehouse.md`](../../inference-lakehouse.md) gains a line saying
 billing reads the usage ledger, not the lakehouse.
 [`settings-search.md`](../../settings-search.md) gains the Usage entry.
+[`ace.md`](../../ace.md) gains the plan control.
