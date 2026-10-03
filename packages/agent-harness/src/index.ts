@@ -3074,6 +3074,8 @@ export interface HarnessToolContext {
    * recorded receipt never used.
    */
   effectIntentId?: string;
+  /** Host-only: executing the input already stored in a durable receipt. */
+  replaying?: boolean;
   executionPrincipal: ExecutionPrincipal;
   /** Stable per-receipt key for provider APIs that support idempotent writes. */
   providerIdempotencyKey?: string;

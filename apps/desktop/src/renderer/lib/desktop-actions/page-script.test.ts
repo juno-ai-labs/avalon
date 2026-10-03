@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { BrowserImportMessagesSchema } from '@rally/contracts/desktop-actions';
 import { pageScript, type PageScriptOutcome } from '../../../common/desktop-actions/page-script';
 
 /** Run the expression as the page would, with the page globals it reads. */
@@ -6,6 +7,14 @@ async function run(body: string): Promise<PageScriptOutcome> {
   const evaluate = new Function('location', 'document', `return ${pageScript(body)}`) as
     (location: { href: string }, document: { title: string }) => Promise<PageScriptOutcome>;
   return evaluate({ href: 'https://claude.ai/chat/1' }, { title: 'Chat' });
+}
+
+/** Node's fetch Response can return a different Blob realm than the page.
+ * Real page fetch returns page-native Blobs; keep the fixture in that realm. */
+function pageResponse(body: string, init?: ResponseInit): Response {
+  const response = new Response(body, init);
+  vi.spyOn(response, 'blob').mockResolvedValue(new Blob([body]));
+  return response;
 }
 
 describe('page script', () => {
@@ -21,10 +30,10 @@ describe('page script', () => {
       { url: 'expired', name: 'expired.txt' },
     ]);`);
     expect([...replies.keys()]).toEqual(['first', 'second', 'preview', 'expired']);
-    replies.get('second')!(new Response('b'));
-    replies.get('preview')!(new Response('tiny'));
-    replies.get('expired')!(new Response('', { status: 403 }));
-    replies.get('first')!(new Response('a'));
+    replies.get('second')!(pageResponse('b'));
+    replies.get('preview')!(pageResponse('tiny'));
+    replies.get('expired')!(pageResponse('', { status: 403 }));
+    replies.get('first')!(pageResponse('a'));
     const result = await answer;
     expect(result).toMatchObject({ ok: true, value: [
       { name: 'first.txt', kind: 'file', size: 1 },
@@ -36,6 +45,38 @@ describe('page script', () => {
     expect(result.stored.map(file => ({ name: file.name, data: file.data })).sort((a, b) => a.name.localeCompare(b.name)))
       .toEqual([{ name: 'first.txt', data: 'YQ==' }, { name: 'second.txt', data: 'Yg==' }]);
   });
+  it('refuses declared oversized bodies before reading and retains successful sibling references', async () => {
+    const oversized = new Response('unread', { headers: { 'content-length': '25000001' } });
+    const read = vi.spyOn(oversized, 'blob');
+    vi.stubGlobal('fetch', async (url: string) => url === 'large' ? oversized : pageResponse('a'));
+    const result = await run(`
+      const files = await rally.downloadFiles([{ url: 'valid', name: 'valid.txt' }, { url: 'large', name: 'large.txt' }]);
+      return [{ role: 'user', text: 'Files', sourceMessageId: 'm1', files: files.map(file =>
+        file.unavailable ? file : { handle: file.handle, name: file.name, mimeType: file.mimeType }) }];
+    `);
+    expect(read).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, stored: [{ name: 'valid.txt', data: 'YQ==' }] });
+    if (!result.ok) throw new Error(result.message);
+    expect(BrowserImportMessagesSchema.parse(result.value)[0]?.files).toMatchObject([
+      { name: 'valid.txt' }, { unavailable: { name: 'large.txt', reason: 'large.txt is larger than the 25000000-byte file limit.' } },
+    ]);
+  });
+
+  it('returns handled store failures per file while draining successful siblings', async () => {
+    const Reader = FileReader;
+    vi.stubGlobal('FileReader', class extends Reader {
+      override readAsDataURL(blob: Blob) {
+        if (blob.size === 2) { queueMicrotask(() => this.dispatchEvent(new ProgressEvent('error'))); }
+        else super.readAsDataURL(blob);
+      }
+    });
+    vi.stubGlobal('fetch', async (url: string) => pageResponse(url === 'broken' ? 'xx' : 'a'));
+    await expect(run(`return await rally.downloadFiles([{ url: 'valid', name: 'valid.txt' }, { url: 'broken', name: 'broken.txt' }]);`))
+      .resolves.toMatchObject({ ok: true, value: [
+        { name: 'valid.txt', size: 1 }, { unavailable: { name: 'broken.txt', reason: 'The file could not be read.' } },
+      ], stored: [{ name: 'valid.txt', data: 'YQ==' }] });
+  });
+
   it('returns the script’s JSON value with the page it ran on', async () => {
     await expect(run('return { turns: [1, 2] };')).resolves.toEqual({
       ok: true, value: { turns: [1, 2] }, stored: [], url: 'https://claude.ai/chat/1', title: 'Chat',

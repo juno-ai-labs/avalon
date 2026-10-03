@@ -430,9 +430,11 @@ these variations are still required to establish it.
 
 **Why:** A production import copied 14 files, committed its ten messages just before the tool deadline, then received success after the timer had already failed its run. The model also ignored five false text comparisons while claiming complete verification.
 
-**Changed:** Independent original-file downloads and server uploads run concurrently while preserving source order and stable per-file identities. Upload preparation drains all writes before returning infrastructure failure. Finish reports include actual verification check outcomes; failed checks require repair before writes. Admission requires client contract 3 so older strict desktop decoders do not receive the new report shape.
+**Changed:** Server upload preparation uses one queue across messages, preserving source order and stable per-file identities. A failed batch drains started writes and stops subsequent batches. Successful unattached drafts remain retryable under the existing draft expiry/reaper, rather than being compensated away after an ambiguous write. The upload width (`MAX_SESSION_IMPORT_PARALLEL_UPLOADS`) remains open pending a team-set value: full fan-out increases peak decoded-byte memory beside the parsed base64 request. Finish reports contain the latest actual result for each check; unresolved failures require repair, and a successful rerun explains the discrepancy and repair in its basis. Admission requires client contract 3; persisted contract-2 actions still replay without invented checks.
 
-**Considered and rejected:** A larger arbitrary timeout and selector-specific verification rules. The save uses the run lifecycle, and comparisons remain independent of page layout. Reports are still model-authored evidence, not browser attestations.
+The save lifecycle is owned by [desktop actions](desktop-actions.md#changelog), and the file downloader by [browser script runtime](browser-script-runtime.md#changelog).
+
+**Considered and rejected:** Selector-specific verification and deleting sibling drafts after infrastructure failures. Comparisons must survive page redesigns; a write may already have committed and retries need its stable identity. Reports remain model-authored evidence, not browser attestations.
 
 **Consequences:** Model procedures must resolve independent download links concurrently and reuse successful original-byte checks. A changed page or failed comparison requires new evidence rather than a rewritten success claim.
 

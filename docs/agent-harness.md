@@ -1256,6 +1256,8 @@ Host-owned receipt operations may set `HarnessTool.deadline: "run"` to use the
 parent run signal without a second per-tool timer. Conversation import saves
 use this because their file uploads and durable commit must return an outcome
 instead of racing the generic tool timer; run cancellation remains authoritative.
+The host marks durable input re-entry with `HarnessToolContext.replaying` so a
+tool can decode a historical receipt without weakening validation of new calls.
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
