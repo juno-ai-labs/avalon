@@ -26,5 +26,11 @@ export function isConfiguredRegion(value: unknown): value is Region {
   return typeof value === 'string' && Object.hasOwn(regions, value);
 }
 
+/**
+ * The deployment that holds sign-in, the platform identity and cross-region
+ * discovery. Every other deployment is reached through it.
+ */
+export const IDENTITY_REGION = 'global';
+
 /** Requests that act on a deployment must name one this build can reach. */
 export const ConfiguredRegionSchema = RegionSchema.refine(isConfiguredRegion, 'Region is not configured');

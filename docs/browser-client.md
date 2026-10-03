@@ -49,10 +49,12 @@ shared dialogs inject scroll-lock rules and components use dynamic styles, as
 in the desktop renderer. Scripts remain restricted to same-origin bundles.
 The sign-in form becomes usable after the client has checked its cookie session.
 
-`/regional/global/browser/*` forwards to the configured Global API service,
+`/regional/<region>/browser/*` forwards to that deployment's API service
+binding, `<bindingPrefix>_API` from `config/regions.json` (`GLOBAL_API` today),
 preserving request method, body, Origin and cookies and returning Set-Cookie.
-The path chooses a configured deployment, never a caller-supplied upstream host.
-`/regional/global/socket/*` forwards WebSocket upgrades through the same service
+The path chooses a configured deployment, never a caller-supplied upstream host;
+a configured deployment without a binding answers 404.
+`/regional/<region>/socket/*` forwards WebSocket upgrades through the same service
 binding. It requires the browser's exact Origin, removes Cookie and Authorization,
 and preserves the single-use ticket subprotocol. The API performs ticket
 verification and source-object admission; the web Worker returns its upgrade
@@ -245,9 +247,28 @@ checks; the adapter adds no permission of its own. The rest of `onboarding`
 stays out: creating, activating or joining a workspace there answers with a
 bearer session, and a browser holds only its HttpOnly cookie.
 
-Connector setup, Google sign-in, Web Push, inline artifact preview and other
-deployments are later phases of
-[the full browser client PRD](PRDs/2026-10-03_full-browser-client/plan.md).
+### Other deployments
+
+Sign-in goes to Global, which holds the identity; an invitation's sign-in stays
+in the deployment that issued it. On Global, `GET /browser/workspaces` adds
+every other deployment's memberships to the local list, through the same
+discovery desktop onboarding runs. It skips that discovery when only one
+deployment is configured or the identity has no Google subject (only a Google
+identity is linked across deployments), and a deployment that fails discovery
+is logged and left out rather than hiding the rest. Each workspace links to its
+own region's path.
+
+Opening a workspace selects it in its own deployment. A deployment other than
+Global with no cookie for this browser answers 401; the client then posts
+`{ region, workspaceId }` to Global's `/browser/workspace/activate` and retries
+once. Global admits the workspace through discovery, and the target, over the
+identity bridge's `activateBrowser`, runs desktop activation's admission,
+creates its own identity session, registers it as a browser session and selects
+the workspace. Only the cookie credential comes back, and Global sets it as
+`__Host-rally-browser-<region>` on the browser host. Regional user ids differ
+from Global's, so the client never compares a session across deployments.
+Sign-out leaves the deployment in view and Global. The contract is in the PRD's
+[`design.md`](PRDs/2026-10-03_full-browser-client/design.md).
 
 ### Shared collaboration transport
 
@@ -405,7 +426,9 @@ main changes to the host or its shared desktop/package dependencies. It reuses
 The deployment token needs Workers and zone permissions for the Custom Domain;
 `rallywith.ai` must be an active zone in the same account and `app` must not have
 an unrelated conflicting DNS record. No browser secrets are added: `GLOBAL_API`
-already connects to `avalon-api-global` through a service binding.
+already connects to `avalon-api-global` through a service binding. A new
+deployment needs its own `<bindingPrefix>_API` binding here, and its identity
+bridge on Global, before the browser can reach it.
 
 The API deploy workflow independently applies its checked-in browser origin and
 email policy. The team selected six-digit OTPs, ten-minute expiry and five failed
@@ -443,8 +466,8 @@ remain visible in the form and retries preserve the active operation. This modul
 introduces no new authentication TTL or attempt count; those remain explicit
 policy in [email-login.md](email-login.md).
 
-Current limitations: the entry restores the configured deployment's identity,
-not a cross-deployment session set. Only Global is configured today. A guest tab
+Current limitations: only Global is configured today, so the cross-deployment
+path is proven against a simulated deployment in tests. A guest tab
 owns one selected-conversation subscription, with no desktop background swarm; a
 member tab runs the desktop's feed swarm over native sockets.
 Production routing/configuration, external mailbox delivery and deployed stateful
@@ -501,6 +524,34 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-03 — Browser members reach every deployment
+
+**What changed:** The browser Worker forwards each region to its own service
+binding. On Global, the workspace list covers every deployment, and
+`/browser/workspace/activate` opens a workspace in another deployment: the
+target registers its own browser session over the identity bridge
+(`activateBrowser`) and Global sets that deployment's cookie. Sign-in always
+goes to Global.
+
+**Why:** Goal 9 of the [PRD](PRDs/2026-10-03_full-browser-client/prd.md): a
+member in any configured deployment can use the browser. The product chose to
+build this before a second deployment exists.
+
+**Considered and rejected:** Global proxying regional API calls, which puts
+every request on two hops and makes Global a dependency of other deployments'
+data. A one-use handoff code redeemed by the browser, which puts a credential
+in JavaScript and a URL. One cookie shared across deployments, which needs a
+shared session ledger. The PRD's [`design.md`](PRDs/2026-10-03_full-browser-client/design.md)
+has the contract.
+
+**Consequences:** A new deployment is reachable from the browser only once it
+has a `<bindingPrefix>_API` binding on the browser Worker and an identity bridge
+on Global. Email-only identities stay in Global; only a Google identity is
+linked across deployments. Region-addressed invitations still need their own
+routing in a second deployment.
+
+Shipped in the pull request for this change. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
 ### 2026-10-03 — Connect Gmail and Drive from the browser
 
