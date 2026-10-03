@@ -55,7 +55,8 @@ it("starts Google with a callback on the browser host and binds the state to thi
   const { authorize,binding } = await start("/app/workspaces/global/abc");
   expect(authorize.origin).toBe("https://accounts.google.com");
   expect(authorize.searchParams.get("redirect_uri")).toBe(`${origin}/regional/global/browser/google/callback`);
-  expect(binding).toBe(`__Host-rally-browser-global-google-state=${authorize.searchParams.get("state")}`);
+  const state = authorize.searchParams.get("state")!;
+  expect(binding).toBe(`__Host-rally-browser-global-google-${state}=${state}`);
 });
 
 it("signs a browser in with Google, sets the session cookie and returns to the requested path",async () => {
@@ -69,7 +70,7 @@ it("signs a browser in with Google, sets the session cookie and returns to the r
   const cookies = callback.headers.getSetCookie();
   const session = cookies.find((cookie) => cookie.startsWith("__Host-rally-browser-global="))!;
   for (const attribute of ["HttpOnly","Secure","SameSite=Lax","Path=/"]) expect(session).toContain(attribute);
-  expect(cookies.some((cookie) => cookie.startsWith("__Host-rally-browser-global-google-state=;"))).toBe(true);
+  expect(cookies.some((cookie) => cookie.startsWith(`__Host-rally-browser-global-google-${state}=;`))).toBe(true);
   const described = await browser("session",{ cookie:session.split(";")[0]! });
   expect(described.status).toBe(200);
   expect(BrowserSessionSchema.parse(await described.json())).toMatchObject({ user:{ email:"member@example.test" },workspace:null });
@@ -79,7 +80,7 @@ it("refuses a callback this browser did not start, without consuming the state",
   await googleIssuing({ sub:"google-subject-2",email:"victim@example.test",email_verified:true });
   const { authorize } = await start();
   const state = authorize.searchParams.get("state")!;
-  const forged = await browser(`google/callback?code=attacker-code&state=${state}`,{ cookie:"__Host-rally-browser-global-google-state=other" });
+  const forged = await browser(`google/callback?code=attacker-code&state=${state}`,{ cookie:`__Host-rally-browser-global-google-${state}=other` });
   expect(forged.status).toBe(302);
   expect(forged.headers.get("location")).toBe(`${origin}/#google_error=google_state_mismatch`);
   expect(forged.headers.getSetCookie().some((cookie) => cookie.startsWith("__Host-rally-browser-global="))).toBe(false);
@@ -92,9 +93,30 @@ it("will not complete a desktop sign-in on the browser callback",async () => {
   db.prepare(`INSERT INTO oauth_states (id,region,provider,purpose,code_verifier_encrypted,desktop_attempt_id,desktop_code_challenge,return_uri,expires_at)
     VALUES (?,'global','google','identity','sealed',?,?,'rallywithai://auth/complete',?)`)
     .run(state,"a".repeat(43),"c".repeat(43),new Date(Date.now()+60_000).toISOString());
-  const callback = await browser(`google/callback?code=google-code&state=${state}`,{ cookie:`__Host-rally-browser-global-google-state=${state}` });
+  const callback = await browser(`google/callback?code=google-code&state=${state}`,{ cookie:`__Host-rally-browser-global-google-${state}=${state}` });
   expect(callback.headers.get("location")).toBe(`${origin}/#google_error=invalid_oauth_state`);
   expect(callback.headers.getSetCookie().some((cookie) => cookie.startsWith("__Host-rally-browser-global="))).toBe(false);
+  // The desktop sign-in it belongs to can still complete.
+  expect(db.prepare("SELECT consumed_at FROM oauth_states WHERE id=?").get(state)).toEqual({ consumed_at:null });
+});
+
+it("lets two tabs sign in at once without one clobbering the other's binding",async () => {
+  await googleIssuing({ sub:"google-subject-5",email:"tabs@example.test",email_verified:true });
+  const first = await start("/app/first");
+  const second = await start("/app/second");
+  const state = first.authorize.searchParams.get("state")!;
+  const callback = await browser(`google/callback?code=google-code&state=${state}`,{ cookie:`${first.binding}; ${second.binding}` });
+  expect(callback.headers.get("location")).toBe(`${origin}/app/first`);
+  const cleared = callback.headers.getSetCookie().filter((cookie) => /^__Host-rally-browser-global-google-[^=]+=;/u.test(cookie));
+  expect(cleared.map((cookie) => cookie.split("=")[0])).toEqual([`__Host-rally-browser-global-google-${state}`]);
+});
+
+it("sends a sign-in Google could not verify back with a generic reason",async () => {
+  vi.spyOn(globalThis,"fetch").mockImplementation(async () => Response.json({ id_token:"not-a-jwt" }));
+  const { authorize,binding } = await start();
+  const callback = await browser(`google/callback?code=google-code&state=${authorize.searchParams.get("state")}`,{ cookie:binding });
+  expect(callback.status).toBe(302);
+  expect(callback.headers.get("location")).toBe(`${origin}/#google_error=google_sign_in_failed`);
 });
 
 it("returns a declined sign-in to the requested path with the reason",async () => {
@@ -102,6 +124,12 @@ it("returns a declined sign-in to the requested path with the reason",async () =
   const state = authorize.searchParams.get("state")!;
   const callback = await browser(`google/callback?error=access_denied&state=${state}`,{ cookie:binding });
   expect(callback.headers.get("location")).toBe(`${origin}/invite#google_error=google_oauth_denied`);
+});
+
+it("reads a provider error other than a refusal as a failure, not a denial",async () => {
+  const { authorize,binding } = await start("/invite");
+  const callback = await browser(`google/callback?error=server_error&state=${authorize.searchParams.get("state")}`,{ cookie:binding });
+  expect(callback.headers.get("location")).toBe(`${origin}/invite#google_error=google_oauth_failed`);
 });
 
 it("keeps the return path on the browser host",async () => {

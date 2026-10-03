@@ -1,4 +1,4 @@
-import type { ClientSession } from '@rally/contracts/client-session';
+import { isCookieSession, type ClientSession } from '@rally/contracts/client-session';
 import type { RallyApi } from './api';
 import { DEFAULT_CLIENT_FEATURE_FLAGS, useClientFeatureFlags } from './use-client-feature-flags';
 
@@ -27,8 +27,7 @@ export function useConnectorStartAvailable(
   session: ClientSession | null,
 ): (capabilities: readonly string[]) => boolean {
   const flags = useClientFeatureFlags(api);
-  // A browser session is the one that carries no bearer: the cookie session.
-  const browser = session !== null && 'authentication' in session && session.authentication === 'cookie';
+  const browser = isCookieSession(session);
   const allowed = (flags.data ?? DEFAULT_CLIENT_FEATURE_FLAGS).browserConnectableCapabilities;
   return (capabilities) => !browser || browserCanConnect(capabilities, allowed);
 }

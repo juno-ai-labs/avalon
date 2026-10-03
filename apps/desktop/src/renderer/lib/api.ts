@@ -97,7 +97,7 @@ import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
-import type { CookieClientSession } from '@rally/contracts/client-session';
+import { isCookieSession, type CookieClientSession } from '@rally/contracts/client-session';
 import { logDebug } from '../../common/logger';
 import { requestSocketTicket } from './socket-ticket-request';
 import { normalizeElicitation } from './elicitation';
@@ -651,7 +651,7 @@ export class RallyApi {
     // gate could not place.
     headers.set(RALLY_HEADERS.CLIENT_CONTRACT, String(CLIENT_CONTRACT_VERSION));
     if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
-    const cookie = this.session !== null && 'authentication' in this.session && this.session.authentication === 'cookie';
+    const cookie = isCookieSession(this.session);
     if (cookie) headers.delete('Authorization');
     try {
       return await fetch(`${this.baseUrl}${path}`, { ...init, headers, ...(cookie ? { credentials: 'same-origin' as const } : {}) });
@@ -758,7 +758,7 @@ export class RallyApi {
    * returns to its completion page, the desktop to its versioned deep link.
    */
   private connectorHandoffQuery(): string {
-    const cookie = this.session !== null && 'authentication' in this.session && this.session.authentication === 'cookie';
+    const cookie = isCookieSession(this.session);
     return cookie ? 'handoff=browser' : 'desktopHandoffVersion=2';
   }
 

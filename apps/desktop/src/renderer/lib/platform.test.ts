@@ -54,16 +54,16 @@ describe('browser fallback single-platform identity boundary', () => {
     expect(states).toEqual(['suspended', 'resumed']);
   });
 
-  it('opens an external page in a new tab, or in this one when the popup is blocked', async () => {
-    const opened = { opener: window } as unknown as Window;
-    const open = vi.spyOn(window, 'open').mockReturnValueOnce(opened).mockReturnValueOnce(null);
-    const assign = vi.fn();
-    vi.stubGlobal('location', { ...window.location, assign });
-    await desktopBridge().openExternal('https://accounts.google.com/a');
-    expect(opened.opener).toBeNull();
-    await desktopBridge().openExternal('https://accounts.google.com/b');
-    expect(open).toHaveBeenCalledTimes(2);
-    expect(assign).toHaveBeenCalledWith('https://accounts.google.com/b');
+  it('opens an external page in a new tab with no opener, and reports a blocked popup', async () => {
+    const popup = { opener: window as Window | null, location: { href: '' } };
+    const open = vi.spyOn(window, 'open').mockReturnValueOnce(popup as unknown as Window).mockReturnValueOnce(null);
+    await desktopBridge().openExternal('https://accounts.google.com/o/oauth2/v2/auth');
+    expect(popup.opener).toBeNull();
+    expect(popup.location.href).toBe('https://accounts.google.com/o/oauth2/v2/auth');
+    const here = window.location.href;
+    await expect(desktopBridge().openExternal('https://linear.app/oauth')).rejects.toThrow('Allow pop-ups for Rally in this browser, then try again.');
+    expect(window.location.href).toBe(here);
+    open.mockRestore();
   });
 
   it('prefers the hardened preload bridge for clipboard writes', async () => {
