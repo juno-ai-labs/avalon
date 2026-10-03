@@ -1646,6 +1646,21 @@ describe('browser cookie collaboration transport', () => {
   const cookie: CookieClientSession = { authentication: 'cookie', apiBaseUrl: `/regional/global/browser/api/${workspaceId}`,
     user: session.user, workspace: session.workspace, expiresAt: session.expiresAt };
 
+  it('asks a connector authorization to return to the browser completion page', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => json({ url: 'https://linear.app/oauth/authorize?state=opaque', attemptId: 'a'.repeat(43) }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi(cookie.apiBaseUrl, cookie);
+    await api.startProviderConnection('linear', 'you', ['linear.read']).catch(() => undefined);
+    await api.reconnectConnection('connection-1', 'linear').catch(() => undefined);
+    await api.startConnectorResourceAuthorization({ connectionId: 'connection-1', parentKind: 'workstream', parentId: workstreamId,
+      substreamId: '0', failedToolInvocationId: 'tool-1' } as Parameters<RallyApi['startConnectorResourceAuthorization']>[0]).catch(() => undefined);
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      `${cookie.apiBaseUrl}/connections/linear/start?telemetryVersion=2&handoff=browser`,
+      `${cookie.apiBaseUrl}/connections/connection-1/reconnect?telemetryVersion=2&handoff=browser`,
+      `${cookie.apiBaseUrl}/connections/connection-1/resource-authorizations/start?handoff=browser`,
+    ]);
+  });
+
   it('reuses reads and scoped mutations with same-origin cookies and no bearer', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => init?.method === 'PATCH'
       ? new Response(null, { status: 204 }) : json(detail));

@@ -88,7 +88,10 @@ when a native notification response arrives during asynchronous app startup.
 A member's browser tab registers a `webpush` device: `token` is the
 subscription endpoint and `web_push_p256dh` / `web_push_auth` hold its keys
 (migration 0117). The device binds to the cookie session's own session row, so
-signing out of that browser stops delivery like any other device. The browser
+signing out of that browser stops delivery like any other device. The
+subscription itself outlives sign-out, so the member shell registers it again
+for each new session, and Settings reports "on" only after that registration
+succeeds. The browser
 gets the VAPID public key from `GET /push-devices/web-push`, subscribes through
 `/sw.js` at the browser host's root, and registers with `PUT /push-devices/:id`;
 one installation id per browser profile lives in `localStorage`. Settings →
@@ -104,7 +107,11 @@ characters become the `Topic`, so a retry replaces rather than stacks. A `404`
 or `410` disables the device at once: unlike APNs, a dropped browser
 subscription carries no timestamp and never comes back. Enqueueing requires a
 live device whose own transport is available, so either transport can run
-without the other configured.
+without the other configured. A `401` or `403` means the push service refused
+the deployment's VAPID credentials: like an APNs provider-token failure, the
+message retries and operators get one notice. Keys that are not a P-256 point
+retire the device without a request; registration already checks their shape.
+A device with any other transport is rejected rather than sent to APNs.
 
 The service worker shows the title and body, groups by work stream with `tag`,
 and opens the canonical Channel path on the browser host, focusing a tab
@@ -117,9 +124,9 @@ For browsers, set `WEB_PUSH_VAPID_PUBLIC_KEY` (base64url uncompressed P-256
 point), the secret `WEB_PUSH_VAPID_PRIVATE_KEY` (base64url `d` of the same key)
 and `WEB_PUSH_SUBJECT` (`mailto:` or `https:` contact) on each regional API
 Worker; one key pair per deployment. Without them, browsers are told
-notifications are unavailable and APNs is unaffected.
-Without them, health reports push as not configured and existing email delivery
-continues. Local/test transports do not contact Apple. APNs requires the device address in
+notifications are unavailable and APNs is unaffected; the health check does not
+cover these variables. Without the APNs variables, health reports push as not
+configured and existing email delivery continues. Local/test transports do not contact Apple. APNs requires the device address in
 the request path, so existing Cloudflare automatic outbound traces include it;
 application log fields omit tokens and content. The existing queue provisioner
 creates each region's push queue and dead-letter queue from Wrangler configuration.
@@ -196,7 +203,10 @@ across devices as an open question.
 
 **Consequences:** A member with the Mac app and a browser gets each push on
 both. VAPID keys are per deployment; rotating one invalidates every browser
-subscription made with it.
+subscription made with it, and the push service's refusal reaches operators
+as a provider authentication failure.
+
+Shipped in #1081. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
 ### 2026-09-15 — Alert bodies are plain text, not Markdown
 

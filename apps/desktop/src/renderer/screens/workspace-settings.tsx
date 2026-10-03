@@ -1823,7 +1823,8 @@ export function WorkspaceSettingsScreen({
                             <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
-                          {!personalStartsHere && !workspaceStartsHere && (
+                          {((provider.scopes.includes('you' as never) && !personalStartsHere)
+                            || (provider.scopes.includes('workspace' as never) && isAdmin && !workspaceStartsHere)) && (
                             <p className="settings-oauth-status"><a href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a></p>
                           )}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (

@@ -3,9 +3,6 @@ import { SidebarNavigationRowContent } from "@rally/ui/components/navigation";
 import { ConnectorMark } from "@rally/ui/components/primitives";
 import { SidebarRow } from "@rally/ui/components/resizable-sidebar";
 
-/** The public macOS build, the same file the marketing site links to. */
-
-
 /**
  * Pinned above the account menu, in whichever rail holds it. It is a Space-style
  * row, so a compact rail collapses it to the same lone tile a Space becomes.

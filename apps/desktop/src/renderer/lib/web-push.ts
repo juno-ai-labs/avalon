@@ -35,13 +35,42 @@ function applicationServerKey(publicKey: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
 }
 
+/** Registers this browser's subscription as a device bound to the current session. */
+async function registerSubscription(api: WebPushApi, subscription: PushSubscription): Promise<void> {
+  const json = subscription.toJSON();
+  await api.registerPushDevice(installationId(), {
+    platform: 'web', transport: 'webpush', endpoint: subscription.endpoint,
+    keys: { p256dh: json.keys?.p256dh ?? '', auth: json.keys?.auth ?? '' }, appVersion: 'web',
+  });
+}
+
+async function grantedSubscription(): Promise<PushSubscription | null> {
+  if (Notification.permission !== 'granted') return null;
+  const registration = await navigator.serviceWorker.getRegistration('/');
+  return await registration?.pushManager.getSubscription() ?? null;
+}
+
+/**
+ * Binds an existing subscription to the session signed in now. A subscription
+ * outlives sign-out, but the device it registered was bound to the session that
+ * ended, so a new session must register it again or nothing is delivered. The
+ * Mac app does the same from its main process on every session change.
+ */
+export async function reconcileWebPush(api: WebPushApi): Promise<void> {
+  if (!supported()) return;
+  const subscription = await grantedSubscription();
+  if (subscription) await registerSubscription(api, subscription);
+}
+
+/** Reports "on" only once the subscription is registered for this session. */
 export async function webPushState(api: WebPushApi): Promise<WebPushState> {
   if (!supported()) return 'unsupported';
   try { await api.getWebPushConfiguration(); } catch { return 'unavailable'; }
   if (Notification.permission === 'denied') return 'denied';
-  const registration = await navigator.serviceWorker.getRegistration('/');
-  const subscription = await registration?.pushManager.getSubscription();
-  return subscription && Notification.permission === 'granted' ? 'on' : 'off';
+  const subscription = await grantedSubscription();
+  if (!subscription) return 'off';
+  await registerSubscription(api, subscription);
+  return 'on';
 }
 
 /** Asks for permission, subscribes this browser, and registers it. Call from a click. */
@@ -54,11 +83,7 @@ export async function enableWebPush(api: WebPushApi): Promise<WebPushState> {
   await navigator.serviceWorker.ready;
   const subscription = await registration.pushManager.getSubscription()
     ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: applicationServerKey(publicKey) });
-  const json = subscription.toJSON();
-  await api.registerPushDevice(installationId(), {
-    platform: 'web', transport: 'webpush', endpoint: subscription.endpoint,
-    keys: { p256dh: json.keys?.p256dh ?? '', auth: json.keys?.auth ?? '' }, appVersion: 'web',
-  });
+  await registerSubscription(api, subscription);
   return 'on';
 }
 

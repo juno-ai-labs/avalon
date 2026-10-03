@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { BrowserWorkspacesSchema } from '@rally/contracts/browser-session';
@@ -14,6 +14,7 @@ import { clearWorkspaceDrafts } from '../../desktop/src/renderer/lib/draft-cache
 import { FaviconApiProvider } from '../../desktop/src/renderer/lib/favicon-api';
 import { clearWorkspaceLocalCache } from '../../desktop/src/renderer/lib/local-cache';
 import { desktopBridge } from '../../desktop/src/renderer/lib/platform';
+import { reconcileWebPush } from '../../desktop/src/renderer/lib/web-push';
 import { createQueryClient } from '../../desktop/src/renderer/lib/query-client';
 import { NEW_SIDEKICK_TARGET } from '../../desktop/src/common/sidekicks';
 import { memberShellLocation } from './session';
@@ -54,6 +55,9 @@ function MemberSession({ region, session, onSignOut, onRevalidate }: {
   useLayoutEffect(() => { identityApi.setSession({ ...session, workspace: null }); }, [identityApi, session]);
   const getAccountOnboarding = useCallback(() => identityApi.getAccountOnboarding(), [identityApi]);
   const updateAccountOnboarding = useCallback((input: UpdateAccountOnboarding) => identityApi.updateAccountOnboarding(input), [identityApi]);
+  // A notification subscription from an earlier sign-in delivers nothing until
+  // this session registers it. Settings re-checks and shows any failure.
+  useEffect(() => { void reconcileWebPush(api).catch(() => undefined); }, [api]);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [resourceAuthorizationAttempts, setResourceAuthorizationAttempts] = useState<Readonly<Record<string, PendingConnectorOAuth>>>({});
   const setResourceAuthorizationAttempt = useCallback((key: string, attempt: PendingConnectorOAuth | null) => {
