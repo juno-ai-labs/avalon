@@ -14,7 +14,9 @@ export class BrowserSessionService {
 
   async register(session: Session): Promise<{ credential:string; expiresAt:string; session: BrowserSession }> {
     const claims = await verifyAccessToken(this.env, session.accessToken);
-    if (claims.workspaceId !== null) throw new Error("browser_identity_session_required");
+    if (claims.workspaceId !== null) {
+      throw new ApiError(500,"browser_identity_session_required","A browser session must start unbound to a workspace");
+    }
     await authenticateSession(this.env,claims);
     // Email redemption retries recover the same cookie without storing a
     // readable credential or invalidating a different tab's successful login.
