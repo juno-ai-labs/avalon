@@ -96,6 +96,7 @@ Register these exact hosted authorized redirect URIs:
 | OAuth client | Authorized redirect URI |
 | --- | --- |
 | Rally Login | `https://api.rallywith.ai/auth/google/callback` |
+| Rally Login | `https://app.rallywith.ai/regional/global/browser/google/callback` |
 | Rally Google Connectors | `https://api.rallywith.ai/connections/google/callback` |
 
 `https://rallywith.ai/auth/desktop/` is Rally's post-callback browser handoff
@@ -103,7 +104,8 @@ for login and every connector, and `rallywithai://auth/complete` is its allowlis
 desktop return URI. Provider codes always terminate at the owning API callback
 first; **neither handoff URI is a Google OAuth redirect URI.** Add the
 corresponding `http://127.0.0.1:<port>` API callbacks only to a development client
-used for local provider testing.
+used for local provider testing. For the local browser client that includes
+`http://localhost:8794/regional/global/browser/google/callback`.
 
 Configure the consent screen for the exact scopes Rally requests:
 
