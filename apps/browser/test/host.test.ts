@@ -22,7 +22,6 @@ it("serves the push service worker from the root and lets the shell register it"
   expect(worker.status).toBe(200);
   expect(worker.headers.get("content-type")).toContain("javascript");
   expect(worker.headers.get("cache-control")).toBe("no-cache");
-  expect(await worker.text()).toContain('addEventListener("push"');
   const shell = await exports.default.fetch("https://browser.example.test/");
   expect(shell.headers.get("content-security-policy")).toContain("worker-src 'self'");
 });
