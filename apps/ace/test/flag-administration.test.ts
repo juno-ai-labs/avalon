@@ -188,7 +188,7 @@ describe('FlagAdministration', () => {
 
     const result = await administration().updateModelRouting({
       actor,
-      update: { role: 'workstream', routing: { model: 'new/model', fallbackModels: ['new/fallback'] } },
+      update: { role: 'workstream', routing: { model: 'new/model', fallbackModels: ['new/fallback'], reasoningEffort: 'high' } },
     });
 
     expect(result).toEqual({ ok: true, value: { key: 'agent-model-workstream' } });
@@ -196,7 +196,7 @@ describe('FlagAdministration', () => {
     expect(JSON.parse(String(write?.body))).toMatchObject({
       default_variation: 'current',
       variations: {
-        current: { model: 'new/model', fallbackModels: ['new/fallback'] },
+        current: { model: 'new/model', fallbackModels: ['new/fallback'], reasoningEffort: 'high' },
         next: { model: 'staged/model', fallbackModels: [] },
       },
       rules,

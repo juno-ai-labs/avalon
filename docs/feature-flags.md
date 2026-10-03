@@ -75,8 +75,10 @@ inherit the source conversation's model override:
 | Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Conversation import | `agent-model-session-import` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
-The conversation import agent reads screenshots, so any model its flag names
-must accept image input.
+The checked-in primary model is `openai/gpt-6.1-sol`, with low reasoning
+from the harness model-default registry. Flagship variations still override
+the primary model. The conversation import agent reads screenshots, so any
+model its flag names must accept image input.
 
 Message addressing is deliberately absent from this table and from Ace. Its
 evaluated cascade fixes JEV as primary and
@@ -135,7 +137,8 @@ plan, using OpenRouter model ids exactly as OpenRouter publishes them:
 
 ```json
 {
-  "model": "openai/gpt-5.6-terra",
+  "model": "openai/gpt-6.1-sol",
+  "reasoningEffort": "low",
   "fallbackModels": ["google/gemini-3.8-flash"]
 }
 ```
@@ -143,6 +146,12 @@ plan, using OpenRouter model ids exactly as OpenRouter publishes them:
 - `model` — the OpenRouter model id the agent asks for first. Required, non-empty.
 - `fallbackModels` — OpenRouter model ids the route plan traverses, in order,
   under Bind's classified failure policy. Optional; omitted means no fallbacks.
+
+`reasoningEffort` is optional: `low`, `medium`, or `high`. Omission uses each
+selected model's configured default. An explicit flag effort applies to the
+primary and every fallback; a task's explicit reasoning setting wins over it.
+Ace exposes the same choice, and MCP `update_model_flag` accepts it inside
+`routing`. Older flag values continue to work unchanged.
 
 The default model and its fallbacks live in **one** flag value rather than two
 flags on purpose. A route plan is only meaningful as a whole, so a variation
@@ -1095,6 +1104,15 @@ both intent enqueue and delivery. Turning it off stops queued sends as well as
 hiding the Notifications section.
 
 ## Changelog
+
+### 2026-10-02 — Reasoning is part of the atomic model route
+
+Operators can set optional `reasoningEffort` in the same variation as the model
+and fallbacks, through Ace or the engineering MCP. Import comparisons showed
+material timing and cost differences between reasoning levels; requiring a
+code deployment for every experiment prevented targeted evaluation. Omission
+keeps existing model defaults, explicit task settings win, and the selected
+flag effort applies throughout the fallback route.
 
 ### 2026-10-02 — The default route moves to GPT-5.6 Terra and Gemini 3.8 Flash
 

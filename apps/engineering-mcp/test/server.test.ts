@@ -579,7 +579,7 @@ describe("Rally engineering MCP tools", () => {
 
     const response = await rpc(env, "tools/call", {
       name: "update_model_flag",
-      arguments: { role: "workstream", routing: { model: "example/missing", fallbackModels: [] } },
+      arguments: { role: "workstream", routing: { model: "example/missing", fallbackModels: [], reasoningEffort: "low" } },
     });
     const result = response.result as { isError: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBe(true);
@@ -593,7 +593,7 @@ describe("Rally engineering MCP tools", () => {
     })]);
     expect(flags.updateModelRouting).toHaveBeenCalledWith({
       actor: { subject: "engineer-1" },
-      update: { role: "workstream", routing: { model: "example/missing", fallbackModels: [] } },
+      update: { role: "workstream", routing: { model: "example/missing", fallbackModels: [], reasoningEffort: "low" } },
     });
   });
 });

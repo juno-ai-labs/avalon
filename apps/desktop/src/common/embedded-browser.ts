@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import type { DesktopActionResult } from '@rally/contracts/desktop-actions';
+import type { StoredItem } from './desktop-actions/store';
 
 /** The local, user-owned browser surface and command protocol. */
 export interface EmbeddedBrowserTab {
@@ -48,6 +50,8 @@ export interface EmbeddedBrowserNetworkResponse {
  * evaluates code in Electron's main process or receives Rally's preload.
  */
 export type EmbeddedBrowserCommand =
+  | { action: 'script'; tabId: string; runtimeId: string; code: string }
+  | { action: 'script_reset'; tabId: string; runtimeId: string }
   | { action: 'open'; url?: string }
   | { action: 'close'; tabId: string }
   | { action: 'select'; tabId: string }
@@ -65,6 +69,7 @@ export type EmbeddedBrowserCommand =
   | { action: 'response_body'; tabId?: string; requestId: string };
 
 export type EmbeddedBrowserResult =
+  | { kind: 'script'; result: DesktopActionResult<'browser.script'>; stored: StoredItem[] }
   | { kind: 'state'; state: EmbeddedBrowserState }
   | { kind: 'snapshot'; url: string; title: string; tree: unknown }
   | { kind: 'screenshot'; mimeType: 'image/jpeg'; data: string; width: number; height: number }
@@ -79,6 +84,8 @@ export const EmbeddedBrowserBoundsSchema = z.strictObject({
   x: coordinate, y: coordinate, width: coordinate, height: coordinate,
 });
 export const EmbeddedBrowserCommandSchema = z.discriminatedUnion('action', [
+  z.strictObject({ action: z.literal('script'), tabId, runtimeId: z.string().uuid(), code: z.string().min(1) }),
+  z.strictObject({ action: z.literal('script_reset'), tabId, runtimeId: z.string().uuid() }),
   z.strictObject({ action: z.literal('open'), url: z.string().optional() }),
   z.strictObject({ action: z.literal('close'), tabId }),
   z.strictObject({ action: z.literal('select'), tabId }),

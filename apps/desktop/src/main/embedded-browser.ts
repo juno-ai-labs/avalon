@@ -12,6 +12,9 @@ import {
   type EmbeddedBrowserState,
 } from '../common/embedded-browser';
 
+import { BrowserScriptRuntime } from './browser-script-runtime';
+import { BrowserScriptDriver } from './browser-script-driver';
+
 interface RecordedResponse extends EmbeddedBrowserNetworkResponse {
   body: { body: string; base64Encoded: boolean } | null;
 }
@@ -96,6 +99,7 @@ function dimensions(bounds: EmbeddedBrowserBounds, window: BrowserWindow): Embed
  */
 export class EmbeddedBrowser {
   private readonly tabs = new Map<string, BrowserTab>();
+  private readonly scriptRuntimes = new Map<string, { tabId: string; runtime: BrowserScriptRuntime }>();
   private activeTabId: string | null = null;
   private bounds: EmbeddedBrowserBounds = { x: 0, y: 0, width: 0, height: 0 };
   private visible = false;
@@ -302,6 +306,9 @@ export class EmbeddedBrowser {
 
   /** Drops a tab and picks the next active one; false when it was already gone. */
   private forget(id: string): boolean {
+    for (const [runtimeId, entry] of this.scriptRuntimes) {
+      if (entry.tabId === id) { entry.runtime.dispose(); this.scriptRuntimes.delete(runtimeId); }
+    }
     const ids = [...this.tabs.keys()];
     const at = ids.indexOf(id);
     if (!this.tabs.delete(id)) return false;
@@ -393,6 +400,28 @@ export class EmbeddedBrowser {
 
   async command(command: EmbeddedBrowserCommand): Promise<EmbeddedBrowserResult> {
     if (this.disposed) throw new Error('Browser is closed');
+    if (command.action === 'script_reset') {
+      const entry = this.scriptRuntimes.get(command.runtimeId);
+      if (entry && entry.tabId !== command.tabId) throw new Error('Browser runtime belongs to another tab');
+      entry?.runtime.dispose();
+      this.scriptRuntimes.delete(command.runtimeId);
+      return { kind: 'state', state: this.state() };
+    }
+    if (command.action === 'script') {
+      this.tab(command.tabId);
+      let entry = this.scriptRuntimes.get(command.runtimeId);
+      if (entry && entry.tabId !== command.tabId) throw new Error('Browser runtime belongs to another tab');
+      if (!entry) {
+        const driver = new BrowserScriptDriver(command.tabId, {
+          getEmbeddedBrowserState: async () => this.state(),
+          commandEmbeddedBrowser: request => this.command(request),
+        });
+        entry = { tabId: command.tabId, runtime: new BrowserScriptRuntime(command.tabId, driver) };
+        this.scriptRuntimes.set(command.runtimeId, entry);
+      }
+      const { stored, ...result } = await entry.runtime.execute(command.code);
+      return { kind: 'script', result, stored };
+    }
     if (command.action === 'open') {
       await this.open(command.url);
       return { kind: 'state', state: this.state() };
@@ -480,6 +509,8 @@ export class EmbeddedBrowser {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    for (const entry of this.scriptRuntimes.values()) entry.runtime.dispose();
+    this.scriptRuntimes.clear();
     for (const tab of this.tabs.values()) {
       if (!this.window.isDestroyed()) this.window.contentView.removeChildView(tab.view);
       if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();

@@ -270,6 +270,8 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   [CONNECTOR_CONNECTION_CARD_WIRE_NAME]: CONNECTOR_CONNECTION_CARD_PROSE,
   // Rally's browser and the conversation import: the import window lists
   // these as its steps, so they read as what happened to the page.
+  browser_js: { started: "Using the browser", settled: "Used the browser", failed: "Could not use the browser" },
+  browser_js_reset: { started: "Resetting the browser session", settled: "Reset the browser session", failed: "Could not reset the browser session" },
   browser_evaluate: { started: "Reading the page", settled: "Read the page", failed: "Could not read the page" },
   browser_snapshot: { started: "Reading the page outline", settled: "Read the page outline", failed: "Could not read the page outline" },
   browser_screenshot: { started: "Looking at the page", settled: "Looked at the page", failed: "Could not look at the page" },
@@ -538,8 +540,14 @@ function humanizeWireToolName(toolName: string): string {
 export function toolActivityName(input: {
   toolName: string;
   status: ToolActivityStatus;
+  arguments?: unknown;
   plugin?: { pluginId: string; displayName: string } | null;
 }): string {
+  if (input.toolName === "browser_js" && input.arguments && typeof input.arguments === "object"
+    && "title" in input.arguments && typeof input.arguments.title === "string") {
+    const title = input.arguments.title.replace(/\s+/gu, " ").trim();
+    if (title) return (input.status === "failed" ? `Could not complete: ${title}` : title).slice(0, 200);
+  }
   const prose = AVALON_TOOL_PROSE[input.toolName];
   if (prose) {
     if (input.status === "started") return prose.started;

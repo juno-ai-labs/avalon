@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pageScript, type PageScriptOutcome } from './page-script';
+import { pageScript, type PageScriptOutcome } from '../../../common/desktop-actions/page-script';
 
 /** Run the expression as the page would, with the page globals it reads. */
 async function run(body: string): Promise<PageScriptOutcome> {
@@ -43,5 +43,35 @@ describe('page script', () => {
       .resolves.toMatchObject({ ok: false, code: 'file_too_large', message: expect.stringContaining('messages') });
     await expect(run('const value = {}; value.self = value; return value;'))
       .resolves.toMatchObject({ ok: false, code: 'value_not_serializable' });
+  });
+
+  it('names the missing await instead of returning a Promise as a file reference', async () => {
+    await expect(run(`
+      const file = rally.store('draft', { name: 'draft.md', mimeType: 'text/markdown' });
+      return { handle: file.handle };
+    `)).resolves.toMatchObject({ ok: false, code: 'script_error', message: expect.stringContaining('Use await rally.store') });
+    await expect(run(`return { stored: rally.store([]) };`))
+      .resolves.toMatchObject({ ok: false, code: 'value_not_serializable', message: expect.stringContaining('Use await rally.store') });
+  });
+
+  it('drains file stores before returning, even when the script does not use their references', async () => {
+    const result = await run(`rally.store('draft', { name: 'draft.md', mimeType: 'text/markdown' }); return { count: 1 };`);
+    expect(result).toMatchObject({ ok: true, value: { count: 1 }, stored: [{ name: 'draft.md', kind: 'file', data: 'ZHJhZnQ=' }] });
+    await expect(run(`rally.store(new Response('x', { headers: { 'content-length': '999999999' } })); return 1;`))
+      .resolves.toMatchObject({ ok: false, code: 'file_too_large' });
+  });
+
+  it('normalizes citations without deleting spaces, paragraphs or code indentation', async () => {
+    await expect(run(`
+      const text = 'Welcome to Rally\\n\\n\\tCode\\r\\nSource: \\uE200cite\\uE202ref\\uE201\\u0000\\uE000\\uE200cite\\uE202unmapped\\uE201';
+      const cleaned = rally.normalizeText(text, [
+        { marker: ' ', text: '' },
+        { marker: 'Welcome to Rally', text: 'changed prose' },
+        { marker: '\\uE200cite\\uE202ref\\uE201', text: '[Source](https://example.com)' },
+      ]);
+      return { cleaned, stable: rally.normalizeText(cleaned) === cleaned };
+    `)).resolves.toMatchObject({ ok: true, value: {
+      cleaned: 'Welcome to Rally\n\n\tCode\r\nSource: [Source](https://example.com)', stable: true,
+    } });
   });
 });

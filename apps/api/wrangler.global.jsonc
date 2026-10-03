@@ -43,7 +43,7 @@
     "FIREFLIES_CONNECTOR_ENABLED": "true",
     "ALLOWED_ORIGINS": "https://app.rallywith.ai,app://rallywithai,app://avalon,app://sideline,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
     "DESKTOP_DEEP_LINK_URI": "rallywithai://auth/complete",
-    "OPENROUTER_PRIMARY_MODEL": "openai/gpt-5.6-terra",
+    "OPENROUTER_PRIMARY_MODEL": "openai/gpt-6.1-sol",
     "OPENROUTER_FALLBACK_MODELS": "google/gemini-3.8-flash",
     "OPENROUTER_CLASSIFIER_MODEL": "google/gemini-2.5-flash-lite",
     "OPENROUTER_STRUCTURED_MODEL": "google/gemini-2.5-flash-lite",

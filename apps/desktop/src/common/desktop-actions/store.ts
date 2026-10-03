@@ -42,6 +42,13 @@ export class DesktopActionStore {
     return this.items.get(handle);
   }
 
+  /** Transfer newly stored bytes from orchestration to its owning window. */
+  drain(): StoredItem[] {
+    const items = [...this.items.values()];
+    this.items.clear();
+    return items;
+  }
+
   /** A stored JSON value, parsed; undefined when the handle names no JSON. */
   json(handle: string): unknown {
     const item = this.items.get(handle);
