@@ -224,6 +224,26 @@ function assertDistinctPinnedStreamIds(manifests) {
   }
 }
 
+/**
+ * A new lakehouse lands with an all-zero stream ID until its first
+ * reconciliation pins the real one. Reconciliation accepts it, since that is
+ * how a stream gets created; a deploy refuses it, because binding a stream
+ * that does not exist would fail every send at runtime instead of here.
+ */
+export const UNPROVISIONED_STREAM_ID = '0'.repeat(32);
+
+export function assertStreamsProvisioned(manifests) {
+  for (const manifest of manifests) {
+    for (const regionName of LAKEHOUSE_REGIONS) {
+      if (manifest.regions[regionName].streamId === UNPROVISIONED_STREAM_ID) {
+        throw new Error(
+          `${manifest.binding} has no provisioned ${regionName} stream yet; run pnpm cloudflare:lakehouses:ensure and pin the stream ID it reports`,
+        );
+      }
+    }
+  }
+}
+
 class PinnedStreamIdDriftError extends Error {
   constructor(streamName, expected, actual) {
     super(`${streamName} ID drifted from pinned deployment binding: expected ${expected}, got ${actual}`);
@@ -514,6 +534,7 @@ export async function materializePinnedLakehouseWranglerConfigs(options = {}) {
     loadUsageLakehouseManifest(),
   ]);
   assertDistinctPinnedStreamIds(manifests);
+  assertStreamsProvisioned(manifests);
   const configs = await writePinnedLakehouseWranglerConfigs(manifests, options);
   return { manifests, configs };
 }
