@@ -104,8 +104,8 @@ tree on 2026-10-03 found:
 ### Sign-in
 
 The entry offers **Continue with Google** above the existing email form. Google
-returns to `app.rallywith.ai`, which sets the browser cookie and restores the
-workspace list exactly as email sign-in does. A Google account and an email
+returns to a callback on `app.rallywith.ai` itself, which sets the browser
+cookie and restores the workspace list exactly as email sign-in does. A Google account and an email
 sign-in with the same verified address reach the same identity. Guests keep
 using email; nothing about invitation acceptance changes.
 
@@ -163,7 +163,9 @@ email fallback still applies.
 ### Artifacts
 
 The details rail previews a live artifact in a sandboxed iframe on the artifact
-host. Pop-out still opens the artifact in a new tab.
+host. Pop-out still opens the artifact in a new tab. Where the browser refuses
+the artifact's framed viewer cookie (see **Security and trust model**), the
+preview shows the artifact's public representation and the pop-out link.
 
 ### Regions
 
@@ -177,6 +179,10 @@ brief describes the client as "a secure Electron shell"; this adds a second
 member client with a smaller feature set. Authorization stays on the server;
 nothing in this PRD lets a browser session do something a member's bearer
 session could not.
+
+## Decision log
+
+None yet.
 
 ## Key design decisions
 
@@ -214,8 +220,9 @@ session could not.
 6. **Inline artifact preview uses a sandboxed iframe.** This reverses, for the
    browser host only, the recorded rule in
    [`live-web-artifacts.md`](../../live-web-artifacts.md) that the renderer
-   never embeds artifact content. See **Security and trust model**. Rejected:
-   new tab only, which the guest host does today.
+   never embeds artifact content, and changes the artifact serving policy to
+   allow exactly one framing origin. See **Security and trust model**.
+   Rejected: new tab only, which the guest host does today.
 7. **Region support is built now**, before a second deployment exists. It
    cannot be proven against production until one does.
 
@@ -239,17 +246,40 @@ desktop's identity session plus one regional credential per workspace.
 - **Cookie routes grow.** More route families accept a cookie-derived bearer.
   The Origin and `Sec-Fetch-Site` gate on unsafe methods is unchanged, and every
   forwarded response keeps the sandbox CSP and `nosniff`.
-- **Artifact iframe.** The browser shell's CSP gains `frame-src` for the
-  artifact serving host. The iframe is sandboxed without `allow-same-origin`
-  toward the app, and the artifact host is a different registrable domain, so
-  artifact script cannot read the app's cookies or DOM. What is accepted: remote
-  model-authored content renders inside the app's window and can `postMessage`
-  the parent, so the app must ignore messages it does not expect. This is the
-  risk `live-web-artifacts.md` names; that document is updated in the
-  implementing change to record the browser exception and why.
-- **Google sign-in.** The Google callback sets the browser cookie only for
-  `BROWSER_APP_ORIGIN`. `allowedReturnUri` gains a browser target; desktop
-  schemes are unchanged.
+- **Artifact iframe, app side.** The browser shell's CSP gains `frame-src` for
+  the artifact serving host. The artifact host is a different registrable
+  domain, so framed artifact script runs in the artifact's own origin and cannot
+  read the app's cookies or DOM. The `sandbox` attribute withholds top
+  navigation and popups beyond what artifacts already need. What is accepted:
+  remote model-authored content renders inside the app's window and can
+  `postMessage` the parent, so the app must ignore messages it does not expect.
+- **Artifact iframe, serving side.** Every artifact response sends
+  `frame-ancestors 'none'` and `X-Frame-Options: DENY`
+  (`apps/api/src/artifacts/serving-policy.ts`), so a `frame-src` alone loads
+  nothing. The policy changes to `frame-ancestors` naming exactly
+  `BROWSER_APP_ORIGIN`, and drops `X-Frame-Options`, which cannot express an
+  allowlist and which CSP `frame-ancestors` supersedes. An artifact still cannot
+  frame another artifact, because the artifact host is not in that list.
+- **Artifact viewer cookie in a frame.** The viewer cookie is `SameSite=Lax`, so
+  a browser does not send it inside a cross-site iframe and a framed artifact
+  would load as anonymous. The framed path needs a `SameSite=None; Partitioned`
+  viewer cookie, keyed to the app as top-level site. A browser that refuses it
+  falls back to the public representation and the pop-out link, as **Product
+  behavior** says. Top-level artifact navigation keeps the current `Lax` cookie.
+- **`live-web-artifacts.md` is updated** in the implementing change to record
+  the browser exception, the serving-policy change, and why.
+- **Google sign-in.** The API-hosted Google callback cannot set the browser
+  cookie: `__Host-rally-browser-<region>` is host-only to `app.rallywith.ai`.
+  The browser therefore gets its own Google identity redirect URI on the app
+  host, `https://app.rallywith.ai/regional/global/browser/google/callback`,
+  which the browser Worker forwards to the API's `/browser` routes like every
+  other browser request. The API completes Google's code exchange there and its
+  `Set-Cookie` reaches the browser as a same-origin response. No Rally
+  credential appears in a URL or in JavaScript; the only value in the URL is
+  Google's one-use authorization code, as in any web OAuth flow. Rejected: an
+  API callback that redirects with a Rally login ticket for the page to redeem,
+  which puts a Rally credential in a URL. The desktop callback and its
+  `allowedReturnUri` schemes are unchanged.
 - **Connector return target.** The stored return target is accepted only when it
   is under `BROWSER_APP_ORIGIN` or a desktop scheme. Nothing caller-supplied
   chooses an arbitrary host.
@@ -260,8 +290,11 @@ desktop's identity session plus one regional credential per workspace.
 
 ## Provider configuration
 
-- **Google:** none. The identity and connector callbacks are already on the API
-  host.
+- **Google:** add `https://app.rallywith.ai/regional/global/browser/google/callback`
+  as an authorized redirect URI on the identity OAuth client, before the browser
+  Google sign-in ships; without it Google refuses the browser flow with
+  `redirect_uri_mismatch`. Connector callbacks stay on the API host and need no
+  change.
 - **Web Push:** generate a VAPID key pair per deployment; store the private key
   as a Worker secret and serve the public key to the client.
 - **Cloudflare:** a service binding from `rally-browser` to each regional API
@@ -317,7 +350,3 @@ navigation for every session; members keep using the Mac app.
 - **Push from several browsers.** Each browser registers its own subscription.
   Is a member with three browsers expected to get three pushes? Does not block
   the build.
-
-## Decision log
-
-None yet.
