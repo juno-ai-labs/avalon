@@ -128,7 +128,7 @@ describe('showing a live artifact in the rail', () => {
   });
 
   it('frames the artifact in a browser host instead of asking a main process to composite it', async () => {
-    const { props } = setup({ surface: surface({ frameSandbox: 'allow-scripts allow-same-origin allow-forms' }) }, { strict: true });
+    const { props } = setup({ surface: surface({ framed: true }) }, { strict: true });
     const frame = await screen.findByTitle('Offsite RSVP');
     expect(frame.tagName).toBe('IFRAME');
     expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
