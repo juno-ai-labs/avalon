@@ -109,11 +109,17 @@ next, clamped to the last day of a short month, in UTC.
 ### Plans
 
 Every workspace starts on Starter. An operator changes the plan from Ace;
-`setWorkspacePlan` writes `workspaces.plan` in `DB`, then rewrites
-`quota_microusd` on the current week's rollups in `USAGE_DB`, so the meter
-re-prices the current week at once. Past weeks keep their quota. The two writes
-are in different databases, so they are not one transaction; both are
-idempotent, and a failure shows in Ace, where saving again finishes it.
+`setWorkspacePlan` records the change in `usage_plan_changes` (with the plan it
+replaced) and rewrites `quota_microusd` on the current week's rollups, in one
+`USAGE_DB` transaction, so the meter re-prices the current week at once. Then it
+writes `workspaces.plan` in `DB`, which the meter and Ace display; if that
+second write fails, Ace shows the error and saving again finishes it.
+
+A new rollup row's quota is computed inside the consumer's insert from
+`usage_plan_changes`: the plan in force at the end of the row's week (the
+latest change before the week ended, else the plan the first later change
+replaced, else the plan `DB` holds). Past weeks therefore keep the plan they
+had, even for an event that arrives late.
 
 ## Invariants
 
@@ -158,6 +164,13 @@ idempotent, and a failure shows in Ace, where saving again finishes it.
   redelivery find its row gone and be counted twice. Guard:
   `test/usage-metering.test.ts` ("deletes rows received before the 90-day
   window…").
+- **A new rollup row's quota comes from `usage_plan_changes` at insert time,
+  never from the batch's earlier read of `DB`.** D1 runs one transaction at a
+  time, so a plan change either commits first and the insert reads it, or
+  commits after and rewrites the row; with the quota taken from the earlier
+  read, a change landing between the read and the insert would be lost, and a
+  late event for a past week would get today's plan. Guard:
+  `test/usage-metering.test.ts` ("rollup quota").
 - **The ledger stays out of `DB`.** D1's 10 GB limit is per database, so a full
   ledger in `DB` would stop every regional write, sign-in included. Guard: none
   automated; the tables exist only in `packages/db/usage-migrations/`.
@@ -239,6 +252,8 @@ period is computed from it.
   days from `received_at` (indexed for the prune).
 - `avalon.usage_events` (R2, Iceberg): every event for good, with the same
   fields plus `schema_version` and `region`. May hold duplicates.
+- `usage_plan_changes` (`USAGE_DB`): one row per plan change, keyed by
+  (`workspace_id`, `effective_at`), with the new and the previous plan.
 - `usage_rollups` (`USAGE_DB`): kept for good, keyed by (`workspace_id`, `week_start`, `period_start`),
   with `quota_microusd`, `organization_microusd` and `rally_microusd`. At most
   two rows per workspace per week.
