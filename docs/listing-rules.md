@@ -51,6 +51,16 @@ that already binds the user id first can pass `userId: "?1"` to reuse it. The
 Breakout half is left out on an object that has not reached the Breakout
 projection (`breakoutsReady()`), which then lists by Main alone.
 
+**A Channel listed only through a Breakout carries none of Main.** Its row
+keeps the name, appearance, scope, and this person's own placement, pins and
+Breakout counts. `mainWithheld` in `workspace-do.ts` empties the rest: Main's
+description, email address, author, run state, unread position, activity time,
+wake-up and roster. Its per-viewer state keeps the person's Breakouts and drops
+Main's agents and rail waterline. The rail (`channelRails`) answers only
+somebody who may open Main, and foregrounding the Channel does not wake Main.
+Each of these asks `mainOpenableSql` or its TypeScript form `mainOpenFor`, not
+`channelListedSql`.
+
 The client draws what the socket sends. A Channel listed only through a
 Breakout arrives as an ordinary row; the conversation directory
 (`/sharing/navigation`) adds no rows, and only says which conversation such a
@@ -72,6 +82,12 @@ row opens on, so it never opens on Main.
   the two then disagree about whether a row exists; the dashboard page, the
   attention counts, the socket rows and the Space directory must all agree.
   Guard: the rules live in one module; no automated check stops a copy.
+- **Listing a Channel is not Main's authority.** A row, rail or wake that
+  used `channelListedSql` where it meant Main would hand somebody invited to
+  one Breakout the Channel's roster, resources, email address and wake-up.
+  Guard: `space-conversation-page.test.ts` "given a Channel this viewer
+  reaches only through a Breakout, when their socket lists it, then it carries
+  its name and none of Main".
 - **Reach never flows down.** Seeing a Space or a Channel is never a reason to
   list what is in it. Breaking this lists private Breakouts to everyone in
   their Channel. Guard: `space-conversation-page.test.ts`.
@@ -134,6 +150,12 @@ case was a place for the rules to drift.
 **Considered and rejected:** Keeping guests off the socket and patching the
 leaking path alone. It fixed one leak and kept two answers to the same
 question.
+
+Using the Channel rule for everything a Channel row carries. Security review
+found that it handed somebody listed only through a Breakout Main's roster,
+resources, email address and wake-up preview, and let them wake Main. Rows,
+rails and the wake now ask the Main rule; only existence and Space reach ask
+the Channel rule.
 
 **Consequences:** This reverses the Spaces PRD's non-goal "Guest access to
 Spaces is deferred"

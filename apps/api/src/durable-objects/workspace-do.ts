@@ -4365,6 +4365,7 @@ function directoryWorkstream(
   spaceIds: readonly string[] = [],
   spacePins: readonly { spaceId: string; position: number }[] = [],
   breakoutAttentionCount = 0,
+  mainOpen = true,
 ): Workstream {
   const latest = Number(row.latest_attention_ordinal);
   const seen = row.seen_attention_ordinal === null
@@ -4414,7 +4415,53 @@ function directoryWorkstream(
     spaceIds,
     breakoutAttentionCount,
     ...participantPreview,
+    ...(mainOpen ? {} : mainWithheld(row)),
   });
+}
+
+/**
+ * The fields of a Channel row that are its Main's, emptied for somebody the
+ * Channel is listed to only through a Breakout (`docs/listing-rules.md`).
+ *
+ * Listing names the Channel so its Breakouts have a place to sit; it is not
+ * Main's authority. Main's description, email address, author, run state,
+ * unread position, activity time, wake-up and roster stay with Main. What is
+ * left is the name, the appearance, the scope and this person's own
+ * placement, pins and Breakout counts.
+ */
+function mainWithheld(row: WorkspaceDirectoryRow): Partial<Workstream> {
+  return {
+    objective: "",
+    emailAddress: null,
+    createdByUserId: null,
+    harnessStatus: "idle",
+    latestAttentionSequenceNumber: 0,
+    readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    youAreMentioned: false,
+    unseen: false,
+    firstUnreadSequenceNumber: null,
+    lastActivityAt: new Date(row.source_created_at).toISOString(),
+    nextPendingWakeup: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
+  };
+}
+
+/** Whether this viewer may open a directory row's Main: {@link mainOpenableSql} for a row already read. */
+function mainOpenFor(row: WorkspaceDirectoryRow, accessClass: Viewer["accessClass"]): boolean {
+  return organizationWideAdmits(row.scope, accessClass) || row.is_participant === 1;
+}
+
+/** A Channel's per-viewer state without Main's part: its agents and its rail. */
+function withoutMainState(state: ChannelViewerState | undefined): Partial<ChannelViewerState> | undefined {
+  if (!state) return undefined;
+  const backgroundAgentCounts = Object.fromEntries(
+    Object.entries(state.backgroundAgentCounts).filter(([substreamId]) => substreamId !== "0"),
+  );
+  return { ...state, backgroundAgentCounts, railWaterline: 0 };
 }
 
 /**
@@ -4542,13 +4589,17 @@ function mapDirectoryWorkstreams(
   const viewerStates = withViewerState
     ? channelViewerStates(sql, viewer.userId, rows.map((row) => row.workstream_id))
     : new Map<string, ChannelViewerState>();
-  return rows.map((row) => ({
-    ...directoryWorkstream(
-      row, workspaceId, previews.get(row.workstream_id), spaceIds.get(row.workstream_id) ?? [],
-      pins.get(row.workstream_id) ?? [], breakoutAttentionCounts.get(row.workstream_id) ?? 0,
-    ),
-    ...viewerStates.get(row.workstream_id),
-  }));
+  return rows.map((row) => {
+    const mainOpen = mainOpenFor(row, viewer.accessClass);
+    const state = viewerStates.get(row.workstream_id);
+    return {
+      ...directoryWorkstream(
+        row, workspaceId, previews.get(row.workstream_id), spaceIds.get(row.workstream_id) ?? [],
+        pins.get(row.workstream_id) ?? [], breakoutAttentionCounts.get(row.workstream_id) ?? 0, mainOpen,
+      ),
+      ...(mainOpen ? state : withoutMainState(state)),
+    };
+  });
 }
 
 function loadSpacePins(
@@ -6089,10 +6140,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         && parsed.data.foregroundWorkstreamId !== null) {
         const now = Date.now();
         const workstreamId = parsed.data.foregroundWorkstreamId;
+        // The presence check above has already found this Channel listed for
+        // this viewer, so its row is theirs to be sent.
+        const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+          `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
+          currentAttachment.userId, currentAttachment.userId, workstreamId,
+        ).one();
         // Opening a Channel is the moment its Main is about to be read. The
         // Channel control socket used to start this wake; a desktop that no
         // longer opens one says it here instead, ahead of its feed ticket.
-        this.wakeMainConversation(workstreamId);
+        // Somebody listed the Channel only through a Breakout opens that
+        // Breakout, not Main, so Main is not theirs to wake.
+        if (mainOpenFor(row, viewerOf(currentAttachment).accessClass)) this.wakeMainConversation(workstreamId);
         this.state.storage.transactionSync(() => {
           this.state.storage.sql.exec(
             `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
@@ -6102,12 +6161,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           );
           this.advanceDirectoryVersion(now);
         });
-        // The presence check above has already found this Channel listed for
-        // this viewer, so its row is theirs to be sent.
-        const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
-          `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
-          currentAttachment.userId, currentAttachment.userId, workstreamId,
-        ).one();
         const payload = JSON.stringify(WorkspaceWorkstreamRecencyEventSchema.parse({
           type: "workspace_workstream_recency",
           directoryWaterline: this.directoryWaterline(),
@@ -6210,7 +6263,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const rails = (workstreamIds: readonly string[]) => channelRails(sql, {
       userId: identity.userId,
       accessClass: identity.accessClass,
-      breakouts: this.spaceStorage().breakoutsReady(),
       workspaceId: identity.workspaceId,
       workstreamIds,
       onInvalidAppearance: this.invalidAppearanceReporter(identity.workspaceId),
@@ -6307,7 +6359,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const answer = channelRails(sql, {
         userId: identity.userId,
         accessClass: identity.accessClass,
-        breakouts: spaces.breakoutsReady(),
         workspaceId: identity.workspaceId,
         workstreamIds: rows.map((row) => row.workstream_id),
         onInvalidAppearance: this.invalidAppearanceReporter(identity.workspaceId),
@@ -15496,8 +15547,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             ...directoryWorkstream(
               row, person.workspaceId, shared.previews.get(row.workstream_id),
               spaceIds.get(row.workstream_id) ?? [], [], attention.get(row.workstream_id) ?? 0,
+              mainOpenFor(row, person.accessClass),
             ),
-            ...viewerStates.get(row.workstream_id),
+            ...(mainOpenFor(row, person.accessClass)
+              ? viewerStates.get(row.workstream_id)
+              : withoutMainState(viewerStates.get(row.workstream_id))),
           }
           : null,
       }));
