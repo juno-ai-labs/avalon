@@ -245,8 +245,7 @@ checks; the adapter adds no permission of its own. The rest of `onboarding`
 stays out: creating, activating or joining a workspace there answers with a
 bearer session, and a browser holds only its HttpOnly cookie.
 
-Connector setup, Google sign-in, Web Push, inline artifact preview and other
-deployments are later phases of
+Other deployments are a later phase of
 [the full browser client PRD](PRDs/2026-10-03_full-browser-client/plan.md).
 
 ### Shared collaboration transport
