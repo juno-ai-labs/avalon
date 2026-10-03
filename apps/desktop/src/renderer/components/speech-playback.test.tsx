@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { SpeechPlaybackProvider, useSpeechPlayback, type SpeechApi, type SpeechPlayer } from './speech-playback';
+import { CollaborationSessionProvider } from '../lib/collaboration-session';
 
 function hangingPlayer(): SpeechPlayer {
   return {
@@ -74,5 +75,25 @@ describe('SpeechPlaybackProvider mutex', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'One' }));
     await waitFor(() => expect(seen?.aborted).toBe(true));
+  });
+});
+
+describe('speech for a guest', () => {
+  it('offers a guest no speech, because the speech route refuses them', () => {
+    const api = { streamMessageSpeech: vi.fn<SpeechApi['streamMessageSpeech']>() } satisfies SpeechApi;
+    function Probe() { return <span>{useSpeechPlayback() ? 'offered' : 'withheld'}</span>; }
+    const tree = (accessClass?: 'guest') => (
+      <CollaborationSessionProvider api={null} session={{
+        user: { id: 'user', email: 'person@example.test', name: 'Person' },
+        workspace: { id: 'workspace', name: 'Design', region: 'global', role: accessClass ? null : 'member', ...(accessClass ? { accessClass } : {}) },
+        expiresAt: '2099-01-01T00:00:00.000Z', apiBaseUrl: 'https://api.rallywith.ai',
+      }}>
+        <SpeechPlaybackProvider api={api}><Probe /></SpeechPlaybackProvider>
+      </CollaborationSessionProvider>
+    );
+    const view = render(tree());
+    expect(screen.getByText('offered')).toBeInTheDocument();
+    view.rerender(tree('guest'));
+    expect(screen.getByText('withheld')).toBeInTheDocument();
   });
 });
