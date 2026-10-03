@@ -239,6 +239,14 @@ describe("artifact serving hostname routes", () => {
     const unframed = await artifactWorker.fetch(new Request(`${origin}/__rally/open`), env, context());
     expect(unframed.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
     expect(unframed.headers.get("x-frame-options")).toBe("DENY");
+    // A frame one artifact moves to another is refused before anything is served.
+    const hop = await artifactWorker.fetch(new Request(`${origin}/__rally/open`, { headers: {
+      "sec-fetch-dest": "iframe", "sec-fetch-mode": "navigate", "sec-fetch-site": "same-site" } }), framing, context());
+    expect(hop.status).toBe(403);
+    // Rally's own framed load comes from the app, cross-site, and is served.
+    const fromApp = await artifactWorker.fetch(new Request(`${origin}/__rally/open`, { headers: {
+      "sec-fetch-dest": "iframe", "sec-fetch-mode": "navigate", "sec-fetch-site": "cross-site" } }), framing, context());
+    expect(fromApp.status).toBe(200);
     // Nor may anything when the configured origin cannot be read; serving goes on.
     const misconfigured = await artifactWorker.fetch(new Request(`${origin}/__rally/open`), { ...env, BROWSER_APP_ORIGIN: "not a url" }, context());
     expect(misconfigured.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
