@@ -53,12 +53,16 @@ Changed code:
   `demo_pack_changed`. `startDemoOperation` takes an optional pack (absent
   means the built-in one) and the requester. Its first statement stays the
   replay lookup, before any validation, as the comment there requires.
-- `DemoOperationStartRequestSchema` and `DemoOperationStatusSchema` gain the
-  new fields as optional. Optional and omitted, never required and nullable,
-  so Ace and the API can deploy in either order (the same rule
-  [`engineering-mcp.md`](../../engineering-mcp.md#invariants-and-contracts)
-  records for mid-rollout strict parsing). Ace keeps sending and reading what
-  it does today.
+- **The HTTP contract Ace uses does not change.** Ace parses
+  `DemoOperationStatusSchema` strictly, so a new field on it, optional or not,
+  would break Ace's Demos list the moment one MCP-made operation appeared in
+  it. `DemoOperationStartRequestSchema` and `DemoOperationStatusSchema` stay
+  as they are, and `/internal/demos` answers exactly what it answers today,
+  for every operation. The MCP's additions live only in the new
+  `demo-administration` contract, which the entrypoint fills from the shipped
+  status plus the new columns. `packVersion` is the one shipped field whose
+  value is new (`stored:<contentHash>`), and it is a string within the
+  shipped limit.
 - The pack schema's `superRefine` issues gain stable codes (see
   `check_demo_scenario`). Messages are unchanged.
 
@@ -90,7 +94,11 @@ somebody asks for it.
 - **Issue shape.** `{ "path": string, "code": string, "message": string }`.
   `path` is a JSON path into the submitted value, with array indexes
   (`steps[4].as`, `expect[0]`). `code` is the Zod issue code or a pack rule
-  code (below). `message` is the pack rule's own sentence.
+  code (below). `message` is a fixed sentence per code that says what to
+  change. It never contains pack text: no step ID, role token, Sidekick name,
+  room key or other submitted value, per
+  [naming a schema failure](../../naming-a-schema-failure.md). The path is
+  what locates the problem.
 - **Annotations.** Read tools: `readOnlyHint: true, openWorldHint: false`.
   Write tools: `readOnlyHint: false`, with `destructiveHint` and
   `idempotentHint` as listed per tool.
@@ -215,12 +223,17 @@ Output on success:
 }
 ```
 
-**The presenter's `expect` is always derived.** Whatever the pack says for the
-presenter, the check replaces it with `demoIdleViewerExpectation`'s answer and
-lists that entry's path in `derived`. The presenter never acts, so their flags
-have one right answer, and a pack cannot be refused for getting it wrong. An
-entry for a cast member, whose flags depend on what they did, is kept as
-written and checked by the existing rules.
+**The presenter's `expect` is derived when the presenter never acts.** If no
+step in a room's main conversation is authored by the presenter, the check
+replaces the presenter's entry with `demoIdleViewerExpectation`'s answer and
+lists that entry's path in `derived`: their flags have one right answer, so a
+pack is never refused for getting it wrong. If the presenter does act, their
+flags depend on what they did, `demoIdleViewerExpectation` refuses to answer
+(`demo_pack_viewer_is_not_idle`), and the presenter is treated like any cast
+member: their entry is kept as written and checked by the existing rules, and
+a pack with no presenter entry is refused with
+`demo_pack_presenter_expect_required` at `expect`. An entry for a cast member
+is always kept as written.
 
 **`preview`** is Markdown: one section per Space, then per room in the order the
 presenter's sidebar will list them, each headed with what the presenter finds
@@ -237,13 +250,16 @@ of a check, not a failed call):
 {
   "ok": false,
   "issues": [
-    { "path": "steps[4].as", "code": "demo_pack_role_not_in_cast", "message": "Role \"dana\" is not in the cast" }
+    { "path": "steps[4].as", "code": "demo_pack_role_not_in_cast", "message": "This role is not in the pack's roles. Add it to roles and roleLabels, or name a role that is." }
   ]
 }
 ```
 
 The pack rules in `DemoPackSchema.superRefine` are `custom` issues with only a
-message today. This change gives each a stable code and keeps its message:
+message today, and several of those messages interpolate submitted values (a
+step ID, a Sidekick name, a role token). This change gives each rule a stable
+code and a fixed corrective sentence; the interpolated message is not
+forwarded:
 
 | Code | Rule today |
 | --- | --- |
@@ -265,11 +281,12 @@ message today. This change gives each a stable code and keeps its message:
 | `demo_pack_viewer_duplicate` / `demo_pack_viewer_not_in_cast` | Each `expect` viewer appears once and is in the cast. |
 | `demo_pack_expect_rooms_mismatch` | A viewer's `expect.rooms` is not exactly the rooms visible to them. |
 
-One code is a new rule rather than a name for an existing one:
+Two codes are new rules rather than names for existing ones:
 
 | Code | Rule |
 | --- | --- |
 | `demo_pack_personal_room_unsupported` | A `personal` room. The seeder refuses one today with `demo_seed_personal_room_unsupported`, after earlier steps have run; the check reports it before anything is written. |
+| `demo_pack_presenter_expect_required` | The presenter authors a step in a room's main conversation and the pack states no `expect` entry for them, so there is nothing to verify their view against. |
 
 ### 4. `list_demo_cast_candidates`
 
@@ -347,8 +364,9 @@ Output: `{ operations: Status[] }`, as the shipped list returns them.
 
 Input: `{ operationId: string }`.
 
-Output (`Status`): the shipped `DemoOperationStatusSchema`, returned as is,
-plus optional fields that Ace ignores:
+Output (`Status`): every field of the shipped `DemoOperationStatusSchema`,
+plus MCP-only fields. The additions are defined in the `demo-administration`
+contract, not on the shipped schema, so Ace's strict parse never sees them:
 
 ```json
 {
@@ -382,7 +400,8 @@ plus optional fields that Ace ignores:
 }
 ```
 
-Everything above the blank line is the shipped shape, unchanged. `packVersion`
+Everything above the blank line is the shipped shape, unchanged, and is what
+`/internal/demos` still returns for the same operation. `packVersion`
 is the built-in version for a built-in scenario and `stored:<contentHash>` for a
 stored one, so the shipped field stays meaningful without a second one.
 Connection results stay where they are today, in the `copying_connections`
@@ -444,6 +463,7 @@ Input:
 
 ```ts
 {
+  requestKey: string;                // client-chosen, one per save you mean
   scenarioId?: string;               // omitted: create
   expectedRevision: number | null;   // null: create-only; number: the revision read
   name: string;                      // unique among live scenarios
@@ -453,8 +473,14 @@ Input:
 ```
 
 `scenarioId` present with `expectedRevision: null`, or absent with a number, is
-refused with `invalid_input`. Saving content identical to the latest revision
-returns that revision and writes nothing.
+refused with `invalid_input`.
+
+**Replay first, as for create.** The revision row records the
+`(actor.subject, requestKey)` that wrote it, uniquely. A save whose key already
+wrote a revision returns that revision before anything else is checked, so a
+retry after a lost response gets its original revision even if somebody saved
+a newer one in between, and a create-only retry finds its scenario without
+knowing its ID.
 
 Output: `{ scenarioId, revision, revisionId, contentHash }`.
 
@@ -572,9 +598,11 @@ Common sequences:
   `create_demo_organization({ scenario: { pack } })` → `get_demo_operation`.
 - **Recover:** `get_demo_operation` → `recovery` → that tool.
 - **Phase 2, save for the team:** … `check_demo_scenario` →
-  `save_demo_scenario` (`expectedRevision: null`). Later: `get_demo_scenario` →
-  edit → `save_demo_scenario({ scenarioId, expectedRevision })`; on
-  `demo_scenario_revision_conflict`, read again and rebuild the edit.
+  `save_demo_scenario` (`expectedRevision: null`, a new `requestKey`). Later:
+  `get_demo_scenario` → edit → `save_demo_scenario({ scenarioId,
+  expectedRevision, requestKey })`; on `demo_scenario_revision_conflict`, read
+  again and rebuild the edit under a new `requestKey`. After a lost response,
+  repeat the same call with the same `requestKey`.
 
 ## Failures
 
@@ -622,8 +650,9 @@ Phase failures inside a running operation are not tool errors: they arrive in
 **Ambiguous writes.** If `create_demo_organization`'s response is lost, the
 client calls it again with the same `requestKey` and gets the operation. A
 retry whose response is lost is repeated with the same `expectedAttempt` and
-answers `demo_operation_changed` instead of starting a third attempt. Abandon
-and retire resume. No write needs a blind retry.
+answers `demo_operation_changed` instead of starting a third attempt. A
+phase-2 save whose response is lost is repeated with the same `requestKey`.
+Abandon and retire resume. No write needs a blind retry.
 
 ## Authority and lifecycle
 
@@ -642,9 +671,10 @@ and retire resume. No write needs a blind retry.
 ## Model-usability acceptance
 
 - Schema snapshot tests for every tool's input and output, including each
-  refused shape above, and a test that `get_demo_operation`'s output still
-  parses with the shipped `DemoOperationStatusSchema` once its optional fields
-  are removed.
+  refused shape above; a test that `get_demo_operation`'s output, with the
+  MCP-only fields removed, parses with the shipped `DemoOperationStatusSchema`;
+  and a test that `/internal/demos` answers an MCP-made operation in a shape
+  Ace's current strict parse accepts.
 - Contract tests through the real MCP handler, as
   `apps/engineering-mcp/test/server.test.ts` does, with a double only for the
   regional binding.
