@@ -47,7 +47,6 @@ import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/gui
 import { NewWorkstreamScreen } from './screens/new-workstream';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
 import { SpaceDashboardScreen } from './screens/space-dashboard';
-import { SharedLanding } from './screens/shared-landing';
 import { SidekicksWindow, SidekicksWindowRedirect } from './screens/sidekicks-library';
 import { BrowserImportWindow } from './screens/browser-import';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
@@ -280,7 +279,7 @@ export function WorkspaceApp(): React.JSX.Element {
       {mainSurface ? <HashRouter useTransitions={false}>
         <WorkstreamSocketResumeProvider scope={scope}>
           <WorkspaceOnboardingJourney workspace={workspace.error ? null : workspace.data ?? null}>
-            <WorkspaceWorkstreamSockets api={workspace.error ? null : api} enabled={!guest}>
+            <WorkspaceWorkstreamSockets api={workspace.error ? null : api}>
               <BrowserImportProgress />
               {content}
             </WorkspaceWorkstreamSockets>
@@ -335,12 +334,12 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
       <TelemetryRouteObserver />
         <AppShell workspace={workspace}>
           <Routes>
-            <Route element={guest ? <SharedLanding /> : <WorkstreamLandingScreen />} path="/" />
+            <Route element={<WorkstreamLandingScreen />} path="/" />
             {/* Inert: a deep link that changes organization parks here while
                 its destination resolves, rather than on the landing route,
                 which would open an unrelated conversation first. */}
             <Route element={<LoadingState label="Opening…" />} path="/opening" />
-            <Route element={guest ? <SharedLanding /> : <SpaceDashboardScreen workspace={workspace} />} path="/spaces/:spaceId" />
+            <Route element={<SpaceDashboardScreen workspace={workspace} />} path="/spaces/:spaceId" />
             {/* Starting a Channel is a member's; a guest who lands here goes home. */}
             <Route element={guest ? <Navigate replace to="/" /> : <NewWorkstreamScreen workspace={workspace} />} path="/spaces/:spaceId/workstreams/new" />
             {/* Projects are gone and their ids mean nothing here; the landing

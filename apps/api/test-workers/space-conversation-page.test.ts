@@ -608,13 +608,17 @@ describe("space dashboard conversation page", () => {
     const pick = (row: Record<string, unknown> | undefined) => Object.fromEntries(main.map((key) => [key, row?.[key]]));
 
     // The owner, a participant of Main, is told Main's own fields.
-    expect(pick((await listed(OWNER)).row)).toEqual({
+    const ownerRow = (await listed(OWNER)).row;
+    expect(ownerRow?.mainWithheld).toBeUndefined();
+    expect(pick(ownerRow)).toEqual({
       objective: "Who we hire next", createdByUserId: OWNER, harnessStatus: "needs_input", hasUnread: true, participantUserIds: [OWNER],
     });
     // The member is told the Channel exists, so the Breakout has a place to
     // sit, and nothing that is Main's.
     const member = await listed(MEMBER);
     expect(member.row?.title).toBe("Private Channel");
+    // The row says so, so a client never has to guess before dialling Main.
+    expect(member.row?.mainWithheld).toBe(true);
     expect(pick(member.row)).toEqual({
       objective: "", createdByUserId: null, harnessStatus: "idle", hasUnread: false, participantUserIds: [],
     });

@@ -31,6 +31,7 @@ import {
   StatusDot,
 } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
+import { useShellCapabilities } from '../lib/collaboration-session';
 import { copySpaceLink } from '../lib/copy-workstream-link';
 import { workstreamMarkerStatus } from '../lib/format';
 import { blockedChannelLabel, spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
@@ -65,6 +66,9 @@ type FailureSlot =
  */
 export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api } = useAppSession();
+  // A guest sees the Spaces the listing rules give them; changing one, and the
+  // Organization's member directory, are a member's.
+  const { guest } = useShellCapabilities();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const { spaceId } = useParams<{ spaceId: string }>();
   const queryClient = useQueryClient();
@@ -100,7 +104,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   const workspaceMembers = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api),
+    enabled: Boolean(api) && !guest,
   });
   // The Space's membership is paginated: General holds every Channel in the
   // Organization, so it is the one Space read that cannot ride the socket.
@@ -165,7 +169,10 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   // Every Space edit sends the whole record back, so an edit made against the
   // seed would carry fields another client may have changed since the row was
   // written. A remembered Space is read-only until the directory is live.
-  const editable = space.status === 'active' && !directoryFromLocalCache && !reachedThroughChannel;
+  // A Space is changed only by a member who reaches it as more than a Channel
+  // in it; a guest never changes one.
+  const writable = !reachedThroughChannel && !guest;
+  const editable = space.status === 'active' && !directoryFromLocalCache && writable;
   const report = (slot: FailureSlot, sentence: string | null): void => setFailures((current) => {
     const next = { ...current };
     if (sentence === null) delete next[slot];
@@ -278,7 +285,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               'The space could not be restored.',
             )}><RotateCcw aria-hidden="true" size={15} /> Restore space</Button>}
           appearance={space}
-          {...(isGeneral || reachedThroughChannel ? {} : {
+          {...(isGeneral || !writable ? {} : {
             audience: {
               scope: space.scope,
               onChange: (scope: 'personal' | 'workspace') => {
