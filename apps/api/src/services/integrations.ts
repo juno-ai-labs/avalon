@@ -3216,6 +3216,11 @@ export async function runWorkstreamHarness(
       ? { requestReceivedAt: input.telemetryRequestReceivedAt }
       : {}),
     inferenceStartEligible,
+    usage: profile?.role === "session_import"
+      ? { activity: "session_import" }
+      : input.automationRun
+        ? { activity: "sidekick_run", sidekickId: input.automationRun.automationId }
+        : { activity: "agent_run" },
   });
   const ensureTranscriptToolParents = async (event: {
     toolCallId: string;

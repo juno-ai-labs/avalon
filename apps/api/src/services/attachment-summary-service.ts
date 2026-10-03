@@ -61,6 +61,7 @@ export function createAttachmentSummaryRunner(env: Env): AttachmentSummaryRunner
     const inference: AttachmentSummaryInference = {
       summarize: async ({ messages, signal }) => (await runStructuredInference(env, {
         role: "workstream",
+        activity: "attachment_summary",
         context,
         messages,
         schemaName: "attachment_summary",

@@ -468,6 +468,7 @@ async function evaluate(
     // is a judgment call, unlike the mechanical roles that explicitly disable it.
     const inference = await runStructuredInference(env, {
       role: "workstream_description",
+      activity: "channel_description",
       context: {
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
