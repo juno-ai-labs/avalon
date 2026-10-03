@@ -60,6 +60,8 @@ const setReleaseChannel = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const leaveWorkspace = vi.hoisted(() => vi.fn());
 const applicationSettingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
+const sessionHost = vi.hoisted(() => ({ current: 'desktop' as 'desktop' | 'browser' }));
+const getAccountOnboarding = vi.hoisted(() => async () => ({ eligible: false, introduced: true, revision: 1, presentation: null }));
 const settingsSectionRequest = vi.hoisted(() => ({
   listener: null as ((section: string) => void) | null,
 }));
@@ -68,7 +70,9 @@ vi.mock('../lib/app-session', () => ({
   useAppSession: () => {
     const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
     return {
+      host: sessionHost.current,
       api,
+      getAccountOnboarding,
       runtime: {
         appVersion: '0.1.0',
         isPackaged: false,
@@ -248,6 +252,7 @@ function applicationSettings(
 
 describe('Organization settings', () => {
   beforeEach(() => {
+    sessionHost.current = 'desktop';
     vi.clearAllMocks();
     // `clearAllMocks` wipes recorded calls but leaves a queued
     // `mockResolvedValueOnce` in place, and a queued value outranks the
@@ -2183,6 +2188,32 @@ describe('Organization settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use the system icon' }));
     await waitFor(() => expect(resetApplicationIcon).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Using dark automatically with the system appearance.')).toBeVisible();
+  });
+
+  it('offers only appearance in a browser and names the Mac app for the rest', async () => {
+    sessionHost.current = 'browser';
+    renderSettings();
+    openSettingsSection('Application');
+
+    expect(await screen.findByText('Security, diagnostics, app icon, update and startup settings are available in the Mac app.')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Appearance' })).toBeVisible();
+    expect(screen.queryByRole('switch', { name: 'Lockdown mode' })).toBeNull();
+    expect(screen.queryByRole('switch', { name: /Product analytics/ })).toBeNull();
+  });
+
+  it('returns to the workspace instead of closing a browser tab', async () => {
+    sessionHost.current = 'browser';
+    const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+    window.location.hash = '#/settings';
+    renderSettings(workspace, createTestQueryClient(), true);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Close settings' }));
+    expect(window.location.hash).toBe('#/');
+    window.location.hash = '#/settings';
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(window.location.hash).toBe('#/');
+    expect(close).not.toHaveBeenCalled();
+    close.mockRestore();
   });
 
   it('toggles Lockdown mode for the saved authentication session', async () => {

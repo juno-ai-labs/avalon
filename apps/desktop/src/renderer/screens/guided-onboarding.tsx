@@ -24,20 +24,20 @@ const AccountContext = createContext<AccountOnboarding | null>(null);
 export function useOnboardingAccount(): AccountOnboarding | null { return useContext(AccountContext); }
 
 export function AccountOnboardingGate({ children }: { children: ReactNode }): React.JSX.Element {
-  const { api, session, signOut, updateCurrentUserName } = useAppSession();
+  const { api, session, signOut, updateCurrentUserName, getAccountOnboarding, updateAccountOnboarding } = useAppSession();
   const [previewed, setPreviewed] = useState(false);
   const members = useQuery({ queryKey: ['workspace-members'], queryFn: () => api!.getWorkspaceMembers(), enabled: Boolean(api && session?.workspace) });
   const account = useQuery({ queryKey: ['account-onboarding', session?.user.email],
-    queryFn: () => desktopBridge().getAccountOnboarding(), enabled: Boolean(session), refetchOnWindowFocus: 'always' });
+    queryFn: () => getAccountOnboarding(), enabled: Boolean(session), refetchOnWindowFocus: 'always' });
   const queryClient = useQueryClient();
   const editor = useMemo(() => new AccountProfileEditor('',
-    (input) => desktopBridge().updateAccountOnboarding(input),
-    () => desktopBridge().getAccountOnboarding(),
+    (input) => updateAccountOnboarding(input),
+    () => getAccountOnboarding(),
     (saved) => {
       queryClient.setQueryData(['account-onboarding', session?.user.email], saved);
       void queryClient.invalidateQueries({ queryKey: ['workspace-members'] });
       void queryClient.invalidateQueries({ queryKey: ['workspace'] });
-    }), [queryClient, session?.user.email]);
+    }), [getAccountOnboarding, queryClient, session?.user.email, updateAccountOnboarding]);
   // Pane navigation keeps this gate mounted; sign-out retires the old writer
   // before queued writes could use a different account's desktop credential.
   useEffect(() => { editor.start(); return () => editor.stop(); }, [editor]);
@@ -80,6 +80,7 @@ export function OnboardingPage({ title, subtitle, children, footer }: { title: s
 
 function PlatformIntroduction({ previewed }: { previewed: boolean }): React.JSX.Element {
   const account = useOnboardingAccount()!;
+  const { updateAccountOnboarding } = useAppSession();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,12 +88,12 @@ function PlatformIntroduction({ previewed }: { previewed: boolean }): React.JSX.
     if (busy) return;
     setBusy(true); setError(null);
     try {
-      const saved = await desktopBridge().updateAccountOnboarding({ expectedRevision: account.revision, introduced: true });
+      const saved = await updateAccountOnboarding({ expectedRevision: account.revision, introduced: true });
       queryClient.setQueriesData({ queryKey: ['account-onboarding'] }, saved);
       await queryClient.invalidateQueries({ queryKey: ['account-onboarding'] });
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not save your progress.'); }
     finally { setBusy(false); }
-  }, [account.revision, busy, queryClient]);
+  }, [account.revision, busy, queryClient, updateAccountOnboarding]);
   const recorded = useRef(false);
   useEffect(() => {
     if (previewed && !recorded.current) { recorded.current = true; void complete(); }
@@ -107,7 +108,7 @@ export function PersonalSetup({ onSaved, variant = 'onboarding', profileDetails 
 
 function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> }): React.JSX.Element {
   const account = useOnboardingAccount();
-  const { session } = useAppSession();
+  const { session, updateAccountOnboarding } = useAppSession();
   const queryClient = useQueryClient();
   const [color, setColor] = useState<PersonalPresentation['color']>(account?.presentation?.color ?? 'blue');
   const [name, setName] = useState(account?.presentation?.displayName ?? session?.user.name ?? '');
@@ -126,7 +127,7 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
     if (busy || !account || draftRevision !== account.revision) return;
     setBusy(true); setError(null);
     try {
-      const updated = await desktopBridge().updateAccountOnboarding({ expectedRevision: draftRevision, presentation: { color, avatar: 'circle', displayName: name.trim(), initials: initials.trim() } });
+      const updated = await updateAccountOnboarding({ expectedRevision: draftRevision, presentation: { color, avatar: 'circle', displayName: name.trim(), initials: initials.trim() } });
       queryClient.setQueryData(['account-onboarding', session?.user.email], updated);
       await queryClient.invalidateQueries({ queryKey: ['workspace-members'] });
       await onSaved?.();

@@ -1,7 +1,9 @@
-# Lite browser client
+# Browser client
 
-The browser client provides email entry for shared collaboration without setup
-or onboarding. Email entry, invitation acceptance and canonical conversation links
+The browser client provides email entry for shared collaboration. A guest gets
+the shared conversation screen described below; an Organization member gets the
+desktop shell, as described in [Member shell](#member-shell). The guest path has
+no setup or onboarding. Email entry, invitation acceptance and canonical conversation links
 activate the workspace and mount the shared conversation screen. Local API and
 Chrome journeys cover guest entry, feed, upload/reload, multiple workstreams,
 promotion and membership removal. Production mail delivery and deployed stateful
@@ -16,6 +18,8 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, invitation acceptance, session restore and workspace list. |
 | `apps/browser/src/invitation.ts` | Tokenized and addressed invitation fragments, and exact canonical scope destinations. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
+| `apps/browser/src/workspace.tsx` | The signed-in application's one lazy boundary; picks the guest or member shell. |
+| `apps/browser/src/member-shell.tsx` | The desktop shell for members over the cookie session: the browser's `AppSessionValue`. |
 | `apps/browser/src/conversation.tsx` | Browser router and providers for the shared feed, and the tab's one workspace socket for membership nudges; no desktop background socket pool. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
@@ -157,6 +161,45 @@ one Space (`browserSidebarVisible`). The lone Channel then opens directly and th
 account menu floats at the bottom left. The sidebar stays while the directory is
 loading, failed or empty. Its width is the reader's preference clamped by
 `browserSidebarWidth`; it does not collapse.
+
+### Member shell
+
+`browserShellFor` in `session.ts` picks the shell from the selected workspace:
+`accessClass: "guest"` keeps the guest shell, anything else mounts
+`BrowserMemberShell`. The shell kind is part of the remount key, so a promotion
+or removal swaps shells on the next session read. Making `browserShellFor`
+return `"guest"` for everyone turns the member shell off.
+
+The member shell reuses the desktop renderer rather than forking it. It builds
+an `AppSessionValue` over the cookie session and installs it with
+`AppSessionValueProvider`, then mounts the desktop's `AccountOnboardingGate`
+and `WorkspaceApp`: the workspace socket provider, the Space directory, the
+Channel feed swarm, Breakouts, the details rail and the Settings route. The value
+carries `host: "browser"`, which surfaces use to tell the Mac app from a tab.
+Account onboarding is identity-scoped, so it goes through the `_` workspace of
+the cookie adapter. Anything only the Mac app can do (accepting a workspace
+invitation from the desktop flow, creating a workspace, desktop sign-in)
+rejects with "Available in the Mac app." In Settings, Application shows only
+Appearance and names the Mac app for the rest.
+
+The desktop shell routes by hash. Before its router mounts, the member shell
+rewrites a canonical Channel or Space link into the workspace path plus the hash
+the desktop's own deep links set (`memberShellLocation`). Losing access or a
+401 asks the entry to re-read the server session, which unmounts the shell when
+the session is gone, exactly as for guests. Because members keep transcripts in
+the local cache, the entry wipes it alongside drafts on sign-out and account
+change.
+
+The cookie adapter forwards the member route families (`spaces`, `projects`,
+`onboarding/account`, `work-opportunities`, `digest`, `push-devices`,
+`workspaces`) in addition to the guest ones. Each route keeps its own role
+checks; the adapter adds no permission of its own. The rest of `onboarding`
+stays out: creating, activating or joining a workspace there answers with a
+bearer session, and a browser holds only its HttpOnly cookie.
+
+Connector setup, Google sign-in, Web Push, inline artifact preview and other
+deployments are later phases of
+[the full browser client PRD](PRDs/2026-10-03_full-browser-client/plan.md).
 
 ### Shared collaboration transport
 
@@ -350,8 +393,9 @@ introduces no new authentication TTL or attempt count; those remain explicit
 policy in [email-login.md](email-login.md).
 
 Current limitations: the entry restores the configured deployment's identity,
-not a cross-deployment session set. Only Global is configured today. The browser
-owns one selected-conversation subscription, with no desktop background swarm.
+not a cross-deployment session set. Only Global is configured today. A guest tab
+owns one selected-conversation subscription, with no desktop background swarm; a
+member tab runs the desktop's feed swarm over native sockets.
 Production routing/configuration, external mailbox delivery and deployed stateful
 artifact serving remain release checks.
 
@@ -406,6 +450,33 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-03 — Members get the desktop shell
+
+**What changed:** A member's workspace in the browser mounts the desktop shell
+instead of the guest shell: the full sidebar from the workspace socket, Spaces,
+Channels, Breakouts, Settings and account onboarding. The desktop's session
+value became a shared `AppSessionValueProvider` with a `host` field and
+account-onboarding methods, so the browser supplies its own value over the
+cookie session. The cookie adapter forwards the member route families.
+
+**Why:** Requiring the Mac app before a member can do any work is too much
+friction ([PRD](PRDs/2026-10-03_full-browser-client/prd.md)).
+
+**Considered and rejected:** Forking a browser-only member UI, which would be a
+second product to keep in step; mounting the desktop `App` whole, which drives
+its session from the Electron bridge and its stored credentials.
+
+**Consequences:** The guest shell and the member shell share one lazy boundary
+(`workspace.tsx`). A member tab opens the desktop's feed sockets one handshake
+at a time, because Chromium serializes handshakes to one endpoint and there is
+no Node broker here. Any surface that only works in the Mac app must check
+`host`, not `desktopServicesAvailable()`, because renderer tests treat the
+latter as false for the desktop. Of onboarding, only `onboarding/account`
+crosses the adapter: workspace creation, activation and invitation acceptance
+answer with a bearer session, which browser JavaScript must never hold.
+
+Shipped in #1077. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
 ### 2026-09-30 — The account rail offers the Mac app
 
