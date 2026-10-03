@@ -44,11 +44,13 @@ function writeCookie(c: Context<HonoAppEnv>, value: string, expiresAt: string) {
 
 /**
  * The business route families a browser cookie may reach. The member shell
- * needs the Space directory, onboarding, Suggested Work, digests, push devices
- * and workspace membership as well as what guests use; `auth`, `internal`,
- * `ingest`, `access`, `slack`, `sideline` and `dev` stay outside.
+ * needs the Space directory, account onboarding, Suggested Work, digests, push
+ * devices and workspace membership as well as what guests use; `auth`,
+ * `internal`, `ingest`, `access`, `slack`, `sideline` and `dev` stay outside.
+ * Only `onboarding/account` crosses: the other onboarding steps answer with a
+ * bearer session, which browser JavaScript must never hold.
  */
-const BROWSER_ROUTE_FAMILIES = /^\/(conversations|sharing|resources|feature-flags|telemetry|workspace|workspaces|workstreams|spaces|projects|onboarding|work-opportunities|digest|push-devices|sidekicks|automations|connections|favicons|search|speech|realtime)(\/|$)/u;
+const BROWSER_ROUTE_FAMILIES = /^\/(conversations|sharing|resources|feature-flags|telemetry|workspace|workspaces|workstreams|spaces|projects|onboarding\/account|work-opportunities|digest|push-devices|sidekicks|automations|connections|favicons|search|speech|realtime)(\/|$)/u;
 
 /** Same-origin cookie transport over the existing regional business API. */
 export function createBrowserRoutes(dispatch: (request:Request, context:Context<HonoAppEnv>) => Response | Promise<Response>) {

@@ -44,7 +44,7 @@ describe('ThemePicker', () => {
     render(<ThemePicker />);
 
     expect(screen.getByRole('radio', { name: 'System' })).toBeChecked();
-    expect(screen.getByText('Following this Mac, which is light right now.')).toBeInTheDocument();
+    expect(screen.getByText('Following this device, which is light right now.')).toBeInTheDocument();
     expect(readThemeChoice()).toBe('system');
   });
 
@@ -64,7 +64,7 @@ describe('ThemePicker', () => {
 
     act(() => setDark(true));
 
-    expect(screen.getByText('Following this Mac, which is dark right now.')).toBeInTheDocument();
+    expect(screen.getByText('Following this device, which is dark right now.')).toBeInTheDocument();
     expect(document.documentElement.dataset['theme']).toBe('dark');
     stop();
   });

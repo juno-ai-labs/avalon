@@ -36,7 +36,7 @@ export function ThemePicker(): React.JSX.Element {
 
       <p aria-live="polite" className="settings-theme-status">
         {choice === 'system'
-          ? `Following this Mac, which is ${lighting} right now.`
+          ? `Following this device, which is ${lighting} right now.`
           : `Always ${choice}.`}
       </p>
     </div>
