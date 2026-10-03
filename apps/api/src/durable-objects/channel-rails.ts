@@ -27,7 +27,7 @@ import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 
 import { listedResourceVisibilitySql } from "../services/resource-listing";
 import { sidekickAudienceAllows } from "./sidekick-audience";
-import { channelListedSql, type AccessClass } from "./listing-rules";
+import { channelListedSql, mainOpenableSql, type AccessClass } from "./listing-rules";
 
 type Sql = SqlStorage;
 
@@ -216,8 +216,6 @@ function groupIds(rows: readonly { workstream_id: string; sidekick_id: string }[
 export interface ChannelRailsRequest {
   userId: string;
   accessClass: AccessClass;
-  /** Whether this object has the Breakout projection a Channel can be reached through. */
-  breakouts: boolean;
   workspaceId: string;
   workstreamIds: readonly string[];
   onInvalidAppearance: InvalidAppearanceReport;
@@ -231,9 +229,10 @@ export interface ChannelRailsAnswer {
 }
 
 /**
- * The rails of these Channels for one viewer. Visible means what the Channel
- * row's audience means (`channelRowPayloads`); a guest sees only the Channels
- * they take part in.
+ * The rails of these Channels for one viewer. A rail is Main's (its resources,
+ * Sidekicks and roster), so it answers only somebody who may open Main
+ * (`mainOpenableSql`); a Channel listed to them only through a Breakout is
+ * `unavailable`, as is anything else they may not open.
  */
 export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRailsAnswer {
   const asked = [...new Set(request.workstreamIds)];
@@ -252,10 +251,9 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
         AND viewer.authority_generation = directory.authority_generation
       WHERE directory.workstream_id IN (SELECT value FROM json_each(?))
         AND directory.archived_at IS NULL
-        AND ${channelListedSql("directory", "viewer", request.accessClass, { breakouts: request.breakouts })}`,
+        AND ${mainOpenableSql("directory", "viewer", request.accessClass)}`,
     request.userId,
     JSON.stringify(asked),
-    ...(request.breakouts ? [request.userId] : []),
   ).toArray().map((row): [string, RailChannel] => [row.workstream_id, {
     workstreamId: row.workstream_id,
     railWaterline: row.rail_waterline,
