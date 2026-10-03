@@ -56,7 +56,7 @@ over unchanged.
 - **Sources:** <https://developers.cloudflare.com/queues/platform/limits/>,
   <https://developers.cloudflare.com/queues/reference/delivery-guarantees/>
 
-**Verdict: use it.** Rally already runs eight queues with dead-letter queues,
+**Verdict: use it.** Rally already runs seven queues with dead-letter queues,
 and [choosing a Queue or RPC](../../choosing-queues-or-rpc.md) makes a Queue
 the default for exactly this kind of hop.
 
@@ -104,10 +104,8 @@ days.
 
 ### Third-party metering
 
-The market has consolidated: Stripe bought Metronome, Kong bought OpenMeter,
-and Adyen bought Orb. Lago remains open source and can be self-hosted. All of
-them offer real-time balances and credit wallets. None is needed until pricing
-grows complex; when it does, Metronome is the Stripe-native choice.
+Third-party meters (Metronome, Lago and others) are unnecessary until pricing
+grows complex.
 
 ### D1 rollups (chosen)
 
