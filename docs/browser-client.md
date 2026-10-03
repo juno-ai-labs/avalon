@@ -372,6 +372,11 @@ proofs stay visible until explicitly redeemed, even if focus discovers an older
 cookie session. Legacy unaddressed links restore the root workspace picker.
 
 The entry scrolls independently of the shared application's fixed viewport.
+Its screens draw the desktop's sign-in card (`.onboarding-shell`, `.signin-card`,
+`.onboarding-field`, `.signin-button` in `@rally/ui`'s `app.css`) with the shared
+`RallyMark`, `Button`, `ConnectorMark` and `InlineError`; `styles.css` holds only
+what a web page adds, such as the organization rows. A sign-in or picker change
+belongs in the shared rules so both hosts move together.
 Collaboration code loads after authentication through one explicit lazy boundary;
 this is the browser-only exception to static imports. The browser declares its
 desktop dependency because it consumes the existing collaboration implementation;
@@ -547,6 +552,23 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-03 — The entry draws the desktop sign-in card
+
+**What changed:** Sign-in, the organization picker, invitation acceptance and
+the connection-complete page now use the desktop's sign-in classes and shared
+primitives instead of the entry's own left-aligned wordmark layout.
+Organizations are bordered rows with the desktop's initial mark.
+
+**Why:** The web entry looked like a different product from the Mac app and
+the signed-in browser shell that follows it.
+
+**Considered and rejected:** Restyling the entry's own classes to look similar.
+That keeps a second copy of the design to drift; reusing the shared rules costs
+the entry chunk about 2 KB.
+
+**Consequences:** Changing the desktop sign-in rules changes the web entry too.
+Test names (headings, button and field labels) are unchanged.
 
 ### 2026-10-03 — Browser members reach every deployment
 
