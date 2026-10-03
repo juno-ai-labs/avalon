@@ -61,6 +61,24 @@ afterEach(() => {
 });
 
 describe('Usage in Settings', () => {
+  it("never shows the previous Organization's usage after a switch", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (scope: string, api: OrganizationUsageApi) => (
+      <LocalCacheScopeProvider scope={scope}>
+        <QueryClientProvider client={client}><Tooltip.Provider>
+          <UsageSettingsSection api={api} organizationName="Juno Labs" />
+        </Tooltip.Provider></QueryClientProvider>
+      </LocalCacheScopeProvider>
+    );
+    const { rerender } = render(tree(SCOPE, apiAnswering(usage(72))));
+    expect(await screen.findByText("72% of this week's quota left")).toBeVisible();
+
+    rerender(tree('user-1:global:workspace-2', pendingApi));
+
+    expect(await screen.findByText('Checking usage…')).toBeVisible();
+    expect(screen.queryByText("72% of this week's quota left")).not.toBeInTheDocument();
+  });
+
   it('shows the plan, the meter and when the week resets', async () => {
     renderSection(apiAnswering(usage(72)));
 
