@@ -17,6 +17,14 @@ it("serves the private SPA shell with built assets and no setup", async () => {
   expect(script.headers.get("content-type")).toContain("javascript");
 });
 
+it("serves the shell for the page a connector authorization returns to, and nothing beside it", async () => {
+  const complete = await exports.default.fetch("https://browser.example.test/connections/complete?status=connected&provider=google");
+  expect(complete.status).toBe(200);
+  expect(complete.headers.get("cache-control")).toBe("no-store");
+  expect(await complete.text()).toContain('<div id="root"></div>');
+  expect((await exports.default.fetch("https://browser.example.test/connections/other")).status).toBe(404);
+});
+
 it("forwards same-origin cookie requests through the configured regional service without changing proofs", async () => {
   const response = await exports.default.fetch("https://browser.example.test/regional/global/browser/email/redeem", {
     method: "POST", headers: { Origin: "https://browser.example.test", Cookie: "__Host-rally-browser-global=prior", "Content-Type": "application/json" },

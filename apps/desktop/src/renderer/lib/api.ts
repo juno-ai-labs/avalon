@@ -753,6 +753,15 @@ export class RallyApi {
     return this.request('/search', { method: 'POST', body: request, schema: SearchResponseSchema, signal });
   }
 
+  /**
+   * How a connector authorization this client starts comes back: a browser tab
+   * returns to its completion page, the desktop to its versioned deep link.
+   */
+  private connectorHandoffQuery(): string {
+    const cookie = this.session !== null && 'authentication' in this.session && this.session.authentication === 'cookie';
+    return cookie ? 'handoff=browser' : 'desktopHandoffVersion=2';
+  }
+
   private async request<T>(path: string, options: RequestOptions<T>): Promise<T> {
     const headers = new Headers(options.headers);
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
@@ -2234,7 +2243,7 @@ export class RallyApi {
       capabilityCount: telemetryCountBucket(capabilities.length),
       operationId,
     });
-    return this.request(`/connections/${provider}/start?telemetryVersion=2&desktopHandoffVersion=2`, {
+    return this.request(`/connections/${provider}/start?telemetryVersion=2&${this.connectorHandoffQuery()}`, {
       method: 'POST',
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: { scope: scope === 'you' ? 'personal' : 'workspace', capabilities },
@@ -2281,7 +2290,7 @@ export class RallyApi {
       method: 'oauth', capabilityCount: telemetryCountBucket(1),
       operationId,
     });
-    return this.request('/connections/custom-mcp/start?telemetryVersion=2&desktopHandoffVersion=2', {
+    return this.request(`/connections/custom-mcp/start?telemetryVersion=2&${this.connectorHandoffQuery()}`, {
       method: 'POST',
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: {
@@ -2434,7 +2443,7 @@ export class RallyApi {
       });
     }
     return this.request(
-      `/connections/${encodeURIComponent(id)}/reconnect?telemetryVersion=2&desktopHandoffVersion=2`,
+      `/connections/${encodeURIComponent(id)}/reconnect?telemetryVersion=2&${this.connectorHandoffQuery()}`,
       {
         method: 'POST',
         ...(operationId ? { headers: { [RALLY_HEADERS.OPERATION_ID]: operationId } } : {}),
@@ -2454,7 +2463,7 @@ export class RallyApi {
     request: ConnectorResourceAuthorizationRequest,
   ): Promise<ConnectorResourceAuthorizationStart> {
     return this.request(
-      `/connections/${encodeURIComponent(request.connectionId)}/resource-authorizations/start?desktopHandoffVersion=2`,
+      `/connections/${encodeURIComponent(request.connectionId)}/resource-authorizations/start?${this.connectorHandoffQuery()}`,
       {
         method: 'POST',
         body: { target: {
