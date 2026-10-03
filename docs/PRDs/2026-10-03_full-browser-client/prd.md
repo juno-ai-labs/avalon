@@ -203,6 +203,19 @@ session could not.
 
 ## Decision log
 
+### 2026-10-03 — Nothing provisions the capability list
+
+**Decided:** Ace's deploy no longer creates `browser-connectable-capabilities`.
+The API falls back to the launch set when the flag is missing, so the flag is
+created in Flagship the first time the list should differ.
+
+**Why:** Provisioning it with the launch set added nothing at launch and kept a
+second copy of the list in `deploy.mjs` in step by hand. The deploy skipped an
+existing flag, so editing that copy never reached Flagship anyway.
+
+**Changes:** Supersedes the entry below on who creates the flag. Its value is
+still edited in Flagship, and the list still changes without a deploy.
+
 ### 2026-10-03 — The browser connector list names whole Google connections
 
 **Decided:** `browser-connectable-capabilities` defaults to every capability of
