@@ -10,6 +10,10 @@ import { demoOperatorRoutes } from "../src/routes/demo-operations";
 import { DEMO_TEMPLATE_WORKSPACE_ID } from "../src/services/demo-workspace-visibility";
 import { listDemoCastCandidates, mintDemoPersona } from "../src/services/demo-cast";
 import { __demoPreparationTesting } from "../src/services/demo-preparation";
+import { DemoPackSchema, PLACEHOLDER_DEMO_PACK } from "../src/services/demo-pack";
+import { DemoAdministration } from "../src/demo-administration";
+import { demoOperationIdForRequest } from "@rally/contracts/demo-administration";
+import { DemoOperationListSchema } from "@rally/contracts";
 import {
   abandonDemoOperation,
   activeDemoPack,
@@ -402,15 +406,47 @@ describe("a demo preparation operation", () => {
     expect(await row(env, OPERATION_ID)).toMatchObject({ status: "running", attempt: 2 });
   });
 
-  it("refuses a resumed later phase when deployment changed the pack", async () => {
+  it("refuses a resumed later phase of an operation older than stored packs when deployment changed the pack", async () => {
     const { env } = fixture();
     await startDemoOperation(env, request());
     await runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 });
-    await env.DB.prepare("UPDATE demo_operations SET pack_version = 'previous-pack' WHERE operation_id = ?")
+    // A row written before migration 0118 points at no stored pack and still
+    // runs from the pack in service.
+    await env.DB.prepare("UPDATE demo_operations SET pack_version = 'previous-pack', scenario_revision_id = NULL WHERE operation_id = ?")
       .bind(OPERATION_ID).run();
     await expect(runDemoPreparationPhase(env, OPERATION_ID, "seeding_conversations", { attempt: 1 }))
       .rejects.toMatchObject({ code: "demo_pack_changed" });
     expect(await row(env, OPERATION_ID)).toMatchObject({ status: "failed", error_code: "demo_pack_changed" });
+  });
+
+  it("runs every phase from the pack it stored, whatever the pack in service is now", async () => {
+    const { env } = fixture();
+    // A pack that is not the one in service: what a deploy that changed the
+    // built-in pack, or a Demo MCP scenario, looks like to a resumed phase.
+    const pack = { ...DemoPackSchema.parse(PLACEHOLDER_DEMO_PACK), version: "northwind-custom" };
+    const status = await startDemoOperation(env, { ...request(), pack });
+    expect(status.packVersion).toMatch(/^stored:[0-9a-f]{64}$/u);
+    expect(await runDemoPreparationPhase(env, OPERATION_ID, "checking_template", { attempt: 1 }))
+      .toMatchObject({ outcome: "completed", detail: { roles: ["presenter", "priya", "marcus", "dana"] } });
+    const stored = await env.DB.prepare(
+      `SELECT revision.pack_json FROM demo_operations op
+         JOIN demo_scenario_revisions revision ON revision.id = op.scenario_revision_id
+        WHERE op.operation_id = ?`,
+    ).bind(OPERATION_ID).first<{ pack_json: string }>();
+    expect(JSON.parse(stored!.pack_json)).toMatchObject({ version: "northwind-custom" });
+  });
+
+  it("stores one revision for two operations started from the same pack", async () => {
+    const { env } = fixture();
+    await startDemoOperation(env, request());
+    await startDemoOperation(env, { ...request(), operationId: "00000000-0000-7000-8000-0000000000e3" });
+    const revisions = await env.DB.prepare(
+      "SELECT DISTINCT scenario_revision_id AS id FROM demo_operations",
+    ).all<{ id: string | null }>();
+    expect(revisions.results).toHaveLength(1);
+    expect(revisions.results[0]!.id).not.toBeNull();
+    expect((await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_scenario_revisions").first<{ count: number }>())!.count)
+      .toBe(1);
   });
 
   it("runs the template check against the real rows and fails the operation on a presenter the template lost", async () => {
@@ -700,5 +736,152 @@ describe("what the operator reads when a phase stops", () => {
       thrown = error;
     }
     expect(thrown).toMatchObject({ code: expect.stringMatching(/^demo_cast_unreadable:.*invalid_type/u) });
+  });
+});
+
+describe("the Demo MCP's entrypoint", () => {
+  const ACTOR = { subject: "access-subject-1", email: "adam@rallywith.ai" };
+
+  function administration(env: Env): DemoAdministration {
+    return new DemoAdministration({} as ExecutionContext, env);
+  }
+
+  function inlinePack(version = "northwind-1") {
+    return { ...DemoPackSchema.parse(PLACEHOLDER_DEMO_PACK), version };
+  }
+
+  function create(overrides: Record<string, unknown> = {}) {
+    return {
+      requestKey: "northwind-2026-10-03",
+      scenario: { pack: inlinePack() },
+      companyName: "Northwind",
+      presenterUserId: PRESENTER_ID,
+      cast: cast(),
+      ...overrides,
+    };
+  }
+
+  it("creates a demo from an inline pack once per request key, and a repeat stores and launches nothing", async () => {
+    const { env, launched } = fixture();
+    const first = await administration(env).createOrganization({ actor: ACTOR, input: create() });
+    expect(first).toMatchObject({
+      ok: true,
+      value: {
+        companyName: "Northwind",
+        status: "running",
+        requestKey: "northwind-2026-10-03",
+        requestedBy: "adam@rallywith.ai",
+        scenario: { source: "stored" },
+        recovery: null,
+      },
+    });
+    const operationId = first.ok ? first.value.operationId : "";
+    expect(operationId).toBe(await demoOperationIdForRequest(ACTOR.subject, "northwind-2026-10-03"));
+
+    // The same key with a different pack and company: the first demo, untouched.
+    const again = await administration(env).createOrganization({
+      actor: ACTOR,
+      input: create({ companyName: "Someone else", scenario: { pack: inlinePack("northwind-2") } }),
+    });
+    expect(again).toMatchObject({ ok: true, value: { operationId, companyName: "Northwind" } });
+    // A repeat is never re-checked, so not even a pack that would now be
+    // refused stops it from finding its demo.
+    const broken = await administration(env).createOrganization({
+      actor: ACTOR,
+      input: create({ scenario: { pack: { version: "broken" } } }),
+    });
+    expect(broken).toMatchObject({ ok: true, value: { operationId } });
+    expect(launched).toHaveLength(1);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_scenario_revisions").first<{ count: number }>())!.count)
+      .toBe(1);
+  });
+
+  it("refuses a pack that does not check with its issues, and writes nothing", async () => {
+    const { env, launched } = fixture();
+    const result = await administration(env).createOrganization({
+      actor: ACTOR,
+      input: create({ scenario: { pack: { ...inlinePack(), roles: ["presenter", "priya"] } } }),
+    });
+    expect(result).toMatchObject({ ok: false, code: "demo_scenario_invalid" });
+    expect(result.ok ? [] : result.issues?.map((issue) => issue.code)).toContain("demo_pack_role_not_in_cast");
+    expect(launched).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_operations").first<{ count: number }>())!.count).toBe(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS count FROM demo_scenario_revisions").first<{ count: number }>())!.count).toBe(0);
+  });
+
+  it("carries a shipped refusal across by its code", async () => {
+    const { env } = fixture();
+    expect(await administration(env).createOrganization({ actor: ACTOR, input: create({ presenterUserId: PRIYA_ID }) }))
+      .toMatchObject({ ok: false, code: "demo_presenter_not_in_template" });
+  });
+
+  it("keeps the shipped status Ace parses for an operation the Demo MCP made", async () => {
+    const { env, app } = fixture();
+    await administration(env).createOrganization({ actor: ACTOR, input: create() });
+    const listed = await app.request("/internal/demos", { headers: { authorization: `Bearer ${DEMOS_TOKEN}` } }, env);
+    expect(listed.status).toBe(200);
+    const body = DemoOperationListSchema.parse(await listed.json());
+    expect(body.operations[0]!.packVersion).toMatch(/^stored:[0-9a-f]{64}$/u);
+  });
+
+  it("starts no second attempt when a retry repeats the attempt it read", async () => {
+    const { env, launched } = fixture();
+    const created = await administration(env).createOrganization({ actor: ACTOR, input: create() });
+    const operationId = created.ok ? created.value.operationId : "";
+    expect(await administration(env).retryOperation({ actor: ACTOR, input: { operationId, expectedAttempt: 1 } }))
+      .toMatchObject({ ok: true, value: { attempt: 2 } });
+    expect(await administration(env).retryOperation({ actor: ACTOR, input: { operationId, expectedAttempt: 1 } }))
+      .toMatchObject({ ok: false, code: "demo_operation_changed" });
+    expect(launched.map((launch) => launch.id)).toEqual([
+      `demo-preparation-${operationId}-1`,
+      `demo-preparation-${operationId}-2`,
+    ]);
+  });
+
+  it("names the recovery for a failure and warns that a Ready demo is invisible without the presenter's flag", async () => {
+    const { env } = fixture();
+    const created = await administration(env).createOrganization({ actor: ACTOR, input: create() });
+    const operationId = created.ok ? created.value.operationId : "";
+    await env.DB.prepare("UPDATE demo_operations SET status = 'failed', error_code = 'demo_seed_run_failed', error_message = 'x' WHERE operation_id = ?")
+      .bind(operationId).run();
+    expect(await administration(env).getOperation({ actor: ACTOR, input: { operationId } }))
+      .toMatchObject({ ok: true, value: { recovery: "abandon_demo_operation" } });
+    await env.DB.prepare("UPDATE demo_operations SET status = 'ready', ready_at = ?, error_code = NULL, error_message = NULL WHERE operation_id = ?")
+      .bind(NOW, operationId).run();
+    const ready = await administration(env).getOperation({ actor: ACTOR, input: { operationId } });
+    expect(ready.ok && ready.value.notices.map((notice) => notice.code)).toEqual(["presenter_cannot_see_organizations"]);
+  });
+
+  it("retires only an Organization demo preparation published, and only by its exact name", async () => {
+    const { env } = fixture();
+    expect(await administration(env).retireOrganization({
+      actor: ACTOR,
+      input: { organizationId: DEMO_TEMPLATE_WORKSPACE_ID, confirmName: "demo-template" },
+    })).toMatchObject({ ok: false, code: "demo_not_a_demo_organization" });
+
+    const created = await administration(env).createOrganization({ actor: ACTOR, input: create() });
+    const operationId = created.ok ? created.value.operationId : "";
+    const workspaceId = "00000000-0000-7000-8000-0000000000f1";
+    await env.DB.prepare(
+      `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+       VALUES (?, 'Northwind-demo', 'northwind-demo', 'global', ?, ?, ?)`,
+    ).bind(workspaceId, PRESENTER_ID, NOW, NOW).run();
+    await env.DB.prepare("UPDATE demo_operations SET workspace_id = ? WHERE operation_id = ?").bind(workspaceId, operationId).run();
+    expect(await administration(env).retireOrganization({
+      actor: ACTOR,
+      input: { organizationId: workspaceId, confirmName: "Northwind-demo" },
+    })).toMatchObject({ ok: false, code: "demo_operation_unpublished" });
+
+    await env.DB.prepare("UPDATE demo_operations SET status = 'ready', ready_at = ? WHERE operation_id = ?").bind(NOW, operationId).run();
+    expect(await administration(env).retireOrganization({
+      actor: ACTOR,
+      input: { organizationId: workspaceId, confirmName: "northwind-demo" },
+    })).toMatchObject({ ok: false, code: "demo_retire_unconfirmed" });
+  });
+
+  it("refuses every call outside Global", async () => {
+    const { env } = fixture({ AVALON_REGION: "enterprise" } as Partial<Env>);
+    expect(await administration(env).listScenarios({ actor: ACTOR, input: {} }))
+      .toMatchObject({ ok: false, code: "demo_region_unsupported" });
   });
 });

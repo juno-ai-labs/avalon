@@ -45,6 +45,7 @@ import { copyTemplateConnections } from "./demo-connection-copy";
 import { DEMO_PRESENTER_ROLE, DemoPackSchema, PLACEHOLDER_DEMO_PACK, demoCastRoles, type DemoPack } from "./demo-pack";
 import { DEMO_CAST_EMAIL_DOMAIN, assertDemoCastNamesDistinct, listDemoCastCandidates, mintDemoPersona, nameDemoPersonas, readDemoCast } from "./demo-cast";
 import { checkDemoReadiness, demoReadinessManifest } from "./demo-readiness";
+import { readDemoPackRevision, storeDemoPackRevision } from "./demo-scenarios";
 import {
   applyDemoSeedAction,
   demoSeedReceipts,
@@ -91,6 +92,10 @@ interface OperationRecord {
   retired_at: string | null;
   created_at: string;
   updated_at: string;
+  /** The stored pack this operation runs from; null only on rows older than migration 0118. */
+  scenario_revision_id: string | null;
+  /** How many steps that pack has, read in the same query so a list needs no pack parse. */
+  pack_step_count: number | null;
 }
 
 interface PhaseRecord {
@@ -109,10 +114,12 @@ const OPERATION_SELECT = `
   SELECT op.operation_id, op.company_name, op.presenter_user_id, presenter.name AS presenter_name,
          op.pack_version, op.cast_json, op.workspace_id, workspace.name AS workspace_name,
          op.status, op.attempt, op.failed_phase, op.error_code, op.error_message,
-         op.ready_at, op.retired_at, op.created_at, op.updated_at
+         op.ready_at, op.retired_at, op.created_at, op.updated_at,
+         op.scenario_revision_id, json_array_length(revision.pack_json, '$.steps') AS pack_step_count
     FROM demo_operations op
     LEFT JOIN users presenter ON presenter.id = op.presenter_user_id
-    LEFT JOIN workspaces workspace ON workspace.id = op.workspace_id`;
+    LEFT JOIN workspaces workspace ON workspace.id = op.workspace_id
+    LEFT JOIN demo_scenario_revisions revision ON revision.id = op.scenario_revision_id`;
 
 const PHASE_SELECT = `
   SELECT operation_id, phase, status, attempt, detail_json, error_code, error_message, started_at, finished_at
@@ -190,7 +197,7 @@ function toStatus(
       startedAt: phase.started_at,
       finishedAt: phase.finished_at,
     })),
-    seeding: { confirmed, total: activeDemoPack().steps.length },
+    seeding: { confirmed, total: record.pack_step_count ?? activeDemoPack().steps.length },
   });
 }
 
@@ -392,6 +399,63 @@ async function launchAttempt(env: Env, operationId: string, attempt: number): Pr
 }
 
 /**
+ * The cast a request names, checked against the pack and the directory: every
+ * role the operator casts is bound and nothing else is, the presenter is not
+ * in it, every chosen id is a colleague, nobody plays two parts, and no two
+ * people share a name. Answers the chosen accounts and the typed names apart,
+ * with each person's directory name.
+ *
+ * The presenter is passed when the request has one; the Demo MCP's check of a
+ * scenario has none yet, and reads the cast alone.
+ */
+export async function checkDemoCastEntries(
+  env: Env,
+  pack: DemoPack,
+  entries: Readonly<Record<string, DemoCastEntry>>,
+  presenter: { userId: string; name: string } | null,
+): Promise<{ chosen: Record<string, string>; typed: Record<string, string>; names: Record<string, string> }> {
+  const castRoles = demoCastRoles(pack.roles);
+  for (const role of castRoles) {
+    if (!entries[role]) throw new ApiError(422, "demo_pack_role_unbound", `Nobody is cast as "${role}"`);
+  }
+  for (const role of Object.keys(entries)) {
+    if (role === DEMO_PRESENTER_ROLE) {
+      // The presenter is named by their own field: they are cast from the
+      // template's members, which is a narrower list than the cast's.
+      throw new ApiError(422, "demo_presenter_cast", "The presenter is chosen from the template, not cast");
+    }
+    if (!castRoles.includes(role)) throw new ApiError(422, "demo_pack_role_unknown", `The pack has no role "${role}"`);
+  }
+  const presenterRole = pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null;
+  const chosen: Record<string, string> = {};
+  const typed: Record<string, string> = {};
+  for (const role of castRoles) {
+    const entry = entries[role]!;
+    if (typeof entry === "string") chosen[role] = entry;
+    else typed[role] = entry.name;
+  }
+  // Every chosen id is a colleague, read here so the names below are the
+  // directory's rather than the request's.
+  const people = await readDemoCast(env, { cast: chosen, presenterRole });
+  // One person cannot play two parts: the seeded conversation has them
+  // answering themselves, and the readiness barrier reads one directory row
+  // for two roles.
+  const picked = [...(presenterRole && presenter ? [presenter.userId] : []), ...Object.values(chosen)];
+  if (new Set(picked).size !== picked.length) {
+    throw new ApiError(422, "demo_cast_duplicate", "Each pack role must be played by a different person");
+  }
+  assertDemoCastNamesDistinct([
+    ...Object.values(people).map((person) => person.name),
+    ...Object.values(typed),
+    ...(presenterRole && presenter ? [presenter.name] : []),
+  ]);
+  const names: Record<string, string> = { ...typed };
+  for (const [role, person] of Object.entries(people)) names[role] = person.name;
+  if (presenterRole && presenter) names[presenterRole] = presenter.name;
+  return { chosen, typed, names };
+}
+
+/**
  * Start one preparation, or return the one this operation id already started.
  *
  * Operation identity, not a concurrency limit: two different ids are two demos.
@@ -407,7 +471,22 @@ async function launchAttempt(env: Env, operationId: string, attempt: number): Pr
  */
 export async function startDemoOperation(
   env: Env,
-  input: { operationId: string; companyName: string; presenterUserId: string; cast: Record<string, DemoCastEntry> },
+  input: {
+    operationId: string;
+    companyName: string;
+    presenterUserId: string;
+    cast: Record<string, DemoCastEntry>;
+    /**
+     * A pack the caller already checked (the Demo MCP's inline scenario).
+     * Absent: the built-in pack. Either way the operation stores the pack it
+     * starts with and every phase reads that copy.
+     */
+    pack?: DemoPack;
+    /** The key a Demo MCP client chose; the operation id was derived from it. */
+    requestKey?: string;
+    /** Who asked, from the Access identity the Demo MCP verified. */
+    requester?: { subject: string; email: string | null };
+  },
   operator: { operatorId: string | null } = { operatorId: null },
 ): Promise<DemoOperationStatus> {
   requireDemoRegion(env);
@@ -421,43 +500,13 @@ export async function startDemoOperation(
   // this settles the second submission of one that already landed.
   const started = await demoOperationStatus(env, input.operationId);
   if (started) return started;
-  const pack = activeDemoPack();
-  const castRoles = demoCastRoles(pack.roles);
-  for (const role of castRoles) {
-    if (!input.cast[role]) throw new ApiError(422, "demo_pack_role_unbound", `Nobody is cast as "${role}"`);
-  }
-  for (const role of Object.keys(input.cast)) {
-    if (role === DEMO_PRESENTER_ROLE) {
-      // The presenter is named by their own field: they are cast from the
-      // template's members, which is a narrower list than the cast's.
-      throw new ApiError(422, "demo_presenter_cast", "The presenter is chosen from the template, not cast");
-    }
-    if (!castRoles.includes(role)) throw new ApiError(422, "demo_pack_role_unknown", `The pack has no role "${role}"`);
-  }
+  const pack = input.pack ?? activeDemoPack();
   const presenter = await assertTemplatePresenter(env, input.presenterUserId);
   const presenterRole = pack.roles.includes(DEMO_PRESENTER_ROLE) ? DEMO_PRESENTER_ROLE : null;
-  const chosen: Record<string, string> = {};
-  const typed: Record<string, string> = {};
-  for (const role of castRoles) {
-    const entry = input.cast[role]!;
-    if (typeof entry === "string") chosen[role] = entry;
-    else typed[role] = entry.name;
-  }
-  // Every chosen id is a colleague, read here so the names below are the
-  // directory's rather than the request's.
-  const people = await readDemoCast(env, { cast: chosen, presenterRole });
-  // One person cannot play two parts: the seeded conversation has them
-  // answering themselves, and the readiness barrier reads one directory row
-  // for two roles.
-  const picked = [...(presenterRole ? [input.presenterUserId] : []), ...Object.values(chosen)];
-  if (new Set(picked).size !== picked.length) {
-    throw new ApiError(422, "demo_cast_duplicate", "Each pack role must be played by a different person");
-  }
-  assertDemoCastNamesDistinct([
-    ...Object.values(people).map((person) => person.name),
-    ...Object.values(typed),
-    ...(presenterRole ? [presenter.name] : []),
-  ]);
+  const { chosen, typed } = await checkDemoCastEntries(env, pack, input.cast, {
+    userId: input.presenterUserId,
+    name: presenter.name,
+  });
   // A typed name is played by a persona minted for this operation and role,
   // only once every check has passed.
   const bound: Record<string, string> = { ...chosen };
@@ -469,15 +518,24 @@ export async function startDemoOperation(
     ...bound,
   };
   const at = nowIso();
+  // The exact bytes this demo is made from, stored before the row that points
+  // at them. Two operations from the same pack share one revision, so a start
+  // that loses the insert race below leaves nothing behind but a row the
+  // winner points at too.
+  const revision = await storeDemoPackRevision(env.DB, pack, input.requester ?? null, at);
+  const packVersion = input.pack ? `stored:${revision.contentHash}` : pack.version;
   const inserted = await env.DB.prepare(
     `INSERT INTO demo_operations
        (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id,
-        status, attempt, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, NULL, 'running', 1, ?, ?)
+        status, attempt, created_at, updated_at,
+        scenario_revision_id, request_key, requested_by_subject, requested_by_email)
+     VALUES (?, ?, ?, ?, ?, NULL, 'running', 1, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (operation_id) DO NOTHING`,
   ).bind(
-    input.operationId, input.companyName, input.presenterUserId, pack.version,
+    input.operationId, input.companyName, input.presenterUserId, packVersion,
     JSON.stringify(cast), at, at,
+    revision.revisionId, input.requestKey ?? null,
+    input.requester?.subject ?? null, input.requester?.email ?? null,
   ).run();
   // The insert's own answer decides who launches: exactly one submission of
   // an operation id writes the row, and only it starts the driver. Deciding
@@ -491,6 +549,8 @@ export async function startDemoOperation(
       operation_id: input.operationId,
       company_name: input.companyName,
       operator_id: operator.operatorId,
+      requested_by_subject: input.requester?.subject ?? null,
+      scenario_revision_id: revision.revisionId,
     });
   }
   return (await demoOperationStatus(env, input.operationId))!;
@@ -802,10 +862,7 @@ async function phaseBody(
   phase: DemoPreparationPhase,
   options: { attempt: number; deadlineAt?: number },
 ): Promise<DemoPhaseOutcome> {
-  const pack = activeDemoPack();
-  if (record.pack_version !== pack.version) {
-    throw new ApiError(409, "demo_pack_changed", `The pack in service is ${pack.version}, not ${record.pack_version}`);
-  }
+  const pack = await operationPack(env, record);
   const cast = castOf(record);
   switch (phase) {
     case "checking_template": {
@@ -940,6 +997,25 @@ async function phaseBody(
       return { outcome: "ready", detail: { checkedAt: report.checkedAt, readyAt: at } };
     }
   }
+}
+
+/**
+ * The pack this operation runs from: the revision it stored when it started.
+ * A row older than migration 0118 has none and runs from the pack in service,
+ * which it must still match; a deploy that changed that pack fails it with
+ * `demo_pack_changed`, as it always did.
+ */
+async function operationPack(env: Env, record: OperationRecord): Promise<DemoPack> {
+  if (record.scenario_revision_id) {
+    const stored = await readDemoPackRevision(env.DB, record.scenario_revision_id);
+    if (!stored) throw new ApiError(500, "demo_scenario_revision_missing", "The operation's stored pack could not be found");
+    return stored.pack;
+  }
+  const pack = activeDemoPack();
+  if (record.pack_version !== pack.version) {
+    throw new ApiError(409, "demo_pack_changed", `The pack in service is ${pack.version}, not ${record.pack_version}`);
+  }
+  return pack;
 }
 
 function requireWorkspace(record: OperationRecord): string {

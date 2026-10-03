@@ -73,6 +73,13 @@ played by a different signed-in account on the company's domain.
 | Rally answers, weighs in, sorts it out | `assistant: { kind: "say" }` |
 | Rally asks them to pick | `assistant: { kind: "ask" }` |
 
+**Does it need to ship to everyone?** This skill changes the built-in pack,
+which every future demo prepared from Ace starts from. A scenario for one
+prospect or one presenter does not need a pull request: through the Demo MCP
+([`docs/demo-mcp.md`](../../../docs/demo-mcp.md)) a client edits the pack, checks
+it and prepares a demo from it directly. Say so, and continue here only for a
+change that belongs in every demo.
+
 Ask only what changes the work, in **one** `AskUserQuestion` batch, once:
 
 1. Which of the three are in it, and who starts it.
@@ -182,12 +189,12 @@ their own miniature packs — so a scenario change does not reach them. Adding a
 
 ### Bumping the pack version
 
-`PLACEHOLDER_DEMO_PACK.version` is recorded on every demo operation when it
-starts, and `checking_template` refuses an operation whose recorded version is
-not the one now deployed (`demo_pack_changed`). So changing the pack's contents
-under the same version lets a demo that was already being prepared resume onto
-half of the new pack; bumping it stops that demo loudly instead, and the
-operator starts a fresh one — a matter of minutes.
+`PLACEHOLDER_DEMO_PACK.version` is recorded on every demo operation that starts
+from the built-in pack, and it is how an operator tells which pack a demo was
+made from. A demo already preparing is not affected by your change: every
+operation stores the pack it started with and runs from that copy
+([`docs/demo-workspaces.md`](../../../docs/demo-workspaces.md)), so only an
+operation older than that rule can still fail `demo_pack_changed`.
 
 **Bump it.** Three literals in `apps/ace/test/demos.test.ts` and
 `apps/ace/test/demos-client.test.tsx` name the version and change with it; run

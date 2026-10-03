@@ -26,25 +26,33 @@
  * `docs/demo-workspaces.md` owns the feature and says which scenarios the
  * placeholder pack carries and why.
  */
-import { z } from "zod";
+import type { z } from "zod";
 
 import {
-  DemoSeedSayTurnSchema,
-  SpaceIconKeySchema,
-  SpaceColorKeySchema,
-  DemoSeedTurnSchema,
-  IanaTimezoneSchema,
-  MESSAGE_MAX_CHARACTERS,
   type DemoSeed,
   type DemoSeedTurn,
   type Message,
 } from "@rally/contracts";
+import {
+  DEMO_PACK_MENTION_TOKEN,
+  DemoPackShapeSchema,
+  type DemoPackRole,
+  type DemoPackStep,
+  type DemoViewerExpectation,
+} from "@rally/contracts/demo-pack";
+
+export {
+  DemoPackRoleSchema,
+  DemoPackStepSchema,
+  type DemoPackRole,
+  type DemoPackStep,
+  type DemoViewerExpectation,
+} from "@rally/contracts/demo-pack";
+
+const MENTION_TOKEN = DEMO_PACK_MENTION_TOKEN;
 
 type Mention = Message["mentions"][number];
 
-/** A role the cast plays. Bound to an account per demo, never in the pack. */
-export const DemoPackRoleSchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
-export type DemoPackRole = z.infer<typeof DemoPackRoleSchema>;
 
 /**
  * The one role that has to be the person presenting. They sign in and the demo
@@ -59,150 +67,6 @@ export function demoCastRoles(roles: readonly DemoPackRole[]): DemoPackRole[] {
   return roles.filter((role) => role !== DEMO_PRESENTER_ROLE);
 }
 
-/**
- * A step's id doubles as the action id on every receipt and seed, and — joined
- * to the operation id — as the client message id the production path dedupes
- * on. 80 is what `DemoSeedSchema.actionId` allows, and the pair fits the 120
- * a client message id may be.
- */
-const StepIdSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/u);
-const RoomKeySchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
-/**
- * The pack's own name for a substream, unique across the pack. The main
- * conversation of a room has no name of its own: creating the room creates it,
- * and a step that names no substream is a step in it.
- */
-const SubstreamKeySchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
-const MessageTextSchema = z.string().min(1).max(MESSAGE_MAX_CHARACTERS);
-
-/**
- * `@{role}` in a message names a cast member. The planner replaces it with the
- * bound account's display name and records a mention at those offsets, which
- * is what makes the mention real: the object validates that the visible text
- * matches the person, and a confirmed mention seats them in the room.
- */
-const MENTION_TOKEN = /@\{([a-z][a-z0-9-]{0,39})\}/gu;
-
-const CreateWorkstreamStepSchema = z.strictObject({
-  kind: z.literal("create_workstream"),
-  execution: z.enum(["run", "history"]).optional(),
-  id: StepIdSchema,
-  room: RoomKeySchema,
-  as: DemoPackRoleSchema,
-  title: z.string().min(1),
-  space: RoomKeySchema.optional(),
-  /**
-   * Roles seated at creation, besides the author. May be empty: a person alone
-   * with Rally is an ordinary room, and whether a seeded line starts a run is
-   * the seed's decision rather than the room's size.
-   */
-  participants: z.array(DemoPackRoleSchema),
-  scope: z.enum(["workspace", "personal"]),
-  openingMessage: MessageTextSchema,
-  /** What Rally says: an opening message always starts a run. */
-  assistant: DemoSeedTurnSchema,
-});
-
-/**
- * Open a substream: a private conversation inside a room the pack already
- * created. Only its participants ever see it — it is not a second work stream,
- * takes no row in anybody's sidebar, and changes nothing about how the room it
- * hangs off is listed.
- *
- * Two things the production flow decides for a person are the pack's here.
- * Membership, because a substream opens creator-only and everybody else is
- * added afterwards, so the pack says who ends up in it rather than leaving a
- * demo's private room with one person in it. And the starting context, because
- * Rally normally writes that by summarizing the parent conversation with a
- * model: scripting it keeps a seeded demo reproducible and keeps one more live
- * model call out of the minutes an operator spends waiting to present.
- */
-const CreateSubstreamStepSchema = z.strictObject({
-  kind: z.literal("create_substream"),
-  id: StepIdSchema,
-  /** The room this hangs off, which an earlier step must have created. */
-  room: RoomKeySchema,
-  substream: SubstreamKeySchema,
-  /** Who opens it. A substream is created by one person and starts idle. */
-  as: DemoPackRoleSchema,
-  title: z.string().min(1),
-  /** Everyone else in it, added by the creator once it is ready. */
-  participants: z.array(DemoPackRoleSchema),
-  /** What Rally's starting context says, in place of the summary a model would write. */
-  startingContext: z.string().min(1).max(20_000),
-});
-
-const MessageStepSchema = z.strictObject({
-  kind: z.literal("message"),
-  id: StepIdSchema,
-  room: RoomKeySchema,
-  /** Which conversation of the room. Absent: the main one. */
-  substream: SubstreamKeySchema.optional(),
-  as: DemoPackRoleSchema,
-  text: MessageTextSchema,
-  /** What Rally says when this message starts a run. Absent: it starts none. */
-  assistant: DemoSeedTurnSchema.optional(),
-});
-
-const UploadStepSchema = z.strictObject({
-  kind: z.literal("upload"),
-  id: StepIdSchema,
-  room: RoomKeySchema,
-  /** Which conversation of the room. Absent: the main one. */
-  substream: SubstreamKeySchema.optional(),
-  as: DemoPackRoleSchema,
-  title: z.string().min(1),
-  fileName: z.string().min(1),
-  mimeType: z.enum(["text/markdown", "text/plain"]),
-  content: z.string().min(1),
-});
-
-/**
- * A Sidekick the demo already has, published and on a schedule.
- *
- * It belongs to no room: it is created by `createAutomation` like the one a
- * person makes from the Sidekicks library, it owns its own authoring
- * conversation, and no later step refers back to it. That is why this step
- * carries no `room` key while every other step does.
- *
- * The definition's four prose fields are the ones a drafting conversation would
- * have produced, written here instead so a demo does not depend on a live model
- * to have a Sidekick in it. `schedule` is the recurrence, and its `timezone` is
- * always named: a demo is presented in a zone somebody chose, and leaving it
- * null would resolve it against whichever colleague happens to be cast as the
- * author, whose own zone is not the one the demo is being shown in.
- */
-const SidekickStepSchema = z.strictObject({
-  kind: z.literal("sidekick"),
-  id: StepIdSchema,
-  as: DemoPackRoleSchema,
-  /** `personal` is the author's alone; `workspace` is offered to every member. */
-  scope: z.enum(["personal", "workspace"]),
-  name: z.string().min(1).max(140),
-  description: z.string().min(1).max(1200),
-  overview: z.string().min(1).max(3000),
-  instructions: z.string().min(1).max(12000),
-  schedule: z.strictObject({
-    rrule: z.string().min(1),
-    timezone: IanaTimezoneSchema,
-    summary: z.string().min(1),
-  }),
-  /**
-   * One run it has already made, so the demo has something to look at before
-   * the schedule first fires. Absent: it is published and has never run. Only
-   * a `say`, because a Sidekick run has no room to park a question in.
-   */
-  firstRun: DemoSeedSayTurnSchema.optional(),
-});
-
-export const DemoPackStepSchema = z.discriminatedUnion("kind", [
-  CreateWorkstreamStepSchema,
-  CreateSubstreamStepSchema,
-  MessageStepSchema,
-  UploadStepSchema,
-  SidekickStepSchema,
-]);
-export type DemoPackStep = z.infer<typeof DemoPackStepSchema>;
 
 /** The steps that happen inside a room, which is every step but a Sidekick's. */
 type DemoPackRoomStep = Exclude<DemoPackStep, { kind: "sidekick" }>;
@@ -240,36 +104,6 @@ function mentionedRoles(text: string): string[] {
   return [...text.matchAll(MENTION_TOKEN)].map((match) => match[1]!);
 }
 
-/**
- * What one viewer should find in one room once the demo is Ready — the flags
- * the directory answers per viewer and nothing can derive from the steps
- * alone, because they depend on who opened what: the seeder reads a room as
- * the cast member who acted in it, and that read opens it for them.
- */
-const ViewerRoomExpectationSchema = z.strictObject({
-  /** In the room and never opened it. */
-  unseen: z.boolean(),
-  hasUnread: z.boolean(),
-  /** A mention of this viewer sits above what they have seen. */
-  mentioned: z.boolean(),
-});
-
-/**
- * One viewer the readiness barrier verifies. The rooms listed must be exactly
- * the rooms the pack makes visible to them — every workspace-scoped room, and
- * every room they were seated in — which the schema checks, so a pack cannot
- * expect a room a viewer will never see or forget one they will.
- */
-const ViewerExpectationSchema = z.strictObject({
-  viewer: DemoPackRoleSchema,
-  /** The home screen's attention summary for this viewer. */
-  attention: z.strictObject({
-    waitingForYou: z.number().int().nonnegative(),
-    waitingReason: z.enum(["mentioned", "needs_input", "unseen"]).nullable(),
-  }),
-  rooms: z.record(RoomKeySchema, ViewerRoomExpectationSchema),
-});
-export type DemoViewerExpectation = z.infer<typeof ViewerExpectationSchema>;
 
 /** What the steps say about one room, once every step has been applied. */
 export interface DemoPackRoomFacts {
@@ -442,33 +276,11 @@ export function demoIdleViewerExpectation(
 /**
  * The rules a pack has to satisfy to be playable at all, checked at parse time
  * so a bad pack stops preparation before the first write rather than after
- * the third.
+ * the third. Each issue names its rule in `params.rule`, which is the stable
+ * code the Demo MCP's check reports in place of the message: a message here
+ * quotes the pack's own values, and the check must not echo them back.
  */
-export const DemoPackSchema = z.strictObject({
-  version: z.string().min(1),
-  roles: z.array(DemoPackRoleSchema).min(1),
-  spaces: z.record(RoomKeySchema, z.strictObject({
-    as: DemoPackRoleSchema, name: z.string().trim().min(1),
-    iconKey: SpaceIconKeySchema, colorKey: SpaceColorKeySchema,
-  })).optional(),
-  steps: z.array(DemoPackStepSchema).min(1),
-  /**
-   * The viewers the readiness barrier verifies, and what each should find.
-   * Usually the presenter alone: a cast member who acted in a room opened it
-   * by acting, and a pack that lists them has to say so in their flags. The
-   * barrier refuses a pack that lists nobody, so Ready never means nothing
-   * was checked.
-   */
-  expect: z.array(ViewerExpectationSchema).default([]),
-  /**
-   * What each cast role is, in a word or two — the part the operator is
-   * casting somebody into. The form labels its dropdowns with these, because
-   * a role token reads as this pack's own character and says nothing about
-   * who should play it: a colleague seated in the wrong part has the pack's
-   * scripted words attributed to them under their real name.
-   */
-  roleLabels: z.record(DemoPackRoleSchema, z.string().trim().min(1).max(40)).default({}),
-}).superRefine((pack, context) => {
+export const DemoPackSchema = DemoPackShapeSchema.superRefine((pack, context) => {
   const roles = new Set(pack.roles);
   // Every role the operator casts, and only those: an unlabelled dropdown
   // says nothing about the part, and a label for a role nobody plays would
@@ -476,19 +288,19 @@ export const DemoPackSchema = z.strictObject({
   const cast = new Set(demoCastRoles(pack.roles));
   for (const role of cast) {
     if (!pack.roleLabels[role]) {
-      context.addIssue({ code: "custom", path: ["roleLabels"], message: `Role "${role}" has no label` });
+      context.addIssue({ code: "custom", path: ["roleLabels"], params: { rule: "demo_pack_role_label_missing" }, message: `Role "${role}" has no label` });
     }
   }
   for (const role of Object.keys(pack.roleLabels)) {
     if (!cast.has(role)) {
-      context.addIssue({ code: "custom", path: ["roleLabels", role], message: `"${role}" is not a role the operator casts` });
+      context.addIssue({ code: "custom", path: ["roleLabels", role], params: { rule: "demo_pack_role_label_unused" }, message: `"${role}" is not a role the operator casts` });
     }
   }
   if (roles.size !== pack.roles.length) {
-    context.addIssue({ code: "custom", path: ["roles"], message: "Roles must be unique" });
+    context.addIssue({ code: "custom", path: ["roles"], params: { rule: "demo_pack_role_duplicate" }, message: "Roles must be unique" });
   }
   for (const [key, space] of Object.entries(pack.spaces ?? {})) {
-    if (!roles.has(space.as)) context.addIssue({ code: "custom", path: ["spaces", key, "as"], message: "Space creator is not in the cast" });
+    if (!roles.has(space.as)) context.addIssue({ code: "custom", path: ["spaces", key, "as"], params: { rule: "demo_pack_role_not_in_cast" }, message: "Space creator is not in the cast" });
   }
   const ids = new Set<string>();
   /**
@@ -508,16 +320,16 @@ export const DemoPackSchema = z.strictObject({
   pack.steps.forEach((step, index) => {
     const path = ["steps", index];
     if (step.kind === "create_workstream" && step.space && !pack.spaces?.[step.space]) {
-      context.addIssue({ code: "custom", path: [...path, "space"], message: "Space is not declared in the pack" });
+      context.addIssue({ code: "custom", path: [...path, "space"], params: { rule: "demo_pack_space_not_declared" }, message: "Space is not declared in the pack" });
     }
     if (ids.has(step.id)) {
-      context.addIssue({ code: "custom", path: [...path, "id"], message: `Step id "${step.id}" is used twice` });
+      context.addIssue({ code: "custom", path: [...path, "id"], params: { rule: "demo_pack_step_id_duplicate" }, message: `Step id "${step.id}" is used twice` });
     }
     ids.add(step.id);
     const named = [step.as, ...(step.kind === "create_workstream" || step.kind === "create_substream" ? step.participants : [])];
     for (const role of named) {
       if (!roles.has(role)) {
-        context.addIssue({ code: "custom", path, message: `Role "${role}" is not in the cast` });
+        context.addIssue({ code: "custom", path, params: { rule: "demo_pack_role_not_in_cast" }, message: `Role "${role}" is not in the cast` });
       }
     }
     if (step.kind === "sidekick") {
@@ -529,7 +341,7 @@ export const DemoPackSchema = z.strictObject({
       const spoken = [step.description, step.overview, step.instructions, step.firstRun?.text ?? ""];
       for (const role of spoken.flatMap(mentionedRoles)) {
         if (!roles.has(role)) {
-          context.addIssue({ code: "custom", path, message: `The Sidekick's prose names role "${role}", which is not in the cast` });
+          context.addIssue({ code: "custom", path, params: { rule: "demo_pack_role_not_in_cast" }, message: `The Sidekick's prose names role "${role}", which is not in the cast` });
         }
       }
       const name = step.name.trim().toLowerCase();
@@ -537,7 +349,7 @@ export const DemoPackSchema = z.strictObject({
         // The directory lists Sidekicks by title and the barrier matches a
         // viewer's row by name, so two under one name would make one of them
         // unverifiable.
-        context.addIssue({ code: "custom", path: [...path, "name"], message: `Two Sidekicks are named "${step.name}"` });
+        context.addIssue({ code: "custom", path: [...path, "name"], params: { rule: "demo_pack_sidekick_name_duplicate" }, message: `Two Sidekicks are named "${step.name}"` });
       }
       sidekickNames.add(name);
       return;
@@ -548,7 +360,7 @@ export const DemoPackSchema = z.strictObject({
     const mentions = text === null ? [] : mentionedRoles(text);
     for (const role of mentions) {
       if (!roles.has(role)) {
-        context.addIssue({ code: "custom", path, message: `Mentioned role "${role}" is not in the cast` });
+        context.addIssue({ code: "custom", path, params: { rule: "demo_pack_role_not_in_cast" }, message: `Mentioned role "${role}" is not in the cast` });
       }
     }
     // Rally's own prose names people with the same tokens, expanded to bare
@@ -562,7 +374,7 @@ export const DemoPackSchema = z.strictObject({
       : assistant.kind === "say" ? [assistant.text] : [assistant.prompt, ...assistant.options];
     for (const role of spoken.flatMap(mentionedRoles)) {
       if (!roles.has(role)) {
-        context.addIssue({ code: "custom", path: [...path, "assistant"], message: `Rally's turn names role "${role}", which is not in the cast` });
+        context.addIssue({ code: "custom", path: [...path, "assistant"], params: { rule: "demo_pack_role_not_in_cast" }, message: `Rally's turn names role "${role}", which is not in the cast` });
       }
     }
     // A substream's starting context is Rally's prose too, and it names people
@@ -571,19 +383,19 @@ export const DemoPackSchema = z.strictObject({
     if (step.kind === "create_substream") {
       for (const role of mentionedRoles(step.startingContext)) {
         if (!roles.has(role)) {
-          context.addIssue({ code: "custom", path: [...path, "startingContext"], message: `The starting context names role "${role}", which is not in the cast` });
+          context.addIssue({ code: "custom", path: [...path, "startingContext"], params: { rule: "demo_pack_role_not_in_cast" }, message: `The starting context names role "${role}", which is not in the cast` });
         }
       }
     }
     if (step.kind === "create_workstream") {
       if (step.execution === "history" && (step.assistant.kind !== "say" || mentions.length)) {
-        context.addIssue({ code: "custom", path, message: "Prepared history requires prose without live mention effects" });
+        context.addIssue({ code: "custom", path, params: { rule: "demo_pack_history_live_effects" }, message: "Prepared history requires prose without live mention effects" });
       }
       if (seated.has(step.room)) {
-        context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${step.room}" is created twice` });
+        context.addIssue({ code: "custom", path: [...path, "room"], params: { rule: "demo_pack_room_created_twice" }, message: `Room "${step.room}" is created twice` });
       }
       if (step.participants.includes(step.as)) {
-        context.addIssue({ code: "custom", path: [...path, "participants"], message: "The author is seated already" });
+        context.addIssue({ code: "custom", path: [...path, "participants"], params: { rule: "demo_pack_already_seated" }, message: "The author is seated already" });
       }
       roomScope.set(step.room, step.scope);
       seated.set(step.room, new Set([step.as, ...step.participants, ...mentions]));
@@ -592,15 +404,15 @@ export const DemoPackSchema = z.strictObject({
     if (step.kind === "create_substream") {
       const parent = seated.get(step.room);
       if (!parent) {
-        context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${step.room}" is used before it is created` });
+        context.addIssue({ code: "custom", path: [...path, "room"], params: { rule: "demo_pack_room_not_created" }, message: `Room "${step.room}" is used before it is created` });
         return;
       }
       const owner = substreams.get(step.substream);
       if (owner !== undefined) {
-        context.addIssue({ code: "custom", path: [...path, "substream"], message: `Substream "${step.substream}" is created twice` });
+        context.addIssue({ code: "custom", path: [...path, "substream"], params: { rule: "demo_pack_substream_created_twice" }, message: `Substream "${step.substream}" is created twice` });
       }
       if (step.participants.includes(step.as)) {
-        context.addIssue({ code: "custom", path: [...path, "participants"], message: "The creator is in it already" });
+        context.addIssue({ code: "custom", path: [...path, "participants"], params: { rule: "demo_pack_already_seated" }, message: "The creator is in it already" });
       }
       // The parent refuses anybody it would not let read the work stream —
       // a workspace room lets every member in, a personal one only its own
@@ -612,7 +424,7 @@ export const DemoPackSchema = z.strictObject({
           context.addIssue({
             code: "custom",
             path,
-            message: `Role "${role}" cannot be put in a substream of personal room "${step.room}" without being in it`,
+            params: { rule: "demo_pack_personal_substream_outsider" }, message: `Role "${role}" cannot be put in a substream of personal room "${step.room}" without being in it`,
           });
         }
       }
@@ -623,9 +435,9 @@ export const DemoPackSchema = z.strictObject({
     const room = seated.get(conversation);
     if (!room) {
       if (step.substream !== undefined && substreams.get(step.substream) !== step.room) {
-        context.addIssue({ code: "custom", path: [...path, "substream"], message: `Substream "${step.substream}" is not a substream of room "${step.room}"` });
+        context.addIssue({ code: "custom", path: [...path, "substream"], params: { rule: "demo_pack_substream_wrong_room" }, message: `Substream "${step.substream}" is not a substream of room "${step.room}"` });
       } else {
-        context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${conversation}" is used before it is created` });
+        context.addIssue({ code: "custom", path: [...path, "room"], params: { rule: "demo_pack_room_not_created" }, message: `Room "${conversation}" is used before it is created` });
       }
       return;
     }
@@ -633,13 +445,13 @@ export const DemoPackSchema = z.strictObject({
       // The `ask` parked its run on a real open elicitation. Anything said in
       // the room after that is said into a question nobody has answered, and
       // the presenter is the one who is meant to answer it.
-      context.addIssue({ code: "custom", path, message: `Room "${conversation}" continues after its question` });
+      context.addIssue({ code: "custom", path, params: { rule: "demo_pack_after_question" }, message: `Room "${conversation}" continues after its question` });
     }
     if (!room.has(step.as)) {
       // The production path admits a message from a workspace member who is
       // not in the room only by seating them, which is a fact the pack would
       // be relying on by accident. Say who is in the room instead.
-      context.addIssue({ code: "custom", path: [...path, "as"], message: `Role "${step.as}" is not in room "${conversation}"` });
+      context.addIssue({ code: "custom", path: [...path, "as"], params: { rule: "demo_pack_speaker_not_seated" }, message: `Role "${step.as}" is not in room "${conversation}"` });
     }
     for (const role of mentions) {
       if (step.substream === undefined) {
@@ -653,7 +465,7 @@ export const DemoPackSchema = z.strictObject({
         context.addIssue({
           code: "custom",
           path,
-          message: `Role "${role}" is mentioned in substream "${conversation}" without being in it`,
+          params: { rule: "demo_pack_substream_mention_not_member" }, message: `Role "${role}" is mentioned in substream "${conversation}" without being in it`,
         });
       }
     }
@@ -664,23 +476,23 @@ export const DemoPackSchema = z.strictObject({
   pack.expect.forEach((expectation, index) => {
     const path = ["expect", index];
     if (viewers.has(expectation.viewer)) {
-      context.addIssue({ code: "custom", path, message: `Viewer "${expectation.viewer}" is expected twice` });
+      context.addIssue({ code: "custom", path, params: { rule: "demo_pack_viewer_duplicate" }, message: `Viewer "${expectation.viewer}" is expected twice` });
     }
     viewers.add(expectation.viewer);
     if (!roles.has(expectation.viewer)) {
-      context.addIssue({ code: "custom", path, message: `Viewer "${expectation.viewer}" is not in the cast` });
+      context.addIssue({ code: "custom", path, params: { rule: "demo_pack_viewer_not_in_cast" }, message: `Viewer "${expectation.viewer}" is not in the cast` });
       return;
     }
     const visible = new Set(visibleRoomsFor(expectation.viewer, facts.values()).map((room) => room.room));
     const listed = new Set(Object.keys(expectation.rooms));
     for (const room of visible) {
       if (!listed.has(room)) {
-        context.addIssue({ code: "custom", path: [...path, "rooms"], message: `Viewer "${expectation.viewer}" will see room "${room}", which is not expected` });
+        context.addIssue({ code: "custom", path: [...path, "rooms"], params: { rule: "demo_pack_expect_rooms_mismatch" }, message: `Viewer "${expectation.viewer}" will see room "${room}", which is not expected` });
       }
     }
     for (const room of listed) {
       if (!visible.has(room)) {
-        context.addIssue({ code: "custom", path: [...path, "rooms", room], message: `Viewer "${expectation.viewer}" will not see room "${room}"` });
+        context.addIssue({ code: "custom", path: [...path, "rooms", room], params: { rule: "demo_pack_expect_rooms_mismatch" }, message: `Viewer "${expectation.viewer}" will not see room "${room}"` });
       }
     }
   });

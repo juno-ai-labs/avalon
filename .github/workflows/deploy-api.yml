@@ -15,6 +15,7 @@ on:
       # touches only docs, the desktop app, or the site does not redeploy.
       - "apps/api/**"
       - "apps/engineering-mcp/**"
+      - "apps/demo-mcp/**"
       # The engineering MCP compiles Ace's flag-administration contract.
       - "apps/ace/src/protocol.ts"
       - "packages/**"
@@ -99,6 +100,7 @@ jobs:
               pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/api build:artifacts &&
               pnpm --filter @rally/engineering-mcp build &&
+              pnpm --filter @rally/demo-mcp build &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-2
             command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
@@ -536,6 +538,30 @@ jobs:
             sleep 10
           done
           echo "Engineering MCP did not expose the expected OAuth challenge" >&2
+          exit 1
+
+      # The Demo MCP binds the Global API's DemoAdministration entrypoint, so it
+      # deploys after that entrypoint is live, as the engineering MCP does.
+      - name: Deploy the Demo MCP after the Global API entrypoint
+        if: env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/demo-mcp run deploy
+
+      - name: Verify the Demo MCP advertises OAuth to non-browser clients
+        if: env.DEPLOY_GLOBAL == 'true'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            headers="${RUNNER_TEMP}/demo-mcp-headers-${attempt}.txt"
+            status="$(curl --silent --show-error --output /dev/null --dump-header "$headers" \
+              --header 'Accept: application/json' \
+              --write-out '%{http_code}' \
+              https://demo-mcp.internal.rallywith.ai/mcp || true)"
+            if [ "$status" = 401 ] && grep -qi '^www-authenticate:.*resource_metadata' "$headers"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Demo MCP did not expose the expected OAuth challenge" >&2
           exit 1
 
       - name: Preserve exact deployment startup evidence

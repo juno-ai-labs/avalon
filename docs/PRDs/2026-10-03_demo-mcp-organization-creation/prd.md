@@ -610,4 +610,73 @@ one production edit.
 
 ## Decision log
 
-None yet.
+### 2026-10-03 — Phase 1 ships; phase 2 waits for a request
+
+**Decided:** The first implementing change builds phase 1 as `design.md`
+lists it: ten tools, the `DemoAdministration` entrypoint, stored revisions for
+every operation, and the check with its preview. The scenario library and
+connection selection are not built.
+
+**Why:** Decision 11, as agreed. Nobody has asked for either yet.
+
+**Changes:** Goals 5 and 6 (connections) stay open. To pick them up: a request
+for a reusable named scenario, or for a demo without some of the template's
+connections. The revision table's `scenario_id` and `revision` columns are
+reserved for the library. Shipped in the change that ticks `in progress`.
+
+### 2026-10-03 — The SDK does not validate arguments; the entrypoint does
+
+**Decided:** Each tool hands the MCP SDK a Standard Schema whose JSON Schema is
+the real one and whose validation lets every argument through. The
+`DemoAdministration` entrypoint parses the arguments and refuses a mismatch as
+`demo_<tool>_input_invalid:<paths>` (`zodDiagnosticCode`), not as a bare
+`invalid_input`.
+
+**Why:** Given a Zod schema, the SDK answers a mismatch with Zod's own
+messages, which name an unknown key the caller sent. That breaks the rule that a
+refusal never echoes caller data. The shared diagnostic code names the paths and
+nothing else.
+
+**Changes:** Refines `design.md`'s `invalid_input` row: the code carries the
+failing paths.
+
+### 2026-10-03 — A deploy with no Access policy deploys, closed
+
+**Decided:** The deploy script creates or updates the Demo MCP's Access
+application with Ace's identity providers and session length, never Ace's
+policy, and deploys the Worker even when the application has no policy, printing
+a warning that nobody can connect.
+
+**Why:** **Provider configuration** item 3 said the script refuses to deploy
+without a policy. Every API deploy runs this step, so refusing would fail every
+deploy until somebody set the policy. An Access application with no policy
+admits nobody, which is the same safety without a red pipeline.
+
+**Changes:** Supersedes item 3's "refuses to deploy". Who is admitted is still
+the open question; until it is answered nobody can connect.
+
+### 2026-10-03 — Retiring an unpublished demo is refused; an oversized pack has no code of its own
+
+**Decided:** `retire_demo_organization` refuses a demo that never became Ready
+with `demo_operation_unpublished` and points at `abandon_demo_operation`. A pack
+too large for a D1 row fails with the platform's error, answered as
+`demo_administration_internal_error`; `demo_scenario_too_large` is not built.
+
+**Why:** Retiring a candidate through the operator door would leave its
+operation `running` with a closed workspace; abandon is the path that claims the
+row first. No pack anyone has written is near D1's row limit, and naming the
+limit needs no code until one is.
+
+**Changes:** Adds a failure to `design.md`'s table and cuts one. To pick the
+second up: the first pack that hits the limit.
+
+### 2026-10-03 — The connection guide is a section, not a second document
+
+**Decided:** Connecting a client to the Demo MCP is the **Operations** section
+of `docs/demo-mcp.md`, pointing at `internal-admin-mcp-server.md` for the steps
+both servers share.
+
+**Why:** The steps differ by hostname only; a second guide would repeat the
+first and drift from it.
+
+**Changes:** Refines **Rollout** item 3.

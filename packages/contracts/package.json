@@ -15,6 +15,8 @@
     "./substream-creation": "./src/substream-creation.ts",
     "./conversation-effects": "./src/conversation-effects.ts",
     "./durable-object-migrations": "./src/durable-object-migrations.ts",
+    "./demo-administration": "./src/demo-administration.ts",
+    "./demo-pack": "./src/demo-pack.ts",
     "./engineering-inspection": "./src/engineering-inspection.ts",
     "./http-headers": "./src/http-headers.ts",
     "./realtime-transcription": "./src/realtime-transcription.ts",

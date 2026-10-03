@@ -44,6 +44,7 @@ Tool/elicitation scenarios retain ordinary scripted executions. See
 | `apps/api/src/services/demo-seeder.ts` | Plays one action at a time through the production write paths, waits for its run to settle as specified, and records the receipt. `sidekickDraft` is the definition a Sidekick step publishes. |
 | `apps/api/src/services/demo-seed-provider.ts` | The `fetch` a seeded run's harness config carries: answers the run's one inference request from the seed and refuses the next. |
 | `apps/api/src/services/demo-readiness.ts` | The manifest of what every verified viewer should find, derived from the pack and the receipts, and the one comparison against their real directory, attention and canonical reads. |
+| `apps/api/src/services/demo-scenarios.ts` | Owned by [`demo-mcp.md`](demo-mcp.md): the store of immutable pack revisions every operation runs from, and the check the Demo MCP runs on a pack. |
 | `apps/api/src/services/demo-preparation.ts` | The operation: its rows, start/retry/abandon, and the five idempotent phase functions the Workflow's steps call. |
 | `apps/api/src/workflows/demo-preparation.ts` | `DemoPreparationWorkflow`: one step per phase, then a check-and-sleep loop until the workspace matches the pack. |
 | `apps/api/src/routes/demo-operations.ts` | `/internal/demos`, behind the operator credential in the `demos` role; `/internal/workspaces/:id/retire` is retirement's own router. |
@@ -211,10 +212,17 @@ and its roster in the pack; naming an Organization Space is not sufficient.
 **Existing demos do not change when this pack deploys.** Use Ace **New demo** with
 a new operation id; wait for Ready, switch to that Organization, then separately
 retire the old demo if desired. There is no in-place reset/reseed and no bulk
-migration of live or customer Organizations. A stale unfinished operation fails
-`demo_pack_changed` at any phase, including a resumed seeding or readiness phase
-whose earlier template check already completed. Abandon that candidate and start
-a new operation; Retry cannot convert it to the new pack.
+migration of live or customer Organizations.
+
+**An operation runs from the pack it started with, not the pack in service.**
+Every new operation stores its pack in `demo_scenario_revisions` and records the
+revision on its row; every phase reads that copy, so a deploy that changes this
+pack cannot touch a demo already preparing, and a retry resumes on the same
+bytes. Only a row written before migration 0118, which has no revision, still
+compares its version with the pack in service and fails `demo_pack_changed` at
+any phase; abandon that candidate and start a new operation. The Demo MCP starts
+operations from a pack it was given whole through the same path
+([`demo-mcp.md`](demo-mcp.md)).
 
 **A room step addresses a conversation, not a room.** Naming only the room means
 its main conversation; naming a room and a substream means the child. Every rule
@@ -385,7 +393,7 @@ receives the template's credentials, so a presenter outside the template would
 be handed them. What the row stores is the user ids every phase after it works
 in.
 
-**The phases are the PRD's, and each is safe to run again.** Every phase verifies the pack in service is the one the operation recorded.
+**The phases are the PRD's, and each is safe to run again.** Every phase reads the pack the operation stored when it started.
 `checking_template` verifies the template
 workspace exists in this region, the presenter is a signed-in regional user and
 still an active member of the template, and every other role is played by an
@@ -643,6 +651,7 @@ has to register it the same way or watch the seeding phase fail.
 | Where | Table | Holds |
 | --- | --- | --- |
 | Regional D1 | `demo_operations` | One row per preparation: company, presenter, pack version, cast, the allocated workspace, status, attempt, the failed phase and reason, and the instants the workspace was published and closed. The register of published workspaces is this table. |
+| Regional D1 | `demo_scenario_revisions` | The pack each operation runs from, stored once and never changed; `demo_operations.scenario_revision_id` points at it. Owned by [`demo-mcp.md`](demo-mcp.md#data-model). |
 | Regional D1 | `demo_seed_receipts` | One row per confirmed seed action: its kind, the room it was in and — once a room can hold more than one conversation — the substream it wrote to, by the pack's name and by the id creation minted; and the work stream, turn, run and outcome, elicitation, and resource it produced — or, for a Sidekick, which belongs to no room and so to no conversation, the Sidekick and the one run seeded for it. A CHECK keeps each kind's identity complete rather than letting a row be half of both. |
 | Regional D1 | `demo_operation_phases` | One row per phase per operation: status, attempt, a small detail object the page renders, and the error when there is one. |
 | A seeded run's `runs.execution_context_json` | `seed` | The pack version, action id, and the one assistant turn the harness answers the run from. |
@@ -732,6 +741,28 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-10-03 — An operation runs from the pack it stored
+
+**What changed:** `startDemoOperation` stores the pack it starts with as an
+immutable revision (`0118_demo_scenario_revisions.sql`) and every phase reads
+that copy through `operationPack`. The start also accepts a pack it was given
+whole, which is how the Demo MCP prepares a custom scenario. The cast checks a
+start makes are one function, `checkDemoCastEntries`, which the Demo MCP's check
+calls too.
+
+**Why:** Every phase compared the operation's recorded version with the pack in
+service, so a deploy that changed the pack failed every demo still preparing,
+and a demo could only ever be made from the pack compiled into the Worker.
+
+**Considered and rejected:** Storing the pack JSON on the operation row, which
+duplicates it per demo; keeping the version comparison for built-in demos,
+which leaves the deploy problem in place for the commonest case.
+
+**Consequences:** A row older than migration 0118 keeps the old comparison. A
+pack in the table is never updated. `packVersion` on a status is the built-in
+version or `stored:<contentHash>`. Design: [the Demo MCP
+PRD](PRDs/2026-10-03_demo-mcp-organization-creation/prd.md).
 
 ### 2026-09-23 — Demonstrate human intervention in shared outcomes
 

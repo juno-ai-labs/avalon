@@ -190,8 +190,16 @@ async function seedControlPlane(): Promise<void> {
       pack_version TEXT NOT NULL, cast_json TEXT NOT NULL, workspace_id TEXT UNIQUE,
       status TEXT NOT NULL CHECK (status IN ('running', 'ready', 'failed', 'abandoned')),
       attempt INTEGER NOT NULL CHECK (attempt > 0), failed_phase TEXT, error_code TEXT, error_message TEXT,
-      ready_at TEXT, retired_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      ready_at TEXT, retired_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      scenario_revision_id TEXT, request_key TEXT, requested_by_subject TEXT, requested_by_email TEXT
     )`),
+    // `0118`: the stored pack each operation runs from.
+    env.DB.prepare(`CREATE TABLE demo_scenario_revisions (
+      id TEXT PRIMARY KEY, scenario_id TEXT, revision INTEGER, pack_json TEXT NOT NULL,
+      content_hash TEXT NOT NULL, saved_by_subject TEXT, saved_by_email TEXT, created_at TEXT NOT NULL
+    )`),
+    env.DB.prepare(`CREATE UNIQUE INDEX demo_scenario_revisions_unnamed_content_idx
+      ON demo_scenario_revisions(content_hash) WHERE scenario_id IS NULL`),
     env.DB.prepare(`CREATE TABLE demo_operation_phases (
       operation_id TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL,
       detail_json TEXT NOT NULL DEFAULT '{}', error_code TEXT, error_message TEXT,

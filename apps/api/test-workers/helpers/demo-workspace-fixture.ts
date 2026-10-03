@@ -318,7 +318,8 @@ export async function seedDemoWorkspaceControlPlane(): Promise<void> {
       operation_id TEXT PRIMARY KEY, company_name TEXT NOT NULL, presenter_user_id TEXT NOT NULL,
       pack_version TEXT NOT NULL, cast_json TEXT NOT NULL, workspace_id TEXT UNIQUE, status TEXT NOT NULL,
       attempt INTEGER NOT NULL, failed_phase TEXT, error_code TEXT, error_message TEXT,
-      ready_at TEXT, retired_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      ready_at TEXT, retired_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      scenario_revision_id TEXT, request_key TEXT, requested_by_subject TEXT, requested_by_email TEXT
     )`),
     env.DB.prepare(`INSERT INTO demo_operations
       (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id, status, attempt, created_at, updated_at)
