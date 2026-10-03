@@ -218,6 +218,18 @@ the open question on what counts as "Google Drive".
 **Changes:** Supersedes the Rollout default of four capabilities. The open
 question is removed.
 
+### 2026-10-03 — Browser notifications are turned on in Settings
+
+**Decided:** The browser's notification switch is in Settings → Notifications,
+"In this browser", in place of the Mac's section, rather than in the account
+menu.
+
+**Why:** The desktop already keeps this switch there, and the browser shell is
+the desktop shell; one place for it on both clients.
+
+**Changes:** Product behavior said the account menu offers **Turn on
+notifications**; it does not.
+
 ### 2026-10-03 — The capability list is a JSON flag Ace provisions but does not edit
 
 **Decided:** Ace's deploy creates `browser-connectable-capabilities` as a JSON

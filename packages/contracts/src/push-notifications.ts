@@ -27,7 +27,17 @@ export const RegisterPushDeviceRequestSchema = z.discriminatedUnion("platform", 
     token,
     appVersion,
   }),
+  // A browser's Web Push subscription, as `PushSubscription.toJSON()` gives it.
+  z.object({
+    platform: z.literal("web"),
+    transport: z.literal("webpush"),
+    endpoint: HttpsUrlSchema,
+    keys: z.object({ p256dh: z.string().min(80).max(100), auth: z.string().min(16).max(32) }),
+    appVersion,
+  }),
 ]);
+/** What a browser needs to subscribe: the server's VAPID public key. */
+export const WebPushConfigurationSchema = z.object({ publicKey: z.string().min(80).max(100) });
 export type RegisterPushDeviceRequest = z.infer<typeof RegisterPushDeviceRequestSchema>;
 export const PushDeliveryMessageSchema = z.object({
   region: RegionSchema,

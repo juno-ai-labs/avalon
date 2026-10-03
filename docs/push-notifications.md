@@ -83,9 +83,41 @@ the Mac.
 Main-window creation waits for renderer protocol and IPC installation, including
 when a native notification response arrives during asynchronous app startup.
 
+## Web Push for browser members
+
+A member's browser tab registers a `webpush` device: `token` is the
+subscription endpoint and `web_push_p256dh` / `web_push_auth` hold its keys
+(migration 0117). The device binds to the cookie session's own session row, so
+signing out of that browser stops delivery like any other device. The browser
+gets the VAPID public key from `GET /push-devices/web-push`, subscribes through
+`/sw.js` at the browser host's root, and registers with `PUT /push-devices/:id`;
+one installation id per browser profile lives in `localStorage`. Settings →
+Notifications shows "In this browser" with a toggle instead of the Mac's
+section.
+
+The consumer renders both payloads and sends each device the one for its
+transport. `web-push-transport.ts` encrypts one `aes128gcm` record to the
+subscription (RFC 8291; the test reproduces the RFC's worked example byte for
+byte) and signs a VAPID token for the push service's origin (RFC 8292), with
+WebCrypto only. TTL matches APNs at one day; the collapse id's first 32
+characters become the `Topic`, so a retry replaces rather than stacks. A `404`
+or `410` disables the device at once: unlike APNs, a dropped browser
+subscription carries no timestamp and never comes back. Enqueueing requires a
+live device whose own transport is available, so either transport can run
+without the other configured.
+
+The service worker shows the title and body, groups by work stream with `tag`,
+and opens the canonical Channel path on the browser host, focusing a tab
+already there.
+
 ## Operations and release
 
 Set `APNS_AUTH_KEY` and `APNS_KEY_ID` separately on both regional API Workers.
+For browsers, set `WEB_PUSH_VAPID_PUBLIC_KEY` (base64url uncompressed P-256
+point), the secret `WEB_PUSH_VAPID_PRIVATE_KEY` (base64url `d` of the same key)
+and `WEB_PUSH_SUBJECT` (`mailto:` or `https:` contact) on each regional API
+Worker; one key pair per deployment. Without them, browsers are told
+notifications are unavailable and APNs is unaffected.
 Without them, health reports push as not configured and existing email delivery
 continues. Local/test transports do not contact Apple. APNs requires the device address in
 the request path, so existing Cloudflare automatic outbound traces include it;
@@ -147,6 +179,24 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-10-03 — Web Push for browser members
+
+**What changed:** A browser tab can subscribe to Web Push. Devices gain a
+`webpush` transport with the subscription's keys, the consumer sends each device
+its own transport's payload, and the browser host serves a root service worker.
+
+**Why:** Members who use Rally in a browser need the same mentions and additions
+the Mac shows ([PRD](PRDs/2026-10-03_full-browser-client/prd.md) goal 8).
+
+**Considered and rejected:** A Web Push library, which would bring Node crypto
+into the Worker for two primitives WebCrypto already has. Suppressing pushes
+to one client while another is in the foreground; the PRD leaves duplicates
+across devices as an open question.
+
+**Consequences:** A member with the Mac app and a browser gets each push on
+both. VAPID keys are per deployment; rotating one invalidates every browser
+subscription made with it.
 
 ### 2026-09-15 — Alert bodies are plain text, not Markdown
 
