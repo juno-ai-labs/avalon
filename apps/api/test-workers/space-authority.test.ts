@@ -629,17 +629,16 @@ describe("WorkspaceDO space authority", () => {
     expect((await spaceDirectories(MEMBER)).active.items).toMatchObject([{ name: "Company" }]);
   });
 
-  it("given a guest relationship, when it reaches any Space RPC, then it is refused", async () => {
+  it("given a guest relationship, when it reads a Space holding no Channel of theirs, then it is told nothing", async () => {
     const spaceId = await reserve("Company");
 
-    // Guest access to Spaces is deferred: a guest holds explicit Channel grants
-    // and no Organization-wide discovery, so admitting one here would put every
-    // Organization-wide Space in their sidebar.
+    // Organization-wide scope admits members only, and the guest lists no
+    // Channel placed here, so the Space is not theirs to be told about.
     await expect(workspace().spaceSummary({ workspaceId: WORKSPACE_ID, userId: GUEST, spaceId }))
-      .resolves.toMatchObject({ ok: false, code: "space_access_denied" });
+      .resolves.toMatchObject({ ok: false, code: "space_not_found" });
     await expect(workspace().listSpaceChannels({
       workspaceId: WORKSPACE_ID, userId: GUEST, spaceId, cursor: null,
-    })).resolves.toMatchObject({ ok: false, code: "space_access_denied" });
+    })).resolves.toMatchObject({ ok: false, code: "space_not_found" });
     // A removed member is refused by the same gate. It is one recheck of
     // active membership and access class, so a relationship that has ended and
     // one that was never a member's read alike here.
@@ -2023,21 +2022,13 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toMatchObject({ ok: false, code: "space_bootstrap_pending" });
   });
 
-  it("given a guest's socket, when Spaces exist, then its payload carries none of them", async () => {
+  it("given a guest's socket, when Spaces exist that hold no Channel of theirs, then its payload carries none of them", async () => {
     const companyId = await reserve("Company", "workspace");
     const { socket, sidebar } = await connectViewer(GUEST, "cf12");
 
-    // Every Space RPC refuses a guest, and this is the other door into the same
-    // state: the connect payload is a push, so a guest who never calls an RPC
-    // would still have been handed every Organization-wide Space.
-    expect(sidebar.spaces).toEqual({
-      active: { waterline: 0, items: [] },
-      inactive: { waterline: 0, items: [] },
-    });
-    // True rather than the Organization's real answer: a guest is not waiting
-    // on the cutover, and `false` would leave their client in the
-    // Organization-opening state for good.
-    expect(sidebar.spacesReady).toBe(true);
+    // The connect payload is the listing rules' answer, as every Space read is:
+    // an Organization-wide Space reaches a guest only through a Channel in it.
+    expect(sidebar.spaces).toMatchObject({ active: { items: [] }, inactive: { items: [] } });
 
     // And on the republication an Organization-wide Space write sends, which is
     // the path a guest holds open rather than asks for. A reorder is not one of

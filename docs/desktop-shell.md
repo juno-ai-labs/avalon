@@ -246,7 +246,8 @@ own:
 - what the desktop restores after relaunch ([`desktop-layout.md`](desktop-layout.md)).
 
 A guest's sidebar reads each Breakout's `originTurnId` and each Space's
-`systemRole` from the shared navigation directory.
+`systemRole` from the same socket lists a member's does
+([`listing-rules.md`](listing-rules.md)).
 
 ## Failure modes and limits
 

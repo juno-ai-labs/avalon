@@ -677,8 +677,8 @@ async function storedMove(input: {
 }): Promise<string> {
   const operationId = input.operationId ?? crypto.randomUUID();
   await withSpaceStorage(workspace(), (storage) => {
-    const source = storage.readable(OWNER, input.sourceSpaceId);
-    const target = storage.readable(OWNER, input.targetSpaceId);
+    const source = storage.readable({ userId: OWNER, accessClass: "member" }, input.sourceSpaceId);
+    const target = storage.readable({ userId: OWNER, accessClass: "member" }, input.targetSpaceId);
     if (source === false || target === false) throw new Error("move Spaces missing");
     storage.recordIntent({
       operationId,

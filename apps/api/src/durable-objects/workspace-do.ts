@@ -723,7 +723,17 @@ import {
   type WorkspaceSpaceReserveRequest,
 } from "./workspace-space-protocol";
 import {
-  spaceVisibleToViewerSql,
+  channelListed,
+  channelListedSql,
+  mainOpenableSql,
+  member,
+  organizationWide as organizationWideAdmits,
+  organizationWideSql,
+  spaceListedSql,
+  type AccessClass,
+  type Viewer,
+} from "./listing-rules";
+import {
   SPACE_BOOTSTRAP_PAGE_SIZE,
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WORKSPACE_PINNED_ORDER_MIGRATION,
@@ -4145,6 +4155,11 @@ function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
+/** The viewer a workspace socket lists for: its person and their relationship. */
+function viewerOf(attachment: WorkspaceSocketAttachment): Viewer {
+  return { userId: attachment.userId, accessClass: attachment.accessClass ?? "member" };
+}
+
 function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
   try {
     const parsed = SocketIdentitySchema.extend({
@@ -4507,8 +4522,7 @@ function mapDirectoryWorkstreams(
   rows: readonly WorkspaceDirectoryRow[],
   workspaceId: string,
   spaces: WorkspaceSpaceStorage,
-  userId: string,
-  accessClass: "member" | "guest" = "member",
+  viewer: Viewer,
   /**
    * Add each row's breakouts and background agents for this viewer. Only the
    * workspace socket asks: it is the one reader that keeps a Channel's rail
@@ -4520,17 +4534,13 @@ function mapDirectoryWorkstreams(
     rows.filter((row) => row.scope === "personal").map((row) => row.workstream_id),
   )];
   const previews = loadParticipantPreviews(sql, personalIds);
-  const spaceIds = spaces.spaceIdsByChannel(userId, rows.map((row) => row.workstream_id));
+  const spaceIds = spaces.spaceIdsByChannel(viewer, rows.map((row) => row.workstream_id));
   const pins = spaces.ready()
-    ? loadSpacePins(sql, userId, rows.map((row) => row.workstream_id))
+    ? loadSpacePins(sql, viewer, spaces.breakoutsReady(), rows.map((row) => row.workstream_id))
     : new Map<string, { spaceId: string; position: number }[]>();
-  const breakoutAttentionCounts = spaces.breakoutAttentionCounts(
-    userId,
-    rows.map((row) => row.workstream_id),
-    accessClass,
-  );
+  const breakoutAttentionCounts = spaces.breakoutAttentionCounts(viewer, rows.map((row) => row.workstream_id));
   const viewerStates = withViewerState
-    ? channelViewerStates(sql, userId, rows.map((row) => row.workstream_id))
+    ? channelViewerStates(sql, viewer.userId, rows.map((row) => row.workstream_id))
     : new Map<string, ChannelViewerState>();
   return rows.map((row) => ({
     ...directoryWorkstream(
@@ -4543,9 +4553,11 @@ function mapDirectoryWorkstreams(
 
 function loadSpacePins(
   sql: DurableObjectState["storage"]["sql"],
-  userId: string,
+  viewer: Viewer,
+  breakouts: boolean,
   workstreamIds: readonly string[],
 ): Map<string, { spaceId: string; position: number }[]> {
+  const userId = viewer.userId;
   const result = new Map<string, { spaceId: string; position: number }[]>();
   for (const ids of boundParameterChunks([...new Set(workstreamIds)])) {
     const rows = sql.exec<{
@@ -4564,12 +4576,13 @@ function loadSpacePins(
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE pin.user_id = ? AND space.archived_at IS NULL
-          AND ${spaceVisibleToViewerSql("space", "viewer")}
+          AND ${spaceListedSql("space", "viewer", viewer.accessClass, { breakouts })}
           AND pin.workstream_id IN (${ids.map(() => "?").join(", ")})
         ORDER BY pin.workstream_id, pin.space_id, pin.position`,
       userId,
       userId,
       userId,
+      ...(breakouts ? [userId] : []),
       ...ids,
     ).toArray();
     for (const row of rows) {
@@ -6050,14 +6063,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // fence the older command before it can restore stale presence.
       const currentAttachment = readAttachment(socket);
       if (!currentAttachment || parsed.data.revision <= currentAttachment.presenceRevision) return;
-      // A guest's foreground is not the workspace's to know: the Channels this
-      // object can check follow member rules, and a guest's own (a shared
-      // Breakout, say) are not among them. Their foreground is dropped, so a
-      // guest records no recency, contributes no presence and is sent none.
-      const foregroundWorkstreamId = currentAttachment.accessClass === "guest" ? null : parsed.data.foregroundWorkstreamId;
       if (!currentAttachment.subscribed
-        || (foregroundWorkstreamId !== null
-          && !this.directoryVisible(currentAttachment.userId, foregroundWorkstreamId))) {
+        || (parsed.data.foregroundWorkstreamId !== null
+          && !this.directoryVisible(viewerOf(currentAttachment), parsed.data.foregroundWorkstreamId))) {
         this.closeSocket(socket, currentAttachment, {
           code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
           reason: "Invalid workspace presence",
@@ -6069,18 +6077,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         return;
       }
       const presenceChanged = currentAttachment.applicationState !== parsed.data.applicationState
-        || currentAttachment.foregroundWorkstreamId !== foregroundWorkstreamId;
+        || currentAttachment.foregroundWorkstreamId !== parsed.data.foregroundWorkstreamId;
       socket.serializeAttachment({
         ...currentAttachment,
         presenceRevision: parsed.data.revision,
         applicationState: parsed.data.applicationState,
-        foregroundWorkstreamId: foregroundWorkstreamId,
+        foregroundWorkstreamId: parsed.data.foregroundWorkstreamId,
       } satisfies WorkspaceSocketAttachment);
       if (presenceChanged) this.broadcastPresence();
       if (presenceChanged && parsed.data.applicationState === "foreground"
-        && foregroundWorkstreamId !== null) {
+        && parsed.data.foregroundWorkstreamId !== null) {
         const now = Date.now();
-        const workstreamId = foregroundWorkstreamId;
+        const workstreamId = parsed.data.foregroundWorkstreamId;
         // Opening a Channel is the moment its Main is about to be read. The
         // Channel control socket used to start this wake; a desktop that no
         // longer opens one says it here instead, ahead of its feed ticket.
@@ -6094,6 +6102,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           );
           this.advanceDirectoryVersion(now);
         });
+        // The presence check above has already found this Channel listed for
+        // this viewer, so its row is theirs to be sent.
         const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
           `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
           currentAttachment.userId, currentAttachment.userId, workstreamId,
@@ -6103,11 +6113,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           directoryWaterline: this.directoryWaterline(),
           workstream: mapDirectoryWorkstreams(
             this.state.storage.sql, [row], currentAttachment.workspaceId,
-            this.spaceStorage(), currentAttachment.userId,
-            currentAttachment.accessClass, true,
-          ).map((item) => currentAttachment.accessClass === "guest"
-            ? { ...item, spaceIds: [] }
-            : item)[0],
+            this.spaceStorage(), viewerOf(currentAttachment), true,
+          )[0],
           stateVersion: directoryStateVersion(row),
         }));
         for (const peer of this.state.getWebSockets()) {
@@ -6155,7 +6162,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         limit: parsed.data.limit,
         ...(parsed.data.before ? { before: parsed.data.before } : {}),
         includeSystem: parsed.data.includeSystem,
-      }, attachment.accessClass, true);
+      }, viewerOf(attachment).accessClass, true);
       socket.send(JSON.stringify(WorkspaceWorkstreamPageEventSchema.parse({
         type: "workspace_workstream_page",
         requestId: parsed.data.requestId,
@@ -6203,6 +6210,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const rails = (workstreamIds: readonly string[]) => channelRails(sql, {
       userId: identity.userId,
       accessClass: identity.accessClass,
+      breakouts: this.spaceStorage().breakoutsReady(),
       workspaceId: identity.workspaceId,
       workstreamIds,
       onInvalidAppearance: this.invalidAppearanceReporter(identity.workspaceId),
@@ -6253,8 +6261,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * many of their rails as fit beside them.
    *
    * The page is the one `channel_rails` reads for a Space, so a hidden Channel
-   * is never on it and `nextAfter` never names one. A guest, or a Space the
-   * viewer cannot see, is answered with an empty page. The page leaves out
+   * is never on it and `nextAfter` never names one. A Space the viewer cannot
+   * see is answered with an empty page. The page leaves out
    * system Channels, as the connect page does.
    *
    * Rails are an extra: one that does not fit, or fails its schema, is left
@@ -6267,10 +6275,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): void {
     const sql = this.state.storage.sql;
     const spaces = this.spaceStorage();
-    const page = identity.accessClass === "member" && spaces.reach(identity.userId, request.spaceId) !== null
+    const viewer: Viewer = { userId: identity.userId, accessClass: identity.accessClass };
+    const page = spaces.reach(viewer, request.spaceId) !== null
       ? visibleSpaceChannelIdsAfter(sql, {
         spaceId: request.spaceId,
         userId: identity.userId,
+        accessClass: identity.accessClass,
+        breakouts: spaces.breakoutsReady(),
         after: request.after ?? null,
         limit: CHANNEL_RAILS_NAMED_LIMIT,
       })
@@ -6285,9 +6296,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       type: "workspace_space_channels",
       requestId: request.requestId,
       directoryWaterline: this.directoryWaterline(),
-      items: mapDirectoryWorkstreams(
-        sql, rows, identity.workspaceId, spaces, identity.userId, identity.accessClass, true,
-      ),
+      items: mapDirectoryWorkstreams(sql, rows, identity.workspaceId, spaces, viewer, true),
       stateVersions: rows.map(directoryStateVersion),
       rails: [],
       nextAfter: page.length === CHANNEL_RAILS_NAMED_LIMIT ? page.at(-1)! : null,
@@ -6298,6 +6307,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const answer = channelRails(sql, {
         userId: identity.userId,
         accessClass: identity.accessClass,
+        breakouts: spaces.breakoutsReady(),
         workspaceId: identity.workspaceId,
         workstreamIds: rows.map((row) => row.workstream_id),
         onInvalidAppearance: this.invalidAppearanceReporter(identity.workspaceId),
@@ -6382,7 +6392,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
       if (contributesPresence(attachment)
-        && !this.directoryVisible(attachment.userId, attachment.foregroundWorkstreamId)) {
+        && !this.directoryVisible(viewerOf(attachment), attachment.foregroundWorkstreamId)) {
         try {
           socket.serializeAttachment({
             ...attachment,
@@ -8167,6 +8177,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * The viewer a Space read lists for, or null without an active relationship.
+   * A read admits a guest as well as a member: what each may be told is the
+   * listing rules' answer, not this gate's.
+   */
+  private async spaceReader(workspaceId: string, userId: string): Promise<Viewer | null> {
+    const relationship = await this.readRelationship(workspaceId, userId);
+    return relationship?.status === "active" ? { userId, accessClass: relationship.accessClass } : null;
+  }
+
+  /**
    * The gate every Space RPC passes, and the one place all three halves are
    * decided.
    *
@@ -8210,7 +8230,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (intent !== "write") return null;
     const storage = this.spaceStorage();
     if (!storage.ready()) return "space_bootstrap_pending";
-    if (spaceId !== undefined && storage.reach(userId, spaceId) === "through_channel") {
+    if (spaceId !== undefined && storage.reach(member(userId), spaceId) === "through_channel") {
       return "space_access_denied";
     }
     return null;
@@ -8322,7 +8342,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const existing = storage.generalSpaceId();
     let general: { space: SpaceSummary; created: boolean };
     if (existing !== null) {
-      const space = storage.readable(request.userId, existing);
+      const space = storage.readable(member(request.userId), existing);
       if (space === false) return { ok: false, code: "space_not_found" };
       general = { space, created: false };
     } else if (request.spaceId === undefined) {
@@ -8336,7 +8356,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (ensured.created) parent.reserve(request.userId, ensured.space);
         return ensured;
       }));
-      if (!general.created && storage.readable(request.userId, general.space.id) === false) {
+      if (!general.created && storage.readable(member(request.userId), general.space.id) === false) {
         return { ok: false, code: "space_not_found" };
       }
     }
@@ -8435,9 +8455,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "space_summary");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const space = this.spaceStorage().readable(request.userId, request.spaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    const space = this.spaceStorage().readable(viewer, request.spaceId);
     return WorkspaceSpaceMutationResultSchema.parse(space === false
       ? { ok: false, code: "space_not_found" }
       : { ok: true, space });
@@ -8468,9 +8488,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceChannelPageRequestSchema, input, "list_space_channels");
     this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
-    if (refusal) return { ok: false, code: refusal };
-    const page = this.spaceStorage().conversationPage(request.userId, request.spaceId, request.cursor);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const page = this.spaceStorage().conversationPage(viewer, request.spaceId, request.cursor);
     if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
     if (page === false) return { ok: false, code: "space_not_found" };
     const channelIds = page.items.flatMap((item) => (
@@ -8485,7 +8505,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.state.storage.sql.exec<WorkspaceDirectoryRow>(
         `${SELECT_WORKSPACE_DIRECTORY}
          WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
-           AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+           AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
          ORDER BY directory.workstream_id`,
         request.userId,
         request.userId,
@@ -8501,13 +8521,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray());
     const spaceStorage = this.spaceStorage();
     const channels = new Map(mapDirectoryWorkstreams(
-      this.state.storage.sql, channelRows, request.workspaceId, spaceStorage, request.userId,
+      this.state.storage.sql, channelRows, request.workspaceId, spaceStorage, viewer,
     ).map((workstream) => [workstream.id as string, workstream]));
     // A breakout's Spaces are its parent Channel's: a breakout has no
     // membership of its own, and the field is what a client uses to decide
     // which Space a row belongs under.
     const spaceIdsByChannel = spaceStorage.spaceIdsByChannel(
-      request.userId, [...new Set(breakoutRows.map((row) => row.workstream_id))],
+      viewer, [...new Set(breakoutRows.map((row) => row.workstream_id))],
     );
     const breakouts = new Map(breakoutRows.map((row) => [
       row.substream_id,
@@ -8559,11 +8579,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceChannelSpacesRequestSchema, input, "channel_spaces");
     this.assertWorkspace(request.workspaceId);
-    if (await this.spaceRefusalCode(request.workspaceId, request.userId, "read")) {
-      return WorkspaceChannelSpacesResultSchema.parse({ spaceIds: [] });
-    }
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return WorkspaceChannelSpacesResultSchema.parse({ spaceIds: [] });
     return WorkspaceChannelSpacesResultSchema.parse({
-      spaceIds: this.spaceStorage().channelSpaceIds(request.userId, request.workstreamId),
+      spaceIds: this.spaceStorage().channelSpaceIds(viewer, request.workstreamId),
     });
   }
 
@@ -8810,7 +8829,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const spaceIds = request.spaceIds.length > 0 ? [...new Set<string>(request.spaceIds)] : [generalSpaceId ?? ""];
     // The same per-Space gate every Space write takes: reaching a Space only
     // through a Channel in it is not enough to put another Channel there.
-    const throughChannel = spaceIds.find((spaceId) => storage.reach(request.userId, spaceId) === "through_channel");
+    const throughChannel = spaceIds.find((spaceId) => storage.reach(member(request.userId), spaceId) === "through_channel");
     if (throughChannel) return refused("space_access_denied", throughChannel);
     const parent = await this.hostedParent(request.workstreamId, request.workspaceId);
     const workstreamId = request.workstreamId;
@@ -8944,11 +8963,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeSpaceMember(request.workspaceId, request.userId)) return "space_access_denied";
     const storage = this.spaceStorage();
     if (!storage.ready()) return "space_bootstrap_pending";
-    if (storage.reach(request.userId, request.sourceSpaceId) === "through_channel"
-      || storage.reach(request.userId, request.targetSpaceId) === "through_channel") {
+    if (storage.reach(member(request.userId), request.sourceSpaceId) === "through_channel"
+      || storage.reach(member(request.userId), request.targetSpaceId) === "through_channel") {
       return "space_access_denied";
     }
-    if (!this.directoryVisible(request.userId, request.workstreamId)) return "space_not_found";
+    if (!this.directoryVisible(member(request.userId), request.workstreamId)) return "space_not_found";
     return null;
   }
 
@@ -8969,7 +8988,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.auth.workspaceId, request.auth.userId, "write", request.spaceId,
     );
     if (refusal) return this.spaceChannelRefusal(refusal);
-    if (!this.directoryVisible(request.auth.userId, request.workstreamId)) {
+    if (!this.directoryVisible(member(request.auth.userId), request.workstreamId)) {
       return {
         ok: false,
         refusal: { about: "conversation", status: 404, code: "workstream_not_found", message: "Channel not found" },
@@ -9035,7 +9054,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const storage = this.spaceStorage();
       const intent = storage.unsettledIntent(request.operationId);
       if (!intent) {
-        const space = storage.readable(request.auth.userId, request.spaceId);
+        const space = storage.readable(member(request.auth.userId), request.spaceId);
         return space === false
           ? this.spaceChannelRefusal("space_not_found")
           : { ok: true as const, outcome: "walked" as const, space };
@@ -11215,7 +11234,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!organizationWide) return [...readers];
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
-      if (attachment?.subscribed && (attachment.accessClass ?? "member") === "member") readers.add(attachment.userId);
+      if (attachment?.subscribed && organizationWideAdmits("workspace", viewerOf(attachment).accessClass)) readers.add(attachment.userId);
     }
     return [...readers];
   }
@@ -11683,7 +11702,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = ScopeGrantCandidatesRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return this.conversationCandidates(request.userId, request.membershipIncarnation);
+    return this.conversationCandidates(request.userId, request.membershipIncarnation, request.accessClass);
   }
 
   /**
@@ -11692,10 +11711,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * scope grant, or membership of one of its breakouts. Discovery only; every
    * Channel named here decides for itself which conversations it releases.
    */
-  private conversationCandidates(userId: string, membershipIncarnation: string): string[] {
+  private conversationCandidates(userId: string, membershipIncarnation: string, accessClass: AccessClass): string[] {
     return [...new Set([
       ...scopeGrantCandidates(this.state.storage, userId, membershipIncarnation),
-      ...this.spaceStorage().channelsReachedOnlyThroughBreakouts(userId),
+      ...this.spaceStorage().channelsReachedOnlyThroughBreakouts({ userId, accessClass }),
     ])].sort();
   }
 
@@ -11703,7 +11722,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = SharedNavigationSpacesRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const candidates = new Set(this.conversationCandidates(request.userId, request.membershipIncarnation));
+    const candidates = new Set(this.conversationCandidates(request.userId, request.membershipIncarnation, request.accessClass));
     const admittedIds = request.workstreamIds.filter((workstreamId) => candidates.has(workstreamId));
     return this.spaceStorage().sharedNavigationSpaces(admittedIds).map((space) =>
       SharedNavigationSpaceSchema.parse(space));
@@ -11842,7 +11861,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            ON access.workstream_id = directory.workstream_id AND access.user_id = ?1
         WHERE directory.archived_at IS NULL
           AND (? = 1 OR directory.system_kind IS NULL)
-          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+          AND ${this.channelListedFor("member")}
           AND (? IS NULL OR ${recency} >= ?)
           AND (? IS NULL OR ${recency} < ?)
           AND (? IS NULL OR EXISTS (
@@ -11856,7 +11875,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                AND membership.workstream_id = directory.workstream_id
                AND membership.state = 'active'
                AND space.archived_at IS NULL
-               AND ${spaceVisibleToViewerSql("space", "space_viewer")}
+               AND ${spaceListedSql("space", "space_viewer", "member", {
+                 breakouts: this.spaceStorage().breakoutsReady(),
+                 userId: "?1",
+               })}
           ))
           AND (? IS NULL
             OR (? = 1 AND EXISTS (
@@ -11876,7 +11898,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       before ? Date.parse(before) : 0,
       filter.spaceId ?? null,
       filter.spaceId ?? "",
-      userId,
       pinned === undefined ? null : Number(pinned),
       Number(pinned ?? false),
       filter.spaceId ?? "",
@@ -13698,7 +13719,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceDirectoryVisibilityRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return this.directoryVisible(request.userId, request.workstreamId);
+    return this.directoryVisible(member(request.userId), request.workstreamId);
   }
 
   /** Search includes archived and system conversations; final parent checks remain authoritative. */
@@ -13711,7 +13732,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
        LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
-       WHERE directory.scope = 'workspace' OR viewer.is_participant = 1
+       WHERE ${this.channelListedFor("member")}
        ORDER BY directory.workstream_id`, request.userId,
     ).toArray();
     return WorkspaceDirectorySearchableIdsResultSchema.parse({ items: rows.map((row) => row.workstream_id) });
@@ -13730,7 +13751,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
        WHERE directory.workstream_id IN (SELECT value FROM json_each(?))
-         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+         AND ${mainOpenableSql("directory", "viewer", "member")}
        ORDER BY directory.workstream_id`,
       request.userId,
       JSON.stringify(request.workstreamIds),
@@ -13752,7 +13773,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         AND viewer.authority_generation = directory.authority_generation
        WHERE directory.archived_at IS NULL
          AND (? = 1 OR directory.system_kind IS NULL)
-         AND ((? = 0 AND directory.scope = 'workspace')
+         AND ((? = 0 AND ${organizationWideSql("directory.scope", "member")})
               OR viewer.is_participant = 1)
          AND (? IS NULL OR directory.workstream_id > ?)
        ORDER BY directory.workstream_id
@@ -13776,8 +13797,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceDirectoryPinRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    if (!this.directoryVisible(request.userId, request.workstreamId)
-      || !this.spaceStorage().channelSpaceIds(request.userId, request.workstreamId).includes(request.spaceId)) {
+    if (!this.directoryVisible(member(request.userId), request.workstreamId)
+      || !this.spaceStorage().channelSpaceIds(member(request.userId), request.workstreamId).includes(request.spaceId)) {
       throw new Error("workstream_not_found");
     }
     const now = Date.now();
@@ -13819,7 +13840,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.pinnedDirectoryRows(request.userId, true, request.spaceId),
       request.workspaceId,
       this.spaceStorage(),
-      request.userId,
+      member(request.userId),
     ) };
   }
 
@@ -13848,7 +13869,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.pinnedDirectoryRows(request.userId, true, request.spaceId),
       request.workspaceId,
       this.spaceStorage(),
-      request.userId,
+      member(request.userId),
     ) };
   }
 
@@ -13869,7 +13890,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.pinnedDirectoryRows(request.userId, true, request.spaceId),
       request.workspaceId,
       this.spaceStorage(),
-      request.userId,
+      member(request.userId),
     ) };
   }
 
@@ -15060,12 +15081,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     accessClass: "member" | "guest" = "member",
     withViewerState = false,
   ): WorkspaceDirectoryPage {
-    // A guest's rail is the grant-scoped conversation directory
-    // (`/sharing/navigation`). This list follows member rules (every
-    // Organization-public Channel), so a guest is sent none of it.
-    if (accessClass === "guest") {
-      return { items: [], stateVersions: [], nextCursor: null, directoryWaterline: this.directoryWaterline() };
-    }
+    const listed = this.channelListedFor(accessClass);
     let cursor = request.before ? directoryCursor(request.before) : null;
     if (cursor) {
       const anchor = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
@@ -15086,7 +15102,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          AND directory.exact_state NOT IN ('running', 'interrupting', 'preparing_context',
                                            'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
-         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+         AND ${listed}
          AND (? IS NULL OR COALESCE(access.last_accessed_at, directory.source_created_at) < ?
               OR (COALESCE(access.last_accessed_at, directory.source_created_at) = ? AND directory.workstream_id > ?))
        ORDER BY COALESCE(access.last_accessed_at, directory.source_created_at) DESC, directory.workstream_id LIMIT ?`,
@@ -15109,7 +15125,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const selected = new Set(rows.map((row) => row.workstream_id));
       const supplemental = [
         ...this.pinnedDirectoryRows(request.userId, request.includeSystem),
-        ...this.runningDirectoryRows(request.userId, request.includeSystem),
+        ...this.runningDirectoryRows({ userId: request.userId, accessClass }, request.includeSystem),
       ];
       for (const row of supplemental) {
         if (selected.has(row.workstream_id)) continue;
@@ -15119,8 +15135,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     return {
       items: mapDirectoryWorkstreams(
-        this.state.storage.sql, rows, request.workspaceId, this.spaceStorage(), request.userId,
-        accessClass, withViewerState,
+        this.state.storage.sql, rows, request.workspaceId, this.spaceStorage(),
+        { userId: request.userId, accessClass }, withViewerState,
       ),
       stateVersions: rows.map(directoryStateVersion),
       nextCursor,
@@ -15133,13 +15149,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * workspace's, drafts included, never a room's.
    */
   /**
-   * A socket's sidebar automations. A guest authors none, and the workspace's
-   * own automations are member information, so a guest is sent none.
+   * The Sidekick library a socket's sidebar carries. It is the Organization's
+   * catalog rather than part of the Space/Channel/Breakout hierarchy, and its
+   * routes are a member's, so a guest's socket carries none; a guest reaches a
+   * Sidekick through the conversation it is attached to.
    */
-  private sidebarAutomationsFor(attachment: WorkspaceSocketAttachment): AutomationSummary[] {
-    return attachment.accessClass === "guest"
-      ? []
-      : this.listSidebarAutomations(attachment.workspaceId, attachment.userId);
+  private sidekickLibrary(attachment: WorkspaceSocketAttachment): AutomationSummary[] {
+    return viewerOf(attachment).accessClass === "member"
+      ? this.listSidebarAutomations(attachment.workspaceId, attachment.userId)
+      : [];
   }
 
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
@@ -15168,7 +15186,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               AND (?3 IS NULL OR pin.space_id = ?3)
          )
          AND (? = 1 OR directory.system_kind IS NULL)
-         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+         -- Pins are a member's; a Channel they pinned is listed by the same rule.
+         AND ${this.channelListedFor("member")}
        ORDER BY (
          SELECT MIN(pin.position) FROM workspace_workstream_pins pin
           WHERE pin.user_id = ?2 AND pin.workstream_id = directory.workstream_id
@@ -15186,22 +15205,33 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Return every visible one with the first page so an old active stream is
    * not hidden behind the recent-work cursor and omitted from socket prewarm.
    */
-  private runningDirectoryRows(userId: string, includeSystem: boolean): WorkspaceDirectoryRow[] {
+  private runningDirectoryRows(viewer: Viewer, includeSystem: boolean): WorkspaceDirectoryRow[] {
     return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL
          AND directory.exact_state IN ('running', 'interrupting', 'preparing_context',
                                        'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
-         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+         AND ${this.channelListedFor(viewer.accessClass)}
        ORDER BY directory.last_activity_at DESC, directory.workstream_id`,
-      userId,
-      userId,
+      viewer.userId,
+      viewer.userId,
       includeSystem ? 1 : 0,
     ).toArray();
   }
 
-  private directoryVisible(userId: string, workstreamId: string): boolean {
+  /**
+   * The Channel listing rule against `directory`/`viewer` in a statement whose
+   * first parameter is the viewer's user id, as every directory read here is.
+   */
+  private channelListedFor(accessClass: AccessClass): string {
+    return channelListedSql("directory", "viewer", accessClass, {
+      breakouts: this.spaceStorage().breakoutsReady(),
+      userId: "?1",
+    });
+  }
+
+  private directoryVisible(viewer: Viewer, workstreamId: string): boolean {
     return this.state.storage.sql.exec<{ one: number }>(
       `SELECT 1 AS one FROM channels directory
        LEFT JOIN channel_viewers viewer
@@ -15209,8 +15239,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
        WHERE directory.workstream_id = ? AND directory.archived_at IS NULL
-         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)`,
-      userId,
+         AND ${this.channelListedFor(viewer.accessClass)}`,
+      viewer.userId,
       workstreamId,
     ).toArray().length === 1;
   }
@@ -15306,15 +15336,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // No authorization re-check on the way out: an open socket is closed by
     // the access-revocation queue, never by a publisher asking again
     // (`docs/access-revocation.md`). The relationship a socket was admitted
-    // under is part of its row (a guest is told about no Space), so two
-    // sockets of one person under different relationships are two readers.
+    // under decides what it may be told (`listing-rules.ts`), so two sockets
+    // of one person under different relationships are two readers.
     const people = new Map<string, WorkspaceChannelRowReader>();
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
-      // A guest is sent no Channel rows, not even a tombstone: its id would
-      // name a Channel the member directory lists and the guest was not shared.
-      if (attachment.accessClass === "guest") continue;
       const accessClass = attachment.accessClass ?? "member";
       const key = `${attachment.userId}:${accessClass}`;
       const person = people.get(key);
@@ -15328,29 +15355,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         WHERE workstream_id IN (SELECT value FROM json_each(?))`,
       JSON.stringify(channelIds),
     ).toArray().map((row) => [row.workstream_id, row]));
-    // Participation counts only at the Channel's own generation, as the
-    // directory's visibility join has it.
-    const participants = new Map<string, Set<string>>();
-    for (const row of this.state.storage.sql.exec<{ workstream_id: string; user_id: string }>(
+    // The two facts the Channel rule composes, read once for every planned
+    // Channel: who takes part in Main (at the Channel's own generation, as the
+    // directory's join has it), and who opens a Breakout in it.
+    const participants = this.peopleByChannel(
       `SELECT viewer.workstream_id, viewer.user_id FROM channel_viewers viewer
          JOIN channels directory
            ON directory.workstream_id = viewer.workstream_id
           AND directory.authority_generation = viewer.authority_generation
         WHERE viewer.workstream_id IN (SELECT value FROM json_each(?))
-          AND viewer.is_participant = 1 AND directory.scope <> 'workspace' AND directory.archived_at IS NULL`,
-      JSON.stringify(channelIds),
-    ).toArray()) {
-      const users = participants.get(row.workstream_id) ?? new Set<string>();
-      users.add(row.user_id);
-      participants.set(row.workstream_id, users);
-    }
+          AND viewer.is_participant = 1 AND directory.archived_at IS NULL`,
+      channelIds,
+    );
+    const breakoutReach = this.spaceStorage().breakoutsReady()
+      ? this.peopleByChannel(
+        `SELECT DISTINCT breakout.workstream_id, breakout_viewer.user_id
+           FROM breakouts breakout
+           JOIN breakout_viewers breakout_viewer
+             ON breakout_viewer.workstream_id = breakout.workstream_id
+            AND breakout_viewer.substream_id = breakout.substream_id
+            AND breakout_viewer.authority_generation = breakout.authority_generation
+          WHERE breakout.workstream_id IN (SELECT value FROM json_each(?))
+            AND breakout.archived_at IS NULL AND breakout_viewer.listable = 1`,
+        channelIds,
+      )
+      : new Map<string, Set<string>>();
     const owed = new Map<string, string[]>();
     for (const [workstreamId, audience] of plan.channels) {
       const channel = channels.get(workstreamId);
       if (!channel) continue;
       for (const [key, person] of people) {
-        const sees = channel.archived_at === null
-          && (channel.scope === "workspace" || participants.get(workstreamId)?.has(person.userId) === true);
+        const sees = channel.archived_at === null && channelListed({
+          scope: channel.scope,
+          accessClass: person.accessClass,
+          mainParticipant: participants.get(workstreamId)?.has(person.userId) === true,
+          reachedThroughBreakout: breakoutReach.get(workstreamId)?.has(person.userId) === true,
+        });
         const lost = audience.lost.has(person.userId);
         if (!lost && !(sees && (audience.readers || audience.users.has(person.userId)))) continue;
         const ids = owed.get(key);
@@ -15399,11 +15439,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * somebody else's row is the existence of a private Space leaking through a
    * shared Channel), and the breakouts and agents are theirs.
    */
+  /** `workstream_id, user_id` rows for these Channels, grouped by Channel. */
+  private peopleByChannel(sql: string, channelIds: readonly string[]): Map<string, Set<string>> {
+    const people = new Map<string, Set<string>>();
+    for (const row of this.state.storage.sql.exec<{ workstream_id: string; user_id: string }>(
+      sql, JSON.stringify(channelIds),
+    ).toArray()) {
+      const users = people.get(row.workstream_id) ?? new Set<string>();
+      users.add(row.user_id);
+      people.set(row.workstream_id, users);
+    }
+    return people;
+  }
+
   private channelRowPayloads(
     person: WorkspaceChannelRowReader,
     workstreamIds: readonly string[],
     shared: ChannelRowShared,
   ): string[] {
+    const viewer: Viewer = { userId: person.userId, accessClass: person.accessClass };
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.workstream_id IN (SELECT value FROM json_each(?))`,
@@ -15411,18 +15465,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       person.userId,
       JSON.stringify(workstreamIds),
     ).toArray();
-    // A guest is sent no directory rows (see `listDirectory`), so every frame
-    // to them is `workstream: null`.
-    const visible = person.accessClass === "guest" ? [] : rows.filter((row) => row.archived_at === null
-      && (row.scope === "workspace" || row.is_participant === 1));
-    const visibleIds = visible.map((row) => row.workstream_id);
     const spaces = this.spaceStorage();
-    const spaceIds = person.accessClass === "guest" || visibleIds.length === 0
+    const listed = new Set(spaces.listableChannelIds(viewer, rows
+      .filter((row) => row.archived_at === null)
+      .map((row) => row.workstream_id)));
+    const visibleIds = rows.filter((row) => listed.has(row.workstream_id)).map((row) => row.workstream_id);
+    const spaceIds = visibleIds.length === 0
       ? new Map<string, string[]>()
-      : spaces.spaceIdsByChannel(person.userId, visibleIds);
+      : spaces.spaceIdsByChannel(viewer, visibleIds);
     const attention = visibleIds.length === 0
       ? new Map<string, number>()
-      : spaces.breakoutAttentionCounts(person.userId, visibleIds, person.accessClass);
+      : spaces.breakoutAttentionCounts(viewer, visibleIds);
     const viewerStates = channelViewerStates(this.state.storage.sql, person.userId, visibleIds, shared.background);
     const shown = new Set(visibleIds);
     return rows.map((row) => {
@@ -15462,16 +15515,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private sidebarPayload(attachment: WorkspaceSocketAttachment): WorkspaceSidebar {
     const spaces = this.spacesFor(attachment);
-    // A member is sent no Channel rows, and walks the Spaces for them, once
-    // the Space hierarchy is whole: before that, a Channel can sit in no
-    // Space, and the page is the only way it reaches the sidebar. A guest is
-    // sent no Spaces, so the page is theirs.
-    if (attachment.accessClass !== "guest" && spaces.spacesReady) {
+    // Nobody is sent Channel rows once the Space hierarchy is whole: each
+    // viewer walks the Spaces the listing rules give them for those. Before
+    // that, a Channel can sit in no Space, and the page is the only way it
+    // reaches the sidebar.
+    if (spaces.spacesReady) {
       return WorkspaceSidebarSchema.parse({
         workstreams: { directoryWaterline: this.directoryWaterline(), items: [], stateVersions: [], nextCursor: null },
         automations: {
           waterline: this.sidebarListWaterline("automations"),
-          items: this.sidebarAutomationsFor(attachment),
+          items: this.sidekickLibrary(attachment),
         },
         notes: { waterline: 0, items: [], nextCursor: null },
         ...spaces,
@@ -15485,12 +15538,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       includeSystem: false,
     }, attachment.accessClass, true);
     return WorkspaceSidebarSchema.parse({
-      workstreams: attachment.accessClass === "guest"
-        ? { ...workstreams, items: workstreams.items.map((item) => ({ ...item, spaceIds: [] })) }
-        : workstreams,
+      workstreams,
       automations: {
         waterline: this.sidebarListWaterline("automations"),
-        items: this.sidebarAutomationsFor(attachment),
+        items: this.sidekickLibrary(attachment),
       },
       notes: {
         waterline: 0, items: [], nextCursor: null,
@@ -15531,7 +15582,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
-      const page = { items: this.sidebarAutomationsFor(attachment) };
+      const page = { items: this.sidekickLibrary(attachment) };
       try {
         socket.send(JSON.stringify(WorkspaceSidebarListEventSchema.parse({
           type: "workspace_sidebar_list",
@@ -15682,37 +15733,35 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
-      // A guest is handed no Space state at all — `spacesFor` says why — and a
-      // nudge naming a Space is Space state.
-      if (attachment.accessClass === "guest") continue;
+      const viewer = viewerOf(attachment);
       const channelIds = [...new Set([
         ...sharedChannelIds,
         ...[...viewerChannelIds].flatMap(([workstreamId, users]) => (
           users.has(attachment.userId) ? [workstreamId] : []
         )),
       ])];
-      const spaceIds = new Set(spaces.visibleSpaceIdsAmong(attachment.userId, namedSpaceIds));
+      const spaceIds = new Set(spaces.visibleSpaceIdsAmong(viewer, namedSpaceIds));
       for (const [workstreamId, named] of spaceIdsThroughChannel) {
         // Both halves: can this person list the Channel that moved, and may
         // they see the Space it moved into or out of. The second is not
         // implied by the first — a Channel they can read leaving somebody's
         // personal Space takes their whole reach into it with it.
-        if (spaces.listableChannelIds(attachment.userId, [workstreamId]).length === 0) continue;
-        for (const spaceId of spaces.visibleSpaceIdsAmong(attachment.userId, named)) {
+        if (spaces.listableChannelIds(viewer, [workstreamId]).length === 0) continue;
+        for (const spaceId of spaces.visibleSpaceIdsAmong(viewer, named)) {
           spaceIds.add(spaceId);
         }
       }
       if (channelIds.length > 0) {
         for (const ids of spaces.spaceIdsByChannel(
-          attachment.userId,
-          spaces.listableChannelIds(attachment.userId, channelIds),
+          viewer,
+          spaces.listableChannelIds(viewer, channelIds),
         ).values()) {
           for (const spaceId of ids) spaceIds.add(spaceId);
         }
       }
       if (spaceIds.size === 0) continue;
       const sortedSpaceIds = [...spaceIds].sort();
-      const attentionCounts = spaces.attentionCounts(attachment.userId, sortedSpaceIds);
+      const attentionCounts = spaces.attentionCounts(viewer, sortedSpaceIds);
       try {
         socket.send(JSON.stringify(WorkspaceSpaceConversationsEventSchema.parse({
           type: "space_conversations_changed",
@@ -15752,20 +15801,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * The Space half of what one socket is told, connect payload and snapshot
-   * alike.
-   *
-   * A guest is told nothing: the PRD's non-goal 3 defers guest access to
-   * Spaces, and a guest holds explicit Channel and Breakout grants with no
-   * Organization-wide discovery — so sending them the directory would put every
-   * Organization-wide Space in their sidebar, which is the leak the Space RPCs
-   * already refuse and this is the other door into the same state.
-   *
-   * `spacesReady` is true for them rather than the Organization's real answer,
-   * because the cutover is not a state a guest is waiting on: reporting false
-   * would leave their client in the Organization-opening state indefinitely.
-   * It is also the one place the answer differs by *viewer* rather than by
-   * Organization, which is why it is computed here beside the directories
-   * instead of at each call site.
+   * alike: the Spaces the listing rules give this viewer, member or guest.
+   * A guest is not Organization-wide, so a Space reaches them only through a
+   * Channel they may list, with the `through_channel` summary.
    */
   private spacesFor(attachment: WorkspaceSocketAttachment): {
     spaces: SpaceSnapshot;
@@ -15773,24 +15811,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     pinnedOrder: string[];
     spacesReady: boolean;
   } {
-    if (attachment.accessClass === "guest") {
-      return {
-        spaces: { active: { waterline: 0, items: [] }, inactive: { waterline: 0, items: [] } },
-        ordering: [],
-        pinnedOrder: [],
-        spacesReady: true,
-      };
-    }
     const spaces = this.spaceStorage();
+    const viewer = viewerOf(attachment);
     // `list` first, and not for tidiness: it is the read that gives a newly
     // visible Space its row in the Organization's order, so a read of the
     // orders taken ahead of it would answer without the Space the directory
     // beside it is about to carry.
-    const active = spaces.list(attachment.workspaceId, attachment.userId);
+    const active = spaces.list(attachment.workspaceId, viewer);
     return {
-      spaces: { active, inactive: spaces.listInactive(attachment.userId) },
-      ordering: spaces.readOrders(attachment.workspaceId, attachment.userId),
-      pinnedOrder: spaces.readPinnedOrder(attachment.userId),
+      spaces: { active, inactive: spaces.listInactive(viewer) },
+      ordering: spaces.readOrders(attachment.workspaceId, viewer),
+      pinnedOrder: spaces.readPinnedOrder(viewer),
       spacesReady: spaces.bootstrapStatus().ready,
     };
   }

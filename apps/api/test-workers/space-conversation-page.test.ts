@@ -555,7 +555,7 @@ describe("space dashboard conversation page", () => {
     expect(await breakoutRows()).toEqual(after);
   });
 
-  it("given a Channel this viewer cannot see, when they read the page, then its breakout is absent too", async () => {
+  it("given a Channel this viewer reaches only through a Breakout, when they read the page, then it lists the Breakout and not Main", async () => {
     const spaceId = await reserve("Hiring");
     await openChannelObject(PRIVATE_CHANNEL);
     await publishChannel(PRIVATE_CHANNEL, [
@@ -573,10 +573,9 @@ describe("space dashboard conversation page", () => {
 
     expect((await page(spaceId, OWNER)).items.map((item) => item.title))
       .toEqual(["Offer letter", "Private Channel"]);
-    // Not "an empty page because the Space is empty": the member can read the
-    // Space, and the only thing keeping both rows off their page is the
-    // Channel's own audience.
-    expect((await page(spaceId, MEMBER)).items).toEqual([]);
+    // The Breakout the member opens lists its Channel, and so the Space, for
+    // them; Main, which they cannot open, stays off their page.
+    expect((await page(spaceId, MEMBER)).items.map((item) => item.title)).toEqual(["Offer letter"]);
   });
 
   it("given a breakout in a Channel this viewer cannot see, then that Channel is a conversation-directory candidate for them alone", async () => {
@@ -591,7 +590,7 @@ describe("space dashboard conversation page", () => {
       viewerEffect(MEMBER) as ConversationEffect,
     ]);
     const candidates = (userId: UserId) => workspace().listScopeGrantCandidates({
-      workspaceId: WORKSPACE_ID, userId, membershipIncarnation: userId,
+      workspaceId: WORKSPACE_ID, userId, membershipIncarnation: userId, accessClass: "member",
     });
     // The member reaches the Channel only through its breakout. The owner
     // already sees the Channel, so the member directory lists it for them.
@@ -796,7 +795,7 @@ describe("space dashboard conversation page", () => {
     }, { timeout: 5_000 });
   });
 
-  it("sends a guest's workspace socket no Channel the member directory lists", async () => {
+  it("sends a guest's workspace socket nothing of an Organization-wide Channel they are not in", async () => {
     await openChannelObject(CHANNEL_A);
     await publishChannel(CHANNEL_A, [channelCommonEffect("Org-wide roadmap"), viewerEffect(OWNER)]);
 
@@ -829,10 +828,6 @@ describe("space dashboard conversation page", () => {
     // Not a row, and not a tombstone either: its id alone names the Channel.
     expect(guest.frames.filter((frame) => WorkspaceWorkstreamStateEventSchema.safeParse(frame).success)).toEqual([]);
 
-    // Foregrounding it records nothing and answers nothing, and the socket
-    // stays open: a guest's own Channel (a shared Breakout) is not one this
-    // object can check, so the same message must not close it.
-    guest.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: CHANNEL_A }));
     // Its rail is not theirs either.
     const railRequestId = "00000000-0000-7000-8000-00000000d1fe";
     guest.socket.send(JSON.stringify({ type: "channel_rails", requestId: railRequestId, workstreamIds: [CHANNEL_A] }));
@@ -842,8 +837,15 @@ describe("space dashboard conversation page", () => {
     const rails = guest.frames.find((frame) => (frame as { requestId?: string }).requestId === railRequestId) as { rails: unknown[]; unavailable: string[] };
     expect(rails.rails).toEqual([]);
     expect(rails.unavailable).toEqual([CHANNEL_A]);
+
+    // Foregrounding it is refused as a member's would be: it is not a Channel
+    // this guest may list, so it records no recency and closes the socket.
+    const closed = new Promise<number>((resolve) => {
+      guest.socket.addEventListener("close", (event) => resolve(event.code));
+    });
+    guest.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: CHANNEL_A }));
+    await closed;
     expect(guest.frames.some((frame) => (frame as { type?: string }).type === "workspace_workstream_recency")).toBe(false);
-    expect(guest.socket.readyState).toBe(WebSocket.OPEN);
   });
 
   it("keeps Channel badge totals inside the parent Channel and guest visibility boundaries", async () => {
@@ -863,19 +865,20 @@ describe("space dashboard conversation page", () => {
     const counts = await runInDurableObject(workspace(), (_instance, state) => {
       const spaces = new WorkspaceSpaceStorage(state.storage);
       return {
-        guestWithoutGrant: spaces.breakoutAttentionCounts(GUEST, [CHANNEL_A], "guest"),
-        memberWithoutParent: spaces.breakoutAttentionCounts(MEMBER, [PRIVATE_CHANNEL]),
+        guestWithoutGrant: spaces.breakoutAttentionCounts({ userId: GUEST, accessClass: "guest" }, [CHANNEL_A]),
+        memberThroughBreakout: spaces.breakoutAttentionCounts({ userId: MEMBER, accessClass: "member" }, [PRIVATE_CHANNEL]),
       };
     });
     expect(counts.guestWithoutGrant.get(CHANNEL_A)).toBeUndefined();
-    expect(counts.memberWithoutParent.get(PRIVATE_CHANNEL)).toBeUndefined();
+    // A Breakout the member opens lists its Channel for them, so it is counted.
+    expect(counts.memberThroughBreakout.get(PRIVATE_CHANNEL)).toBe(1);
 
     await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
       viewerEffect(GUEST) as ConversationEffect,
     ], 2);
     const guestWithGrant = await runInDurableObject(workspace(), (_instance, state) => (
       new WorkspaceSpaceStorage(state.storage)
-        .breakoutAttentionCounts(GUEST, [CHANNEL_A], "guest")
+        .breakoutAttentionCounts({ userId: GUEST, accessClass: "guest" }, [CHANNEL_A])
         .get(CHANNEL_A)
     ));
     expect(guestWithGrant).toBe(1);
