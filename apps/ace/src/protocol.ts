@@ -61,7 +61,7 @@ export const MANAGED_MODELS = [
     key: 'agent-model-workstream',
     label: 'Work-stream agent',
     description: 'Runs the main participant-visible work stream and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.',
-    defaultRouting: { model: 'openai/gpt-5.6-terra', fallbackModels: ['google/gemini-3.8-flash'] },
+    defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
     rank: 2,
@@ -70,7 +70,7 @@ export const MANAGED_MODELS = [
     key: 'agent-model-inline-child',
     label: 'Inline subagent',
     description: 'Runs a bounded read-only child task delegated by a work-stream agent and returns the result to its parent.',
-    defaultRouting: { model: 'openai/gpt-5.6-terra', fallbackModels: ['google/gemini-3.8-flash'] },
+    defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
     rank: 3,
@@ -115,7 +115,7 @@ export const MANAGED_MODELS = [
     key: 'agent-model-session-import',
     label: 'Conversation import',
     description: 'Drives the person\'s desktop browser (page script, page outline, screenshots, input) to read a ChatGPT or Claude conversation and its files into a new Channel. Must accept images.',
-    defaultRouting: { model: 'openai/gpt-5.6-terra', fallbackModels: ['google/gemini-3.8-flash'] },
+    defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
   },
 ] as const satisfies readonly ManagedModelDefinition[];
 

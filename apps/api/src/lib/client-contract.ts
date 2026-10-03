@@ -1,5 +1,6 @@
 import {
   MINIMUM_SERVED_CLIENT_CONTRACT,
+  SESSION_IMPORT_CLIENT_CONTRACT,
   RALLY_HEADERS,
   readRallyHeader,
 } from "@rally/contracts/http-headers";
@@ -53,4 +54,13 @@ function clientUpdateRequired(): ApiError {
     "client_update_required",
     "This version of Rally can no longer read this organization. Update Rally to continue.",
   );
+}
+
+/** Import tools require a matching desktop before any Channel or run is reserved. */
+export function requireSessionImportClientContract(header: ClientRequestHeaders): void {
+  const declared = readRallyHeader(header, RALLY_HEADERS.CLIENT_CONTRACT);
+  if (declared === undefined || !/^\d+$/u.test(declared)
+    || !Number.isSafeInteger(Number(declared)) || Number(declared) < SESSION_IMPORT_CLIENT_CONTRACT) {
+    throw new ApiError(426, "client_update_required", "Update Rally to import conversations with this version of the browser tools.");
+  }
 }

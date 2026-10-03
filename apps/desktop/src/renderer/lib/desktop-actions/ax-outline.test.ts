@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { axOutline } from './ax-outline';
+import { axOutline } from '../../../common/desktop-actions/ax-outline';
 
 describe('page outline', () => {
   it('keeps named nodes, lifts unnamed wrappers, and skips ignored nodes and text boxes', () => {

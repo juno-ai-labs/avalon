@@ -50,8 +50,11 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  *
  * `1` is the Organization/Space/Channel hierarchy. Absent means a build from
  * before this header, which is exactly what a pre-cutover desktop is.
+ * `2` adds browser script/reset support, required only by conversation import admission.
  */
-export const CLIENT_CONTRACT_VERSION = 1;
+export const CLIENT_CONTRACT_VERSION = 2;
+/** First client contract that implements the persistent browser script actions. */
+export const SESSION_IMPORT_CLIENT_CONTRACT = 2;
 
 /**
  * The oldest client contract a Worker still answers.

@@ -8,6 +8,16 @@ const drive = { pluginId: "plugin_google_2", displayName: "Google Drive · Work"
 const github = { pluginId: "plugin_github_1", displayName: "GitHub" };
 
 describe("tool activity names", () => {
+  it("names browser work from its call title throughout the lifecycle", () => {
+    for (const status of ["started", "completed"] as const) {
+      expect(toolActivityName({ toolName: "browser_js", status, arguments: { title: "Find conversation data" } }))
+        .toBe("Find conversation data");
+    }
+    expect(toolActivityName({ toolName: "browser_js", status: "failed", arguments: { title: "Read messages" } }))
+      .toBe("Could not complete: Read messages");
+    expect(toolActivityName({ toolName: "browser_js", status: "completed", arguments: { title: "  " } }))
+      .toBe("Used the browser");
+  });
   it("gives Avalon-owned tools their own prose in both lifecycle states", () => {
     expect(toolActivityName({ toolName: "web_search", status: "started" }))
       .toBe("Searching the public web");

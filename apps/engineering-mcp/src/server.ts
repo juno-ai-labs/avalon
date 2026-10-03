@@ -374,7 +374,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     administered(await env.FLAG_ADMINISTRATION.listModelFlags())));
 
   server.registerTool("update_model_flag", {
-    description: "Replace the route plan (primary OpenRouter model and ordered fallbacks) in an agent role's model flag's default variation. Every model id is checked against OpenRouter first; targeting rules and other variations are kept. New runs pick up the change on their next evaluation.",
+    description: "Replace the route plan (primary OpenRouter model, ordered fallbacks, and optional reasoningEffort: low, medium, or high) in an agent role's model flag's default variation. Omit reasoningEffort to use each selected model's configured default; an explicit effort applies to the whole route. Every model id is checked against OpenRouter first; targeting rules and other variations are kept. New runs pick up the change on their next evaluation.",
     inputSchema: ManagedModelUpdateSchema.shape,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   }, (update) => tool(principal, "update_model_flag", { agent_role: update.role }, async () =>

@@ -6,6 +6,7 @@ import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from './api-emitt
 import {
   emitProductUsageTelemetry,
   resourceTelemetryEventId,
+  runTelemetryOperationId,
   telemetryCountBucket,
   telemetryJourneyDuration,
   type TelemetryJourneyDuration,
@@ -141,7 +142,7 @@ async function acceptCorrelatedRunOutcome(
   };
   const started = run.started_at;
   const completed = stored.completed_at;
-  const operationId = input.telemetryOperationId ?? input.harnessRunId;
+  const operationId = input.telemetryOperationId ?? runTelemetryOperationId(input.harnessRunId);
   const subjectUserId = userIdForRun(run, input.telemetrySubjectUserId);
 
   emitProductUsageTelemetry(env, {

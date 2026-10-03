@@ -1,6 +1,6 @@
 import type { HarnessPlugin, HarnessTool } from "@rally/agent-harness";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
-import { SessionImportFailureReasonSchema } from "@rally/contracts/desktop-actions";
+import { SessionImportFailureReasonSchema, SessionImportVerificationSchema } from "@rally/contracts/desktop-actions";
 import { z } from "zod";
 
 import { runDesktopAction } from "./browser-plugin";
@@ -13,6 +13,7 @@ function inputSchema(schema: z.ZodType): Record<string, unknown> {
 }
 
 const FinishArgumentsSchema = z.strictObject({
+  verification: SessionImportVerificationSchema,
   title: z.string().trim().min(1).max(180).describe("The conversation's title as the provider shows it, or a short one you write when it has none."),
   messages: z.string().min(1).describe("The handle rally.store returned for the stored messages array."),
 });
@@ -48,7 +49,7 @@ export function createSessionImportPlugin(
     execute: async (raw, context) => {
       const args = FinishArgumentsSchema.parse(raw);
       const result = await runDesktopAction(executor, input, context, {
-        kind: "session_import.finish", title: args.title, messages: args.messages,
+        kind: "session_import.finish", title: args.title, messages: args.messages, verification: args.verification,
       });
       // Not a halt: the run ends on the model's own one-line reply, the
       // durable final turn every completed run must have. A tool that halted

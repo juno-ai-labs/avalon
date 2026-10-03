@@ -61,6 +61,25 @@ function fixture() {
 }
 
 describe('agent tool usage telemetry', () => {
+  it('accepts deterministic UUIDv8 import runs without losing their original correlation', async () => {
+    const { database, env } = fixture();
+    const lifecycle = workDeferral();
+    emitAgentToolStartedTelemetry(env, {
+      workspaceId, workstreamId, harnessRunId: '251de11b-1267-8961-a279-42e99158d13a', invocationId: userInvocationId,
+      executionPrincipal: { type: 'user', userId }, toolName: 'browser_evaluate', pluginId: 'avalon:browser',
+      capability: 'browser.page.evaluate', mode: 'write', runKind: 'workstream',
+    }, lifecycle.defer);
+    await lifecycle.settle();
+    const row = database.prepare('SELECT envelope_json FROM telemetry_accepted_events WHERE event_id = ?').get(userInvocationId) as
+      { envelope_json: string } | undefined;
+    expect(row).toBeDefined();
+    expect(JSON.parse(row!.envelope_json)).toMatchObject({
+      name: 'agent_tool_started', context: { operationId: '251de11b-1267-7961-a279-42e99158d135' },
+      properties: { harnessRunId: '251de11b-1267-8961-a279-42e99158d13a', toolName: 'browser_evaluate' },
+    });
+    database.close();
+  });
+
   it('attributes a user-owned invocation to the person and workspace without content', async () => {
     const { database, env } = fixture();
     const lifecycle = workDeferral();

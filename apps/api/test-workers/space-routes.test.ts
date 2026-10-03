@@ -95,11 +95,15 @@ function routeEnv(): Env {
 
 const app = createApp();
 
+let importModelHeld = false;
+const importContexts: ReturnType<typeof createExecutionContext>[] = [];
+
 async function request(
   path: string,
   auth: AuthContext,
   body?: unknown,
   method = body === undefined ? "GET" : "POST",
+  clientContract: string | null = "2",
 ): Promise<{ status: number; body: unknown }> {
   const token = await new SignJWT({ sid: auth.sessionId, wid: auth.workspaceId, region: auth.region })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
@@ -113,12 +117,15 @@ async function request(
     method,
     headers: {
       authorization: `Bearer ${token}`,
+      ...(clientContract === null ? {} : { "x-rally-client-contract": clientContract }),
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }, routeEnv(), context);
   const value: unknown = await response.json();
-  await waitOnExecutionContext(context);
+  // Import admission returns while its deliberately held model is still running.
+  if (importModelHeld) importContexts.push(context);
+  else await waitOnExecutionContext(context);
   return { status: response.status, body: value };
 }
 
@@ -368,8 +375,13 @@ describe("conversation import routes", () => {
   beforeEach(() => {
     const held = new Promise<void>((resolve) => { release = resolve; });
     gate = held;
+    importModelHeld = true;
   });
-  afterEach(() => release());
+  afterEach(async () => {
+    release();
+    importModelHeld = false;
+    await Promise.all(importContexts.splice(0).map(context => waitOnExecutionContext(context)));
+  });
   let gate: Promise<void> = Promise.resolve();
   useSelectedModel();
   useOpenRouterDouble(async () => {
@@ -388,6 +400,16 @@ describe("conversation import routes", () => {
       title, source: SOURCE, content: { messages }, clientMessageId, spaceIds,
     });
   }
+
+  it.each([null, "1"])("refuses import admission from unsupported client contract %s", async (contract) => {
+    const before = await request("/workstreams", OWNER_AUTH);
+    const body = { sourceUrl: SOURCE_URL, title: "Unsupported import", clientMessageId: "00000000-0000-7000-8000-00000000d299", spaceIds: [] };
+    const started = await request("/workstreams/import/runs", OWNER_AUTH, body, "POST", contract);
+    expect(started).toMatchObject({ status: 426, body: { error: { code: "client_update_required", message: "Update Rally to import conversations with this version of the browser tools." } } });
+    const updated = await request("/workstreams/00000000-0000-7000-8000-00000000d299/import/runs", OWNER_AUTH, {}, "POST", contract);
+    expect(updated.status).toBe(426);
+    expect(await request("/workstreams", OWNER_AUTH)).toEqual(before);
+  });
 
   it("rejects an imported title outside the Channel creation contract", async () => {
     const started = await request("/workstreams/import/runs", OWNER_AUTH, {

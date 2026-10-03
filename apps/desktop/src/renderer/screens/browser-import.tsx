@@ -280,7 +280,7 @@ export function BrowserImportWindow(): React.JSX.Element {
     </main>
     <Modal
       backdrop="blur"
-      description="Rally is reading this conversation in the page behind. It is locked until the import finishes."
+      description="Rally is using a large language model and computer use to read the page. This can take between 20 and 60 seconds."
       dismissible={false}
       footer={<Button onClick={() => void run?.cancel()}>Cancel</Button>}
       headerActions={<DropdownMenu.Root>

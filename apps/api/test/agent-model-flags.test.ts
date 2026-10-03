@@ -398,6 +398,13 @@ describe("agent model flags", () => {
     warn.mockRestore();
   });
 
+  it("preserves reasoning effort from a model flag", async () => {
+    const env = envWithFlags(serving({ model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "medium" }));
+    await expect(resolveAgentModelRouting(env, "session_import")).resolves.toEqual({
+      model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "medium",
+    });
+  });
+
   it("rejects a malformed flag value whole instead of applying half of it", async () => {
     const env = envWithFlags(serving({ model: "", fallbackModels: ["x-ai/grok-4.3"] }));
 

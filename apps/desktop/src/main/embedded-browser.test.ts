@@ -16,6 +16,8 @@ class FakeContents extends EventEmitter {
   windowOpenHandler: ((details: { url: string }) => { action: string }) | null = null;
   navigationHistory = { canGoBack: () => false, canGoForward: () => false, goBack: vi.fn(), goForward: vi.fn() };
   setUserAgent = vi.fn();
+  session = { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() };
+  executeJavaScript = vi.fn(async () => []);
   setWindowOpenHandler = vi.fn((handler: (details: { url: string }) => { action: string }) => { this.windowOpenHandler = handler; });
   loadURL = vi.fn(async (url: string) => { this.url = url; });
   getURL = (): string => this.url;
@@ -67,7 +69,7 @@ function hostWindow(zoom = 1) {
   const window = Object.assign(new EventEmitter(), {
     getContentSize: () => [1000, 800],
     isDestroyed: () => false,
-    webContents: { getZoomFactor: () => zoom, focus: vi.fn() },
+    webContents: Object.assign(new EventEmitter(), { getZoomFactor: () => zoom, focus: vi.fn() }),
     contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
   });
   return window;
@@ -84,6 +86,22 @@ describe('the local browser behind the rail and the import window', () => {
   beforeEach(() => {
     electron.sessions.clear();
     electron.views.length = 0;
+  });
+
+  it.each(['render-process-gone', 'did-start-navigation'])('disposes script realms on owner %s while preserving the page', async event => {
+    const { instance, window } = browser();
+    await instance.command({ action: 'open', url: 'https://chatgpt.com/' });
+    const tabId = instance.state().activeTabId!;
+    await instance.command({ action: 'script', tabId, runtimeId: 'run-1', code: '1' });
+    const page = electron.views[0]!.webContents;
+    const realm = electron.views[1]!.webContents;
+    expect(realm.destroyed).toBe(false);
+    if (event === 'did-start-navigation') window.webContents.emit(event, {}, 'http://localhost/', false, true);
+    else window.webContents.emit(event, {});
+    expect(realm.destroyed).toBe(true);
+    expect(page.destroyed).toBe(false);
+    expect(instance.state().tabs.map(tab => tab.url)).toEqual(['https://chatgpt.com/']);
+    instance.dispose();
   });
 
   it('gives visited pages no preload or Node, in a sandbox, in the signed-in user’s own partition', async () => {
