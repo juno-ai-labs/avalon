@@ -1261,7 +1261,8 @@ Migration 0107 adds regional `user_push_devices`, `user_push_device_sessions`, a
 `push_delivery_receipts`. Devices belong to a person and installation; live
 sessions bound by registration establish delivery eligibility. Receipts identify
 one workspace intent and device. Notification content remains in WorkspaceDO,
-read through typed RPC. See [Apple push](push-notifications.md).
+read through typed RPC. Migration 0117 adds a browser subscription's key
+columns for `webpush` devices. See [Push notifications](push-notifications.md).
 
 ## Observational databases
 
