@@ -2201,6 +2201,21 @@ describe('Organization settings', () => {
     expect(screen.queryByRole('switch', { name: /Product analytics/ })).toBeNull();
   });
 
+  it('returns to the workspace instead of closing a browser tab', async () => {
+    sessionHost.current = 'browser';
+    const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+    window.location.hash = '#/settings';
+    renderSettings(workspace, createTestQueryClient(), true);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Close settings' }));
+    expect(window.location.hash).toBe('#/');
+    window.location.hash = '#/settings';
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(window.location.hash).toBe('#/');
+    expect(close).not.toHaveBeenCalled();
+    close.mockRestore();
+  });
+
   it('toggles Lockdown mode for the saved authentication session', async () => {
     renderSettings();
     openSettingsSection('Application');

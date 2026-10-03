@@ -213,9 +213,11 @@ the local cache, the entry wipes it alongside drafts on sign-out and account
 change.
 
 The cookie adapter forwards the member route families (`spaces`, `projects`,
-`onboarding`, `work-opportunities`, `digest`, `push-devices`, `workspaces`) in
-addition to the guest ones. Each route keeps its own role checks; the adapter
-adds no permission of its own.
+`onboarding/account`, `work-opportunities`, `digest`, `push-devices`,
+`workspaces`) in addition to the guest ones. Each route keeps its own role
+checks; the adapter adds no permission of its own. The rest of `onboarding`
+stays out: creating, activating or joining a workspace there answers with a
+bearer session, and a browser holds only its HttpOnly cookie.
 
 Connector setup, Google sign-in, Web Push, inline artifact preview and other
 deployments are later phases of
@@ -512,7 +514,11 @@ its session from the Electron bridge and its stored credentials.
 at a time, because Chromium serializes handshakes to one endpoint and there is
 no Node broker here. Any surface that only works in the Mac app must check
 `host`, not `desktopServicesAvailable()`, because renderer tests treat the
-latter as false for the desktop.
+latter as false for the desktop. Of onboarding, only `onboarding/account`
+crosses the adapter: workspace creation, activation and invitation acceptance
+answer with a bearer session, which browser JavaScript must never hold.
+
+Shipped in #1077. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
 ### 2026-09-30 — The account rail offers the Mac app
 
