@@ -23,7 +23,7 @@ are in
 | `apps/api/src/queues/usage-consumer.ts` | The `avalon-<region>-usage` consumer: validates, rejects misrouted messages, sends the batch to the usage lakehouse, applies it to D1, logs `usage_batch_applied`. `usageLakehouseRecord` shapes the R2 row. |
 | `apps/api/src/routes/workspace.ts` | `GET /workspace/usage`, for every member role. |
 | `apps/api/src/routes/workspace-operations.ts` | `POST /internal/workspaces/:id/plan`, the operator route Ace calls. |
-| `packages/db/migrations/0117_usage_quota_metering.sql` | `workspaces.plan`, in the regional `DB`. |
+| `packages/db/migrations/0118_usage_quota_metering.sql` | `workspaces.plan`, in the regional `DB`. |
 | `packages/db/usage-migrations/` | `usage_events` and `usage_rollups`, in `USAGE_DB` (`avalon-<region>-usage`). Applied by `pnpm --filter @rally/api db:usage:migrate` (local, part of `db:migrate`) and `db:usage:migrate:remote` (deploy). |
 | `config/usage-lakehouse.json`, `config/usage-lakehouse-stream-schema.json` | The usage lakehouse: the `USAGE_LAKEHOUSE` Pipeline into the Iceberg table `avalon.usage_events` in R2, provisioned by `scripts/ensure-cloudflare-inference-lakehouse.mjs` like the other lakehouses. |
 | `apps/ace/src/client/workspaces.tsx` | The plan control on Ace's workspaces tab. |
