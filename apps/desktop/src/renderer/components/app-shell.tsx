@@ -448,15 +448,14 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
-      // Search reads the whole Organization, and its route refuses a guest.
-      if (api && !guestSession && (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyF' && !event.isComposing) {
+      if (api && (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyF' && !event.isComposing) {
         event.preventDefault();
         setSearchOpen(true);
       }
     };
     window.addEventListener('keydown', openSearch);
     return () => window.removeEventListener('keydown', openSearch);
-  }, [api, guestSession]);
+  }, [api]);
   const searchIdentity = `${workspace.id}:${workspace.currentUser.id}`;
   const [searchPreview, setSearchPreview] = useState<{ identity: string; preview: AttachmentPreview } | null>(null);
   const navigate = useNavigate();

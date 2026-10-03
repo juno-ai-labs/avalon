@@ -30,7 +30,7 @@ const directory: DesktopWorkspaceOnboardingState = {
  * the API, less the Organization profile and socket ticket under `/workspace`,
  * and the Sidekick library and creation, which refuse a guest per route.
  */
-const MEMBER_ONLY = /^\/(workspace\/(?!socket$)|workspaces|workstreams|sideline|work-opportunities|projects|spaces|digest|push-devices|connections|favicons|search|speech|realtime|(sidekicks|automations)\/?$)/u;
+const MEMBER_ONLY = /^\/(workspace\/(?!socket$)|workspaces|workstreams|sideline|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime|(sidekicks|automations)\/?$)/u;
 
 const spaceId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 
@@ -108,6 +108,8 @@ it('opens a guest in the main window without asking for anything a guest is refu
   await waitFor(() => expect(requested).toContain('/workspace'));
   // The account menu reads background attention for the membership alone.
   await waitFor(() => expect(attention).toEqual([member.id]));
+  // Search answers a guest from their own audience, as it does a member.
+  expect(await screen.findByRole('button', { name: 'Search organization' })).toBeEnabled();
   // The menu's content mounts on open, and with it anything it reads.
   const triggers = await screen.findAllByRole('button', { name: /Guest/u });
   fireEvent.pointerDown(triggers[triggers.length - 1]!, { button: 0, ctrlKey: false });

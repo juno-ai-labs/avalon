@@ -12,7 +12,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import { conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
-import { mainOmitted, useConversationDirectory } from '../lib/conversation-directory';
+import { mainOmitted, mainReachable, useConversationDirectory } from '../lib/conversation-directory';
 
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { reportTelemetryProductIntent, telemetryVisibility, uuidV7 } from '../lib/telemetry';
@@ -174,20 +174,22 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const { guest } = useShellCapabilities();
   const conversationDirectory = useConversationDirectory();
   const directoryEntry = conversationDirectory?.workstreams.find((item) => item.parentId === id);
-  // Scoped to the conversations the directory lists: always for a guest, whose
-  // every Channel comes from it, and for a member whose entry leaves Main out —
-  // somebody who is in a breakout of a Channel they cannot otherwise read.
-  const conversationScoped = guest || Boolean(directoryEntry && mainOmitted(directoryEntry));
+  const row = useCachedWorkstreamSummary(id);
+  // Scoped to the conversations the directory lists when Main is not theirs,
+  // by their row or the conversation directory (`mainReachable`): somebody in
+  // a Breakout of a Channel whose Main they may not open.
+  const conversationScoped = mainReachable(row, conversationDirectory, id) === false;
+  // Changing the Channel itself (its audience, name, mark, pin, archive) goes
+  // through `/workstreams` and the pin RPC, which take a member who can open
+  // Main. A guest reads Main when they take part in it, and changes it never.
+  const channelWritable = !conversationScoped && !guest;
   // Parent chrome remains live even on a direct link into a child. Reuse the
   // retained Main connection rather than deriving its inventory from the child.
   // A child grant proves nothing about Main; keep that host scoped to its child.
-  // Main is on screen beside any Breakout, unless the reader holds only some of
-  // this Channel's conversations and Main is not among them. A reader scoped
-  // to conversations is shown Main only once the directory says they hold it:
-  // a Breakout grant proves nothing about Main.
-  const mainVisible = selectedSubstreamId === '0'
-    || (conversationScoped ? Boolean(directoryEntry && !mainOmitted(directoryEntry)) : true);
-  const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && (!conversationScoped || mainVisible)), 'workstream', '0');
+  // Main is on screen beside any Breakout unless it is not this person's: a
+  // Breakout grant proves nothing about Main.
+  const mainVisible = selectedSubstreamId === '0' || !conversationScoped;
+  const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && !conversationScoped), 'workstream', '0');
   const navigate = useNavigate();
   const parent = useQuery<WorkstreamDetail | undefined>({
     queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
@@ -204,7 +206,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // now and this rail when the projection lands. The header keeps the detail:
   // that entry is what retires the picker's own preview.
   const rowAppearance = useCachedWorkstreamAppearance(id);
-  const row = useCachedWorkstreamSummary(id);
   const children = useQuery<WorkstreamChildDirectory | undefined>({
     queryKey: ['workstream-children', id], queryFn: async () => undefined, enabled: false,
   });
@@ -397,7 +398,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     setSubstreamMenuFailure(null);
     try {
       // Match header renaming: a conversation-scoped Main is its own authority.
-      if (target.substreamId === '0' && !conversationScoped) {
+      if (target.substreamId === '0' && channelWritable) {
         const updated = await api.renameWorkstream(target.parentId, title);
         patchCachedWorkstream(queryClient, target.parentId, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
         reportParentAction(updated, 'rename');
@@ -670,12 +671,12 @@ function OpenWorkstreamScreen(): React.JSX.Element {
 
   const mainActions = (conversationScoped ? mainVisible : parent.data) ? {
     isPublic: parent.data?.scope === 'workspace',
-    onSetPublic: conversationScoped || parent.data?.systemKind ? undefined : setPublic,
+    onSetPublic: !channelWritable || parent.data?.systemKind ? undefined : setPublic,
     publicDisabled: substreamPending,
     onShare: (target: ConversationRowTarget) => setSharingSubstream(target.substreamId),
     onCopyLink: session?.workspace ? copyRowLink : undefined,
     onRename: (target: ConversationRowTarget) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuFailure(null); },
-    onArchive: conversationScoped ? undefined : (target: ConversationRowTarget) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
+    onArchive: !channelWritable ? undefined : (target: ConversationRowTarget) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
   } : undefined;
   const substreamActions = {
     onShare: (target: ConversationRowTarget) => setSharingSubstream(target.substreamId),
@@ -695,7 +696,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     const title = parent.data?.title ?? detail?.title ?? railTitle ?? '';
     const naming = (detail?.titleStatus ?? row?.titleStatus) === 'naming';
     const glyph = <WorkstreamGlyph appearance={channelAppearance} id={id} size={24} />;
-    const appearanceChange = conversationScoped ? undefined : mainConnection.setAppearance;
+    const appearanceChange = channelWritable ? mainConnection.setAppearance : undefined;
     const channelEmail = context?.detail.emailAddress ?? row?.emailAddress ?? null;
     return {
       key: `channel:${id}`,
@@ -739,7 +740,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         openSubstreamId={openBreakoutId}
         participantsPending={context === null && railParticipants === undefined}
         people={context?.people}
-        pinned={pinChannel && row && !conversationScoped ? {
+        pinned={pinChannel && row && channelWritable ? {
           on: (row.spacePins ?? []).some((pin) => row.spaceIds.includes(pin.spaceId)),
           onChange: (next) => pinChannel(row, next),
         } : undefined}
@@ -779,7 +780,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       ...(context.replyCount ? { meta: `${context.replyCount} ${context.replyCount === 1 ? 'reply' : 'replies'}` } : {}),
       menu: <BreakoutMenu
         actions={substreamActions}
-        appearance={conversationScoped ? undefined : <AppearanceSubmenu
+        appearance={!channelWritable ? undefined : <AppearanceSubmenu
           appearance={selectedAppearance}
           icon={<IconPalette aria-hidden="true" size={16} stroke={1.8} />}
           id={breakoutId}
@@ -809,7 +810,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     };
   };
 
-  const mainPane = mainVisible ? <ConversationSurface
+  const mainPane = !mainVisible ? null : <ConversationSurface
     breakouts={breakoutMarks}
     honorsSearchTarget={openBreakoutId === null}
     onOpenBreakout={openBreakout}
@@ -822,7 +823,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     sidebarScope={conversationScoped ? 'conversation' : 'workstream'}
     substreamId="0"
     workstreamContext={conversationScoped ? undefined : parent.data}
-  /> : null;
+  />;
 
   const closeBreakout = <TitlePillClose label="Close breakout" onClose={() => selectSubstream('0')} />;
   const breakoutPane = !breakoutPaneOpen ? null : creatingHere ? <ConversationSurface

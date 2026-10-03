@@ -13,20 +13,24 @@ and every Space write still requires an active member.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/listing-rules.ts` | The one source of every rule: `organizationWideSql`, `mainOpenableSql`, `breakoutListedSql`, `channelReachedThroughBreakoutSql`, `channelListedSql`, `spaceReachedThroughChannelSql`, `spaceListedSql`, their TypeScript forms for rows already read, and the `Viewer` type with its `member()` constructor. |
+| `apps/api/src/durable-objects/listing-rules.ts` | The one source of every rule: `admitsOrganizationWide` (the leaf, shared with read authority and search), `organizationWideSql`, `mainOpenableSql`, `breakoutListedSql`, `channelReachedThroughBreakoutSql`, `channelListedSql`, `spaceReachedThroughChannelSql`, `spaceListedSql`, their TypeScript forms for rows already read, and the `Viewer` type with its `member()` constructor. |
 | `apps/api/src/durable-objects/workspace-space-storage.ts` | Space directories, the dashboard page, attention counts and Channel placement, each rendering the rules for a `Viewer`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The Channel directory, the socket's Channel rows, Space snapshots and nudges, and the Space reads (`spaceSummary`, `listSpaceChannels`, `channelSpaces`), each taking the viewer from the socket attachment or the caller's relationship. |
 | `apps/api/src/durable-objects/channel-rails.ts` | The Channels a `channel_rails` or `space_channels` answer may name. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | `associativeWorkstreamsForSidebar`: the socket's rows, tagged with the conversation a Breakout-only Channel opens on. |
+| `apps/desktop/src/renderer/lib/conversation-directory.ts` | `mainReachable`: whether a Channel's Main is this person's, from the row's `mainWithheld` or the conversation directory. The Channel screen, the socket pool and the feed hook all ask it. |
 
 ## How it works
 
 Reach flows up from children and grandchildren and never down. Each rule is
 built from the one below it:
 
-1. **Organization-wide** (`organizationWideSql`). A `workspace`-scoped Space,
-   Channel or Breakout admits every member. It admits no guest. This leaf is
-   the only place the access class changes an answer.
+1. **Organization-wide** (`admitsOrganizationWide`, rendered as
+   `organizationWideSql`). A `workspace`-scoped Space, Channel or Breakout
+   admits every member. It admits no guest. This leaf is the only place the
+   access class changes an answer, and read authority asks the same one:
+   `resolveScopedAccess` in `scope-grant-policy.ts` and search's members group
+   (`readSearchAudience`).
 2. **Main openable** (`mainOpenableSql`). Organization-wide, or the person's
    `channel_viewers` row says they take part. A Channel grant makes a guest a
    participant.
@@ -61,12 +65,21 @@ somebody who may open Main, and foregrounding the Channel does not wake Main.
 Presence is Main's audience too: someone listed only through a Breakout neither
 joins the Channel's face pile nor is told who is in it.
 Each of these asks `mainOpenableSql` or its TypeScript form `mainOpenFor`, not
-`channelListedSql`.
+`channelListedSql`. The row says so in `mainWithheld: true`.
 
-The client draws what the socket sends. A Channel listed only through a
-Breakout arrives as an ordinary row; the conversation directory
-(`/sharing/navigation`) adds no rows, and only says which conversation such a
-row opens on, so it never opens on Main.
+The client draws what the socket sends, with the same screens for a member and
+a guest: the landing route, the Space dashboard (read-only for a guest) and the
+Channel screen. A Channel listed only through a Breakout arrives as an ordinary
+row; the conversation directory (`/sharing/navigation`) adds no rows, and only
+says which conversation such a row opens on. `mainReachable` reads the row's
+`mainWithheld` and the directory, and the client dials Main unless either says
+it is withheld. Before either has arrived it dials, as it always has for a
+member: a refusal costs one request and drops only Main's own cached entry.
+
+What a guest may *do* is a separate question (`useShellCapabilities().guest`):
+Channel and Space writes, the member directory, imports, connectors and the
+Sidekick library stay a member's. Search, Speak and push registration are
+everyone's, because each answers only for what the person may already reach.
 
 ## Invariants
 
@@ -153,6 +166,10 @@ case was a place for the rules to drift.
 leaking path alone. It fixed one leak and kept two answers to the same
 question.
 
+Holding Main until the row or the directory has said it is the person's. It
+kept a guest from ever asking for Main, but left Main shut wherever neither had
+loaded yet, including any screen mounted without the shell.
+
 Using the Channel rule for everything a Channel row carries. Security review
 found that it handed somebody listed only through a Breakout Main's roster,
 resources, email address and wake-up preview, and let them wake Main. Rows,
@@ -160,9 +177,16 @@ rails, the wake and presence now ask the Main rule; only existence and Space
 reach ask the Channel rule. Pinned rows are listed by the viewer's rule as it
 is now, because a pin outlives a member's demotion to guest.
 
+The guest-only branches beside the rules went in the same change: a guest's
+own landing (`SharedLanding`), the Space dashboard withheld from guests, the
+socket pool turned off for guests, the Channel screen scoping every guest to
+their directory entry, and a guest check in `reachableConversations`, which now
+asks each Channel's `readableSubstreams` for everyone. Push, search and Speak
+were opened to guests by product decision.
+
 **Consequences:** This reverses the Spaces PRD's non-goal "Guest access to
 Spaces is deferred"
 ([`PRDs/2026-09-18_spaces-and-product-hierarchy`](PRDs/2026-09-18_spaces-and-product-hierarchy/prd.md)).
 A guest sees a Space only through a Channel in it or as a participant, read-only.
-A new listing path must render these rules, and a new leaf term that differs by
-access class belongs in `organizationWideSql`, nowhere else.
+A new listing or read path must render these rules, and a new leaf term that
+differs by access class belongs in `admitsOrganizationWide`, nowhere else.

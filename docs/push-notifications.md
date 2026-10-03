@@ -20,8 +20,8 @@ fallback when neither Slack nor push accepted the notification.
 ## How it works
 
 Every stored workspace credential registers the installation with its own region.
-The Mac loops every credential it holds except a guest's, which `/push-devices`
-refuses. A registration belongs to the account in that deployment, not to one
+The Mac loops every credential it holds, a guest's included, and the browser
+registers a guest's tab as it does a member's. A registration belongs to the account in that deployment, not to one
 workspace, so a guest workspace's notifications still reach a device that a
 membership in the same deployment registered; the iPhone holds one workspace session
 and registers that one. Delivery requires a live session bound to that device; another installation's

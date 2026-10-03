@@ -727,6 +727,7 @@ import {
   channelListedSql,
   mainOpenableSql,
   member,
+  admitsOrganizationWide,
   organizationWide as organizationWideAdmits,
   organizationWideSql,
   spaceListedSql,
@@ -4447,6 +4448,7 @@ function mainWithheld(row: WorkspaceDirectoryRow): Partial<Workstream> {
     nextPendingWakeup: null,
     participantUserIds: [],
     participantExtraCount: 0,
+    mainWithheld: true,
   };
 }
 
@@ -7599,10 +7601,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * The unarchived conversations of a scope this person can read. A guest
-   * reads only what a grant gives them, which the directory's viewer rows do
-   * not record, so their `readable` flag says nothing: each candidate is
-   * admitted the way a read would be.
+   * The unarchived conversations of a scope this person can read, as each
+   * Channel's own authority answers it (`readableSubstreams`, the rule its
+   * canonical reads and search's audience apply) for this person's
+   * relationship. Asked once per Channel, inside this object.
    */
   private async reachableConversations<T extends { parentId: string; substreamId: string; readable: boolean; archived: boolean }>(
     workspaceId: string,
@@ -7611,12 +7613,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): Promise<T[]> {
     const relationship = await this.readRelationship(workspaceId, userId);
     if (relationship?.status !== "active") return [];
-    const guest = relationship.accessClass === "guest";
-    const listed = scoped.filter((conversation) => (guest || conversation.readable) && !conversation.archived);
-    if (!guest) return listed;
-    return (await Promise.all(listed.map(async (conversation) =>
-      (await this.conversationToolAdmission(workspaceId, conversation, userId)).authorized ? conversation : null)))
-      .filter((conversation) => conversation !== null);
+    const unarchived = scoped.filter((conversation) => !conversation.archived);
+    if (!this.hostedParentSchemaPresent()) return [];
+    const readable = new Map<string, ReadonlySet<string>>();
+    for (const parentId of new Set(unarchived.map((conversation) => conversation.parentId))) {
+      readable.set(parentId, new Set((await this.hostedParent(parentId)).readableSubstreams(asUserId(userId), relationship)));
+    }
+    return unarchived.filter((conversation) => readable.get(conversation.parentId)?.has(conversation.substreamId) === true);
   }
 
   /**
@@ -8220,14 +8223,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Every Space RPC starts here: an active Organization membership that is not
-   * a guest relationship.
-   *
-   * Stricter than `activeWorkspaceMember`, because guest access to Spaces is
-   * deferred by the PRD's non-goal 3. A guest
-   * holds explicit Channel and Breakout grants and no Organization-wide
-   * discovery, so admitting one here would put every Organization-wide Space in
-   * their sidebar.
+   * Every Space write, and the member walk, starts here: an active
+   * Organization membership that is not a guest relationship. A guest sees the
+   * Spaces the listing rules give them (`spaceReader`), and changes none.
    */
   private async activeSpaceMember(workspaceId: string, userId: string): Promise<boolean> {
     const relationship = await this.readRelationship(workspaceId, userId);
@@ -14527,7 +14525,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const member = relationship.accessClass === "member";
     const sql = this.state.storage.sql;
     const groups = [searchAudienceGroup.user(request.userId)];
-    if (member) groups.push(searchAudienceGroup.members(request.workspaceId));
+    // The members group is the audience of Organization-wide rows.
+    if (admitsOrganizationWide(relationship.accessClass)) groups.push(searchAudienceGroup.members(request.workspaceId));
     const parents = new Map<string, HostedParent>();
     const parent = async (parentId: string) => {
       const known = parents.get(parentId);

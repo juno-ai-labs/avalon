@@ -1444,8 +1444,9 @@ adds no rows; it says which conversation such a row opens on. It opens on the
 first one listed and never on Main, and the Channel socket pool does not hold
 its Main.
 
-**A guest's Spaces are read-only.** Selecting one filters the Channel list; in
-Electron the row is a button rather than a link to the member Space dashboard.
+**A guest's Spaces are read-only.** Selecting one filters the Channel list, and
+its dashboard opens as it does for a member, with nothing to change and no
+member directory: Space writes and `/workspace/members` stay a member's.
 
 **Only manually ordered lists advertise reordering.** Pinned Channels keep drag
 plus Alt with the up or down arrow. Space pills and ordinary Channels are alphabetical,

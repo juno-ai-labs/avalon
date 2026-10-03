@@ -1,5 +1,6 @@
 import type { ChildAudience, ScopeGrant, ScopeGrantTarget, WorkspaceAccessClass, ScopeAccessResult } from "@rally/contracts/scope-grants";
 import type { UserId, WorkspaceId } from "@rally/contracts";
+import { organizationWide } from "../durable-objects/listing-rules";
 
 export interface ScopedWorkspaceRelationship {
   workspaceId: WorkspaceId;
@@ -63,8 +64,7 @@ export function resolveScopedAccess(facts: ScopedAccessFacts): ScopedAccess {
   });
   // Implicit member discovery grants conversation collaboration, not parent
   // management. Existing owner/participant rules still govern parent mutations.
-  const workspaceMemberAccess = relationship.accessClass === "member"
-    && facts.parentVisibility === "workspace" && inherits;
+  const workspaceMemberAccess = organizationWide(facts.parentVisibility, relationship.accessClass) && inherits;
   if (!grants.length && !workspaceMemberAccess) return { allowed: false, reason: "grant_required" };
   return {
     allowed: true,

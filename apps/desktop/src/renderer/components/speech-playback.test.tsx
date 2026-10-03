@@ -79,7 +79,7 @@ describe('SpeechPlaybackProvider mutex', () => {
 });
 
 describe('speech for a guest', () => {
-  it('offers a guest no speech, because the speech route refuses them', () => {
+  it('offers a guest Speak as it does a member', () => {
     const api = { streamMessageSpeech: vi.fn<SpeechApi['streamMessageSpeech']>() } satisfies SpeechApi;
     function Probe() { return <span>{useSpeechPlayback() ? 'offered' : 'withheld'}</span>; }
     const tree = (accessClass?: 'guest') => (
@@ -94,6 +94,6 @@ describe('speech for a guest', () => {
     const view = render(tree());
     expect(screen.getByText('offered')).toBeInTheDocument();
     view.rerender(tree('guest'));
-    expect(screen.getByText('withheld')).toBeInTheDocument();
+    expect(screen.getByText('offered')).toBeInTheDocument();
   });
 });

@@ -9,7 +9,7 @@ import { WorkspaceApp } from '../../desktop/src/renderer/App';
 import { AccountOnboardingGate } from '../../desktop/src/renderer/screens/guided-onboarding';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
 import { AppSessionValueProvider, type AppSessionValue } from '../../desktop/src/renderer/lib/app-session';
-import { shellCapabilities, type ConnectorSetupCapability, type PendingConnectorOAuth } from '../../desktop/src/renderer/lib/collaboration-session';
+import { type ConnectorSetupCapability, type PendingConnectorOAuth } from '../../desktop/src/renderer/lib/collaboration-session';
 import { clearWorkspaceDrafts } from '../../desktop/src/renderer/lib/draft-cache';
 import { FaviconApiProvider } from '../../desktop/src/renderer/lib/favicon-api';
 import { clearWorkspaceLocalCache } from '../../desktop/src/renderer/lib/local-cache';
@@ -58,9 +58,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
   const updateAccountOnboarding = useCallback((input: UpdateAccountOnboarding) => identityApi.updateAccountOnboarding(input), [identityApi]);
   // A notification subscription from an earlier sign-in delivers nothing until
   // this session registers it. Settings re-checks and shows any failure.
-  // A guest is refused `/push-devices`, so a guest's tab registers nothing.
-  const { guest } = shellCapabilities({ host: 'browser', session });
-  useEffect(() => { if (!guest) void reconcileWebPush(api).catch(() => undefined); }, [api, guest]);
+  useEffect(() => { void reconcileWebPush(api).catch(() => undefined); }, [api]);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [resourceAuthorizationAttempts, setResourceAuthorizationAttempts] = useState<Readonly<Record<string, PendingConnectorOAuth>>>({});
   const setResourceAuthorizationAttempt = useCallback((key: string, attempt: PendingConnectorOAuth | null) => {

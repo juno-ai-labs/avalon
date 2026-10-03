@@ -26,7 +26,7 @@ import { faviconRoutes } from "./routes/favicons";
 import { healthRoutes } from "./routes/health";
 import { onboardingRoutes } from "./routes/onboarding";
 import { projectRoutes } from "./routes/projects";
-import { spaceRoutes } from "./routes/spaces";
+import { spaceReadRoutes, spaceRoutes } from "./routes/spaces";
 import { pushDeviceRoutes } from "./routes/push-devices";
 import { realtimeRoutes } from "./routes/realtime";
 import { resendInboundRoutes } from "./routes/resend";
@@ -164,6 +164,12 @@ export function createApp(): Hono<HonoAppEnv> {
   identityApi.route("/sidekicks", sidekickRoutes);
   identityApi.route("/feature-flags", featureFlagRoutes);
   identityApi.route("/telemetry", authenticatedTelemetryRoutes);
+  // Members and guests alike: each answers only for what this person may
+  // already reach (their own devices, their search audience, text they send).
+  identityApi.route("/push-devices", pushDeviceRoutes);
+  identityApi.route("/search", searchRoutes);
+  identityApi.route("/speech", speechRoutes);
+  identityApi.route("/spaces", spaceReadRoutes);
   app.route("/", identityApi);
 
   const protectedApi = new Hono<HonoAppEnv>();
@@ -177,11 +183,8 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/projects", projectRoutes);
   protectedApi.route("/spaces", spaceRoutes);
   protectedApi.route("/digest", digestRoutes);
-  protectedApi.route("/push-devices", pushDeviceRoutes);
   protectedApi.route("/connections", connectionRoutes);
   protectedApi.route("/favicons", faviconRoutes);
-  protectedApi.route("/search", searchRoutes);
-  protectedApi.route("/speech", speechRoutes);
   protectedApi.route("/realtime", realtimeRoutes);
   app.route("/", protectedApi);
 
