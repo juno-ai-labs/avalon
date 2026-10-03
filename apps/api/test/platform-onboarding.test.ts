@@ -559,6 +559,27 @@ describe("single-platform regional onboarding", () => {
     expect(enterprise.activateBrowser).toHaveBeenCalledOnce();
   });
 
+  it("opens a browser workspace while an unrelated deployment is down", async () => {
+    const global = new FakeRegionalGateway("global");
+    vi.spyOn(global, "discover").mockRejectedValue(new Error("global unreachable"));
+    const enterprise = new FakeRegionalGateway("enterprise", { workspaces: [workspace("enterprise", enterpriseWorkspaceId)] });
+    const subject = service({ global, enterprise, ids: [operationId] });
+
+    await expect(subject.value.activateBrowser("enterprise", enterpriseWorkspaceId))
+      .resolves.toEqual({ credential: `enterprise:${enterpriseWorkspaceId}`, expiresAt: "2099-01-01T00:00:00.000Z" });
+  });
+
+  it("names the deployment whose browser discovery failed instead of failing the list", async () => {
+    const enterprise = new FakeRegionalGateway("enterprise");
+    vi.spyOn(enterprise, "discover").mockRejectedValue(new TypeError("fetch failed"));
+    await expect(service({ enterprise }).value.otherDeploymentWorkspaces())
+      .resolves.toEqual({ workspaces: [], failed: [{ region: "enterprise", code: "TypeError" }] });
+
+    const answering = new FakeRegionalGateway("enterprise", { workspaces: [workspace("enterprise", enterpriseWorkspaceId)] });
+    await expect(service({ enterprise: answering }).value.otherDeploymentWorkspaces())
+      .resolves.toEqual({ workspaces: [workspace("enterprise", enterpriseWorkspaceId)], failed: [] });
+  });
+
   it("reconciles a regional membership alongside the account's existing active binding", async () => {
     const enterprise = new FakeRegionalGateway("enterprise", { workspaces: [workspace("enterprise", enterpriseWorkspaceId)] });
     const bindings = new MemoryBindingStore({

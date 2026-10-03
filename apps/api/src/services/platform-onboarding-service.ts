@@ -17,6 +17,7 @@ import {
   type Workspace,
 } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
@@ -1069,26 +1070,40 @@ export class PlatformOnboardingService {
   /**
    * Memberships in every other deployment, for the browser's list on Global.
    * Only a Google identity is linked across deployments, so an email-only
-   * identity has none.
+   * identity has none. Each deployment is asked on its own: one that fails is
+   * named in `failed` and the others still answer. Nothing is reconciled; the
+   * desktop's binding bookkeeping is not the browser's to change.
    */
-  async otherDeploymentWorkspaces(): Promise<Workspace[]> {
+  async otherDeploymentWorkspaces(): Promise<{ workspaces: Workspace[]; failed: Array<{ region: Region; code: string }> }> {
     const row = await this.env.DB.prepare("SELECT google_subject FROM users WHERE id = ?")
       .bind(this.auth.userId).first<{ google_subject: string | null }>();
-    if (!row?.google_subject) return [];
-    return ((await this.state()).workspaces ?? []).filter((workspace) => workspace.region !== this.env.AVALON_REGION);
+    if (!row?.google_subject) return { workspaces: [], failed: [] };
+    const identity = await this.loadPlatformIdentity();
+    const regions = configuredRegions.filter((region) => region !== this.env.AVALON_REGION);
+    const settled = await Promise.allSettled(regions.map(async (region) => this.gateway(region).discover(identity)));
+    return {
+      workspaces: settled.flatMap((result) => result.status === "fulfilled" ? result.value.workspaces : []),
+      failed: settled.flatMap((result, index) => result.status === "rejected"
+        ? [{ region: regions[index]!, code: result.reason instanceof ApiError ? result.reason.code : codeShaped(result.reason instanceof Error ? result.reason.name : "unknown") }]
+        : []),
+    };
   }
 
   /**
    * Activates a workspace for a browser and returns that deployment's cookie
-   * credential. Admission is the same discovery check as `activate`.
+   * credential. Admission asks only the target deployment, so an unrelated one
+   * being down cannot block it.
    */
   async activateBrowser(region: Region, workspaceId: string): Promise<BrowserRegistration> {
     const identity = await this.loadPlatformIdentity();
-    const discovery = await this.discover(identity);
-    const workspace = discovery.flatMap((item) => item.workspaces)
-      .find((item) => item.region === region && item.id === workspaceId);
+    let discovery: RegionalDiscovery;
+    try { discovery = await this.gateway(region).discover(identity); }
+    catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(503, "regional_onboarding_unavailable", "A regional onboarding service is unavailable");
+    }
+    const workspace = discovery.workspaces.find((item) => item.id === workspaceId);
     if (!workspace) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
-    await this.reconcileWorkspaceBindings(identity.platformUserId, discovery);
     return this.gateway(region).activateBrowser({
       identity,
       operationId: this.createId(),
