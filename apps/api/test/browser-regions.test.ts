@@ -120,14 +120,22 @@ it("needs the Global cookie to activate anywhere", async () => {
 it("lists and activates another deployment's guest relationship for the Mac app", async () => {
   enterpriseDb.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at, access_class)
     VALUES (?, ?, NULL, 'active', ?, 'guest')`).run(strangerWorkspaceId, enterpriseUserId, "2026-10-02T00:00:00.000Z");
+  // And one in Global, the deployment listed first.
+  const globalGuestWorkspaceId = "00000000-0000-7000-8000-00000000a002";
+  globalDb.prepare(`INSERT INTO workspaces (id, name, slug, region, placement_affinity, created_by_user_id, created_at, updated_at)
+    VALUES (?, 'Partner', 'partner', 'global', 'wnam', ?, ?, ?)`).run(globalGuestWorkspaceId, globalUserId, at, at);
+  globalDb.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at, access_class)
+    VALUES (?, ?, NULL, 'active', ?, 'guest')`).run(globalGuestWorkspaceId, globalUserId, "2026-10-01T00:00:00.000Z");
   const auth = { sessionId: "identity-session", userId: asUserId(globalUserId), workspaceId: null, region: "global" as const, role: null };
   const platform = new PlatformOnboardingService(global(), auth);
 
-  // Listed after the membership although it was joined first: a device with
-  // nothing selected opens the first workspace, and that is the person's own.
+  // Both guest relationships follow the membership, though each was joined
+  // first and one is in the deployment listed first: a device with nothing
+  // selected opens the first workspace, and that is the person's own.
   const state = await platform.state();
   expect(state.workspaces.map((workspace) => [workspace.id, workspace.role, workspace.accessClass])).toEqual([
     [enterpriseWorkspaceId, "member", undefined],
+    [globalGuestWorkspaceId, null, "guest"],
     [strangerWorkspaceId, null, "guest"],
   ]);
   const session = await platform.activate("enterprise", strangerWorkspaceId);

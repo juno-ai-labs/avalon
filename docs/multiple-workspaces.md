@@ -19,7 +19,9 @@ own background work skips guest credentials: the account menu reads no attention
 for a guest row (`/workspace/attention` is member-only, so the row shows no
 count) nor shows the usage meter (`/workspace/usage`), push registration skips
 them (`/push-devices`), and the menu bar empties
-rather than asking for the Channel list. A guest's Settings window opens on
+rather than asking for the Channel list. A push registration belongs to the
+account in a deployment, so a guest workspace's notifications still reach a
+device a membership there registered. A guest's Settings window opens on
 Account whatever section it was asked for, its Sidekicks window offers neither
 the library nor creation, and a guest is handed no connector setup on either
 host. A guest cannot leave from the Mac app: `DELETE /workspaces/:id/membership`
@@ -409,7 +411,10 @@ before guest relationships. The Electron-only paths that call member-only routes
 now skip a guest: background attention in the account menu, push registration
 (`storedCredentialIsGuest` in `stored-auth.ts`), the menu bar
 (`MenuBarContentStore`'s `available`), the Settings window's first section, and
-the Sidekicks window's library and creation routes. `AppSessionValueProvider`
+the Sidekicks window's library and creation routes. A guest's Channel rows
+offer only Share, a stale new-Channel link goes to the landing route, and the
+renderer renews the session when the workspace profile reports a different
+access class, so a promotion takes effect without waiting out the access token. `AppSessionValueProvider`
 withholds connector setup and Sidekick creation from a guest on both hosts,
 replacing the browser shell's own copy of that rule.
 
