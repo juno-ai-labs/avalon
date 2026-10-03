@@ -127,22 +127,6 @@ async function ensureModelFlag(key, description, model, fallbackModels) {
   }, aceRuntimeToken);
 }
 
-/** A JSON flag with one served value, for a setting that has no on and off. */
-async function ensureJsonFlag(key, description, value) {
-  if (await flagExists(key)) return;
-  await cloudflare(`/flagship/apps/${flagshipAppId}/flags`, {
-    method: 'POST',
-    body: JSON.stringify({
-      key,
-      description,
-      enabled: true,
-      default_variation: 'current',
-      variations: { current: value },
-      rules: [],
-      type: 'json',
-    }),
-  }, aceRuntimeToken);
-}
 
 function run(command, args, options = {}) {
   execFileSync(command, args, { cwd: appDirectory, stdio: 'inherit', ...options });
@@ -170,12 +154,6 @@ await Promise.all([
   // must not be the thing that silently stops delivery. See docs/digests.md#the-run.
   ensureFlag('digests-enabled', 'True sends scheduled digests as configured; false stops delivery for whoever the rule reaches and hides the Digest settings section in Electron for them, without touching their saved schedule, destinations, or cursor.', 'on'),
   ensureFlag('push-notifications-enabled', 'True enables Apple push delivery and the desktop Notifications setting for everyone from launch; false pauses push for the targeted users.', 'on'),
-  // Keep the value in step with BROWSER_CONNECTABLE_CAPABILITIES_DEFAULT in
-  // packages/contracts by hand: this script runs under plain Node.
-  ensureJsonFlag('browser-connectable-capabilities', 'Connector capabilities the browser may start an authorization for; every other connector is shown there and disabled with a pointer to the Mac app. Presentation only.', [
-    'gmail.read', 'gmail.draft', 'gmail.send', 'calendar.read', 'calendar.write',
-    'drive.read', 'docs.read', 'docs.write', 'sheets.read', 'sheets.write',
-  ]),
   ensureFlag('live-artifacts-enabled', 'True shows live-artifact surfaces in Electron — the rail site detail and preview, the data view, and the artifact window; false hides them. An artifact URL somebody already holds keeps working either way, because its authorization is structural rather than flagged.'),
   ensureModelFlag('agent-model-workstream', 'Runs the main participant-visible work stream and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.', 'openai/gpt-5.6-terra', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-inline-child', 'Runs a bounded read-only child task delegated by a work-stream agent and returns the result to its parent.', 'openai/gpt-5.6-terra', ['google/gemini-3.8-flash']),
