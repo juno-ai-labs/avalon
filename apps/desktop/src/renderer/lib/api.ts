@@ -2,6 +2,8 @@ import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationRes
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
 import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
 import { SessionImportRunSchema, type SessionImportPreview } from "@rally/contracts";
+import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
+import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
@@ -973,6 +975,23 @@ export class RallyApi {
     return this.request('/onboarding', {
       schema: z.object({ invitations: z.array(WirePendingWorkspaceInvitationSchema) }),
       signal,
+    });
+  }
+
+  /** The signed-in person's account onboarding. Identity-scoped: call it on an identity API. */
+  async getAccountOnboarding(signal?: AbortSignal): Promise<AccountOnboarding> {
+    return this.request('/onboarding/account', { schema: AccountOnboardingSchema, signal });
+  }
+
+  async updateAccountOnboarding(input: UpdateAccountOnboarding): Promise<AccountOnboarding> {
+    return this.request('/onboarding/account', {
+      method: 'PATCH', body: UpdateAccountOnboardingSchema.parse(input), schema: AccountOnboardingSchema,
+    });
+  }
+
+  async leaveWorkspace(workspaceId: string, expectedOutcome: WorkspaceDepartureOutcome): Promise<WorkspaceDeparture> {
+    return this.request(`/workspaces/${encodeURIComponent(workspaceId)}/membership?expectedOutcome=${expectedOutcome}`, {
+      method: 'DELETE', schema: WorkspaceDepartureSchema,
     });
   }
 

@@ -31,6 +31,7 @@ vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
     updateOnboardingJourney: state.updateJourney, getConnections: state.connections, getAvailableConnectorTypes: state.connectors,
     startProviderConnection: state.startProviderConnection },
   signOut: vi.fn(), setPendingConnectorOAuth: vi.fn(),
+  getAccountOnboarding: state.getAccount, updateAccountOnboarding: state.saveAccount,
 }) }));
 const workspace = { id: 'workspace-1', region: 'global', name: 'Team', currentUser: { id: 'user-1', name: 'Person', role: 'member' } } as Workspace;
 function Route(): React.JSX.Element {
