@@ -774,7 +774,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         accountMenu={(
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}
-            activeUsage={(
+            // The meter reads `/workspace/usage`, which refuses a guest.
+            activeUsage={guestSession ? null : (
               <OrganizationUsageMenuItem
                 api={api ?? null}
                 onSelect={() => { void desktopBridge().openSettings('workspace'); }}

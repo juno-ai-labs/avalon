@@ -17,7 +17,8 @@ Organization. The shell opens for a guest the way it does in the browser; what a
 guest is refused is decided by `useShellCapabilities().guest`, and the Mac app's
 own background work skips guest credentials: the account menu reads no attention
 for a guest row (`/workspace/attention` is member-only, so the row shows no
-count), push registration skips them (`/push-devices`), and the menu bar empties
+count) nor shows the usage meter (`/workspace/usage`), push registration skips
+them (`/push-devices`), and the menu bar empties
 rather than asking for the Channel list. A guest's Settings window opens on
 Account whatever section it was asked for, its Sidekicks window offers neither
 the library nor creation, and a guest is handed no connector setup on either

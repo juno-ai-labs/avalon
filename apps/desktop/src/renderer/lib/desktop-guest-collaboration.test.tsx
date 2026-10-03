@@ -1,5 +1,5 @@
 import "../../../../../tests/isolated-region";
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { DesktopSession, DesktopWorkspaceOnboardingState, RallyDesktopBridge } from '../../common/desktop';
 
@@ -100,6 +100,11 @@ it('opens a guest in the main window without asking for anything a guest is refu
   await waitFor(() => expect(requested).toContain('/workspace'));
   // The account menu reads background attention for the membership alone.
   await waitFor(() => expect(attention).toEqual([member.id]));
+  // The menu's content mounts on open, and with it anything it reads.
+  const triggers = await screen.findAllByRole('button', { name: /Guest/u });
+  fireEvent.pointerDown(triggers[triggers.length - 1]!, { button: 0, ctrlKey: false });
+  await screen.findByRole('menuitem', { name: /Settings/u });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
   expect(refused()).toEqual([]);
 });
 
