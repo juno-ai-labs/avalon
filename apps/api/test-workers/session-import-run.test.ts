@@ -194,7 +194,7 @@ describe("a conversation import run", () => {
     } finally { desktop.socket.close(); await alarm.catch(() => undefined); }
   }, 60_000);
 
-  it("uploads files across messages concurrently through real R2 and preserves source order", async () => {
+  it.each([undefined, 2])("uploads files across messages with width %s through real R2 and preserves source order", async (width) => {
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const started: string[] = [];
@@ -220,8 +220,8 @@ describe("a conversation import run", () => {
         { role: "assistant", text: "Generated", sourceMessageId: "m2", files: [{ name: "three.txt", mimeType: "text/plain",
           kind: "artifact", source: { kind: "inline", encoding: "utf8", data: "three.txt" } }] },
       ] },
-    }, operationId);
-    try { await expect.poll(() => started.length).toBe(3); }
+    }, operationId, new Map(), width);
+    try { await expect.poll(() => started.length).toBe(width ?? 3); }
     finally { release(); await pending.catch(() => undefined); }
     const prepared = await pending;
     expect(prepared.messages.map(message => message.text)).toEqual(["Uploads", "Generated"]);
@@ -230,6 +230,47 @@ describe("a conversation import run", () => {
       state.storage.sql.exec<{ title: string }>("SELECT title FROM resources WHERE id=?", id).one().title));
     expect(titles).toEqual(["one.txt", "two.txt", "three.txt"]);
   });
+  it("drains a failed upload batch, stops later files, and reuses successful drafts on retry", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let writes = 0;
+    const payloads = new Proxy(env.PAYLOADS, { get(target, property) {
+      if (property === "put") return async (...args: Parameters<R2Bucket["put"]>) => {
+        writes += 1;
+        if (writes === 1) throw new Error("R2 unavailable");
+        await gate;
+        return target.put(...args);
+      };
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    } });
+    const testEnv = new Proxy(creationEnv(), { get(target, property, receiver) {
+      return property === "PAYLOADS" ? payloads : Reflect.get(target, property, receiver);
+    } });
+    const preview = { title: "Files", source: { provider: "chatgpt" as const, url: SOURCE_URL, sessionId: CONVERSATION_ID },
+      content: { messages: ["one", "two", "three"].map(name => ({ role: "user" as const, text: name, sourceMessageId: name,
+        files: [{ name: `${name}.txt`, mimeType: "text/plain", kind: "attachment" as const,
+          source: { kind: "inline" as const, encoding: "utf8" as const, data: name } }] })) } };
+    let settled = false;
+    const pending = prepareSessionImport(testEnv, AUTH, preview, "partial-files", new Map(), 2)
+      .then(value => ({ value }), error => ({ error })).finally(() => { settled = true; });
+    try {
+      await expect.poll(() => writes).toBe(2);
+      expect(settled).toBe(false);
+    } finally { release(); await pending; }
+    expect(await pending).toMatchObject({ error: { message: "R2 unavailable" } });
+    expect(writes).toBe(2);
+    const firstDrafts = await runInDurableObject(workspace(), (_instance, state) =>
+      state.storage.sql.exec("SELECT id,title,content_ref FROM resources WHERE resource_type='uploaded_file'").toArray());
+    expect(firstDrafts).toMatchObject([{ title: "two.txt" }]);
+    const retried = await prepareSessionImport(creationEnv(), AUTH, preview, "partial-files", new Map(), 2);
+    expect(retried.messages.map(message => message.attachmentIds?.length)).toEqual([1, 1, 1]);
+    const after = await runInDurableObject(workspace(), (_instance, state) =>
+      state.storage.sql.exec("SELECT id,title,content_ref FROM resources WHERE resource_type='uploaded_file'").toArray());
+    expect(after).toHaveLength(3);
+    expect(after.find(row => row['title'] === 'two.txt')).toEqual(firstDrafts[0]);
+  });
+
   it("reads the page through the desktop and opens the Channel with what it read", async () => {
     const spaceId = await personalSpace();
     const clientMessageId = crypto.randomUUID();

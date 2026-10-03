@@ -53,10 +53,7 @@ export function pageScript(body: string): string {
       reader.onerror = () => reject(reader.error ?? new Error('The file could not be read.'));
       reader.readAsDataURL(blob);
     });
-    const rally = Object.freeze({
-      normalizeText: ${normalizePageText.toString()},
-      downloadFiles: (files) => (${downloadPageFiles.toString()})(files, (value, options) => rally.store(value, options)),
-      store(value, options = {}) {
+    const store = (value, options = {}, handled = false) => {
         const operation = (async () => {
           const name = typeof options.name === 'string' && options.name ? options.name : 'file';
           const handle = 'h' + Date.now().toString(36) + '-' + (sequence += 1).toString(36) + '-' + Math.random().toString(36).slice(2, 8);
@@ -83,14 +80,20 @@ export function pageScript(body: string): string {
         })();
         // Observe every store immediately, and drain it before serializing an
         // answer. An unawaited Blob must not outlive the call that owns its bytes.
-        stores.push(operation.then(() => ({ ok: true }), error => ({ ok: false, error })));
+        stores.push(operation.then(() => ({ ok: true }), error => ({ ok: handled, error })));
         const unawaited = () => { throw new Error('rally.store is asynchronous. Use await rally.store(...) before reading or returning its reference.'); };
         for (const field of ['handle', 'kind', 'name', 'mimeType', 'size']) {
           Object.defineProperty(operation, field, { get: unawaited });
         }
         Object.defineProperty(operation, 'toJSON', { value: unawaited });
         return operation;
-      },
+    };
+    const rally = Object.freeze({
+      normalizeText: ${normalizePageText.toString()},
+      // The helper catches each store failure and returns its named outcome.
+      // Ordinary unawaited stores still fail the page call; every operation drains.
+      downloadFiles: (files) => (${downloadPageFiles.toString()})(files, maxFileBytes, (value, options) => store(value, options, true)),
+      store: (value, options) => store(value, options),
     });
     try {
       const value = await (async (rally) => {
