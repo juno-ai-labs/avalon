@@ -98,6 +98,7 @@ function fixture(): { regional: DatabaseSync; object: DatabaseSync; env: Env; au
       PUBLIC_API_BASE_URL: "https://api.rallywith.ai",
       PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
       DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
+      BROWSER_APP_ORIGIN: "https://app.rallywith.ai",
       OAUTH_STATE_ENCRYPTION_KEY: "test-oauth-state-encryption-key",
       CONNECTOR_CREDENTIALS_KEY: "test-connector-credentials-key",
       CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
@@ -424,6 +425,22 @@ describe("connector OAuth handoff", () => {
     const target = new URL(row.return_uri);
     expect(target.hostname).toBe("workspace");
     expect(target.pathname).toBe(`/global/${WORKSPACE_ID}/auth/complete`);
+  });
+
+  it("returns a browser start to the browser's completion page, not a desktop deep link", async () => {
+    const { auth, env, regional } = fixture();
+    const service = new ConnectionService(env, auth);
+    const started = await service.beginGoogle({ scope: "personal", capabilities: ["gmail.read"], desktopHandoffVersion: "browser" });
+
+    const row = regional.prepare("SELECT id, return_uri FROM oauth_states").get() as { id: string; return_uri: string };
+    expect(row.return_uri).toBe("https://app.rallywith.ai/connections/complete");
+
+    const target = await service.failProviderAttempt("google", row.id, "provider_failed");
+    expect(target).toBe(`https://app.rallywith.ai/connections/complete?provider=google&region=global&attempt=${started.attemptId}&status=failed&error=provider_failed`);
+    // A browser target is a page already; it never goes through the desktop handoff.
+    expect(desktopHandoffUrl(env, target)).toBe(target);
+    // Any other web URL is not a redirect target: it lands on the handoff page.
+    expect(new URL(desktopHandoffUrl(env, "https://evil.example.test/connections/complete")).pathname).toBe("/auth/desktop/");
   });
 
   it("persists the legacy return when the route maps an absent capability to version one", async () => {

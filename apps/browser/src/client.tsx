@@ -7,6 +7,7 @@ import type { Region } from "@rally/contracts/regions";
 import { browserShellFor, cookieClientSession } from "./session";
 import { createRoot } from "react-dom/client";
 import { BrowserEntry } from "./entry";
+import { ConnectionComplete } from "./connection-complete";
 import "./styles.css";
 import '@rally/ui/styles/app.css';
 // The signed-in application is a separate loading boundary; email entry must
@@ -23,4 +24,8 @@ watchSystemAppearance();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Browser root is missing");
-createRoot(root).render(<AppErrorBoundary onError={(error) => reportJavascriptError(error, "react_boundary")}><BrowserEntry renderCollaboration={(region, session, onSignOut, onRevalidate) => <BrowserCollaboration onSignOut={onSignOut} onRevalidate={onRevalidate} key={`${region}:${session.user.id}:${session.workspace?.id}:${browserShellFor(session)}`} region={region} session={session} />} /></AppErrorBoundary>);
+createRoot(root).render(<AppErrorBoundary onError={(error) => reportJavascriptError(error, "react_boundary")}>
+  {location.pathname === "/connections/complete"
+    ? <ConnectionComplete />
+    : <BrowserEntry renderCollaboration={(region, session, onSignOut, onRevalidate) => <BrowserCollaboration onSignOut={onSignOut} onRevalidate={onRevalidate} key={`${region}:${session.user.id}:${session.workspace?.id}:${browserShellFor(session)}`} region={region} session={session} />} />}
+</AppErrorBoundary>);

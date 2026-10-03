@@ -44,6 +44,18 @@ describe('browser fallback single-platform identity boundary', () => {
     open.mockRestore();
   });
 
+  it('opens an external page in a new tab with no opener, and reports a blocked popup', async () => {
+    const popup = { opener: window as Window | null, location: { href: '' } };
+    const open = vi.spyOn(window, 'open').mockReturnValueOnce(popup as unknown as Window).mockReturnValueOnce(null);
+    await desktopBridge().openExternal('https://accounts.google.com/o/oauth2/v2/auth');
+    expect(popup.opener).toBeNull();
+    expect(popup.location.href).toBe('https://accounts.google.com/o/oauth2/v2/auth');
+    const here = window.location.href;
+    await expect(desktopBridge().openExternal('https://linear.app/oauth')).rejects.toThrow('Allow pop-ups for Rally in this browser, then try again.');
+    expect(window.location.href).toBe(here);
+    open.mockRestore();
+  });
+
   it('prefers the hardened preload bridge for clipboard writes', async () => {
     const copyText = vi.fn(async () => undefined);
     const preloadBridge = { copyText } satisfies Pick<RallyDesktopBridge, 'copyText'>;

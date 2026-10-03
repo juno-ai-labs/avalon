@@ -30,7 +30,7 @@ import { getAuth } from "../middleware/auth";
 import { noteChangedConnection } from "../middleware/workspace-realtime";
 import { ApiError } from "../lib/api-error";
 import { classifyConnectorOAuthCallbackFailure } from "../lib/connector-oauth-error";
-import { desktopHandoffUrl, unknownConnectorAttemptFailureTarget } from "../lib/desktop-handoff";
+import { desktopHandoffUrl, unknownConnectorAttemptFailureTarget, type ConnectorHandoff } from "../lib/desktop-handoff";
 import { logEvent } from "../observability/logger";
 import { ConnectionService } from "../services/connection-service";
 import {
@@ -197,7 +197,13 @@ async function bindConnectorTelemetry(
   return result;
 }
 
-function desktopHandoffVersion(c: Context<HonoAppEnv>): 1 | 2 {
+/**
+ * How this start returns to its client. The browser asks with
+ * `?handoff=browser` and returns to its completion page; a desktop build sends
+ * its deep-link version.
+ */
+function desktopHandoffVersion(c: Context<HonoAppEnv>): ConnectorHandoff {
+  if (c.req.query('handoff') === 'browser') return 'browser';
   return c.req.query('desktopHandoffVersion') === '2' ? 2 : 1;
 }
 

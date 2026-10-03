@@ -127,6 +127,7 @@ async function ensureModelFlag(key, description, model, fallbackModels) {
   }, aceRuntimeToken);
 }
 
+
 function run(command, args, options = {}) {
   execFileSync(command, args, { cwd: appDirectory, stdio: 'inherit', ...options });
 }
