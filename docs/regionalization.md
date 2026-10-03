@@ -28,6 +28,8 @@ deployment has to give that link its own routing again rather than offering its
 token to every deployment in turn ([`scope-invitations.md`](scope-invitations.md)). It does not change when a client switches workspaces.
 
 Discovery visits configured deployments through the existing named RPC bridges.
+The browser client opens other deployments over the same bridge
+([`browser-client.md`](browser-client.md#other-deployments)).
 Provider ingresses use their existing opaque route directories to select a
 configured binding. Product repositories continue using the deployment's bound
 storage. Configuration lookup replaces special cases; it does not add an

@@ -1,3 +1,4 @@
+import "../../../tests/isolated-region";
 import { exports } from "cloudflare:workers";
 import { expect, it } from "vitest";
 
@@ -47,6 +48,20 @@ it("forwards same-origin cookie requests through the configured regional service
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect(response.headers.get("content-security-policy")).toBe("sandbox; default-src 'none'");
   expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+});
+
+it("forwards only the target deployment's cookies, never another deployment's session", async () => {
+  const response = await exports.default.fetch("https://browser.example.test/regional/global/browser/session", {
+    headers: { Authorization: "Bearer ignored",
+      Cookie: "__Host-rally-browser-enterprise=other; __Host-rally-browser-global=mine; analytics=1; __Host-rally-browser-global-google-abc=state" },
+  });
+  expect(await response.json()).toMatchObject({ cookie: "__Host-rally-browser-global=mine; __Host-rally-browser-global-google-abc=state" });
+});
+
+it("reaches a deployment only through its own service binding", async () => {
+  // `enterprise` is configured for this test but this Worker has no ENTERPRISE_API binding.
+  const response = await exports.default.fetch("https://browser.example.test/regional/enterprise/browser/session");
+  expect(response.status).toBe(404);
 });
 
 it("refuses arbitrary regional hosts and non-browser API surfaces", async () => {

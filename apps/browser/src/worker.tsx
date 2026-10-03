@@ -1,5 +1,25 @@
 import { isConfiguredRegion, regionConfiguration } from "@rally/contracts/regions";
 
+/** The service binding for a deployment, `<bindingPrefix>_API`, when this Worker has one. */
+function regionalApi(env: object, bindingPrefix: string): Fetcher | null {
+  const binding: unknown = Reflect.get(env, `${bindingPrefix}_API`);
+  return typeof binding === "object" && binding !== null && "fetch" in binding && typeof binding.fetch === "function" ? binding as Fetcher : null;
+}
+
+/**
+ * Only this deployment's cookies, so a request to one deployment never carries
+ * another's session: `rally-browser-<region>` (with `__Host-` on https) and the
+ * Google state cookies named after it.
+ */
+function deploymentCookies(header: string | null, region: string): string | null {
+  if (!header) return null;
+  const kept = header.split(";").map((part) => part.trim()).filter((part) => {
+    const name = part.split("=", 1)[0]!.replace(/^__Host-/u, "");
+    return name === `rally-browser-${region}` || name.startsWith(`rally-browser-${region}-google-`);
+  });
+  return kept.length > 0 ? kept.join("; ") : null;
+}
+
 const unavailable = () => new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
 
 export default {
@@ -9,7 +29,11 @@ export default {
     if (regional) {
       const region = regional[1]!;
       const path = regional[2]!;
-      if (!isConfiguredRegion(region) || region !== "global") return unavailable();
+      if (!isConfiguredRegion(region)) return unavailable();
+      // One service binding per deployment, named from config/regions.json. A
+      // configured region whose binding this Worker lacks is not reachable yet.
+      const api = regionalApi(env, regionConfiguration(region).bindingPrefix);
+      if (!api) return unavailable();
       const socket = path.startsWith("/socket/");
       if (!path.startsWith("/browser/") && !socket) return unavailable();
       if (socket && (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket")) return unavailable();
@@ -19,14 +43,13 @@ export default {
       upstream.pathname = path;
       upstream.search = url.search;
       const forwarded = new Request(upstream, request);
-      if (socket) {
-        // The API consumes the single-use ticket in Sec-WebSocket-Protocol.
-        // Forward the upgrade itself, without creating a frame relay or
-        // interpreting browser cookies as socket authorization.
-        forwarded.headers.delete("Cookie");
-        forwarded.headers.delete("Authorization");
-      }
-      const upstreamResponse = await env.GLOBAL_API.fetch(forwarded);
+      const cookies = deploymentCookies(request.headers.get("Cookie"), region);
+      forwarded.headers.delete("Cookie");
+      forwarded.headers.delete("Authorization");
+      // The API consumes a socket's single-use ticket in Sec-WebSocket-Protocol,
+      // so the upgrade carries no cookie. HTTP carries this deployment's only.
+      if (!socket && cookies) forwarded.headers.set("Cookie", cookies);
+      const upstreamResponse = await api.fetch(forwarded);
       if (socket) return upstreamResponse;
       // Resource bytes can also be opened as a document on this cookie origin.
       // Sandbox that document without altering streamed XHR/blob consumers.
