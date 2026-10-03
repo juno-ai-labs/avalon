@@ -641,10 +641,11 @@ describe("organization setup intent", () => {
     expect(database.runs).toHaveLength(1);
     const stateInsert = database.runs[0]!;
     expect(stateInsert.sql).toContain("workspace_name, invitation_id");
-    expect(stateInsert.values[1]).toBe("global");
-    expect(stateInsert.values[3]).toBeNull();
-    expect(stateInsert.values[4]).toBeNull();
-    expect(stateInsert.values[5]).toBeNull();
+    // Workspace, name and invitation are written as NULL; only identity values are bound.
+    expect(stateInsert.sql).toContain("NULL, NULL, NULL, ?, ?, ?, ?)");
+    expect(stateInsert.values.slice(1, 3)).toEqual(["global", "identity"]);
+    expect(stateInsert.values.slice(4, 6)).toEqual(["a".repeat(43), "c".repeat(43)]);
+    expect(stateInsert.values).toHaveLength(8);
     const google = new URL(authorize);
     expect(google.hostname).toBe("accounts.google.com");
     expect(google.searchParams.get("scope")).toBe("openid email profile");
@@ -657,8 +658,8 @@ describe("organization setup intent", () => {
       desktopCodeChallenge: "c".repeat(43),
     })).resolves.toContain("accounts.google.com");
     expect(database.runs).toHaveLength(1);
-    expect(database.runs[0]!.values[4]).toBeNull();
-    expect(database.runs[0]!.values[5]).toBeNull();
+    expect(database.runs[0]!.sql).toContain("NULL, NULL, NULL, ?, ?, ?, ?)");
+    expect(database.runs[0]!.values).toHaveLength(8);
   });
 });
 
