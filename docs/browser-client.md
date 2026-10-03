@@ -201,9 +201,12 @@ The list is presentation only; the connection routes do not read it.
 A cookie session's `RallyApi` starts with `?handoff=browser`. The API stores
 `<browser origin>/connections/complete` as the return, accepts exactly that
 page in `connectorAttemptTarget`, and the callback redirects there directly
-instead of through the site's desktop handoff page. The browser's
-`openExternal` opens the provider in a new tab and falls back to this tab when a
-popup is blocked. The completion page says what happened and closes itself
+instead of through the site's desktop handoff page. `desktopHandoffUrl` passes
+that one page through and sends every other target to the handoff page, so it
+never redirects to an arbitrary web URL. The browser's `openExternal` opens a
+blank tab, cuts its opener, then loads the provider; a blocked popup is an error
+the caller shows ("Allow pop-ups…"), never a navigation away from the tab that
+holds the pending attempt. The completion page says what happened and closes itself
 when a script opened it; the tab that started the connection reconciles from the
 attempt read, as on the desktop.
 
@@ -513,8 +516,13 @@ page and relying on polling, which tells a browser user to return to an app they
 may not have. A registry field for the list, which needs a deploy to change.
 
 **Consequences:** A connection tile is offered only when its whole capability
-set is listed. The list is edited in Flagship, not in Ace. Reconnecting an
-existing connection is not gated.
+set is listed. Nothing provisions the flag; it is created and edited in
+Flagship, not in Ace. Reconnecting an existing connection is not gated, in
+Settings or in a conversation card. The cookie-session check is
+`isCookieSession` in `@rally/contracts/client-session`, the one answer to "is
+this the browser?".
+
+Shipped in #1079. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
 ### 2026-10-03 — Sign in with Google in the browser
 
