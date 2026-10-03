@@ -14,6 +14,7 @@ import {
   type WorkspaceId,
   type Session,
   type WorkspaceOnboardingState,
+  type Workspace,
 } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { newId, nowIso } from "@rally/db";
@@ -29,6 +30,7 @@ import {
   type WorkspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
+import { BrowserSessionService } from "./browser-session-service";
 import { AuthService } from "./auth-service";
 import { openGeneralSpaceForNewWorkspace } from "./space-bootstrap-service";
 import {
@@ -153,10 +155,15 @@ export async function serializeRegionalRpcResult<T>(
   }
 }
 
+/** A browser cookie credential a deployment minted for itself, and when it expires. */
+export const browserRegistrationSchema = z.object({ credential: z.string().min(1), expiresAt: z.string().datetime() });
+export type BrowserRegistration = z.infer<typeof browserRegistrationSchema>;
+
 /** Named WorkerEntrypoint RPC surface. It is intentionally not an HTTP route. */
 export interface RegionalIdentityBridgeBinding {
   discover(identity: PlatformIdentity): Promise<RegionalDiscovery>;
   activate(input: RegionalActivateInput): Promise<Session>;
+  activateBrowser(input: RegionalActivateInput): Promise<BrowserRegistration>;
   create(input: RegionalCreateInput): Promise<Session>;
   accept(input: RegionalAcceptInput): Promise<Session>;
   decline(input: RegionalDeclineInput): Promise<{ ok: true }>;
@@ -166,6 +173,7 @@ export interface RegionalIdentityBridgeBinding {
 export interface RegionalIdentityBridgeRpcBinding {
   discover(identity: PlatformIdentity): Promise<RegionalRpcResult<RegionalDiscovery>>;
   activate(input: RegionalActivateInput): Promise<RegionalRpcResult<Session>>;
+  activateBrowser(input: RegionalActivateInput): Promise<RegionalRpcResult<BrowserRegistration>>;
   create(input: RegionalCreateInput): Promise<RegionalRpcResult<Session>>;
   accept(input: RegionalAcceptInput): Promise<RegionalRpcResult<Session>>;
   decline(input: RegionalDeclineInput): Promise<RegionalRpcResult<{ ok: true }>>;
@@ -181,6 +189,10 @@ export class RegionalIdentityBridgeClient implements RegionalIdentityBridgeBindi
 
   activate(input: RegionalActivateInput): Promise<Session> {
     return this.call(this.rpc.activate(input), SessionSchema);
+  }
+
+  activateBrowser(input: RegionalActivateInput): Promise<BrowserRegistration> {
+    return this.call(this.rpc.activateBrowser(input), browserRegistrationSchema);
   }
 
   create(input: RegionalCreateInput): Promise<Session> {
@@ -319,6 +331,26 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
 
   async activate(rawInput: RegionalActivateInput): Promise<Session> {
     const input = regionalActivateSchema.parse(rawInput);
+    const user = await this.admit(input);
+    return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
+  }
+
+  /**
+   * The browser's activation: the same admission as `activate`, ending in a
+   * browser cookie credential for this deployment rather than a bearer session.
+   * The credential goes back to Global over the bridge and on to the browser as
+   * a host-only cookie; see the full browser client PRD's `design.md`.
+   */
+  async activateBrowser(rawInput: RegionalActivateInput): Promise<BrowserRegistration> {
+    const input = regionalActivateSchema.parse(rawInput);
+    const user = await this.admit(input);
+    const browser = new BrowserSessionService(this.env);
+    const registration = await browser.register(await new AuthService(this.env).createIdentitySession(user.id));
+    await browser.select(registration.credential, input.workspaceId);
+    return { credential: registration.credential, expiresAt: registration.expiresAt };
+  }
+
+  private async admit(input: RegionalActivateInput): Promise<RegionalUserRow> {
     this.requireCompatiblePlacementAffinity(input.placementAffinity);
     const user = await this.ensureRegionalUser(input.identity);
     await applyRegionalPreferenceProjection(this.env, user.id, input.preference);
@@ -336,7 +368,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     // Activation is a read/verify plus fresh session issue. It intentionally
     // does not claim the action journal because the binding's operation may
     // have originally been a create or invitation acceptance.
-    return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
+    return user;
   }
 
   async create(rawInput: RegionalCreateInput): Promise<Session> {
@@ -1032,6 +1064,38 @@ export class PlatformOnboardingService {
       workspaceId,
       workspace.placementAffinity,
     );
+  }
+
+  /**
+   * Memberships in every other deployment, for the browser's list on Global.
+   * Only a Google identity is linked across deployments, so an email-only
+   * identity has none.
+   */
+  async otherDeploymentWorkspaces(): Promise<Workspace[]> {
+    const row = await this.env.DB.prepare("SELECT google_subject FROM users WHERE id = ?")
+      .bind(this.auth.userId).first<{ google_subject: string | null }>();
+    if (!row?.google_subject) return [];
+    return ((await this.state()).workspaces ?? []).filter((workspace) => workspace.region !== this.env.AVALON_REGION);
+  }
+
+  /**
+   * Activates a workspace for a browser and returns that deployment's cookie
+   * credential. Admission is the same discovery check as `activate`.
+   */
+  async activateBrowser(region: Region, workspaceId: string): Promise<BrowserRegistration> {
+    const identity = await this.loadPlatformIdentity();
+    const discovery = await this.discover(identity);
+    const workspace = discovery.flatMap((item) => item.workspaces)
+      .find((item) => item.region === region && item.id === workspaceId);
+    if (!workspace) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
+    await this.reconcileWorkspaceBindings(identity.platformUserId, discovery);
+    return this.gateway(region).activateBrowser({
+      identity,
+      operationId: this.createId(),
+      workspaceId: asWorkspaceId(workspaceId),
+      placementAffinity: workspace.placementAffinity,
+      preference: await loadOrCreateCanonicalPreferenceProjection(this.env, identity.platformUserId),
+    });
   }
 
   async createWorkspace(

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'reac
 import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { BrowserWorkspacesSchema } from '@rally/contracts/browser-session';
-import type { Region } from '@rally/contracts/regions';
+import { IDENTITY_REGION, type Region } from '@rally/contracts/regions';
 import { WorkspaceApp } from '../../desktop/src/renderer/App';
 import { AccountOnboardingGate } from '../../desktop/src/renderer/screens/guided-onboarding';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
@@ -95,7 +95,7 @@ function MemberSession({ region, session, onSignOut, onRevalidate }: {
     updateCurrentUserName: () => { void queryClient.invalidateQueries({ queryKey: ['workspace'] }); },
     clearPendingInvitation: () => undefined,
     getOnboardingState: async () => {
-      const { workspaces } = await browserRequest(region, '/workspaces', BrowserWorkspacesSchema);
+      const { workspaces } = await browserRequest(IDENTITY_REGION, '/workspaces', BrowserWorkspacesSchema);
       return { workspace: null, workspaces, invitations: [], identity: 'connected' as const };
     },
     activateWorkspace: async (target, workspaceId) => { location.assign(`/app/workspaces/${target}/${workspaceId}`); },

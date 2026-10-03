@@ -1,0 +1,114 @@
+import "../../../tests/isolated-region";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { createApp } from "../src/app";
+import type { Env } from "../src/env";
+import { BrowserSessionService, BrowserWorkspacesSchema } from "../src/services/browser-session-service";
+import { AuthService } from "../src/services/auth-service";
+import { RegionalOnboardingService, serializeRegionalRpcResult, type RegionalIdentityBridgeRpcBinding } from "../src/services/platform-onboarding-service";
+import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+
+// Two real deployments, each with its own migrated database, joined by the
+// identity bridge as service-binding RPC would join them. The workspace object
+// is the one double: activation initializes it, and this test is about the
+// session ledgers and the cookie, not the object.
+const origin = "https://app.example.test";
+const apiOrigin = "https://api.example.test";
+const signingKey = "browser-regions-signing-key";
+const globalUserId = "00000000-0000-7000-8000-00000000a001";
+const enterpriseUserId = "00000000-0000-7000-8000-00000000e001";
+const enterpriseWorkspaceId = "00000000-0000-7000-8000-00000000e002";
+const strangerWorkspaceId = "00000000-0000-7000-8000-00000000e003";
+const at = "2026-10-03T00:00:00.000Z";
+let globalDb: DatabaseSync;
+let enterpriseDb: DatabaseSync;
+
+function workspaceObjects(): Env["WORKSPACE_DOS"] {
+  const stub = { initializeWorkspace: async () => undefined };
+  const binding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+    idFromName: (name: string) => createTestDurableObjectId(name),
+    get: () => stub,
+    jurisdiction: (): Env["WORKSPACE_DOS"] => binding,
+  });
+  return binding;
+}
+const common = { APP_ENV: "development", RALLY_DEV_AUTH: "false", ALLOWED_ORIGINS: origin, PUBLIC_API_BASE_URL: apiOrigin,
+  LOG_LEVEL: "error", SESSION_SIGNING_KEY: signingKey, BROWSER_APP_ORIGIN: origin } as const;
+function enterprise(): Env {
+  return createTestEnv({ ...common, DB: sqliteD1(enterpriseDb), AVALON_REGION: "enterprise", WORKSPACE_DOS: workspaceObjects() });
+}
+/** What the service binding carries: the bridge entrypoint's own envelope, against the enterprise deployment. */
+function bridge(): RegionalIdentityBridgeRpcBinding {
+  const service = () => new RegionalOnboardingService(enterprise());
+  return {
+    discover: (identity) => serializeRegionalRpcResult(() => service().discover(identity)),
+    activate: (input) => serializeRegionalRpcResult(() => service().activate(input)),
+    activateBrowser: (input) => serializeRegionalRpcResult(() => service().activateBrowser(input)),
+    create: (input) => serializeRegionalRpcResult(() => service().create(input)),
+    accept: (input) => serializeRegionalRpcResult(() => service().accept(input)),
+    decline: (input) => serializeRegionalRpcResult(() => service().decline(input)),
+  };
+}
+function global(): Env {
+  return createTestEnv({ ...common, DB: sqliteD1(globalDb), AVALON_REGION: "global", REGION_ENTERPRISE_IDENTITY_BRIDGE: bridge() });
+}
+async function signedIn(): Promise<string> {
+  const registration = await new BrowserSessionService(global()).register(await new AuthService(global()).createIdentitySession(globalUserId));
+  return `__Host-rally-browser-global=${registration.credential}`;
+}
+function request(path: string, cookie: string, body?: unknown) {
+  return createApp().request(`${apiOrigin}/browser/${path}`, { method: body === undefined ? "GET" : "POST",
+    headers: { origin, cookie, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, global());
+}
+
+beforeEach(() => {
+  globalDb = migratedSqliteDatabase();
+  enterpriseDb = migratedSqliteDatabase();
+  globalDb.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at, platform_user_id)
+    VALUES (?, 'google-person', 'person@example.test', 'Person', ?, ?, ?)`).run(globalUserId, at, at, globalUserId);
+  // Enterprise knows the same person under its own id, linked to the platform identity.
+  enterpriseDb.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at, platform_user_id)
+    VALUES (?, 'google-person', 'person@example.test', 'Person', ?, ?, ?)`).run(enterpriseUserId, at, at, globalUserId);
+  for (const id of [enterpriseWorkspaceId, strangerWorkspaceId]) {
+    enterpriseDb.prepare(`INSERT INTO workspaces (id, name, slug, region, placement_affinity, created_by_user_id, created_at, updated_at)
+      VALUES (?, 'Enterprise', ?, 'enterprise', 'weur', ?, ?, ?)`).run(id, id, enterpriseUserId, at, at);
+  }
+  enterpriseDb.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+    VALUES (?, ?, 'member', 'active', ?)`).run(enterpriseWorkspaceId, enterpriseUserId, at);
+});
+afterEach(() => { globalDb.close(); enterpriseDb.close(); });
+
+it("lists another deployment's workspace from Global and hands the browser that deployment's own cookie", async () => {
+  const cookie = await signedIn();
+  const listed = BrowserWorkspacesSchema.parse(await (await request("workspaces", cookie)).json());
+  expect(listed.workspaces.map((workspace) => [workspace.region, workspace.id])).toEqual([["enterprise", enterpriseWorkspaceId]]);
+
+  const activated = await request("workspace/activate", cookie, { region: "enterprise", workspaceId: enterpriseWorkspaceId });
+  expect(activated.status).toBe(204);
+  const setCookie = activated.headers.getSetCookie().find((value) => value.startsWith("__Host-rally-browser-enterprise="))!;
+  for (const attribute of ["HttpOnly", "Secure", "SameSite=Lax", "Path=/"]) expect(setCookie).toContain(attribute);
+  expect(await activated.text()).toBe("");
+
+  // The credential is enterprise's own: it resolves there, to enterprise's user and workspace.
+  const credential = decodeURIComponent(setCookie.split(";")[0]!.slice(setCookie.indexOf("=") + 1));
+  const auth = await new BrowserSessionService(enterprise()).read(credential, enterpriseWorkspaceId);
+  expect(auth).toMatchObject({ userId: enterpriseUserId, workspaceId: enterpriseWorkspaceId, region: "enterprise" });
+  // And means nothing to Global.
+  await expect(new BrowserSessionService(global()).read(credential)).rejects.toMatchObject({ status: 401 });
+});
+
+it("refuses a workspace the identity is not a member of, and mints nothing there", async () => {
+  const cookie = await signedIn();
+  const refused = await request("workspace/activate", cookie, { region: "enterprise", workspaceId: strangerWorkspaceId });
+  expect(refused.status).toBe(403);
+  expect(refused.headers.getSetCookie().some((value) => value.includes("rally-browser-enterprise"))).toBe(false);
+  expect(enterpriseDb.prepare("SELECT COUNT(*) AS n FROM browser_sessions").get()).toEqual({ n: 0 });
+});
+
+it("needs the Global cookie to activate anywhere", async () => {
+  const response = await request("workspace/activate", "__Host-rally-browser-global=forged", { region: "enterprise", workspaceId: enterpriseWorkspaceId });
+  expect(response.status).toBe(401);
+  expect(enterpriseDb.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n: 0 });
+});

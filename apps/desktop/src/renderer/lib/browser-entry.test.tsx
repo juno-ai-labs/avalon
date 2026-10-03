@@ -1,3 +1,4 @@
+import '../../../../../tests/isolated-region';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 // These cases control the session clock; IndexedDB transactions have their own
@@ -64,6 +65,37 @@ it('revalidates other-tab session changes and same-user organization changes wit
   }
 });
 
+
+it('opens a workspace in another deployment through Global the first time, then uses that deployment directly', async () => {
+  const enterprise = { ...workspace, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Enterprise team', region: 'enterprise', accessClass: 'member', role: 'member' };
+  // Enterprise knows the same person under its own user id.
+  const regionalUser = { ...user, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' };
+  let activated = false;
+  const calls: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    calls.push(`${init?.method ?? 'GET'} ${input}`);
+    const metadata = { user: regionalUser, workspace: enterprise, expiresAt: new Date(Date.now() + 100_000).toISOString() };
+    if (input === '/regional/enterprise/browser/workspace/select') {
+      return activated ? Response.json(metadata) : Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    }
+    if (input === '/regional/global/browser/workspace/activate') {
+      expect(JSON.parse(String(init?.body))).toEqual({ region: 'enterprise', workspaceId: enterprise.id });
+      activated = true;
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  history.replaceState(null, '', `/app/workspaces/enterprise/${enterprise.id}`);
+  const view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.workspace?.name}`}</output>} />);
+  try {
+    await screen.findByText('enterprise:Enterprise team');
+    expect(calls.slice(0, 3)).toEqual([
+      'POST /regional/enterprise/browser/workspace/select',
+      'POST /regional/global/browser/workspace/activate',
+      'POST /regional/enterprise/browser/workspace/select',
+    ]);
+  } finally { view.unmount(); }
+});
 
 it.each([false, true])('renews before expiry and respects an unchanged absolute ceiling (extended=%s)', async (extended) => {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
