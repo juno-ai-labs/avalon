@@ -126,11 +126,14 @@ export async function sendWebPush(env: Env, device: PushDevice, payload: string,
     // RFC 8030 §7.3: the subscription is gone; the browser will not receive again.
     if (response.status === 404 || response.status === 410) return { outcome: "unregistered", status: response.status, reason: "subscription_expired" };
     if (response.status >= 300 && response.status < 400) return { outcome: "rejected", status: response.status, reason: "push_service_redirect" };
-    // RFC 8292 §4: the push service refused our VAPID credentials. That is the
-    // deployment's fault, not the device's, and every browser is affected. It
-    // pauses the transport's batch and notifies ops, so it is believed only
+    // RFC 8292 §4.2: a 403 means this subscription was made under another
+    // application server key. That is the subscription's fault, so it retires;
+    // a browser with Rally open re-subscribes under the current key.
+    if (response.status === 403) return { outcome: "unregistered", status: 403, reason: "subscription_key_mismatch" };
+    // A 401 refuses the token itself, which this deployment signed for every
+    // browser alike. It pauses the transport and notifies ops, believed only
     // from an allowlisted push service, which the check above guarantees.
-    if (response.status === 401 || response.status === 403) return { outcome: "provider_auth_failed", status: response.status, reason: `push_service_${response.status}` };
+    if (response.status === 401) return { outcome: "provider_auth_failed", status: 401, reason: "push_service_401" };
     return { outcome: response.status === 429 || response.status >= 500 ? "transient" : "rejected", status: response.status, reason: `push_service_${response.status}` };
   } catch {
     return { outcome: "transient", reason: "request_failed" };
