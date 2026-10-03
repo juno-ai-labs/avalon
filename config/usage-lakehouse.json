@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 5,
+  "binding": "USAGE_LAKEHOUSE",
+  "deploymentTokenOwner": "account",
+  "namespace": "avalon",
+  "table": "usage_events",
+  "streamSchema": "config/usage-lakehouse-stream-schema.json",
+  "regions": {
+    "global": {
+      "jurisdiction": "default",
+      "sinkType": "r2_data_catalog",
+      "bucket": "avalon-global-usage-lakehouse",
+      "stream": "avalon_global_usage_lakehouse_stream",
+      "streamId": "3ee5b0ac716541d6a2fe81843c226772",
+      "sink": "avalon_global_usage_lakehouse_sink",
+      "pipeline": "avalon_global_usage_lakehouse"
+    }
+  }
+}

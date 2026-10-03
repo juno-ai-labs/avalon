@@ -1255,6 +1255,17 @@ conversation's scope and participant rows or by the grant ledger. See
 [authorization](authorization.md) for what a Space-derived grant does and does
 not reach.
 
+## Usage metering
+
+Migration 0118 adds `workspaces.plan` (`starter` or `growth`, default
+`starter`), with no CHECK: the plan set is a moving product decision, and
+`PlanIdSchema` parses it on every read. The ledger itself is in a separate D1 database, `USAGE_DB`, with
+its own migrations in `packages/db/usage-migrations/`: `usage_events`, one row
+per metered call keyed by `event_id` and kept 90 days, and `usage_rollups`,
+one row per workspace per quota week and monthly period, kept for good. Every
+event is also in the Iceberg table `avalon.usage_events` in R2. Overage is not
+stored; it is derived on read. See [usage metering](usage-metering.md).
+
 ## Push devices
 
 Migration 0107 adds regional `user_push_devices`, `user_push_device_sessions`, and

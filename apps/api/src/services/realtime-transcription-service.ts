@@ -28,6 +28,8 @@ import {
   TRANSCRIPTION_MAX_FRAME_CHARACTERS as MAX_CLIENT_FRAME_CHARACTERS,
   TRANSCRIPTION_MAX_FRAMES_PER_SECOND as MAX_CLIENT_FRAMES_PER_SECOND,
 } from "@rally/contracts/realtime-transcription";
+import { runtimeDeferral } from "../lib/defer";
+import { emitInferenceUsage } from "./usage-metering";
 const SESSION_LEASE_REFRESH_MS = 60 * 1_000;
 const RELEASE_RETRY_DELAYS_MS = [0, 50, 200] as const;
 
@@ -254,6 +256,16 @@ export class RealtimeTranscriptionService {
     }
 
     const sessionId = await reserveTranscriptionSession(this.env, claims);
+    // The realtime transcription stream reports no usage or price, so a
+    // dictation session is metered as unpriced until a rate card exists.
+    emitInferenceUsage(this.env, runtimeDeferral, {
+      eventId: `stt:${sessionId}`,
+      workspaceId: claims.workspaceId,
+      activity: "dictation",
+      costCents: undefined,
+      model: null,
+      refs: { userId: claims.userId },
+    });
     let released = false;
     let releaseInFlight: Promise<void> | undefined;
     const release = (): Promise<void> => {

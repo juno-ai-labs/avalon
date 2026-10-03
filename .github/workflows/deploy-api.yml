@@ -31,6 +31,8 @@ on:
       - "config/inference-lakehouse-stream-schema.json"
       - "config/analytics-events-lakehouse.json"
       - "config/analytics-events-lakehouse-stream-schema.json"
+      - "config/usage-lakehouse.json"
+      - "config/usage-lakehouse-stream-schema.json"
       - "scripts/wrangler-config.mjs"
       - "scripts/entry-point.mjs"
       - "scripts/check-regional-health.mjs"
@@ -422,6 +424,10 @@ jobs:
       - name: Apply telemetry and audit D1 migrations
         if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @rally/api db:observability:migrate:remote
+
+      - name: Apply usage ledger D1 migrations
+        if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/api db:usage:migrate:remote
 
       - name: Apply the remote D1 migrations to Global
         if: >-

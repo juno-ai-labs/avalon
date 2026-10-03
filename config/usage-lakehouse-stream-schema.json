@@ -1,0 +1,18 @@
+{
+  "fields": [
+    { "name": "schema_version", "type": "int32", "required": true },
+    { "name": "event_id", "type": "string", "required": true },
+    { "name": "workspace_id", "type": "string", "required": true },
+    { "name": "region", "type": "string", "required": true },
+    { "name": "activity", "type": "string", "required": true },
+    { "name": "occurred_at", "type": "timestamp", "required": true },
+    { "name": "received_at", "type": "timestamp", "required": true },
+    { "name": "cost_microusd", "type": "int64", "required": true },
+    { "name": "organization_pays", "type": "bool", "required": true },
+    { "name": "model", "type": "string", "required": false },
+    { "name": "user_id", "type": "string", "required": false },
+    { "name": "workstream_id", "type": "string", "required": false },
+    { "name": "substream_id", "type": "string", "required": false },
+    { "name": "sidekick_id", "type": "string", "required": false }
+  ]
+}

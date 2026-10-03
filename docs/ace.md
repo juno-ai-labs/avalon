@@ -33,7 +33,7 @@ until that deadline. Both generation actions share the current lifetime choice, 
 | `apps/ace/src/regional-api.ts` | The client for the regional API's operator routes, over the operator credential; every answer parsed with the shared contract. |
 | `apps/ace/src/demos.ts` | The demo preparation routes on that client: list, template, start, read, retry, abandon. |
 | `apps/ace/src/client/demos.tsx` | The Demos page: every preparation and its phases from real receipts, **New demo**, retry and abandon. |
-| `apps/ace/src/client/workspaces.tsx` | The workspaces tab: find any workspace and retire it behind a typed-id confirmation. |
+| `apps/ace/src/client/workspaces.tsx` | The workspaces tab: find any workspace, set its plan, and retire it behind a typed-id confirmation. |
 | `apps/ace/src/flagship.ts` | Flagship reads and writes plus the post-write change notification. |
 | `apps/ace/src/flag-administration.ts` | The `FlagAdministration` RPC entrypoint the engineering MCP's flag tools call; the same catalogs and write functions as the pages. See [`engineering-mcp.md`](engineering-mcp.md#feature-and-model-flags). |
 | `apps/ace/src/cloudflare-queue-admin.ts` | Active dead-letter discovery, realtime backlog metrics, and non-consuming message peeks through Cloudflare's REST API. |
@@ -144,6 +144,15 @@ message, and an answer the shared contract refuses is named
 `regional_api_contract_mismatch` rather than read as an outage, with the
 field the contract refused in the message — which says whether Ace or the
 regional API is the one behind.
+
+The same tab sets the selected workspace's plan, Starter or Growth, through
+`POST /api/workspaces/:id/plan`, which relays to the regional API's
+`/internal/workspaces/:id/plan` over the same credential. The new weekly quota
+applies to the current week at once, and the regional API refuses a workspace
+another region owns. The directory search returns each workspace's current
+plan, and reads a region whose `workspaces` table has no `plan` column yet as
+Starter: Ace deploys apart from the API, so it can reach a region before
+migration 0118 has run there. [`usage-metering.md`](usage-metering.md) owns what a plan means.
 
 `GET /api/queues/dead-letters` lists account Queues through Cloudflare's REST
 API. A Queue is classified as a dead-letter queue only when a live consumer's

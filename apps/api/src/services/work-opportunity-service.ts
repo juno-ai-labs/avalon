@@ -1093,6 +1093,7 @@ async function processModelBatch(
   try {
     const { result } = await runStructuredInference(env, {
       role: "work_opportunity_admission",
+      activity: "work_opportunity",
       context: {
         workspaceId: window.workspace_id,
         userId: window.audience_user_id ?? undefined,
@@ -1282,6 +1283,7 @@ async function rankBatch(
 ) {
   const ranking = await runStructuredInference(env, {
     role: "work_opportunity_ranking",
+    activity: "work_opportunity",
     context: { workspaceId, userId },
     messages: renderWorkOpportunityRankingMessages({
       user: { id: userId, name: userName },

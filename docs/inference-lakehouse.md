@@ -18,7 +18,7 @@ product authority, and a capture failure does not change the inference outcome.
 | `apps/api/src/queues/inference-lakehouse-consumer.ts` | Validate the pointer and archived bytes, enforce the regional boundary, fit the row to Pipeline's request limit, and send it through `INFERENCE_LAKEHOUSE`. |
 | `config/inference-lakehouse.json` | Source of truth for the Global bucket, stream, pinned stream ID, sink, pipeline, namespace, table, and binding name. |
 | `config/inference-lakehouse-stream-schema.json` | Immutable structured-stream schema and analytical column contract. |
-| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Locally materializes pinned bindings for application deploys; explicit modes check or reconcile both Global lakehouses. |
+| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Locally materializes pinned bindings for application deploys; explicit modes check or reconcile every Global lakehouse (inference, analytics events and usage). |
 | `.github/workflows/deploy-api.yml` | Materializes pinned Wrangler configs locally and deploys them without a Pipelines management-plane preflight. |
 
 ### Capture and archive
@@ -193,6 +193,11 @@ model-routing control, or the owning execution object's operational
 `inference_attempts` ledger. Those systems may correlate with `request_id`, `workstream_id`,
 `substream_id`, and `inference_request_id`, but none may use lakehouse arrival
 as proof that a model call committed product state.
+
+Usage quotas and overage read the separate D1 usage ledger, which the same call
+sites feed through `emitInferenceUsage`, not this projection. The usage ledger
+has its own lakehouse, `avalon.usage_events`, provisioned by the same script
+from `config/usage-lakehouse.json`. See [usage metering](usage-metering.md).
 
 ## Failure modes and limits
 

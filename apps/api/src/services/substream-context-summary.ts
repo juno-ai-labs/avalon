@@ -60,6 +60,7 @@ function summaryMessages(messages: readonly SubstreamContextMessage[]): ModelMes
 export const substreamSummaryGateway = (env: Env): SubstreamSummaryGateway => async (input) => {
   const inference = await runStructuredInference(env, {
     role: "substream_context_summary",
+    activity: "breakout_summary",
     routing: { model: input.model, fallbackModels: [] },
     context: {
       workspaceId: input.address.workspaceId,

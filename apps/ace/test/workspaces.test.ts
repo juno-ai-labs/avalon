@@ -126,3 +126,47 @@ describe('the retirement route', () => {
     expect(regional).not.toHaveBeenCalled();
   });
 });
+
+describe('the plan route', () => {
+  afterEach(() => vi.restoreAllMocks());
+  const planRequest = (body: unknown, requestHeaders: Record<string, string> = headers) =>
+    new Request(`https://ace.internal.rallywith.ai/api/workspaces/${WORKSPACE_ID}/plan`, {
+      method: 'POST', headers: requestHeaders, body: JSON.stringify(body),
+    });
+
+  it('accepts the write from the Ace page only', async () => {
+    const regional = vi.spyOn(globalThis, 'fetch');
+    const response = await worker.fetch!(planRequest({ region: 'global', plan: 'growth' }, { 'Content-Type': 'application/json' }), env(), context);
+    expect(response.status).toBe(403);
+    expect(regional).not.toHaveBeenCalled();
+  });
+
+  it('refuses a request without a known plan before asking the region, naming the field', async () => {
+    const regional = vi.spyOn(globalThis, 'fetch');
+    const response = await worker.fetch!(planRequest({ region: 'global', plan: 'enterprise' }), env(), context);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: 'invalid_plan_request', message: expect.stringContaining('plan_request_invalid:plan') });
+    expect(regional).not.toHaveBeenCalled();
+  });
+
+  it('sets the plan in the region that owns the workspace, with that region\'s token', async () => {
+    const regional = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ workspaceId: WORKSPACE_ID, plan: 'growth' }));
+    const response = await worker.fetch!(planRequest({ region: 'enterprise', plan: 'growth' }), env(), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ workspaceId: WORKSPACE_ID, plan: 'growth' });
+    expect(regional).toHaveBeenCalledWith(`https://enterprise.api.rally.test/internal/workspaces/${WORKSPACE_ID}/plan`, expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({ authorization: 'Bearer enterprise-operator-token-for-tests' }),
+      body: JSON.stringify({ plan: 'growth' }),
+    }));
+  });
+
+  it('relays a regional refusal by its own code', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      Response.json({ error: { code: 'workspace_not_found', message: 'This region has no such workspace' } }, { status: 404 }),
+    );
+    const response = await worker.fetch!(planRequest({ region: 'global', plan: 'growth' }), env(), context);
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: 'workspace_not_found', message: 'This region has no such workspace' });
+  });
+});

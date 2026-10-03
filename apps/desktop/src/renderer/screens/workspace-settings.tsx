@@ -57,6 +57,7 @@ import { connectorBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
 import { DigestSettings } from '../components/digest-settings';
+import { UsageSettingsSection } from '../components/organization-usage';
 import { useAppSession } from '../lib/app-session';
 import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError, type RallyApi } from '../lib/api';
@@ -1080,12 +1081,17 @@ export function WorkspaceSettingsScreen({
   }, [browserHost]);
   useEscapeClosesWindow({ enabled: standaloneWindow, unsavedTextScope: contentRef, onClose: closeSettings });
 
+  // The settings window is kept and reused, so a pane already on screen does
+  // not remount when Settings is asked for again. Usage counts each request
+  // for its pane as the section opening, which is when it refreshes.
+  const [usageRequest, setUsageRequest] = useState(0);
   useEffect(() => bridge.onSettingsSectionRequested((section) => {
     const nextSection = parseDesktopSettingsSection(section);
     if (!nextSection) return;
     setNavigationQuery('');
     setSearchTarget(null);
     setActiveSection(nextSection);
+    if (nextSection === 'workspace') setUsageRequest((count) => count + 1);
   }), [bridge]);
 
   useEffect(() => {
@@ -1363,6 +1369,7 @@ export function WorkspaceSettingsScreen({
                   </label>
                 </div>
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
+                <UsageSettingsSection api={api ?? null} organizationName={workspace.name} openRequest={usageRequest} />
                 <div className="settings-pane-heading settings-pane-heading-count settings-pane-heading-spaced">
                   <div><h2><SettingLabel setting={settings.members} /></h2><p>People with access to {workspace.name}.</p></div>
                   <span>{members.data?.length ?? 0}</span>
