@@ -274,6 +274,7 @@ export const AgentModelRoutingSchema = z.object({
   // that shape as no fallbacks keeps every evaluator and operator surface in
   // agreement instead of silently substituting a different checked-in route.
   fallbackModels: z.array(z.string().trim().min(1)).default([]),
+  reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
 });
 export type AgentModelRouting = z.infer<typeof AgentModelRoutingSchema>;
 

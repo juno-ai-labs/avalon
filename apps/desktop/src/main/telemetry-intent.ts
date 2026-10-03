@@ -198,6 +198,7 @@ export function parseTelemetryProductIntent(value: unknown): DesktopTelemetryPro
     || semanticKind === 'automation_opened'
     || semanticKind === 'workstream_resource_action_completed'
     || semanticKind === 'realtime_socket_state'
+    || semanticKind === 'desktop_action_phase'
     || semanticKind === 'workspace_socket_handshake'
   )) {
     const properties = { ...candidate };

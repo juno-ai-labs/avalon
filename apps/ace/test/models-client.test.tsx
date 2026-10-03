@@ -40,7 +40,7 @@ describe('Ace Models client', () => {
     expect(routingFromFlag(workstreamFlag({ model: 'custom/current', fallbackModels: ['custom/backup'] }), 'workstream'))
       .toMatchObject({ source: 'flagship', routing: { model: 'custom/current', fallbackModels: ['custom/backup'] } });
     expect(routingFromFlag(workstreamFlag({ model: '', fallbackModels: [] }), 'workstream'))
-      .toMatchObject({ source: 'checked-in', routing: { model: 'openai/gpt-5.6-terra', fallbackModels: ['google/gemini-3.8-flash'] } });
+      .toMatchObject({ source: 'checked-in', routing: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] } });
     expect(routingFromFlag({
       ...workstreamFlag({ model: 'ignored', fallbackModels: [] }),
       variations: { current: { model: 'custom/without-fallbacks' } },
@@ -108,6 +108,11 @@ describe('Ace Models client', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(400); });
     await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available for this role.'), { timeout: 5_000 });
     expect(save.disabled).toBe(false);
+    const effort = container.querySelector('select')!;
+    await act(async () => {
+      effort.value = 'medium';
+      effort.dispatchEvent(new Event('change', { bubbles: true }));
+    });
     await act(async () => save.click());
 
     await vi.waitFor(() => expect(fetch.mock.calls.some(([input, init]) => (
@@ -120,6 +125,7 @@ describe('Ace Models client', () => {
       role: 'workstream',
       routing: {
         model: 'x-ai/grok-4.3',
+        reasoningEffort: 'medium',
         fallbackModels: ['google/gemini-3.6-flash', 'new-provider/new-model'],
       },
     });

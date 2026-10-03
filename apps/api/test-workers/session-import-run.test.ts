@@ -26,6 +26,12 @@ import { useOpenRouterDouble, type ProviderCall } from "./helpers/openrouter-dou
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
+const verification = {
+  branch: { complete: true as const, basis: 'Selected leaf reaches the root.' },
+  page: { messageCount: 2, firstSourceMessageId: 'm1', lastSourceMessageId: 'm2', sampledSourceMessageIds: ['m2'], basis: 'Both rendered turns compared.' },
+  fileCount: 0,
+};
+
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000f20");
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000f21");
 const SESSION_ID = "00000000-0000-7000-8000-000000000f22";
@@ -40,8 +46,8 @@ const provider = useOpenRouterDouble((call: ProviderCall) => {
   // The icon pass the opened Channel gets, a structured call with no tools.
   if (call.toolNames.length === 0) return { say: JSON.stringify({ title: "Tomato watering", icon: "megaphone" }) };
   const toolResults = call.messages.filter((message) => message.role === "tool").length;
-  if (toolResults === 0) return { callTool: { name: "browser_evaluate", arguments: { script: "return window.__probe" } } };
-  if (toolResults === 1) return { callTool: { name: "import_finish", arguments: { title: "Garden irrigation", messages: "messages-handle" } } };
+  if (toolResults === 0) return { callTool: { name: "browser_js", arguments: { code: "nodeRepl.write(await rally.pageScript(\"return window.__probe\"));" } } };
+  if (toolResults === 1) return { callTool: { name: "import_finish", arguments: { title: "Garden irrigation", messages: "messages-handle", verification } } };
   return { say: "Imported." };
 });
 
@@ -170,14 +176,14 @@ describe("a conversation import run", () => {
     const desktop = await openDesktop(run.workstreamId, run.substreamId, admission.membershipVersion ?? 0);
     const alarm = runDurableObjectAlarm(child(run.workstreamId, run.substreamId));
 
-    const evaluate = await desktop.nextAction("browser.evaluate");
-    expect(evaluate.action).toEqual({ kind: "browser.evaluate", script: "return window.__probe" });
+    const evaluate = await desktop.nextAction("browser.script");
+    expect(evaluate.action).toEqual({ kind: "browser.script", code: "nodeRepl.write(await rally.pageScript(\"return window.__probe\"));" });
     desktop.answer(evaluate.id, { ok: true, result: {
-      url: SOURCE_URL, title: "Garden irrigation", value: { turns: 2 }, stored: [],
+      output: [{ type: "text", text: '{"turns":2}' }],
     } });
 
     const finish = await desktop.nextAction("session_import.finish");
-    expect(finish.action).toEqual({ kind: "session_import.finish", title: "Garden irrigation", messages: "messages-handle" });
+    expect(finish.action).toEqual({ kind: "session_import.finish", title: "Garden irrigation", messages: "messages-handle", verification });
     // What a desktop does on finish: hand Rally the assembled conversation.
     await service.complete(run.workstreamId, {
       title: "Garden irrigation",
@@ -202,13 +208,12 @@ describe("a conversation import run", () => {
 
     // The run saw only its profile's tools, and the page's answer came back as the tool's result.
     expect(new Set(provider.calls.flatMap((call) => call.toolNames))).toEqual(new Set([
-      "browser_evaluate", "browser_snapshot", "browser_screenshot", "browser_click", "browser_scroll",
-      "browser_type", "browser_press_key", "browser_navigate", "browser_load", "browser_network_list", "browser_network_read",
+      "browser_js", "browser_js_reset",
       "import_finish", "import_fail",
       // The profile's skills, offered by Bind's own skill tools.
       "load_skill", "read_skill_resource",
     ]));
-    expect(JSON.stringify(provider.calls[1]!.messages.at(-1)?.content)).toContain("\\\"turns\\\":2");
+    expect(JSON.parse(String(provider.calls[1]!.messages.at(-1)?.content))).toEqual({ success: true, data: { output: ['{"turns":2}'] } });
     // Finishing returns to the model, whose reply is the run's final turn, so the run completes.
     await expect.poll(() => runInDurableObject(child(run.workstreamId, run.substreamId), (_instance, state) =>
       state.storage.sql.exec<{ status: string; has_final_turn: number }>(
@@ -224,18 +229,18 @@ describe("a conversation import run", () => {
     const agent = child(run.workstreamId, run.substreamId);
     const desktop = await openDesktop(run.workstreamId, run.substreamId, 1);
     void runDurableObjectAlarm(agent).catch(() => undefined);
-    const evaluate = await desktop.nextAction("browser.evaluate");
+    const evaluate = await desktop.nextAction("browser.script");
     // The waiting tool is gone, as after an eviction; the answer must still land durably.
     await runInDurableObject(agent, (instance) => {
       (instance as unknown as { desktopActionWaiters: Map<string, unknown> }).desktopActionWaiters.clear();
     });
-    desktop.answer(evaluate.id, { ok: true, result: { url: SOURCE_URL, title: "t", value: 1, stored: [] } });
+    desktop.answer(evaluate.id, { ok: true, result: { output: [{ type: "text", text: "1" }] } });
     await expect.poll(() => runInDurableObject(agent, (_instance, state) => state.storage.sql.exec<{ status: string }>(
       `SELECT status FROM desktop_actions WHERE action_id = ?`, evaluate.id).one().status), { timeout: 5_000 }).toBe("answered");
     // A re-entered call with the same receipt reads that answer instead of asking again.
     const replayed = await runInDurableObject(agent, (_instance, state) => state.storage.sql.exec<{ outcome_json: string }>(
       `SELECT outcome_json FROM desktop_actions WHERE action_id = ?`, evaluate.id).one().outcome_json);
-    expect(JSON.parse(replayed)).toMatchObject({ ok: true, result: { value: 1 } });
+    expect(JSON.parse(replayed)).toMatchObject({ ok: true, result: { output: [{ type: "text", text: "1" }] } });
     desktop.socket.close();
   }, 60_000);
 
@@ -274,8 +279,8 @@ describe("a conversation import run", () => {
     const agent = child(run.workstreamId, run.substreamId);
     const desktop = await openDesktop(run.workstreamId, run.substreamId, 1);
     const alarm = runDurableObjectAlarm(agent);
-    const evaluate = await desktop.nextAction("browser.evaluate");
-    desktop.answer(evaluate.id, { ok: true, result: { url: SOURCE_URL, title: "t", value: 1, stored: [] } });
+    const evaluate = await desktop.nextAction("browser.script");
+    desktop.answer(evaluate.id, { ok: true, result: { output: [{ type: "text", text: "1" }] } });
     // The finish is refused and nothing completes the import; the window is gone.
     const finish = await desktop.nextAction("session_import.finish");
     desktop.answer(finish.id, { ok: false, code: "import_rejected", message: "Rally refused the import." });

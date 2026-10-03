@@ -5,7 +5,7 @@ import {
   type ModelMessage,
   type StructuredModelDiagnostic,
 } from "@rally/agent-harness";
-import { AgentModelRoutingSchema } from "@rally/contracts";
+import { AgentModelRoutingSchema, type AgentModelRouting } from "@rally/contracts";
 import type { Env } from "../env";
 import { createDeadline } from "../lib/deadline";
 import { runtimeDeferral, type WorkDeferral } from "../lib/defer";
@@ -154,7 +154,7 @@ export async function runStructuredInference<T>(
   input: {
     context: AgentModelFlagContext & { substreamId?: string };
     /** A persisted route bypasses current Flagship targeting and fallback defaults. */
-    routing?: { model: string; fallbackModels: string[] };
+    routing?: AgentModelRouting;
     requestId?: string;
     messages: ModelMessage[];
     schemaName: string;
@@ -170,7 +170,7 @@ export async function runStructuredInference<T>(
     onModelResolved?: (model: string) => void;
     /** Owning lifecycle override for exact-envelope archive work. */
     defer?: WorkDeferral;
-  } & ({ role: StructuredInferenceRole } | { role: "substream_context_summary"; routing: { model: string; fallbackModels: string[] } }),
+  } & ({ role: StructuredInferenceRole } | { role: "substream_context_summary"; routing: AgentModelRouting }),
 ): Promise<{
   result: T;
   model: string;
@@ -263,13 +263,14 @@ export async function runStructuredInference<T>(
     }, diagnostic));
     if (diagnostic.stage === "complete" && diagnostic.success) completion.diagnostic = diagnostic;
   };
+  const reasoningEffort = input.reasoningEffort ?? routing.reasoningEffort;
   try {
     const result = await client.structured({
       messages: input.messages,
       schemaName: input.schemaName,
       jsonSchema: input.jsonSchema,
       parse: input.parse,
-      ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
       signal,
       onDiagnostic,
     });
