@@ -245,7 +245,6 @@ import {
   sessionFromStoredState,
   sessionsShareBinding,
   storedAuthFromSession,
-  memberStoredCredentials,
   storedProfileForCredential,
   storedWorkspaceCredential,
   type StoredAuth,
@@ -1140,7 +1139,7 @@ async function recoverGlobalSessionWithoutKeystore(): Promise<void> {
 
 async function clearCredentialsForLockdownRelogin(): Promise<void> {
   closeAndForgetArtifactWindows();
-  desktopPush.signOut(inMemoryAuthSet ? memberStoredCredentials(inMemoryAuthSet.workspaces, inMemoryProfileSet) : undefined);
+  desktopPush.signOut(inMemoryAuthSet?.workspaces);
   sessionLifecycleEpoch += 1;
   desktopAuthAttempts.clear();
   inMemoryAuthSet = null;
@@ -1357,8 +1356,7 @@ const menuBarController = new MenuBarController({
 });
 
 const desktopPush = new DesktopPushNotifications({
-  // Every caller passes `memberStoredCredentials`: `/push-devices` refuses a guest.
-  credentials: async () => memberStoredCredentials((await loadStoredAuthSet())?.workspaces ?? [], await loadStoredProfileSet()),
+  credentials: async () => (await loadStoredAuthSet())?.workspaces ?? [],
   request: async (credential, path, init = {}) => {
     const ask = (auth: StoredAuth) => net.fetch(`${apiBaseForAuth(auth)}${path}`, {
       ...init, headers: { ...init.headers, Authorization: `Bearer ${auth.accessToken}` },
@@ -2783,7 +2781,7 @@ async function logout(): Promise<void> {
   const failures: unknown[] = [];
   try {
     const stored = await loadStoredAuthSet();
-    desktopPush.signOut(stored ? memberStoredCredentials(stored.workspaces, await loadStoredProfileSet()) : undefined);
+    desktopPush.signOut(stored?.workspaces);
     try {
       await clearStoredSession();
     } catch (error) {

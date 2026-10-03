@@ -254,11 +254,6 @@ export function storedProfileForCredential(
   )) ?? null;
 }
 
-/** The stored workspace credentials that are not a guest's, for push registration. */
-export function memberStoredCredentials(credentials: readonly StoredAuth[], profiles: StoredProfileSet | null): StoredAuth[] {
-  return credentials.filter((credential) => !storedCredentialIsGuest(profiles, credential));
-}
-
 /** Whether the credential this device would use now is a guest's. */
 export function activeStoredCredentialIsGuest(auth: StoredAuthSet | null, profiles: StoredProfileSet | null): boolean {
   const active = auth ? activeStoredCredential(auth) : null;
@@ -267,7 +262,7 @@ export function activeStoredCredentialIsGuest(auth: StoredAuthSet | null, profil
 
 /**
  * Whether a stored credential is a guest's. A guest is refused the member-only
- * routes (attention, push devices, the Channel list), so background work that
+ * routes (workspace attention, the Channel list), so background work that
  * asks them skips these credentials rather than fail on them. A credential with
  * no cached profile (the profile file is unreadable, or has not been written
  * yet) counts as a member's, so its background calls can be refused until the

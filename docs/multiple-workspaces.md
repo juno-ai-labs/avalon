@@ -12,9 +12,9 @@ switching, background attention, leaving, or abandonment.
 Desktop platform discovery and activation offer guest relationships as well as
 memberships, to a client that declares `GUEST_WORKSPACES_CLIENT_CONTRACT`;
 memberships are listed first. What a guest is refused is decided by
-`useShellCapabilities().guest`, and the Mac app's background work (attention,
-push registration, the menu bar) skips guest credentials, because those routes
-are member-only. A guest cannot leave from the Mac app: Leave is in the
+`useShellCapabilities().guest`, and the Mac app's background work that reads
+member-only routes (attention, the menu bar) skips guest credentials. Push
+registration covers every credential, a guest's included. A guest cannot leave from the Mac app: Leave is in the
 member-only Organization section. The 2026-10-03 entry lists every path.
 The ordinary member directory includes guests with `accessClass: guest`, a null
 administrative role and a Guest badge. It also carries the current incarnation
@@ -398,16 +398,18 @@ best-effort remote revocation.
 **What changed:** `RegionalOnboardingService.discover` and `requireMembership`
 no longer require `access_class = 'member'`, and discovery orders memberships
 before guest relationships. The Electron-only paths that call member-only routes
-now skip a guest: background attention in the account menu, push registration
-(`storedCredentialIsGuest` in `stored-auth.ts`), the menu bar
-(`MenuBarContentStore`'s `available`), the Settings window's first section, and
-the Sidekicks window's library and creation routes. A guest's Channel rows
+now skip a guest: background attention in the account menu, the menu bar
+(`MenuBarContentStore`'s `available`, from `storedCredentialIsGuest` in
+`stored-auth.ts`), the Settings window's first section, and the Sidekicks
+window's library and creation routes. A guest's Channel rows
 offer only Share, a stale new-Channel link goes to the landing route, and the
 renderer renews the session when the workspace profile reports a different
 access class, so a promotion takes effect without waiting out the access token.
-Speak and the Slack-link deep link are withheld from a guest, sign-out skips
-their push deregistration, and the menu bar decides from the stored profile,
-so a login launch with a guest workspace active asks nothing. Global offers
+The Slack-link deep link is withheld from a guest, and the menu bar decides
+from the stored profile, so a login launch with a guest workspace active asks
+nothing. Push registration, search and Speak are a guest's too: `/push-devices`,
+`/search` and `/speech` moved from the member-only stack to the workspace-auth
+stack, and push registers and deregisters every stored credential. Global offers
 guest rows only to a client declaring contract 3 (`clientOpensGuestWorkspaces`);
 bindings still reconcile against every relationship. `AppSessionValueProvider`
 withholds connector setup and Sidekick creation from a guest on both hosts,
@@ -419,9 +421,11 @@ a guest with 403 `workspace_setup_required`, and two of them failed for members
 too: one guest's attention read failed the whole batch, and one guest's push
 registration ended the loop before the credentials after it.
 
-**Considered and rejected:** Opening `/workspace/attention` and `/push-devices`
-to guests. Both are Organization-wide reads or registrations that need a
-product decision about what a guest is told, not a compatibility fix. Ordering
+**Considered and rejected:** Opening `/workspace/attention` to guests. It is an
+Organization-wide read that needs a product decision about what a guest is
+told. Push, search and Speak had that decision made in review: each answers
+only for what the person may already reach (their own devices, their search
+audience, the text they send), so they were opened rather than skipped. Ordering
 discovery by `joined_at` alone, which lands a fresh sign-in in whichever
 Organization the person was shared into first. Lifting the filter for every
 client, which hands shipped desktops guest rows they would fail on.

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   activeStoredCredential,
   activeStoredCredentialIsGuest,
-  memberStoredCredentials,
   activeStoredWorkspaceCredential,
   mergeStoredSession,
   parseStoredAuthSet,
@@ -163,8 +162,6 @@ describe('plural desktop authentication storage', () => {
     expect(sessionFromStoredState(active, storedProfileForCredential(profiles, active)!, guestSession.apiBaseUrl)?.workspace)
       .toMatchObject({ id: guestSession.workspace.id, role: null, accessClass: 'guest' });
     expect(auth.workspaces.map((credential) => storedCredentialIsGuest(profiles, credential))).toEqual([false, true]);
-    expect(memberStoredCredentials(auth.workspaces, profiles).map((credential) => credential.binding.workspaceId))
-      .toEqual([session.workspace.id]);
     expect(activeStoredCredentialIsGuest(auth, profiles)).toBe(true);
     expect(activeStoredCredentialIsGuest(selectStoredWorkspace(auth, session.workspace.id, 'global'), profiles)).toBe(false);
   });

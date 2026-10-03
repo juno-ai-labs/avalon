@@ -112,6 +112,32 @@ describe("authentication in the complete application router", () => {
     });
   });
 
+  it("admits a guest to push registration, search, speech and Space reads", async () => {
+    const guestId = "00000000-0000-7000-8000-000000000004";
+    database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId, at, at);
+    database.prepare("INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'guest',NULL,'active',?)")
+      .run(workspaceId, guestId, at);
+    const bindings = createTestEnv({ ...env(), PUBLIC_API_BASE_URL: "https://api.example.test" });
+    const guestSession = await new AuthService(bindings).createRegionalSession(guestId, workspaceId);
+    const request = (path: string, init: RequestInit = {}) => createApp().request(path, {
+      ...init,
+      headers: { authorization: `Bearer ${guestSession.accessToken}`, "content-type": "application/json" },
+    }, bindings);
+    const installationId = "00000000-0000-4000-8000-000000000009";
+
+    // A device is the account's; a guest registers and removes their own.
+    expect((await request(`/push-devices/${installationId}`, { method: "DELETE" })).status).toBe(204);
+    // Search and speech reach their own validation, past the relationship
+    // check that used to refuse a guest; a malformed body is the request's fault.
+    expect((await request("/search", { method: "POST", body: "{}" })).status).toBe(400);
+    expect((await request("/speech", { method: "POST", body: "{}" })).status).toBe(400);
+    // A Space's Channel list is read by the listing rules for everyone.
+    expect((await request("/spaces/not-an-id/channels")).status).toBe(400);
+    // Changing a Space, and the member directory, stay a member's.
+    expect((await request("/spaces", { method: "POST", body: "{}" })).status).toBe(403);
+    expect((await request("/workspace/members")).status).toBe(403);
+  });
+
   it("gives a guest the Organization profile and nothing else under /workspace", async () => {
     const guestId = "00000000-0000-7000-8000-000000000004";
     database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId, at, at);
@@ -209,7 +235,7 @@ describe("authentication in the complete application router", () => {
     expect(session.workspace).toMatchObject({ id:workspaceId,accessClass:"guest",role:null });
     const guestHeaders = { ...headers,authorization:`Bearer ${session.accessToken}` };
     expect((await app.request("/auth/workspaces",{ headers:guestHeaders },bindings)).status).toBe(200);
-    expect((await app.request("/speech",{ method:"POST",headers:guestHeaders,body:"{}" },bindings)).status).toBe(403);
+    expect((await app.request("/workspace/members",{ headers:guestHeaders },bindings)).status).toBe(403);
     const refreshed = await new AuthService(bindings).refresh(session.refreshToken);
     expect(refreshed.workspace).toMatchObject({ accessClass:"guest",role:null });
     database.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE workspace_id=? AND user_id=?")
@@ -217,7 +243,7 @@ describe("authentication in the complete application router", () => {
     const promoted = await new AuthService(bindings).refresh(refreshed.refreshToken);
     expect(promoted.user.id).toBe(session.user.id);
     expect(promoted.workspace?.role).toBe("member");
-    expect((await app.request("/speech",{ method:"POST",headers:guestHeaders,body:"{}" },bindings)).status).toBe(400);
+    expect((await app.request("/workspace/members",{ headers:guestHeaders },bindings)).status).toBe(200);
     database.prepare("UPDATE workspace_members SET status='suspended' WHERE workspace_id=? AND user_id=?").run(workspaceId,userId);
     expect((await app.request("/auth/workspaces",{ headers:guestHeaders },bindings)).status).toBe(401);
     expect(await (await app.request("/auth/workspaces",{ headers },bindings)).json()).toEqual({ workspaces:[] });

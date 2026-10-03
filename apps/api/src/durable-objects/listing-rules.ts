@@ -37,9 +37,19 @@ export function member(userId: string): Viewer {
   return { userId, accessClass: "member" };
 }
 
+/**
+ * The one difference between a member and a guest, everywhere a person is
+ * told something exists or may read it: Organization-wide scope admits a
+ * member and never a guest. Listing (below), read authority
+ * (`scope-grant-policy.ts`) and search's audience all ask this.
+ */
+export function admitsOrganizationWide(accessClass: AccessClass): boolean {
+  return accessClass === "member";
+}
+
 /** The leaf term: Organization-wide scope, which admits members only. */
 export function organizationWideSql(scope: string, accessClass: AccessClass): string {
-  return accessClass === "member" ? `(${scope} = 'workspace')` : "(0)";
+  return admitsOrganizationWide(accessClass) ? `(${scope} = 'workspace')` : "(0)";
 }
 
 /**
@@ -150,7 +160,7 @@ export function spaceListedSql(
 
 /** The TypeScript form of {@link organizationWideSql}, for rows already read. */
 export function organizationWide(scope: string, accessClass: AccessClass): boolean {
-  return accessClass === "member" && scope === "workspace";
+  return admitsOrganizationWide(accessClass) && scope === "workspace";
 }
 
 /** The TypeScript form of {@link channelListedSql}, for rows already read. */

@@ -23,7 +23,6 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
 | `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context, optional setup capabilities, and `useShellCapabilities`: which host is drawing and whether the reader is a guest. |
 | `apps/desktop/src/renderer/components/mac-download-link.tsx` | The Mac app download row, the sidebar's footer item when the host is a browser tab. |
-| `apps/desktop/src/renderer/screens/shared-landing.tsx` | Where a guest lands, at the root or from a Space link: the first Channel shared with them, from the conversation directory. |
 | `packages/contracts/src/browser-session.ts` | Shared credential-free session and email exchange schemas. |
 | `apps/browser/wrangler.jsonc` | Assets and the explicit Global API service binding. |
 | `apps/browser/test/host.test.ts` | Real workerd host and service-binding transport tests. |
@@ -142,10 +141,11 @@ they are not in. The shared-navigation directory adds no rows; it says which
 conversations of a Channel the guest holds. A child-only share still omits Main
 and every unshared Breakout; such a Breakout opens alone, in Main's place. The
 Channel's canonical parent in WorkspaceDO independently re-authorizes every
-Channel and Breakout. Selecting a Space pill filters the Channel list. A
-canonical Space link selects that Space's pill and opens the first Channel
-shared there; the Organization root opens the first Channel shared anywhere
-(`SharedLanding`). A guest's shell opens no background Channel sockets.
+Channel and Breakout. Selecting a Space pill filters the Channel list. The
+Organization root and a Space link open the same landing route and Space
+dashboard a member's do; the dashboard is read-only for a guest. A guest's
+shell holds background Channel sockets as a member's does, for every Channel
+whose Main is theirs (`mainReachable`).
 
 ### Google sign-in
 
@@ -221,10 +221,12 @@ account menu, as a footer item ([`desktop-shell.md`](desktop-shell.md#the-sideba
 
 What a guest may do is asked in one place, `useShellCapabilities()`, which reads
 `host` and the session's `accessClass`. A guest's shell does not read imports,
-connections or the connector catalog; it shows no search, no Sidekicks library, no account
+connections or the connector catalog; it shows no Sidekicks library, no account
 introduction and no Organization setup journey; and Settings holds only Account
 (without the timezone, saved through a member-only route) and Application. Those
-routes refuse a guest, so the shell neither asks nor offers. The server still
+routes refuse a guest, so the shell neither asks nor offers. Search, Speak and
+push registration are a guest's as they are a member's: each answers only for
+what the person may already reach. The server still
 authorizes every call. `GET /workspace` answers guests too, with
 `accessClass: "guest"` and no role, because the shell reads it before anything
 else; the rest of `/workspace` stays member-only.
