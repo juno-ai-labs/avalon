@@ -128,6 +128,14 @@ export class EmbeddedBrowser {
     this.browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     this.browserSession.setPermissionCheckHandler(() => false);
     window.once('closed', () => this.dispose());
+    const clearRuntimes = () => {
+      for (const entry of this.scriptRuntimes.values()) entry.runtime.dispose();
+      this.scriptRuntimes.clear();
+    };
+    window.webContents.on('render-process-gone', clearRuntimes);
+    window.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) clearRuntimes();
+    });
   }
 
   state(): EmbeddedBrowserState {

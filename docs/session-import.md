@@ -112,6 +112,11 @@ returns the main window to where it was. The pending-row rule is in
    **Copy import id**, which copies
    `/app/<region>/<organization>/i/<agent conversation>/c/<Channel>`
    (`sessionImportCanonicalUrl`) for a bug report once the API has answered.
+Import admission requires client contract 2, which supports persistent browser
+scripting. Older desktops receive an update-required error before either a new
+Channel or an update run is reserved; ordinary Channel access still accepts
+contract 1.
+
 4. **Finish.** `import_finish` names the stored messages array and a compact
    `verification` report: selected-branch completeness and its basis, page-accounted
    message count, first/last source ids, assistant ids actually compared with the

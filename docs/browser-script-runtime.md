@@ -43,8 +43,10 @@ absent rather than advertised as aliases.
 A model can use `tab.playwright.getByRole("button", { name: "Expand" }).click()`,
 other documented locators, or indexed AX actions. Role/name matching uses
 Chromium's accessibility tree, not guessed DOM role attributes. Locator chains
-are descriptions, resolved afresh for each operation. Single-target operations
-reject ambiguous matches. Input uses the existing native browser command path;
+are descriptions, resolved afresh for each operation. Single-target operations and visible/hidden waits
+reject ambiguous matches. Missing targets or unmet states return a repairable error
+unless the caller supplies `timeoutMs`; the deadline runs in main even when the
+page stops painting. Input uses the existing native browser command path;
 it does not simulate clicks by calling DOM event handlers. Locator input checks
 visibility and rejects disabled or read-only targets; this subset does not
 implement Playwright's full actionability or frame semantics.
@@ -66,7 +68,9 @@ at the end of each script call; only references reach the API/model.
 `browser_js_reset` destroys the orchestration realm. The next call creates a
 fresh session. The pinned page, its globals and already transferred file handles
 survive. Completion, failure and cancellation of an import dispose the runtime;
-closing a tab or browser also disposes associated runtimes. Locator waits stop
+closing a tab or browser, reloading the owning renderer, or losing its process
+also disposes associated runtimes. Disposal discards bytes not yet transferred
+and fails the pending script; it never returns a successful partial transfer. Locator waits stop
 when their runtime is disposed. A page operation already submitted to Chromium
 can finish after cancellation, but it cannot send a late import answer or issue
 new browser requests through the destroyed realm.
@@ -108,13 +112,15 @@ ambiguous locators, non-visible targets, disabled targets and unsupported method
 produce repairable script errors. A closed pinned tab fails the desktop action.
 A reset during execution closes the realm and stops subsequent native work.
 
-The API and desktop both need the new script/reset action kinds. An older
-desktop refuses them with `invalid_action`; release the matching desktop before
-switching its imports to this tool surface.
+The API admits new and update import runs only from client contract 2 or newer,
+which implements script/reset actions. Older or undeclared clients receive an
+update-required response before a Channel or agent is reserved. Other routes
+continue serving client contract 1.
 
 No new timeout or size limit is introduced. The desktop action transport still
-owns its deadline. Locators accept caller-supplied `timeoutMs`; otherwise they
-wait until resolved or disposed, using Chromium observations. Existing file
+owns its deadline. Locators accept caller-supplied `timeoutMs`; otherwise missing targets or
+unmet wait states fail immediately. Explicit waits race Chromium observations
+against the caller deadline and runtime disposal. Existing file
 limits remain in the shared desktop store. Keep large conversation data in the
 page/store; emitting it still consumes model context.
 
@@ -122,7 +128,7 @@ page/store; emitting it still consumes model context.
 
 Run the API `test/desktop-action-tools.test.ts`, desktop
 `src/common/browser-script-bootstrap.test.ts`,
-`src/main/browser-script-driver.test.ts`, existing desktop executor/page-script
+`src/main/browser-script-driver.test.ts`, `src/main/browser-script-runtime.test.ts`, existing desktop executor/page-script
 and session-import-run tests, and harness prompt tests. API worker tests
 `test-workers/desktop-action-storage.test.ts` and
 `test-workers/session-import-run.test.ts` exercise script receipts, durable replay
@@ -145,11 +151,13 @@ restoring the code.
 
 ### 2026-10-02 — Persistent browser handles with a model-neutral contract
 
-Live Terra testing also showed function expressions passed as body strings silently returning null and titles discarded by activity rows. Callbacks now execute explicitly, mis-shaped strings fail with a repair instruction, and activity rows retain the call title. Slow canceled imports exposed mistakes at the browser tool boundary, including
+Slow canceled imports exposed mistakes at the browser tool boundary, including
 unawaited storage and oversized observations. The model-facing browser tools now
 share one persistent JavaScript session with semantic handles, following Codex's
 basic browser shape. Exact tool/API parity was rejected: Rally may use different
 model families, controls one pinned tab and needs writable extraction and file
-storage. Keep the documented subset explicit, preserve desktop-owned tab and
+storage. Import admission requires the matching desktop contract before any
+reservation; cancellation guards the shared native dispatch path, and renderer
+reloads destroy orphaned realms. Keep the documented subset explicit, preserve desktop-owned tab and
 byte authority, and execute orchestration in a separate sandboxed realm rather
 than the authenticated renderer.

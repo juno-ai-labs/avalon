@@ -98,6 +98,11 @@ size, type and top-level keys; with `length` it also returns that slice of the
 body's text, from `offset`. Nothing is redacted: the page already received the
 body, and the model reads it as it reads any page content.
 
+The older snapshot/click/scroll/type/key action schemas remain readable for
+durable replay of imports started before the script tool cutover. New model
+inventories expose only the script/reset tools; these legacy actions are not
+advertised to models.
+
 A desktop keeps every answer it computed. The room offers an unanswered action
 again to each new subscription, so a desktop that is offered an action it has
 already answered sends the same answer again rather than ignoring it: that is
