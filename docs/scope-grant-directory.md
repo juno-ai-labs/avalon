@@ -63,8 +63,10 @@ conversation's common and requesting-viewer projections. The default response
 keeps its previous shape for deployed clients with strict navigation parsers.
 `?shell=1` adds each Breakout's `originTurnId` and each Space's `systemRole`
 for the single-sidebar shell, behind a flag for the same reason.
-This remains a navigation snapshot, refreshed on focus or directory
-invalidation; it does not create a guest socket for unopened Breakouts.
+This remains a navigation snapshot, refreshed on directory invalidation; it
+adds no sidebar rows. The workspace socket lists a guest's Channels and Spaces
+([`listing-rules.md`](listing-rules.md)); this read says which conversations of
+each the guest holds, and so where a Breakout-only Channel opens.
 
 ## Invariants
 

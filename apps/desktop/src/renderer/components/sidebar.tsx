@@ -63,12 +63,11 @@ interface SidebarProps {
    *
    * Absent is not empty: an empty directory is an Organization whose Spaces
    * have not been made yet, which still has a **Spaces** heading and a **New
-   * space**. No directory at all is the guest shell, where Space discovery is
-   * deferred — the host decides that, per the PRD's design decision 9, rather
-   * than this component inferring it from a refusal.
+   * space**. No directory at all is a shell with no active workspace; the
+   * host decides that rather than this component inferring it from a refusal.
    */
   spaces?: SpaceSummary[];
-  /** Associative ancestor metadata is navigation-only and exposes no Space writes. */
+  /** The Spaces are listed but not this person's to change: a guest's. */
   spacesReadOnly?: boolean;
   inactiveSpaces?: SpaceSummary[];
   /** False while the Organization has not finished its one-time cutover. */

@@ -27,7 +27,7 @@ import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 
 import { listedResourceVisibilitySql } from "../services/resource-listing";
 import { sidekickAudienceAllows } from "./sidekick-audience";
-import { channelVisibleToViewerSql } from "./workspace-space-storage";
+import { channelListedSql, type AccessClass } from "./listing-rules";
 
 type Sql = SqlStorage;
 
@@ -215,7 +215,9 @@ function groupIds(rows: readonly { workstream_id: string; sidekick_id: string }[
 
 export interface ChannelRailsRequest {
   userId: string;
-  accessClass: "member" | "guest";
+  accessClass: AccessClass;
+  /** Whether this object has the Breakout projection a Channel can be reached through. */
+  breakouts: boolean;
   workspaceId: string;
   workstreamIds: readonly string[];
   onInvalidAppearance: InvalidAppearanceReport;
@@ -229,11 +231,9 @@ export interface ChannelRailsAnswer {
 }
 
 /**
- * The rails of these Channels for one viewer. For a member, visible means what
- * the Channel row's audience means (`channelRowPayloads`). A guest is sent no
- * Channel rows, and sees a rail only for a Channel they take part in: never
- * for one only because it is Organization-wide, nor for a Channel whose
- * Breakout alone was shared with them.
+ * The rails of these Channels for one viewer. Visible means what the Channel
+ * row's audience means (`channelRowPayloads`); a guest sees only the Channels
+ * they take part in.
  */
 export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRailsAnswer {
   const asked = [...new Set(request.workstreamIds)];
@@ -252,9 +252,10 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
         AND viewer.authority_generation = directory.authority_generation
       WHERE directory.workstream_id IN (SELECT value FROM json_each(?))
         AND directory.archived_at IS NULL
-        AND ${request.accessClass === "guest" ? "viewer.is_participant = 1" : channelVisibleToViewerSql("directory", "viewer")}`,
+        AND ${channelListedSql("directory", "viewer", request.accessClass, { breakouts: request.breakouts })}`,
     request.userId,
     JSON.stringify(asked),
+    ...(request.breakouts ? [request.userId] : []),
   ).toArray().map((row): [string, RailChannel] => [row.workstream_id, {
     workstreamId: row.workstream_id,
     railWaterline: row.rail_waterline,
@@ -374,7 +375,7 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
  */
 export function visibleSpaceChannelIdsAfter(
   sql: Sql,
-  request: { spaceId: string; userId: string; after: string | null; limit: number },
+  request: { spaceId: string; userId: string; accessClass: AccessClass; breakouts: boolean; after: string | null; limit: number },
 ): string[] {
   return sql.exec<{ workstream_id: string }>(
     `SELECT membership.workstream_id
@@ -388,7 +389,7 @@ export function visibleSpaceChannelIdsAfter(
         AND viewer.authority_generation = directory.authority_generation
       WHERE membership.space_id = ? AND membership.state = 'active' AND membership.workstream_id > ?
         AND directory.archived_at IS NULL AND directory.system_kind IS NULL
-        AND ${channelVisibleToViewerSql("directory", "viewer")}
+        AND ${channelListedSql("directory", "viewer", request.accessClass, { breakouts: request.breakouts, userId: "?1" })}
       ORDER BY membership.workstream_id
       LIMIT ?`,
     request.userId,

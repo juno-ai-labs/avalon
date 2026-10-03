@@ -94,7 +94,7 @@ import {
   ensureStorageAlarmNoLaterThan,
 } from "./scheduled-alarms";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
-import { spaceVisibleToViewerSql } from "./workspace-space-storage";
+import { spaceListedSql } from "./listing-rules";
 import { substreamLoopId, workspaceDOName } from "./names";
 import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
@@ -1922,7 +1922,9 @@ export class WorkstreamObjectProductService {
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE pin.workstream_id = ? AND pin.user_id = ? AND space.archived_at IS NULL
-          AND ${spaceVisibleToViewerSql("space", "viewer")}
+          -- A pin is a member's, placed in a Space they listed when pinning;
+          -- this remote read cannot ask for the Breakout projection.
+          AND ${spaceListedSql("space", "viewer", "member", { breakouts: false })}
         ORDER BY pin.space_id`,
     ).bind(userId, root.workstream_key, userId, userId).all<{ space_id: string; position: number }>();
     const wakeup = first(this.storage.sql.exec<{ due_at: number; prompt: string }>(

@@ -236,6 +236,7 @@ export const SharedNavigationSpacesRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   userId: UserIdSchema,
   membershipIncarnation: z.string().min(1),
+  accessClass: z.enum(["member", "guest"]),
   workstreamIds: z.array(IdSchema),
 });
 

@@ -4,6 +4,7 @@ import { ParentEffectEnvelopeSchema, conversationEffectHash, type ParentEffectEn
 
 export const ScopeGrantCandidatesRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, userId: UserIdSchema, membershipIncarnation: z.string().min(1),
+  accessClass: z.enum(["member", "guest"]),
 });
 export const ScopeGrantCandidatesSchema = z.array(IdSchema);
 
