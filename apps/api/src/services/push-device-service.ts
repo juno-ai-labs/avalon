@@ -4,26 +4,33 @@ import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 
 export interface PushDevice {
   id: string; token: string; topic: string; apns_environment: string; last_seen_at: string;
+  transport: string; web_push_p256dh: string | null; web_push_auth: string | null;
 }
 export async function registerPushDevice(env: Env, auth: AuthContext, installationId: string, input: RegisterPushDeviceRequest): Promise<void> {
   const db = workspaceRegionalDatabase(env);
   const now = new Date().toISOString();
-  const token = input.token.toLowerCase();
+  // An APNs token is hex, compared case-insensitively; a Web Push endpoint is a URL.
+  const token = input.transport === "apns" ? input.token.toLowerCase() : input.endpoint;
+  const apnsEnvironment = input.transport === "apns" ? input.apnsEnvironment : "none";
+  const topic = input.transport === "apns" ? input.topic : "web";
+  const keys = input.transport === "webpush" ? input.keys : null;
   await db.batch([
     db.prepare(`UPDATE user_push_devices SET disabled_at = ?, disabled_reason = 'token_reassigned'
       WHERE token = ? AND user_id <> ?`).bind(now, token, auth.userId),
     db.prepare(`INSERT INTO user_push_devices
-      (id, user_id, installation_id, platform, transport, topic, apns_environment, token, app_version, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, user_id, installation_id, platform, transport, topic, apns_environment, token, app_version, last_seen_at,
+       web_push_p256dh, web_push_auth)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, installation_id, transport) DO UPDATE SET
       token = excluded.token, topic = excluded.topic, apns_environment = excluded.apns_environment,
       app_version = excluded.app_version, last_seen_at = excluded.last_seen_at,
+      web_push_p256dh = excluded.web_push_p256dh, web_push_auth = excluded.web_push_auth,
       disabled_at = NULL, disabled_reason = NULL`)
       .bind(crypto.randomUUID(), auth.userId, installationId, input.platform, input.transport,
-        input.topic, input.apnsEnvironment, token, input.appVersion, now),
+        topic, apnsEnvironment, token, input.appVersion, now, keys?.p256dh ?? null, keys?.auth ?? null),
     db.prepare(`INSERT OR IGNORE INTO user_push_device_sessions (device_id, session_id)
-      SELECT id, ? FROM user_push_devices WHERE user_id = ? AND installation_id = ? AND transport = 'apns'`)
-      .bind(auth.sessionId, auth.userId, installationId),
+      SELECT id, ? FROM user_push_devices WHERE user_id = ? AND installation_id = ? AND transport = ?`)
+      .bind(auth.sessionId, auth.userId, installationId, input.transport),
   ]);
 }
 export async function deletePushDevice(env: Env, userId: string, installationId: string): Promise<void> {
@@ -31,7 +38,8 @@ export async function deletePushDevice(env: Env, userId: string, installationId:
     .bind(userId, installationId).run();
 }
 export async function livePushDevices(env: Env, userId: string): Promise<PushDevice[]> {
-  const rows = await workspaceRegionalDatabase(env).prepare(`SELECT d.id, d.token, d.topic, d.apns_environment, d.last_seen_at
+  const rows = await workspaceRegionalDatabase(env).prepare(`SELECT d.id, d.token, d.topic, d.apns_environment, d.last_seen_at,
+      d.transport, d.web_push_p256dh, d.web_push_auth
     FROM user_push_devices d WHERE d.user_id = ? AND d.disabled_at IS NULL
       AND EXISTS (SELECT 1 FROM user_push_device_sessions ds JOIN sessions s ON s.id = ds.session_id
         WHERE ds.device_id = d.id AND s.revoked_at IS NULL AND s.expires_at > ?)`)

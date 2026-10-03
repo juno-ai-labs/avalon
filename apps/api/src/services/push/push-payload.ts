@@ -22,3 +22,23 @@ export async function pushCollapseId(workspaceId: string, intentId: string): Pro
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([workspaceId, intentId])));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
+
+/**
+ * The Web Push payload the browser's service worker shows: the same title,
+ * body and target as the APNs alert, as plain JSON. `tag` groups a work
+ * stream's notifications the way APNs `thread-id` does.
+ */
+export function renderWebPushPayload(input: {
+  title: string; body: string; threadKey: string; data: PushNotificationData; maxBytes: number;
+}): string {
+  const characters = Array.from(input.body);
+  const encode = (length: number) => JSON.stringify({
+    title: input.title,
+    body: characters.slice(0, length).join("") + (length < characters.length ? "…" : ""),
+    tag: input.threadKey,
+    rally: input.data,
+  });
+  let length = Math.min(characters.length, PUSH_BODY_PREVIEW_CHARACTERS);
+  while (length > 0 && new TextEncoder().encode(encode(length)).byteLength > input.maxBytes) length--;
+  return encode(length);
+}

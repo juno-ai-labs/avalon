@@ -10,12 +10,19 @@ import { logInfo, logWarn } from "../observability/logger";
 import { notificationDeliveryContext } from "../services/conversation-effect-service";
 import { pushEnabled } from "../services/push-delivery-service";
 import { livePushDevices } from "../services/push-device-service";
-import { sendApns } from "../services/push/apns-transport";
-import { renderPushPayload, pushCollapseId } from "../services/push/push-payload";
+import { sendApns, type ApnsOutcome, type PushPayloads } from "../services/push/apns-transport";
+import type { PushDevice } from "../services/push-device-service";
+import { renderPushPayload, renderWebPushPayload, pushCollapseId } from "../services/push/push-payload";
+import { sendWebPush, WEB_PUSH_PAYLOAD_BYTES, type WebPushOutcome } from "../services/push/web-push-transport";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
 import { canonicalWorkstreamUrl } from "../services/workstream-link-service";
 
-export async function deliverPush(env: Env, message: PushDeliveryMessage, send: typeof sendApns = sendApns, providerFailed: (reason: string) => void = () => {}): Promise<boolean> {
+/** One send per device, to the transport the device registered with. */
+export type PushSend = (env: Env, device: PushDevice, payload: PushPayloads, collapseId: string) => Promise<ApnsOutcome | WebPushOutcome>;
+const sendByTransport: PushSend = (env, device, payload, collapseId) =>
+  device.transport === "webpush" ? sendWebPush(env, device, payload.web, collapseId) : sendApns(env, device, payload.apns, collapseId);
+
+export async function deliverPush(env: Env, message: PushDeliveryMessage, send: PushSend = sendByTransport, providerFailed: (reason: string) => void = () => {}): Promise<boolean> {
   if (message.region !== env.AVALON_REGION) throw new Error("Push queue region mismatch");
   if (!await pushEnabled(env, { userId: message.recipientUserId, workspaceId: message.workspaceId })) return true;
   const id = asWorkspaceId(message.workspaceId);
@@ -43,10 +50,11 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
   }));
   const url = await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
     workstreamId: row.workstreamId, ...(childId ? { substreamId: childId } : {}) });
-  const payload = renderPushPayload({ title, body, threadKey: row.workstreamId, badge: attention.unreadAndNeedsInputCount, data: {
-    v: 1, kind: row.notificationKind, region: env.AVALON_REGION, workspaceId: row.workspaceId,
-    url,
-  } });
+  const data = { v: 1 as const, kind: row.notificationKind, region: env.AVALON_REGION, workspaceId: row.workspaceId, url };
+  const payload = {
+    apns: renderPushPayload({ title, body, threadKey: row.workstreamId, badge: attention.unreadAndNeedsInputCount, data }),
+    web: renderWebPushPayload({ title, body, threadKey: row.workstreamId, data, maxBytes: WEB_PUSH_PAYLOAD_BYTES }),
+  };
   const db = workspaceRegionalDatabase(env);
   const collapseId = await pushCollapseId(row.workspaceId, row.intentId);
   const devices = await livePushDevices(env, row.recipientUserId);
@@ -63,7 +71,9 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
         db.prepare(`INSERT OR IGNORE INTO push_delivery_receipts VALUES (?, ?, ?, ?)`).bind(row.workspaceId, row.intentId, device.id, at),
         db.prepare(`UPDATE user_push_devices SET last_delivery_at = ?, last_failure_code = NULL WHERE id = ?`).bind(at, device.id),
       ]);
-    } else if (result.outcome === "bad_token" || (result.outcome === "unregistered" && result.timestamp !== undefined && result.timestamp >= Date.parse(device.last_seen_at))) {
+    } else if (result.outcome === "bad_token" || (result.outcome === "unregistered" && (device.transport === "webpush"
+      // A browser subscription the push service has dropped never comes back; APNs dates its answer.
+      || ("timestamp" in result && result.timestamp !== undefined && result.timestamp >= Date.parse(device.last_seen_at))))) {
       await db.prepare(`UPDATE user_push_devices SET disabled_at = ?, disabled_reason = ? WHERE id = ? AND token = ? AND last_seen_at = ?`)
         .bind(at, result.outcome, device.id, device.token, device.last_seen_at).run();
     } else if (["transient", "provider_auth_failed", "provider_token_throttled"].includes(result.outcome)) complete = false;
@@ -78,7 +88,7 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
   }
   return complete;
 }
-export async function consumePushDeliveryQueue(batch: MessageBatch<unknown>, env: Env, send: typeof sendApns = sendApns): Promise<void> {
+export async function consumePushDeliveryQueue(batch: MessageBatch<unknown>, env: Env, send: PushSend = sendByTransport): Promise<void> {
   let providerFailure: string | undefined;
   for (const message of batch.messages) {
     if (providerFailure) { message.retry(); continue; }
