@@ -19,8 +19,11 @@ import { canonicalWorkstreamUrl } from "../services/workstream-link-service";
 
 /** One send per device, to the transport the device registered with. */
 export type PushSend = (env: Env, device: PushDevice, payload: PushPayloads, collapseId: string) => Promise<ApnsOutcome | WebPushOutcome>;
-const sendByTransport: PushSend = (env, device, payload, collapseId) =>
-  device.transport === "webpush" ? sendWebPush(env, device, payload.web, collapseId) : sendApns(env, device, payload.apns, collapseId);
+const sendByTransport: PushSend = async (env, device, payload, collapseId) => {
+  if (device.transport === "apns") return sendApns(env, device, payload.apns, collapseId);
+  if (device.transport === "webpush") return sendWebPush(env, device, payload.web, collapseId);
+  return { outcome: "rejected", reason: "unknown_transport" };
+};
 
 export async function deliverPush(env: Env, message: PushDeliveryMessage, send: PushSend = sendByTransport, providerFailed: (reason: string) => void = () => {}): Promise<boolean> {
   if (message.region !== env.AVALON_REGION) throw new Error("Push queue region mismatch");
@@ -78,7 +81,7 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
         .bind(at, result.outcome, device.id, device.token, device.last_seen_at).run();
     } else if (["transient", "provider_auth_failed", "provider_token_throttled"].includes(result.outcome)) complete = false;
     const providerFault = result.outcome === "provider_auth_failed" || result.outcome === "provider_token_throttled";
-    if (providerFault) providerFailed(result.reason ?? result.outcome);
+    if (providerFault) providerFailed(`${device.transport}:${result.reason ?? result.outcome}`);
     if (result.outcome !== "sent" && result.outcome !== "skipped") {
       await db.prepare(`UPDATE user_push_devices SET last_failure_code = ? WHERE id = ? AND token = ?`)
         .bind(result.reason ?? result.outcome, device.id, device.token).run();
@@ -101,6 +104,6 @@ export async function consumePushDeliveryQueue(batch: MessageBatch<unknown>, env
     }
   }
   if (providerFailure) await notifyOps(env, {
-    event: "push_provider_auth_failed", summary: "Apple push provider authentication needs attention.", fields: { reason: providerFailure },
+    event: "push_provider_auth_failed", summary: "Push provider authentication needs attention (APNs key or Web Push VAPID key).", fields: { reason: providerFailure },
   });
 }
