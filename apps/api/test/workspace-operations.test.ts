@@ -9,7 +9,7 @@ import type { Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
 import { workspaceOperatorRoutes } from "../src/routes/workspace-operations";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { migratedSqliteDatabase, migratedUsageSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 /**
  * The door in front of retirement.
@@ -71,12 +71,14 @@ function emptyWorkspaceObjects(calls: string[]): Env["WORKSPACE_DOS"] {
 
 function fixture(options: { workspaceRegion?: string; objectCalls?: string[] } = {}): { env: Env; app: Hono<HonoAppEnv>; database: DatabaseSync } {
   const database = migratedSqliteDatabase();
-  databases.push(database);
+  const usageDatabase = migratedUsageSqliteDatabase();
+  databases.push(database, usageDatabase);
   if (options.workspaceRegion) seedWorkspace(database, options.workspaceRegion);
   const env = createTestEnv({
     APP_ENV: "development",
     AVALON_REGION: "global",
     DB: sqliteD1(database),
+    USAGE_DB: sqliteD1(usageDatabase),
     ...(options.objectCalls ? { WORKSPACE_DOS: emptyWorkspaceObjects(options.objectCalls) } : {}),
     // Two secrets of one shape. A token filed in the wrong one is what the
     // isolation has to refuse: a demos principal in the telemetry map never

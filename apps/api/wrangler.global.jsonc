@@ -93,6 +93,14 @@
       "migrations_dir": "../../packages/db/audit-migrations"
     },
     {
+      // The usage ledger, apart from `DB` so that reaching the D1 size limit
+      // can only stop metering. See docs/usage-metering.md.
+      "binding": "USAGE_DB",
+      "database_name": "avalon-global-usage",
+      "database_id": "fb6235ab-8856-44c0-afc0-04deb6dc62e0",
+      "migrations_dir": "../../packages/db/usage-migrations"
+    },
+    {
       "binding": "PLATFORM_DB",
       "database_name": "rally-platform",
       "database_id": "39b6800c-7945-4c5b-80cb-e7cdd73af14a"
