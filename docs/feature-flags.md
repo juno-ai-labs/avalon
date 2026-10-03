@@ -480,7 +480,7 @@ guarantee. The inference ledger records what each attempt actually used.
 ### Client-visible flags
 
 A client flag decides what the desktop is allowed to *offer*, or how it should
-behave. There are seven today:
+behave:
 
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
