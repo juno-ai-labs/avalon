@@ -490,7 +490,8 @@ export class ResourceService {
       {
         signal,
         pdfExtractor: (bytes) => this.env.DOCUMENT_PROCESSOR.extractText(bytes),
-        ocr: (bytes, pageCount) => ocrPdfWithWorkersAi(this.env.AI, fileName, bytes, pageCount, signal),
+        ocr: (bytes, pageCount) => ocrPdfWithWorkersAi(this.env.AI, fileName, bytes, pageCount, signal,
+          { env: this.env, workspaceId: String(resource.workspace_id), resourceId: String(resource.id) }),
       },
     );
     if (derivative.status === "processing") {

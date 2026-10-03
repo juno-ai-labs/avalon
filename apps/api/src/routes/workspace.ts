@@ -34,6 +34,9 @@ import { parseTerminalRegionConfiguration } from "../services/terminal/contract"
 import { createTerminalProviderRpcClient } from "../services/terminal/provider-rpc-client";
 import { TerminalSettingsService } from "../services/terminal/settings";
 import { issueWorkspaceSocketTicket } from "../services/socket-service";
+import { OrganizationUsageSchema } from "@rally/contracts/usage";
+import { readOrganizationUsage } from "../services/usage-metering";
+import { ApiError } from "../lib/api-error";
 
 const invitationParam = z.object({ id: IdSchema });
 const memberParam = z.object({ userId: IdSchema });
@@ -85,6 +88,12 @@ workspaceRoutes.get("/", async (c) =>
   c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getWorkspace())));
 workspaceRoutes.get("/attention", async (c) =>
   c.json(WorkspaceAttentionSchema.parse(await workspaceAttention(c.env, getAuth(c)))));
+// The usage meter. Every member role may read it: usage is shared by design.
+workspaceRoutes.get("/usage", async (c) => {
+  const usage = await readOrganizationUsage(c.env, getAuth(c).workspaceId, Date.now());
+  if (!usage) throw new ApiError(404, "workspace_not_found", "Workspace not found");
+  return c.json(OrganizationUsageSchema.parse(usage));
+});
 workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), async (c) =>
   c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).updateWorkspace(c.req.valid("json")))),
 );

@@ -268,6 +268,11 @@
       // region's objects hold its sockets. See docs/access-revocation.md.
       { "binding": "ACCESS_REVOCATION_QUEUE", "queue": "avalon-global-access-revocations" },
       { "binding": "PUSH_DELIVERY_QUEUE", "queue": "avalon-global-push-deliveries" },
+      // Usage quota metering: one small event per metered call, sent in the
+      // background and never awaited, so metering adds nothing to the agent
+      // loop. Split per region because each event names a workspace whose
+      // ledger lives in that region's D1. See docs/usage-metering.md.
+      { "binding": "USAGE_QUEUE", "queue": "avalon-global-usage" },
       // Durable Object migration reports. A queue rather than a service
       // binding to the tracker: the whole fleet converges on one registry
       // object, nothing waits on the outcome, and a queue is a resource both
@@ -336,6 +341,20 @@
         "max_batch_timeout": 1,
         "max_retries": 5,
         "dead_letter_queue": "avalon-global-product-feature-flags-dead-letter"
+      },
+      {
+        "queue": "avalon-global-usage",
+        // Usage is a best-effort ledger the PRD lets lag by minutes, so batches
+        // take the platform maxima (100 messages, 60 seconds; Queues limits,
+        // checked 2026-10-03) to make each D1 write cover as many events as it
+        // can. One consumer at a time is correctness, not a guard: the
+        // in-batch dedupe and the rollup upserts must not race another batch
+        // carrying a copy of the same event. Retries and the dead-letter queue
+        // are the platform defaults; a non-empty DLQ is the alarm.
+        "max_batch_size": 100,
+        "max_batch_timeout": 60,
+        "max_concurrency": 1,
+        "dead_letter_queue": "avalon-global-usage-dead-letter"
       },
       {
         "queue": "avalon-global-migration-commands",

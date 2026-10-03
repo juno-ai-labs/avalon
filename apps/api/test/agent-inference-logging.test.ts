@@ -544,3 +544,75 @@ describe("agent inference logging", () => {
     logged.mockRestore();
   });
 });
+
+describe("agent inference usage metering", () => {
+  const attempt = (turnId: string, costCents?: number) => ({
+    inferenceRequestId: `${turnId}-request`,
+    success: true,
+    turnId,
+    model: request.model,
+    provider: request.provider,
+    providerInvocationModel: request.providerInvocationModel,
+    cursor: request.cursor,
+    latencyMs: 340,
+    ...(costCents === undefined ? {} : { costCents }),
+  });
+
+  function meteredLogger(send: (body: unknown) => Promise<void>, usage: Parameters<typeof createAgentInferenceLogger>[1]["usage"]) {
+    const env = createTestEnv({
+      APP_ENV: "production",
+      AVALON_REGION: "global",
+      LOG_LEVEL: "warn",
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: vi.fn() }),
+      USAGE_QUEUE: createCloudflareTestBinding<Queue>({ send: vi.fn(send) }),
+    });
+    const deferred: Promise<unknown>[] = [];
+    const logger = createAgentInferenceLogger(env, {
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      workstreamId: "workstream-1",
+      requestId: "run-1",
+      source: "workstream",
+      ...(usage ? { usage } : {}),
+    }, (task) => deferred.push(task));
+    return { logger, deferred };
+  }
+
+  it("sends one usage event per priced attempt, metering compaction separately", async () => {
+    const sent: unknown[] = [];
+    const { logger, deferred } = meteredLogger(async (body) => { sent.push(body); }, { activity: "sidekick_run", sidekickId: "sidekick-1" });
+
+    await logger.onAttempt(attempt("run-1:turn:1", 1.25));
+    await logger.onAttempt(attempt("run-1:compaction:0", 0.5));
+    await Promise.all(deferred);
+
+    expect(sent).toEqual([
+      expect.objectContaining({
+        v: 1, eventId: "inf:run-1:turn:1-request", workspaceId: "workspace-1", region: "global",
+        activity: "sidekick_run", costMicrousd: 12_500, model: request.model,
+        refs: { userId: "user-1", workstreamId: "workstream-1", substreamId: "0", sidekickId: "sidekick-1" },
+      }),
+      expect.objectContaining({ eventId: "inf:run-1:compaction:0-request", activity: "context_compaction", costMicrousd: 5_000 }),
+    ]);
+  });
+
+  it("logs an unpriced attempt instead of recording it as free, and never fails on a lost send", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sent: unknown[] = [];
+    const unpriced = meteredLogger(async (body) => { sent.push(body); }, { activity: "agent_run" });
+    await unpriced.logger.onAttempt(attempt("run-1:turn:2"));
+    await Promise.all(unpriced.deferred);
+    expect(sent).toEqual([]);
+
+    const failing = meteredLogger(async () => { throw new Error("queue_unavailable"); }, { activity: "agent_run" });
+    await expect(failing.logger.onAttempt(attempt("run-1:turn:3", 1))).resolves.toBeUndefined();
+    await Promise.all(failing.deferred);
+
+    const events = warned.mock.calls.map(([entry]) => entry as { event?: string; event_id?: string });
+    expect(events.filter((entry) => entry.event?.startsWith("usage_"))).toEqual([
+      expect.objectContaining({ event: "usage_unpriced", event_id: "inf:run-1:turn:2-request" }),
+      expect.objectContaining({ event: "usage_emit_failed", event_id: "inf:run-1:turn:3-request" }),
+    ]);
+    warned.mockRestore();
+  });
+});

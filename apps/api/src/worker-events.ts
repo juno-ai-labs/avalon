@@ -15,6 +15,7 @@ import {
   isInferenceLakehouseQueue,
 } from "./queues/inference-lakehouse-consumer";
 import { consumeMigrationCommandQueue } from "./queues/migration-command-consumer";
+import { consumeUsageQueue, isUsageQueue } from "./queues/usage-consumer";
 import {
   consumeProductFeatureFlagQueue,
   isProductFeatureFlagQueue,
@@ -164,6 +165,11 @@ export default {
     // maintenance rather than converting an operational cutover into a DLQ.
     if (isAnalyticsLakehouseQueue(batch.queue)) {
       return consumeAnalyticsLakehouseQueue(batch, env);
+    }
+    // Usage metering records work that already happened, like the lakehouse
+    // projections, so it drains through product maintenance as well.
+    if (isUsageQueue(batch.queue)) {
+      return consumeUsageQueue(batch, env);
     }
     // Forced migrations dispatch before the gate too, and for a closely related
     // reason: a migration pass is schema work, not new work-stream work — it

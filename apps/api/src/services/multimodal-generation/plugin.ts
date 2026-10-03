@@ -8,6 +8,8 @@ import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../../env";
 import { numericEnv } from "../../env";
 import { logStructuredEvent } from "../../observability/logger";
+import { runtimeDeferral } from "../../lib/defer";
+import { emitInferenceUsage } from "../usage-metering";
 import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
 import {
   calculateAzureImageCostUsd,
@@ -141,6 +143,7 @@ export function createAvalonMultimodalGenerationPlugin(
         ...(edit?.maskResourceId ? { maskResourceId: edit.maskResourceId } : {}),
         billing,
       });
+      meterGeneration(env, context, "image_generation", published.resourceId, billing.costUsd, MULTIMODAL_GENERATION_MODEL);
       logStructuredEvent(env, "info", "multimodal_generation_tool_finished", {
         workspace_id: context.workspaceId,
         workstream_id: context.workstreamId,
@@ -208,6 +211,7 @@ export function createAvalonMultimodalGenerationPlugin(
           : {}),
         billing,
       });
+      meterGeneration(env, context, "audio_generation", published.resourceId, billing.costUsd, MULTIMODAL_AUDIO_MODEL);
       logStructuredEvent(env, "info", "multimodal_generation_tool_finished", {
         workspace_id: context.workspaceId,
         workstream_id: context.workstreamId,
@@ -269,6 +273,32 @@ function requireResourceContext(context: HarnessToolContext): ResourceContext {
     effectIntentId: context.effectIntentId,
     executionPrincipal: context.executionPrincipal,
   };
+}
+
+/**
+ * Meter one generated resource. Keyed by the resource, so a replayed tool call
+ * that finds the published resource is never counted twice. A generation
+ * whose cost is unknown is logged as unpriced rather than recorded as free.
+ */
+function meterGeneration(
+  env: Env,
+  context: HarnessToolContext,
+  activity: "image_generation" | "audio_generation",
+  resourceId: string,
+  costUsd: string | null,
+  model: string,
+): void {
+  emitInferenceUsage(env, runtimeDeferral, {
+    eventId: `gen:${resourceId}`,
+    workspaceId: context.workspaceId,
+    activity,
+    costCents: costUsd === null ? undefined : Number(costUsd) * 100,
+    model,
+    refs: {
+      workstreamId: context.workstreamId,
+      ...(context.executionPrincipal.type === "user" ? { userId: context.executionPrincipal.userId } : {}),
+    },
+  });
 }
 
 async function bestEffortAudioPricing(
