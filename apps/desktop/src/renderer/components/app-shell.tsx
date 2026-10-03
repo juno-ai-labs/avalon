@@ -14,6 +14,7 @@ import {
   WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY,
 } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
+import { MacDownloadLink } from './mac-download-link';
 import type { RallyApi } from '../lib/api';
 import { workstreamRecencyAt } from '../lib/format';
 import { MemberPresentationContext } from '../lib/member-presentation';
@@ -497,7 +498,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     session,
     signOut,
   } = useAppSession();
-  const { guest: guestSession } = useShellCapabilities();
+  const { host, guest: guestSession } = useShellCapabilities();
   const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
@@ -763,6 +764,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       <div className={shellClassName} style={shellStyle}>
       <Sidebar
         onOpenSearch={api && !guestSession ? () => setSearchOpen(true) : undefined}
+        // A browser tab always offers the Mac app, member or guest.
+        footerItems={host === 'browser' ? <MacDownloadLink /> : undefined}
         accountMenu={(
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}
