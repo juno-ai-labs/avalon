@@ -162,6 +162,28 @@ account menu floats at the bottom left. The sidebar stays while the directory is
 loading, failed or empty. Its width is the reader's preference clamped by
 `browserSidebarWidth`; it does not collapse.
 
+### Google sign-in
+
+The entry offers **Continue with Google** under the email form, except on an
+invitation page, where leaving for Google would drop the invitation held only in
+the page's memory. `POST /browser/google/start` stores the OAuth state with no
+desktop attempt and a return path on the browser host, and sets a ten-minute
+HttpOnly `<cookie>-google-state` cookie holding the same state. Google returns
+to `/regional/<region>/browser/google/callback` on the browser host, which the
+Worker forwards like any `/browser/*` request; the API host could not set the
+browser's host-only cookie. The callback requires the state cookie to match the
+`state` query before it touches the stored state, so a link to someone else's
+callback cannot sign this browser in as them. It then exchanges the code, links
+the Google identity to the same user an email sign-in with that verified address
+reaches, registers a browser session, sets the cookie and redirects to the
+return path. A declined or failed sign-in returns with `#google_error=<code>`,
+which the entry reads, removes from history and explains.
+
+Each callback accepts only its own kind of state: the browser callback refuses a
+desktop row (one with a desktop attempt) and the desktop callback refuses a
+browser row. The redirect URI must be registered on Google's identity OAuth
+client; see the PRD's provider configuration.
+
 ### Member shell
 
 `browserShellFor` in `session.ts` picks the shell from the selected workspace:
@@ -448,6 +470,26 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-03 — Sign in with Google in the browser
+
+**What changed:** The entry has a Google button. New `/browser/google/start`
+and `/browser/google/callback` routes run Google identity sign-in for a tab and
+set the browser cookie; the Google code exchange is shared with the desktop
+flow.
+
+**Why:** Members sign in to the Mac app with Google; the browser offered only
+email ([PRD](PRDs/2026-10-03_full-browser-client/prd.md), goal 2).
+
+**Considered and rejected:** An API-hosted callback that redirects with a Rally
+login ticket for the page to redeem, which puts a Rally credential in a URL. A
+schema column for a browser binding, where a double-submitted state cookie does
+the same job with no migration.
+
+**Consequences:** Production needs
+`https://app.rallywith.ai/regional/global/browser/google/callback` registered on
+the identity OAuth client before the button works there. Google identity stays
+Global; the route refuses other deployments.
 
 ### 2026-10-03 — Members get the desktop shell
 
