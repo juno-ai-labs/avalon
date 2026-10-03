@@ -62,6 +62,7 @@ import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { desktopBridge } from '../lib/platform';
+import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOAD_URL, useConnectorStartAvailable } from '../lib/browser-connectors';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useEscapeClosesWindow } from '../lib/window-escape';
 import type {
@@ -417,6 +418,7 @@ export function WorkspaceSettingsScreen({
   const {
     api,
     host,
+    session,
     runtime,
     leaveWorkspace,
     signOut,
@@ -424,6 +426,7 @@ export function WorkspaceSettingsScreen({
     setPendingConnectorOAuth,
   } = useAppSession();
   const browserHost = host === 'browser';
+  const connectorStartAvailable = useConnectorStartAvailable(api, session);
   const workspaceSocket = useOptionalWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
   // Fails open: `digestsEnabled` defaults `true` and only an explicit `false`
@@ -1750,8 +1753,13 @@ export function WorkspaceSettingsScreen({
                       const personalConnectPrerequisite = provider.provider === 'ashby'
                         ? "Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account."
                         : undefined;
-                      const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
-                      const personalConnectTitle = hasActivePersonalConnection
+                      // A browser tab starts only the connections the served list names.
+                      const personalStartsHere = connectorStartAvailable(providerCapabilitiesForScope(provider, 'you'));
+                      const workspaceStartsHere = connectorStartAvailable(providerCapabilitiesForScope(provider, 'workspace'));
+                      const personalConnectDisabled = !personalStartsHere || !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
+                      const personalConnectTitle = !personalStartsHere
+                        ? MAC_APP_CONNECT_NOTE
+                        : hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
                           ? `${provider.name} is not configured in this Rally region.`
@@ -1760,8 +1768,10 @@ export function WorkspaceSettingsScreen({
                           : personalConnectionStateUnavailable && connections.isError
                             ? 'Installed personal connections could not be loaded.'
                             : undefined;
-                      const workspaceConnectDisabled = !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
-                      const workspaceConnectTitle = hasActiveWorkspaceConnection
+                      const workspaceConnectDisabled = !workspaceStartsHere || !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
+                      const workspaceConnectTitle = !workspaceStartsHere
+                        ? MAC_APP_CONNECT_NOTE
+                        : hasActiveWorkspaceConnection
                         ? `A ${provider.name} organization connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
                           ? `${provider.name} is not configured in this Rally region.`
@@ -1781,6 +1791,10 @@ export function WorkspaceSettingsScreen({
                             <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
+                          {((provider.scopes.includes('you' as never) && !personalStartsHere)
+                            || (provider.scopes.includes('workspace' as never) && isAdmin && !workspaceStartsHere)) && (
+                            <p className="settings-oauth-status"><a href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a></p>
+                          )}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
                             <p className="settings-search-guidance" role="status">
                               {searchTarget.definition.label} is part of setup. Choose the appropriate connection scope below.

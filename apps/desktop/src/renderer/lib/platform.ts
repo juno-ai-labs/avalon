@@ -521,7 +521,14 @@ const browserBridge: RallyDesktopBridge = {
     throw new Error('Saving a message needs the Rally desktop application.');
   },
   async openExternal(url) {
-    window.open(url, '_blank', 'noopener,noreferrer');
+    // A new tab keeps the person's place, including an authorization the
+    // caller records once this returns. Open it blank and cut its opener
+    // before it loads the page, so the page never holds this window. A
+    // blocked popup is an error the caller shows, never a navigation away.
+    const opened = window.open('', '_blank');
+    if (!opened) throw new Error('Allow pop-ups for Rally in this browser, then try again.');
+    opened.opener = null;
+    opened.location.href = url;
   },
   // The browser build has no main process to composite a view, and an iframe
   // is exactly what the desktop's design refuses. So the preview is absent

@@ -21,7 +21,7 @@ describe('useClientFeatureFlags', () => {
       liveArtifactsEnabled: true,
       digestsEnabled: true,
       pushNotificationsEnabled: false,
-      controlTowerRefreshSeconds: 60,
+      browserConnectableCapabilities: ['drive.read'],
     }));
     const { Wrapper } = wrapper();
 
