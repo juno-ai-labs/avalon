@@ -65,8 +65,23 @@ export interface SiteResourceDetailProps {
     popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<boolean>;
     copyText: (text: string) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
+    /**
+     * Set by a browser host: preview in a sandboxed `<iframe>`
+     * (`ARTIFACT_FRAME_SANDBOX`) instead of a composited view.
+     */
+    framed?: true;
   };
 }
+
+/**
+ * What a framed artifact may do. It needs its own origin (`allow-same-origin`)
+ * for its viewer cookie and storage, scripts, and forms; it gets no top
+ * navigation, popups or downloads. The artifact host is a different
+ * registrable domain and allows exactly the browser origin to frame it, so
+ * `allow-same-origin` means the artifact's origin, never the app's. Widening
+ * this is a security change: see `docs/live-web-artifacts.md`.
+ */
+const ARTIFACT_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
 export function SiteResourceDetail({
   resourceId,
@@ -102,6 +117,11 @@ export function SiteResourceDetail({
    * that is about to work.
    */
   const [previewShown, setPreviewShown] = React.useState<boolean | null>(null);
+  // The browser host's preview: the freshly minted URL, rendered as a frame.
+  // Keyed by resource like `loadedAccess`: on a switch the new resource renders
+  // before the old effect's cleanup runs, and must not show the old page.
+  const [frame, setFrame] = React.useState<{ resourceId: string; url: string } | null>(null);
+  const frameUrl = frame?.resourceId === resourceId ? frame.url : null;
   /**
    * The site's stored rows, in place of the page.
    *
@@ -215,6 +235,10 @@ export function SiteResourceDetail({
         // this detail. Its cleanup has already closed the native view by then,
         // so presenting here would resurrect an ownerless old preview.
         if (cancelled) return false;
+        if (surface.framed) {
+          setFrame({ resourceId, url: navigation.openUrl });
+          return true;
+        }
         return await surface.present({
           artifactId: navigation.artifactId,
           url: navigation.openUrl,
@@ -229,9 +253,10 @@ export function SiteResourceDetail({
       .catch(() => { if (!cancelled) setPreviewShown(false); });
     return () => {
       cancelled = true;
+      setFrame(null);
       void surface.close();
     };
-  }, [access, measure, mintAccess, paneCorner, showingData, surface]);
+  }, [access, measure, mintAccess, paneCorner, resourceId, showingData, surface]);
 
   // Native content must remain clipped to its owning scroll viewport and
   // disappear behind nested DOM dialogs; Electron cannot infer either.
@@ -239,7 +264,7 @@ export function SiteResourceDetail({
     // Nothing to track while the data view has the pane: the composited view is
     // already torn down, and this effect would go on re-querying the document
     // on every scroll and mutation to move something that is not there.
-    if (previewShown !== true || showingData) return undefined;
+    if (previewShown !== true || showingData || surface.framed) return undefined;
     const update = (): void => {
       const bounds = measure();
       if (bounds) void surface.setBounds(bounds);
@@ -341,6 +366,15 @@ export function SiteResourceDetail({
               composited view covers it. This placeholder is what a person sees
               where no view can be composited — a browser build, or a refused URL.
             */}
+            {frameUrl && surface.framed && (
+              <iframe
+                className="site-detail-frame"
+                sandbox={ARTIFACT_FRAME_SANDBOX}
+                src={frameUrl}
+                title={title}
+                referrerPolicy="no-referrer"
+              />
+            )}
             {access && previewShown === false && (
               <EmptyState
                 description="Open it in your browser to see the live page."

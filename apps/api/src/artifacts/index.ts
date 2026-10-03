@@ -50,9 +50,13 @@ import type { ArtifactHostDO } from "../durable-objects/artifact-host-do";
 import { durableObjectStubForArtifact } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import {
+  ARTIFACT_CONTENT_SECURITY_POLICY,
+  artifactContentSecurityPolicy,
   artifactSecurityHeaders,
+  browserFrameAncestor,
   classifyFetchMetadata,
   injectVersionBase,
+  isFramedHopFromAnotherArtifact,
   refuseUnsafeVersionRequest,
   resolveAssetPath,
   splitVersionMount,
@@ -78,6 +82,11 @@ export interface ArtifactServingEnv {
   APP_ENV: "development" | "test" | "staging" | "production";
   AVALON_REGION: Region;
   ARTIFACT_SERVING_DOMAIN: string;
+  /**
+   * The browser client's origin, the one page allowed to frame an artifact for
+   * its inline preview. Unset, nothing may frame one.
+   */
+  BROWSER_APP_ORIGIN?: string;
   ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
   PLATFORM_DB: D1Database;
   PAYLOADS: R2Bucket;
@@ -171,6 +180,12 @@ export { ArtifactAssetLoopback } from "./asset-loopback";
 
 export default {
   async fetch(request: Request, env: ArtifactServingEnv, ctx: ExecutionContext): Promise<Response> {
+    return allowBrowserFraming(await artifactServer.fetch(request, env, ctx), browserFrameAncestor(env.BROWSER_APP_ORIGIN));
+  },
+};
+
+const artifactServer = {
+  async fetch(request: Request, env: ArtifactServingEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const host = parseArtifactHost(url.host);
     // Not an artifact host at all. Answered as the neutral page rather than an
@@ -182,6 +197,7 @@ export default {
     // — and serving it would move workspace content across a boundary
     // regionalization says has no path.
     if (host.region !== env.AVALON_REGION) return html(neutralPage(), 404);
+    if (isFramedHopFromAnotherArtifact(request)) return html(neutralPage(), 403);
 
     let artifactId = host.legacyArtifactId;
     if (!artifactId && host.hostnameStub) {
@@ -229,6 +245,11 @@ export default {
       const redeemed = code ? await artifact.redeemCode(code) : null;
       if (!redeemed) return html(neutralPage(), 403);
       const headers = new Headers({ location: "/" });
+      // Redeemed inside the browser client's preview frame, the artifact is a
+      // cross-site frame, and a `Lax` cookie would never be sent with its
+      // requests. A partitioned `None` cookie is kept only for this artifact
+      // under that one top-level site, so it is no wider than the frame.
+      const framed = request.headers.get("sec-fetch-dest") === "iframe" && Boolean(env.BROWSER_APP_ORIGIN);
       headers.append("set-cookie", [
         `${SESSION_COOKIE}=${redeemed.session}`,
         "Path=/",
@@ -236,7 +257,7 @@ export default {
         "Secure",
         // `Lax` rather than `Strict` so the desktop's own top-level navigation
         // to the artifact carries the cookie it just set.
-        "SameSite=Lax",
+        ...(framed ? ["SameSite=None", "Partitioned"] : ["SameSite=Lax"]),
         `Max-Age=${Math.max(0, Math.floor((redeemed.expiresAt - Date.now()) / 1_000))}`,
       ].join("; "));
       return withSecurityHeaders(new Response(null, { status: 303, headers }));
@@ -539,4 +560,23 @@ function assetLoopback(ctx: ExecutionContext, artifactId: string, manifest: Arti
       })),
     },
   });
+}
+
+/**
+ * Lets exactly the browser client frame an artifact, for its inline preview.
+ *
+ * Every response leaves `artifactServer` with `artifactSecurityHeaders()`,
+ * which refuses all framing. With a frame ancestor configured, a response
+ * carrying exactly that default policy gets the same policy naming the one
+ * origin, and loses the legacy `X-Frame-Options`, which cannot name an origin.
+ * A response with any other policy is left closed. Another artifact still cannot frame this one: its host is not
+ * that origin.
+ */
+export function allowBrowserFraming(response: Response, frameAncestor: string | null): Response {
+  if (!frameAncestor || response.status === 101) return response;
+  if (response.headers.get("content-security-policy") !== ARTIFACT_CONTENT_SECURITY_POLICY) return response;
+  const headers = new Headers(response.headers);
+  headers.set("content-security-policy", artifactContentSecurityPolicy(frameAncestor));
+  headers.delete("x-frame-options");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

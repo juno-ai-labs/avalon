@@ -15,7 +15,9 @@
   "vars": {
     "APP_ENV": "production",
     "AVALON_REGION": "global",
-    "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com"
+    "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com",
+    // The one page allowed to frame an artifact: the browser client's preview.
+    "BROWSER_APP_ORIGIN": "https://app.rallywith.ai"
   },
   // The repository's first wildcard route, and its first untrusted-content
   // domain. One level deep, deliberately: Universal SSL covers the apex and a
