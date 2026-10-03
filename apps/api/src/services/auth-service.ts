@@ -1,11 +1,13 @@
 import { openEmailLoginSecret } from "./email-login-service";
 import { isConfiguredRegion } from "@rally/contracts/regions";
-import { createRemoteJWKSet, jwtVerify, SignJWT } from "jose";
+import { createRemoteJWKSet, jwtVerify, SignJWT, type JWTPayload } from "jose";
 import { newId, nowIso } from "@rally/db";
 import { asUserId, asWorkspaceId, RefreshTokenSchema, IdSchema, WorkspaceSchema, type Region, type Session } from "@rally/contracts";
 import { isDesktopDeepLinkProtocol, SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
+import { browserOrigin } from "../lib/browser-origin";
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { publishSessionRevocations, type RevokedSessionRow } from "./access-revocation";
 import { logWarn } from "../observability/logger";
 import { openString, randomToken, sealString, sha256, timingSafeEqualText } from "../lib/crypto";
@@ -183,64 +185,195 @@ function callbackUrl(env: Env, purpose: "identity" | "connector"): string {
   ).toString();
 }
 
+/**
+ * The browser's Google identity callback. It is on the browser host, not the
+ * API host, because only a response on that host can set its host-only cookie;
+ * the browser Worker forwards it to `/browser/google/callback` here.
+ */
+function browserGoogleCallbackUrl(env: Env): string {
+  return new URL(`/regional/${env.AVALON_REGION}/browser/google/callback`, browserOrigin(env)).toString();
+}
+
+/** Where a browser sign-in lands afterwards: a path on the browser host, nothing else. */
+function browserReturnUrl(env: Env, path: string | undefined): string {
+  const origin = browserOrigin(env).origin;
+  const target = new URL(path && path.startsWith("/") ? path : "/", origin);
+  if (target.origin !== origin || target.pathname.startsWith("//")) {
+    throw new ApiError(422, "invalid_return_uri", "The browser return path is not allowed");
+  }
+  return `${target.origin}${target.pathname}`;
+}
+
+interface GoogleCredentials {
+  clientId: string;
+  clientSecret: string;
+}
+
 export class AuthService {
   constructor(private readonly env: Env) {}
+
+  /**
+   * Starts Google sign-in for a browser. Unlike the desktop flow there is no
+   * ticket to hand back: the callback sets the browser cookie itself. The
+   * caller binds the returned state to the browser with a cookie of its own.
+   */
+  async beginBrowserIdentity(input: { returnPath?: string | undefined }): Promise<{ url: string; state: string }> {
+    return this.startIdentity({
+      purpose: "browser_identity",
+      desktopAttemptId: null,
+      desktopCodeChallenge: null,
+      returnUri: browserReturnUrl(this.env, input.returnPath),
+      redirectUri: browserGoogleCallbackUrl(this.env),
+    });
+  }
+
+  async consumeBrowserIdentityCallback(code: string, state: string): Promise<{ session: Session; returnUrl: string }> {
+    const credentials = this.requireGoogleIdentity();
+    const row = await this.claimOAuthState(state, "browser_identity");
+    const verifier = await openString(row.code_verifier_encrypted, this.env.OAUTH_STATE_ENCRYPTION_KEY);
+    const identity = await this.exchangeGoogleIdentity(credentials, code, verifier, browserGoogleCallbackUrl(this.env));
+    return { session: await this.createSession(identity), returnUrl: row.return_uri };
+  }
+
+  async consumeBrowserIdentityDenial(state: string): Promise<string> {
+    this.requireGoogleIdentity();
+    const row = await this.claimOAuthState(state, "browser_identity");
+    return row.return_uri;
+  }
+
+  private requireGoogleIdentity(): GoogleCredentials {
+    if (this.env.AVALON_REGION !== "global") {
+      throw new ApiError(409, "global_identity_required", "Sign in through the Avalon platform identity endpoint");
+    }
+    // Checked on both halves of the flow. Without it an unconfigured
+    // deployment sends `undefined` to Google and reports the provider's
+    // rejection as a token-exchange failure.
+    const clientId = this.env.GOOGLE_OAUTH_CLIENT_ID;
+    const clientSecret = this.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      throw new ApiError(503, "google_oauth_not_configured", "Google authentication is not configured");
+    }
+    return { clientId, clientSecret };
+  }
+
+  /**
+   * Stores a single-use Google state and returns the authorization URL for it.
+   * `purpose` keeps desktop and browser rows apart: each callback claims only
+   * its own kind, so neither can consume the other's state.
+   */
+  private async startIdentity(input: {
+    purpose: "identity" | "browser_identity";
+    desktopAttemptId: string | null;
+    desktopCodeChallenge: string | null;
+    returnUri: string;
+    redirectUri: string;
+  }): Promise<{ url: string; state: string }> {
+    const { clientId } = this.requireGoogleIdentity();
+    const state = randomToken(32);
+    const googleVerifier = randomToken(64);
+    await this.env.DB.prepare(
+      `INSERT INTO oauth_states
+       (id, region, provider, purpose, code_verifier_encrypted, workspace_id,
+        workspace_name, invitation_id, desktop_attempt_id, desktop_code_challenge,
+        return_uri, expires_at)
+       VALUES (?, ?, 'google', ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)`,
+    )
+      .bind(
+        state,
+        this.env.AVALON_REGION,
+        input.purpose,
+        await sealString(googleVerifier, this.env.OAUTH_STATE_ENCRYPTION_KEY),
+        input.desktopAttemptId,
+        input.desktopCodeChallenge,
+        input.returnUri,
+        new Date(Date.now() + 10 * 60_000).toISOString(),
+      )
+      .run();
+    const authorize = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    authorize.search = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: input.redirectUri,
+      response_type: "code",
+      scope: "openid email profile",
+      state,
+      code_challenge: await sha256(googleVerifier),
+      code_challenge_method: "S256",
+      prompt: "select_account",
+    }).toString();
+    return { url: authorize.toString(), state };
+  }
+
+  private async exchangeGoogleIdentity(
+    credentials: GoogleCredentials,
+    code: string,
+    verifier: string,
+    redirectUri: string,
+  ): Promise<IdentityRow> {
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: credentials.clientId,
+        client_secret: credentials.clientSecret,
+        code,
+        code_verifier: verifier,
+        grant_type: "authorization_code",
+        redirect_uri: redirectUri,
+      }),
+    });
+    if (!tokenResponse.ok) {
+      throw new ApiError(502, "google_token_exchange_failed", "Google did not complete sign-in");
+    }
+    const tokens = (await tokenResponse.json()) as { id_token?: string };
+    if (!tokens.id_token) throw new ApiError(502, "google_identity_missing", "Google did not return an identity token");
+    let claims: JWTPayload;
+    try {
+      ({ payload: claims } = await jwtVerify(tokens.id_token, googleKeys, {
+        audience: credentials.clientId,
+        issuer: ["https://accounts.google.com", "accounts.google.com"],
+      }));
+    } catch (error) {
+      // A malformed, expired or wrongly signed token, or Google's keys being
+      // unreachable. JOSE names which in its own `code`; the log keeps it.
+      const cause = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : undefined;
+      throw new ApiError(401, "google_id_token_invalid", "Google's identity token could not be verified", undefined,
+        cause === undefined ? undefined : codeShaped(cause));
+    }
+    if (
+      typeof claims.sub !== "string" ||
+      typeof claims.email !== "string" ||
+      claims.email_verified !== true
+    ) {
+      throw new ApiError(401, "google_identity_invalid", "Google identity information is incomplete");
+    }
+    return this.upsertIdentity({
+      subject: claims.sub,
+      email: claims.email,
+      name: typeof claims.name === "string" ? claims.name : claims.email.split("@")[0] ?? "Avalon user",
+      avatarUrl: typeof claims.picture === "string" ? claims.picture : null,
+    });
+  }
 
   async beginIdentity(input: {
     returnUri?: string;
     desktopAttemptId: string;
     desktopCodeChallenge: string;
   }): Promise<string> {
-    if (this.env.AVALON_REGION !== "global") {
-      throw new ApiError(409, "global_identity_required", "Sign in through the Avalon platform identity endpoint");
-    }
-    if (!this.env.GOOGLE_OAUTH_CLIENT_ID || !this.env.GOOGLE_OAUTH_CLIENT_SECRET) {
-      throw new ApiError(503, "google_oauth_not_configured", "Google authentication is not configured");
-    }
+    this.requireGoogleIdentity();
     if (!/^[A-Za-z0-9_-]{43}$/u.test(input.desktopAttemptId)) {
       throw new ApiError(422, "invalid_desktop_attempt", "The desktop authentication attempt is invalid");
     }
     if (!/^[A-Za-z0-9_-]{43}$/u.test(input.desktopCodeChallenge)) {
       throw new ApiError(422, "invalid_desktop_challenge", "The desktop authentication challenge is invalid");
     }
-    const state = randomToken(32);
-    const googleVerifier = randomToken(64);
-    const googleChallenge = await sha256(googleVerifier);
-    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
-    const encryptedVerifier = await sealString(googleVerifier, this.env.OAUTH_STATE_ENCRYPTION_KEY);
-    await this.env.DB.prepare(
-      `INSERT INTO oauth_states
-       (id, region, provider, purpose, code_verifier_encrypted, workspace_id,
-        workspace_name, invitation_id, desktop_attempt_id, desktop_code_challenge,
-        return_uri, expires_at)
-       VALUES (?, ?, 'google', 'identity', ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-      .bind(
-        state,
-        this.env.AVALON_REGION,
-        encryptedVerifier,
-        null,
-        null,
-        null,
-        input.desktopAttemptId,
-        input.desktopCodeChallenge,
-        allowedReturnUri(this.env, input.returnUri),
-        expiresAt,
-      )
-      .run();
-
-    const authorize = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-    authorize.search = new URLSearchParams({
-      client_id: this.env.GOOGLE_OAUTH_CLIENT_ID,
-      redirect_uri: callbackUrl(this.env, "identity"),
-      response_type: "code",
-      scope: "openid email profile",
-      state,
-      code_challenge: googleChallenge,
-      code_challenge_method: "S256",
-      prompt: "select_account",
-    }).toString();
-    return authorize.toString();
+    const { url } = await this.startIdentity({
+      purpose: "identity",
+      desktopAttemptId: input.desktopAttemptId,
+      desktopCodeChallenge: input.desktopCodeChallenge,
+      returnUri: allowedReturnUri(this.env, input.returnUri),
+      redirectUri: callbackUrl(this.env, "identity"),
+    });
+    return url;
   }
 
   async createDevelopmentSession(workspaceName = "Avalon Development"): Promise<Session> {
@@ -294,55 +427,13 @@ export class AuthService {
   }
 
   async consumeIdentityCallback(code: string, state: string): Promise<string> {
-    if (this.env.AVALON_REGION !== "global") {
-      throw new ApiError(409, "global_identity_required", "Sign in through the Avalon platform identity endpoint");
-    }
-    // The same guard `beginIdentity` applies, on the other half of the flow.
-    // Without it an unconfigured deployment sends `undefined` to Google and
-    // reports the provider's rejection as a token-exchange failure.
-    if (!this.env.GOOGLE_OAUTH_CLIENT_ID || !this.env.GOOGLE_OAUTH_CLIENT_SECRET) {
-      throw new ApiError(503, "google_oauth_not_configured", "Google authentication is not configured");
-    }
+    const credentials = this.requireGoogleIdentity();
     const row = await this.claimOAuthState(state, "identity");
     if (!row.desktop_attempt_id || !row.desktop_code_challenge) {
       throw new ApiError(401, "invalid_desktop_binding", "The desktop authentication binding is missing");
     }
     const verifier = await openString(row.code_verifier_encrypted, this.env.OAUTH_STATE_ENCRYPTION_KEY);
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: this.env.GOOGLE_OAUTH_CLIENT_ID,
-        client_secret: this.env.GOOGLE_OAUTH_CLIENT_SECRET,
-        code,
-        code_verifier: verifier,
-        grant_type: "authorization_code",
-        redirect_uri: callbackUrl(this.env, "identity"),
-      }),
-    });
-    if (!tokenResponse.ok) {
-      throw new ApiError(502, "google_token_exchange_failed", "Google did not complete sign-in");
-    }
-    const tokens = (await tokenResponse.json()) as { id_token?: string };
-    if (!tokens.id_token) throw new ApiError(502, "google_identity_missing", "Google did not return an identity token");
-    const verified = await jwtVerify(tokens.id_token, googleKeys, {
-      audience: this.env.GOOGLE_OAUTH_CLIENT_ID,
-      issuer: ["https://accounts.google.com", "accounts.google.com"],
-    });
-    const claims = verified.payload;
-    if (
-      typeof claims.sub !== "string" ||
-      typeof claims.email !== "string" ||
-      claims.email_verified !== true
-    ) {
-      throw new ApiError(401, "google_identity_invalid", "Google identity information is incomplete");
-    }
-    const identity = await this.upsertIdentity({
-      subject: claims.sub,
-      email: claims.email,
-      name: typeof claims.name === "string" ? claims.name : claims.email.split("@")[0] ?? "Avalon user",
-      avatarUrl: typeof claims.picture === "string" ? claims.picture : null,
-    });
+    const identity = await this.exchangeGoogleIdentity(credentials, code, verifier, callbackUrl(this.env, "identity"));
     const ticket = randomToken(40);
     const ticketHash = await sha256(ticket);
     const at = nowIso();
@@ -375,9 +466,7 @@ export class AuthService {
   }
 
   async consumeIdentityDenial(state: string): Promise<string> {
-    if (this.env.AVALON_REGION !== "global") {
-      throw new ApiError(409, "global_identity_required", "Sign in through the Avalon platform identity endpoint");
-    }
+    this.requireGoogleIdentity();
     const row = await this.claimOAuthState(state, "identity");
     const target = new URL(row.return_uri);
     target.searchParams.set("error", "google_oauth_denied");
@@ -526,7 +615,12 @@ export class AuthService {
     }
   }
 
-  private async claimOAuthState(state: string, purpose: string): Promise<OAuthStateRow> {
+  /**
+   * Claims a Google state once. Matching on `purpose` means a desktop state
+   * that reaches the browser callback, or the reverse, is refused without
+   * being consumed.
+   */
+  private async claimOAuthState(state: string, purpose: "identity" | "browser_identity"): Promise<OAuthStateRow> {
     const row = await this.env.DB.prepare(
       `UPDATE oauth_states SET consumed_at = ?
        WHERE id = ? AND provider = 'google' AND purpose = ? AND region = ?
