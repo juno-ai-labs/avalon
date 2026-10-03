@@ -1,6 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
+import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { BrowserWorkspacesSchema } from '@rally/contracts/browser-session';
 import type { Region } from '@rally/contracts/regions';
@@ -49,7 +50,10 @@ function MemberSession({ region, session, onSignOut, onRevalidate }: {
   const queryClient = useQueryClient();
   const api = useCookieApi(session);
   // Account onboarding is identity-scoped, so it goes through the `_` workspace.
-  const identityApi = useMemo(() => new RallyApi(`/regional/${region}/browser/api/_`, { ...session, workspace: null }), [region, session]);
+  const identityApi = useMemo(() => new RallyApi(`/regional/${region}/browser/api/_`, { ...session, workspace: null }), [region, session.user.id]);
+  useLayoutEffect(() => { identityApi.setSession({ ...session, workspace: null }); }, [identityApi, session]);
+  const getAccountOnboarding = useCallback(() => identityApi.getAccountOnboarding(), [identityApi]);
+  const updateAccountOnboarding = useCallback((input: UpdateAccountOnboarding) => identityApi.updateAccountOnboarding(input), [identityApi]);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const revalidate = useCallback(async () => { onRevalidate(); }, [onRevalidate]);
   const signOut = useCallback(async () => { onSignOut(); }, [onSignOut]);
@@ -90,15 +94,15 @@ function MemberSession({ region, session, onSignOut, onRevalidate }: {
     createDevelopmentSession: macAppOnly,
     finishWorkspaceSetup: macAppOnly,
     refreshSession: async () => { onRevalidate(); return session; },
-    getAccountOnboarding: () => identityApi.getAccountOnboarding(),
-    updateAccountOnboarding: (input) => identityApi.updateAccountOnboarding(input),
+    getAccountOnboarding,
+    updateAccountOnboarding,
     signOut,
     // The cookie session has no stored credential to inspect: the entry
     // re-reads the server session and unmounts this shell if it is gone.
     signOutIfCredentialCleared: revalidate,
     surrenderActiveWorkspace: revalidate,
     clearDeepLinkError: () => undefined,
-  }), [api, identityApi, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut]);
+  }), [api, getAccountOnboarding, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
   const createSidekick = useCallback(() => desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET), []);
   return <AppSessionValueProvider value={value} connectorSetup={null} createSidekick={createSidekick}>
     <FaviconApiProvider>
