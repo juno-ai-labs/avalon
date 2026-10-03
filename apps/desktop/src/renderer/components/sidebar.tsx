@@ -45,7 +45,7 @@ import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
-import { Avatar, Button, IconButton, InlineError, Modal, StatusDot, Tip } from './primitives';
+import { Avatar, Button, IconButton, InlineError, Meter, Modal, StatusDot, Tip } from './primitives';
 import { AcknowledgedErrorDialog } from './acknowledged-error-dialog';
 import { ManageAccessDialog } from './manage-access-dialog';
 import { ContextNestedMenu } from './nested-menu';
@@ -308,16 +308,12 @@ function OnboardingChecklist(): React.JSX.Element {
         <h2 id="onboarding-checklist-heading">Get started with Rally</h2>
         <span>{completedCount} / {onboardingItems.length}</span>
       </header>
-      <div
-        aria-label={`${completedCount} of ${onboardingItems.length} onboarding steps complete`}
-        aria-valuemax={onboardingItems.length}
-        aria-valuemin={0}
-        aria-valuenow={completedCount}
-        className="onboarding-progress"
+      <Meter
+        label={`${completedCount} of ${onboardingItems.length} onboarding steps complete`}
+        max={onboardingItems.length}
         role="progressbar"
-      >
-        <span style={{ width: `${(completedCount / onboardingItems.length) * 100}%` }} />
-      </div>
+        value={completedCount}
+      />
       <div className="onboarding-items">
         {onboardingItems.map((item) => {
           const isComplete = completed.has(item.id);

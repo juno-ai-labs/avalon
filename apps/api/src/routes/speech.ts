@@ -4,7 +4,10 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { zValidator } from "../middleware/validation";
 import { logEvent } from "../observability/logger";
+import { getAuth } from "../middleware/auth";
+import { runtimeDeferral } from "../lib/defer";
 import { streamMessageSpeech } from "../services/message-speech-service";
+import { emitInferenceUsage } from "../services/usage-metering";
 
 const SpeechBodySchema = z.strictObject({
   markdown: z.string().trim().min(1),
@@ -24,6 +27,16 @@ speechRoutes.post("/", zValidator("json", SpeechBodySchema), async (c) => {
   logEvent(c, "error", "message_speech_billing_unavailable", {
     model: speech.model,
     reason: "provider_usage_missing",
+  });
+  // No price either, so metering logs it as unpriced until a rate card exists.
+  const auth = getAuth(c);
+  emitInferenceUsage(c.env, runtimeDeferral, {
+    eventId: `tts:${crypto.randomUUID()}`,
+    workspaceId: auth.workspaceId,
+    activity: "message_speech",
+    costCents: undefined,
+    model: speech.model,
+    refs: { userId: auth.userId },
   });
   logEvent(c, "info", "message_speech_stream_started", {
     model: speech.model,

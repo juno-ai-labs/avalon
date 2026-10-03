@@ -1,7 +1,9 @@
 import type { StructuredModelDiagnostic } from "@rally/agent-harness";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
+import type { MeteredActivity } from "@rally/contracts/usage";
 import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
+import { emitInferenceUsage } from "./usage-metering";
 
 /**
  * Where a classifier's provider diagnostics go, for every classifier.
@@ -25,8 +27,11 @@ export interface ClassifierDiagnosticSink {
 export function createClassifierDiagnosticSink(
   env: Env,
   context: {
-    /** Names the classifier in logs and lakehouse records, e.g. `addressing_classifier`. */
-    role: string;
+    /**
+     * Names the classifier in logs and lakehouse records, and is the metered
+     * activity its calls are recorded as.
+     */
+    role: Extract<MeteredActivity, "addressing_classifier" | "semantic_trigger_gate">;
     workspaceId: string;
     workstreamId?: string | undefined;
     /** Stable across every stage of one decision, including its fallback. */
@@ -67,6 +72,20 @@ export function createClassifierDiagnosticSink(
           validation_issues: diagnostic.validationIssues,
         },
       );
+      if (diagnostic.stage === "complete") {
+        // The JEV leg reports tokens but no cost, so it is logged as unpriced
+        // until its rate is known (PRD open question 1).
+        emitInferenceUsage(env, context.defer, {
+          eventId: diagnostic.inferenceRequestId
+            ? `inf:${diagnostic.inferenceRequestId}`
+            : `cls:${context.traceId}:${provider}:${diagnostic.attempt}:${diagnostic.fallbackAttempt}`,
+          workspaceId: context.workspaceId,
+          activity: context.role,
+          costCents: diagnostic.costCents,
+          model: diagnostic.model,
+          refs: context.workstreamId ? { workstreamId: context.workstreamId } : {},
+        });
+      }
       context.defer(captureStructuredInferenceDiagnostic(env, {
         source: context.role,
         workspaceId: context.workspaceId,

@@ -17,6 +17,8 @@ import {
   type AgentModelRole,
 } from "./agent-model-flags";
 import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
+import { emitInferenceUsage } from "./usage-metering";
+import type { MeteredActivity } from "@rally/contracts/usage";
 
 const STRUCTURED_INFERENCE_TIMEOUT_MS = 2 * 60_000;
 export const MEMORY_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b" as const;
@@ -136,7 +138,7 @@ export async function runEmbeddingInference(
     );
   };
   try {
-    return await client.embed({
+    const result = await client.embed({
       input: input.text,
       inputType: input.inputType,
       dimensions: input.dimensions,
@@ -144,6 +146,19 @@ export async function runEmbeddingInference(
       signal,
       onDiagnostic,
     });
+    const costUsd = result.usage?.cost;
+    emitInferenceUsage(env, runtimeDeferral, {
+      eventId: `inf:${result.inferenceRequestId}`,
+      workspaceId: input.context.workspaceId,
+      activity: feature,
+      costCents: costUsd === undefined ? undefined : costUsd * 100,
+      model: result.resolvedModel,
+      refs: {
+        ...(input.context.userId ? { userId: input.context.userId } : {}),
+        ...(input.context.workstreamId && substreamId ? { workstreamId: input.context.workstreamId, substreamId } : {}),
+      },
+    });
+    return result;
   } finally {
     deadline.dispose();
   }
@@ -170,6 +185,8 @@ export async function runStructuredInference<T>(
     onModelResolved?: (model: string) => void;
     /** Owning lifecycle override for exact-envelope archive work. */
     defer?: WorkDeferral;
+    /** What this call is metered as. See docs/usage-metering.md. */
+    activity: MeteredActivity;
   } & ({ role: StructuredInferenceRole } | { role: "substream_context_summary"; routing: AgentModelRouting }),
 ): Promise<{
   result: T;
@@ -261,6 +278,20 @@ export async function runStructuredInference<T>(
       ...(input.requestId ? { requestId: input.requestId } : {}),
       ...(diagnostic.traceId ? { traceId: diagnostic.traceId } : {}),
     }, diagnostic));
+    if (diagnostic.stage === "complete" && input.context.workspaceId && diagnostic.inferenceRequestId) {
+      emitInferenceUsage(env, input.defer ?? runtimeDeferral, {
+        eventId: `inf:${diagnostic.inferenceRequestId}`,
+        workspaceId: input.context.workspaceId,
+        activity: input.activity,
+        costCents: diagnostic.costCents,
+        model: diagnostic.model,
+        refs: {
+          ...(input.context.userId ? { userId: input.context.userId } : {}),
+          ...(input.context.workstreamId ? { workstreamId: input.context.workstreamId } : {}),
+          ...(substreamId ? { substreamId } : {}),
+        },
+      });
+    }
     if (diagnostic.stage === "complete" && diagnostic.success) completion.diagnostic = diagnostic;
   };
   const reasoningEffort = input.reasoningEffort ?? routing.reasoningEffort;

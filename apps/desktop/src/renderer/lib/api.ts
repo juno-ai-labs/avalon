@@ -95,6 +95,7 @@ import {
   type SubstreamPreparationPreview,
 } from '@rally/contracts/substream-creation';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
+import { OrganizationUsageSchema, type OrganizationUsage } from '@rally/contracts/usage';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
@@ -911,6 +912,14 @@ export class RallyApi {
     deliveryTargets: Array<{ type: AutomationDeliveryTargetType; connectionId: string | null }>;
   }): Promise<DigestSchedule> {
     return this.request('/digest', { method: 'PUT', body: input, schema: WireDigestScheduleSchema });
+  }
+
+  /**
+   * The Organization's plan and how much of this week's shared quota is left.
+   * Any member may read it; the dollars behind the percentage never cross.
+   */
+  async getWorkspaceUsage(signal?: AbortSignal): Promise<OrganizationUsage> {
+    return this.request('/workspace/usage', { schema: OrganizationUsageSchema, signal });
   }
 
   async getWorkspaceMembers(signal?: AbortSignal): Promise<WorkspaceMember[]> {

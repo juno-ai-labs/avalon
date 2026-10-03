@@ -37,6 +37,7 @@ describe("structured inference telemetry lifecycle", () => {
       }),
     }), {
       role: "workstream_naming",
+      activity: "channel_naming",
       routing: { model: "test/model", fallbackModels: [], reasoningEffort: "medium" },
       context: { workspaceId: "workspace-1" },
       messages: [{ role: "user", content: "Return the decision" }],
@@ -75,5 +76,43 @@ describe("structured inference telemetry lifecycle", () => {
       await Promise.all(deferred);
       expect(queueSend).toHaveBeenCalledTimes(2);
     }
+  });
+
+  it("meters the call as its declared activity with the provider-reported cost", async () => {
+    const usageSend = vi.fn(async (body: unknown) => { void body; });
+    const deferred: Promise<unknown>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      model: "test/model-resolved",
+      choices: [{ message: { content: JSON.stringify({ accepted: true }) } }],
+      usage: { prompt_tokens: 12, completion_tokens: 4, cost: 0.0021 },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    await runStructuredInference(createTestEnv({
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      OPENROUTER_API_KEY: "test-key",
+      LOG_LEVEL: "error",
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: vi.fn() }),
+      USAGE_QUEUE: createCloudflareTestBinding<Queue>({ send: usageSend }),
+    }), {
+      role: "workstream_naming",
+      activity: "channel_naming",
+      routing: { model: "test/model", fallbackModels: [] },
+      context: { workspaceId: "workspace-1", workstreamId: "workstream-1" },
+      messages: [{ role: "user", content: "Name this" }],
+      schemaName: "naming_test",
+      jsonSchema: { type: "object", properties: { accepted: { type: "boolean" } }, required: ["accepted"], additionalProperties: false },
+      parse: (value) => value as { accepted: boolean },
+      defer: (promise) => { deferred.push(promise); },
+    });
+    await Promise.all(deferred);
+
+    expect(usageSend).toHaveBeenCalledTimes(1);
+    expect(usageSend.mock.calls[0]![0]).toMatchObject({
+      workspaceId: "workspace-1",
+      activity: "channel_naming",
+      costMicrousd: 2_100,
+      refs: { workstreamId: "workstream-1", substreamId: "0" },
+    });
   });
 });
