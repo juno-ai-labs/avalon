@@ -299,9 +299,10 @@ This PRD does move two rules of the demo feature, which is internal:
    or from Rally's own agent, and it reaches the seeder only through the
    Access-gated operator door, as a stored, checked, immutable revision. The
    **Security and trust model** section says what that costs.
-2. The pack a demo is made from is no longer "the pack in service". It is the
-   revision the operation recorded, so `demo_pack_changed` no longer applies to
-   an operation that names a stored revision.
+2. The pack a demo is made from is no longer "the pack in service". Every new
+   operation, from Ace or the MCP and built-in or inline, stores the pack it
+   starts with and runs from that copy, so `demo_pack_changed` applies only to
+   operations started before the change.
 
 The earlier demo workspace PRD is still `in progress`. This PRD refines it and
 does not supersede it.
@@ -333,9 +334,11 @@ does not supersede it.
    is reviewable data. **Rejected:** a `generate_demo_scenario(prompt)` tool,
    which would put a model's output straight into a production write path with
    nothing to review.
-4. **Every operation points at a stored, immutable revision.** An inline pack
-   is saved as an unnamed revision, unique by content hash, once its checks
-   pass and before the operation row is written. Retries,
+4. **Every operation points at a stored, immutable revision.** Whatever the
+   scenario's source, built-in or inline, the pack is saved as an unnamed
+   revision, unique by content hash, once its checks pass and before the
+   operation row is written. A built-in scenario is snapshotted too, or a
+   deploy that edits it would still fail a demo in flight. Retries,
    readiness and audit read the same bytes, a deploy cannot change them, and
    "what was this demo made from" has one answer. **Rejected:** storing the pack
    JSON on the operation row, which would duplicate it per demo and leave saved
@@ -387,17 +390,17 @@ Sketch level; the migration is authoritative. All in Global D1, beside
 Phase 1:
 
 - **`demo_scenario_revisions`**: `id`, `scenario_id` (null for an unnamed
-  revision made by an inline pack), `revision` (null when unnamed), `pack_json`
+  revision, which every new operation makes), `revision` (null when unnamed), `pack_json`
   (the normalized pack, with derived `expect`), `content_hash` (SHA-256 of
   `pack_json`), `saved_by_subject`, `saved_by_email`, `created_at`. Unnamed
   revisions are unique by `content_hash`, so storing one twice writes nothing.
   Immutable: no update path.
-- **`demo_operations`** gains `scenario_revision_id` (null for a built-in
-  scenario), `request_key`, and `requested_by_subject` and
-  `requested_by_email`. A stored revision's `pack_version` is
-  `stored:<content_hash>`, so the shipped column keeps saying what the demo was
-  made from. Existing rows have nulls and keep today's `pack_version`
-  comparison.
+- **`demo_operations`** gains `scenario_revision_id` (set on every new row),
+  `request_key` (MCP rows), and `requested_by_subject` and
+  `requested_by_email`. `pack_version` keeps the built-in version for a
+  built-in scenario and is `stored:<content_hash>` for an inline one, so the
+  shipped column keeps saying what the demo was made from. Rows written before
+  the migration have no revision and keep today's `pack_version` comparison.
 
 Phase 2:
 
@@ -553,9 +556,10 @@ already prepared are unaffected, and Ace still prepares and retires them.
 4. **Derived readiness.** A pack with no `expect` is checked, filled in, and
    reaches Ready. Breaking `demoIdleViewerExpectation`'s mention rule makes the
    integration test fail by the gap it names.
-5. **Immutability and deploys.** Start a demo from an inline pack and deploy a
-   changed built-in pack while it prepares. The operation finishes from the
-   bytes it started with, and `demo_pack_changed` is not raised.
+5. **Immutability and deploys.** Start one demo from an inline pack and one
+   from the built-in scenario (through Ace), and deploy a changed built-in pack
+   while both prepare. Both finish from the bytes they started with, and
+   `demo_pack_changed` is not raised.
 6. **Replay.** Call `create_demo_organization` twice with one `requestKey`,
    including after the first call's response is lost, and once with a changed
    pack. One Organization, one operation, one stored revision; the changed

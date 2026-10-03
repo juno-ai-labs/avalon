@@ -44,13 +44,15 @@ New code:
 
 Changed code:
 
-- `demo-preparation.ts`: `activeDemoPack()` becomes "the pack this operation
-  recorded": the built-in pack by version for `builtin` rows (today's
-  behavior, `demo_pack_changed` included), or the stored revision's
-  `pack_json` for `stored` rows (no version comparison). `startDemoOperation`
-  takes an optional stored revision ID and the requester. Its first statement
-  stays the replay lookup, before any validation, as the comment there
-  requires.
+- `demo-preparation.ts`: every new operation, from Ace or from the MCP,
+  built-in scenario or inline pack, stores the pack it starts with as an
+  unnamed revision and records that revision's ID. `activeDemoPack()` becomes
+  "the pack this operation recorded": the stored revision's `pack_json`, with
+  no version comparison. Only rows written before the migration, which have no
+  revision, keep today's comparison against the built-in pack and
+  `demo_pack_changed`. `startDemoOperation` takes an optional pack (absent
+  means the built-in one) and the requester. Its first statement stays the
+  replay lookup, before any validation, as the comment there requires.
 - `DemoOperationStartRequestSchema` and `DemoOperationStatusSchema` gain the
   new fields as optional. Optional and omitted, never required and nullable,
   so Ace and the API can deploy in either order (the same rule
@@ -145,7 +147,7 @@ type CastEntry =
   | string                    // a colleague's user ID, from list_demo_cast_candidates
   | { name: string };         // a typed name; played by a persona minted for this operation
 
-type DemoPack = /* exactly DemoPackSchema in apps/api/src/services/demo-pack.ts */;
+type DemoPack = /* DemoPackSchema; spelled out under "The pack on the wire" */;
 ```
 
 ### 1. `list_demo_scenarios`
@@ -319,9 +321,10 @@ What happens, in order:
    `demo_pack_role_unknown`, `demo_presenter_cast`, `demo_cast_duplicate`,
    `demo_cast_name_duplicate`, `demo_cast_not_a_colleague`,
    `demo_presenter_not_in_template`).
-4. An inline pack is stored as an unnamed revision. Unnamed revisions are
-   unique by content hash, so storing the same pack again finds the existing
-   row and writes nothing. A create refused in steps 2 or 3 has stored nothing.
+4. The pack, built-in or inline, is stored as an unnamed revision. Unnamed
+   revisions are unique by content hash, so storing the same pack again finds
+   the existing row and writes nothing. A create refused in steps 2 or 3 has
+   stored nothing.
 5. The operation row is written with the revision, the request key and the
    requester, and the Workflow is launched, as today.
 
@@ -486,6 +489,63 @@ type ConnectionSelection =
 The copier copies only the selected IDs. A selected ID that is not copyable is
 refused in step 3 of the create, before a row is written.
 
+## The pack on the wire
+
+What `get_demo_scenario` returns and what check and create accept. This is
+`DemoPackSchema` in `apps/api/src/services/demo-pack.ts` as of this PRD; every
+object is strict (unknown keys refused). The MCP advertises the same schema to
+clients as JSON Schema generated from the Zod schema with `z.toJSONSchema`, so
+the advertised shape cannot drift from the parsed one. The cross-field rules
+(who may speak where, one question per conversation, and the rest of the
+check's rule table) cannot be stated in JSON Schema, which is why the check
+exists.
+
+```ts
+type Role = string;      // ^[a-z][a-z0-9-]{0,39}$; "presenter" is the presenter
+type Key = string;       // ^[a-z][a-z0-9-]{0,39}$; a room, Breakout or Space key
+type StepId = string;    // ^[a-z0-9][a-z0-9-]{0,79}$; unique across the pack
+type Text = string;      // 1 to MESSAGE_MAX_CHARACTERS; `@{role}` mentions a cast member
+
+type Turn =                                      // DemoSeedTurnSchema
+  | { kind: "say"; text: string }                // 1 to 20,000 characters
+  | { kind: "ask"; prompt: string; options: string[] };  // prompt 1 to 4,000; 2 to 8 options of 1 to 200
+
+type Step =
+  | { kind: "create_workstream"; id: StepId; room: Key; as: Role; title: string;
+      space?: Key; participants: Role[]; scope: "workspace" | "personal";
+      openingMessage: Text; assistant: Turn; execution?: "run" | "history" }
+  | { kind: "create_substream"; id: StepId; room: Key; substream: Key; as: Role;
+      title: string; participants: Role[]; startingContext: string }  // context 1 to 20,000
+  | { kind: "message"; id: StepId; room: Key; substream?: Key; as: Role;
+      text: Text; assistant?: Turn }              // absent: the line starts no run
+  | { kind: "upload"; id: StepId; room: Key; substream?: Key; as: Role; title: string;
+      fileName: string; mimeType: "text/markdown" | "text/plain"; content: string }
+  | { kind: "sidekick"; id: StepId; as: Role; scope: "personal" | "workspace";
+      name: string;                 // 1 to 140
+      description: string;          // 1 to 1,200
+      overview: string;             // 1 to 3,000
+      instructions: string;         // 1 to 12,000
+      schedule: { rrule: string; timezone: string /* IANA */; summary: string };
+      firstRun?: { kind: "say"; text: string } };
+
+type DemoPack = {
+  version: string;                               // a label; stored revisions are identified by hash
+  roles: Role[];                                 // unique; includes "presenter"
+  roleLabels: Record<Role, string>;              // every role but presenter; 1 to 40
+  spaces?: Record<Key, { as: Role; name: string; iconKey: SpaceIconKey; colorKey: SpaceColorKey }>;
+  steps: Step[];                                 // at least one
+  expect?: Array<{                               // the presenter's entry is derived by the check
+    viewer: Role;
+    attention: { waitingForYou: number; waitingReason: "mentioned" | "needs_input" | "unseen" | null };
+    rooms: Record<Key, { unseen: boolean; hasUnread: boolean; mentioned: boolean }>;
+  }>;
+};
+```
+
+`SpaceIconKey` and `SpaceColorKey` are the enums in
+`packages/contracts/src/spaces.ts`; the JSON Schema lists their values. Every
+limit above is the existing schema's, not one this PRD sets.
+
 ## Discovery and sequencing
 
 Where every input comes from:
@@ -508,7 +568,7 @@ Common sequences:
 - **Built-in, as is:** `list_demo_cast_candidates({ scenario })` →
   `create_demo_organization` → `get_demo_operation` until `ready` or `failed`.
 - **Customized:** `get_demo_scenario` → edit → `check_demo_scenario` (repeat
-  until `ok`; show the operator `preview`) → operator confirms →
+  until `ok`; `preview` is there for the operator to read) →
   `create_demo_organization({ scenario: { pack } })` → `get_demo_operation`.
 - **Recover:** `get_demo_operation` → `recovery` → that tool.
 - **Phase 2, save for the team:** … `check_demo_scenario` →
