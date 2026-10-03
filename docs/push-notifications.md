@@ -113,8 +113,10 @@ characters become the `Topic`, so a retry replaces rather than stacks. A `404`
 or `410` disables the device at once: unlike APNs, a dropped browser
 subscription carries no timestamp and never comes back. Enqueueing requires a
 live device whose own transport is available, so either transport can run
-without the other configured. A `401` or `403` means the push service refused
-the deployment's VAPID credentials: like an APNs provider-token failure, the
+without the other configured. A `403` means the subscription was made under
+another VAPID key (RFC 8292 §4.2), so it retires that device only; one member's
+stale subscription cannot pause anyone else's. A `401` refuses the token the
+deployment signed for every browser: like an APNs provider-token failure, the
 message retries and operators get one Web Push notice, while APNs devices keep
 receiving. Keys that are not a P-256 point retire the device without a request;
 registration already checks their shape. A device with any other transport is
@@ -247,13 +249,15 @@ into the Worker for two primitives WebCrypto already has. Suppressing pushes
 to one client while another is in the foreground; the PRD leaves duplicates
 across devices as an open question. Accepting any HTTPS endpoint, which let any
 member make the Worker POST anywhere. Keeping one batch-wide stop on a provider
-fault, which let an APNs key problem stall every browser. Per-region VAPID keys,
+fault, which let an APNs key problem stall every browser. Reading a `403` as a
+deployment fault, which let one stale subscription pause every browser and page
+operators. Per-region VAPID keys,
 which one browser origin with one subscription cannot hold.
 
 **Consequences:** A member with the Mac app and a browser gets each push on
-both. One VAPID key pair serves every region; rotating it makes each browser
-re-subscribe on its next visit, and until then the push service's refusal
-reaches operators as a Web Push authentication failure. A new browser push
+both. One VAPID key pair serves every region; rotating it retires each subscription at
+its next push (`403`), and the browser re-subscribes under the new key on its
+next visit. A new browser push
 service needs its host added to the allowlist before its users can subscribe.
 
 Shipped in #1081. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
