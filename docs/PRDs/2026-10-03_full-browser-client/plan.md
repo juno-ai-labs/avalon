@@ -41,8 +41,8 @@ General, in a real browser window, and a guest still sees the guest shell.
 
 ## Phase 4: realtime parity
 
-- [ ] Each tab opens the desktop feed set over native sockets.
-- [ ] Presence published from page visibility and focus.
+- [x] Each tab opens the desktop feed set over native sockets.
+- [x] Presence published from page visibility and focus.
 
 **Gate:** another member sees the browser member as present; switching to a
 warmed pinned Channel shows no loading state.

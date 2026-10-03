@@ -44,6 +44,28 @@ describe('browser fallback single-platform identity boundary', () => {
     open.mockRestore();
   });
 
+  it('reports a frozen and resumed tab as the desktop reports sleep and wake', () => {
+    const states: string[] = [];
+    const stop = desktopBridge().onPowerStateChanged((state) => states.push(state));
+    document.dispatchEvent(new Event('freeze'));
+    document.dispatchEvent(new Event('resume'));
+    stop();
+    document.dispatchEvent(new Event('freeze'));
+    expect(states).toEqual(['suspended', 'resumed']);
+  });
+
+  it('opens an external page in a new tab, or in this one when the popup is blocked', async () => {
+    const opened = { opener: window } as unknown as Window;
+    const open = vi.spyOn(window, 'open').mockReturnValueOnce(opened).mockReturnValueOnce(null);
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign });
+    await desktopBridge().openExternal('https://accounts.google.com/a');
+    expect(opened.opener).toBeNull();
+    await desktopBridge().openExternal('https://accounts.google.com/b');
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(assign).toHaveBeenCalledWith('https://accounts.google.com/b');
+  });
+
   it('prefers the hardened preload bridge for clipboard writes', async () => {
     const copyText = vi.fn(async () => undefined);
     const preloadBridge = { copyText } satisfies Pick<RallyDesktopBridge, 'copyText'>;
