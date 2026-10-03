@@ -19,10 +19,7 @@
   "exclude": [
     "src/client.tsx",
     "src/connection-complete.tsx",
-    "src/conversation.tsx",
     "src/entry.tsx",
-    "src/mac-download.tsx",
-    "src/member-shell.tsx",
-    "src/workspace.tsx"
+    "src/shell.tsx"
   ]
 }

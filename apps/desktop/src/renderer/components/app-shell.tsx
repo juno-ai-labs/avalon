@@ -13,6 +13,8 @@ import {
   useAppSession,
   WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY,
 } from '../lib/app-session';
+import { useShellCapabilities } from '../lib/collaboration-session';
+import { MacDownloadLink } from './mac-download-link';
 import type { RallyApi } from '../lib/api';
 import { workstreamRecencyAt } from '../lib/format';
 import { MemberPresentationContext } from '../lib/member-presentation';
@@ -497,17 +499,19 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     session,
     signOut,
   } = useAppSession();
+  const { host, guest: guestSession } = useShellCapabilities();
   const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
-      if (api && (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyF' && !event.isComposing) {
+      // Search reads the whole Organization, and its route refuses a guest.
+      if (api && !guestSession && (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyF' && !event.isComposing) {
         event.preventDefault();
         setSearchOpen(true);
       }
     };
     window.addEventListener('keydown', openSearch);
     return () => window.removeEventListener('keydown', openSearch);
-  }, [api]);
+  }, [api, guestSession]);
   const searchIdentity = `${workspace.id}:${workspace.currentUser.id}`;
   const [searchPreview, setSearchPreview] = useState<{ identity: string; preview: AttachmentPreview } | null>(null);
   const navigate = useNavigate();
@@ -577,7 +581,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   };
   const { active: spaces, inactive: inactiveSpaces } = useSpaceDirectories();
   const socketSpacesReady = useSpacesReady();
-  const guestSession = session?.workspace?.accessClass === 'guest';
   const associativeNavigation = useQuery({
     queryKey: conversationDirectoryQueryKey(workspace.id),
     queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal),
@@ -762,6 +765,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       <div className={shellClassName} style={shellStyle}>
       <Sidebar
         onOpenSearch={api ? () => setSearchOpen(true) : undefined}
+        // A browser tab always offers the Mac app, member or guest.
+        footerItems={host === 'browser' ? <MacDownloadLink /> : undefined}
         accountMenu={(
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}

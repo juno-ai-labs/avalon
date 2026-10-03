@@ -11,7 +11,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import { conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
-import { useCollaborationSession } from '../lib/collaboration-session';
+import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { mainOmitted, useConversationDirectory } from '../lib/conversation-directory';
 
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
@@ -171,7 +171,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const queryClient = useQueryClient();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const selectedSubstreamId = searchParams.get('substream') || '0';
-  const guest = session?.workspace?.accessClass === 'guest';
+  const { guest } = useShellCapabilities();
   const conversationDirectory = useConversationDirectory();
   const directoryEntry = conversationDirectory?.workstreams.find((item) => item.parentId === id);
   // Scoped to the conversations the directory lists: always for a guest, whose
@@ -195,7 +195,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const importedSource = useQuery({
     queryKey: ['workstream-import-source', session?.user.id, id],
     queryFn: () => api!.importedSessionSource(id),
-    enabled: Boolean(api && session?.user.id && id),
+    // Imports are a member's; a guest's route refuses the read.
+    enabled: Boolean(api && session?.user.id && id && !guest),
     staleTime: Number.POSITIVE_INFINITY,
   });
   // The rail's mark follows the sidebar row rather than this detail, so one
@@ -360,7 +361,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     const workspace = session.workspace;
     const visit = routeRef.current.visit;
     const operation = ++menuOperation.current;
-    if (!linkSpaceId) { setSubstreamMenuFailure('copy_link'); return; }
     void copyWorkstreamLink({ region: workspace.region, workspaceId: workspace.id }, linkSpaceId, id, target.substreamId).catch(() => {
       if (routeRef.current.visit === visit && menuOperation.current === operation) {
         setSubstreamMenuFailure('copy_link');

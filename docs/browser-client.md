@@ -1,10 +1,10 @@
 # Browser client
 
-The browser client provides email and Google sign-in for shared collaboration. A
-guest gets the shared conversation screen described below; an Organization
-member gets the desktop shell, as described in [Member shell](#member-shell). The
-guest path has no setup or onboarding. Sign-in, invitation acceptance and canonical conversation links
-activate the workspace and mount the shared conversation screen. Local API and
+The browser client provides email and Google sign-in, then mounts the desktop
+shell for everyone: Organization members and guests shared into some of its
+conversations, as described in [The shell](#the-shell). A guest gets no setup or
+onboarding. Sign-in, invitation acceptance and canonical conversation links
+activate the workspace and mount the shell. Local API and
 Chrome journeys cover guest entry, feed, upload/reload, multiple workstreams,
 promotion and membership removal. Production mail delivery and deployed stateful
 artifact serving remain release checks; see the guest-sharing completion audit.
@@ -14,17 +14,16 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | Path | Responsibility |
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
-| `apps/browser/src/mac-download.tsx` | The Mac app download, pinned above the account menu in the sidebar, or floating with it when there is no sidebar. |
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, Google sign-in, invitation acceptance, session restore and workspace list. |
 | `apps/browser/src/invitation.ts` | Tokenized and addressed invitation fragments, and exact canonical scope destinations. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
-| `apps/browser/src/workspace.tsx` | The signed-in application's one lazy boundary; picks the guest or member shell. |
-| `apps/browser/src/member-shell.tsx` | The desktop shell for members over the cookie session: the browser's `AppSessionValue`. |
+| `apps/browser/src/shell.tsx` | The signed-in application's one lazy boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
 | `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications and opens their links on this origin. |
-| `apps/browser/src/conversation.tsx` | Browser router and providers for the shared feed, and the tab's one workspace socket for membership nudges; no desktop background socket pool. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
-| `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context and optional setup capabilities. |
+| `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context, optional setup capabilities, and `useShellCapabilities`: which host is drawing and whether the reader is a guest. |
+| `apps/desktop/src/renderer/components/mac-download-link.tsx` | The Mac app download row, the sidebar's footer item when the host is a browser tab. |
+| `apps/desktop/src/renderer/screens/shared-landing.tsx` | Where a guest lands, at the root or from a Space link: the first Channel shared with them, from the conversation directory. |
 | `packages/contracts/src/browser-session.ts` | Shared credential-free session and email exchange schemas. |
 | `apps/browser/wrangler.jsonc` | Assets and the explicit Global API service binding. |
 | `apps/browser/test/host.test.ts` | Real workerd host and service-binding transport tests. |
@@ -104,10 +103,9 @@ child-only destination points directly to that child, not through Main. No GET
 or focus event accepts.
 
 For an unaddressed entry, the client lists the user's regional workspaces and can sign
-out through the ordinary browser-session logout. Workspace roots mount the
-shared-conversation directory and canonical Space, Channel, and Breakout links
-activate the addressed workspace and mount the shared feed. No setup or onboarding
-view is part of this client.
+out through the ordinary browser-session logout. Workspace roots mount the shell,
+and canonical Space, Channel, and Breakout links activate the addressed
+workspace and open in it. A guest sees no setup or onboarding view.
 
 Returning focus refreshes both the root session and the selected workspace
 relationship, even when the user ID is unchanged. The feed stays mounted while
@@ -135,35 +133,25 @@ Failed network requests remain visible and can recover on focus or reconnect;
 generation used for sign-out and cross-tab restoration. Long session deadlines
 are split into timer-range-safe waits by `session-timer.ts`.
 
-The shared navigation uses the same single sidebar, Space pills, Channel rows,
-title pills and menus, split Breakout pane, resource rows, Sidekick controls and
-account trigger as desktop, from `@rally/ui` ([`desktop-shell.md`](desktop-shell.md)).
-The navigation directory carries each Breakout's `originTurnId` and each
-Space's `systemRole`; General gets no pill. The browser's versioned navigation directory contains
-only authorized containment plus the associative presentation metadata above it:
-name, icon, colour and public/private scope for Space, Channel and Breakout.
-The Channel's canonical parent in WorkspaceDO independently re-authorizes every
-Channel and Breakout;
-the metadata grants no parent transcript, roster, defaults or write capability.
-A child-only share names and styles its Channel so the Breakout can be placed
-correctly, but still omits Main and every unshared Breakout; such a Breakout opens
-alone, in Main's place. Selecting a Space pill filters the Channel list. On legacy paths it opens the first active authorized
-conversation across its Channels, falling back to archived content only when
-none is active. Canonical Space roots show a read-only overview of the Space
-and its shared Channels; selecting a Space on the canonical host opens that
-overview. A Channel with no visible Space placement
-stays reachable in a local **Shared channels** group. Workspace identity uses the
-existing account/badge treatment; no workspace icon/color settings are introduced.
-The browser does not install desktop background subscriptions. See [shared UI](shared-ui.md).
-It holds one workspace socket per tab, through `watchWorkspaceReach`, and reads
-the shared navigation again when that socket reports this person's reach
-changed ([`realtime-sockets.md`](realtime-sockets.md)).
-
-The sidebar is hidden when there is nothing to choose: one Channel and at most
-one Space (`browserSidebarVisible`). The lone Channel then opens directly and the
-account menu floats at the bottom left. The sidebar stays while the directory is
-loading, failed or empty. Its width is the reader's preference clamped by
-`browserSidebarWidth`; it does not collapse.
+A guest's sidebar is the desktop sidebar fed by the shared-navigation
+directory rather than the member socket's Space and Channel lists
+([`desktop-shell.md`](desktop-shell.md)). The navigation directory carries each
+Breakout's `originTurnId` and each Space's `systemRole`; General gets no pill.
+The browser's versioned navigation directory contains only authorized
+containment plus the associative presentation metadata above it: name, icon,
+colour and public/private scope for Space, Channel and Breakout. The Channel's
+canonical parent in WorkspaceDO independently re-authorizes every Channel and
+Breakout; the metadata grants no parent transcript, roster, defaults or write
+capability. A child-only share names and styles its Channel so the Breakout can
+be placed correctly, but still omits Main and every unshared Breakout; such a
+Breakout opens alone, in Main's place. Selecting a Space pill filters the
+Channel list. A canonical Space link selects that Space's pill and opens the
+first Channel shared there; the Organization root opens the first Channel shared
+anywhere (`SharedLanding`). A Channel with no visible
+Space placement stays reachable. A guest's shell holds the workspace socket, as
+a member's does, and reads the directory again when it reports this person's
+reach changed ([`realtime-sockets.md`](realtime-sockets.md)); it opens no
+background Channel sockets.
 
 ### Google sign-in
 
@@ -217,38 +205,48 @@ holds the pending attempt. The completion page says what happened and closes its
 when a script opened it; the tab that started the connection reconciles from the
 attempt read, as on the desktop.
 
-### Member shell
+### The shell
 
-`browserShellFor` in `session.ts` picks the shell from the selected workspace:
-`accessClass: "guest"` keeps the guest shell, anything else mounts
-`BrowserMemberShell`. The shell kind is part of the remount key, so a promotion
-or removal swaps shells on the next session read. Making `browserShellFor`
-return `"guest"` for everyone turns the member shell off.
+Every signed-in workspace mounts `BrowserShell` (`shell.tsx`), members and
+guests alike. The selected workspace's access class is part of the remount key,
+so a promotion, or a member made a guest, remounts the shell and drops caches
+that held what the old relationship could read.
 
-The member shell reuses the desktop renderer rather than forking it. It builds
-an `AppSessionValue` over the cookie session and installs it with
+The shell reuses the desktop renderer rather than forking it. It builds an
+`AppSessionValue` over the cookie session and installs it with
 `AppSessionValueProvider`, then mounts the desktop's `AccountOnboardingGate`
-and `WorkspaceApp`: the workspace socket provider, the Space directory, the
-Channel feed swarm, Breakouts, the details rail and the Settings route. The value
-carries `host: "browser"`, which surfaces use to tell the Mac app from a tab.
-Account onboarding is identity-scoped, so it goes through the `_` workspace of
-the cookie adapter. Anything only the Mac app can do (accepting a workspace
-invitation from the desktop flow, creating a workspace, desktop sign-in)
-rejects with "Available in the Mac app." In Settings, Application shows
+and `WorkspaceApp`: the workspace socket provider, the sidebar, the Channel feed,
+Breakouts, the details rail and the Settings route. The value carries
+`host: "browser"`. Account onboarding is identity-scoped, so it goes through the
+`_` workspace of the cookie adapter. Anything only the Mac app can do (accepting
+a workspace invitation from the desktop flow, creating a workspace, desktop
+sign-in) rejects with "Available in the Mac app." In Settings, Application shows
 Appearance and names the Mac app for the rest, and Notifications offers
-"In this browser".
+"In this browser". The sidebar always shows **Download the Mac app** above the
+account menu, as a footer item ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
 
-The desktop shell routes by hash. Before its router mounts, the member shell
-rewrites a canonical Channel or Space link into the workspace path plus the hash
-the desktop's own deep links set (`memberShellLocation`). Losing access or a
-401 asks the entry to re-read the server session, which unmounts the shell when
-the session is gone, exactly as for guests. Because members keep transcripts in
-the local cache, the entry wipes it alongside drafts on sign-out and account
-change.
+What a guest may do is asked in one place, `useShellCapabilities()`, which reads
+`host` and the session's `accessClass`. A guest's shell does not read the member
+directory, the Space directory, the Channel list, imports, connections or the
+connector catalog; it shows no search, no Sidekicks library, no account
+introduction and no Organization setup journey; and Settings holds only Account
+(without the timezone, saved through a member-only route) and Application. Those
+routes refuse a guest, so the shell neither asks nor offers. The server still
+authorizes every call. `GET /workspace` answers guests too, with
+`accessClass: "guest"` and no role, because the shell reads it before anything
+else; the rest of `/workspace` stays member-only.
+
+The desktop shell routes by hash. Before its router mounts, the shell rewrites a
+canonical Channel or Space link, or an invitation's addressed Channel path, into
+the workspace path plus the hash the desktop's own deep links set
+(`shellLocation`). Losing access or a 401 asks the entry to re-read the server
+session, which unmounts the shell when the session is gone. The shell keeps
+transcripts in the local cache, so the entry wipes it alongside drafts on
+sign-out and account change.
 
 The cookie adapter forwards the member route families (`spaces`, `projects`,
 `onboarding/account`, `work-opportunities`, `digest`, `push-devices`,
-`workspaces`) in addition to the guest ones. Each route keeps its own role
+`workspaces`) in addition to the ones guests use. Each route keeps its own role
 checks; the adapter adds no permission of its own. The rest of `onboarding`
 stays out: creating, activating or joining a workspace there answers with a
 bearer session, and a browser holds only its HttpOnly cookie.
@@ -287,14 +285,10 @@ which supplies pending OAuth state and external navigation. Omitting it hides
 setup cards and avoids their catalog request; existing connector chips and tool
 execution are separate from setup. Sidekick creation likewise requires an explicit
 creation callback; without it the picker retains attachment of existing Sidekicks
-and omits the native creation action. The lite browser omits both setup capabilities.
+and omits the native creation action. The browser supplies both to a member and
+neither to a guest, whose routes for them refuse.
 
 Addressed conversation links select their workspace directly without waiting for the workspace list.
-The browser mounts the shared surface with query, collaboration, tooltip and
-speech providers. A router basename preserves workspace-addressed links. The
-standalone feed hook opens only the selected conversation; workspace presence is
-optional and no workspace-wide subscription is fabricated. Persistent local
-transcript caching remains disabled without a cache-scope provider.
 
 The client and Worker have separate TypeScript configurations: browser components
 use DOM types and the existing shared-renderer optional-property convention; the
@@ -322,7 +316,7 @@ These actions use the canonical conversation-addressed recommendation options,
 not Main's participant list. Owned Sidekicks are excluded from explicit
 recommendation management. Recommendations use the exact substream endpoint and query key, so
 navigating between children does not reuse another child's source visibility.
-Sidekick authoring and setup are outside this lite surface. Guests use the scoped
+A guest's shell offers no Sidekick authoring or setup. Guests use the scoped
 recommendation summaries for eligible owned Sidekicks as well; they do not fetch
 the member-only owned Sidekick authoring directory.
 
@@ -335,7 +329,7 @@ no access picker, invitation list, direct-share management, or related reads.
 The server remains responsible for sharing authorization. No setup or onboarding
 capability is required.
 
-The lite header also opens the selected conversation's participant controls and
+The conversation header also opens the selected conversation's participant controls and
 lists its attached resources. Resource selection uses the shared preview/lightbox
 and authenticated byte endpoint. The header's resource opener is bound to the
 selected conversation; the desktop parent sidebar retains a separately bound
@@ -384,7 +378,7 @@ existing desktop jsdom harness rather than creating another test runner.
 
 The host serves the push service worker at `/sw.js` from the root, with
 `Cache-Control: no-cache` so a changed worker is picked up, and the shell's CSP
-allows `worker-src 'self'` so the member shell can register it. The worker
+allows `worker-src 'self'` so the shell can register it. The worker
 caches nothing and answers no requests.
 
 Forwarded HTTP responses retain their streaming bodies but add document sandbox
@@ -529,7 +523,13 @@ browser-session suites own the cookie and membership authority checks.
 Fake-clock entry cases additionally cover renewal, unchanged-ceiling expiry,
 late renewal after logout and deadlines beyond the browser timer range.
 
-The lite conversation header exposes rename through the shared conversation
+`browser-collaboration.test.tsx` mounts the entry and the shell for a guest
+and fails on any request to a route family that refuses guests, so a surface
+that starts reading member-only data for everyone shows up there.
+`apps/api/test/auth-router.test.ts` proves `GET /workspace` answers a guest
+while the member directory stays refused.
+
+The conversation header exposes rename through the shared conversation
 mutation. A failed rename keeps its draft and shows the API error; success closes
 the dialog and refreshes shared navigation. Guest Main renames use the same
 exact-conversation route as child renames, without requiring full membership.
@@ -551,6 +551,44 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-03 — Guests get the desktop shell too
+
+**What changed:** The browser's guest shell (`conversation.tsx`, about 600
+lines with its own sidebar, router and header) is gone. Every browser user
+mounts the desktop shell; what a guest may do is read from one hook,
+`useShellCapabilities()`, which also took over the scattered `accessClass` and
+cookie-session checks. `GET /workspace` now answers guests, with no role. A
+guest's shell skips the member directory, imports, connections, search, the
+Sidekicks library, the account introduction and the Organization journey, and
+its Settings holds Account and Application. A guest's Space link opens the
+first Channel shared with them there, and the root opens the first one shared
+anywhere. The Mac app download moved into the
+shared sidebar for every browser user.
+
+**Why:** Two shells meant every conversation feature shipped twice or reached
+guests late, and the desktop shell already carried most of what guests need:
+the sidebar from the shared-navigation directory, scoped Breakouts, and no
+background Channel sockets for guests.
+
+**Considered and rejected:** Opening the member directory to guests so the
+shell needs no guest checks; it would show a guest everyone in the
+Organization. Porting the guest shell's own rules (hiding the sidebar for a
+single Channel, a "make this window wider" notice under 920px, a Space
+overview page) into the shared shell; members never had them, and the
+Channel opens directly either way.
+
+**Consequences:** A surface that reads Organization-wide data must check
+`useShellCapabilities().guest` before it asks; the guest test in
+`browser-collaboration.test.tsx` fails on any request to a member-only route
+family. Turning the shared shell off for guests is now a revert, not a
+switch. The Mac app still withholds guest workspaces in platform discovery
+(see [`multiple-workspaces.md`](multiple-workspaces.md)); lifting that is a
+separate change that has to audit Electron-only surfaces. A guest's transcript
+cache sits in its own scope (`localCacheScope(…, 'guest')`), so one shared in
+after being removed as a member never hydrates what they cached as a member.
+
+Shipped in #1088.
 
 ### 2026-10-03 — The entry draws the desktop sign-in card
 

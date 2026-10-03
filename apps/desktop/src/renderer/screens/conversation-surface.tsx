@@ -27,8 +27,8 @@ import {
 } from '@rally/contracts';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import type { SubstreamInitialContext } from '@rally/contracts/substream-creation';
-import { isCookieSession, type ClientSession } from '@rally/contracts/client-session';
-import { useCollaborationSession } from '../lib/collaboration-session';
+import type { ClientSession } from '@rally/contracts/client-session';
+import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
@@ -1081,6 +1081,7 @@ export function ConversationSurface({
   const requestedSearch = useRef<string | null>(null);
 
   const { api, session } = useCollaborationSession();
+  const { host, guest } = useShellCapabilities();
   const workspaceSocket = useOptionalWorkspaceSocket();
   const presenceUserIdsByWorkstream = workspaceSocket?.presenceUserIdsByWorkstream ?? NO_WORKSPACE_PRESENCE;
   const featureFlags = useClientFeatureFlags(api);
@@ -1360,7 +1361,7 @@ export function ConversationSurface({
    * flag gates presentation only: an artifact's authorization is structural and
    * holds whether or not this is passed.
    */
-  const browserHost = isCookieSession(session);
+  const browserHost = host === 'browser';
   const siteArtifacts = useMemo(() => {
     if (!api || featureFlags.data?.liveArtifactsEnabled !== true) return undefined;
     const bridge = window.rally ?? (browserHost ? desktopBridge() : undefined);
@@ -1478,25 +1479,24 @@ export function ConversationSurface({
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
   const railLeaving = useRailExitFade(railOpen, railScopeKey);
-  const isGuest = session?.workspace?.accessClass === 'guest';
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api && !isGuest),
+    enabled: Boolean(api && !guest),
     staleTime: 60_000,
   });
   const connections = useQuery({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),
-    enabled: Boolean(api && !isGuest),
+    enabled: Boolean(api && !guest),
     // OAuth completion publishes the workspace socket's
     // `connector_connections` topic. Its invalidation refetches this active
     // query, which lets an in-feed connection card become Connected without a
     // focus heuristic or polling loop.
     staleTime: 60_000,
   });
-  const visibleMembers = isGuest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
-  const visibleConnections = isGuest ? routedDetail?.connections : connections.data;
+  const visibleMembers = guest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
+  const visibleConnections = guest ? routedDetail?.connections : connections.data;
   const availableResources = useInfiniteQuery({
     queryKey: ['resources', debouncedResourceSearch],
     queryFn: ({ pageParam, signal }) => api!.listResources({
@@ -1978,7 +1978,7 @@ export function ConversationSurface({
   // have to show the new title without a refetch round trip.
   const renameWorkstream = useMutation({
     mutationFn: async (title: string) => {
-      if (substreamId === '0' && session?.workspace?.accessClass !== 'guest') return api!.renameWorkstream(id, title);
+      if (substreamId === '0' && !guest) return api!.renameWorkstream(id, title);
       await api!.renameSubstream(id, substreamId, title);
       return undefined;
     },
@@ -2097,7 +2097,7 @@ export function ConversationSurface({
   });
   // Guest recommendations already include eligible owned sources as minimal
   // summaries. The member-only authoring directory is neither needed nor allowed.
-  const readOwnedSidekickDetails = session?.workspace?.accessClass !== 'guest';
+  const readOwnedSidekickDetails = !guest;
   const ownedSidekicks = useQuery({
     queryKey: ['workstream-sidekicks', id],
     // A person viewing a room they do not participate in may not list what it

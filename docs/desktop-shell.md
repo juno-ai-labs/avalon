@@ -3,8 +3,9 @@
 The shell is everything around a conversation's feed: the one navigation
 sidebar, the floating title pills and their menus, and the split that puts a
 Channel and its open Breakout side by side. The Electron client and the browser
-web app draw it from the same shared components in `packages/ui`. Each host
-owns its routing, data and authority; the shared pieces own only shape.
+web app mount the same shell, the desktop renderer's `WorkspaceApp`, for
+members and guests alike; each host supplies its session and its native
+services. What differs by host or by guest is read from `useShellCapabilities()`.
 
 Read this before changing the sidebar's geometry, the Space pills, what a
 Channel row shows, either title menu, how a Breakout opens, or who owns the
@@ -28,7 +29,7 @@ right panel.
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The Channel screen: both panes, both pills, the one-slot rule, Breakout creation in the right pane. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation. Draws chips and ticks for Main, owns its right panel by conversation, honours a scroll-to-turn request. |
 | `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Routes a clicked web link to the pane it was clicked in. |
-| `apps/browser/src/conversation.tsx`, `apps/browser/src/sidebar-layout.ts` | The web app's sidebar and split screen over the shared navigation directory. |
+| `apps/browser/src/shell.tsx` | The web app: this shell over the browser's cookie session ([`browser-client.md`](browser-client.md#the-shell)). |
 
 ## How it works
 
@@ -44,8 +45,9 @@ desktop has four: **Restart to update** (only when `useDownloadedUpdate` has
 one), **Search organization**, **Import from ChatGPT or Claude** (the browser
 import window, locked to the selected Space), and **New channel** (the Start a
 new channel form, opened directly with `NewWorkstreamMenu trigger="direct"`).
-The web app has none of them; the Mac download link sits above its account
-menu.
+In a browser tab the import is absent (it needs the native import window). A guest's bar has no search
+and no **New channel**: their sidebar is read-only and filled from the
+shared-navigation directory.
 
 Under it, the Space pills, whose row fades at whichever edge has pills scrolled past it (the app's scroll-edge fade, on the inline axis). The round **New space** button, a folder with a plus, leads, and its
 right-click offers **Restore archived space**. Then **All**, then each Space by
@@ -91,6 +93,15 @@ shows the ranked marker from
 [`workstream-markers.md`](workstream-markers.md), with `completed` left out. A
 Breakout needing this reader counts as unread on its Channel. The dot replaced
 the numeric badge.
+
+At the bottom, below the list and above the line over the account menu, sit
+the sidebar's **footer items**: rows the host passes as `footerItems`, drawn by
+`SidebarFooterItems` from `@rally/ui`. They stay on screen however long the
+list is, since they are outside its scroll, and each is a `SidebarRow`, so a
+compact rail collapses it to a tile like a Space row. Today the one item is
+**Download the Mac app**, which `AppShell` passes whenever the host is a
+browser tab, for members and guests alike; the Mac app passes none and draws
+nothing there. Tips or tutorials go here too.
 
 ### Pins under All
 
@@ -234,8 +245,8 @@ own:
 - the feed, composer and panels inside a pane ([`conversation-surfaces.md`](conversation-surfaces.md));
 - what the desktop restores after relaunch ([`desktop-layout.md`](desktop-layout.md)).
 
-The web app reads each Breakout's `originTurnId` and each Space's `systemRole`
-from the shared navigation directory.
+A guest's sidebar reads each Breakout's `originTurnId` and each Space's
+`systemRole` from the shared navigation directory.
 
 ## Failure modes and limits
 
@@ -256,7 +267,7 @@ from the shared navigation directory.
   `components/space-pills.test.tsx`, `components/message-feed.test.tsx`,
   `components/breakout-marks.test.tsx`, `lib/browser-rail-links.test.ts`. Run
   with `pnpm --filter @rally/desktop exec vitest run <path>`.
-- **Web layout math:** `apps/browser/test/sidebar-layout.test.ts`.
+- **A guest in the shell:** `lib/browser-collaboration.test.tsx`.
 - **API side of the origin fields:**
   `apps/api/test-workers/substream-creation-runtime.test.ts`.
 - **Window behaviour:** whether panes, pills and ticks are visible and placed
@@ -264,6 +275,30 @@ from the shared navigation directory.
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-03 — Footer items above the account menu
+
+**What changed:** The sidebar takes `footerItems`, rows drawn above the line
+over the account menu and outside the scrolling list. The browser's
+**Download the Mac app** is its first user, passed by `AppShell` when the host
+is a browser tab, so members and guests both always see it.
+
+**Why:** Product wants the download always on screen in the browser, and
+expects tips or tutorials in the same place. On `main` the browser drew the
+download itself (`apps/browser/src/mac-download.tsx`), in the guest shell's
+own sidebar only, so members never saw it; with every browser user now in the
+desktop sidebar, it needed a place there that later items can share.
+
+**Considered and rejected:** Putting the rows inside the scrolling list,
+which hides them under a long Channel list; and a sidebar-owned list of
+known items, which would make the sidebar decide what a host offers.
+
+**Consequences:** Anything that must stay visible at the bottom of the
+sidebar goes through `footerItems` as `SidebarRow`s, not into the list. The
+host decides what appears; the sidebar only places it.
+
+Shipped in #1088.
+
 
 ### 2026-10-02 — Space pickers lead with All
 

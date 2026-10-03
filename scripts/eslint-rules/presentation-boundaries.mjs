@@ -3,7 +3,6 @@
  * provider, and exception diagnostics belong in telemetry and logs, not UI copy.
  */
 export const presentationBoundaryFiles = [
-  "apps/browser/src/conversation.tsx",
   "apps/desktop/src/renderer/components/message-feed.tsx",
   "apps/desktop/src/renderer/components/scope-sharing-panel.tsx",
   "apps/desktop/src/renderer/components/**/*{sidebar,rail}*.tsx",
