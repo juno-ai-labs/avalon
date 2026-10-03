@@ -73,18 +73,20 @@ export function escapeClosesWindow(event: KeyboardEvent, unsavedTextScope: Eleme
  * consumed it, `stopPropagation()` from one that owns the whole event, and
  * Radix's own dismissal of whatever layer is on top.
  */
-export function useEscapeClosesWindow({ enabled = true, unsavedTextScope }: {
+export function useEscapeClosesWindow({ enabled = true, unsavedTextScope, onClose }: {
   enabled?: boolean;
   unsavedTextScope?: RefObject<Element | null>;
+  /** Replaces closing the window, where the screen is a route in a browser tab. */
+  onClose?: () => void;
 } = {}): void {
   useEffect(() => {
     if (!enabled) return undefined;
     const close = (event: KeyboardEvent): void => {
-      if (escapeClosesWindow(event, unsavedTextScope?.current ?? null)) window.close();
+      if (escapeClosesWindow(event, unsavedTextScope?.current ?? null)) (onClose ?? (() => window.close()))();
     };
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
-  }, [enabled, unsavedTextScope]);
+  }, [enabled, onClose, unsavedTextScope]);
 }
 
 /** Input types Escape may close the window over: the rest hold no typing. */
