@@ -361,7 +361,8 @@ versions. Each row carries its breakouts (`privateChildren`), so one answer is
 the Space's children and grandchildren. It also holds as many of those
 Channels' rails as fit the frame beside the rows. `nextAfter` is the page's
 last Channel when the page is full, and `null` when the Space ends there. A
-guest, or a Space the viewer cannot see, gets an empty page. System Channels
+Space the viewer cannot see gets an empty page; a guest's pages hold what the
+listing rules give them ([`listing-rules.md`](listing-rules.md)). System Channels
 are left off, as the connect page leaves them off.
 
 The desktop walks every Space. It asks the Space on screen alone (else the
@@ -391,20 +392,19 @@ A Space whose request fails shows the rows held for it and is asked again
 when it next comes on screen. A whole walk that fails leaves the directory
 query in error, and the sidebar stops waiting on the Spaces it did not reach.
 
-A guest is sent no Spaces, no Channel rows and no automations: the connect
-snapshot's lists are empty, `list_workstreams` answers an empty page, and no
-`workspace_workstream_state` frame reaches them, not even a tombstone, whose id
-alone would name a Channel. Those lists follow member rules (every
-Organization-public Channel, every workspace automation), and a guest's rail is
-the grant-scoped `shared-navigation` directory instead. For the same reason a
-guest's `set_presence` foreground is dropped (no recency, no presence either
-way, and no close for a Channel this object cannot check), and `channel_rails`
-answers a guest only for a Channel they take part in.
+A guest's socket is shaped by the same rules as a member's
+([`listing-rules.md`](listing-rules.md)), with Organization-wide scope admitting
+only members. The connect snapshot, `list_workstreams`, `workspace_workstream_state`
+frames, `channel_rails` and `set_presence` all ask whether this person may list
+the Channel, so a guest is sent nothing of an Organization-wide Channel they are
+not in, not even a tombstone, and foregrounding one closes the socket as it
+would a member's. A guest is sent no automations: the Sidekick library is a
+member's.
 
-For a member, the sidebar keeps the first page, and the desktop keeps
-`list_workstreams` paging, while an Organization is still opening
-(`spacesReady` false): a Channel can sit in no Space there, and the page is the
-only way it reaches the sidebar.
+The sidebar keeps the first page, and the desktop keeps `list_workstreams`
+paging, while **an Organization is still opening** (`spacesReady` false). A
+Channel can sit in no Space there, and the page is the only way it reaches the
+sidebar.
 
 Electron asks for Channel rails with `channel_rails`: a stable request ID and
 up to 250 named Channels (`workstreamIds`). The retired Space target
@@ -491,9 +491,10 @@ or holds an active impersonation relationship to them. It is not a
 fail every older desktop's subscribe answer; an unknown event `type` is ignored
 instead. It is not on the waterline or replayed, so a listener rereads on every
 subscribe answer. Three clients listen. The desktop's own workspace socket rereads the
-guest navigation (`shared-navigation`) on it: a member's Channel rows and Space
-pages already move on the same flip, but a guest is sent no Space snapshot, so
-without it a guest's new grant waited for window focus. Hosts with no workspace
+conversation directory (`shared-navigation`) on it: Channel rows and Space
+pages already move on the same flip, but the directory says which conversation
+a Breakout-only Channel opens on, and without the reread a new grant's row
+opened on Main. Hosts with no workspace
 socket of their own — Sideline ([`impersonation.md`](impersonation.md)) and the
 lite browser client ([`browser-client.md`](browser-client.md)) — hold one
 through `watchWorkspaceReach` in `@rally/contracts/workspace-reach-watch`, which
@@ -951,7 +952,7 @@ receipt.
 | `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Sync topic audiences on real sockets, live and on replay, and the Channel row's; the full list is in [`websocket-architecture.md`](websocket-architecture.md#testing). |
 | `apps/api/test/workspace-realtime-service.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-realtime-service.test.ts` | The mutation map: each write's topics and audience. |
 | `apps/api/test-workers/channel-viewer-state.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Each viewer's own breakouts on the connect sidebar, per Channel; a roster change pushed to that breakout's members only; running background agents pushed to every reader and counted only where each can look; a lost Channel tombstoned without closing the socket; the current list after a resubscribe; nothing said for a parent still waiting for its import; foregrounding a Channel warms its Main. |
-| `apps/api/test-workers/channel-rails.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-rails.test.ts` | `channel_rails` answers on a real socket: rail contents, `unavailable`, `attached` absent until reported, frames within a lowered frame limit and `oversized`, a guest's answer, a corrupt stored row that still ends in `final`; and the row pushed with a higher `railWaterline` for each kind of rail change. `space_channels` on the same fixture: a Space's rows with their breakouts and rails for each viewer, rails that do not fit left out, paging by visible Channels, and the Spaces-only sidebar for every member once the hierarchy is whole, never for a guest, with the retired `channels_by_space` ignored. |
+| `apps/api/test-workers/channel-rails.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/channel-rails.test.ts` | `channel_rails` answers on a real socket: rail contents, `unavailable`, `attached` absent until reported, frames within a lowered frame limit and `oversized`, a guest's answer, a corrupt stored row that still ends in `final`; and the row pushed with a higher `railWaterline` for each kind of rail change. `space_channels` on the same fixture: a Space's rows with their breakouts and rails for each viewer, rails that do not fit left out, paging by visible Channels, and the Spaces-only sidebar once the hierarchy is whole, for a member and a guest alike, with the retired `channels_by_space` ignored. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (breakouts block) | `pnpm --filter @rally/desktop test` | The breakout list and running agents taken from sidebar and pushed rows and kept with no screen observing them, waterline order, silence on an absent field, eviction on a tombstone, receipt-backed appearance, and pruning the disk cache to the roster. |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial admission for the pooled SubstreamAgent feed and that no Channel control ticket is ever requested, exact-feed reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent command/feed reconnect, private message receipts, streaming, explicit compaction lifecycle/reconciliation, range merging, oversized-turn placeholder rendering, and scroll thresholds/anchor preservation. |

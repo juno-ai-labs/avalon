@@ -28,7 +28,7 @@ import {
   DESKTOP_DEEP_LINK_PROTOCOL,
   DESKTOP_DEEP_LINK_PROTOCOLS,
 } from '@rally/contracts/desktop-deep-link';
-import { RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
 import type { Region } from "@rally/contracts/regions";
 import { regions } from "@rally/contracts/regions";
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
@@ -236,6 +236,7 @@ import { WorkspaceSyncRelay } from './workspace-sync-relay';
 import { registerWorkspaceSyncRelayIpc } from './workspace-sync-relay-ipc';
 import {
   activeStoredCredential,
+  activeStoredCredentialIsGuest,
   activeStoredWorkspaceCredential,
   mergeStoredSession,
   parseStoredAuthSet,
@@ -1278,6 +1279,9 @@ const developerSettingsFlagController = new DeveloperSettingsFlagController({
 const menuBarContentStore = new MenuBarContentStore({
   requestJson: rallyApiRequest,
   onChange: () => menuBarController.refresh(),
+  // From storage rather than `inMemorySession`, which a login launch has not
+  // set when the status item first asks.
+  available: async () => !activeStoredCredentialIsGuest(await loadStoredAuthSet(), await loadStoredProfileSet()),
   logWarning: (message, error) => logWarn('rally', message, error),
 });
 
@@ -2255,6 +2259,8 @@ async function discoverWorkspaces(): Promise<WorkspaceDiscovery> {
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${credential.accessToken}`,
+        // Declares that this build opens a guest relationship it is offered.
+        [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION),
       },
     },
   ));
@@ -2504,6 +2510,7 @@ async function requestOnboardingSession(
         Accept: 'application/json',
         'Content-Type': 'application/json',
         Authorization: `Bearer ${credential.accessToken}`,
+        [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION),
         ...(operationId ? { [RALLY_HEADERS.OPERATION_ID]: operationId } : {}),
       },
       body: JSON.stringify(body),

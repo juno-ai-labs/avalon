@@ -264,7 +264,7 @@ it("applies committed grants to the grant directory in the same object even when
   const directory = room();
   await directory.initializeWorkspace(workspaceId, "wnam");
   expect(await directory.listScopeGrantCandidates({ workspaceId, userId: actorId,
-    membershipIncarnation: actorId })).toEqual([parentId]);
+    membershipIncarnation: actorId, accessClass: "guest" })).toEqual([parentId]);
   await runInDurableObject(directory, (_instance, state) => {
     for (const [spaceId, title, appearance, createdAt] of [
       [firstSpaceId, "Product", '{"icon":"rocket","color":"violet"}', 1],
@@ -282,7 +282,7 @@ it("applies committed grants to the grant directory in the same object even when
     }
   });
   expect(await directory.listScopeGrantCandidates({ workspaceId, userId: recipientId,
-    membershipIncarnation: recipientId })).toEqual([parentId]);
+    membershipIncarnation: recipientId, accessClass: "guest" })).toEqual([parentId]);
   expect(await listSharedDirectory(env, workspaceId, recipientId)).toEqual({ workstreams: [{
     parentId, title: null, archived: false, conversations: [{ substreamId: childId, title: "Shared breakout", archived: false }],
   }] });
@@ -309,13 +309,13 @@ it("applies committed grants to the grant directory in the same object even when
   // The revocation's directory row lands in the revocation's own transaction.
   await room().mutateScopeGrant({ ...mutation(), active: false, expectedRevision: added.grant.revision });
   expect(await directory.listScopeGrantCandidates({ workspaceId, userId: recipientId,
-    membershipIncarnation: recipientId })).toEqual([]);
+    membershipIncarnation: recipientId, accessClass: "guest" })).toEqual([]);
   // A candidate index that still named the Channel (a directory row restored
   // from before the revocation) would not expose it either: the canonical
   // grant is what the listing reads.
   await exec(`UPDATE scope_grant_directory SET active = 1 WHERE parent_id = ? AND user_id = ?`, parentId, recipientId);
   expect(await directory.listScopeGrantCandidates({ workspaceId, userId: recipientId,
-    membershipIncarnation: recipientId })).toEqual([parentId]);
+    membershipIncarnation: recipientId, accessClass: "guest" })).toEqual([parentId]);
   expect(await listSharedDirectory(env, workspaceId, recipientId)).toEqual({ workstreams: [] });
   expect(await listSharedNavigationDirectory(env, workspaceId, recipientId)).toEqual({ spaces: [], workstreams: [] });
 });

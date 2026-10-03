@@ -27,7 +27,7 @@ import { accountReconnectRequired, workspaceActivationFailureCode } from '../../
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
 import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
-import { CollaborationSessionProvider, type ConnectorSetupCapability, type PendingConnectorOAuth } from './collaboration-session';
+import { CollaborationSessionProvider, shellCapabilities, type ConnectorSetupCapability, type PendingConnectorOAuth } from './collaboration-session';
 export type { PendingConnectorOAuth } from './collaboration-session';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
@@ -971,6 +971,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (intent.kind === 'slack-link') {
         const linkSlack = async (targetApi: RallyApi): Promise<void> => {
           setDeepLinkError(null);
+          // Linking reads `/connections`, which refuses a guest. The workspace
+          // the link ran in is the session by now, whether or not it switched.
+          if (sessionRef.current?.workspace?.accessClass === 'guest') {
+            reportDeepLinkFailure('Connecting Slack is available to members of this organization.');
+            return;
+          }
           try {
             const preview = await targetApi.previewSlackUserLink(intent.token);
             const confirmed = window.confirm(
@@ -1297,8 +1303,13 @@ export function AppSessionValueProvider({ value, connectorSetup, createSidekick,
   connectorSetup: ConnectorSetupCapability | null;
   createSidekick: (() => Promise<void>) | null;
 }>): React.JSX.Element {
+  // Starting a connection and authoring a Sidekick are a member's: their
+  // routes refuse a guest, so on either host a guest's shell is handed neither
+  // and offers neither. Existing connectors and attached Sidekicks still work.
+  const { guest } = shellCapabilities(value);
   return <AppSessionContext.Provider value={value}>
-    <CollaborationSessionProvider api={value.api} host={value.host} session={value.session} connectorSetup={connectorSetup} createSidekick={createSidekick}>{children}</CollaborationSessionProvider>
+    <CollaborationSessionProvider api={value.api} host={value.host} session={value.session}
+      connectorSetup={guest ? null : connectorSetup} createSidekick={guest ? null : createSidekick}>{children}</CollaborationSessionProvider>
   </AppSessionContext.Provider>;
 }
 

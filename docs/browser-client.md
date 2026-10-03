@@ -23,7 +23,6 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
 | `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context, optional setup capabilities, and `useShellCapabilities`: which host is drawing and whether the reader is a guest. |
 | `apps/desktop/src/renderer/components/mac-download-link.tsx` | The Mac app download row, the sidebar's footer item when the host is a browser tab. |
-| `apps/desktop/src/renderer/screens/shared-landing.tsx` | Where a guest lands, at the root or from a Space link: the first Channel shared with them, from the conversation directory. |
 | `packages/contracts/src/browser-session.ts` | Shared credential-free session and email exchange schemas. |
 | `apps/browser/wrangler.jsonc` | Assets and the explicit Global API service binding. |
 | `apps/browser/test/host.test.ts` | Real workerd host and service-binding transport tests. |
@@ -133,25 +132,20 @@ Failed network requests remain visible and can recover on focus or reconnect;
 generation used for sign-out and cross-tab restoration. Long session deadlines
 are split into timer-range-safe waits by `session-timer.ts`.
 
-A guest's sidebar is the desktop sidebar fed by the shared-navigation
-directory rather than the member socket's Space and Channel lists
-([`desktop-shell.md`](desktop-shell.md)). The navigation directory carries each
-Breakout's `originTurnId` and each Space's `systemRole`; General gets no pill.
-The browser's versioned navigation directory contains only authorized
-containment plus the associative presentation metadata above it: name, icon,
-colour and public/private scope for Space, Channel and Breakout. The Channel's
-canonical parent in WorkspaceDO independently re-authorizes every Channel and
-Breakout; the metadata grants no parent transcript, roster, defaults or write
-capability. A child-only share names and styles its Channel so the Breakout can
-be placed correctly, but still omits Main and every unshared Breakout; such a
-Breakout opens alone, in Main's place. Selecting a Space pill filters the
-Channel list. A canonical Space link selects that Space's pill and opens the
-first Channel shared there; the Organization root opens the first Channel shared
-anywhere (`SharedLanding`). A Channel with no visible
-Space placement stays reachable. A guest's shell holds the workspace socket, as
-a member's does, and reads the directory again when it reports this person's
-reach changed ([`realtime-sockets.md`](realtime-sockets.md)); it opens no
-background Channel sockets.
+A guest's sidebar is the desktop sidebar fed by the workspace socket, the same
+Space and Channel lists a member gets, by the same rules
+([`listing-rules.md`](listing-rules.md)): the Channels with a conversation the
+guest may open, and the Spaces those Channels sit in. Organization-wide scope
+admits only members, so a guest is told nothing of an Organization-wide Channel
+they are not in. The shared-navigation directory adds no rows; it says which
+conversations of a Channel the guest holds. A child-only share still omits Main
+and every unshared Breakout; such a Breakout opens alone, in Main's place. The
+Channel's canonical parent in WorkspaceDO independently re-authorizes every
+Channel and Breakout. Selecting a Space pill filters the Channel list. The
+Organization root and a Space link open the same landing route and Space
+dashboard a member's do; the dashboard is read-only for a guest. A guest's
+shell holds background Channel sockets as a member's does, for every Channel
+whose Main is theirs (`mainReachable`).
 
 ### Google sign-in
 
@@ -226,12 +220,13 @@ Appearance and names the Mac app for the rest, and Notifications offers
 account menu, as a footer item ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
 
 What a guest may do is asked in one place, `useShellCapabilities()`, which reads
-`host` and the session's `accessClass`. A guest's shell does not read the member
-directory, the Space directory, the Channel list, imports, connections or the
-connector catalog; it shows no search, no Sidekicks library, no account
+`host` and the session's `accessClass`. A guest's shell does not read imports,
+connections or the connector catalog; it shows no Sidekicks library, no account
 introduction and no Organization setup journey; and Settings holds only Account
 (without the timezone, saved through a member-only route) and Application. Those
-routes refuse a guest, so the shell neither asks nor offers. The server still
+routes refuse a guest, so the shell neither asks nor offers. Search, Speak and
+push registration are a guest's as they are a member's: each answers only for
+what the person may already reach. The server still
 authorizes every call. `GET /workspace` answers guests too, with
 `accessClass: "guest"` and no role, because the shell reads it before anything
 else; the rest of `/workspace` stays member-only.

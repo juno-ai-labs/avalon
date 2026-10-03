@@ -94,7 +94,9 @@ updatedAt, value }` with a compound primary key of `[scope, kind, key]`. A
 `desktopWorkspaceIdentityKey(region, workspaceId)`, so one account's rows for
 one workspace are one key range, leaving that workspace deletes exactly them,
 and two accounts on one device that share a workspace never read each other's
-rows, whatever order a wipe and a hydration run in. A *kind* names the slice
+rows, whatever order a wipe and a hydration run in. A guest's scope adds
+`:guest`, so an account demoted from member to guest never reads back what it
+cached as a member; leaving the workspace deletes both ranges. A *kind* names the slice
 that owns the row's shape. The *subject* is what
 the row is about, for removal by identity rather than by key: every
 conversation under one work stream carries the work stream's id, so losing the
@@ -579,6 +581,25 @@ is small. The cost that would grow is the persisted transcript, and
 scrolling.
 
 ## Changelog
+
+### 2026-10-03 — A guest's rows live apart from a member's
+
+**What changed:** `localCacheScope` takes the access class and suffixes a
+guest's scope with `:guest`. `clearWorkspaceLocalCache` deletes both ranges.
+
+**Why:** Guests and members now mount the same shell over the same cache, in
+the browser and the Mac app. A member demoted to guest keeps the account and
+the workspace, so under one scope the guest view would hydrate transcripts the
+person cached as a member, including Channels no longer shared with them,
+before any socket said otherwise. Reported in review of #1089.
+
+**Considered and rejected:** Wiping the member rows when the access class
+changes. That needs an observer of the transition on both hosts and still
+races a hydration that starts first; a separate scope cannot be read at all.
+
+**Consequences:** A promotion back to member starts from the member rows the
+device still holds, which that person may read again. Anything that builds a
+scope by hand instead of through `localCacheScope` must pass the access class.
 
 ### 2026-10-03 — Usage is the first slice without a socket (#1086)
 

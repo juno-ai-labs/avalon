@@ -52,10 +52,16 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  * before this header, which is exactly what a pre-cutover desktop is.
  * `2` adds browser script/reset support.
  * `3` adds explicit import verification checks and parallel file downloads, required by import admission.
+ * `4` opens a guest relationship: platform discovery lists one and activation admits it.
  */
-export const CLIENT_CONTRACT_VERSION = 3;
+export const CLIENT_CONTRACT_VERSION = 4;
 /** Import verification includes explicit check outcomes and parallel file downloads. */
 export const SESSION_IMPORT_CLIENT_CONTRACT = 3;
+/**
+ * First client contract that opens a guest relationship. A desktop before it
+ * asks member-only routes for every stored workspace, so it is not offered one.
+ */
+export const GUEST_WORKSPACES_CLIENT_CONTRACT = 4;
 
 /**
  * The oldest client contract a Worker still answers.

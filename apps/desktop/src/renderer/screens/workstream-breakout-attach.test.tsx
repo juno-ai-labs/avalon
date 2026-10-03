@@ -68,6 +68,9 @@ import { useUiStore } from '../lib/ui-store';
 import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import type * as CollaborationSessionModule from '../lib/collaboration-session';
 import type { ClientSession } from '@rally/contracts/client-session';
+import type { SubstreamId } from '@rally/contracts';
+import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
+import { conversationDirectoryQueryKey } from '../lib/conversation-directory';
 
 const channelId = '00000000-0000-7000-8000-000000000801';
 
@@ -158,10 +161,11 @@ function seed(queryClient: QueryClient, key: readonly unknown[], transcriptKey: 
   queryClient.setQueryData(transcriptKey, { ...transcript, snapshotId: `snapshot-${transcriptKey.join(':')}` });
 }
 
-function renderScreen({ breakout }: { breakout: boolean }): QueryClient {
+function renderScreen({ breakout, directory }: { breakout: boolean; directory?: SharedNavigationDirectory }): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
+  if (directory) queryClient.setQueryData(conversationDirectoryQueryKey(undefined), directory);
   seed(queryClient, ['workstream', channelId], ['ordered-transcript', channelId],
     boot(channelId, 'Channel', breakout ? [] : [site], breakout ? undefined : reply));
   if (breakout) {
@@ -245,9 +249,15 @@ describe('attaching a breakout artifact to its channel', () => {
     expect(screen.queryByRole('menuitem', { name: 'Attach to channel' })).toBeNull();
   });
 
-  it('offers no menu to a guest, who has no channel to attach to', async () => {
+  it('offers no menu to somebody whose conversations leave Main out, who has no channel to attach to', async () => {
     session.current = { user: { id: 'guest', email: 'guest@example.test' }, workspace: { id: 'workspace', region: 'global', accessClass: 'guest' } };
-    renderScreen({ breakout: true });
+    renderScreen({ breakout: true, directory: {
+      spaces: [],
+      workstreams: [{
+        parentId: channelId, title: 'Channel', scope: 'personal', archived: false,
+        conversations: [{ substreamId: 'child' as SubstreamId, title: 'Breakout', scope: 'personal', archived: false }],
+      }],
+    } });
     await openCardMenu();
     expect(screen.queryByRole('menuitem', { name: 'Attach to channel' })).toBeNull();
   });

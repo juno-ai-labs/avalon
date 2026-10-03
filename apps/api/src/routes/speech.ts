@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { zValidator } from "../middleware/validation";
 import { logEvent } from "../observability/logger";
-import { getAuth } from "../middleware/auth";
+import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { runtimeDeferral } from "../lib/defer";
 import { streamMessageSpeech } from "../services/message-speech-service";
 import { emitInferenceUsage } from "../services/usage-metering";
@@ -14,6 +14,7 @@ const SpeechBodySchema = z.strictObject({
 });
 
 export const speechRoutes = new Hono<HonoAppEnv>();
+speechRoutes.use("*", requireWorkspaceAuth);
 
 speechRoutes.post("/", zValidator("json", SpeechBodySchema), async (c) => {
   const startedAt = Date.now();
@@ -29,7 +30,7 @@ speechRoutes.post("/", zValidator("json", SpeechBodySchema), async (c) => {
     reason: "provider_usage_missing",
   });
   // No price either, so metering logs it as unpriced until a rate card exists.
-  const auth = getAuth(c);
+  const auth = getWorkspaceAuth(c);
   emitInferenceUsage(c.env, runtimeDeferral, {
     eventId: `tts:${crypto.randomUUID()}`,
     workspaceId: auth.workspaceId,

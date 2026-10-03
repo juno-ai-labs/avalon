@@ -38,6 +38,9 @@ export interface MenuBarContentDependencies {
    * returns the decoded JSON body. Rejects when nobody is signed in. */
   readonly requestJson: (path: string) => Promise<unknown>;
   readonly onChange: (content: MenuBarContent) => void;
+  /** False while the active workspace is a guest's, who is refused the
+   * Channel list. Read from storage at launch, before any session exists. */
+  readonly available?: () => boolean | Promise<boolean>;
   readonly logWarning: (message: string, error: unknown) => void;
   /** Injected so the staleness window can be driven in tests. */
   readonly now?: () => number;
@@ -117,6 +120,12 @@ export class MenuBarContentStore {
   }
 
   private async refreshNow(generation: number): Promise<void> {
+    // Cleared rather than left alone: the cache still holds the workspace this
+    // device switched away from, and its rows would open in this one.
+    if (await this.dependencies.available?.() === false) {
+      if (generation === this.generation) this.clear();
+      return;
+    }
     // The menu has no selected Space, so it cannot project a placement-scoped
     // pin. It asks only for recent Channels and sorts the returned first page by
     // the same viewer recency used in the sidebar.

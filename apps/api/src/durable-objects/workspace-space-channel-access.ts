@@ -41,6 +41,7 @@ import type {
   SpaceAccessRetraction,
 } from "./workstream-access-protocol";
 import type { ChannelAccessSources } from "@rally/contracts";
+import { member } from "./listing-rules";
 
 /**
  * Cloudflare permits six simultaneous outgoing connections per invocation
@@ -464,7 +465,7 @@ export class SpaceChannelAccess {
       return { ok: true, outcome: "abandoned", reason };
     };
     if (intent.kind === "move") return this.resumeMove(actor, intent, abandon);
-    const reach = storage.reach(actor.userId, spaceId);
+    const reach = storage.reach(member(actor.userId), spaceId);
     if (reach === null) return { ok: false, refusal: spaceRefused("space_not_found", "").refusal };
     if (reach === "through_channel") {
       // On the row before the receipt that settles it: the failure is only
@@ -900,7 +901,7 @@ export class SpaceChannelAccess {
    * withdraw every reader this Space supplies and report success.
    */
   private currentSpace(storage: WorkspaceSpaceStorage, userId: string, spaceId: SpaceId): SpaceSummary {
-    const space = storage.readable(userId, spaceId);
+    const space = storage.readable(member(userId), spaceId);
     if (space === false) throw spaceRefused("space_not_found", "");
     if (space.reach === "through_channel") throw spaceRefused("space_access_denied", space.name);
     return space;
@@ -912,7 +913,7 @@ export class SpaceChannelAccess {
     spaceId: SpaceId,
     outcome: "walked" | "abandoned",
   ): WorkspaceSpaceMemberWalkResult {
-    const space = storage.readable(actor.userId, spaceId);
+    const space = storage.readable(member(actor.userId), spaceId);
     if (space === false) return { ok: false, refusal: spaceRefused("space_not_found", "").refusal };
     return { ok: true, outcome, space };
   }
