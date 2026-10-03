@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { normalizePageText } from './page-text';
+import { downloadPageFiles } from './page-files';
 import { MAX_STORED_FILE_BYTES } from './store';
 
 const PageStoredSchema = z.object({
@@ -54,6 +55,7 @@ export function pageScript(body: string): string {
     });
     const rally = Object.freeze({
       normalizeText: ${normalizePageText.toString()},
+      downloadFiles: (files) => (${downloadPageFiles.toString()})(files, (value, options) => rally.store(value, options)),
       store(value, options = {}) {
         const operation = (async () => {
           const name = typeof options.name === 'string' && options.name ? options.name : 'file';

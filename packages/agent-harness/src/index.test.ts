@@ -5354,7 +5354,7 @@ describe("agent harness", () => {
     }));
   });
 
-  it("preserves write ambiguity when the parent run is cancelled during execution", async () => {
+  it.each([undefined, "run"] as const)("preserves write ambiguity with deadline %s when the parent run is cancelled during execution", async (deadline) => {
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{
         delta: { tool_calls: [toolDelta(0, "provider-write", "create_record")] },
@@ -5367,7 +5367,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       signal: controller.signal,
-      corePlugins: [testCorePlugin([recordBeforeExecuteTool("create_record", () => new Promise(() => {}))])],
+      corePlugins: [testCorePlugin([{ ...recordBeforeExecuteTool("create_record", () => new Promise(() => {})), ...(deadline ? { deadline } : {}) }])],
       onAmbiguousExternalWrite,
       onEvent: (event) => {
         events.push(event);

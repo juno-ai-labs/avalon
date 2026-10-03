@@ -1806,7 +1806,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         const resolvedTimeoutMs = dispatched.tool.resolveTimeoutMs?.(args);
         const toolDeadline = combinedDeadline(
           signal,
-          resolvedTimeoutMs ?? dispatched.tool.definition.timeoutMs ?? input.config.toolTimeoutMs,
+          dispatched.tool.deadline === "run" ? null
+            : resolvedTimeoutMs ?? dispatched.tool.definition.timeoutMs ?? input.config.toolTimeoutMs,
         );
         const toolSignal = toolDeadline.signal;
         let toolResult: HarnessToolResult;
@@ -3860,7 +3861,8 @@ interface CombinedDeadline {
  * this package cannot import from the app, and the shape is small enough that a
  * dependency for it would cost more than the twelve lines.
  */
-function combinedDeadline(parent: AbortSignal, timeoutMs: number): CombinedDeadline {
+function combinedDeadline(parent: AbortSignal, timeoutMs: number | null): CombinedDeadline {
+  if (timeoutMs === null) return { signal: parent, dispose: () => {} };
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new DOMException(`Operation timed out after ${timeoutMs}ms`, "TimeoutError")),

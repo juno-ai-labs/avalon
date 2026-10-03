@@ -12,8 +12,7 @@ export async function prepareSessionImport(env: Env, auth: AuthContext, preview:
   const person = await env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(auth.userId).first<{ name: string }>();
   const provenance = { kind: 'imported_session', source: preview.source,
     importedByUserId: auth.userId, importedByName: person?.name || 'A workspace member' };
-  const messages: PreparedConversation['messages'] = [];
-  for (const [messageIndex, message] of preview.content.messages.entries()) {
+  const results = await Promise.allSettled(preview.content.messages.map(async (message, messageIndex): Promise<PreparedConversation['messages'][number]> => {
     const sourceRevision = message.sourceMessageId
       ? workstreamImportHash({ role: message.role, text: message.text, files: (message.files ?? []).map((file) => ({
         name: file.name, mimeType: file.mimeType, kind: file.kind,
@@ -26,17 +25,13 @@ export async function prepareSessionImport(env: Env, auth: AuthContext, preview:
       // No old attachment needs another workspace upload for this snapshot.
       // Attachment-only messages need a nonempty transport placeholder; the
       // authority never materializes an unchanged entry.
-      messages.push({ role: message.role, text: message.text || "Unchanged source attachment", attachmentIds: [], structuredContent: {
+      return { role: message.role, text: message.text || "Unchanged source attachment", attachmentIds: [], structuredContent: {
         ...provenance, sourceMessageId: message.sourceMessageId, sourceRevision,
-      } });
-      continue;
+      } };
     }
-    const attachmentIds: string[] = [];
-    const missing: string[] = [];
-    for (const [fileIndex, file] of (message.files ?? []).entries()) {
+    const files = await Promise.allSettled((message.files ?? []).map(async (file, fileIndex) => {
       if (file.source.kind !== 'inline') {
-        missing.push(`Unavailable ${file.kind}: ${file.name} — ${file.source.kind === 'unavailable' ? file.source.reason : 'Read the conversation again to retrieve this file.'}`);
-        continue;
+        return { missing: `Unavailable ${file.kind}: ${file.name} — ${file.source.kind === 'unavailable' ? file.source.reason : 'Read the conversation again to retrieve this file.'}` };
       }
       const identity = { operationId, sourceRole: message.role, sourceKind: file.kind, fileIndex: `${messageIndex}:${fileIndex}` };
       const id = await stableUuid(['session-import-file', auth.workspaceId, auth.userId, operationId, String(messageIndex), String(fileIndex)]);
@@ -49,21 +44,34 @@ export async function prepareSessionImport(env: Env, auth: AuthContext, preview:
           throw new ApiError(422, 'attachment_encoding_invalid', 'The export contains invalid encoded file bytes. Add the original file instead.');
         }
         await uploader.upload(new File([bytes], file.name, { type: file.mimeType }), file.name, id, identity);
-        attachmentIds.push(id);
+        return { id };
       } catch (error) {
         // Infrastructure failures must remain retryable; only a definite file
         // rejection becomes an unavailable reference in the committed history.
         if (error instanceof ApiError && ['attachment_encoding_invalid', 'attachment_empty', 'attachment_too_large', 'attachment_mime_mismatch', 'attachment_type_unsupported'].includes(error.code)) {
-          missing.push(`Unavailable ${file.kind}: ${file.name} — ${error.message}`);
+          return { missing: `Unavailable ${file.kind}: ${file.name} — ${error.message}` };
         } else throw error;
       }
+    }));
+    // Drain every write before returning a retryable failure. Settled results retain source order.
+    const attachmentIds: string[] = [];
+    const missing: string[] = [];
+    for (const result of files) {
+      if (result.status === "rejected") throw result.reason;
+      if (result.value.id) attachmentIds.push(result.value.id);
+      if (result.value.missing) missing.push(result.value.missing);
     }
-    messages.push({ role: message.role, text: [message.text, ...missing].filter(Boolean).join('\n\n'),
+    return { role: message.role, text: [message.text, ...missing].filter(Boolean).join('\n\n'),
       attachmentIds, structuredContent: {
         ...provenance,
         ...(message.sourceMessageId ? { sourceMessageId: message.sourceMessageId,
           sourceRevision } : {}),
-      } });
+      } };
+  }));
+  const messages: PreparedConversation["messages"] = [];
+  for (const result of results) {
+    if (result.status === "rejected") throw result.reason;
+    messages.push(result.value);
   }
   return { messages };
 }

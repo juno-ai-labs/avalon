@@ -112,17 +112,18 @@ returns the main window to where it was. The pending-row rule is in
    **Copy import id**, which copies
    `/app/<region>/<organization>/i/<agent conversation>/c/<Channel>`
    (`sessionImportCanonicalUrl`) for a bug report once the API has answered.
-Import admission requires client contract 2, which supports persistent browser
-scripting. Older desktops receive an update-required error before either a new
+Import admission requires client contract 3, which supports persistent browser
+scripting, concurrent page downloads, and explicit verification check outcomes. Older desktops receive an update-required error before either a new
 Channel or an update run is reserved; ordinary Channel access still accepts
 contract 1.
 
 4. **Finish.** `import_finish` names the stored messages array and a compact
    `verification` report: selected-branch completeness and its basis, page-accounted
    message count, first/last source ids, assistant ids actually compared with the
-   page, the observation basis, and file count including unavailable files.
+   page, the observation basis, file count including unavailable files, and `checks`
+   with each observed probe's name, actual pass/fail result and basis.
    The shared `SessionImportVerificationSchema` requires evidence; the desktop's
-   `verifySessionImport` checks counts, endpoints and assistant sample membership
+   `verifySessionImport` refuses every failed check, then checks counts, endpoints and assistant sample membership
    against the assembled history before any import write. A mismatch returns a
    field-named repair reason. This is model-reported evidence, not independent
    proof that the page was checked. Rendered turns may group several messages;
@@ -424,6 +425,16 @@ These deterministic checks do not measure model compliance: live runs across
 these variations are still required to establish it.
 
 ## Changelog
+
+### 2026-10-03 — Parallel file preparation and explicit verification outcomes
+
+**Why:** A production import copied 14 files, committed its ten messages just before the tool deadline, then received success after the timer had already failed its run. The model also ignored five false text comparisons while claiming complete verification.
+
+**Changed:** Independent original-file downloads and server uploads run concurrently while preserving source order and stable per-file identities. Upload preparation drains all writes before returning infrastructure failure. Finish reports include actual verification check outcomes; failed checks require repair before writes. Admission requires client contract 3 so older strict desktop decoders do not receive the new report shape.
+
+**Considered and rejected:** A larger arbitrary timeout and selector-specific verification rules. The save uses the run lifecycle, and comparisons remain independent of page layout. Reports are still model-authored evidence, not browser attestations.
+
+**Consequences:** Model procedures must resolve independent download links concurrently and reuse successful original-byte checks. A changed page or failed comparison requires new evidence rather than a rewritten success claim.
 
 ### 2026-10-02 — Copy import id from the progress modal
 

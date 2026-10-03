@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { pageScript, type PageScriptOutcome } from '../../../common/desktop-actions/page-script';
 
 /** Run the expression as the page would, with the page globals it reads. */
@@ -9,6 +9,33 @@ async function run(body: string): Promise<PageScriptOutcome> {
 }
 
 describe('page script', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('downloads files concurrently, preserves source order, and accounts for rejected originals', async () => {
+    const replies = new Map<string, (response: Response) => void>();
+    vi.stubGlobal('fetch', (url: string) => new Promise<Response>(resolve => replies.set(url, resolve)));
+    const answer = run(`return await rally.downloadFiles([
+      { url: 'first', name: 'first.txt', expectedSize: 1 },
+      { url: 'second', name: 'second.txt', expectedSize: 1 },
+      { url: 'preview', name: 'original.png', expectedSize: 100 },
+      { url: 'expired', name: 'expired.txt' },
+    ]);`);
+    expect([...replies.keys()]).toEqual(['first', 'second', 'preview', 'expired']);
+    replies.get('second')!(new Response('b'));
+    replies.get('preview')!(new Response('tiny'));
+    replies.get('expired')!(new Response('', { status: 403 }));
+    replies.get('first')!(new Response('a'));
+    const result = await answer;
+    expect(result).toMatchObject({ ok: true, value: [
+      { name: 'first.txt', kind: 'file', size: 1 },
+      { name: 'second.txt', kind: 'file', size: 1 },
+      { unavailable: { name: 'original.png', reason: 'File size mismatch: expected 100 bytes, received 4. Retrieve the original file.' } },
+      { unavailable: { name: 'expired.txt', reason: 'File download returned HTTP 403.' } },
+    ] });
+    if (!result.ok) throw new Error(result.message);
+    expect(result.stored.map(file => ({ name: file.name, data: file.data })).sort((a, b) => a.name.localeCompare(b.name)))
+      .toEqual([{ name: 'first.txt', data: 'YQ==' }, { name: 'second.txt', data: 'Yg==' }]);
+  });
   it('returns the script’s JSON value with the page it ran on', async () => {
     await expect(run('return { turns: [1, 2] };')).resolves.toEqual({
       ok: true, value: { turns: [1, 2] }, stored: [], url: 'https://claude.ai/chat/1', title: 'Chat',

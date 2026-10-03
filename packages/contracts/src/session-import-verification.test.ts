@@ -7,6 +7,7 @@ const messages = [
   { role: 'assistant', sourceMessageId: 'reply-document', files: [{ handle: 'document' }] },
 ];
 const evidence = {
+  checks: [{ name: "page content", passed: true, basis: "Compared every displayed turn." }],
   branch: { complete: true as const, basis: 'Selected edited branch reaches its explicit root; older sibling excluded.' },
   page: { messageCount: 3, firstSourceMessageId: 'edit-selected', lastSourceMessageId: 'reply-document',
     sampledSourceMessageIds: ['reply-text', 'reply-document'], basis: 'Two rendered turns account for three source messages; expanded document compared.' },
@@ -31,6 +32,11 @@ describe('layout-independent import verification', () => {
     ['sampledSourceMessageIds', { ...evidence.page, sampledSourceMessageIds: ['reply-text', 'reply-text'] }],
   ])('names the rejected %s when report and stored history disagree', (field, page) => {
     expect(() => verifySessionImport(messages, { ...evidence, page })).toThrow(`verification.page.${field}`);
+  });
+  it('refuses a failed text comparison even when the narrative claims completeness', () => {
+    expect(() => verifySessionImport(messages, { ...evidence, checks: [{ name: 'user text', passed: false, basis: 'Full text did not match the page.' }] }))
+      .toThrow('verification.checks[0].passed');
+    expect(SessionImportVerificationSchema.safeParse({ ...evidence, checks: [] }).success).toBe(false);
   });
   it('refuses missing file accounting', () => {
     expect(() => verifySessionImport(messages, { ...evidence, fileCount: 1 })).toThrow('verification.fileCount');
