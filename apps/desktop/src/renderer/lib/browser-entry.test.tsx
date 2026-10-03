@@ -239,3 +239,55 @@ it('fills the invited mailbox into the sign-in form and accepts by the opaque to
   fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
   await waitFor(() => expect(bodies.get('/email/start')).toMatchObject({ email: 'invited@example.test' }));
 });
+
+it('starts Google sign-in for the page it was opened on and explains a declined one on return', async () => {
+  const starts: unknown[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const path = input.split('/browser')[1];
+    if (path === '/workspace/select' || path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/google/start') { starts.push(JSON.parse(String(init?.body))); return Response.json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=s' }); }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}#google_error=google_oauth_denied`);
+  const view = render(<BrowserEntry />);
+  try {
+    expect(await screen.findByRole('alert')).toHaveTextContent('Google sign-in was cancelled.');
+    expect(location.hash).toBe('');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
+    await waitFor(() => expect(starts).toEqual([{ returnPath: `/app/workspaces/global/${workspace.id}` }]));
+  } finally { view.unmount(); }
+});
+
+it('hides Continue with Google on an invitation page, whose link lives only in page memory', async () => {
+  history.replaceState(null, '', `/invite#inv_${'this-is-not-a-real-token'.padEnd(43, '0')}`);
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/invitation') return Response.json({ email: 'invited@example.test' });
+    if (path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry />);
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue('invited@example.test'));
+  expect(screen.getByRole('button', { name: 'Email me a sign-in link' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
+});
+
+it('drops a returned Google failure once an email sign-in starts', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/email/start') return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: Date.now() + 600_000 }, { status: 202 });
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  history.replaceState(null, '', '/#google_error=google_oauth_failed');
+  render(<BrowserEntry />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Google sign-in did not complete. Try again or use your email.');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: 'person@example.test' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
+  expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).toBeNull();
+  // Back on the signed-out screen, the old Google failure stays gone.
+  fireEvent.click(screen.getByRole('button', { name: 'Use another email or request a new code' }));
+  expect(await screen.findByRole('heading', { name: 'Welcome to Rally' })).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
