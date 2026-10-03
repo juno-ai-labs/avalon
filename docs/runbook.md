@@ -1318,7 +1318,7 @@ Changing such a default afterwards is far more expensive than choosing it correc
 
 ## Provider configuration
 
-Google identity and connector OAuth use two distinct Google Cloud OAuth **Web application** clients in one project. The **Rally Login** client requests only platform identity scopes and has this one redirect URI:
+Google identity and connector OAuth use two distinct Google Cloud OAuth **Web application** clients in one project. The **Rally Login** client requests only platform identity scopes and has these two redirect URIs, one for the desktop and one for the browser client:
 
 **Register the Rally callback URLs on both Google clients before deploying.**
 `callbackUrl()` derives `redirect_uri` from `PUBLIC_API_BASE_URL`, so the moment
@@ -1327,6 +1327,11 @@ fails with `redirect_uri_mismatch` on its first request. Keep the Rally URLs
 registered alongside: they cost nothing and they are what a rollback lands on.
 
 - Global identity: `https://api.rallywith.ai/auth/google/callback`
+- Global browser identity: `https://app.rallywith.ai/regional/global/browser/google/callback`
+
+The browser one is derived from `BROWSER_APP_ORIGIN`, not `PUBLIC_API_BASE_URL`:
+it sits on the browser host so the callback can set the browser's cookie. See
+[browser-client.md](browser-client.md#google-sign-in).
 
 The **Rally Google Connectors** client owns the Gmail, Calendar, Drive, Docs, and Sheets scopes and has these redirect URIs:
 
