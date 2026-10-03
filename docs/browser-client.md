@@ -570,6 +570,8 @@ the entry chunk about 2 KB.
 **Consequences:** Changing the desktop sign-in rules changes the web entry too.
 Test names (headings, button and field labels) are unchanged.
 
+Shipped in #1085.
+
 ### 2026-10-03 — Browser members reach every deployment
 
 **What changed:** The browser Worker forwards each region to its own service
