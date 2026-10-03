@@ -12,15 +12,18 @@ import { logEvent } from "../observability/logger";
 import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { zValidator } from "../middleware/validation";
 import { AuthService, issueAccessToken } from "../services/auth-service";
+import { PlatformOnboardingService } from "../services/platform-onboarding-service";
+import { IDENTITY_REGION, configuredRegions, type Region } from "@rally/contracts/regions";
 import { BrowserSessionService, BrowserSessionSchema, BrowserWorkspacesSchema } from "../services/browser-session-service";
-import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema } from "@rally/contracts/browser-session";
+import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserWorkspaceActivateSchema } from "@rally/contracts/browser-session";
 import { UNAVAILABLE_INVITATION, describeScopeInvitation } from "../services/scope-invitation-link";
 import { startEmailLogin, deliverEmailLogin, redeemEmailLogin, EmailLoginStartSchema,
   EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
 
-function cookieOptions(env: Env) {
+/** One cookie per deployment; Global also writes another deployment's after activating there. */
+function cookieOptions(env: Env, region: Region = env.AVALON_REGION) {
   const secure = browserOrigin(env).protocol === "https:";
-  return { name:`${secure ? "__Host-" : ""}rally-browser-${env.AVALON_REGION}`,
+  return { name:`${secure ? "__Host-" : ""}rally-browser-${region}`,
     attributes:{ secure,httpOnly:true,sameSite:"Lax" as const,path:"/" } };
 }
 
@@ -166,7 +169,32 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
   });
   routes.get("/workspaces",async (c) => {
     const auth = await new BrowserSessionService(c.env).read(credential(c));
-    return c.json(BrowserWorkspacesSchema.parse({ workspaces:await new AuthService(c.env).listRegionalWorkspaces(auth.userId) }));
+    const local = await new AuthService(c.env).listRegionalWorkspaces(auth.userId);
+    // Global holds the identity, so it also lists memberships in every other
+    // deployment, as desktop onboarding does. With one deployment there is
+    // nothing to discover and the list stays a single local read.
+    if (c.env.AVALON_REGION !== IDENTITY_REGION || configuredRegions.length < 2) return c.json(BrowserWorkspacesSchema.parse({ workspaces:local }));
+    // Each other deployment answers on its own; one that is down is logged by
+    // name and does not hide the rest.
+    const remote = await new PlatformOnboardingService(c.env,auth).otherDeploymentWorkspaces();
+    if (remote.failed.length > 0) logEvent(c,"warn","browser_workspace_discovery_failed",{ failed:remote.failed.map((item) => `${item.region}:${item.code}`).join(",") });
+    return c.json(BrowserWorkspacesSchema.parse({ workspaces:[...local,...remote.workspaces] }));
+  });
+  /**
+   * Opens a workspace in another deployment for this browser. Global admits it
+   * through discovery, the target registers its own browser session over the
+   * identity bridge, and only its cookie comes back, on the browser host.
+   * See the full browser client PRD's design.md.
+   */
+  routes.post("/workspace/activate",zValidator("json",BrowserWorkspaceActivateSchema),async (c) => {
+    const { region,workspaceId } = c.req.valid("json");
+    if (c.env.AVALON_REGION !== IDENTITY_REGION) throw new ApiError(409,"global_identity_required","Open this organization through Rally's identity deployment");
+    if (region === c.env.AVALON_REGION) throw new ApiError(400,"browser_workspace_local","Select a workspace in this deployment directly");
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    const registration = await new PlatformOnboardingService(c.env,auth).activateBrowser(region,workspaceId);
+    const target = cookieOptions(c.env,region);
+    setCookie(c,target.name,registration.credential,{ ...target.attributes,expires:new Date(registration.expiresAt) });
+    return c.body(null,204);
   });
   routes.post("/workspace/select",zValidator("json",z.strictObject({ workspaceId:WorkspaceIdSchema })),async (c) =>
     c.json(BrowserSessionSchema.parse(await new BrowserSessionService(c.env).select(credential(c),c.req.valid("json").workspaceId))));

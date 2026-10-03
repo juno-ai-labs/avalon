@@ -75,9 +75,13 @@ sockets stayed open.
 
 ## Phase 7: regions
 
-- [ ] `design.md` for the Global-to-regional cookie handoff.
-- [ ] Per-region service bindings in the browser Worker.
-- [ ] Global discovery and activation routes; server-to-server registration.
+- [x] `design.md` for the Global-to-regional cookie handoff.
+- [x] Per-region service bindings in the browser Worker.
+- [x] Global discovery and activation routes; server-to-server registration.
 
 **Gate:** proven in local multi-region development; production proof waits
 for a second deployment.
+
+The local stack runs one deployment, so the proof is
+`apps/api/test/browser-regions.test.ts`: Global and a simulated `enterprise`
+deployment, each with its own migrated database, joined by the identity bridge.
