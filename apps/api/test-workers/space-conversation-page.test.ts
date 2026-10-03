@@ -129,6 +129,10 @@ async function establishWorkspace(): Promise<void> {
       (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
       .bind(`dashboard-session-${MEMBER}`, MEMBER, WORKSPACE_ID),
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions
+      (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(`dashboard-session-${GUEST}`, GUEST, WORKSPACE_ID),
   ]);
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
 }
@@ -459,6 +463,35 @@ async function connectViewer(userId: UserId): Promise<{
   return { channelUpdates, initialChannelCounts, initialSpaceCounts, nudgeCounts, nudges };
 }
 
+/** A subscribed workspace socket and every frame it is sent, parsed. */
+async function connectRaw(userId: UserId): Promise<{ socket: WebSocket; frames: unknown[] }> {
+  ticketSequence += 1;
+  const response = await workspace().fetch("https://workspace.test/socket", {
+    headers: {
+      Upgrade: "websocket",
+      "x-rally-workspace-id": WORKSPACE_ID,
+      "x-rally-placement-affinity": "wnam",
+      "x-rally-user-id": userId,
+      "x-rally-session-id": `dashboard-session-${userId}`,
+      "x-rally-socket-ticket-id":
+        `00000000-0000-7000-8000-${String(ticketSequence).padStart(12, "0")}`,
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+    },
+  });
+  if (response.status !== 101 || !response.webSocket) {
+    throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
+  }
+  const socket = response.webSocket;
+  socket.accept();
+  const frames: unknown[] = [];
+  socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data))); });
+  socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+  await vi.waitFor(() => {
+    expect(frames.some((frame) => WorkspaceSocketSyncEventSchema.safeParse(frame).success)).toBe(true);
+  }, { timeout: 5_000 });
+  return { socket, frames };
+}
+
 function inspect(sql: string): Promise<{ rows: Record<string, unknown>[] }> {
   return workspace().runInspectionSql({ sql, bindings: [] });
 }
@@ -761,6 +794,43 @@ describe("space dashboard conversation page", () => {
       expect(owner.nudgeCounts.at(-1)).toEqual([1]);
       expect(owner.channelUpdates.at(-1)).toBe(0);
     }, { timeout: 5_000 });
+  });
+
+  it("sends a guest's workspace socket no Channel the member directory lists", async () => {
+    await openChannelObject(CHANNEL_A);
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Org-wide roadmap"), viewerEffect(OWNER)]);
+
+    // The member sees the Organization-public Channel; the guest, never shared
+    // into it, must not, by any of the socket's three paths.
+    const member = await connectRaw(MEMBER);
+    const memberSync = member.frames.map((frame) => WorkspaceSocketSyncEventSchema.safeParse(frame))
+      .find((parsed) => parsed.success);
+    const guest = await connectRaw(GUEST);
+    const guestSync = guest.frames.map((frame) => WorkspaceSocketSyncEventSchema.safeParse(frame))
+      .find((parsed) => parsed.success);
+    expect(memberSync?.data?.sidebar?.workstreams.items.map((item) => item.id) ?? []).toContain(CHANNEL_A);
+    expect(guestSync?.data?.sidebar?.workstreams.items ?? []).toEqual([]);
+    expect(guestSync?.data?.sidebar?.automations.items ?? []).toEqual([]);
+
+    guest.socket.send(JSON.stringify({ type: "list_workstreams", requestId: "00000000-0000-7000-8000-00000000d1ff", limit: 50, includeSystem: false }));
+    await vi.waitFor(() => {
+      expect(guest.frames.some((frame) => (frame as { type?: string }).type === "workspace_workstream_page")).toBe(true);
+    }, { timeout: 5_000 });
+    const page = guest.frames.find((frame) => (frame as { type?: string }).type === "workspace_workstream_page") as { items: unknown[] };
+    expect(page.items).toEqual([]);
+
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Renamed roadmap")], 2);
+    await vi.waitFor(() => {
+      expect(member.frames.some((frame) => {
+        const state = WorkspaceWorkstreamStateEventSchema.safeParse(frame);
+        return state.success && state.data.workstream?.title === "Renamed roadmap";
+      })).toBe(true);
+    }, { timeout: 5_000 });
+    const guestRows = guest.frames.flatMap((frame) => {
+      const state = WorkspaceWorkstreamStateEventSchema.safeParse(frame);
+      return state.success && state.data.workstream ? [state.data.workstream.id] : [];
+    });
+    expect(guestRows).toEqual([]);
   });
 
   it("keeps Channel badge totals inside the parent Channel and guest visibility boundaries", async () => {

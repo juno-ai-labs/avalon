@@ -15055,6 +15055,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     accessClass: "member" | "guest" = "member",
     withViewerState = false,
   ): WorkspaceDirectoryPage {
+    // A guest's rail is the grant-scoped conversation directory
+    // (`/sharing/navigation`). This list follows member rules (every
+    // Organization-public Channel), so a guest is sent none of it.
+    if (accessClass === "guest") {
+      return { items: [], stateVersions: [], nextCursor: null, directoryWaterline: this.directoryWaterline() };
+    }
     let cursor = request.before ? directoryCursor(request.before) : null;
     if (cursor) {
       const anchor = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
@@ -15121,6 +15127,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * The automations a person's left sidebar lists: their own and the
    * workspace's, drafts included, never a room's.
    */
+  /**
+   * A socket's sidebar automations. A guest authors none, and the workspace's
+   * own automations are member information, so a guest is sent none.
+   */
+  private sidebarAutomationsFor(attachment: WorkspaceSocketAttachment): AutomationSummary[] {
+    return attachment.accessClass === "guest"
+      ? []
+      : this.listSidebarAutomations(attachment.workspaceId, attachment.userId);
+  }
+
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
     return this.state.storage.sql.exec<AutomationDirectoryRow>(
       `SELECT automation_id, loadable, appearance_json, lifecycle, scope, owning_workstream_id, title,
@@ -15387,7 +15403,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       person.userId,
       JSON.stringify(workstreamIds),
     ).toArray();
-    const visible = rows.filter((row) => row.archived_at === null
+    // A guest is sent no directory rows (see `listDirectory`), so every frame
+    // to them is `workstream: null`.
+    const visible = person.accessClass === "guest" ? [] : rows.filter((row) => row.archived_at === null
       && (row.scope === "workspace" || row.is_participant === 1));
     const visibleIds = visible.map((row) => row.workstream_id);
     const spaces = this.spaceStorage();
@@ -15445,7 +15463,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         workstreams: { directoryWaterline: this.directoryWaterline(), items: [], stateVersions: [], nextCursor: null },
         automations: {
           waterline: this.sidebarListWaterline("automations"),
-          items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
+          items: this.sidebarAutomationsFor(attachment),
         },
         notes: { waterline: 0, items: [], nextCursor: null },
         ...spaces,
@@ -15464,7 +15482,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         : workstreams,
       automations: {
         waterline: this.sidebarListWaterline("automations"),
-        items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId),
+        items: this.sidebarAutomationsFor(attachment),
       },
       notes: {
         waterline: 0, items: [], nextCursor: null,
@@ -15505,7 +15523,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
-      const page = { items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId) };
+      const page = { items: this.sidebarAutomationsFor(attachment) };
       try {
         socket.send(JSON.stringify(WorkspaceSidebarListEventSchema.parse({
           type: "workspace_sidebar_list",
