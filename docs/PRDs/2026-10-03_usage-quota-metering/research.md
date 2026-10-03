@@ -23,7 +23,7 @@ append-only log stored on R2. Several independent subscriptions can each read
 every record, so one stream could feed the lakehouse, this ledger and a future
 Stripe sink.
 
-- **Limits in beta:** 10 GB stored per account; 30 MB/s produced per stream;
+- **Limits in beta:** 10 GB stored per account; 20 streams per account;
   retention from 1 hour to 30 days (default 7); about 1 MB per record; consume
   up to 10,000 records or 10 MB per request; 100 subscriptions per stream.
 - **Delivery:** at-least-once. Each batch is leased to one consumer for 5
