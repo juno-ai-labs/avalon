@@ -150,7 +150,9 @@ The same tab sets the selected workspace's plan, Starter or Growth, through
 `/internal/workspaces/:id/plan` over the same credential. The new weekly quota
 applies to the current week at once, and the regional API refuses a workspace
 another region owns. The directory search returns each workspace's current
-plan. [`usage-metering.md`](usage-metering.md) owns what a plan means.
+plan, and reads a region whose `workspaces` table has no `plan` column yet as
+Starter: Ace deploys apart from the API, so it can reach a region before
+migration 0118 has run there. [`usage-metering.md`](usage-metering.md) owns what a plan means.
 
 `GET /api/queues/dead-letters` lists account Queues through Cloudflare's REST
 API. A Queue is classified as a dead-letter queue only when a live consumer's

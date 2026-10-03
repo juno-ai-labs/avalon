@@ -6,12 +6,12 @@ import { createTestD1Database, createTestEnv } from './helpers/cloudflare-test';
 
 const databases: DatabaseSync[] = [];
 
-function database(): D1Database {
+function database({ planColumn = true } = {}): D1Database {
   const sqlite = new DatabaseSync(':memory:');
   databases.push(sqlite);
   sqlite.exec(`
     CREATE TABLE users (platform_user_id TEXT, email TEXT NOT NULL, name TEXT NOT NULL);
-    CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'starter');
+    CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL${planColumn ? ", plan TEXT NOT NULL DEFAULT 'starter'" : ''});
   `);
   return createTestD1Database({
     prepare: (sql: string) => ({
@@ -76,5 +76,15 @@ describe('Ace directory lookup', () => {
     });
     // Both down is a failure, never an empty list.
     await expect(searchWorkspaces(createTestEnv({ GLOBAL_DB: down, ENTERPRISE_DB: down }), 'Launch')).rejects.toThrow('directory_unavailable');
+  });
+
+  it('reads a region that has not yet gained the plan column as Starter', async () => {
+    // Ace deploys apart from the API, so it can reach a region before migration 0118.
+    const global = database({ planColumn: false });
+    await global.exec(`INSERT INTO workspaces (id, name, slug) VALUES ('workspace-1', 'Launch', 'launch');`);
+    await expect(searchWorkspaces(createTestEnv({ GLOBAL_DB: global, ENTERPRISE_DB: database() }), 'Launch')).resolves.toEqual({
+      results: [{ id: 'workspace-1', name: 'Launch', slug: 'launch', plan: 'starter', region: 'global' }],
+      unavailableRegions: [],
+    });
   });
 });

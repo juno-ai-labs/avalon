@@ -46,10 +46,10 @@ describe('Meter', () => {
     expect(meter.querySelector('.meter-fill')).toHaveStyle({ width: '72%' });
   });
 
-  it('fills against its own maximum', () => {
-    render(<Meter label="2 of 4 onboarding steps complete" max={4} value={2} />);
+  it('fills against its own maximum and can announce task progress', () => {
+    render(<Meter label="2 of 4 onboarding steps complete" max={4} role="progressbar" value={2} />);
 
-    const meter = screen.getByRole('meter', { name: '2 of 4 onboarding steps complete' });
+    const meter = screen.getByRole('progressbar', { name: '2 of 4 onboarding steps complete' });
     expect(meter).toHaveAttribute('aria-valuemax', '4');
     expect(meter.querySelector('.meter-fill')).toHaveStyle({ width: '50%' });
   });
