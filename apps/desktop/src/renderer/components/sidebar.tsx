@@ -1,11 +1,11 @@
 import { ShareConversationDialog } from './scope-sharing-panel';
-import { useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
-import { MacDownloadLink } from './mac-download-link';
+import { useOptionalCollaborationSession } from '../lib/collaboration-session';
 import { IconPin, IconShare2 } from '@tabler/icons-react';
 import { ChannelRowContent, NavigationRowContent } from '@rally/ui/components/navigation';
 import {
   ResizableSidebar,
   SidebarFooter,
+  SidebarFooterItems,
   SidebarHorizontalLine,
   SidebarList,
   SidebarRow,
@@ -93,6 +93,8 @@ interface SidebarProps {
   onViewSpace?: (spaceId: string | null) => void;
   loading?: boolean;
   accountMenu?: ReactNode;
+  /** Rows above the account menu's line, always on screen. Absent, nothing is drawn there. */
+  footerItems?: ReactNode;
   onArchiveWorkstream: (workstream: WorkstreamSummary) => Promise<void>;
   onApplyWorkstreamBatch: (
     operationId: string,
@@ -1083,6 +1085,7 @@ export function Sidebar({
   onViewSpace,
   loading: directoryLoading,
   accountMenu,
+  footerItems,
   onArchiveWorkstream,
   onApplyWorkstreamBatch,
   onChangeWorkstreamScope,
@@ -1107,7 +1110,6 @@ export function Sidebar({
   loadingMoreWorkstreams = false,
   onLoadMoreWorkstreams,
 }: SidebarProps): React.JSX.Element {
-  const { host } = useShellCapabilities();
   const debugEnabled = useDebugEnabled();
   const location = useLocation();
   const navigate = useNavigate();
@@ -2546,8 +2548,9 @@ export function Sidebar({
           closeable.
         */}
         {/* <OnboardingChecklist /> */}
+        {/* Brought back, it would be a footer item rather than drawn here. */}
 
-        {host === 'browser' && <MacDownloadLink />}
+        {footerItems && <SidebarFooterItems>{footerItems}</SidebarFooterItems>}
         <SidebarHorizontalLine className="sidebar-footer-line" />
         <SidebarFooter leading={<div className="sidebar-account-slot" ref={setAccountSlot} />} />
         {accountSlot && createPortal(accountMenu ?? <DropdownMenu.Root>

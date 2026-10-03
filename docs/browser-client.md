@@ -22,7 +22,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
 | `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context, optional setup capabilities, and `useShellCapabilities`: which host is drawing and whether the reader is a guest. |
-| `apps/desktop/src/renderer/components/mac-download-link.tsx` | The Mac app download, pinned above the account menu when the host is a browser tab. |
+| `apps/desktop/src/renderer/components/mac-download-link.tsx` | The Mac app download row, the sidebar's footer item when the host is a browser tab. |
 | `apps/desktop/src/renderer/screens/shared-space-landing.tsx` | A guest's Space link: opens the first Channel shared with them in that Space. |
 | `packages/contracts/src/browser-session.ts` | Shared credential-free session and email exchange schemas. |
 | `apps/browser/wrangler.jsonc` | Assets and the explicit Global API service binding. |
@@ -221,8 +221,8 @@ Breakouts, the details rail and the Settings route. The value carries
 a workspace invitation from the desktop flow, creating a workspace, desktop
 sign-in) rejects with "Available in the Mac app." In Settings, Application shows
 Appearance and names the Mac app for the rest, and Notifications offers
-"In this browser". The sidebar pins **Download the Mac app** above the account
-menu.
+"In this browser". The sidebar always shows **Download the Mac app** above the
+account menu, as a footer item ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
 
 What a guest may do is asked in one place, `useShellCapabilities()`, which reads
 `host` and the session's `accessClass`. A guest's shell does not read the member

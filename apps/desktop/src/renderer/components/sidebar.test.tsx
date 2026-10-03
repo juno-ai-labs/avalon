@@ -277,6 +277,38 @@ describe('Sidebar channel markers', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  it('keeps footer items above the account menu and out of the scrolling list', () => {
+    const many = Array.from({ length: 40 }, (_, index) =>
+      workstream(`00000000-0000-7000-8000-${String(index).padStart(12, '0')}`, `Channel ${index}`, 'completed'));
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={many}
+            footerItems={<a href="https://example.test/mac">Download the Mac app</a>}
+            accountMenu={<button type="button">Account menu</button>} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const item = screen.getByRole('link', { name: 'Download the Mac app' });
+    const account = screen.getByRole('button', { name: 'Account menu' });
+    const list = screen.getByRole('link', { name: /^Channel 0/u }).closest('.sidebar-scroll');
+    expect(list).not.toBeNull();
+    expect(list!.contains(item)).toBe(false);
+    expect(item.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('draws nothing above the account menu without footer items', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    expect(container.querySelector('.sidebar-footer-items')).toBeNull();
+  });
+
   it('resizes from the keyboard and exposes its constrained width', () => {
     render(
       <MemoryRouter>

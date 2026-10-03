@@ -45,8 +45,7 @@ desktop has four: **Restart to update** (only when `useDownloadedUpdate` has
 one), **Search organization**, **Import from ChatGPT or Claude** (the browser
 import window, locked to the selected Space), and **New channel** (the Start a
 new channel form, opened directly with `NewWorkstreamMenu trigger="direct"`).
-In a browser tab the import is absent (it needs the native import window), and
-the Mac download link sits above the account menu. A guest's bar has no search
+In a browser tab the import is absent (it needs the native import window). A guest's bar has no search
 and no **New channel**: their sidebar is read-only and filled from the
 shared-navigation directory.
 
@@ -94,6 +93,15 @@ shows the ranked marker from
 [`workstream-markers.md`](workstream-markers.md), with `completed` left out. A
 Breakout needing this reader counts as unread on its Channel. The dot replaced
 the numeric badge.
+
+At the bottom, below the list and above the line over the account menu, sit
+the sidebar's **footer items**: rows the host passes as `footerItems`, drawn by
+`SidebarFooterItems` from `@rally/ui`. They stay on screen however long the
+list is, since they are outside its scroll, and each is a `SidebarRow`, so a
+compact rail collapses it to a tile like a Space row. Today the one item is
+**Download the Mac app**, which `AppShell` passes whenever the host is a
+browser tab, for members and guests alike; the Mac app passes none and draws
+nothing there. Tips or tutorials go here too.
 
 ### Pins under All
 
@@ -267,6 +275,27 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-03 — Footer items above the account menu
+
+**What changed:** The sidebar takes `footerItems`, rows drawn above the line
+over the account menu and outside the scrolling list. The browser's
+**Download the Mac app** is its first user, passed by `AppShell` when the host
+is a browser tab, so members and guests both always see it.
+
+**Why:** Product wants the download always on screen in the browser, and
+expects tips or tutorials in the same place. The download had been drawn
+inline in the sidebar on a host check, a one-off that each later item would
+have copied.
+
+**Considered and rejected:** Putting the rows inside the scrolling list,
+which hides them under a long Channel list; and a sidebar-owned list of
+known items, which would make the sidebar decide what a host offers.
+
+**Consequences:** Anything that must stay visible at the bottom of the
+sidebar goes through `footerItems` as `SidebarRow`s, not into the list. The
+host decides what appears; the sidebar only places it.
+
 
 ### 2026-10-02 — Space pickers lead with All
 
