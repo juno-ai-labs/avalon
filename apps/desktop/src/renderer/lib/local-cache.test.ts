@@ -92,6 +92,20 @@ describe('local cache store', () => {
     expect(await notes.read(otherAccount, 'a')).toEqual({ text: 'second account' });
   });
 
+  it('keeps a guest\'s rows apart from what the same account cached as a member, and clears both on leaving', async () => {
+    const guest1 = localCacheScope(USER, 'global', '00000000-0000-7000-8000-000000000001', 'guest');
+    await notes.write(global1, 'a', { text: 'read as a member' });
+
+    expect(await notes.read(guest1, 'a')).toBeNull();
+    await notes.write(guest1, 'a', { text: 'read as a guest' });
+    expect(await notes.read(global1, 'a')).toEqual({ text: 'read as a member' });
+
+    await clearWorkspaceLocalCache(USER, 'global', '00000000-0000-7000-8000-000000000001');
+
+    expect(await notes.read(global1, 'a')).toBeNull();
+    expect(await notes.read(guest1, 'a')).toBeNull();
+  });
+
   it('lists a scope and removes by subject and by key across scopes', async () => {
     await notes.write(global1, 'p:0', { text: 'main' }, 'p');
     await notes.write(global1, 'p:child', { text: 'child' }, 'p');

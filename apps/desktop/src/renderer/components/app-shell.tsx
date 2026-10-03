@@ -763,7 +763,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     <>
       <div className={shellClassName} style={shellStyle}>
       <Sidebar
-        onOpenSearch={api && !guestSession ? () => setSearchOpen(true) : undefined}
+        onOpenSearch={api ? () => setSearchOpen(true) : undefined}
         // A browser tab always offers the Mac app, member or guest.
         footerItems={host === 'browser' ? <MacDownloadLink /> : undefined}
         accountMenu={(

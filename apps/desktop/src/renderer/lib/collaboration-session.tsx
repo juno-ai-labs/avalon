@@ -59,10 +59,8 @@ export function useCollaborationSession(): CollaborationSessionValue {
  *
  * The one place a surface asks. Members and guests, in the Mac app or a tab,
  * mount the same shell; what differs is read here rather than by a second
- * shell. A guest has no member directory, Space directory, Channel list,
- * workspace settings or account onboarding: those routes refuse them, so the
- * shell neither requests nor offers them. The server still authorizes every
- * call; this only keeps the shell from making ones that would be refused.
+ * shell. The server still authorizes every call; this only keeps the shell
+ * from making ones that would be refused.
  */
 export interface ShellCapabilities {
   host: 'desktop' | 'browser';

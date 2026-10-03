@@ -1279,6 +1279,23 @@ describe('Sidebar channel markers', () => {
       .not.toBeInTheDocument());
   });
 
+  it('offers a read-only sidebar only the row actions a guest\'s routes accept', async () => {
+    const target = workstream('shared-with-me', 'Quarterly planning', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} onSignOut={vi.fn()} spacesReadOnly workspace={workspace} workstreams={[target]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    expect(await screen.findByRole('menuitem', { name: 'Share' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Mark as unread' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Rename' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Archive channel' })).not.toBeInTheDocument();
+  });
+
   it('reports a channel archive the server rejected instead of failing silently', async () => {
     const onArchiveWorkstream = vi.fn(async () => {
       throw new Error('The channel could not be reached.');

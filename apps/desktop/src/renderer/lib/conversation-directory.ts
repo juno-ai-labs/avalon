@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useOptionalCollaborationSession } from './collaboration-session';
 
@@ -30,10 +30,15 @@ export function conversationScopedChannelIds(directory: SharedNavigationDirector
  * a collaboration session there is none, and the answer is undefined.
  */
 export function useConversationDirectory(): SharedNavigationDirectory | undefined {
+  return useConversationDirectoryQuery().data;
+}
+
+/** The same read with its state, for a screen that must say when the shell's fetch failed. */
+export function useConversationDirectoryQuery(): UseQueryResult<SharedNavigationDirectory | undefined> {
   const session = useOptionalCollaborationSession()?.session;
   return useQuery<SharedNavigationDirectory | undefined>({
     queryKey: conversationDirectoryQueryKey(session?.workspace?.id),
     queryFn: async () => undefined,
     enabled: false,
-  }).data;
+  });
 }
