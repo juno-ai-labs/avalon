@@ -42,3 +42,17 @@ CREATE TABLE usage_rollups (
 -- not occurrence: dedupe needs a row for as long as its message can be
 -- redelivered, and that is measured from when the ledger received it.
 CREATE INDEX usage_events_received ON usage_events(received_at);
+
+-- Every plan change, with the plan it replaced. A rollup row's quota is the
+-- plan in force at the end of its week, read from here inside the same insert
+-- that creates the row, so a late event priced into a past week gets that
+-- week's plan, and a plan change racing the consumer cannot be lost: D1 runs
+-- one transaction at a time, so either the change lands first and the insert
+-- reads it, or the insert lands first and the change rewrites the row.
+CREATE TABLE usage_plan_changes (
+  workspace_id TEXT NOT NULL,
+  effective_at TEXT NOT NULL,
+  plan TEXT NOT NULL CHECK (plan IN ('starter', 'growth')),
+  previous_plan TEXT NOT NULL CHECK (previous_plan IN ('starter', 'growth')),
+  PRIMARY KEY (workspace_id, effective_at)
+);
