@@ -79,18 +79,18 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
       return <Navigate replace state={savedBreakout ? { restoredBreakout: savedBreakout } : undefined}
         to={`/workstreams/${encodeURIComponent(savedChannelId)}${savedBreakout ? `?substream=${encodeURIComponent(savedBreakout)}` : ''}`} />;
     }
-    if (savedSpaceId !== null && session?.workspace?.accessClass !== 'guest') {
+    if (savedSpaceId !== null) {
       if (awaitingSpace) return <LoadingState label="Opening spaces…" />;
       if (spaces?.items.some((row) => row.id === savedSpaceId)) return <Navigate replace to={`/spaces/${encodeURIComponent(savedSpaceId)}`} />;
     }
   }
   if (first) return <Navigate replace to={`/workstreams/${encodeURIComponent(first.id)}`} />;
   // No Channel to open. Every Channel is started from a Space, so an empty
-  // Organization lands on General, whose dashboard says so. A guest has no
-  // Space directory, and nothing to start from.
+  // Organization lands on General, whose dashboard says so. (A guest lands
+  // through `SharedLanding` instead.)
   const general = spaces?.items.find((row) => row.systemRole === 'general');
   if (general) return <Navigate replace to={`/spaces/${encodeURIComponent(general.id)}`} />;
-  if (!spaces && session?.workspace?.accessClass !== 'guest' && state !== 'unavailable'
+  if (!spaces && state !== 'unavailable'
     && sidebarConnect?.spacesLive !== false) return <LoadingState label="Opening spaces…" />;
   return <EmptyState title="No channels yet" description="Channels shared with you appear in the sidebar." />;
 }

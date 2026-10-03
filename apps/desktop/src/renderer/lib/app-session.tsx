@@ -1298,7 +1298,7 @@ export function AppSessionValueProvider({ value, connectorSetup, createSidekick,
   createSidekick: (() => Promise<void>) | null;
 }>): React.JSX.Element {
   return <AppSessionContext.Provider value={value}>
-    <CollaborationSessionProvider api={value.api} session={value.session} connectorSetup={connectorSetup} createSidekick={createSidekick}>{children}</CollaborationSessionProvider>
+    <CollaborationSessionProvider api={value.api} host={value.host} session={value.session} connectorSetup={connectorSetup} createSidekick={createSidekick}>{children}</CollaborationSessionProvider>
   </AppSessionContext.Provider>;
 }
 

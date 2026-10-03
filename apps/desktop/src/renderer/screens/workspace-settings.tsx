@@ -59,6 +59,7 @@ import { ThemePicker } from '../components/theme-picker';
 import { DigestSettings } from '../components/digest-settings';
 import { UsageSettingsSection } from '../components/organization-usage';
 import { useAppSession } from '../lib/app-session';
+import { useShellCapabilities } from '../lib/collaboration-session';
 import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError, type RallyApi } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
@@ -261,6 +262,13 @@ interface SettingsNavItem {
   child?: boolean;
 }
 
+/**
+ * What a guest's Settings holds: their own profile and this app. Every other
+ * section configures the Organization or a member's place in it, and its
+ * routes refuse a guest.
+ */
+const GUEST_SETTINGS_SECTIONS: ReadonlySet<SettingsSection> = new Set(['account', 'application']);
+
 const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Settings',
@@ -448,7 +456,6 @@ export function WorkspaceSettingsScreen({
 }: { standaloneWindow?: boolean; workspace: Workspace }): React.JSX.Element {
   const {
     api,
-    host,
     session,
     runtime,
     leaveWorkspace,
@@ -456,6 +463,7 @@ export function WorkspaceSettingsScreen({
     pendingConnectorOAuth,
     setPendingConnectorOAuth,
   } = useAppSession();
+  const { host, guest } = useShellCapabilities();
   const browserHost = host === 'browser';
   const connectorStartAvailable = useConnectorStartAvailable(api, session);
   const workspaceSocket = useOptionalWorkspaceSocket();
@@ -471,7 +479,10 @@ export function WorkspaceSettingsScreen({
   const webhookRefreshCancelRef = useRef<HTMLButtonElement | null>(null);
   const reconnectCancelRef = useRef<HTMLButtonElement | null>(null);
   const disconnectCancelRef = useRef<HTMLButtonElement | null>(null);
-  const [activeSection, setActiveSection] = useState<SettingsSection>(initialSettingsSection);
+  const [requestedSection, setActiveSection] = useState<SettingsSection>(initialSettingsSection);
+  // Clamped while rendering, not after: a link or the hash can name a member's
+  // section, and its reads would start in the frame before an effect moved on.
+  const activeSection: SettingsSection = guest && !GUEST_SETTINGS_SECTIONS.has(requestedSection) ? 'account' : requestedSection;
   const [navigationQuery, setNavigationQuery] = useState('');
   const [connectionFilter, setConnectionFilter] = useState<ConnectionFilter>('not_connected');
   const [githubSettingsConnectionId, setGitHubSettingsConnectionId] = useState<string | null>(null);
@@ -535,7 +546,7 @@ export function WorkspaceSettingsScreen({
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api),
+    enabled: Boolean(api && !guest),
     staleTime: 30_000,
   });
   const [promotion, setPromotion] = useState<{ id: string; name: string; incarnation: string; revision: number } | null>(null);
@@ -567,7 +578,7 @@ export function WorkspaceSettingsScreen({
   const connections = useQuery({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),
-    enabled: Boolean(api),
+    enabled: Boolean(api && !guest),
     refetchOnWindowFocus: true,
     staleTime: 5_000,
   });
@@ -714,7 +725,7 @@ export function WorkspaceSettingsScreen({
   const connectorCatalog = useQuery({
     queryKey: ['connector-catalog'],
     queryFn: ({ signal }) => api!.getAvailableConnectorTypes(signal),
-    enabled: Boolean(api),
+    enabled: Boolean(api && !guest),
     staleTime: 30_000,
   });
   const connectProvider = useMutation({
@@ -972,9 +983,10 @@ export function WorkspaceSettingsScreen({
     // paused state, and an absent section is still an honest answer to "is
     // this available to me."
     return { ...withCustomMcp, items: withCustomMcp.items.filter((item) =>
-      (item.id !== 'digest' || digestSettingsAvailable)
+      (!guest || GUEST_SETTINGS_SECTIONS.has(item.id))
+      && (item.id !== 'digest' || digestSettingsAvailable)
       && (item.id !== 'notifications' || featureFlags.data?.pushNotificationsEnabled === true)) };
-  }), [githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable, featureFlags.data?.pushNotificationsEnabled]);
+  }), [guest, githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable, featureFlags.data?.pushNotificationsEnabled]);
   const availableSections = useMemo(
     () => new Set(settingsNavigationWithConnectors.flatMap((group) => group.items.map((item) => item.id))),
     [settingsNavigationWithConnectors],
@@ -1292,8 +1304,11 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-pane-heading"><h2><SettingLabel setting={settings.profile} /></h2><p>Your Rally identity and access in this workspace.</p></div>
                 <PersonalSetup variant="settings" profileDetails={(displayName) => <>
                   <span><strong>{displayName}</strong><small>{workspace.currentUser.email}</small></span>
-                  <Badge className="role-badge">{workspace.currentUser.role}</Badge>
+                  <Badge className="role-badge">{guest ? 'Guest' : workspace.currentUser.role}</Badge>
                 </>} />
+                {/* The timezone is saved through a member-only route, and only
+                    a member's automations read it. */}
+                {!guest && <>
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Preferences</h2></div>
                 <div className="settings-list-card">
                   <label className="settings-preference-row">
@@ -1312,6 +1327,7 @@ export function WorkspaceSettingsScreen({
                   </label>
                 </div>
                 {updateUserTimezone.error && <InlineError>{updateUserTimezone.error.message}</InlineError>}
+                </>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Session</h2></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">

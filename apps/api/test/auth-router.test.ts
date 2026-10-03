@@ -115,8 +115,33 @@ describe("authentication in the complete application router", () => {
       url: `wss://api.example.test/socket/workspaces/${workspaceId}`,
       ticket: expect.any(String),
     });
-    // The rest of `/workspace` stays member-only.
-    expect((await request("/workspace")).status).toBe(403);
+  });
+
+  it("gives a guest the Organization profile and nothing else under /workspace", async () => {
+    const guestId = "00000000-0000-7000-8000-000000000004";
+    database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId, at, at);
+    database.prepare("INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'guest',NULL,'active',?)")
+      .run(workspaceId, guestId, at);
+    const bindings = createTestEnv({ ...env(), PUBLIC_API_BASE_URL: "https://api.example.test" });
+    const guestSession = await new AuthService(bindings).createRegionalSession(guestId, workspaceId);
+    const request = (path: string) => createApp().request(path, {
+      headers: { authorization: `Bearer ${guestSession.accessToken}` },
+    }, bindings);
+
+    const profile = await request("/workspace");
+    expect(profile.status).toBe(200);
+    expect(await profile.json()).toMatchObject({ id: workspaceId, accessClass: "guest", role: null });
+    // The member directory and the rest of `/workspace` stay member-only.
+    expect((await request("/workspace/members")).status).toBe(403);
+    expect((await request("/workspace/attention")).status).toBe(403);
+  });
+
+  it("still answers a member's profile with their role", async () => {
+    const response = await createApp().request("/workspace", { headers: { authorization: `Bearer ${await bearer()}` } }, env());
+    expect(response.status).toBe(200);
+    const body = await response.json() as Record<string, unknown>;
+    expect(body).toMatchObject({ id: workspaceId, role: "owner" });
+    expect(body).not.toHaveProperty("accessClass");
   });
 
   it("promotes the same guest through the public route and retains its session binding", async () => {

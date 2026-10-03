@@ -20,21 +20,12 @@ export function cookieClientSession(region: string, session: BrowserSession): Co
 }
 
 /**
- * Which shell a workspace session mounts. Guests keep the guest collaboration
- * shell; members get the desktop shell. Returning `"guest"` for everyone is the
- * PRD's way to turn the member shell off.
+ * Where the shell lands for a path the browser was opened on. The desktop
+ * shell routes by hash, so a canonical Channel or Space link, or an invitation's
+ * addressed Channel path, becomes the workspace path plus the hash the
+ * desktop's own deep links set. Returns null when the path needs no rewrite.
  */
-export function browserShellFor(session: Pick<BrowserSession, "workspace">): "guest" | "member" {
-  return session.workspace?.accessClass === "guest" ? "guest" : "member";
-}
-
-/**
- * Where the member shell lands for a path the browser was opened on. The
- * desktop shell routes by hash, so a canonical Channel or Space link becomes
- * the workspace path plus the hash the desktop's own deep links set. Returns
- * null when the path needs no rewrite.
- */
-export function memberShellLocation(pathname: string, hash: string): string | null {
+export function shellLocation(pathname: string, hash: string): string | null {
   const workstream = parseWorkstreamLinkPathTarget(pathname);
   if (workstream?.region && workstream.workspaceId) {
     const query = new URLSearchParams();

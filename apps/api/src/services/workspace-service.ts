@@ -356,9 +356,14 @@ async function notifyInvitationResolution(
 export class WorkspaceService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
 
+  /**
+   * The Organization's profile as this person sees it. Guests read it too: the
+   * shell every browser user mounts loads it first, and a guest's answer is the
+   * same row with no role, which `WorkspaceSchema` already requires of them.
+   */
   async getWorkspace() {
     const row = await this.env.DB.prepare(
-      `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at, m.role
+      `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at, m.role, m.access_class
        FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id
        WHERE w.id = ? AND m.user_id = ? AND m.status = 'active'
          AND w.abandoned_at IS NULL`,
@@ -372,7 +377,8 @@ export class WorkspaceService {
       slug: String(row.slug),
       region: String(row.region),
       timezone: String(row.timezone),
-      role: String(row.role),
+      role: row.role == null ? null : String(row.role),
+      ...(row.access_class === "guest" ? { accessClass: "guest" as const } : {}),
       createdAt: String(row.created_at),
     };
   }

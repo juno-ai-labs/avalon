@@ -84,8 +84,15 @@ async function withTerminalSettingsService<T>(
   }
 }
 
-workspaceRoutes.get("/", async (c) =>
-  c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getWorkspace())));
+/**
+ * The Organization's profile, for members and guests alike. Mounted on the
+ * identity layer beside the socket ticket, for the same reason: the one shell
+ * both mount reads it before anything else.
+ */
+export async function workspaceProfile(c: Context<HonoAppEnv>) {
+  return c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getWorkspaceAuth(c)).getWorkspace()));
+}
+
 workspaceRoutes.get("/attention", async (c) =>
   c.json(WorkspaceAttentionSchema.parse(await workspaceAttention(c.env, getAuth(c)))));
 // The usage meter. Every member role may read it: usage is shared by design.

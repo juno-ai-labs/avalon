@@ -13,6 +13,7 @@ import { ApiError } from '../lib/api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from '../lib/use-client-feature-flags';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
 import { WorkspaceSettingsScreen } from './workspace-settings';
+import { CollaborationSessionProvider } from '../lib/collaboration-session';
 
 const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
@@ -159,7 +160,9 @@ function renderSettings(
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={client}>
-        <AccountOnboardingGate><WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} /></AccountOnboardingGate>
+        <CollaborationSessionProvider api={api as never} host={sessionHost.current} session={null}>
+          <AccountOnboardingGate><WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} /></AccountOnboardingGate>
+        </CollaborationSessionProvider>
       </QueryClientProvider>
     </Tooltip.Provider>,
   );
@@ -429,6 +432,32 @@ describe('Organization settings', () => {
     await waitFor(() => expect(api.promoteWorkspaceGuest).toHaveBeenCalledWith(guest.id, { incarnation: 'membership', expectedRevision: 3 }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Make Guest Sam a member' })).not.toBeInTheDocument());
     expect(screen.getByText('Guest Sam')).toBeVisible();
+  });
+
+  it('keeps a guest on their own sections even when a link names a member\'s', async () => {
+    const guestSession = { apiBaseUrl: 'https://enterprise.api.rallywith.ai', expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'user-1', name: 'Adam', email: 'adam@example.com' },
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'enterprise', role: null, timezone: 'Europe/London', accessClass: 'guest' as const } };
+    window.location.hash = '#/settings?section=internet-access';
+    const client = createTestQueryClient();
+    client.setQueryData(['account-onboarding', 'adam@example.com'], { eligible: false, introduced: true, revision: 1, presentation: null });
+    try {
+      render(
+        <Tooltip.Provider>
+          <QueryClientProvider client={client}>
+            <CollaborationSessionProvider api={api as never} session={guestSession}>
+              <WorkspaceSettingsScreen workspace={workspace} />
+            </CollaborationSessionProvider>
+          </QueryClientProvider>
+        </Tooltip.Provider>,
+      );
+      expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
+      const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+      expect(within(navigation).getAllByRole('button').map((button) => button.textContent)).toEqual(['Account', 'Application']);
+      expect(api.getTerminalWorkspaceSettings).not.toHaveBeenCalled();
+    } finally {
+      window.location.hash = '';
+    }
   });
 
   it('opens on the member list the application already holds', async () => {
