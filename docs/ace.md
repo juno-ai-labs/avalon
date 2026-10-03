@@ -162,7 +162,7 @@ the code path the model serves and carries the same checked-in route the API
 Worker uses when Flagship is unavailable. The suggested model list combines
 the reviewed work-stream pin choices with the classifier model used only by
 fleet routing; either a primary or fallback input may also carry an arbitrary
-OpenRouter model id entered as free text. Sol is the exception: Ace suggests
+OpenRouter model id entered as free text. GPT-5.6 Sol is the exception: Ace suggests
 and accepts it only for `inline_child`, whose complete execution path receives
 Bind's Azure configuration and pricing port. A role such as `workstream` is not safe merely because its main
 turn is routed: its attachment-summary pass still uses the structured
@@ -182,6 +182,10 @@ come after them. Each row shows its numeric rank and the usage reason behind it.
 The rank lives beside the hard-coded role explanation so adding a role requires
 making its operational importance explicit rather than letting insertion order
 decide where operators see it.
+
+The route editor includes optional reasoning effort (`low`, `medium`, or
+`high`); Model default omits the field. Read, edit, and save preserve it as
+part of the atomic route alongside the primary model and fallback array.
 
 The client debounces edits to the atomic route and asks
 `POST /api/models/validate` to check every distinct id against OpenRouter's
@@ -381,6 +385,14 @@ When a save succeeds but clients do not change, inspect in order:
 Shared DB runtime sources and package exports are deployment inputs alongside
 contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only changes
 do not publish a new Ace bundle.
+
+### 2026-10-02 — Edit reasoning with the model route
+
+The Models editor reads and saves optional reasoning effort alongside model
+and fallbacks. Model comparisons needed independent effort changes without a
+deploy or a separate flag whose rollout could disagree with the model. The
+shared route schema also owns MCP validation; Model default removes the field
+and preserves existing behavior.
 
 ### 2026-10-02 — Deploy stops re-creating retired model flags
 

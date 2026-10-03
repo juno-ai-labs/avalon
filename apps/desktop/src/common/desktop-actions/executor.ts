@@ -7,14 +7,18 @@ import {
 } from '@rally/contracts/desktop-actions';
 import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
 
-import type { RallyDesktopBridge } from '../../../common/desktop';
-import type { EmbeddedBrowserCommand } from '../../../common/embedded-browser';
-import { loadThroughTab } from '../browser-conversation';
+import type { RallyDesktopBridge } from '../desktop';
+import type { EmbeddedBrowserCommand } from '../embedded-browser';
+import { loadThroughTab } from '../browser-loader';
 import { axOutline } from './ax-outline';
 import { pageScript, PageScriptOutcomeSchema } from './page-script';
 import { MAX_STORED_FILE_BYTES, type DesktopActionStore } from './store';
 
 type ExecutorBridge = Pick<RallyDesktopBridge, 'getEmbeddedBrowserState' | 'commandEmbeddedBrowser'>;
+
+export type DesktopActionExecutionPhase =
+  | 'browser_state_requested' | 'browser_state_received'
+  | 'browser_command_requested' | 'browser_command_completed';
 
 /** Actions that are not the browser's: the work's own, answered by its owner. */
 export type DesktopActionHandlers = {
@@ -29,6 +33,8 @@ export interface DesktopActionExecutorOptions {
   tabId: string;
   store: DesktopActionStore;
   handlers?: DesktopActionHandlers;
+  /** Content-free observations; a diagnostic must never affect execution. */
+  onPhase?: (phase: DesktopActionExecutionPhase) => void;
 }
 
 const failed = (code: DesktopActionFailureCode, message: string): DesktopActionOutcome => ({ ok: false, code, message });
@@ -53,11 +59,21 @@ function fileName(url: string): string {
  */
 export function createDesktopActionExecutor(options: DesktopActionExecutorOptions) {
   const { bridge, tabId, store } = options;
+  const runtimeId = crypto.randomUUID();
 
-  const command = (input: EmbeddedBrowserCommand) => bridge.commandEmbeddedBrowser(input);
+  const phase = (value: DesktopActionExecutionPhase) => {
+    try { options.onPhase?.(value); } catch { /* Diagnostics do not decide an action's outcome. */ }
+  };
+  const command = async (input: EmbeddedBrowserCommand) => {
+    phase('browser_command_requested');
+    try { return await bridge.commandEmbeddedBrowser(input); }
+    finally { phase('browser_command_completed'); }
+  };
 
   const page = async (): Promise<{ url: string; title: string } | null> => {
+    phase('browser_state_requested');
     const state = await bridge.getEmbeddedBrowserState();
+    phase('browser_state_received');
     const tab = state.tabs.find((candidate) => candidate.id === tabId);
     return tab ? { url: tab.url, title: tab.title } : null;
   };
@@ -78,6 +94,16 @@ export function createDesktopActionExecutor(options: DesktopActionExecutorOption
   const browser = async (action: Extract<DesktopAction, { kind: `browser.${string}` }>): Promise<DesktopActionOutcome> => {
     const before = await settled();
     if ('ok' in before) return before;
+    if (action.kind === 'browser.script_reset') {
+      await command({ action: 'script_reset', tabId, runtimeId });
+      return { ok: true, result: {} };
+    }
+    if (action.kind === 'browser.script') {
+      const result = await command({ action: 'script', tabId, runtimeId, code: action.code });
+      if (result.kind !== 'script') return failed('script_error', 'The browser runtime did not answer.');
+      for (const item of result.stored) store.add(item);
+      return { ok: true, result: result.result };
+    }
     if (action.kind === 'browser.evaluate') {
       let raw: unknown;
       try {
@@ -188,6 +214,9 @@ export function createDesktopActionExecutor(options: DesktopActionExecutorOption
   };
 
   return {
+    dispose(): void {
+      void bridge.commandEmbeddedBrowser({ action: 'script_reset', tabId, runtimeId }).catch(() => undefined);
+    },
     /** Run one requested action; never throws, so every request gets an answer. */
     async execute(raw: unknown): Promise<DesktopActionOutcome> {
       const parsed = DesktopActionSchema.safeParse(raw);

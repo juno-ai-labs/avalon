@@ -32,6 +32,18 @@ const snapshot = { kind: "browser.snapshot" } as const;
 const ignore = () => undefined;
 
 describe("desktop action storage", () => {
+  it("replays a browser script observation and repairable error without re-executing its code", async () => {
+    await withStorage("desktop-browser-script-replay", actions => {
+      const action = { kind: "browser.script", code: "nodeRepl.write(await tab.title());", title: "Read the conversation" } as const;
+      actions.request({ id: "script-1", runId: "r1", toolCallId: "c1", action, now: 1 });
+      expect(actions.pending(ignore)).toEqual([{ id: "script-1", action }]);
+      const outcome = { ok: true, result: { output: [{ type: "text", text: "Conversation" }], error: "Unknown variable: messages" } } as const;
+      expect(actions.answer({ id: "script-1", outcome, answeredByUserId: "u1", now: 2 })).toEqual({ status: "answered", outcome });
+      expect(actions.request({ id: "script-2", runId: "r1", toolCallId: "c1", action, now: 3 })).toEqual({ status: "answered", outcome });
+      expect(actions.pending(ignore)).toEqual([]);
+    });
+  });
+
   it("hands a re-entered call the answer already recorded, and keeps the first answer", async () => {
     await withStorage("desktop-action-storage-replay", (actions) => {
       const asked = actions.request({ id: "a1", runId: "r1", toolCallId: "c1", action: snapshot, now: 1 });

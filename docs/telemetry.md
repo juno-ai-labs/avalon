@@ -87,6 +87,22 @@ pagination contract and p50/p90 acceptance targets.
 
 ### Contract and producers
 
+The importer's `desktop_action_phase` diagnostic joins an opaque UUIDv7 action
+ID to content-free renderer phases and elapsed milliseconds from receipt,
+including queue admission, browser-state reads, browser-command round trips,
+execution, answer send/defer, re-offers and terminal-run interruption. Window
+visibility distinguishes a hidden renderer. The durable `desktop_actions` row
+supplies server creation and answer times; a renderer send is not a server
+acknowledgment. Collection uses the existing main-owned semantic intent and
+diagnostic preference/retention policy. Scripts, provider URLs, titles, file
+names, tool results and transcript contents are absent.
+
+Deterministic importer runs are UUIDv8. Tool-start, tool-terminal and run-terminal
+producers keep that original ID in `harnessRunId` and derive a stable UUIDv7
+operation correlation through `runTelemetryOperationId`; native UUIDv7 runs
+retain their existing operation ID. This satisfies the context contract without
+rejecting the entire event or changing the actual run identity.
+
 `TELEMETRY_EVENTS` is the only event registry. Each entry fixes its sources,
 authoritative producer, identity scopes, category, exact property schema,
 classification, priority, sample rate, retention, and destination. Incompatible
@@ -1951,6 +1967,26 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-10-02 — Locate desktop-action waits and admit deterministic import runs
+
+**What changed:** A closed desktop action-phase diagnostic records the action
+ID, phase, elapsed time and visibility through the existing semantic intent
+path. Run and tool producers derive valid operation correlation for UUIDv8
+imports while retaining the original run ID in their properties.
+
+**Why:** Production import transcripts showed a successful desktop answer
+arriving after the tool deadline without enough evidence to locate the delay.
+The importer also used UUIDv8 run IDs where telemetry context required UUIDv7,
+silently losing otherwise valid tool and terminal events.
+
+**Considered and rejected:** Widening every context ID, sending raw tool content,
+or building another transport. A stable correlation projection and the existing
+governed event path fix the observed gap without changing product identity or
+the telemetry privacy boundary.
+
+**Consequences:** Deploy the event reader before a desktop producer. Action
+timestamps join durable rows; a sent answer is not proof of server receipt.
 
 ### 2026-09-29 — An unreadable stored event no longer stalls PostHog delivery
 
