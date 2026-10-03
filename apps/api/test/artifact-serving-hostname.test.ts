@@ -239,6 +239,10 @@ describe("artifact serving hostname routes", () => {
     const unframed = await artifactWorker.fetch(new Request(`${origin}/__rally/open`), env, context());
     expect(unframed.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
     expect(unframed.headers.get("x-frame-options")).toBe("DENY");
+    // Nor may anything when the configured origin cannot be read; serving goes on.
+    const misconfigured = await artifactWorker.fetch(new Request(`${origin}/__rally/open`), { ...env, BROWSER_APP_ORIGIN: "not a url" }, context());
+    expect(misconfigured.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(misconfigured.headers.get("x-frame-options")).toBe("DENY");
   });
 
   it("serves a public artifact to a crawler without a Rally session", async () => {
