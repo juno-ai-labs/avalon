@@ -311,6 +311,7 @@ function OnboardingChecklist(): React.JSX.Element {
       <Meter
         label={`${completedCount} of ${onboardingItems.length} onboarding steps complete`}
         max={onboardingItems.length}
+        role="progressbar"
         value={completedCount}
       />
       <div className="onboarding-items">

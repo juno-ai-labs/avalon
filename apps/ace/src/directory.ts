@@ -59,12 +59,21 @@ async function workspaces(
 ): Promise<DirectoryWorkspace[]> {
   // By id as well as by name or slug: the retirement form asks the operator to
   // paste the workspace id, and the id is often what they were handed.
+  // `*` rather than naming `plan`: Ace deploys apart from the API, so it can
+  // reach a region before migration 0118 adds the column. A missing column
+  // reads as Starter, the default that migration gives every existing row.
   const result = await db.prepare(
-    `SELECT id, name, slug, plan FROM workspaces
+    `SELECT * FROM workspaces
       WHERE name LIKE ? ESCAPE '\\' OR slug LIKE ? ESCAPE '\\' OR id = ?
       ORDER BY name`,
-  ).bind(like(query), like(query), query).all<{ id: string; name: string; slug: string; plan: string }>();
-  return (result.results ?? []).map((row) => ({ ...row, plan: PlanIdSchema.parse(row.plan), region }));
+  ).bind(like(query), like(query), query).all<{ id: string; name: string; slug: string; plan?: string }>();
+  return (result.results ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    plan: PlanIdSchema.parse(row.plan ?? 'starter'),
+    region,
+  }));
 }
 
 export async function searchUsers(env: Env, query: string): Promise<DirectoryUser[]> {

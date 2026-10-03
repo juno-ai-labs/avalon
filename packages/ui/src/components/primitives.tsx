@@ -608,11 +608,16 @@ export type MeterTone = 'normal' | 'warning';
  * is drawn so the layout does not jump when it does, and it is hidden from the
  * accessibility tree, since a meter with no value has nothing to say and the
  * surface beside it says what it is waiting for.
+ *
+ * `role` is what assistive technology hears, and the drawing is the same for
+ * both: `meter` for a measurement such as quota left, `progressbar` for a task
+ * moving towards done such as onboarding steps.
  */
 export function Meter({
   className,
   label,
   max = 100,
+  role = 'meter',
   size = 'regular',
   tone = 'normal',
   value,
@@ -620,6 +625,7 @@ export function Meter({
   className?: string;
   label: string;
   max?: number;
+  role?: 'meter' | 'progressbar';
   size?: 'regular' | 'thin';
   tone?: MeterTone;
   value: number | null;
@@ -634,7 +640,7 @@ export function Meter({
       aria-valuemin={0}
       aria-valuenow={clamped}
       className={classes}
-      role="meter"
+      role={role}
     >
       <span className="meter-fill" style={{ width: `${max > 0 ? (clamped / max) * 100 : 0}%` }} />
     </div>
