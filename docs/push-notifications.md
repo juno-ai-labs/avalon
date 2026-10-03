@@ -21,7 +21,9 @@ fallback when neither Slack nor push accepted the notification.
 
 Every stored workspace credential registers the installation with its own region.
 The Mac loops every credential it holds except a guest's, which `/push-devices`
-refuses, so a guest workspace sends this device no push; the iPhone holds one workspace session
+refuses. A registration belongs to the account in that deployment, not to one
+workspace, so a guest workspace's notifications still reach a device that a
+membership in the same deployment registered; the iPhone holds one workspace session
 and registers that one. Delivery requires a live session bound to that device; another installation's
 session cannot keep it alive. The device switch and a separate push installation
 ID persist in the existing application settings file on the Mac, and in the

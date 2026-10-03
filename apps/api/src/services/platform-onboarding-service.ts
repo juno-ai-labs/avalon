@@ -1315,7 +1315,12 @@ export class PlatformOnboardingService {
   ): Promise<RegionalWorkspace[]> {
     const workspaces = discovery.flatMap((item) => item.workspaces);
     const unique = new Map(workspaces.map((workspace) => [`${workspace.region}:${workspace.id}`, workspace]));
-    const ordered = [...unique.values()];
+    // Memberships before guest relationships across every deployment, not only
+    // within one: a device with nothing selected opens the first, and that
+    // should be the person's own Organization. The sort is stable, so each
+    // group keeps the deployment and discovery order it came in.
+    const ordered = [...unique.values()].sort((left, right) =>
+      Number(left.accessClass === "guest") - Number(right.accessClass === "guest"));
     const current = await this.bindings.list(platformUserId);
     await this.bindings.reconcile(platformUserId, ordered.map((workspace) => ({
       region: workspace.region,
