@@ -391,11 +391,17 @@ A Space whose request fails shows the rows held for it and is asked again
 when it next comes on screen. A whole walk that fails leaves the directory
 query in error, and the sidebar stops waiting on the Spaces it did not reach.
 
-The sidebar keeps the first page, and the desktop keeps `list_workstreams`
-paging, in two cases:
-- **A guest.** A guest is sent no Spaces.
-- **An Organization still opening** (`spacesReady` false). A Channel can sit in
-  no Space there, and the page is the only way it reaches the sidebar.
+A guest is sent no Spaces, no Channel rows and no automations: the connect
+snapshot's lists are empty, `list_workstreams` answers an empty page, and every
+`workspace_workstream_state` frame to them carries `workstream: null`. Those
+lists follow member rules (every Organization-public Channel, every workspace
+automation), and a guest's rail is the grant-scoped `shared-navigation`
+directory instead.
+
+For a member, the sidebar keeps the first page, and the desktop keeps
+`list_workstreams` paging, while an Organization is still opening
+(`spacesReady` false): a Channel can sit in no Space there, and the page is the
+only way it reaches the sidebar.
 
 Electron asks for Channel rails with `channel_rails`: a stable request ID and
 up to 250 named Channels (`workstreamIds`). The retired Space target
@@ -981,6 +987,28 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-10-03 — A guest's workspace socket carries no member directory
+
+**What changed:** WorkspaceDO sends a guest's socket no Channel rows (connect
+snapshot, `list_workstreams` pages, `workspace_workstream_state` frames) and no
+sidebar automations.
+
+**Why:** Those lists follow member rules, so a guest received every
+Organization-public Channel's title, description, email address and activity,
+and every workspace automation. The old browser guest shell ignored the
+snapshot; once guests mounted the desktop shell, it cached the rows, which is
+how the gap surfaced (security review on #1088).
+
+**Considered and rejected:** Filtering on the client, which leaves the data on
+the wire; and sending guests the Channels they participate in, which the
+shell does not need, since a guest's rail is `shared-navigation`.
+
+**Consequences:** Anything a guest's shell shows about a Channel comes from
+`shared-navigation` or the conversation's own socket. A new list on the
+workspace socket must decide what a guest gets before it ships.
+
+Shipped in #1088.
 
 ### 2026-09-30 — Every member is sent Spaces, and `channel_rails` names Channels only
 
