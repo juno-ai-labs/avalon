@@ -6,7 +6,7 @@ import { desktopBridge } from '../lib/platform';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import type { WorkspaceAttention } from '@rally/contracts';
 import { Check, LoaderCircle, Plus } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import type { DesktopPendingWorkspaceInvitation, DesktopWorkspaceSummary, RallyRegion } from '../../common/desktop';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
@@ -18,6 +18,12 @@ import { RelativeTime } from './relative-time';
 
 export interface WorkspaceAccountMenuProps {
   activeWorkspace: DesktopWorkspaceSummary;
+  /**
+   * Drawn under the active Organization's row and nowhere else. It is a slot so
+   * the menu stays presentational: the host supplies the usage read, and the
+   * slot mounts with the menu's content, so opening the menu refreshes it.
+   */
+  activeUsage?: ReactNode;
   attention: Record<string, WorkspaceAttention | undefined>;
   currentUser: WorkspaceMember;
   enabled: boolean;
@@ -99,6 +105,7 @@ function actionErrorMessage(error: unknown, fallback: string): string {
 
 export function WorkspaceAccountMenu({
   activeWorkspace,
+  activeUsage = null,
   attention,
   currentUser,
   enabled,
@@ -257,46 +264,48 @@ export function WorkspaceAccountMenu({
                     ...(error ? [error] : []),
                   ].join(', ');
                   return (
-                    <DropdownMenu.Item
-                      aria-label={label}
-                      className="menu-item workspace-menu-item"
-                      key={workspaceKey}
-                      onSelect={(event) => {
-                        // A row waiting on the browser can be chosen again,
-                        // which opens the browser again.
-                        if (active || (switching && !signingIn)) return;
-                        // The menu stays open while the switch is pending, so
-                        // the row's spinner and any error land where the
-                        // person is looking; it closes itself once it took.
-                        event.preventDefault();
-                        void onSwitchWorkspace(workspace).then(
-                          (switched) => { if (switched) setMenuOpen(false); },
-                          () => undefined,
-                        );
-                      }}
-                    >
-                      <span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span>
-                      <span className="workspace-menu-copy">
-                        <span>{workspace.name}</span>
-                        {error
-                          ? <small className="workspace-menu-error">{error}</small>
-                          : signingIn && <small className="workspace-menu-note">{FINISH_SIGN_IN_IN_BROWSER}</small>}
-                      </span>
-                      {multipleRegions && <small className="workspace-region-tag">{regionLabel(workspace.region)}</small>}
-                      {switching && (
-                        <LoaderCircle
-                          aria-label={signingIn ? 'Waiting for sign-in' : 'Opening organization'}
-                          className="spin"
-                          size={14}
-                        />
-                      )}
-                      {active && <Check aria-label="Current" size={14} />}
-                      {!active && !switching && attentionDescription && activityDetail && (
-                        <IndicatorTooltip label={activityDetail}>
-                          <span aria-label={attentionDescription} className="workspace-activity-dot" />
-                        </IndicatorTooltip>
-                      )}
-                    </DropdownMenu.Item>
+                    <Fragment key={workspaceKey}>
+                      <DropdownMenu.Item
+                        aria-label={label}
+                        className="menu-item workspace-menu-item"
+                        onSelect={(event) => {
+                          // A row waiting on the browser can be chosen again,
+                          // which opens the browser again.
+                          if (active || (switching && !signingIn)) return;
+                          // The menu stays open while the switch is pending, so
+                          // the row's spinner and any error land where the
+                          // person is looking; it closes itself once it took.
+                          event.preventDefault();
+                          void onSwitchWorkspace(workspace).then(
+                            (switched) => { if (switched) setMenuOpen(false); },
+                            () => undefined,
+                          );
+                        }}
+                      >
+                        <span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span>
+                        <span className="workspace-menu-copy">
+                          <span>{workspace.name}</span>
+                          {error
+                            ? <small className="workspace-menu-error">{error}</small>
+                            : signingIn && <small className="workspace-menu-note">{FINISH_SIGN_IN_IN_BROWSER}</small>}
+                        </span>
+                        {multipleRegions && <small className="workspace-region-tag">{regionLabel(workspace.region)}</small>}
+                        {switching && (
+                          <LoaderCircle
+                            aria-label={signingIn ? 'Waiting for sign-in' : 'Opening organization'}
+                            className="spin"
+                            size={14}
+                          />
+                        )}
+                        {active && <Check aria-label="Current" size={14} />}
+                        {!active && !switching && attentionDescription && activityDetail && (
+                          <IndicatorTooltip label={activityDetail}>
+                            <span aria-label={attentionDescription} className="workspace-activity-dot" />
+                          </IndicatorTooltip>
+                        )}
+                      </DropdownMenu.Item>
+                      {active && activeUsage}
+                    </Fragment>
                   );
                 })}
                 {invitations.length > 0 && (

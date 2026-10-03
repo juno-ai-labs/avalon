@@ -1,0 +1,155 @@
+import { onlineManager, useQuery } from '@tanstack/react-query';
+import { LOW_QUOTA_PERCENT, OrganizationUsageSchema, PLANS, type OrganizationUsage } from '@rally/contracts/usage';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import type { RallyApi } from './api';
+import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
+import { useLocalCacheScope } from './local-cache-scope';
+
+/**
+ * The Organization's usage meter as this device last read it.
+ *
+ * `GET /workspace/usage` is a plain REST read with no socket behind it: a figure
+ * that may lag by minutes gains nothing from a push. So the reader fetches when
+ * a surface that shows it opens, the Usage section of Settings or the
+ * Organization menu, and paints the last answer this device saw while it waits.
+ * `docs/local-cache.md` owns the `usage` slice; the usage quota PRD
+ * (`docs/PRDs/2026-10-03_usage-quota-metering/prd.md`) owns what each state says.
+ */
+
+/** The surface only needs this one call, not the whole renderer client. */
+export type OrganizationUsageApi = Pick<RallyApi, 'getWorkspaceUsage'>;
+
+/** One answer and when it arrived, which is what the offline label names. */
+export interface UsageReading {
+  usage: OrganizationUsage;
+  fetchedAt: string;
+}
+
+const USAGE_KEY = 'usage';
+
+function parseUsageReading(value: unknown): UsageReading | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Record<string, unknown>;
+  const usage = OrganizationUsageSchema.safeParse(candidate['usage']);
+  const fetchedAt = candidate['fetchedAt'];
+  if (!usage.success || typeof fetchedAt !== 'string' || Number.isNaN(Date.parse(fetchedAt))) return null;
+  return { usage: usage.data, fetchedAt };
+}
+
+/**
+ * One row per Organization scope. The response is parsed with the same schema
+ * the API client uses, so a row this build cannot read is dropped on read
+ * rather than painted.
+ */
+export const usageCacheSlice = defineLocalCacheSlice<UsageReading>({
+  kind: 'usage',
+  version: 1,
+  parse: parseUsageReading,
+});
+
+export const organizationUsageQueryKey = ['workspace-usage'] as const;
+
+export type OrganizationUsageState =
+  | { status: 'loading' }
+  | { status: 'error' }
+  | { status: 'ready'; reading: UsageReading; offline: boolean };
+
+const subscribeOnline = (notify: () => void): (() => void) => onlineManager.subscribe(notify);
+const readOnline = (): boolean => onlineManager.isOnline();
+
+/**
+ * Reads usage when the surface calling it mounts, and paints the cached row
+ * until the answer lands. A cached row seeds only an empty query: an answer
+ * already in memory from earlier in the session is newer than anything on disk.
+ */
+export function useOrganizationUsage(api: OrganizationUsageApi | null): OrganizationUsageState & { retry: () => void } {
+  const scope = useLocalCacheScope();
+  const online = useSyncExternalStore(subscribeOnline, readOnline);
+  const [seed, setSeed] = useState<UsageReading | null>(null);
+  const query = useQuery({
+    queryKey: organizationUsageQueryKey,
+    queryFn: async ({ signal }): Promise<UsageReading> => {
+      // Stated before the request so a sign-out while it is in flight drops
+      // the write rather than restoring a row the wipe removed.
+      const epoch = localCacheEpoch();
+      const usage = await api!.getWorkspaceUsage(signal);
+      const reading = { usage, fetchedAt: new Date().toISOString() };
+      if (scope) void usageCacheSlice.write(scope, USAGE_KEY, reading, USAGE_KEY, epoch);
+      return reading;
+    },
+    enabled: Boolean(api),
+    // Opening the surface is the refresh: there is no push and no polling.
+    refetchOnMount: 'always',
+  });
+
+  useEffect(() => {
+    if (!scope) return undefined;
+    let current = true;
+    const epoch = localCacheEpoch();
+    void usageCacheSlice.read(scope, USAGE_KEY).then((row) => {
+      if (current && row && epoch === localCacheEpoch()) setSeed(row);
+    });
+    return () => { current = false; };
+  }, [scope]);
+
+  const { refetch } = query;
+  // Stable, so a caller can refresh from an effect without refetching on every render.
+  const retry = useCallback((): void => { void refetch(); }, [refetch]);
+  const reading = query.data ?? seed;
+  const offline = !online || query.fetchStatus === 'paused';
+  if (offline) return reading ? { status: 'ready', reading, offline: true, retry } : { status: 'error', retry };
+  if (query.isError && !query.isFetching) return { status: 'error', retry };
+  return reading ? { status: 'ready', reading, offline: false, retry } : { status: 'loading', retry };
+}
+
+export function usageTone(usage: OrganizationUsage): 'normal' | 'warning' {
+  return usage.quotaRemainingPercent < LOW_QUOTA_PERCENT ? 'warning' : 'normal';
+}
+
+export function usagePlanLabel(usage: OrganizationUsage): string {
+  return `${PLANS[usage.plan].name} plan`;
+}
+
+/** The line beside the meter in Settings. */
+export function usageRemainingLabel(percent: number): string {
+  return percent === 0 ? 'Quota used for this week' : `${percent}% of this week's quota left`;
+}
+
+/** The one line under the active Organization in its menu. */
+export function usageMenuLabel(percent: number): string {
+  return percent === 0 ? 'Quota used this week' : `${percent}% left this week`;
+}
+
+// Formatters are built per call rather than at module load so they follow the
+// viewer's time zone as it is now, not as it was when the module loaded.
+function timeOfDay(at: Date): string {
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(at);
+}
+
+/** "Resets Thursday, October 8 at 9:00 AM", in the viewer's local time. */
+export function usageResetLabel(weekResetsAt: string): string {
+  const at = new Date(weekResetsAt);
+  const day = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(at);
+  return `Resets ${day} at ${timeOfDay(at)}`;
+}
+
+/** "as of 2:14 PM": when the figure on screen was read. */
+export function usageAsOfLabel(fetchedAt: string): string {
+  return `as of ${timeOfDay(new Date(fetchedAt))}`;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * "Oct 3 to Nov 2". The period ends at the next sign-up anniversary, which is
+ * the first instant of the next period, so the last day named is the day before.
+ */
+export function usagePeriodLabel(periodStart: string, periodEndsAt: string): string {
+  const format = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+  return `${format.format(new Date(periodStart))} to ${format.format(new Date(Date.parse(periodEndsAt) - DAY_MS))}`;
+}
+
+/** Micro-USD as dollars and cents: 12_400_000 is "$12.40". */
+export function formatMicrousd(amountMicrousd: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amountMicrousd / 1_000_000);
+}

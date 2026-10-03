@@ -18,6 +18,7 @@ without maintaining a second list of section keywords.
 | `apps/desktop/src/renderer/settings/digest-provider.ts` | Connection-backed digest destination definitions. |
 | `apps/desktop/src/renderer/settings/search-results.tsx` | Result navigation and lazy target revelation. |
 | `apps/desktop/src/renderer/components/sidebar-search.tsx` | Search control shared by the main and Settings sidebars. |
+| `apps/desktop/src/renderer/components/organization-usage.tsx` | The Usage section of the Organization pane and the Organization menu's usage line. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Existing settings bindings, authorized connection providers, section selection and availability. |
 
 The window these panes are drawn in, and what the screen may render before its
@@ -153,7 +154,17 @@ The `notifications` section is available only when the served
 in the same settings catalogue; unsigned builds explain that an installed release
 is required. Permission denial exposes a System Settings action.
 
-## Changelog
+## Usage
+
+The `workspace` section registers **Usage** (`settings.usage`) as an
+information definition with no availability gate, so every member finds it,
+whatever their role. Its description names the plan and the week's shared
+quota, so "usage", "quota" and "plan" all reach it; "billing" and "limit" are
+aliases. The heading is the inert target, and it renders in every state of the
+section, loading and failed included, so a search result always has somewhere
+to land. `components/organization-usage.tsx` draws the section;
+[`local-cache.md`](local-cache.md) owns the row it paints from.
+
 
 ### 2026-09-15 — Make the desktop release channel a searchable device preference
 

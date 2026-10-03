@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { installWindowActivationTracking } from '../lib/window-activation';
-import { AvatarStack, ConnectorMark, DragHint, RallyMark, DropdownSelect, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
+import { AvatarStack, ConnectorMark, DragHint, RallyMark, DropdownSelect, Meter, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state, theme }: { size: number; state: string; theme?: string }) => (
@@ -32,6 +32,50 @@ describe('RallyMark', () => {
     const { container } = render(<RallyMark className="test-mark" />);
     expect(container.querySelector('.rally-mark.test-mark')).not.toBeNull();
     expect(container.querySelector('svg')).toBeNull();
+  });
+});
+
+describe('Meter', () => {
+  it('is a named meter carrying its value', () => {
+    render(<Meter label="Weekly quota left" value={72} />);
+
+    const meter = screen.getByRole('meter', { name: 'Weekly quota left' });
+    expect(meter).toHaveAttribute('aria-valuemin', '0');
+    expect(meter).toHaveAttribute('aria-valuemax', '100');
+    expect(meter).toHaveAttribute('aria-valuenow', '72');
+    expect(meter.querySelector('.meter-fill')).toHaveStyle({ width: '72%' });
+  });
+
+  it('fills against its own maximum', () => {
+    render(<Meter label="2 of 4 onboarding steps complete" max={4} value={2} />);
+
+    const meter = screen.getByRole('meter', { name: '2 of 4 onboarding steps complete' });
+    expect(meter).toHaveAttribute('aria-valuemax', '4');
+    expect(meter.querySelector('.meter-fill')).toHaveStyle({ width: '50%' });
+  });
+
+  it('never draws or reports past either end', () => {
+    render(<><Meter label="Over" value={140} /><Meter label="Under" value={-5} /></>);
+
+    expect(screen.getByRole('meter', { name: 'Over' })).toHaveAttribute('aria-valuenow', '100');
+    expect(screen.getByRole('meter', { name: 'Over' }).querySelector('.meter-fill')).toHaveStyle({ width: '100%' });
+    expect(screen.getByRole('meter', { name: 'Under' })).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.getByRole('meter', { name: 'Under' }).querySelector('.meter-fill')).toHaveStyle({ width: '0%' });
+  });
+
+  it('takes the warning colour only when asked', () => {
+    render(<><Meter label="Low" tone="warning" value={12} /><Meter label="Fine" value={12} /></>);
+
+    expect(screen.getByRole('meter', { name: 'Low' })).toHaveClass('meter-warning');
+    expect(screen.getByRole('meter', { name: 'Fine' })).not.toHaveClass('meter-warning');
+  });
+
+  it('draws an empty track with no meter role while its value has not arrived', () => {
+    const { container } = render(<Meter label="Weekly quota left" value={null} />);
+
+    expect(screen.queryByRole('meter')).not.toBeInTheDocument();
+    expect(container.querySelector('.meter')).toHaveAttribute('aria-hidden', 'true');
+    expect(container.querySelector('.meter-fill')).toBeNull();
   });
 });
 
