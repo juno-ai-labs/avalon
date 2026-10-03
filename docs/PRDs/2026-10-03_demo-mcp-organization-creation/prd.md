@@ -52,8 +52,11 @@ replaced every earlier story (the 2026-09-09, 2026-09-10, 2026-09-15 and
 want scenarios do not write TypeScript, which is why the
 [`/demo-scenario`](../../../.agents/skills/demo-scenario/SKILL.md) skill exists:
 it turns a plain description into pack steps and opens the PR for them. That
-skill is already behind the code it edits: its cast labels and its "renewal
-room" no longer match the shipped pack.
+skill had already fallen behind the code it edits by the time this PRD was
+written: its cast labels and its "renewal room" no longer matched the shipped
+pack, and it did not cover Spaces or prepared history. The change that adds
+this PRD brings it up to date, but a guide to editing code drifts whenever the
+code moves.
 
 A deploy also breaks demos in flight. Every phase compares the operation's
 recorded `pack_version` with the pack in service and fails with
