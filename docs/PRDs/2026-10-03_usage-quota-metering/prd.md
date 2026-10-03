@@ -276,6 +276,27 @@ Organization paid for at the time, which the current map cannot tell it.
 
 **Changes:** Nothing in the agreed scope. Adds one column to the design's DDL.
 
+### 2026-10-03: The ledger keeps 90 days in its own D1 and the history in R2
+
+**Decided:** `usage_events` and `usage_rollups` live in a separate D1
+database, `USAGE_DB`, not in the regional `DB`. D1 keeps events for 90 days
+from receipt and the weekly totals for good. Every event is also sent, before
+D1 sees it, to a Pipeline that writes the Iceberg table `avalon.usage_events`
+in R2, which keeps it for good and is read with Basin SQL.
+
+**Why:** D1's 10 GB limit is per database. At about 12,000 events a day and 391
+bytes a row (measured), events alone would reach it in 3 to 6 years at today's
+volume and in months at ten times it, and in `DB` a full database would stop
+sign-in and membership writes, not just metering. Analytics Engine was
+rejected because it samples and keeps 3 months; a monthly export job because
+Basin SQL reads only Parquet, which a Worker would have to write; Turbopuffer
+because it has no multi-document atomicity or increment, and its vendor does
+not recommend aggregations for latency-sensitive reads past 1M documents.
+
+**Changes:** Supersedes design decision 3's single D1 ledger and the "kept, not
+pruned" history in the data model. Goal 8 now rests on the lakehouse for
+history older than 90 days.
+
 ## Key design decisions
 
 1. **Usage travels on a Cloudflare Queue, not K2.** Cloudflare's K2 event

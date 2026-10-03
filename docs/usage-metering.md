@@ -3,7 +3,8 @@
 Usage metering measures what each Organization spends on inference against its
 plan's weekly quota. Every model call Rally makes for an Organization sends one
 small usage event in the background. One queue consumer adds the events into a
-D1 ledger, and one route derives the meter members see: the percentage of this
+ledger, a recent window in its own D1 database and the full history in R2, and
+one route derives the meter members see: the percentage of this
 week's quota left, and this month's overage. Nothing is charged; the overage is
 shown as not billed.
 
@@ -18,11 +19,13 @@ are in
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/usage.ts` | The single source for plans, the 18 metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
-| `apps/api/src/services/usage-metering.ts` | `emitUsage` and `emitInferenceUsage` (the only producers), `applyUsageBatch` (the only ledger writer), `readOrganizationUsage` (the only reader), `setWorkspacePlan`. |
-| `apps/api/src/queues/usage-consumer.ts` | The `avalon-<region>-usage` consumer: validates, rejects misrouted messages, applies the batch, logs `usage_batch_applied`. |
+| `apps/api/src/services/usage-metering.ts` | `emitUsage` and `emitInferenceUsage` (the only producers), `applyUsageBatch` (the only D1 ledger writer), `readOrganizationUsage` (the only reader), `setWorkspacePlan`, `pruneUsageEvents` and `USAGE_EVENTS_D1_RETENTION_DAYS`. |
+| `apps/api/src/queues/usage-consumer.ts` | The `avalon-<region>-usage` consumer: validates, rejects misrouted messages, sends the batch to the usage lakehouse, applies it to D1, logs `usage_batch_applied`. `usageLakehouseRecord` shapes the R2 row. |
 | `apps/api/src/routes/workspace.ts` | `GET /workspace/usage`, for every member role. |
 | `apps/api/src/routes/workspace-operations.ts` | `POST /internal/workspaces/:id/plan`, the operator route Ace calls. |
-| `packages/db/migrations/0117_usage_quota_metering.sql` | `workspaces.plan`, `usage_events`, `usage_rollups`. |
+| `packages/db/migrations/0117_usage_quota_metering.sql` | `workspaces.plan`, in the regional `DB`. |
+| `packages/db/usage-migrations/` | `usage_events` and `usage_rollups`, in `USAGE_DB` (`avalon-<region>-usage`). Applied by `pnpm --filter @rally/api db:usage:migrate` (local, part of `db:migrate`) and `db:usage:migrate:remote` (deploy). |
+| `config/usage-lakehouse.json`, `config/usage-lakehouse-stream-schema.json` | The usage lakehouse: the `USAGE_LAKEHOUSE` Pipeline into the Iceberg table `avalon.usage_events` in R2, provisioned by `scripts/ensure-cloudflare-inference-lakehouse.mjs` like the other lakehouses. |
 | `apps/ace/src/client/workspaces.tsx` | The plan control on Ace's workspaces tab. |
 | `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, the `usage` local-cache slice, and the formatters. |
 | `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage, and the Organization menu's meter (under the active row, or on its own when the Organizations list is hidden). |
@@ -63,7 +66,10 @@ the SDK's embeddings shape drops the bring-your-own-key upstream charge.
 
 The consumer runs one batch at a time (up to 100 messages or 60 seconds). It
 drops repeated event IDs within the batch, then IDs already in `usage_events`,
-reads each Organization's plan and creation time, and in one `DB.batch()`:
+First it sends the whole batch to the usage lakehouse. Only then does it touch
+D1: it drops repeated event IDs within the batch, then IDs already in
+`usage_events`, reads each Organization's plan and creation time from `DB`, and
+in one `USAGE_DB.batch()`:
 
 - inserts each event into `usage_events`, recording whether the Organization
   paid (`ORGANIZATION_PAYS` at apply time);
@@ -73,6 +79,16 @@ reads each Organization's plan and creation time, and in one `DB.batch()`:
 
 The consumer computes no overage. Addition commutes, so the totals do not
 depend on arrival order.
+
+### Retention
+
+D1 keeps `usage_events` for `USAGE_EVENTS_D1_RETENTION_DAYS` (90) from receipt;
+the scheduled tick deletes older rows. `usage_rollups` is kept for good, so the
+meter never reads a pruned row. The lakehouse in R2 keeps every event for good:
+it is the history a Stripe replay, a per-person breakdown or a support question
+older than 90 days reads, through Basin SQL (read-only, over its REST API with
+an account token; $2.50 per TB scanned, checked 2026-10-03). Readers there
+deduplicate by `event_id`, since a retried batch can be written twice.
 
 ### Reading
 
@@ -93,9 +109,11 @@ next, clamped to the last day of a short month, in UTC.
 ### Plans
 
 Every workspace starts on Starter. An operator changes the plan from Ace;
-`setWorkspacePlan` writes `workspaces.plan` and rewrites `quota_microusd` on the
-current week's rollups in one batch, so the meter re-prices the current week at
-once. Past weeks keep their quota.
+`setWorkspacePlan` writes `workspaces.plan` in `DB`, then rewrites
+`quota_microusd` on the current week's rollups in `USAGE_DB`, so the meter
+re-prices the current week at once. Past weeks keep their quota. The two writes
+are in different databases, so they are not one transaction; both are
+idempotent, and a failure shows in Ace, where saving again finishes it.
 
 ## Invariants
 
@@ -129,6 +147,21 @@ once. Past weeks keep their quota.
   is never applied. Guard: `test/usage-metering.test.ts` ("…retries one from
   another region").
 
+- **A batch reaches the lakehouse before D1.** If the send fails the batch
+  retries before D1 has seen it, so no event is in D1 without being in R2.
+  The other order would let D1's dedupe drop the retry and lose the event from
+  R2 for good. Guard: `test/usage-metering.test.ts` ("sends the whole batch to
+  the lakehouse before D1…").
+- **D1 keeps an event for longer than its message can be redelivered.** The
+  prune keys on `received_at` and the window (90 days) is far above the usage
+  queue's message retention (at most 14 days); a shorter window would let a
+  redelivery find its row gone and be counted twice. Guard:
+  `test/usage-metering.test.ts` ("deletes rows received before the 90-day
+  window…").
+- **The ledger stays out of `DB`.** D1's 10 GB limit is per database, so a full
+  ledger in `DB` would stop every regional write, sign-in included. Guard: none
+  automated; the tables exist only in `packages/db/usage-migrations/`.
+
 ## Boundary
 
 This module owns the ledger, the meter's arithmetic, and the plan column. It
@@ -159,6 +192,16 @@ desktop meter is owned by the settings screens and
   (until pricing for the text-to-speech model is in the pricing cache),
   `message_speech`, `dictation` and `document_ocr` log `usage_unpriced` and do
   not move the meter. See the PRD's decision log.
+- **Lakehouse send fails:** the batch retries, D1 is not touched, and the meter
+  lags until the Pipeline recovers or the batch reaches the dead-letter queue.
+- **`USAGE_DB` fills:** only metering stops; the consumer fails into the
+  dead-letter queue. Shorten `USAGE_EVENTS_D1_RETENTION_DAYS` (never below the
+  queue's message retention). At about 12,000 events a day and 391 bytes a row,
+  90 days is about 0.4 GB; the 10 GB limit is reached at roughly 20 times
+  today's volume.
+- **An unprovisioned lakehouse:** the manifest ships an all-zero stream ID until
+  `pnpm cloudflare:lakehouses:ensure` pins the real one, and materializing the
+  deploy bindings refuses it, so the deploy fails rather than every batch.
 - **Numbers:** batch size 100 and wait 60 seconds are the Queues platform
   maxima (checked 2026-10-03). Plan prices, the 2× multiplier and the 20% warning
   threshold are product limits from the PRD.
@@ -171,6 +214,11 @@ desktop meter is owned by the settings screens and
   consumer and reader against the real migrations. In-batch dedupe, straddling
   weeks, arrival-order independence, plan change, misrouted and invalid
   messages.
+- The same file covers the lakehouse-before-D1 order and the prune. It runs the
+  regional schema and the usage schema on separate connections
+  (`migratedUsageSqliteDatabase`), as production does.
+- `scripts/ensure-cloudflare-inference-lakehouse.test.mjs`: deploy refuses an
+  unprovisioned stream.
 - `test/workspace-operations.test.ts`: the plan route, including the refusal
   of another region's workspace.
 - `test/agent-inference-logging.test.ts` and
@@ -186,20 +234,20 @@ period is computed from it.
 
 ## Data model
 
-- `workspaces.plan`: `'starter' | 'growth'`, default `'starter'`.
-- `usage_events`: one append-only row per event, keyed by `event_id`. Kept, not
-  pruned: it is the per-event history a later breakdown or Stripe sink reads.
-  Its growth meets D1's per-database size limit first; moving closed months to
-  R2 is the decision to make when that comes close.
-- `usage_rollups`: keyed by (`workspace_id`, `week_start`, `period_start`),
+- `workspaces.plan` (`DB`): `'starter' | 'growth'`, default `'starter'`.
+- `usage_events` (`USAGE_DB`): one row per event, keyed by `event_id`, kept 90
+  days from `received_at` (indexed for the prune).
+- `avalon.usage_events` (R2, Iceberg): every event for good, with the same
+  fields plus `schema_version` and `region`. May hold duplicates.
+- `usage_rollups` (`USAGE_DB`): kept for good, keyed by (`workspace_id`, `week_start`, `period_start`),
   with `quota_microusd`, `organization_microusd` and `rally_microusd`. At most
   two rows per workspace per week.
 
 ## Regional impact
 
 Each configured deployment has its own `avalon-<region>-usage` queue and
-dead-letter queue behind the one `USAGE_QUEUE` binding, and its consumer writes
-only that region's `DB`. Events carry their region and never cross the
+dead-letter queue behind the one `USAGE_QUEUE` binding, its own `USAGE_DB`, and
+its own lakehouse, and its consumer writes only that region's stores. Events carry their region and never cross the
 boundary. Global is the only configured deployment today.
 
 ## Security and trust model
@@ -223,10 +271,11 @@ uses to retire a workspace.
 
 ### 2026-10-03: Usage metering introduced
 
-**What changed:** Every model call now emits a usage event to a regional queue, one
-consumer applies it to `usage_events` and `usage_rollups` in D1, and
-`GET /workspace/usage` derives the weekly percentage and monthly overage.
-Workspaces gained a plan, set from Ace.
+**What changed:** Every model call now emits a usage event to a regional queue.
+One consumer sends each batch to a usage lakehouse in R2 and then applies it
+to `usage_events` and `usage_rollups` in a D1 database of its own, which keeps
+events for 90 days and totals for good. `GET /workspace/usage` derives the
+weekly percentage and monthly overage. Workspaces gained a plan, set from Ace.
 
 **Why:** Pricing was decided (Starter and Growth, twice the price as a weekly
 quota) and nothing in the product could say what an Organization had used. The
@@ -236,8 +285,15 @@ billing authority, and it missed embeddings, speech, dictation and OCR.
 **Considered and rejected:** Cloudflare K2 (pull-only with no dead-letter queue in its beta),
 Analytics Engine (samples), Stripe credits (applied only when an invoice is
 finalized), and splitting overage when each event arrives (queue order would
-decide the month). The PRD has the full reasoning.
+decide the month). For the history: keeping every event in D1 (the 10 GB
+per-database limit, shared with sign-in if in `DB`), a monthly export job to R2
+(Basin SQL reads only Parquet, which a Worker would have to write), and
+Turbopuffer (no multi-document atomicity or increment, and aggregations its
+vendor does not recommend for latency-sensitive reads past 1M documents). The
+PRD has the full reasoning.
 
 **Consequences:** A future change has to keep overage derived on read, keep
-one ledger writer, and never let metering block or fail the call it measures.
+one ledger writer, send to the lakehouse before D1, keep the D1 window above
+the queue's message retention, and never let metering block or fail the call
+it measures.
 Five activities are logged as unpriced until a rate exists for them.
