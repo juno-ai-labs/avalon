@@ -79,7 +79,9 @@ import {
 import { encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
 import {
   compatibleDesktopDeepLink,
+  browserConnectorCompletionUrl,
   connectorAttemptTarget,
+  type ConnectorHandoff,
   normalizeConnectorOAuthErrorCode,
   type ConnectorAttemptTargetInput,
   unknownConnectorAttemptFailureTarget,
@@ -932,7 +934,7 @@ export class ConnectionService {
     scope: Scope;
     capabilities: string[];
     connectionId?: string;
-    desktopHandoffVersion: 1 | 2;
+    desktopHandoffVersion: ConnectorHandoff;
   }): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
@@ -983,7 +985,7 @@ export class ConnectionService {
   async beginResourceAuthorization(
     connectionId: string,
     target: ConnectorResourceAuthorizationTarget,
-    desktopHandoffVersion: 1 | 2,
+    desktopHandoffVersion: ConnectorHandoff,
   ): Promise<ConnectorResourceAuthorizationStart> {
     const auth = this.requireAuth();
     const conversation = WorkstreamObjectClient.forParent(
@@ -1289,7 +1291,7 @@ export class ConnectionService {
       scope: Scope;
       capabilities: string[];
       connectionId?: string;
-      desktopHandoffVersion: 1 | 2;
+      desktopHandoffVersion: ConnectorHandoff;
       /**
        * The connection-level configuration a custom MCP authorization needs.
        *
@@ -1391,7 +1393,7 @@ export class ConnectionService {
     scope: Scope;
     capabilities: string[];
     connectionId?: string;
-    desktopHandoffVersion: 1 | 2;
+    desktopHandoffVersion: ConnectorHandoff;
   }): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
@@ -2162,7 +2164,7 @@ export class ConnectionService {
     };
   }
 
-  async reconnect(id: string, desktopHandoffVersion: 1 | 2): Promise<ConnectorOAuthStart> {
+  async reconnect(id: string, desktopHandoffVersion: ConnectorHandoff): Promise<ConnectorOAuthStart> {
     const connection = await this.loadAuthorized(id);
     if (connection.connector_type === "google") {
       return this.beginGoogle({
@@ -3053,7 +3055,7 @@ export class ConnectionService {
     displayName: string;
     serverUrl: string;
     toolPolicy: CustomMcpToolPolicy;
-    desktopHandoffVersion: 1 | 2;
+    desktopHandoffVersion: ConnectorHandoff;
   }): Promise<ConnectorOAuthStart> {
     this.customMcpAdapter();
     return this.beginProvider(CUSTOM_MCP_CONNECTOR_TYPE, {
@@ -4057,7 +4059,7 @@ export class ConnectionService {
     scope: Scope;
     capabilityCount: number;
     reconnect: boolean;
-    desktopHandoffVersion: 1 | 2;
+    desktopHandoffVersion: ConnectorHandoff;
   }): Promise<void> {
     const at = nowIso();
     await (await this.workspaceObject(input.auth.workspaceId)).startConnectorOAuthAttempt({
@@ -4086,12 +4088,7 @@ export class ConnectionService {
         input.statePayload,
         input.auth.userId,
         input.auth.workspaceId,
-        (input.desktopHandoffVersion === 2
-          ? addWorkspaceTarget(compatibleDesktopDeepLink(this.env), {
-            region: this.env.AVALON_REGION,
-            workspaceId: input.auth.workspaceId,
-          })
-          : compatibleDesktopDeepLink(this.env)).toString(),
+        this.connectorReturnUri(input.desktopHandoffVersion, input.auth.workspaceId),
         input.expiresAt,
       ).run();
     } catch (error) {
@@ -4225,6 +4222,18 @@ export class ConnectionService {
       this.env.AVALON_REGION,
       attempt.telemetryOperationId,
     ));
+  }
+
+  /** Where a started authorization returns: the desktop that asked, or the browser's completion page. */
+  private connectorReturnUri(handoff: ConnectorHandoff, workspaceId: string): string {
+    if (handoff === "browser") {
+      const page = browserConnectorCompletionUrl(this.env);
+      if (!page) throw new ApiError(503, "browser_configuration_required", "Browser access is not configured");
+      return page;
+    }
+    return (handoff === 2
+      ? addWorkspaceTarget(compatibleDesktopDeepLink(this.env), { region: this.env.AVALON_REGION, workspaceId })
+      : compatibleDesktopDeepLink(this.env)).toString();
   }
 
   private connectorAttemptTarget(input: ConnectorAttemptTargetInput): string {

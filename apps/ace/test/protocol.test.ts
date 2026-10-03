@@ -29,6 +29,7 @@ const repositoryDirectory = fileURLToPath(new URL('../../..', import.meta.url));
 const NOT_ACE_MANAGED = new Map([
   ['developer-settings', 'a per-device staff toggle, targeted through Wrangler'],
   ['control-tower-refresh-seconds', 'a cadence with no off, so it is not a Boolean'],
+  ['browser-connectable-capabilities', 'a JSON capability list with no off; created in Flagship only when it should differ from the launch default'],
 ]);
 
 /**

@@ -27,7 +27,7 @@ import {
 } from '@rally/contracts';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import type { SubstreamInitialContext } from '@rally/contracts/substream-creation';
-import type { ClientSession } from '@rally/contracts/client-session';
+import { isCookieSession, type ClientSession } from '@rally/contracts/client-session';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
@@ -1360,7 +1360,7 @@ export function ConversationSurface({
    * flag gates presentation only: an artifact's authorization is structural and
    * holds whether or not this is passed.
    */
-  const browserHost = session !== null && 'authentication' in session && session.authentication === 'cookie';
+  const browserHost = isCookieSession(session);
   const siteArtifacts = useMemo(() => {
     if (!api || featureFlags.data?.liveArtifactsEnabled !== true) return undefined;
     const bridge = window.rally ?? (browserHost ? desktopBridge() : undefined);

@@ -1,4 +1,4 @@
-import { asUserId, asWorkspaceId, type UserId, type WorkspaceId } from "@rally/contracts";
+import { BROWSER_CONNECTABLE_CAPABILITIES_DEFAULT, asUserId, asWorkspaceId, type UserId, type WorkspaceId } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import type { Env, IdentityAuthContext } from "../src/env";
@@ -119,6 +119,20 @@ function servingNumber(value: unknown): Partial<Flagship> {
       reason: "STATIC",
     })),
   };
+}
+
+/** The JSON capability list the browser's connector screens read. */
+function servingObject(value: unknown, errorCode?: string): Partial<Flagship> {
+  const getObjectDetails = vi.fn(async (flagKey: string) => ({
+    flagKey,
+    value,
+    variant: "current",
+    reason: "STATIC",
+    ...(errorCode ? { errorCode } : {}),
+  }));
+  // The stub answers whatever it is given, which is the point: the resolver
+  // has to cope with a served value of the wrong shape.
+  return { getObjectDetails: getObjectDetails as unknown as Flagship["getObjectDetails"] };
 }
 
 function contextOf(flags: Partial<Flagship>): FlagshipEvaluationContext {
@@ -242,6 +256,19 @@ describe("client feature flags", () => {
     await expect(developerSettings(env, auth(staffUserId))).resolves.toBe(true);
   });
 
+  it("serves the browser's connectable capabilities from the flag", async () => {
+    const flags = { ...serving(false), ...servingObject(["drive.read"]) };
+    await expect(resolveClientFeatureFlags(envWithAccounts(flags), auth(staffUserId)))
+      .resolves.toMatchObject({ browserConnectableCapabilities: ["drive.read"] });
+  });
+
+  it("serves the launch connector set when the capability flag is unresolved or malformed", async () => {
+    for (const flags of [servingObject({ not: "a list" }), servingObject(["drive.read"], "FLAG_NOT_FOUND")]) {
+      await expect(resolveClientFeatureFlags(envWithAccounts({ ...serving(false), ...flags }), auth(staffUserId)))
+        .resolves.toMatchObject({ browserConnectableCapabilities: [...BROWSER_CONNECTABLE_CAPABILITIES_DEFAULT] });
+    }
+  });
+
   it("stays off when no binding is attached", async () => {
     await expect(resolveClientFeatureFlags(envWithAccounts(), auth(staffUserId)))
       .resolves.toEqual({
@@ -255,6 +282,7 @@ describe("client feature flags", () => {
         digestsEnabled: true,
         // A feature fails closed; a cadence has no off, so it fails to the
         // checked-in default the desktop would have used anyway.
+        browserConnectableCapabilities: [...BROWSER_CONNECTABLE_CAPABILITIES_DEFAULT],
       });
   });
 
@@ -370,6 +398,7 @@ describe("GET /feature-flags", () => {
       pushNotificationsEnabled: true,
       liveArtifactsEnabled: true,
       digestsEnabled: true,
+      browserConnectableCapabilities: [...BROWSER_CONNECTABLE_CAPABILITIES_DEFAULT],
     });
   });
 
@@ -396,6 +425,7 @@ describe("GET /feature-flags", () => {
       // The one field that answers `true` here: an unresolvable flag must
       // reproduce delivery continuing, not stopping.
       digestsEnabled: true,
+      browserConnectableCapabilities: [...BROWSER_CONNECTABLE_CAPABILITIES_DEFAULT],
     });
   });
 });
