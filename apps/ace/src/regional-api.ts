@@ -1,6 +1,7 @@
 import { regionConfiguration } from "@rally/contracts/regions";
 import type { Region } from "@rally/contracts/regions";
 import { WorkspaceRetirementResultSchema, type WorkspaceRetirementResult } from '@rally/contracts';
+import { WorkspacePlanResultSchema, type PlanId, type WorkspacePlanResult } from '@rally/contracts/usage';
 import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { z } from 'zod';
 import type { Env } from './env';
@@ -131,4 +132,18 @@ export function regionalFlagQueue(env: Env, region: string): Queue {
   const queue = env[`${regionConfiguration(region).bindingPrefix}_PRODUCT_FLAG_QUEUE`];
   if (!queue) throw new Error('regional_queue_unavailable');
   return queue;
+}
+
+/** Move a workspace to a plan in the region that owns it. */
+export async function changeWorkspacePlan(
+  env: Env,
+  input: { region: RallyRegion; workspaceId: string; plan: PlanId },
+): Promise<WorkspacePlanResult> {
+  return regional(
+    env,
+    input.region,
+    `/internal/workspaces/${encodeURIComponent(input.workspaceId)}/plan`,
+    { method: 'POST', body: { plan: input.plan } },
+    (value) => WorkspacePlanResultSchema.parse(value),
+  );
 }

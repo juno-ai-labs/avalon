@@ -30,7 +30,8 @@ import {
 } from './protocol';
 import { accessRoutes } from './private-access';
 import { consumeFlagChanges } from './queues';
-import { relayRegionalError, retireWorkspace } from './regional-api';
+import { changeWorkspacePlan, relayRegionalError, retireWorkspace } from './regional-api';
+import { PlanIdSchema } from '@rally/contracts/usage';
 
 type AceHono = { Bindings: Env; Variables: { principal: AccessPrincipal } };
 const app = new Hono<AceHono>();
@@ -172,6 +173,10 @@ app.put('/api/models/:role', async (c) => {
  */
 const UuidSchema = z.string().uuid();
 const AbandonRequestSchema = z.strictObject({ confirmOperationId: z.string().uuid() });
+const PlanRequestSchema = z.strictObject({
+  region: RegionSchema,
+  plan: PlanIdSchema,
+});
 const RetireRequestSchema = z.strictObject({
   region: RegionSchema,
   confirmWorkspaceId: z.string().uuid(),
@@ -266,6 +271,26 @@ app.post('/api/workspaces/:workspaceId/retire', async (c) => {
       complete: receipt.complete,
     }));
     return c.json(receipt);
+  } catch (error) { return relayRegionalError(error); }
+});
+
+app.post('/api/workspaces/:workspaceId/plan', async (c) => {
+  if (!sameOrigin(c)) return c.json({ error: 'same_origin_required', message: 'Writes are accepted from the Ace page only.' }, 403);
+  const workspaceId = UuidSchema.safeParse(c.req.param('workspaceId'));
+  const body = PlanRequestSchema.safeParse(await c.req.json().catch(() => null));
+  if (!workspaceId.success || !body.success) {
+    return c.json({ error: 'invalid_plan_request', message: 'The request needs the region and a plan.' }, 400);
+  }
+  try {
+    const result = await changeWorkspacePlan(c.env, { region: body.data.region, workspaceId: workspaceId.data, plan: body.data.plan });
+    console.log(JSON.stringify({
+      event: 'ace_workspace_plan_changed',
+      actor_subject: c.get('principal').subject,
+      workspace_id: workspaceId.data,
+      region: body.data.region,
+      plan: body.data.plan,
+    }));
+    return c.json(result);
   } catch (error) { return relayRegionalError(error); }
 });
 

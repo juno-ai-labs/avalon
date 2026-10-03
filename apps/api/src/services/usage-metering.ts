@@ -225,11 +225,16 @@ export async function readOrganizationUsage(
  * once (PRD decision 12); past weeks keep the quota they had.
  */
 export async function setWorkspacePlan(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "DB" | "AVALON_REGION">,
   workspaceId: string,
   plan: PlanId,
   nowMs: number,
 ): Promise<boolean> {
+  // Only a workspace this region owns: a row for another region's workspace
+  // can sit in the table, and its ledger is not here.
+  const owned = await env.DB.prepare(`SELECT 1 AS owned FROM workspaces WHERE id = ? AND region = ?`)
+    .bind(workspaceId, env.AVALON_REGION).first<{ owned: number }>();
+  if (!owned) return false;
   const workspace = await workspacePlan(env, workspaceId);
   if (!workspace) return false;
   const weekStart = new Date(usageWeekStart(workspace.createdAtMs, nowMs)).toISOString();

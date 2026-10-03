@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { WorkspaceRetirementResultSchema, type WorkspaceRetirementResult } from '@rally/contracts';
+import { PLAN_IDS, PLANS, PlanIdSchema, WorkspacePlanResultSchema, type PlanId } from '@rally/contracts/usage';
 import { WorkspaceSearchResultSchema, type DirectoryRegion, type DirectoryWorkspace } from '../directory';
 import { Button, EmptyState, Field } from './components/ui';
 import { responseBody } from './response';
@@ -49,6 +50,12 @@ export function WorkspacesView({ retired, onRetired }: {
   const [error, setError] = useState<{ id: string; message: string } | null>(null);
   const [incomplete, setIncomplete] = useState<{ id: string; receipt: WorkspaceRetirementResult } | null>(null);
   const receiptRef = useRef<HTMLElement | null>(null);
+  // Plans saved this session, so a row keeps showing what was just set
+  // without another search.
+  const [savedPlans, setSavedPlans] = useState<ReadonlyMap<string, PlanId>>(new Map());
+  const [planDraft, setPlanDraft] = useState<PlanId | null>(null);
+  const [planSaving, setPlanSaving] = useState(false);
+  const [planError, setPlanError] = useState<{ id: string; message: string } | null>(null);
 
   useEffect(() => {
     if (query.trim().length < 2) {
@@ -80,6 +87,27 @@ export function WorkspacesView({ retired, onRetired }: {
   const selectedError = selected && error?.id === selected.id ? error.message : '';
   const selectedIncomplete = selected && incomplete?.id === selected.id ? incomplete.receipt : null;
   const retiring = selected !== null && retiringId === selected.id;
+  const currentPlan = selected ? savedPlans.get(selected.id) ?? selected.plan : null;
+  const chosenPlan = planDraft ?? currentPlan;
+  const selectedPlanError = selected && planError?.id === selected.id ? planError.message : '';
+
+  const savePlan = async (): Promise<void> => {
+    if (!selected || !chosenPlan || chosenPlan === currentPlan || planSaving) return;
+    const target = selected;
+    setPlanSaving(true); setPlanError(null);
+    try {
+      const response = await fetch(`/api/workspaces/${encodeURIComponent(target.id)}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ region: target.region, plan: chosenPlan }),
+      });
+      const result = await responseBody(response, (value) => WorkspacePlanResultSchema.parse(value));
+      setSavedPlans((previous) => new Map(previous).set(result.workspaceId, result.plan));
+      setPlanDraft(null);
+    } catch (caught) {
+      setPlanError({ id: target.id, message: caught instanceof Error ? caught.message : 'The plan could not be changed.' });
+    } finally { setPlanSaving(false); }
+  };
 
   // The receipt replaces the form the operator was focused in; without this,
   // focus falls to the document body and a screen reader announces nothing.
@@ -126,7 +154,7 @@ export function WorkspacesView({ retired, onRetired }: {
       {searchError && <p className="queue-error" role="alert">{searchError}</p>}
       {!searchError && unavailableRegions.length > 0 && <p className="directory-notice" role="alert">The {unavailableRegions.map(regionLabel).join(' and ')} directory did not answer, so a workspace there would not be listed. Only the other region was searched.</p>}
       <div className="queues workspaces">
-        {results.map((workspace) => <button className={`${selected?.id === workspace.id ? 'selected' : ''}${retired.has(workspace.id) ? ' retired' : ''}`} disabled={searching} key={`${workspace.region}:${workspace.id}`} onClick={() => { setSelected(workspace); setConfirmation(''); }} type="button">
+        {results.map((workspace) => <button className={`${selected?.id === workspace.id ? 'selected' : ''}${retired.has(workspace.id) ? ' retired' : ''}`} disabled={searching} key={`${workspace.region}:${workspace.id}`} onClick={() => { setSelected(workspace); setConfirmation(''); setPlanDraft(null); }} type="button">
           <span className="queue-count">{workspace.region.toUpperCase()}</span>
           <div><strong>{workspace.name}</strong><small>{retired.has(workspace.id) ? 'Retired this session' : workspace.slug}</small></div>
           <b aria-hidden="true">›</b>
@@ -148,6 +176,14 @@ export function WorkspacesView({ retired, onRetired }: {
               <p>All {plural(selectedRetired.receipt.parents, 'work stream and automation', 'work streams and automations')} in the {regionLabel(selected.region)} workspace are closed; this pass closed {selectedRetired.receipt.retiredParents} of them, with {plural(selectedRetired.receipt.retiredChildren, 'conversation')} under them. {selectedRetired.receipt.retainedOutbox === 0 ? 'Nothing was left queued.' : `${plural(selectedRetired.receipt.retainedOutbox, 'queued effect')} will never publish.`} Messages, files and members were not deleted; nothing in this workspace answers any more, and nobody can sign in to it.</p>
             </section>
             : <>
+              <div className="section-title"><div><h3>Plan</h3><p>Sets the weekly usage quota everyone in this workspace shares. A change applies to the current week at once.</p></div></div>
+              <div className="ace-form plan-form">
+                <Field label="Plan"><select aria-label="Plan" value={chosenPlan ?? ''} onChange={(event) => setPlanDraft(PlanIdSchema.parse(event.target.value))}>
+                  {PLAN_IDS.map((plan) => <option key={plan} value={plan}>{PLANS[plan].name} (${PLANS[plan].monthlyPriceUsd} a month)</option>)}
+                </select></Field>
+                {selectedPlanError && <p className="queue-error" role="alert">{selectedPlanError}</p>}
+                <div className="ace-form-actions"><Button disabled={planSaving || chosenPlan === currentPlan} onClick={() => void savePlan()} type="button">{planSaving ? 'Saving…' : 'Save plan'}</Button></div>
+              </div>
               <div className="section-title"><div><h3>Retire this workspace</h3><p>Every work stream, automation and socket in it closes and nothing reopens. Members can no longer sign in to it. Messages, files and members are kept but unreachable.</p></div></div>
               <div className="ace-form retire-form">
                 <p className="retire-consequence">This cannot be undone. Type or paste the workspace id shown above to confirm that <strong>{selected.name}</strong> is the workspace to close.</p>

@@ -1,10 +1,12 @@
 import { WorkspaceRetirementResultSchema } from '@rally/contracts';
+import { WorkspacePlanChangeSchema, WorkspacePlanResultSchema } from '@rally/contracts/usage';
 import { Hono } from 'hono';
 import { z } from 'zod';
 
 import type { HonoAppEnv } from '../env';
 import { ApiError } from '../lib/api-error';
 import { zValidator } from '../middleware/validation';
+import { setWorkspacePlan } from '../services/usage-metering';
 import { retireWorkspaceForOperator } from '../services/workspace-retirement-service';
 import { getOperator, requireDemoOperator, requireOperatorRole } from '../telemetry/operator-auth';
 
@@ -13,8 +15,9 @@ import { getOperator, requireDemoOperator, requireOperatorRole } from '../teleme
  *
  * Behind the operator credential in the `demos` role, from the region's
  * `DEMO_OPERATORS_JSON`: Ace holds one token per region, and that token can
- * retire and nothing else. The handler validates, delegates, and maps; the
- * rules live in `workspace-retirement-service.ts`.
+ * retire a workspace and set its plan, and nothing else. The handlers
+ * validate, delegate, and map; the rules live in
+ * `workspace-retirement-service.ts` and `usage-metering.ts`.
  */
 
 const WorkspaceParamSchema = z.strictObject({ workspaceId: z.string().uuid() });
@@ -44,5 +47,21 @@ workspaceOperatorRoutes.post(
       operatorId: getOperator(c).operatorId,
     });
     return c.json(WorkspaceRetirementResultSchema.parse({ workspaceId, ...receipt }));
+  },
+);
+
+// Move a workspace to a plan. The new weekly quota applies to the current week
+// at once; see docs/usage-metering.md.
+workspaceOperatorRoutes.post(
+  '/:workspaceId/plan',
+  zValidator('param', WorkspaceParamSchema),
+  zValidator('json', WorkspacePlanChangeSchema),
+  async (c) => {
+    const { workspaceId } = c.req.valid('param');
+    const { plan } = c.req.valid('json');
+    if (!await setWorkspacePlan(c.env, workspaceId, plan, Date.now())) {
+      throw new ApiError(404, 'workspace_not_found', 'This region has no such workspace');
+    }
+    return c.json(WorkspacePlanResultSchema.parse({ workspaceId, plan }));
   },
 );

@@ -11,7 +11,7 @@ function database(): D1Database {
   databases.push(sqlite);
   sqlite.exec(`
     CREATE TABLE users (platform_user_id TEXT, email TEXT NOT NULL, name TEXT NOT NULL);
-    CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL);
+    CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'starter');
   `);
   return createTestD1Database({
     prepare: (sql: string) => ({
@@ -41,8 +41,8 @@ describe('Ace directory lookup', () => {
     await global.exec(`
       INSERT INTO users VALUES ('user-1', 'PM+Flags@Example.com', 'Casey_100%');
       INSERT INTO users VALUES ('user-2', 'different@example.com', 'CaseyX1000');
-      INSERT INTO workspaces VALUES ('workspace-1', 'Launch_100%', 'launch-special');
-      INSERT INTO workspaces VALUES ('workspace-2', 'LaunchX1000', 'launch-other');
+      INSERT INTO workspaces (id, name, slug) VALUES ('workspace-1', 'Launch_100%', 'launch-special');
+      INSERT INTO workspaces (id, name, slug, plan) VALUES ('workspace-2', 'LaunchX1000', 'launch-other', 'growth');
     `);
     const env = createTestEnv({ GLOBAL_DB: global, ENTERPRISE_DB: enterprise });
 
@@ -59,19 +59,19 @@ describe('Ace directory lookup', () => {
     // By id as well: the retirement form asks for the id, and it is often what
     // the operator was handed.
     await expect(searchWorkspaces(env, 'workspace-2')).resolves.toMatchObject({
-      results: [{ id: 'workspace-2', region: 'global' }],
+      results: [{ id: 'workspace-2', plan: 'growth', region: 'global' }],
     });
   });
 
   it('names a region whose directory did not answer instead of blanking the other', async () => {
     const global = database();
-    await global.exec(`INSERT INTO workspaces VALUES ('workspace-1', 'Launch', 'launch');`);
+    await global.exec(`INSERT INTO workspaces (id, name, slug) VALUES ('workspace-1', 'Launch', 'launch');`);
     const down = createTestD1Database({
       prepare: () => { throw new Error('D1_ERROR: no such table'); },
       exec: async () => ({ count: 0, duration: 0 }),
     });
     await expect(searchWorkspaces(createTestEnv({ GLOBAL_DB: global, ENTERPRISE_DB: down }), 'Launch')).resolves.toEqual({
-      results: [{ id: 'workspace-1', name: 'Launch', slug: 'launch', region: 'global' }],
+      results: [{ id: 'workspace-1', name: 'Launch', slug: 'launch', plan: 'starter', region: 'global' }],
       unavailableRegions: ['enterprise'],
     });
     // Both down is a failure, never an empty list.
