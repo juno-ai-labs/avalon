@@ -79,7 +79,7 @@ describe("structured inference telemetry lifecycle", () => {
   });
 
   it("meters the call as its declared activity with the provider-reported cost", async () => {
-    const usageSend = vi.fn(async (_body: unknown) => {});
+    const usageSend = vi.fn(async (body: unknown) => { void body; });
     const deferred: Promise<unknown>[] = [];
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       model: "test/model-resolved",

@@ -158,12 +158,14 @@ describe('the workspaces tab', () => {
     await search('Alto');
     await act(async () => { buttonContaining('Alto Capital-demo').click(); });
 
-    const select = container.querySelector<HTMLSelectElement>('select[aria-label="Plan"]')!;
+    // The plan control is the tab's only select.
+    const select = container.querySelector('select')!;
+    expect(select.getAttribute('aria-label')).toBe('Plan');
     expect(select.value).toBe('starter');
     // Nothing to save until the plan differs from the current one.
     expect(buttonContaining('Save plan').disabled).toBe(true);
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'growth');
+      select.value = 'growth';
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await act(async () => { buttonContaining('Save plan').click(); });
@@ -172,7 +174,7 @@ describe('the workspaces tab', () => {
     const call = fetchMock.mock.calls.find((candidate) => String(candidate[0]).endsWith('/plan'));
     expect(String(call?.[0])).toBe(`/api/workspaces/${WORKSPACE_ID}/plan`);
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ region: 'enterprise', plan: 'growth' });
-    expect(container.querySelector<HTMLSelectElement>('select[aria-label="Plan"]')!.value).toBe('growth');
+    expect(container.querySelector('select')!.value).toBe('growth');
     expect(buttonContaining('Save plan').disabled).toBe(true);
   });
 });
