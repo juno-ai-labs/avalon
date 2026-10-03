@@ -8,15 +8,24 @@ function readMessage(data) {
 }
 
 // The payload carries the canonical Channel link; open it on this host, which
-// serves the same /app/... paths.
+// serves the same /app/... paths. Only the path and query are taken, set on
+// this origin, so no link (not even a path starting "//") leaves the host.
 function localUrl(canonical) {
+  const local = new URL(self.location.origin);
   try {
     const target = new URL(canonical || "/", self.location.origin);
-    return new URL(target.pathname + target.search, self.location.origin).href;
+    local.pathname = target.pathname;
+    local.search = target.search;
   } catch {
-    return new URL("/", self.location.origin).href;
+    // An unreadable link opens the app's root.
   }
+  return local.href;
 }
+
+// Controls the tabs already open, so a click can navigate one of them.
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
 
 self.addEventListener("push", (event) => {
   const message = readMessage(event.data);
@@ -33,8 +42,18 @@ self.addEventListener("notificationclick", (event) => {
   const url = (event.notification.data && event.notification.data.url) || localUrl("/");
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    const open = windows.find((client) => client.url === url);
-    if (open) return open.focus();
+    const exact = windows.find((client) => client.url === url);
+    if (exact) return exact.focus();
+    // Reuse a Rally tab on this host rather than opening another.
+    const app = windows.find((client) => new URL(client.url).pathname.startsWith("/app/"));
+    if (app) {
+      try {
+        const focused = await app.focus();
+        return await focused.navigate(url);
+      } catch {
+        // An uncontrolled tab cannot be navigated from here; open a new one.
+      }
+    }
     return self.clients.openWindow(url);
   })());
 });
