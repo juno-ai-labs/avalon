@@ -284,9 +284,10 @@ over the account menu and outside the scrolling list. The browser's
 is a browser tab, so members and guests both always see it.
 
 **Why:** Product wants the download always on screen in the browser, and
-expects tips or tutorials in the same place. The download had been drawn
-inline in the sidebar on a host check, a one-off that each later item would
-have copied.
+expects tips or tutorials in the same place. On `main` the browser drew the
+download itself (`apps/browser/src/mac-download.tsx`), in the guest shell's
+own sidebar only, so members never saw it; with every browser user now in the
+desktop sidebar, it needed a place there that later items can share.
 
 **Considered and rejected:** Putting the rows inside the scrolling list,
 which hides them under a long Channel list; and a sidebar-owned list of
