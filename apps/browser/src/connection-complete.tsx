@@ -1,3 +1,5 @@
+import { ChevronRight } from "lucide-react";
+import { RallyMark } from "@rally/ui/components/primitives";
 import { useEffect } from "react";
 /**
  * Where a connector authorization started in this browser returns. The tab
@@ -13,10 +15,12 @@ export function ConnectionComplete(): React.JSX.Element {
     : "The connection did not complete. Close this tab and try again from Rally.";
   // Only a window a script opened can close itself; elsewhere this does nothing.
   useEffect(() => { if (status === "connected") window.close(); }, [status]);
-  return <main className="entry"><a className="wordmark" href="/">Rally</a>
-    <section className="entry-card"><h1>{status === "connected" ? "Connection added" : "Connection not added"}</h1>
+  return <main className="onboarding-shell signin-shell entry">
+    <section className="signin-card entry-card">
+      <a className="entry-mark" href="/" aria-label="Rally"><RallyMark className="signin-mark" /></a>
+      <h1>{status === "connected" ? "Connection added" : "Connection not added"}</h1>
       <p role="status">{message}</p>
-      <a className="workspace-link" href="/">Return to Rally<span aria-hidden="true">→</span></a>
+      <div className="signin-choice-list"><a className="signin-choice" href="/"><span className="signin-choice-name">Return to Rally</span><ChevronRight aria-hidden="true" size={16} /></a></div>
     </section>
   </main>;
 }
