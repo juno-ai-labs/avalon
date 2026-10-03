@@ -61,6 +61,7 @@ export class BrowserScriptRuntime {
   async execute(code: string): Promise<DesktopActionResult<'browser.script'> & { stored: StoredItem[] }> {
     if (this.disposed) throw new Error('The browser runtime is closed.');
     await this.ready;
+    if (this.disposed) throw new Error('The browser runtime is closed.');
     if (this.active) throw new Error('The browser runtime is already executing a call.');
     this.active = true;
     let error: string | undefined;
@@ -74,7 +75,9 @@ export class BrowserScriptRuntime {
       while (this.pending.size > 0 && !this.disposed) await Promise.all([...this.pending]);
       this.active = false;
     }
-    const output = this.disposed ? [] : await this.view.webContents.executeJavaScript('globalThis.__rallyOutput.splice(0)') as DesktopActionResult<'browser.script'>['output'];
+    if (this.disposed) throw new Error('The browser runtime is closed.');
+    const output = await this.view.webContents.executeJavaScript('globalThis.__rallyOutput.splice(0)') as DesktopActionResult<'browser.script'>['output'];
+    if (this.disposed) throw new Error('The browser runtime is closed.');
     return { output, ...(error !== undefined ? { error } : {}), stored: this.driver.store.drain() };
   }
   dispose() {

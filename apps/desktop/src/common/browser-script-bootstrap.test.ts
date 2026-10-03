@@ -70,6 +70,10 @@ describe('browser script API', () => {
     const request = calls.at(-1) as { action: { script: string } };
     const run = new Function(`return (async () => { ${request.action.script} })();`);
     await expect(run()).resolves.toBe(7);
+    expect(() => root.rally.pageScript('function decode(x) { return x; }')).toThrow('Pass the function directly');
+    await root.rally.pageScript('function decode(x) { return x; } return decode(7);');
+    const body = (calls.at(-1) as { action: { script: string } }).action.script;
+    await expect(new Function(`return (async () => { ${body} })();`)()).resolves.toBe(7);
     expect(() => root.rally.pageScript('async () => { return 7; }')).toThrow('Pass the function directly');
     expect(() => root.rally.pageScript('() => { return 7; }')).toThrow('Pass the function directly');
   });

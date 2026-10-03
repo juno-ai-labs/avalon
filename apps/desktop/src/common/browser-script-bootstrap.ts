@@ -148,7 +148,9 @@ export function installBrowserScriptRuntime(tabId: string, documentation: string
     rally: {
       pageScript: (body: string | (() => unknown)) => {
         if (typeof body === 'string' && /^(?:async\s+)?(?:function\b|(?:\([^)]*\)|[\w$]+)\s*=>)/u.test(body.trim())) {
-          throw new Error('pageScript received a function as a string. Pass the function directly: await rally.pageScript(async () => { return value; }), or pass an async function body string: "return value;".');
+          let expression = false;
+          try { new Function(`return (${body.trim().replace(/;$/u, '')});`); expression = true; } catch { /* A body may begin with a helper declaration. */ }
+          if (expression) throw new Error('pageScript received a function as a string. Pass the function directly: await rally.pageScript(async () => { return value; }), or pass an async function body string: "return value;".');
         }
         const script = typeof body === 'function' ? `return await (${body.toString()})();` : body;
         return rpc('action', { action: { kind: 'browser.evaluate', script } });
