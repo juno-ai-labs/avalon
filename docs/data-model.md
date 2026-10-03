@@ -1257,7 +1257,7 @@ not reach.
 
 ## Usage metering
 
-Migration 0117 adds `workspaces.plan` (`starter` or `growth`, default
+Migration 0118 adds `workspaces.plan` (`starter` or `growth`, default
 `starter`). The ledger itself is in a separate D1 database, `USAGE_DB`, with
 its own migrations in `packages/db/usage-migrations/`: `usage_events`, one row
 per metered call keyed by `event_id` and kept 90 days, and `usage_rollups`,
