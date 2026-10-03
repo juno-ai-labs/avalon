@@ -8,6 +8,7 @@
 > [design.md](design.md), which holds the full tool catalog, wire shapes and
 > errors. Builds on [the demo workspace PRD](../2026-09-04_demo-workspace/prd.md)
 > and the shipped machinery in [`demo-workspaces.md`](../../demo-workspaces.md).
+> Ships in two phases; [design.md](design.md#phases) says which tool is in which.
 > Modeled on [the engineering MCP](../../engineering-mcp.md). Standing
 > contract: [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
@@ -16,21 +17,22 @@
 A person preparing a Rally demo opens Claude, connects the **Rally Demo MCP**,
 and says what the demo should hold: "a demo for Northwind, a logistics company;
 keep the vendor selection story but make it about a warehouse system, rename
-Acme to Northwind, drop the Sales review Space, Priya is played by Sam, and only
-copy the Drive connection." The model reads the built-in scenario through the
-MCP, edits it, asks the server to check it, shows a readable preview, and
-starts the demo. The person watches the same phases the Ace **Demos** page
+Acme to Northwind, drop the Sales review Space, and Priya is played by Sam."
+The model reads the built-in scenario through the
+MCP, edits it, asks the server to check it, shows the operator the readable
+preview the check returns, and starts the demo. The person watches the same phases the Ace **Demos** page
 shows, and gets the Organization name to switch to once it is Ready.
 
 Today every demo is prepared from one scenario that is compiled into the API
 and changes only through a pull request. After this change a scenario is data:
-any pack the existing schema accepts can be checked, previewed, saved as a
-named, versioned scenario for the team to reuse, and used to create a demo
-Organization. Everything a demo is made of becomes a choice at creation time:
-the content, the Spaces, Channels, Breakouts, documents and Sidekicks, the
-cast and who plays each part, the company and Organization names, and which
-template connections the demo receives. The preparation operation, seeder,
-readiness barrier and retirement walk are reused unchanged.
+any pack the existing schema accepts can be checked, previewed and used to
+create a demo Organization, pinned to an immutable stored copy. Everything a
+demo is made of becomes a choice at creation time: the content, the Spaces,
+Channels, Breakouts, documents and Sidekicks, the cast and who plays each part,
+and the company name. The preparation operation, seeder, readiness barrier and
+retirement walk are reused unchanged, as are the shipped status shape, cast
+entries and error codes. A second phase adds a named, shared scenario library
+and a choice of which template connections a demo receives.
 
 ## Motivation
 
@@ -88,12 +90,12 @@ production flags and SQL.
    to change, so a model can fix its own pack in one or two rounds.
 4. A person can read a scenario as the presenter will read it, with the cast's
    real names bound, before starting a demo from it.
-5. A scenario can be saved under a name, revised, and reused by anyone on the
-   team, and each revision is immutable, so a demo always records exactly what
-   it was made from.
-6. The per-demo choices are explicit inputs: company name, Organization name,
-   presenter, who plays each part (a colleague or a typed name), and which of
-   the template's copyable connections the demo receives.
+5. **(Phase 2.)** A scenario can be saved under a name, revised, and reused by
+   anyone on the team. In both phases every pack a demo is made from is stored
+   immutably, so a demo always records exactly what it was made from.
+6. The per-demo choices are explicit inputs: company name, presenter, and who
+   plays each part (a colleague or a typed name). **(Phase 2.)** Which of the
+   template's copyable connections the demo receives.
 7. A change to the built-in scenario never fails a demo that is already
    preparing.
 8. The people who may prepare demos can be admitted without being given Ace,
@@ -119,7 +121,8 @@ production flags and SQL.
 4. **More than one connection template, and connections the template does not
    hold: deferred.** The demo still copies from the one hand-built
    `demo-template`, and still only providers in `SHAREABLE_CONNECTOR_TYPES`.
-   The new choice is which of those copies a demo receives, including none.
+   Phase 2 adds a choice of which of those copies a demo receives, including
+   none.
    Several templates (for instance one per industry, with its own demo
    accounts) is a later PRD once a second set of demo accounts exists.
 5. **Attachments other than Markdown and plain text: deferred.** The `upload`
@@ -164,14 +167,17 @@ ordered list of steps (`create_workstream`, `create_substream`, `message`,
 `upload`, `sidekick`), and the `expect` block the readiness barrier verifies.
 This PRD adds no step kind and loosens no playability rule.
 
-There are two sources of scenarios, and every tool treats them the same way:
+There are three sources of scenarios, and every tool treats them the same way:
 
 - **Built-in** scenarios are compiled into the API, as the shipped pack is
   today. Their ID is fixed (`builtin:multiplayer`) and their revision is the
   pack's `version`. They change only by pull request, and the
   `/demo-scenario` skill keeps working for them.
-- **Saved** scenarios are stored in Global D1, written through this server.
-  Each save makes a new immutable revision. Anyone admitted to the server can
+- **Inline** packs are passed whole to `create_demo_organization` and stored
+  as an unnamed revision, unique by content hash, so the operation points at
+  bytes that cannot change.
+- **Saved** scenarios (phase 2) are stored in Global D1, written through this
+  server. Each save makes a new immutable revision. Anyone admitted to the server can
   read, use, revise or archive any saved scenario: the library is the team's,
   not the author's. Each revision records who saved it.
 
@@ -192,11 +198,10 @@ their model. The table is the whole list; what is not in it is fixed.
 | Sidekicks: definition, schedule, time zone, a first briefing | Scenario | `sidekick` steps |
 | How many parts there are and what each is called | Scenario | `roles`, `roleLabels` |
 | Which rooms the presenter is in, and what their home screen shows | Scenario | seats and mentions; `expect` is derived (below) |
-| Company name | Per demo | `companyName` |
-| Organization name | Per demo | `organizationName`, default `<companyName>-demo` |
+| Company name, which names the Organization `<companyName>-demo` | Per demo | `companyName`, as today |
 | Presenter | Per demo | a member of `demo-template`, as today |
-| Who plays each part | Per demo | a colleague's account or email, or a typed name (a persona) |
-| Which template connections are copied | Per demo | all copyable (default), none, or a chosen subset |
+| Who plays each part | Per demo | a colleague's user ID or a typed name (a persona), as today |
+| Which template connections are copied (phase 2) | Per demo | all copyable (default and today's behavior), none, or a chosen subset |
 
 A model customizes a built-in story by reading it with `get_demo_scenario`,
 editing the JSON (renaming the customer, changing figures, dropping a room,
@@ -213,65 +218,22 @@ parses, plans and seeds, then leaves the demo in **Waiting for workspace**
 until the wait runs out. The skill today has the author run tests and copy the
 failing diff.
 
-The check does that work. When a scenario's `expect` has no entry for the
-presenter, the check fills it from `demoIdleViewerExpectation`, which is
-already the answer the checked-in pack is held to by test. An `expect` entry
-the author does write is kept and compared: if the presenter's entry differs
-from the derived one, the check refuses it with both versions, because the
-presenter never acts and their flags have one right answer. An entry for a cast
-member, whose flags depend on what they did, is accepted as written.
+The check does that work. It always replaces the presenter's entry with what
+`demoIdleViewerExpectation` derives, which is already the answer the
+checked-in pack is held to by test, and says it did. The presenter never acts,
+so their flags have one right answer, and there is nothing to refuse. An entry
+for a cast member, whose flags depend on what they did, is kept as written.
 
-### The flow
+### The flow and its states
 
-A typical session, as the model sees it (exact shapes are in
-[design.md](design.md)):
-
-1. `list_demo_scenarios` returns the built-in scenario and any saved ones, each
-   with a one-paragraph description and its rooms.
-2. `get_demo_scenario` returns the full pack of one revision.
-3. The model edits it and calls `check_demo_scenario`. The answer is either
-   `ok` with the normalized pack (the derived `expect` filled in) and a summary
-   (rooms, Spaces, Breakouts, Sidekicks, documents, parts, and how many seeded
-   runs preparation will wait on), or a list of issues, each with a path, a
-   stable code and a sentence saying what to change.
-4. `preview_demo_scenario` returns the scenario as readable text, one section
-   per room in sidebar order, with each `@{role}` replaced by the name of the
-   person cast in it (or the part's label if no cast is given), and with each
-   room marked as what the presenter will find: seated or only visible, new,
-   mentioned, waiting on a question.
-5. Optionally `save_demo_scenario` stores it as a named scenario or a new
-   revision of one.
-6. `list_demo_cast_candidates` returns who may present, the colleagues who may
-   play a part, and the parts the scenario casts. `list_template_connections`
-   returns the template's connections, each marked copyable or with the reason
-   it is not (`personal_scope`, `shared_grant`).
-7. `create_demo_organization` starts the operation and returns its status.
-   The scenario is a saved revision, a built-in scenario, or a pack passed
-   inline; an inline pack is stored as an unnamed revision first, so the
-   operation always points at a stored, immutable pack.
-8. `get_demo_operation` returns phases, the seeding count, the readiness gaps
-   by viewer, failures with their code and recovery, and once Ready, the
-   Organization's name and ID and anything the presenter needs to do to see it.
-
-### States
-
-The operation's states are the shipped ones; the MCP reports them rather than
-inventing its own.
-
-| State | What `get_demo_operation` returns |
-| --- | --- |
-| Checking template | `running`, phase `checking_template` |
-| Creating workspace | `running`, phase `creating_workspace`, the allocated Organization ID |
-| Copying connections | `running`, the connections copied and those skipped, each with its reason |
-| Seeding conversations | `running`, confirmed actions of total |
-| Waiting for workspace | `running`, the open gaps, each naming the viewer it was read as |
-| Ready | `ready`, the Organization's ID and name, the presenter, and a `notices` list |
-| Failed | `failed`, the phase, the code, the message, and which tool recovers it (`retry_demo_operation`, or `abandon_demo_operation` and a new demo for a failed seeded run) |
-| Abandoned | `abandoned`, and whether the candidate's retirement finished |
-| Retired | `ready` with `retiredAt` set |
-
-There is no percentage and no time estimate, as in Ace. Polling is the
-client's choice; the server sets no rate.
+A model reads a scenario, edits it, checks it until it passes, shows the
+operator the preview, creates the demo, and follows the operation to Ready. The
+operation's states are the shipped ones (checking template, creating workspace,
+copying connections, seeding conversations, waiting for workspace, Ready,
+failed, abandoned), returned in the shipped status shape, with no percentage
+and no time estimate. Failed carries the tool that recovers it. The calls,
+their shapes and the common sequences are in
+[design.md](design.md#discovery-and-sequencing).
 
 **Ready can still be invisible to the presenter.** The account menu lists
 Organizations only while `multiple-workspaces-enabled` is on for that person
@@ -296,6 +258,12 @@ shipped "one operation id, one demo" rule, given an input a model can repeat
 reliably; a model cannot be trusted to reuse a random UUID across a context
 loss.
 
+The repeat is answered first, before the pack is resolved, checked or stored
+and before the cast is checked, as `startDemoOperation` does today and for its
+reason: re-checking a repeat against a directory that has moved since would
+refuse a retry of a preparation that is running fine. So a repeat writes
+nothing, and a repeat with different inputs still returns the first demo.
+
 ### Retiring and abandoning
 
 `abandon_demo_operation` is the shipped abandon: it closes an unfinished
@@ -313,12 +281,9 @@ so it may only close what demo preparation opened.
 ### Errors
 
 Every refusal names the field it rejected and says what to do next, per
-[naming a schema failure](../../naming-a-schema-failure.md). A pack issue uses
-`describeZodIssues` and the pack's own messages ("Role \"dana\" is not in the
-cast" at `steps[4].as`), never a bare `ZodError`. A refusal reports issue codes
-and declared field names; it never echoes a credential, a provider error's own
-text, or pack text beyond the field path. The full list is in
-[design.md](design.md#failures).
+[naming a schema failure](../../naming-a-schema-failure.md). Shipped refusals
+keep their shipped codes, so Ace and the MCP report the same failure the same
+way. The full list is in [design.md](design.md#failures).
 
 ## Impact on the product contract
 
@@ -369,15 +334,18 @@ does not supersede it.
    which would put a model's output straight into a production write path with
    nothing to review.
 4. **Every operation points at a stored, immutable revision.** An inline pack
-   is saved as an unnamed revision before the operation starts. Retries,
+   is saved as an unnamed revision, unique by content hash, once its checks
+   pass and before the operation row is written. Retries,
    readiness and audit read the same bytes, a deploy cannot change them, and
    "what was this demo made from" has one answer. **Rejected:** storing the pack
    JSON on the operation row, which would duplicate it per demo and leave saved
    scenarios as a second store.
-5. **`expect` for the presenter is derived by the server.** It is the step most
-   likely to be wrong and the one whose failure costs a demo rather than a
-   test. **Rejected:** keeping it author-written, which hands a model the one
-   task the skill already moved to the test suite.
+5. **`expect` for the presenter is derived by the server, always.** It is the
+   step most likely to be wrong and the one whose failure costs a demo rather
+   than a test, and it has one right answer, so the check overwrites it.
+   **Rejected:** keeping it author-written, which hands a model the one task
+   the skill already moved to the test suite; and refusing a wrong entry,
+   which makes the model do work the server already did.
 6. **Idempotency by `requestKey`, scoped to the caller.** See **Replays and
    duplicate demos**. **Rejected:** client-supplied UUIDs (a model loses them)
    and server-minted IDs with no key (a retried call makes a second demo).
@@ -387,32 +355,57 @@ does not supersede it.
    `DemoAdministration` entrypoint that calls the same service functions the
    `/internal/demos` routes call. **Rejected:** calling `/internal/demos` with a
    `demos` token from `DEMO_OPERATORS_JSON`, which would add a bearer secret to
-   rotate and pass the Access identity only as a claim the API cannot verify.
+   rotate. Either way the API receives the operator's identity as a value it
+   cannot verify itself; it trusts the caller, the binding here or the token
+   there. The entrypoint is chosen for having no secret, not for verifying
+   more.
 8. **Retirement from this server is limited to demo Organizations.** See
    **Retiring and abandoning**.
 9. **The operator is recorded.** Each operation and each scenario revision
    stores the Access subject and email of who made it, so a demo whose
    seeded words are attributed to a colleague can be traced to the person who
-   wrote and started it.
+   wrote and started it. The record is only as trustworthy as the Demo MCP
+   Worker, which is the one caller that can reach the entrypoint and the one
+   place the Access assertion is verified.
+10. **Shipped shapes and codes, unchanged.** The MCP returns the shipped
+    `DemoOperationStatusSchema` with optional additions, takes the shipped
+    cast entry (a user ID or `{ name }`) and the shipped company name, and
+    keeps every shipped error code. **Rejected:** an MCP-specific status shape,
+    an `{ email }` cast form and a separate Organization name, each a second
+    version of something Ace already sends or reads, for no new capability.
+11. **Two phases.** Phase 1 is the primitive: run any checked pack, pinned to
+    immutable bytes, which meets every goal but the library and connection
+    choice. Those two are cheap to add later and costly to remove once people
+    depend on them, so they wait until somebody asks. Preview is part of the
+    check, not its own tool, so each round of editing is one call.
 
 ## Data model
 
 Sketch level; the migration is authoritative. All in Global D1, beside
 `demo_operations`.
 
-- **`demo_scenarios`**: `id`, `name` (unique among live scenarios), `description`,
-  `archived_at`, `created_at`. A built-in scenario has no row.
-- **`demo_scenario_revisions`**: `scenario_id` (null for an unnamed revision
-  made by an inline pack), `revision` (1, 2, 3 per scenario), `pack_json` (the
-  normalized pack, with derived `expect`), `content_hash` (SHA-256 of
-  `pack_json`), `saved_by_subject`, `saved_by_email`, `created_at`. Immutable:
-  no update path.
-- **`demo_operations`** gains `scenario_source` (`builtin` or `stored`),
-  `scenario_revision_id` (for stored), `organization_name`,
-  `connection_selection` (JSON: `all`, `none`, or a list of template connection
-  IDs), `request_key`, and `requested_by_subject` and `requested_by_email`.
-  Existing rows are `builtin` with nulls, and keep today's `pack_version`
+Phase 1:
+
+- **`demo_scenario_revisions`**: `id`, `scenario_id` (null for an unnamed
+  revision made by an inline pack), `revision` (null when unnamed), `pack_json`
+  (the normalized pack, with derived `expect`), `content_hash` (SHA-256 of
+  `pack_json`), `saved_by_subject`, `saved_by_email`, `created_at`. Unnamed
+  revisions are unique by `content_hash`, so storing one twice writes nothing.
+  Immutable: no update path.
+- **`demo_operations`** gains `scenario_revision_id` (null for a built-in
+  scenario), `request_key`, and `requested_by_subject` and
+  `requested_by_email`. A stored revision's `pack_version` is
+  `stored:<content_hash>`, so the shipped column keeps saying what the demo was
+  made from. Existing rows have nulls and keep today's `pack_version`
   comparison.
+
+Phase 2:
+
+- **`demo_scenarios`**: `id`, `name` (unique among live scenarios),
+  `description`, `archived_at`, `created_at`. A built-in scenario has no row.
+  Saved revisions point at it and number 1, 2, 3.
+- **`demo_operations`** gains `connection_selection` (JSON: `all`, `none`, or a
+  list of template connection IDs); null means all, today's behavior.
 
 A pack is stored as one D1 value. D1's published per-row size limit (2,000,000
 bytes when this was written; check the current
@@ -460,7 +453,10 @@ Google connections. Three things bound the result:
 2. Seeded text is history, not instructions to the harness. It runs through
    the same admission and Bind path as a person's message and gains no
    authority by being seeded.
-3. The revision records who saved it and the operation records who started it.
+3. The revision records who saved it and the operation records who started it,
+   as reported by the Demo MCP Worker. The entrypoint cannot check that
+   identity itself; it trusts the one Worker bound to it, which verified the
+   Access assertion.
 
 **Words in a colleague's name.** A scenario puts words in the mouth of whoever
 is cast in a part, under their real name. A checked-in pack had a reviewer; a
@@ -471,8 +467,8 @@ before custom words are attributed to them is an open question below.
 
 **Credentials.** Unchanged: copying uses `decryptVersionedCredentialValue`, never
 writes the template, and keeps plaintext out of responses, logs and receipts.
-`list_template_connections` returns type, display name, scope and copyability,
-never account tokens.
+In phase 2, `list_template_connections` returns type, display name, scope and
+copyability, never account tokens.
 
 **Logs.** As in the engineering MCP: Access subject and email, tool name,
 target IDs and a fixed outcome code. Pack text, cast names and preview text
@@ -521,17 +517,19 @@ The default applies: it ships to its audience on merge.
 
 Order:
 
-1. The migration and the `DemoAdministration` entrypoint, with saved scenarios
-   and the operation changes. Ace keeps working unchanged against the built-in
-   scenario.
-2. The Demo MCP Worker and its Access application, deployed after the API.
-3. Documentation: a new `docs/demo-mcp.md` module document registered in
-   [`docs/README.md`](../../README.md), a connection guide beside
+1. Phase 1: the migration and the `DemoAdministration` entrypoint, with stored
+   revisions and the operation changes. Ace keeps working unchanged against
+   the built-in scenario.
+2. Phase 1: the Demo MCP Worker and its Access application, deployed after the
+   API.
+3. Phase 1: documentation. A new `docs/demo-mcp.md` module document registered
+   in [`docs/README.md`](../../README.md), a connection guide beside
    `internal-admin-mcp-server.md`, and updates to `demo-workspaces.md` for
-   stored revisions, derived `expect`, connection selection and the new
-   `demo_operations` columns. The `/demo-scenario` skill gains a note that a
-   scenario that does not need to ship to everyone can be saved through the MCP
-   instead of opening a PR.
+   stored revisions, derived `expect` and the new `demo_operations` columns.
+   The `/demo-scenario` skill gains a note that a scenario that does not need
+   to ship to everyone can be run through the MCP instead of opening a PR.
+4. Phase 2, when asked for: the scenario library and connection selection, each
+   with its own migration and documentation update.
 
 To turn it off: remove the Access policy's members, or delete the Worker. Demos
 already prepared are unaffected, and Ace still prepares and retires them.
@@ -549,20 +547,22 @@ already prepared are unaffected, and Ace still prepares and retires them.
 3. **Self-correction.** Give the model a pack with a speaker who is not in the
    room, a second question in one conversation, a mention of a role outside the
    cast and a wrong presenter `expect`. Each issue names its path and says what
-   to change, and the model fixes the pack without human help. Run this on the
+   to change, the presenter's `expect` is replaced and reported in `derived`
+   rather than refused, and the model fixes the pack without human help. Run this on the
    medium fallback model, not only a frontier one.
 4. **Derived readiness.** A pack with no `expect` is checked, filled in, and
    reaches Ready. Breaking `demoIdleViewerExpectation`'s mention rule makes the
    integration test fail by the gap it names.
-5. **Immutability and deploys.** Start a demo from a saved revision, save a new
-   revision and deploy a changed built-in pack while it prepares. The operation
-   finishes from the bytes it started with, and `demo_pack_changed` is not
-   raised.
+5. **Immutability and deploys.** Start a demo from an inline pack and deploy a
+   changed built-in pack while it prepares. The operation finishes from the
+   bytes it started with, and `demo_pack_changed` is not raised.
 6. **Replay.** Call `create_demo_organization` twice with one `requestKey`,
-   including after the first call's response is lost. One Organization, one
-   operation.
-7. **Connection selection.** `none` copies nothing; a subset copies only those;
-   a non-copyable ID is refused before a row is written with its reason.
+   including after the first call's response is lost, and once with a changed
+   pack. One Organization, one operation, one stored revision; the changed
+   repeat returns the first demo and stores nothing.
+7. **Phase 2, connection selection.** `none` copies nothing; a subset copies
+   only those; a non-copyable ID is refused before a row is written with its
+   reason.
 8. **Limits of the door.** `retire_demo_organization` refuses `demo-template`
    and a customer workspace; the server has no SQL or flag tool; an Ace token
    and an engineering MCP token are both refused by the origin.
@@ -587,8 +587,11 @@ one production edit.
   in custom ones. The last is the safest and the least useful. Does not block
   the build; changes one check in `create_demo_organization`.
 - **Hostname.** `demo-mcp.internal.rallywith.ai` is a proposal.
-- **Scenario library hygiene.** Whether archived scenarios are ever removed.
-  Revisions referenced by an operation must stay, so this PRD proposes none.
+- **Phase 2 triggers.** What request would start the scenario library or
+  connection selection. Until one arrives, neither is built.
+- **Scenario library hygiene (phase 2).** Whether archived scenarios are ever
+  removed. Revisions referenced by an operation must stay, so this PRD
+  proposes none.
 
 ## Decision log
 
