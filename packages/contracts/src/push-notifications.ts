@@ -32,7 +32,9 @@ export const RegisterPushDeviceRequestSchema = z.discriminatedUnion("platform", 
     platform: z.literal("web"),
     transport: z.literal("webpush"),
     endpoint: HttpsUrlSchema,
-    keys: z.object({ p256dh: z.string().min(80).max(100), auth: z.string().min(16).max(32) }),
+    // RFC 8291: an uncompressed P-256 point (65 bytes, leading 0x04, so "B")
+    // and a 16-byte auth secret, each unpadded base64url.
+    keys: z.object({ p256dh: z.string().regex(/^B[A-Za-z0-9_-]{86}$/u), auth: z.string().regex(/^[A-Za-z0-9_-]{22}$/u) }),
     appVersion,
   }),
 ]);

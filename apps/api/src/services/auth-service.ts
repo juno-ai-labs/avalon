@@ -237,8 +237,7 @@ export class AuthService {
   /** Completes a browser Google sign-in with an unbound identity session. */
   async consumeBrowserIdentityCallback(code: string, state: string): Promise<{ session: Session; returnUrl: string }> {
     this.requireGoogleIdentity();
-    const row = await this.claimOAuthState(state, "identity");
-    if (row.desktop_attempt_id) throw new ApiError(401, "invalid_oauth_state", "The OAuth request is invalid or expired");
+    const row = await this.claimOAuthState(state, "identity", { browser: true });
     const verifier = await openString(row.code_verifier_encrypted, this.env.OAUTH_STATE_ENCRYPTION_KEY);
     const identity = await this.exchangeGoogleIdentity(code, verifier, browserGoogleCallbackUrl(this.env));
     return { session: await this.createSession(await this.loadIdentity(identity.user_id, null)), returnUrl: row.return_uri };
@@ -247,8 +246,7 @@ export class AuthService {
   /** A browser sign-in the person declined at Google: where to send them back. */
   async consumeBrowserIdentityDenial(state: string): Promise<string> {
     this.requireGoogleIdentity();
-    const row = await this.claimOAuthState(state, "identity");
-    if (row.desktop_attempt_id) throw new ApiError(401, "invalid_oauth_state", "The OAuth request is invalid or expired");
+    const row = await this.claimOAuthState(state, "identity", { browser: true });
     return row.return_uri;
   }
 
@@ -610,11 +608,16 @@ export class AuthService {
     }
   }
 
-  private async claimOAuthState(state: string, purpose: string): Promise<OAuthStateRow> {
+  /**
+   * Claims a Google state once. A browser claim matches only a state a browser
+   * started, so a desktop state that reaches the browser callback is refused
+   * without being consumed.
+   */
+  private async claimOAuthState(state: string, purpose: string, options: { browser?: boolean } = {}): Promise<OAuthStateRow> {
     const row = await this.env.DB.prepare(
       `UPDATE oauth_states SET consumed_at = ?
        WHERE id = ? AND provider = 'google' AND purpose = ? AND region = ?
-         AND consumed_at IS NULL AND expires_at > ?
+         AND consumed_at IS NULL AND expires_at > ?${options.browser ? " AND desktop_attempt_id IS NULL" : ""}
        RETURNING *`,
     )
       .bind(nowIso(), state, purpose, this.env.AVALON_REGION, nowIso())

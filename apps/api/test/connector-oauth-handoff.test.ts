@@ -439,6 +439,8 @@ describe("connector OAuth handoff", () => {
     expect(target).toBe(`https://app.rallywith.ai/connections/complete?provider=google&region=global&attempt=${started.attemptId}&status=failed&error=provider_failed`);
     // A browser target is a page already; it never goes through the desktop handoff.
     expect(desktopHandoffUrl(env, target)).toBe(target);
+    // Any other web URL is not a redirect target: it lands on the handoff page.
+    expect(new URL(desktopHandoffUrl(env, "https://evil.example.test/connections/complete")).pathname).toBe("/auth/desktop/");
   });
 
   it("persists the legacy return when the route maps an absent capability to version one", async () => {
