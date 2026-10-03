@@ -3,8 +3,8 @@ import { BrowserImportMessagesSchema } from '@rally/contracts/desktop-actions';
 import { pageScript, type PageScriptOutcome } from '../../../common/desktop-actions/page-script';
 
 /** Run the expression as the page would, with the page globals it reads. */
-async function run(body: string): Promise<PageScriptOutcome> {
-  const evaluate = new Function('location', 'document', `return ${pageScript(body)}`) as
+async function run(body: string, maxParallelDownloads?: number): Promise<PageScriptOutcome> {
+  const evaluate = new Function('location', 'document', `return ${pageScript(body, maxParallelDownloads)}`) as
     (location: { href: string }, document: { title: string }) => Promise<PageScriptOutcome>;
   return evaluate({ href: 'https://claude.ai/chat/1' }, { title: 'Chat' });
 }
@@ -19,6 +19,41 @@ function pageResponse(body: string, init?: ResponseInit): Response {
 
 describe('page script', () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it('bounds active downloads, drains a failed batch, and retains source order', async () => {
+    const replies = new Map<string, (response: Response) => void>();
+    vi.stubGlobal('fetch', (url: string) => new Promise<Response>(resolve => replies.set(url, resolve)));
+    let settled = false;
+    const answer = run(`return await rally.downloadFiles([
+      { url: 'first', name: 'first.txt' },
+      { url: 'failed', name: 'failed.txt' },
+      { url: 'third', name: 'third.txt' },
+    ]);`, 2).finally(() => { settled = true; });
+    try {
+      expect([...replies.keys()]).toEqual(['first', 'failed']);
+      replies.get('failed')!(pageResponse('', { status: 500 }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect([...replies.keys()]).toEqual(['first', 'failed']);
+      expect(settled).toBe(false);
+      replies.get('first')!(pageResponse('a'));
+      await vi.waitFor(() => expect([...replies.keys()]).toEqual(['first', 'failed', 'third']));
+      replies.get('third')!(pageResponse('c'));
+      const result = await answer;
+      expect(result).toMatchObject({ ok: true, value: [
+        { name: 'first.txt', kind: 'file', size: 1 },
+        { unavailable: { name: 'failed.txt', reason: 'File download returned HTTP 500.' } },
+        { name: 'third.txt', kind: 'file', size: 1 },
+      ] });
+      if (!result.ok) throw new Error(result.message);
+      expect(result.stored.map(file => ({ name: file.name, data: file.data })))
+        .toEqual([{ name: 'first.txt', data: 'YQ==' }, { name: 'third.txt', data: 'Yw==' }]);
+    } finally {
+      vi.stubGlobal('fetch', async () => pageResponse('cleanup'));
+      for (const reply of replies.values()) reply(pageResponse('cleanup'));
+      await answer;
+    }
+  });
+
 
   it('downloads files concurrently, preserves source order, and accounts for rejected originals', async () => {
     const replies = new Map<string, (response: Response) => void>();
