@@ -267,10 +267,15 @@ None yet.
    `created_at + 7 days × floor(elapsed / 7 days)`. The rollup is keyed by week
    start, so a new week finds no row and reads 100%. No cron job, no reset write,
    nothing to drift.
-7. **Overage is split when the consumer applies an event**, in arrival order,
-   from the week's running total and the current plan. If a single event crosses
-   the line, it is split. Arrival order can differ slightly from when the calls
-   happened, which this best-effort ledger accepts.
+7. **Overage is derived when it is read, not split when an event arrives.** The
+   consumer only adds each event's cost to a total per week and monthly period.
+   Overage is the part of a week's total above that week's quota, and when a
+   week straddles a monthly boundary, the earlier part uses up the quota first.
+   Sums do not depend on the order events arrive in, so the same events always
+   give the same overage. A plan change also re-prices the current week at once
+   (decision 12), with nothing to reclassify. Splitting each event as it
+   arrived was rejected: queue order would decide which month got overage near
+   a boundary, and the recorded split would go stale when the plan changed.
 8. **No enforcement.** A spent quota never stops a run. Enforcing would put a
    read on the agent loop's path for a number that is minutes stale. Charging
    overage is the planned answer to heavy use.
@@ -303,10 +308,9 @@ Sketch; [`design.md`](design.md) has the DDL and the consumer algorithm.
   the user, Channel, Breakout and Sidekick IDs. The primary key deduplicates
   redelivery. This is the per-event history for a later breakdown and for
   Stripe.
-- `usage_weeks`: (`workspace_id`, `week_start`) primary key,
-  `organization_microusd`, `overage_microusd`, `rally_microusd`.
-- `usage_months`: (`workspace_id`, `period_start`) primary key,
-  `overage_microusd`.
+- `usage_rollups`: (`workspace_id`, `week_start`, `period_start`) primary key,
+  `quota_microusd`, `organization_microusd`, `rally_microusd`. One row per week
+  per monthly period it touches, so at most two rows for each week.
 
 Plan prices and the 2× multiplier live in one `PLANS` constant in
 `@rally/contracts`. They are product limits, set by this PRD.
