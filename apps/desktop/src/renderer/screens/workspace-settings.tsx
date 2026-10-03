@@ -35,6 +35,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -1041,7 +1042,13 @@ export function WorkspaceSettingsScreen({
   // swept for unsaved text because Settings saves immediately and has no undo:
   // a half-written invitation, endpoint, or API key has nowhere to come from
   // once this window is gone.
-  useEscapeClosesWindow({ enabled: standaloneWindow, unsavedTextScope: contentRef });
+  // A browser tab cannot close itself: there Settings is a route, and closing
+  // it returns to the workspace.
+  const closeSettings = useCallback(() => {
+    if (browserHost) window.location.hash = '#/';
+    else window.close();
+  }, [browserHost]);
+  useEscapeClosesWindow({ enabled: standaloneWindow, unsavedTextScope: contentRef, onClose: closeSettings });
 
   useEffect(() => bridge.onSettingsSectionRequested((section) => {
     const nextSection = parseDesktopSettingsSection(section);
@@ -1239,7 +1246,7 @@ export function WorkspaceSettingsScreen({
         <main className="settings-content" ref={contentRef}>
           <header className="settings-content-header window-drag">
             <h1 id="settings-title">{sectionTitle}</h1>
-            <button aria-label="Close settings" className="settings-close window-no-drag" onClick={() => window.close()} type="button">
+            <button aria-label="Close settings" className="settings-close window-no-drag" onClick={closeSettings} type="button">
               <X aria-hidden="true" size={18} />
             </button>
           </header>
