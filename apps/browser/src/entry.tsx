@@ -128,7 +128,11 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       if (restoring) { pendingRenewal ||= renew; return; }
       const read = ++sessionRead.current;
       restoring = (async () => {
-        if (renew) await browserRequest(selected, "/session/renew", BrowserSessionSchema, {});
+        // A deployment other than Global whose cookie has lapsed answers 401;
+        // opening the workspace below activates it again through Global.
+        if (renew) await browserRequest(selected, "/session/renew", BrowserSessionSchema, {}).catch((cause: unknown) => {
+          if (!(target && selected !== IDENTITY_REGION && cause instanceof BrowserApiError && cause.status === 401)) throw cause;
+        });
         const current = target
           ? await openWorkspace(selected, target.workspaceId)
           : await browserRequest(selected, "/session", BrowserSessionSchema);
@@ -166,8 +170,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     window.addEventListener("online", resume);
     document.addEventListener("visibilitychange", visible);
     // Broadcast only an invalidation. Each tab reads the authoritative cookie
-    // session; credentials and invitation proofs never cross the channel.
-    const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(`rally-browser-session:${selected}`);
+    // session; credentials and invitation proofs never cross the channel. One
+    // channel for every deployment, since sign-out reaches all of them.
+    const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("rally-browser-session");
     sessionChannel.current = channel;
     if (channel) channel.onmessage = (event: MessageEvent<unknown>) => {
       if (event.data === "session-changed") {
