@@ -1252,6 +1252,13 @@ Root ordinary work-stream runs allow 1,000 model iterations and have no tool-cal
 
 A published document is readable in the desktop client, and was not until 2026-08-27. A generated resource appears in the work-stream rail under **Artifacts**, and its detail panel now renders the resource's readable content beneath the metadata, through `/resources/:id/preview` — the same authorized route `AttachmentLightbox` uses, which materializes extracted text for a file that is not already text. The gap that remains is narrower: the rail resolves an inspector target only from the loaded work stream's own resources, so a document cited from *another* work stream still has nowhere to open. [`markdown-rendering.md`](markdown-rendering.md) owns the citation half of this and records the same limit.
 
+Host-owned receipt operations may set `HarnessTool.deadline: "run"` to use the
+parent run signal without a second per-tool timer. Conversation import saves
+use this because their file uploads and durable commit must return an outcome
+instead of racing the generic tool timer; run cancellation remains authoritative.
+The host marks durable input re-entry with `HarnessToolContext.replaying` so a
+tool can decode a historical receipt without weakening validation of new calls.
+
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
 Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and dimensions and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, WebP, HEIF/HEIC, and the primary TIFF path are normalized through Cloudflare Images; the TIFF fallback preflights dimensions before pixel decode, while HEIF has no whole-buffer local fallback. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript. Non-image message attachments contribute a compact manifest only; authorized attachment tools own every byte of text, Office, and PDF hydration.

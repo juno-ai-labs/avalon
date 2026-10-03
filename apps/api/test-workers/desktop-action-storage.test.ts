@@ -44,6 +44,25 @@ describe("desktop action storage", () => {
     });
   });
 
+  it("replays a persisted contract-2 finish action without rewriting its wire shape", async () => {
+    await withStorage("desktop-import-contract-2-replay", (actions, sql) => {
+      const action = { kind: "session_import.finish", title: "Old import", messages: "old-handle", verification: {
+        branch: { complete: true, basis: "Reached root" },
+        page: { messageCount: 2, firstSourceMessageId: "m1", lastSourceMessageId: "m2", sampledSourceMessageIds: ["m2"], basis: "Both compared" },
+        fileCount: 0,
+      } };
+      sql.exec(`INSERT INTO desktop_actions (action_id,run_id,tool_call_id,action_json,status,created_at)
+        VALUES ('old-finish','r1','c1',?,'pending',1)`, JSON.stringify(action));
+      expect(actions.pending(ignore)).toEqual([{ id: "old-finish", action }]);
+      expect(actions.request({ id: "new-finish", runId: "r1", toolCallId: "c1", action: snapshot, now: 2 }))
+        .toEqual({ status: "pending", request: { id: "old-finish", action } });
+      const outcome = { ok: true, result: { workstreamId: "channel", messages: 2 } } as const;
+      actions.answer({ id: "old-finish", outcome, answeredByUserId: "u1", now: 3 });
+      expect(actions.request({ id: "retry-finish", runId: "r1", toolCallId: "c1", action: snapshot, now: 4 }))
+        .toEqual({ status: "answered", outcome });
+    });
+  });
+
   it("hands a re-entered call the answer already recorded, and keeps the first answer", async () => {
     await withStorage("desktop-action-storage-replay", (actions) => {
       const asked = actions.request({ id: "a1", runId: "r1", toolCallId: "c1", action: snapshot, now: 1 });
