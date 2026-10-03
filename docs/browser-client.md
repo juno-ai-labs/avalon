@@ -23,7 +23,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
 | `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context, optional setup capabilities, and `useShellCapabilities`: which host is drawing and whether the reader is a guest. |
 | `apps/desktop/src/renderer/components/mac-download-link.tsx` | The Mac app download row, the sidebar's footer item when the host is a browser tab. |
-| `apps/desktop/src/renderer/screens/shared-space-landing.tsx` | A guest's Space link: opens the first Channel shared with them in that Space. |
+| `apps/desktop/src/renderer/screens/shared-landing.tsx` | Where a guest lands, at the root or from a Space link: the first Channel shared with them, from the conversation directory. |
 | `packages/contracts/src/browser-session.ts` | Shared credential-free session and email exchange schemas. |
 | `apps/browser/wrangler.jsonc` | Assets and the explicit Global API service binding. |
 | `apps/browser/test/host.test.ts` | Real workerd host and service-binding transport tests. |
@@ -146,7 +146,8 @@ capability. A child-only share names and styles its Channel so the Breakout can
 be placed correctly, but still omits Main and every unshared Breakout; such a
 Breakout opens alone, in Main's place. Selecting a Space pill filters the
 Channel list. A canonical Space link selects that Space's pill and opens the
-first Channel shared there (`SharedSpaceLanding`). A Channel with no visible
+first Channel shared there; the Organization root opens the first Channel shared
+anywhere (`SharedLanding`). A Channel with no visible
 Space placement stays reachable. A guest's shell holds the workspace socket, as
 a member's does, and reads the directory again when it reports this person's
 reach changed ([`realtime-sockets.md`](realtime-sockets.md)); it opens no
@@ -561,7 +562,8 @@ cookie-session checks. `GET /workspace` now answers guests, with no role. A
 guest's shell skips the member directory, imports, connections, search, the
 Sidekicks library, the account introduction and the Organization journey, and
 its Settings holds Account and Application. A guest's Space link opens the
-first Channel shared with them there. The Mac app download moved into the
+first Channel shared with them there, and the root opens the first one shared
+anywhere. The Mac app download moved into the
 shared sidebar for every browser user.
 
 **Why:** Two shells meant every conversation feature shipped twice or reached
