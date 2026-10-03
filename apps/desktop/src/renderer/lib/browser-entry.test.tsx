@@ -1,3 +1,4 @@
+import '../../../../../tests/isolated-region';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 // These cases control the session clock; IndexedDB transactions have their own
@@ -35,7 +36,7 @@ it('revalidates other-tab session changes and same-user organization changes wit
     throw new Error(`Unexpected browser request: ${input}`);
   }));
   history.replaceState(null, '', `/app/workspaces/global/${workspace.id}`);
-  const channel = new BroadcastChannel('rally-browser-session:global');
+  const channel = new BroadcastChannel('rally-browser-session');
   const view = render(<BrowserEntry renderCollaboration={(_region, session) => <section>
     <output>{session.workspace?.accessClass}</output><textarea aria-label="Draft" />
   </section>} />);
@@ -64,6 +65,97 @@ it('revalidates other-tab session changes and same-user organization changes wit
   }
 });
 
+
+it('opens a workspace in another deployment through Global the first time, then uses that deployment directly', async () => {
+  const enterprise = { ...workspace, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Enterprise team', region: 'enterprise', accessClass: 'member', role: 'member' };
+  // Enterprise knows the same person under its own user id.
+  const regionalUser = { ...user, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' };
+  let activated = false;
+  const calls: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    calls.push(`${init?.method ?? 'GET'} ${input}`);
+    const metadata = { user: regionalUser, workspace: enterprise, expiresAt: new Date(Date.now() + 100_000).toISOString() };
+    if (input === '/regional/enterprise/browser/workspace/select') {
+      return activated ? Response.json(metadata) : Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    }
+    if (input === '/regional/global/browser/workspace/activate') {
+      expect(JSON.parse(String(init?.body))).toEqual({ region: 'enterprise', workspaceId: enterprise.id });
+      activated = true;
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  history.replaceState(null, '', `/app/workspaces/enterprise/${enterprise.id}`);
+  const view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.workspace?.name}`}</output>} />);
+  try {
+    await screen.findByText('enterprise:Enterprise team');
+    expect(calls.slice(0, 3)).toEqual([
+      'POST /regional/enterprise/browser/workspace/select',
+      'POST /regional/global/browser/workspace/activate',
+      'POST /regional/enterprise/browser/workspace/select',
+    ]);
+  } finally { view.unmount(); }
+});
+
+it('signs out of every deployment, so no other deployment keeps a session in this browser', async () => {
+  const logouts: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
+    if (path === '/logout') { logouts.push(input); return new Response(null, { status: 204 }); }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry />);
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+    await screen.findByRole('heading', { name: 'Welcome to Rally' });
+    expect(logouts.sort()).toEqual(['/regional/enterprise/browser/logout', '/regional/global/browser/logout']);
+  } finally { view.unmount(); }
+});
+
+it('says so when a deployment does not answer sign-out', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
+    if (input === '/regional/enterprise/browser/logout') return Response.json({ error: { message: 'Unavailable' } }, { status: 503 });
+    if (path === '/logout') return new Response(null, { status: 204 });
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry />);
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+    await screen.findByText('Signed out here, but a Rally deployment did not respond. Sign out again to finish.');
+  } finally { view.unmount(); }
+});
+
+it('reopens a workspace in another deployment through Global when its renewal finds the cookie gone', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  const now = Date.parse('2026-09-17T00:00:00.000Z');
+  vi.setSystemTime(now);
+  const enterprise = { ...workspace, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Enterprise team', region: 'enterprise', accessClass: 'member', role: 'member' };
+  let cookie = false;
+  let activations = 0;
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const unauthorized = () => Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (input === '/regional/enterprise/browser/session/renew') { cookie = false; return unauthorized(); }
+    if (input === '/regional/enterprise/browser/workspace/select') {
+      return cookie ? Response.json({ user, workspace: enterprise, expiresAt: new Date(Date.now() + 100_000).toISOString() }) : unauthorized();
+    }
+    if (input === '/regional/global/browser/workspace/activate') { cookie = true; ++activations; return new Response(null, { status: 204 }); }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  history.replaceState(null, '', `/app/workspaces/enterprise/${enterprise.id}`);
+  let view: ReturnType<typeof render> | undefined;
+  try {
+    await act(async () => { view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.workspace?.name}`}</output>} />); });
+    expect(screen.getByText('enterprise:Enterprise team')).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(50_000); });
+    expect(activations).toBe(2);
+    expect(screen.getByText('enterprise:Enterprise team')).toBeInTheDocument();
+  } finally { view?.unmount(); }
+});
 
 it.each([false, true])('renews before expiry and respects an unchanged absolute ceiling (extended=%s)', async (extended) => {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });

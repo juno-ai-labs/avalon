@@ -23,6 +23,7 @@ import {
   type RegionalDiscovery,
   type RegionalIdentityBridgeBinding,
   type RegionalIdentityBridgeRpcBinding,
+  type BrowserRegistration,
   type RegionalRpcResult,
 } from "../src/services/platform-onboarding-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
@@ -290,6 +291,7 @@ class MemoryOperationStore implements PlatformOperationStore {
 class FakeRegionalGateway implements RegionalIdentityBridgeBinding {
   discovery: RegionalDiscovery;
   readonly activate = vi.fn<(input: RegionalActivateInput) => Promise<Session>>();
+  readonly activateBrowser = vi.fn<(input: RegionalActivateInput) => Promise<BrowserRegistration>>();
   readonly create = vi.fn<(input: RegionalCreateInput) => Promise<Session>>();
   readonly accept = vi.fn<(input: RegionalAcceptInput) => Promise<Session>>();
   readonly decline = vi.fn<(input: RegionalDeclineInput) => Promise<{ ok: true }>>();
@@ -297,6 +299,7 @@ class FakeRegionalGateway implements RegionalIdentityBridgeBinding {
   constructor(region: Region, discovery?: Partial<RegionalDiscovery>) {
     this.discovery = { region, workspaces: [], invitations: [], ...discovery };
     this.activate.mockImplementation(async (input) => session(region, input.workspaceId));
+    this.activateBrowser.mockImplementation(async (input) => ({ credential: `${region}:${input.workspaceId}`, expiresAt: "2099-01-01T00:00:00.000Z" }));
     this.create.mockImplementation(async (input) => session(region, input.workspaceId));
     this.accept.mockImplementation(async (input) => session(region, input.workspaceId));
     this.decline.mockResolvedValue({ ok: true });
@@ -310,6 +313,7 @@ class FakeRegionalGateway implements RegionalIdentityBridgeBinding {
 class FakeRawRegionalBridge implements RegionalIdentityBridgeRpcBinding {
   readonly discover = vi.fn<(identity: PlatformIdentity) => Promise<RegionalRpcResult<RegionalDiscovery>>>();
   readonly activate = vi.fn<(input: RegionalActivateInput) => Promise<RegionalRpcResult<Session>>>();
+  readonly activateBrowser = vi.fn<(input: RegionalActivateInput) => Promise<RegionalRpcResult<BrowserRegistration>>>();
   readonly create = vi.fn<(input: RegionalCreateInput) => Promise<RegionalRpcResult<Session>>>();
   readonly accept = vi.fn<(input: RegionalAcceptInput) => Promise<RegionalRpcResult<Session>>>();
   readonly decline = vi.fn<
@@ -321,6 +325,10 @@ class FakeRawRegionalBridge implements RegionalIdentityBridgeRpcBinding {
     this.activate.mockImplementation(async (input) => ({
       ok: true,
       value: session("enterprise", input.workspaceId),
+    }));
+    this.activateBrowser.mockImplementation(async (input) => ({
+      ok: true,
+      value: { credential: `enterprise:${input.workspaceId}`, expiresAt: "2099-01-01T00:00:00.000Z" },
     }));
     this.create.mockImplementation(async (input) => ({
       ok: true,
@@ -533,6 +541,43 @@ describe("single-platform regional onboarding", () => {
     expect(subject.bindings.row).toMatchObject({ region: "enterprise", workspace_id: enterpriseWorkspaceId, status: "active" });
     await expect(subject.value.activate("enterprise", enterpriseWorkspaceId)).resolves.toEqual(session("enterprise", enterpriseWorkspaceId));
     expect(enterprise.activate).toHaveBeenCalled();
+  });
+
+  it("activates an enterprise membership for a browser and returns only that deployment's cookie credential", async () => {
+    const enterprise = new FakeRegionalGateway("enterprise", { workspaces: [workspace("enterprise", enterpriseWorkspaceId)] });
+    const subject = service({ enterprise, ids: [operationId] });
+
+    await expect(subject.value.activateBrowser("enterprise", enterpriseWorkspaceId))
+      .resolves.toEqual({ credential: `enterprise:${enterpriseWorkspaceId}`, expiresAt: "2099-01-01T00:00:00.000Z" });
+    expect(enterprise.activateBrowser).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: enterpriseWorkspaceId,
+      identity: expect.objectContaining({ platformUserId }),
+    }));
+    expect(enterprise.activate).not.toHaveBeenCalled();
+    // Discovery is the admission check: a workspace the identity is not in is refused before the bridge.
+    await expect(subject.value.activateBrowser("enterprise", globalWorkspaceId)).rejects.toMatchObject({ status: 403, code: "workspace_access_denied" });
+    expect(enterprise.activateBrowser).toHaveBeenCalledOnce();
+  });
+
+  it("opens a browser workspace while an unrelated deployment is down", async () => {
+    const global = new FakeRegionalGateway("global");
+    vi.spyOn(global, "discover").mockRejectedValue(new Error("global unreachable"));
+    const enterprise = new FakeRegionalGateway("enterprise", { workspaces: [workspace("enterprise", enterpriseWorkspaceId)] });
+    const subject = service({ global, enterprise, ids: [operationId] });
+
+    await expect(subject.value.activateBrowser("enterprise", enterpriseWorkspaceId))
+      .resolves.toEqual({ credential: `enterprise:${enterpriseWorkspaceId}`, expiresAt: "2099-01-01T00:00:00.000Z" });
+  });
+
+  it("names the deployment whose browser discovery failed instead of failing the list", async () => {
+    const enterprise = new FakeRegionalGateway("enterprise");
+    vi.spyOn(enterprise, "discover").mockRejectedValue(new TypeError("fetch failed"));
+    await expect(service({ enterprise }).value.otherDeploymentWorkspaces())
+      .resolves.toEqual({ workspaces: [], failed: [{ region: "enterprise", code: "TypeError" }] });
+
+    const answering = new FakeRegionalGateway("enterprise", { workspaces: [workspace("enterprise", enterpriseWorkspaceId)] });
+    await expect(service({ enterprise: answering }).value.otherDeploymentWorkspaces())
+      .resolves.toEqual({ workspaces: [workspace("enterprise", enterpriseWorkspaceId)], failed: [] });
   });
 
   it("reconciles a regional membership alongside the account's existing active binding", async () => {
