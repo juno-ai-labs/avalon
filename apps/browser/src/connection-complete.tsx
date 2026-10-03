@@ -20,7 +20,7 @@ export function ConnectionComplete(): React.JSX.Element {
       <a className="entry-mark" href="/" aria-label="Rally"><RallyMark className="signin-mark" /></a>
       <h1>{status === "connected" ? "Connection added" : "Connection not added"}</h1>
       <p role="status">{message}</p>
-      <nav className="entry-choice-list" aria-label="Rally"><a className="entry-choice" href="/"><span className="entry-choice-name">Return to Rally</span><ChevronRight aria-hidden="true" size={16} /></a></nav>
+      <div className="signin-choice-list"><a className="signin-choice" href="/"><span className="signin-choice-name">Return to Rally</span><ChevronRight aria-hidden="true" size={16} /></a></div>
     </section>
   </main>;
 }

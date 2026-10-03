@@ -1932,9 +1932,12 @@ pre {
 .workspace-setup-card { width: min(420px, 100%); padding: 24px 0; text-align: center; }
 .workspace-setup-card .onboarding-copy h1 { font-size: 34px; font-weight: 600; letter-spacing: -.04em; margin: 0 0 14px; }
 .workspace-setup-card .onboarding-copy > p { font-size: 15px; line-height: 1.6; }
-.workspace-setup-card .onboarding-field { margin-top: 32px; text-align: left; }
-.workspace-setup-card .onboarding-input-wrap { border-radius: 14px; min-height: 48px; }
-.workspace-setup-card .onboarding-input-wrap input { min-width: 0; font-size: 14px; }
+.workspace-setup-card .onboarding-field,
+.signin-card .onboarding-field { margin-top: 32px; text-align: left; }
+.workspace-setup-card .onboarding-input-wrap,
+.signin-card .onboarding-input-wrap { border-radius: 14px; min-height: 48px; }
+.workspace-setup-card .onboarding-input-wrap input,
+.signin-card .onboarding-input-wrap input { min-width: 0; font-size: 14px; }
 .workspace-setup-card .region-question { text-align: left; }
 .workspace-setup-card .region-options { text-align: left; margin-bottom: 12px; }
 .workspace-setup-card .region-option { border-radius: 14px; }
@@ -1944,7 +1947,7 @@ pre {
 .workspace-setup-card .signed-in-identity { margin-top: 22px !important; overflow-wrap: anywhere; }
 .workspace-setup-card .onboarding-signout { margin-top: 8px; }
 .back-region { margin-top: 14px; }
-.signed-in-identity { color: var(--av-sys-color-text-subtle) !important; font-size: var(--av-cmp-control-font-size); margin-top: 10px !important; }
+.signed-in-identity { color: var(--av-sys-color-text-subtle) !important; font-size: var(--av-cmp-control-font-size); margin-top: 10px !important; overflow-wrap: anywhere; }
 .onboarding-signout { display: block; margin: 14px auto 0; }
 .invitation-card { width: min(560px, 100%); }
 .invitation-icon { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); display: flex; height: 46px; justify-content: center; margin: 0 auto 22px; width: 46px; }
@@ -1955,12 +1958,19 @@ pre {
 .invitation-details div { display: grid; gap: 12px; grid-template-columns: 100px 1fr; padding: 6px 0; }
 .invitation-details dt { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .invitation-details dd { font-size: var(--av-cmp-control-font-size); margin: 0; }
-.invitation-choice-list { display: grid; gap: 9px; margin-top: 24px; text-align: left; }
-.invitation-choice { align-items: center; background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-2); border-radius: var(--av-cmp-control-radius); display: flex; gap: 16px; justify-content: space-between; padding: 14px; }
+.invitation-choice-list,
+.signin-choice-list { display: grid; gap: 9px; margin-top: 24px; text-align: left; }
+.invitation-choice,
+.signin-choice { align-items: center; background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-2); border-radius: var(--av-cmp-control-radius); display: flex; gap: 16px; justify-content: space-between; padding: 14px; }
 .invitation-choice > div:first-child { display: grid; gap: 3px; min-width: 0; }
 .invitation-choice strong { color: var(--av-sys-color-text-default); font-size: 13px; }
 .invitation-choice span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .invitation-choice-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+/* An invitation row you follow rather than answer: an organization to open. */
+.signin-choice { color: var(--av-sys-color-text-muted); gap: 12px; padding-block: 12px; transition: background-color 140ms ease, border-color 140ms ease; }
+.signin-choice:hover { background-image: var(--hover-layer); border-color: var(--av-ref-color-line-4); color: var(--av-sys-color-text-default); }
+.signin-choice .workspace-mark { border-radius: var(--av-sys-size-radius-sm); flex-basis: 26px; font-size: 13px; height: 26px; }
+.signin-choice-name { color: var(--av-sys-color-text-default); flex: 1; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .boot-mark .rally-mark { animation: active-pulse 1.35s ease-in-out infinite; height: 38px; width: 38px; }
 
