@@ -361,7 +361,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
       checkingAvailability={availability.isLoading}
       connected={connected}
       error={connect.error?.message}
-      macAppOnly={!connectorStartAvailable(capabilities)}
+      macAppOnly={!reconnect && !connectorStartAvailable(capabilities)}
       onConnect={() => connect.mutate()}
       pending={pending}
       provider={provider}

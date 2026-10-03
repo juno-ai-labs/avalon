@@ -7,6 +7,8 @@ import { ScopeInvitationLinkCredentialSchema, ScopeInvitationPreviewSchema } fro
 import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
 import type { Env, HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
+import { logEvent } from "../observability/logger";
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { zValidator } from "../middleware/validation";
 import { AuthService, issueAccessToken } from "../services/auth-service";
 import { BrowserSessionService, BrowserSessionSchema, BrowserWorkspacesSchema } from "../services/browser-session-service";
@@ -38,9 +40,11 @@ function cookieOptions(env: Env) {
  * value, so a link to someone else's callback cannot sign this browser in as
  * them.
  */
-function googleStateCookie(env: Env) {
+function googleStateCookie(env: Env, state: string) {
   const cookie = cookieOptions(env);
-  return { name:`${cookie.name}-google-state`,attributes:{ ...cookie.attributes,maxAge:600 } };
+  // One cookie per state, so two tabs signing in at once do not overwrite each
+  // other. The state is base64url, which a cookie name may carry.
+  return { name:`${cookie.name}-google-${state}`,attributes:{ ...cookie.attributes,maxAge:600 } };
 }
 
 function credential(c: Context<HonoAppEnv>): string {
@@ -84,31 +88,44 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
   });
   routes.post("/google/start",authBodyLimit,zValidator("json",BrowserGoogleStartSchema),async (c) => {
     const { url,state } = await new AuthService(c.env).beginBrowserIdentity({ returnPath:c.req.valid("json").returnPath });
-    const binding = googleStateCookie(c.env);
+    const binding = googleStateCookie(c.env,state);
     setCookie(c,binding.name,state,binding.attributes);
     return c.json(BrowserGoogleStartedSchema.parse({ url }));
   });
   routes.get("/google/callback",zValidator("query",z.object({ code:z.string().optional(),state:z.string().min(1),error:z.string().optional() })),async (c) => {
     const query = c.req.valid("query");
     const origin = browserOrigin(c.env).origin;
-    const binding = googleStateCookie(c.env);
-    const bound = getCookie(c,binding.name);
-    deleteCookie(c,binding.name,binding.attributes);
     const failed = (code: string) => c.redirect(`${origin}/#google_error=${encodeURIComponent(code)}`,302);
+    if (!/^[A-Za-z0-9_-]+$/u.test(query.state)) return failed("google_state_mismatch");
+    const binding = googleStateCookie(c.env,query.state);
+    const bound = getCookie(c,binding.name);
     if (!bound || bound !== query.state) return failed("google_state_mismatch");
+    deleteCookie(c,binding.name,binding.attributes);
     const service = new AuthService(c.env);
     try {
       if (query.error || !query.code) {
         const returnUrl = await service.consumeBrowserIdentityDenial(query.state);
-        return c.redirect(`${returnUrl}#google_error=google_oauth_denied`,302);
+        // Only a person declining is a denial; anything else Google reports is
+        // its own failure, named so the two read apart.
+        const code = query.error === "access_denied" ? "google_oauth_denied" : "google_oauth_failed";
+        if (code !== "google_oauth_denied") logEvent(c,"warn","browser_google_sign_in_failed",{ code,providerError:codeShaped(query.error ?? "missing_code") });
+        return c.redirect(`${returnUrl}#google_error=${code}`,302);
       }
       const { session,returnUrl } = await service.consumeBrowserIdentityCallback(query.code,query.state);
       const cookie = await new BrowserSessionService(c.env).register(session);
       writeCookie(c,cookie.credential,cookie.expiresAt);
       return c.redirect(returnUrl,302);
     } catch (error) {
-      if (error instanceof ApiError) return failed(error.code);
-      throw error;
+      if (error instanceof ApiError) {
+        logEvent(c,"warn","browser_google_sign_in_failed",{ code:error.code });
+        return failed(error.code);
+      }
+      // A token exchange or ID token check that threw: name it in the log and
+      // send the person back to a page that says sign-in failed.
+      const code: unknown = error instanceof Error && "code" in error ? error.code : undefined;
+      const cause = typeof code === "string" ? code : error instanceof Error ? error.name : "unknown";
+      logEvent(c,"error","browser_google_sign_in_failed",{ code:"google_sign_in_failed",cause:codeShaped(cause) });
+      return failed("google_sign_in_failed");
     }
   });
   routes.get("/email/redeem",(c) => { c.header("Allow","POST");return c.body(null,405); });

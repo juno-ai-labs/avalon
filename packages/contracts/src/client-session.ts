@@ -25,3 +25,8 @@ export interface ClientSession {
 export interface CookieClientSession extends ClientSession {
   authentication: "cookie";
 }
+
+/** Whether a session is the browser's cookie session: the one question of "am I the browser?". */
+export function isCookieSession(session: ClientSession | null | undefined): session is CookieClientSession {
+  return session != null && "authentication" in session && session.authentication === "cookie";
+}

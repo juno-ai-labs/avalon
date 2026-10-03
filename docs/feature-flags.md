@@ -489,7 +489,7 @@ behave. There are seven today:
 | `live-artifacts-enabled` | boolean | `false` | Whether Electron shows live-artifact surfaces — the rail's site detail and preview pane, the Data view, and the artifact window. Presentation only: an artifact's authorization is structural, so a URL somebody already holds keeps working through its session checks whether or not this is on. See [`live-web-artifacts.md`](live-web-artifacts.md) |
 | `digests-enabled` | boolean | `true` | Whether Electron shows the Digest settings section — resolved through `digest-flags.ts`, the same function that gates delivery; see [`digests.md`](digests.md#the-run) |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
-| `browser-connectable-capabilities` | JSON list | the two Google connections | Which connector capabilities the browser may start an authorization for; every other connector is shown there and disabled with a pointer to the Mac app. Resolved in `browser-connector-flags.ts`, falling back to the launch set. Ace's deploy provisions it; its value is edited in Flagship. See [`browser-client.md`](browser-client.md#connectors) |
+| `browser-connectable-capabilities` | JSON list | the two Google connections | Which connector capabilities the browser may start an authorization for; every other connector is shown there and disabled with a pointer to the Mac app. Resolved in `browser-connector-flags.ts`, falling back to the launch set. Nothing provisions it: create it in Flagship the first time the list should differ from the launch set. See [`browser-client.md`](browser-client.md#connectors) |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
 false,
