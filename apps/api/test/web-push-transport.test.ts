@@ -79,9 +79,9 @@ describe("Web Push transport", () => {
     expect(await sendWebPush(env, device, "{}", "c")).toMatchObject({ outcome: "unregistered" });
     request.mockResolvedValueOnce(new Response(null, { status: 503 }));
     expect(await sendWebPush(env, device, "{}", "c")).toMatchObject({ outcome: "transient" });
-    // A refused VAPID token is the deployment's credential, not this device.
+    // A key mismatch is this subscription's; a refused token is the deployment's.
     request.mockResolvedValueOnce(new Response(null, { status: 403 }));
-    expect(await sendWebPush(env, device, "{}", "c")).toMatchObject({ outcome: "provider_auth_failed", reason: "push_service_403" });
+    expect(await sendWebPush(env, device, "{}", "c")).toMatchObject({ outcome: "unregistered", reason: "subscription_key_mismatch" });
     request.mockResolvedValueOnce(new Response(null, { status: 401 }));
     expect(await sendWebPush(env, device, "{}", "c")).toMatchObject({ outcome: "provider_auth_failed", reason: "push_service_401" });
     const calls = request.mock.calls.length;
