@@ -36,7 +36,7 @@ it('revalidates other-tab session changes and same-user organization changes wit
     throw new Error(`Unexpected browser request: ${input}`);
   }));
   history.replaceState(null, '', `/app/workspaces/global/${workspace.id}`);
-  const channel = new BroadcastChannel('rally-browser-session:global');
+  const channel = new BroadcastChannel('rally-browser-session');
   const view = render(<BrowserEntry renderCollaboration={(_region, session) => <section>
     <output>{session.workspace?.accessClass}</output><textarea aria-label="Draft" />
   </section>} />);
@@ -128,6 +128,33 @@ it('says so when a deployment does not answer sign-out', async () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
     await screen.findByText('Signed out here, but a Rally deployment did not respond. Sign out again to finish.');
   } finally { view.unmount(); }
+});
+
+it('reopens a workspace in another deployment through Global when its renewal finds the cookie gone', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  const now = Date.parse('2026-09-17T00:00:00.000Z');
+  vi.setSystemTime(now);
+  const enterprise = { ...workspace, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Enterprise team', region: 'enterprise', accessClass: 'member', role: 'member' };
+  let cookie = false;
+  let activations = 0;
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const unauthorized = () => Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (input === '/regional/enterprise/browser/session/renew') { cookie = false; return unauthorized(); }
+    if (input === '/regional/enterprise/browser/workspace/select') {
+      return cookie ? Response.json({ user, workspace: enterprise, expiresAt: new Date(Date.now() + 100_000).toISOString() }) : unauthorized();
+    }
+    if (input === '/regional/global/browser/workspace/activate') { cookie = true; ++activations; return new Response(null, { status: 204 }); }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  history.replaceState(null, '', `/app/workspaces/enterprise/${enterprise.id}`);
+  let view: ReturnType<typeof render> | undefined;
+  try {
+    await act(async () => { view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.workspace?.name}`}</output>} />); });
+    expect(screen.getByText('enterprise:Enterprise team')).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(50_000); });
+    expect(activations).toBe(2);
+    expect(screen.getByText('enterprise:Enterprise team')).toBeInTheDocument();
+  } finally { view?.unmount(); }
 });
 
 it.each([false, true])('renews before expiry and respects an unchanged absolute ceiling (extended=%s)', async (extended) => {

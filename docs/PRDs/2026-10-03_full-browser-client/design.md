@@ -86,6 +86,10 @@ cookie at all.
 - Sign-out posts `/logout` to every configured deployment and waits for all of
   them. A deployment this host has no binding for (`404`) holds no cookie; any
   other failure tells the member to sign out again.
+- A renewal that finds such a deployment's cookie gone (`401`) reopens the
+  workspace through Global the same way, rather than signing the tab out.
+- Tabs share one session-invalidation channel across deployments, so a
+  sign-out in any tab reaches tabs open on every deployment.
 - Sessions are compared within one region only: a Global session's user id is
   never compared with a regional one.
 
