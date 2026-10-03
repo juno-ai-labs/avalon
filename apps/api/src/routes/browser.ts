@@ -181,13 +181,11 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     // deployment, as desktop onboarding does. With one deployment there is
     // nothing to discover and the list stays a single local read.
     if (c.env.AVALON_REGION !== IDENTITY_REGION || configuredRegions.length < 2) return c.json(BrowserWorkspacesSchema.parse({ workspaces:local }));
-    let remote: Awaited<ReturnType<PlatformOnboardingService["otherDeploymentWorkspaces"]>> = [];
-    try { remote = await new PlatformOnboardingService(c.env,auth).otherDeploymentWorkspaces(); }
-    catch (error) {
-      // Another deployment being down must not hide this one's workspaces.
-      logEvent(c,"warn","browser_workspace_discovery_failed",{ code:error instanceof ApiError ? error.code : codeShaped(error instanceof Error ? error.name : "unknown") });
-    }
-    return c.json(BrowserWorkspacesSchema.parse({ workspaces:[...local,...remote] }));
+    // Each other deployment answers on its own; one that is down is logged by
+    // name and does not hide the rest.
+    const remote = await new PlatformOnboardingService(c.env,auth).otherDeploymentWorkspaces();
+    if (remote.failed.length > 0) logEvent(c,"warn","browser_workspace_discovery_failed",{ failed:remote.failed.map((item) => `${item.region}:${item.code}`).join(",") });
+    return c.json(BrowserWorkspacesSchema.parse({ workspaces:[...local,...remote.workspaces] }));
   });
   /**
    * Opens a workspace in another deployment for this browser. Global admits it

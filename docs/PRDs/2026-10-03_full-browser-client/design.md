@@ -32,12 +32,15 @@ browser ──/regional/<region>/browser/workspace/select──▶ region (its o
 ```
 
 1. **List.** On Global, `GET /browser/workspaces` resolves the Global cookie and
-   returns `PlatformOnboardingService.state().workspaces`: every deployment's
-   memberships, each with its `region`. Elsewhere it keeps listing the local
-   deployment only.
+   adds every other deployment's memberships to the local list, each with its
+   `region`. Each deployment is asked on its own: one that fails is logged by
+   name and code (`browser_workspace_discovery_failed`) and the rest still show.
+   Nothing is reconciled; desktop's binding bookkeeping is not the browser's to
+   change. Elsewhere the route lists the local deployment only.
 2. **Activate.** `POST /browser/workspace/activate { region, workspaceId }` on
-   Global re-runs discovery and refuses a workspace the identity is not a
-   member of, exactly as desktop activation does. It then calls the target's
+   Global asks the target deployment alone for discovery, so another
+   deployment's outage cannot block it, and refuses a workspace the identity is
+   not a member of, as desktop activation does. It then calls the target's
    identity bridge, `activateBrowser`, with the same input desktop `activate`
    sends.
 3. **Register in the target.** `RegionalOnboardingService.activateBrowser`
@@ -65,14 +68,24 @@ never reaches JavaScript.
 of only `GLOBAL_API`. A configured region without a binding answers `404`, so a
 deployment is reachable from the browser only once its binding is added.
 
+The Worker drops `Authorization` and every cookie but the target's own
+(`rally-browser-<region>` and its `-google-` state cookies) before forwarding,
+so one deployment never sees another's session. A socket upgrade carries no
+cookie at all.
+
 ## The client
 
-- Sign-in (email and Google) always goes to Global.
+- Sign-in (email and Google) always goes to Global. When the page a member
+  signed in from is in another deployment, the client does not show the Global
+  session; it lets the restore path activate the target.
 - The workspace list comes from Global and links each workspace to its own
   region's path.
 - Opening a workspace selects it in its region. A `401` there for a non-Global
   region activates through Global and retries once. The member shell's
   Organization switcher lists through Global for the same reason.
+- Sign-out posts `/logout` to every configured deployment and waits for all of
+  them. A deployment this host has no binding for (`404`) holds no cookie; any
+  other failure tells the member to sign out again.
 - Sessions are compared within one region only: a Global session's user id is
   never compared with a regional one.
 
@@ -90,8 +103,5 @@ deployment is reachable from the browser only once its binding is added.
 - **Invitations.** Scoped invitation links name no region; a second deployment
   needs its own invitation routing, per
   [`regionalization.md`](../../regionalization.md).
-- **Sign-out reaches only the deployment it is sent to.** Global's logout
-  clears the Global cookie; a regional cookie expires with its own session.
-  The client signs out of each region it holds a session in.
 - **Production proof.** Only `global` is configured. The flow is proven against
   a simulated second region in tests until a second deployment exists.
