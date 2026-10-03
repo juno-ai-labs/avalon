@@ -1,4 +1,5 @@
-import { clearAllDrafts } from '../../desktop/src/renderer/lib/draft-cache';
+import { clearAllDrafts as clearAllDraftsOnly } from '../../desktop/src/renderer/lib/draft-cache';
+import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
 import { useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema } from "@rally/contracts/regions";
@@ -13,10 +14,15 @@ import { parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/
 import { WorkspaceIdSchema } from "@rally/contracts";
 
 const initialRegion = configuredRegions[0]!;
+
+/** An account change wipes drafts and, for the member shell, the transcript cache. */
+async function clearAllDrafts(): Promise<void> {
+  await Promise.all([clearAllDraftsOnly(), clearAllLocalCache()]);
+}
 type Proof = { region: string; challengeId: string; credential: string; redemptionId: string };
 
 /** This entry has no account setup step. Collaboration mounts after authentication. */
-export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void) => ReactNode } = {}) {
+export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void, onRevalidate: () => void) => ReactNode } = {}) {
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
   const [workspaceSession, setWorkspaceSession] = useState<BrowserSession | null>(null);
   const [region, setRegion] = useState(initialRegion);
@@ -268,7 +274,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   if (!proof && destination && workspaceSession && session && workspaceSession.user.id === session.user.id && renderCollaboration) {
     return <div className="browser-shell">
       {error && <p role="alert">{error}</p>}
-      <div className="browser-conversation">{renderCollaboration(destination.region, workspaceSession, () => { void signOut(); })}</div>
+      <div className="browser-conversation">{renderCollaboration(destination.region, workspaceSession, () => { void signOut(); }, () => refreshSession.current?.(false))}</div>
     </div>;
   }
 

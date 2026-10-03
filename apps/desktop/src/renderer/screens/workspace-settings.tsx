@@ -415,12 +415,14 @@ export function WorkspaceSettingsScreen({
 }: { standaloneWindow?: boolean; workspace: Workspace }): React.JSX.Element {
   const {
     api,
+    host,
     runtime,
     leaveWorkspace,
     signOut,
     pendingConnectorOAuth,
     setPendingConnectorOAuth,
   } = useAppSession();
+  const browserHost = host === 'browser';
   const workspaceSocket = useOptionalWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
   // Fails open: `digestsEnabled` defaults `true` and only an explicit `false`
@@ -2105,7 +2107,18 @@ export function WorkspaceSettingsScreen({
               </section>
             )}
 
-            {activeSection === 'application' && (
+            {/* In a browser the rest of this section is about the Mac app itself:
+                its keystore, crash reports, icon, updates and startup. Say so
+                rather than offer switches that cannot work here. */}
+            {activeSection === 'application' && browserHost && (
+              <section aria-labelledby="settings-title" className="settings-pane">
+                <div className="settings-pane-heading"><h2>Appearance</h2><p>Keep Rally light or dark, or follow your system.</p></div>
+                <ThemePicker />
+                <p className="settings-oauth-status">Security, diagnostics, app icon, update and startup settings are available in the Mac app.</p>
+              </section>
+            )}
+
+            {activeSection === 'application' && !browserHost && (
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading"><h2>Security</h2><p>Choose how Rally protects the saved authentication session on this Mac.</p></div>
                 <div className="settings-list-card">

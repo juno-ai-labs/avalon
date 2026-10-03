@@ -61,6 +61,8 @@ const bridge = vi.hoisted(() => ({
   declineInvitation: vi.fn(),
   exchangeDesktopTicket: vi.fn(),
   getOnboardingState: vi.fn(),
+  getAccountOnboarding: vi.fn(),
+  updateAccountOnboarding: vi.fn(),
   getRuntimeConfig: vi.fn(),
   getSession: vi.fn(),
   hasStoredCredential: vi.fn(),
@@ -143,7 +145,7 @@ function SessionProbe(): React.JSX.Element {
       </output>
       <output data-testid="invitation-api">{invitationApi?.baseUrl ?? 'none'}</output>
       <output data-testid="session-email">{session?.user.email ?? 'none'}</output>
-      <output data-testid="session-token">{session?.accessToken ?? 'none'}</output>
+      <output data-testid="session-token">{(session && 'accessToken' in session ? String(session.accessToken) : null) ?? 'none'}</output>
       <output data-testid="session-role">{session?.workspace?.role ?? 'none'}</output>
       <output data-testid="pending-connector-attempt">{context.pendingConnectorOAuth?.attemptId ?? 'none'}</output>
       <output data-testid="pending-resource-status">{collaboration.connectorSetup?.resourceAuthorizationAttempts['connection:file:tool']?.resourceAuthorizationStatus ?? 'none'}</output>

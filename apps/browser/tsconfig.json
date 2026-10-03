@@ -20,6 +20,8 @@
     "src/client.tsx",
     "src/conversation.tsx",
     "src/entry.tsx",
-    "src/mac-download.tsx"
+    "src/mac-download.tsx",
+    "src/member-shell.tsx",
+    "src/workspace.tsx"
   ]
 }
