@@ -229,8 +229,11 @@ export interface ChannelRailsAnswer {
 }
 
 /**
- * The rails of these Channels for one viewer. Visible means what the Channel
- * row's audience means (`channelRowPayloads`), for a guest too.
+ * The rails of these Channels for one viewer. For a member, visible means what
+ * the Channel row's audience means (`channelRowPayloads`). A guest is sent no
+ * Channel rows, and sees a rail only for a Channel they take part in: never
+ * for one only because it is Organization-wide, nor for a Channel whose
+ * Breakout alone was shared with them.
  */
 export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRailsAnswer {
   const asked = [...new Set(request.workstreamIds)];
@@ -249,7 +252,7 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
         AND viewer.authority_generation = directory.authority_generation
       WHERE directory.workstream_id IN (SELECT value FROM json_each(?))
         AND directory.archived_at IS NULL
-        AND ${channelVisibleToViewerSql("directory", "viewer")}`,
+        AND ${request.accessClass === "guest" ? "viewer.is_participant = 1" : channelVisibleToViewerSql("directory", "viewer")}`,
     request.userId,
     JSON.stringify(asked),
   ).toArray().map((row): [string, RailChannel] => [row.workstream_id, {

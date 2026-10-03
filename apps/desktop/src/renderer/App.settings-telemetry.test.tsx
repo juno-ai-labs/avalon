@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../common/desktop';
 import type * as TelemetryModule from './lib/telemetry';
 import { SessionGate } from './App';
+import type * as CollaborationSessionModule from './lib/collaboration-session';
 
 /**
  * The settings surface reports `surface_viewed` for `settings_application`, and
@@ -65,10 +66,14 @@ const sessionState = vi.hoisted(() => ({
   surrenderActiveWorkspace: vi.fn(),
 }));
 
-vi.mock('./lib/collaboration-session', () => ({
-  useCollaborationSession: () => sessionState,
-  useOptionalCollaborationSession: () => sessionState,
-}));
+vi.mock('./lib/collaboration-session', async (importOriginal) => {
+  const actual = await importOriginal<typeof CollaborationSessionModule>();
+  return {
+    useCollaborationSession: () => sessionState,
+    useOptionalCollaborationSession: () => sessionState,
+    useShellCapabilities: () => actual.shellCapabilities({ host: 'desktop', session: sessionState.session }),
+  };
+});
 vi.mock('./lib/app-session', () => ({
   AppSessionProvider: ({ children }: { children: React.ReactNode }) => children,
   useAppSession: () => sessionState,
