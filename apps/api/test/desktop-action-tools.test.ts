@@ -9,6 +9,7 @@ import type { DesktopActionExecutor } from "../src/services/desktop-actions/exec
 import { createSessionImportPlugin } from "../src/services/desktop-actions/session-import-plugin";
 
 const verification = {
+  checks: [{ name: "page content", passed: true, basis: "Compared the displayed turns." }],
   branch: { complete: true as const, basis: 'Selected leaf reaches the root.' },
   page: { messageCount: 4, firstSourceMessageId: 'm0', lastSourceMessageId: 'm1', sampledSourceMessageIds: ['m1'], basis: 'Both rendered turns compared.' },
   fileCount: 0,
