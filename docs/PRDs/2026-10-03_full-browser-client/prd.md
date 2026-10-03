@@ -29,13 +29,20 @@ settings stay Mac-only.
 
 ## Motivation
 
-The browser host was scoped to guests on purpose: the guest-sharing PRD lists
-"full desktop parity in the browser" as a non-goal. That leaves a member with
-one way to work, the Mac app. A member on a machine without it, or one who
-lives in a browser, has no Rally beyond links shared with them.
+Requiring a download to use Rally is too much friction. Today a new member's
+path runs through installing the Mac app before they can do any work: the
+browser host is guest-only by design (the guest-sharing PRD lists "full desktop
+parity in the browser" as a non-goal), and what it offers a member beyond
+shared links is a pinned **Download the Mac app** row. Every person invited to
+an Organization has to find the download, install it, approve it on macOS and
+sign in again before they see their first Channel. A person who will not
+install an app, cannot install one on a managed machine, or is not on a Mac
+never gets in.
 
-This was requested on 2026-10-03. The evidence behind the request (support
-threads, counts of members without the Mac app) was not recorded here.
+This is a product judgement made on 2026-10-03, not a measured drop-off. Rally
+has no funnel data on how many invited members never install the app, and this
+PRD does not wait for it: a member who can start in the browser loses nothing,
+and the Mac app remains for everything the browser cannot do.
 
 The cost of building it is lower than the gap suggests. An investigation of the
 tree on 2026-10-03 found:
