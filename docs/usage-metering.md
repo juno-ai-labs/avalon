@@ -24,6 +24,9 @@ are in
 | `apps/api/src/routes/workspace-operations.ts` | `POST /internal/workspaces/:id/plan`, the operator route Ace calls. |
 | `packages/db/migrations/0117_usage_quota_metering.sql` | `workspaces.plan`, `usage_events`, `usage_rollups`. |
 | `apps/ace/src/client/workspaces.tsx` | The plan control on Ace's workspaces tab. |
+| `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, the `usage` local-cache slice, and the formatters. |
+| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage, and the Organization menu's meter (under the active row, or on its own when the Organizations list is hidden). |
+| `packages/ui/src/components/primitives.tsx` (`Meter`) | The shared meter primitive and its `cmp.meter.*` tokens. |
 
 Call sites that emit, each next to where the cost is already known:
 
