@@ -19,7 +19,7 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
     workspaceDOName(env.AVALON_REGION, workspaceId));
   const candidates = ScopeGrantCandidatesSchema.parse(await workspace.listScopeGrantCandidates({
-    workspaceId, userId, membershipIncarnation: relationship.incarnation,
+    workspaceId, userId, membershipIncarnation: relationship.incarnation, accessClass: relationship.accessClass,
   }));
   const items = candidates.length === 0 ? [] : SharedNavigationWorkstreamSchema.nullable().array().parse(
     await workspace.readSharedWorkstreams({
@@ -59,7 +59,7 @@ export async function listSharedNavigationDirectory(
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
     workspaceDOName(env.AVALON_REGION, workspaceId));
   const candidates = ScopeGrantCandidatesSchema.parse(await workspace.listScopeGrantCandidates({
-    workspaceId, userId, membershipIncarnation: relationship.incarnation,
+    workspaceId, userId, membershipIncarnation: relationship.incarnation, accessClass: relationship.accessClass,
   }));
   // Every candidate Channel is hosted in this one object, so one RPC answers
   // for all of them; each Channel still decides what it releases. Nobody
@@ -74,6 +74,7 @@ export async function listSharedNavigationDirectory(
     workspaceId,
     userId,
     membershipIncarnation: relationship.incarnation,
+    accessClass: relationship.accessClass,
     workstreamIds: workstreams.map((workstream) => workstream.parentId),
   }));
   const current = await readWorkspaceRelationship(env.DB, workspaceId, userId);

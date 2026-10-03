@@ -182,8 +182,8 @@ describe("workstream scope grants in real workerd", () => {
     // And it reaches no candidate index: the actor's direct grant is the only
     // thing published. A Space-derived reader finds the Channel through the
     // Organization's Space directory.
-    expect(await stub.listScopeGrantCandidates({ workspaceId, userId, membershipIncarnation: userId })).toEqual([parentId]);
-    expect(await stub.listScopeGrantCandidates({ workspaceId, userId: readerId, membershipIncarnation: readerId })).toEqual([]);
+    expect(await stub.listScopeGrantCandidates({ workspaceId, userId, membershipIncarnation: userId, accessClass: "guest" })).toEqual([parentId]);
+    expect(await stub.listScopeGrantCandidates({ workspaceId, userId: readerId, membershipIncarnation: readerId, accessClass: "guest" })).toEqual([]);
   });
 
   it("publishes combined access and does not acknowledge a newer projection with an old receipt", async () => {

@@ -24,6 +24,16 @@ import {
 } from "@rally/contracts";
 
 import { boundParameterChunks } from "./bound-parameters";
+import {
+  breakoutListedSql,
+  mainOpenableSql,
+  member,
+  channelListedSql,
+  organizationWideSql,
+  spaceListedSql,
+  type AccessClass,
+  type Viewer,
+} from "./listing-rules";
 import type {
   SpaceMember,
   MemberWalkReach,
@@ -432,83 +442,8 @@ function liveForViewerSql(directory: "directory" | "breakout", viewer: "viewer" 
        OR COALESCE(${viewer}.latest_mention_attention_ordinal, 0) > ${seen})`;
 }
 
-/**
- * Whether this person may know a Channel exists, in SQL.
- *
- * One code-owned text rendered wherever the question is asked, for the reason
- * {@link liveForViewerSql} is one: the Space page counts rows against
- * `SPACE_CHANNEL_PAGE_SIZE` and projects them afterwards, so a second spelling
- * that drifted looser would produce silently short pages with a cursor that
- * had already skipped the rows it dropped. The same test decides who a
- * dashboard nudge is addressed to, which is the same question asked of a
- * socket instead of a page.
- *
- * `viewer` is a left-joined alias fenced on the directory row's authority
- * generation, so a missing or stale viewer row reads as "not a participant" —
- * the right answer for a personal-scope Channel and irrelevant for an
- * Organization-wide one.
- */
-export function channelVisibleToViewerSql(directory: string, viewer: string): string {
-  return `(${directory}.scope = 'workspace' OR ${viewer}.is_participant = 1)`;
-}
-
-/**
- * Whether this person reaches a Space through a Channel placed in it, in SQL.
- *
- * The third way a Space becomes visible, beside its own Organization-wide
- * scope and this person's participation in it: **if you can see a Channel in a
- * Space, you can see that Space's mark and name.** Without it a Channel in a
- * participants-only Space is drawn under no Space at all for everybody but
- * that Space's participants — in **Other channels**, a flat list whose whole
- * purpose was to keep such a Channel reachable — and the hierarchy is silent
- * about where the Channel actually lives.
- *
- * The Channel half is {@link channelVisibleToViewerSql}, the one code-owned
- * text, rendered here against this subquery's own aliases. The membership has
- * to be `active` (a `joining` one has granted nobody anything yet) and the
- * Channel's directory row not archived — the same pair the viewer-scoped
- * channel count is taken over, so a Space that is reachable this way always
- * has at least one Channel to draw under it rather than a row a reader cannot
- * account for.
- *
- * **Binds one `?` for the user id**, at the position this fragment sits in the
- * statement — the convention every viewer-scoped query in this file already
- * follows.
- */
-export function spaceReachedThroughChannelSql(space: string): string {
-  return `EXISTS (SELECT 1
-            FROM space_channel_memberships reach_membership
-            JOIN channels reach_directory
-              ON reach_directory.workstream_id = reach_membership.workstream_id
-            LEFT JOIN channel_viewers reach_viewer
-              ON reach_viewer.workstream_id = reach_directory.workstream_id
-             AND reach_viewer.user_id = ?
-             AND reach_viewer.authority_generation = reach_directory.authority_generation
-           WHERE reach_membership.space_id = ${space}.space_id
-             AND reach_membership.state = 'active'
-             AND reach_directory.archived_at IS NULL
-             AND ${channelVisibleToViewerSql("reach_directory", "reach_viewer")})`;
-}
-
-/**
- * Whether this person may be told a Space exists, in SQL: the three ways, in
- * one text.
- *
- * `viewer` is the Space's own left-joined viewer row, already narrowed to
- * `is_participant = 1` by its join. One text rather than one per query for the
- * reason {@link channelVisibleToViewerSql} is one: the directory, the inactive
- * list, the per-Channel placement read and the nudge's addressing all decide
- * the same question, and a spelling that drifted looser in one of them would
- * disclose a Space through whichever query was left behind.
- *
- * **Binds one `?` for the user id**, for
- * {@link spaceReachedThroughChannelSql}, after whatever the viewer join binds.
- */
-export function spaceVisibleToViewerSql(space: string, viewer: string): string {
-  return `(${space}.scope = 'workspace'
-            OR ${viewer}.user_id IS NOT NULL
-            OR ${spaceReachedThroughChannelSql(space)})`;
-}
+// Who may be told a Space, a Channel or a Breakout exists is decided by the
+// rules in `listing-rules.ts`, rendered here against this file's aliases.
 
 /**
  * Why this viewer can see this Space, as a column.
@@ -519,13 +454,13 @@ export function spaceVisibleToViewerSql(space: string, viewer: string): string {
  *
  * The strongest relationship wins. `ELSE 'through_channel'` is sound only
  * because every query rendering this has already applied
- * {@link spaceVisibleToViewerSql}, so a row that reaches it is one of the
+ * {@link spaceListedSql}, so a row that reaches it is one of the
  * three; a row selected without that filter would be labelled
  * `through_channel` whether or not it is reachable at all.
  */
-export function spaceReachSql(space: string, viewer: string): string {
+export function spaceReachSql(space: string, viewer: string, accessClass: AccessClass): string {
   return `CASE WHEN ${viewer}.user_id IS NOT NULL THEN 'participant'
-               WHEN ${space}.scope = 'workspace' THEN 'organization'
+               WHEN ${organizationWideSql(`${space}.scope`, accessClass)} THEN 'organization'
                ELSE 'through_channel' END`;
 }
 
@@ -559,34 +494,6 @@ export function editableReach(reach: SpaceReach): boolean {
  * disagree. The branch costs nothing after the first row, where `?3` is a
  * bound value rather than a column.
  */
-/**
- * Whether this person may list a breakout, in SQL.
- *
- * The breakout half of {@link channelVisibleToViewerSql}, and shaped the same
- * way on purpose: the viewer row is left-joined under the generation fence, so
- * **a missing row and `listable = 0` are two different answers**, and only the
- * second one is the authority saying no.
- *
- * A missing row is this person's projection not having caught up — the case
- * that made this a `LEFT JOIN`. `directory_user` effects only go out for the
- * users an update affects, so when a Channel's authority generation advances,
- * a breakout's next message carries its shared row forward and leaves every
- * unaffected person's viewer row a generation behind. Under an inner join
- * every one of them lost the row until they happened to become an affected
- * user, which is a disappearance nothing would ever have reported.
- *
- * What fills the gap is the breakout's **own scope**, exactly as the Channel
- * directory's scope fills it for a Channel with no viewer row: an
- * Organization-wide breakout is one everybody who can see the Channel may
- * list, and the Channel gate has already been applied by the time this is
- * asked. A personal one still needs the row, and is left out without it —
- * the same answer a personal Channel gets, and the safe one, because nothing
- * else in the Organization knows who a private child's participants are.
- */
-function breakoutListableToViewerSql(breakout: string, viewer: string): string {
-  return `(${breakout}.scope = 'workspace' OR ${viewer}.listable = 1)`;
-}
-
 function afterCursorSql(
   kind: "channel" | "breakout",
   activity: string,
@@ -874,7 +781,28 @@ export class WorkspaceSpaceStorage {
   }
 
   /** Whether this object has reached the migration that created Breakout projections. */
-  private breakoutsReady(): boolean {
+  /**
+   * The listing rules as this object renders them, with the bindings each
+   * fragment takes for one viewer. A Breakout reach binds the user id once
+   * more, and only on an object that has the Breakout projection.
+   */
+  private channelListing(viewer: Viewer, directory = "directory", channelViewer = "viewer"): { sql: string; binds: string[] } {
+    const breakouts = this.breakoutsReady();
+    return {
+      sql: channelListedSql(directory, channelViewer, viewer.accessClass, { breakouts }),
+      binds: breakouts ? [viewer.userId] : [],
+    };
+  }
+
+  private spaceListing(viewer: Viewer, space = "space", spaceViewer = "viewer"): { sql: string; binds: string[] } {
+    const breakouts = this.breakoutsReady();
+    return {
+      sql: spaceListedSql(space, spaceViewer, viewer.accessClass, { breakouts }),
+      binds: breakouts ? [viewer.userId, viewer.userId] : [viewer.userId],
+    };
+  }
+
+  breakoutsReady(): boolean {
     this.breakoutTablesPresent ??= this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
       `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'breakouts'`,
     ).toArray().length === 1;
@@ -939,7 +867,7 @@ export class WorkspaceSpaceStorage {
       const exists = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         "SELECT space_id FROM spaces WHERE space_id = ?", spaceId,
       ).toArray().length > 0;
-      if (exists) return { space: this.readable(request.userId, spaceId), created: false };
+      if (exists) return { space: this.readable(member(request.userId), spaceId), created: false };
       return { space: this.reserve(request, spaceId, null), created: true };
     });
   }
@@ -973,13 +901,13 @@ export class WorkspaceSpaceStorage {
     }
   }
 
-  list(workspaceId: string, userId: string, now = Date.now()): SpaceDirectory {
+  list(workspaceId: string, viewer: Viewer, now = Date.now()): SpaceDirectory {
     if (!this.ready()) return EMPTY_DIRECTORY;
     return this.storage.transactionSync(() => {
-      for (const spaceId of this.visibleSpaceIds(userId)) {
-        this.appendOrder(workspaceId, userId, spaceId, now);
+      for (const spaceId of this.visibleSpaceIds(viewer)) {
+        this.appendOrder(workspaceId, viewer.userId, spaceId, now);
       }
-      return this.directory(workspaceId, userId);
+      return this.directory(workspaceId, viewer);
     });
   }
 
@@ -995,23 +923,24 @@ export class WorkspaceSpaceStorage {
    * predicate is written once so a change to the archive carries here instead
    * of being re-derived.
    */
-  listInactive(userId: string): SpaceDirectory {
+  listInactive(viewer: Viewer): SpaceDirectory {
     if (!this.ready()) return EMPTY_DIRECTORY;
+    const listed = this.spaceListing(viewer);
     const rows = this.storage.sql.exec<SpaceRow>(
-      `SELECT space.*, ${spaceReachSql("space", "viewer")} AS reach
+      `SELECT space.*, ${spaceReachSql("space", "viewer", viewer.accessClass)} AS reach
          FROM spaces space
          LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE space.archived_at IS NOT NULL
-          AND ${spaceVisibleToViewerSql("space", "viewer")}
+          AND ${listed.sql}
         ORDER BY space.updated_at DESC, space.space_id`,
-      userId,
-      userId,
+      viewer.userId,
+      ...listed.binds,
     ).toArray();
     return SpaceDirectorySchema.parse({
       waterline: this.waterline(),
-      items: rows.map((row) => this.summary(row, userId, 0)),
+      items: rows.map((row) => this.summary(row, viewer, 0)),
     });
   }
 
@@ -1032,7 +961,8 @@ export class WorkspaceSpaceStorage {
    * two mechanisms, and the redundancy is a few ids on a payload that already
    * carries every Space's name.
    */
-  readOrders(workspaceId: string, userId: string): PersonalOrder {
+  readOrders(workspaceId: string, viewer: Viewer): PersonalOrder {
+    const userId = viewer.userId;
     if (!this.ready()) return [];
     const rows = this.storage.sql.exec<{
       container_kind: string;
@@ -1064,7 +994,7 @@ export class WorkspaceSpaceStorage {
         });
       }
     }
-    const visibleSpaces = new Set(this.visibleSpaceIds(userId));
+    const visibleSpaces = new Set(this.visibleSpaceIds(viewer));
     const visible: ContainerOrder[] = [];
     for (const order of byContainer.values()) {
       if (order.container.kind === "organization") {
@@ -1072,12 +1002,12 @@ export class WorkspaceSpaceStorage {
         continue;
       }
       if (order.container.kind === "space") {
-        if (!this.readable(userId, order.container.id)) continue;
-        const orderable = this.orderableChannelIds(userId, order.container.id, order.itemIds);
+        if (!this.readable(viewer, order.container.id)) continue;
+        const orderable = this.orderableChannelIds(viewer, order.container.id, order.itemIds);
         visible.push({ ...order, itemIds: order.itemIds.filter((id) => orderable.has(id)) });
         continue;
       }
-      if (this.listableChannelIds(userId, [order.container.id]).length > 0) visible.push(order);
+      if (this.listableChannelIds(viewer, [order.container.id]).length > 0) visible.push(order);
     }
     return PersonalOrderSchema.parse(visible);
   }
@@ -1160,9 +1090,9 @@ export class WorkspaceSpaceStorage {
    * they can still list. A Channel they lost leaves its row behind, harmless,
    * and is simply not named; a pin it never named is the client's to place.
    */
-  readPinnedOrder(userId: string): string[] {
-    const stored = this.storedPinnedOrder(userId);
-    const listable = new Set(this.listableChannelIds(userId, stored));
+  readPinnedOrder(viewer: Viewer): string[] {
+    const stored = this.storedPinnedOrder(viewer.userId);
+    const listable = new Set(this.listableChannelIds(viewer, stored));
     return stored.filter((id) => listable.has(id));
   }
 
@@ -1176,7 +1106,7 @@ export class WorkspaceSpaceStorage {
    */
   writePinnedOrder(userId: string, requestedIds: readonly string[], now: number): string[] {
     const requested = [...new Set(requestedIds)];
-    const listable = new Set(this.listableChannelIds(userId, requested));
+    const listable = new Set(this.listableChannelIds(member(userId), requested));
     const stored = mergedOrder(requested.filter((id) => listable.has(id)), this.storedPinnedOrder(userId));
     this.storage.transactionSync(() => {
       this.storage.sql.exec(`DELETE FROM workspace_pinned_order WHERE user_id = ?`, userId);
@@ -1190,7 +1120,7 @@ export class WorkspaceSpaceStorage {
         );
       }
     });
-    return this.readPinnedOrder(userId);
+    return this.readPinnedOrder(member(userId));
   }
 
   private storedPinnedOrder(userId: string): string[] {
@@ -1203,8 +1133,8 @@ export class WorkspaceSpaceStorage {
   /** Whether this viewer may name the container whose private order they write. */
   canArrange(userId: string, container: OrderedContainer): boolean {
     if (container.kind === "organization") return true;
-    if (container.kind === "space") return this.readable(userId, container.id) !== false;
-    return this.listableChannelIds(userId, [container.id]).length > 0;
+    if (container.kind === "space") return this.readable(member(userId), container.id) !== false;
+    return this.listableChannelIds(member(userId), [container.id]).length > 0;
   }
 
   /** What is left of a requested list once this container's rule has run. */
@@ -1224,7 +1154,7 @@ export class WorkspaceSpaceStorage {
     // name Channels this device cannot currently see (or a concurrent move has
     // just removed); filtering the merged result would turn that incomplete
     // view into a deletion of somebody else's valid arrangement.
-    const orderable = this.orderableChannelIds(userId, container.id, requestedIds);
+    const orderable = this.orderableChannelIds(member(userId), container.id, requestedIds);
     return mergedOrder(requestedIds.filter((id) => orderable.has(id)), stored);
   }
 
@@ -1254,7 +1184,7 @@ export class WorkspaceSpaceStorage {
     requestedIds: readonly string[],
     now: number,
   ): string[] {
-    const visible = this.visibleSpaceIds(userId);
+    const visible = this.visibleSpaceIds(member(userId));
     for (const spaceId of visible) this.appendOrder(workspaceId, userId, spaceId, now);
     const visibleSet = new Set(visible);
     const ordered = mergedOrder(
@@ -1289,14 +1219,14 @@ export class WorkspaceSpaceStorage {
    * about a Channel, and visibility is the reader's.
    */
   private orderableChannelIds(
-    userId: string,
+    viewer: Viewer,
     spaceId: string,
     workstreamIds: readonly string[],
   ): Set<string> {
-    const placed = [...this.spaceIdsByChannel(userId, workstreamIds)]
+    const placed = [...this.spaceIdsByChannel(viewer, workstreamIds)]
       .filter(([, spaceIds]) => spaceIds.includes(spaceId))
       .map(([workstreamId]) => workstreamId);
-    return new Set(this.listableChannelIds(userId, placed));
+    return new Set(this.listableChannelIds(viewer, placed));
   }
 
   /**
@@ -1306,8 +1236,8 @@ export class WorkspaceSpaceStorage {
    * visibility predicate, so asking `canRead` first would be the same question
    * twice and a second place for the answer to drift.
    */
-  readable(userId: string, spaceId: string): SpaceSummary | false {
-    return this.space(spaceId, userId);
+  readable(viewer: Viewer, spaceId: string): SpaceSummary | false {
+    return this.space(spaceId, viewer);
   }
 
   /**
@@ -1332,7 +1262,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!updated) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId, member(request.userId));
     });
   }
 
@@ -1393,7 +1323,7 @@ export class WorkspaceSpaceStorage {
         );
       }
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId, member(request.userId));
     });
   }
 
@@ -1594,11 +1524,13 @@ export class WorkspaceSpaceStorage {
    * to re-derive it.
    */
   conversationPage(
-    userId: string,
+    viewer: Viewer,
     spaceId: string,
     cursor: string | null,
   ): SpaceConversationPage | "invalid_cursor" | false {
-    if (!this.canRead(userId, spaceId)) return false;
+    if (this.reach(viewer, spaceId) === null) return false;
+    const userId = viewer.userId;
+    const breakouts = this.breakoutsReady();
     const after = cursor === null ? null : decodeConversationCursor(cursor);
     // Named apart from "no such Space", which is what an unreadable cursor was
     // answered with. The two ask opposite things of the caller: one says stop,
@@ -1627,7 +1559,7 @@ export class WorkspaceSpaceStorage {
               AND viewer.authority_generation = directory.authority_generation
             WHERE membership.space_id = ?2 AND membership.state = 'active'
               AND directory.archived_at IS NULL
-              AND ${channelVisibleToViewerSql("directory", "viewer")}
+              AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
               AND ${liveForViewerSql("directory", "viewer")}
               AND ${afterCursorSql("channel", "directory.last_activity_at", "directory.workstream_id")}
             ORDER BY directory.last_activity_at DESC, directory.workstream_id
@@ -1656,9 +1588,9 @@ export class WorkspaceSpaceStorage {
               AND breakout_viewer.authority_generation = breakout.authority_generation
             WHERE membership.space_id = ?2 AND membership.state = 'active'
               AND directory.archived_at IS NULL
-              AND ${channelVisibleToViewerSql("directory", "viewer")}
+              AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" })}
               AND breakout.archived_at IS NULL
-              AND ${breakoutListableToViewerSql("breakout", "breakout_viewer")}
+              AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
               AND ${liveForViewerSql("breakout", "breakout_viewer")}
               AND ${afterCursorSql("breakout", "breakout.last_activity_at", "breakout.substream_id")}
             ORDER BY breakout.last_activity_at DESC, breakout.substream_id
@@ -1698,7 +1630,8 @@ export class WorkspaceSpaceStorage {
    * this viewer. This is the dashboard query's admission predicate without its
    * page bound or ordering, so a sidebar badge never counts a different state.
    */
-  attentionCounts(userId: string, spaceIds: readonly string[]): Map<string, number> {
+  attentionCounts(viewer: Viewer, spaceIds: readonly string[]): Map<string, number> {
+    const userId = viewer.userId;
     const result = new Map<string, number>();
     if (!this.ready()) return result;
     const ids = [...new Set(spaceIds)];
@@ -1720,7 +1653,7 @@ export class WorkspaceSpaceStorage {
           WHERE membership.space_id IN (SELECT value FROM json_each(?))
             AND membership.state = 'active'
             AND directory.archived_at IS NULL
-            AND ${channelVisibleToViewerSql("directory", "viewer")}
+            AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
             AND ${liveForViewerSql("directory", "viewer")}
          ${includeBreakouts ? `UNION ALL
          SELECT membership.space_id, breakout.substream_id AS conversation_id
@@ -1741,32 +1674,26 @@ export class WorkspaceSpaceStorage {
           WHERE membership.space_id IN (SELECT value FROM json_each(?))
             AND membership.state = 'active'
             AND directory.archived_at IS NULL
-            AND ${channelVisibleToViewerSql("directory", "viewer")}
+            AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true })}
             AND breakout.archived_at IS NULL
-            AND ${breakoutListableToViewerSql("breakout", "breakout_viewer")}
+            AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
             AND ${liveForViewerSql("breakout", "breakout_viewer")}` : ""}
        ) GROUP BY space_id`,
       userId,
       JSON.stringify(ids),
-      ...(includeBreakouts ? [userId, userId, JSON.stringify(ids)] : []),
+      ...(includeBreakouts ? [userId, userId, JSON.stringify(ids), userId] : []),
     ).toArray();
     for (const row of rows) result.set(row.space_id, row.count);
     return result;
   }
 
-  attentionCount(userId: string, spaceId: string): number {
-    return this.attentionCounts(userId, [spaceId]).get(spaceId) ?? 0;
+  attentionCount(viewer: Viewer, spaceId: string): number {
+    return this.attentionCounts(viewer, [spaceId]).get(spaceId) ?? 0;
   }
 
-  /**
-   * Viewer-specific live Breakout totals, grouped under visible parent Channels.
-   * Guests need an explicit Breakout viewer grant; members retain workspace scope.
-   */
-  breakoutAttentionCounts(
-    userId: string,
-    workstreamIds: readonly string[],
-    accessClass: "member" | "guest" = "member",
-  ): Map<string, number> {
+  /** Viewer-specific live Breakout totals, grouped under the Channels they list. */
+  breakoutAttentionCounts(viewer: Viewer, workstreamIds: readonly string[]): Map<string, number> {
+    const userId = viewer.userId;
     const result = new Map<string, number>();
     if (!this.breakoutsReady()) return result;
     for (const ids of boundParameterChunks([...new Set(workstreamIds)])) {
@@ -1790,16 +1717,15 @@ export class WorkspaceSpaceStorage {
             AND breakout_viewer.authority_generation = breakout.authority_generation
           WHERE breakout.workstream_id IN (${ids.map(() => "?").join(", ")})
             AND directory.archived_at IS NULL
-            AND ${channelVisibleToViewerSql("directory", "viewer")}
+            AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true })}
             AND breakout.archived_at IS NULL
-            AND ${accessClass === "guest"
-              ? "breakout_viewer.listable = 1"
-              : breakoutListableToViewerSql("breakout", "breakout_viewer")}
+            AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
             AND ${liveForViewerSql("breakout", "breakout_viewer")}
           GROUP BY breakout.workstream_id`,
         userId,
         userId,
         ...ids,
+        userId,
       ).toArray();
       for (const row of rows) result.set(row.workstream_id, row.count);
     }
@@ -1812,14 +1738,15 @@ export class WorkspaceSpaceStorage {
    *
    * Candidates for the conversation-scoped directory, beside the scope grant
    * directory's, and never admission: each is re-asked of its own work stream,
-   * which decides every conversation it releases. A Channel this person can
-   * already see is left out because the member directory already lists it.
+   * which decides every conversation it releases. A Channel whose Main this
+   * person can already open is left out: its own entry needs no candidate.
    *
    * Reads `breakout_viewers` by user, which has no index for it. The
    * table holds one row per breakout member, so the scan is the cheaper choice
    * until an Organization's breakouts say otherwise.
    */
-  channelsReachedOnlyThroughBreakouts(userId: string): string[] {
+  channelsReachedOnlyThroughBreakouts(viewer: Viewer): string[] {
+    const userId = viewer.userId;
     if (!this.breakoutsReady()) return [];
     return this.storage.sql.exec<{ workstream_id: string }>(
       `SELECT DISTINCT breakout.workstream_id
@@ -1840,7 +1767,7 @@ export class WorkspaceSpaceStorage {
           AND directory.archived_at IS NULL
           -- A missing viewer row makes the predicate NULL, and NOT NULL is
           -- NULL: "IS NOT 1" is what reads that as "cannot see the Channel".
-          AND ${channelVisibleToViewerSql("directory", "viewer")} IS NOT 1
+          AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)} IS NOT 1
         ORDER BY breakout.workstream_id`,
       userId,
     ).toArray().map((row) => row.workstream_id);
@@ -1892,7 +1819,7 @@ export class WorkspaceSpaceStorage {
     walkReach: MemberWalkReach = "active",
     cursor: string | null = null,
   ): SpaceMemberPage | "not_editable" | false {
-    const viewerReach = this.reach(userId, spaceId);
+    const viewerReach = this.reach(member(userId), spaceId);
     if (viewerReach === null) return false;
     if (!editableReach(viewerReach)) return "not_editable";
     const after = cursor === null ? null : decodeChannelCursor(cursor);
@@ -1943,9 +1870,10 @@ export class WorkspaceSpaceStorage {
    * Space's id, and its count, on every reader's row — the existence of a
    * private Space and how many Channels are in it, to people who cannot see it.
    */
-  spaceIdsByChannel(userId: string, workstreamIds: readonly string[]): Map<string, string[]> {
+  spaceIdsByChannel(viewer: Viewer, workstreamIds: readonly string[]): Map<string, string[]> {
     const byWorkstream = new Map<string, string[]>();
     if (!this.ready()) return byWorkstream;
+    const listed = this.spaceListing(viewer);
     for (const chunk of boundParameterChunks(workstreamIds)) {
       for (const row of this.storage.sql.exec<{
         workstream_id: string;
@@ -1958,11 +1886,11 @@ export class WorkspaceSpaceStorage {
              ON viewer.space_id = space.space_id
             AND viewer.user_id = ? AND viewer.is_participant = 1
           WHERE membership.state = 'active' AND space.archived_at IS NULL
-            AND ${spaceVisibleToViewerSql("space", "viewer")}
+            AND ${listed.sql}
             AND membership.workstream_id IN (${chunk.map(() => "?").join(", ")})
           ORDER BY membership.workstream_id, (space.scope = 'personal'), membership.space_id`,
-        userId,
-        userId,
+        viewer.userId,
+        ...listed.binds,
         ...chunk,
       ).toArray()) {
         const existing = byWorkstream.get(row.workstream_id);
@@ -1974,8 +1902,8 @@ export class WorkspaceSpaceStorage {
   }
 
   /** The active Spaces a Channel is in, as this viewer may see them. */
-  channelSpaceIds(userId: string, workstreamId: string): string[] {
-    return this.spaceIdsByChannel(userId, [workstreamId]).get(workstreamId) ?? [];
+  channelSpaceIds(viewer: Viewer, workstreamId: string): string[] {
+    return this.spaceIdsByChannel(viewer, [workstreamId]).get(workstreamId) ?? [];
   }
 
   /** Stable placement used by links minted without a currently selected Space. */
@@ -2130,8 +2058,8 @@ export class WorkspaceSpaceStorage {
       request.workstreamId,
     ).toArray()[0];
     if (!sourceMembership) return { kind: "refused", code: "space_not_found" };
-    const source = this.space(request.sourceSpaceId, request.userId);
-    const target = this.space(request.targetSpaceId, request.userId);
+    const source = this.space(request.sourceSpaceId, member(request.userId));
+    const target = this.space(request.targetSpaceId, member(request.userId));
     if (source === false || target === false) return { kind: "refused", code: "space_not_found" };
     const sourceParticipants = new Set(source.participants.map((participant) => participant.userId));
     const equivalentAudience = source.scope === target.scope
@@ -2367,7 +2295,7 @@ export class WorkspaceSpaceStorage {
         request.workstreamId,
       ).toArray()[0];
       if (existing?.state === "active") {
-        const space = this.space(request.spaceId, request.userId);
+        const space = this.space(request.spaceId, member(request.userId));
         if (space === false) {
           return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
         }
@@ -2397,7 +2325,7 @@ export class WorkspaceSpaceStorage {
         );
       }
       this.advanceWaterline(now);
-      const space = this.space(request.spaceId, request.userId);
+      const space = this.space(request.spaceId, member(request.userId));
       if (space === false) {
         return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
@@ -2441,7 +2369,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!activated) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId, member(request.userId));
     });
   }
 
@@ -2460,7 +2388,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!cancelled) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId, member(request.userId));
     });
   }
 
@@ -2508,7 +2436,7 @@ export class WorkspaceSpaceStorage {
         );
         this.advanceWaterline(now);
       }
-      const space = this.space(request.spaceId, request.userId);
+      const space = this.space(request.spaceId, member(request.userId));
       if (space === false) return { ok: false as const };
       return { ok: true as const, space, membershipGeneration };
     });
@@ -2547,7 +2475,7 @@ export class WorkspaceSpaceStorage {
         request.workstreamId,
       );
       this.advanceWaterline(now);
-      const space = this.space(request.spaceId, request.userId);
+      const space = this.space(request.spaceId, member(request.userId));
       if (space === false) {
         return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
@@ -2619,7 +2547,7 @@ export class WorkspaceSpaceStorage {
         now,
       );
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId, member(request.userId));
     });
   }
 
@@ -2658,7 +2586,7 @@ export class WorkspaceSpaceStorage {
           ok: false,
           code: "space_membership_final",
           unreachableUserIds: [],
-          blockedWorkstreamIds: this.listableChannelIds(userId, stranded).map(asWorkstreamId),
+          blockedWorkstreamIds: this.listableChannelIds(member(userId), stranded).map(asWorkstreamId),
         };
       }
       this.storage.sql.exec(
@@ -2668,7 +2596,7 @@ export class WorkspaceSpaceStorage {
         spaceId,
       );
       this.advanceWaterline(now);
-      const space = this.space(spaceId, userId);
+      const space = this.space(spaceId, member(userId));
       if (space === false) {
         return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
@@ -2703,7 +2631,7 @@ export class WorkspaceSpaceStorage {
         spaceId,
       );
       this.advanceWaterline(now);
-      return this.space(spaceId, userId);
+      return this.space(spaceId, member(userId));
     });
   }
 
@@ -2743,7 +2671,7 @@ export class WorkspaceSpaceStorage {
       );
       this.appendOrder(workspaceId, userId, spaceId, now);
       this.advanceWaterline(now);
-      return this.space(spaceId, userId);
+      return this.space(spaceId, member(userId));
     });
   }
 
@@ -2772,7 +2700,7 @@ export class WorkspaceSpaceStorage {
       if (existing?.state === "active") {
         const targets = this.pendingTargets(request, existing.generation);
         this.stageDefaultPublications(targets, request.userId, now);
-        const space = this.space(request.spaceId, request.userId);
+        const space = this.space(request.spaceId, member(request.userId));
         if (space === false) {
           return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
         }
@@ -2819,7 +2747,7 @@ export class WorkspaceSpaceStorage {
       for (const target of targets) this.insertDefaultTarget(target, now);
       this.stageDefaultPublications(targets, request.userId, now);
       this.advanceWaterline(now);
-      const space = this.space(request.spaceId, request.userId);
+      const space = this.space(request.spaceId, member(request.userId));
       if (space === false) {
         return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
       }
@@ -2843,7 +2771,7 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!removed) return false;
       this.advanceWaterline(now);
-      return this.space(request.spaceId, request.userId);
+      return this.space(request.spaceId, member(request.userId));
     });
   }
 
@@ -3893,8 +3821,9 @@ export class WorkspaceSpaceStorage {
    * re-read, and naming the Space it moved in would disclose the Channel by
    * another door.
    */
-  listableChannelIds(userId: string, workstreamIds: readonly string[]): string[] {
+  listableChannelIds(viewer: Viewer, workstreamIds: readonly string[]): string[] {
     const listable: string[] = [];
+    const listed = this.channelListing(viewer);
     for (const chunk of boundParameterChunks(workstreamIds)) {
       for (const row of this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
         `SELECT directory.workstream_id
@@ -3904,10 +3833,11 @@ export class WorkspaceSpaceStorage {
             AND viewer.user_id = ?
             AND viewer.authority_generation = directory.authority_generation
           WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
-            AND ${channelVisibleToViewerSql("directory", "viewer")}
+            AND ${listed.sql}
           ORDER BY directory.workstream_id`,
-        userId,
+        viewer.userId,
         ...chunk,
+        ...listed.binds,
       ).toArray()) listable.push(row.workstream_id);
     }
     return listable;
@@ -3955,9 +3885,10 @@ export class WorkspaceSpaceStorage {
    * has to hear about — filtering archived Spaces out here would drop exactly
    * that notice.
    */
-  visibleSpaceIdsAmong(userId: string, spaceIds: readonly string[]): string[] {
+  visibleSpaceIdsAmong(viewer: Viewer, spaceIds: readonly string[]): string[] {
     if (!this.ready() || spaceIds.length === 0) return [];
     const visible: string[] = [];
+    const listed = this.spaceListing(viewer);
     for (const chunk of boundParameterChunks(spaceIds)) {
       for (const row of this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         `SELECT space.space_id
@@ -3965,11 +3896,11 @@ export class WorkspaceSpaceStorage {
            LEFT JOIN space_viewers viewer
              ON viewer.space_id = space.space_id
             AND viewer.user_id = ? AND viewer.is_participant = 1
-          WHERE ${spaceVisibleToViewerSql("space", "viewer")}
+          WHERE ${listed.sql}
             AND space.space_id IN (${chunk.map(() => "?").join(", ")})
           ORDER BY space.space_id`,
-        userId,
-        userId,
+        viewer.userId,
+        ...listed.binds,
         ...chunk,
       ).toArray()) visible.push(row.space_id);
     }
@@ -3977,8 +3908,9 @@ export class WorkspaceSpaceStorage {
   }
 
   /** Active Spaces this viewer may see, in creation order. */
-  private visibleSpaceIds(userId: string): string[] {
+  private visibleSpaceIds(viewer: Viewer): string[] {
     if (!this.ready()) return [];
+    const listed = this.spaceListing(viewer);
     return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
       `SELECT space.space_id
          FROM spaces space
@@ -3986,10 +3918,10 @@ export class WorkspaceSpaceStorage {
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE space.archived_at IS NULL
-          AND ${spaceVisibleToViewerSql("space", "viewer")}
+          AND ${listed.sql}
         ORDER BY space.created_at, space.space_id`,
-      userId,
-      userId,
+      viewer.userId,
+      ...listed.binds,
     ).toArray().map((row) => row.space_id);
   }
 
@@ -4006,26 +3938,27 @@ export class WorkspaceSpaceStorage {
    * an archive, a membership, a default. A read, a restore and a removal reach
    * an archived Space on purpose.
    */
-  reach(userId: string, spaceId: string, activeOnly = false): SpaceReach | null {
+  reach(viewer: Viewer, spaceId: string, activeOnly = false): SpaceReach | null {
     if (!this.ready()) return null;
+    const listed = this.spaceListing(viewer);
     return this.storage.sql.exec<{ reach: SpaceReach } & Record<string, SqlStorageValue>>(
-      `SELECT ${spaceReachSql("space", "viewer")} AS reach
+      `SELECT ${spaceReachSql("space", "viewer", viewer.accessClass)} AS reach
          FROM spaces space
          LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE space.space_id = ?
           AND (? = 0 OR space.archived_at IS NULL)
-          AND ${spaceVisibleToViewerSql("space", "viewer")}`,
-      userId,
+          AND ${listed.sql}`,
+      viewer.userId,
       spaceId,
       activeOnly ? 1 : 0,
-      userId,
+      ...listed.binds,
     ).toArray()[0]?.reach ?? null;
   }
 
   private canRead(userId: string, spaceId: string): boolean {
-    return this.reach(userId, spaceId) !== null;
+    return this.reach(member(userId), spaceId) !== null;
   }
 
   /**
@@ -4040,7 +3973,8 @@ export class WorkspaceSpaceStorage {
    * it; every write on it is somebody else's.
    */
   private canEdit(userId: string, spaceId: string, activeOnly = false): boolean {
-    const reach = this.reach(userId, spaceId, activeOnly);
+    // Writes are a member's; a guest is refused before reaching here.
+    const reach = this.reach(member(userId), spaceId, activeOnly);
     return reach !== null && editableReach(reach);
   }
 
@@ -4072,9 +4006,10 @@ export class WorkspaceSpaceStorage {
     );
   }
 
-  private directory(workspaceId: string, userId: string): SpaceDirectory {
+  private directory(workspaceId: string, viewer: Viewer): SpaceDirectory {
+    const listed = this.spaceListing(viewer);
     const rows = this.storage.sql.exec<SpaceRow>(
-      `SELECT space.*, ${spaceReachSql("space", "viewer")} AS reach
+      `SELECT space.*, ${spaceReachSql("space", "viewer", viewer.accessClass)} AS reach
          FROM workspace_container_order ordering
          JOIN spaces space ON space.space_id = ordering.item_id
          LEFT JOIN space_viewers viewer
@@ -4082,17 +4017,17 @@ export class WorkspaceSpaceStorage {
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE ordering.user_id = ? AND ordering.container_kind = 'organization'
           AND ordering.container_id = ? AND space.archived_at IS NULL
-          AND ${spaceVisibleToViewerSql("space", "viewer")}
+          AND ${listed.sql}
         ORDER BY ordering.position, space.space_id`,
-      userId,
-      userId,
+      viewer.userId,
+      viewer.userId,
       workspaceId,
-      userId,
+      ...listed.binds,
     ).toArray();
-    const attentionCounts = this.attentionCounts(userId, rows.map((row) => row.space_id));
+    const attentionCounts = this.attentionCounts(viewer, rows.map((row) => row.space_id));
     return SpaceDirectorySchema.parse({
       waterline: this.waterline(),
-      items: rows.map((row) => this.summary(row, userId, attentionCounts.get(row.space_id) ?? 0)),
+      items: rows.map((row) => this.summary(row, viewer, attentionCounts.get(row.space_id) ?? 0)),
     });
   }
 
@@ -4109,7 +4044,7 @@ export class WorkspaceSpaceStorage {
    * invent.
    */
   private writtenSpace(spaceId: string, userId: string): SpaceSummary {
-    const space = this.space(spaceId, userId);
+    const space = this.space(spaceId, member(userId));
     if (space === false) throw new Error("workspace_space_unreadable_after_write");
     return space;
   }
@@ -4119,7 +4054,7 @@ export class WorkspaceSpaceStorage {
    * theirs to see.
    *
    * Takes the viewer because the summary now carries one viewer-dependent
-   * field, and renders {@link spaceVisibleToViewerSql} because
+   * field, and renders {@link spaceListedSql} because
    * {@link spaceReachSql} is only sound beside it: its `ELSE 'through_channel'`
    * is the label for a row that reached it having passed the filter, so a row
    * selected without the filter is labelled `through_channel` whether or not
@@ -4135,22 +4070,23 @@ export class WorkspaceSpaceStorage {
    * predicates disagreeing; each passes it on as its own "no such Space"
    * rather than rendering a row it cannot account for.
    */
-  private space(spaceId: string, userId: string): SpaceSummary | false {
+  private space(spaceId: string, viewer: Viewer): SpaceSummary | false {
+    const listed = this.spaceListing(viewer);
     const row = this.storage.sql.exec<SpaceRow>(
-      `SELECT space.*, ${spaceReachSql("space", "viewer")} AS reach
+      `SELECT space.*, ${spaceReachSql("space", "viewer", viewer.accessClass)} AS reach
          FROM spaces space
          LEFT JOIN space_viewers viewer
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE space.space_id = ?
-          AND ${spaceVisibleToViewerSql("space", "viewer")}`,
-      userId,
+          AND ${listed.sql}`,
+      viewer.userId,
       spaceId,
-      userId,
+      ...listed.binds,
     ).toArray()[0];
     return row === undefined
       ? false
-      : this.summary(row, userId, this.attentionCount(userId, row.space_id));
+      : this.summary(row, viewer, this.attentionCount(viewer, row.space_id));
   }
 
   /**
@@ -4169,7 +4105,7 @@ export class WorkspaceSpaceStorage {
     ).toArray()[0];
     return row === undefined
       ? false
-      : this.summary(row, userId, this.attentionCount(userId, row.space_id));
+      : this.summary(row, member(userId), this.attentionCount(member(userId), row.space_id));
   }
 
   /**
@@ -4191,7 +4127,7 @@ export class WorkspaceSpaceStorage {
    * disclosure `spaceIdsByChannel` used to keep a personal Space's id off a
    * Channel row to avoid.
    */
-  private summary(row: SpaceRow, userId: string, attentionCount: number): SpaceSummary {
+  private summary(row: SpaceRow, viewer: Viewer, attentionCount: number): SpaceSummary {
     const appearance = row.appearance_json
       ? JSON.parse(row.appearance_json) as { icon?: unknown; color?: unknown }
       : null;
@@ -4214,7 +4150,7 @@ export class WorkspaceSpaceStorage {
       participants: row.reach === "through_channel"
         ? []
         : this.participantUserIds(row.space_id).map((participantId) => ({ userId: participantId })),
-      channelCount: this.channelCount(row.space_id, userId, row.reach),
+      channelCount: this.channelCount(row.space_id, viewer, row.reach),
       attentionCount: row.archived_at === null ? attentionCount : 0,
       defaultResourceIds: row.reach === "through_channel" ? [] : this.defaultIds(row.space_id, "resource"),
       defaultSidekickIds: row.reach === "through_channel" ? [] : this.defaultIds(row.space_id, "sidekick"),
@@ -4241,11 +4177,12 @@ export class WorkspaceSpaceStorage {
    * participants-only Space*, which is the disclosure the whole of this change
    * is written around not making. Narrowing it also makes the two agree by
    * construction: this predicate is exactly the one
-   * {@link spaceReachedThroughChannelSql} tests for existence, so such a
+   * `spaceReachedThroughChannelSql` tests for existence, so such a
    * viewer's count is never zero.
    */
-  private channelCount(spaceId: string, userId: string, reach: SpaceReach): number {
+  private channelCount(spaceId: string, viewer: Viewer, reach: SpaceReach): number {
     const viewerScoped = reach === "through_channel";
+    const listed = this.channelListing(viewer);
     return this.storage.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
       `SELECT COUNT(*) AS count
          FROM space_channel_memberships membership
@@ -4259,9 +4196,10 @@ export class WorkspaceSpaceStorage {
            : ""}
         WHERE membership.space_id = ? AND membership.state = 'active'
           AND directory.archived_at IS NULL
-          ${viewerScoped ? `AND ${channelVisibleToViewerSql("directory", "viewer")}` : ""}`,
-      ...(viewerScoped ? [userId] : []),
+          ${viewerScoped ? `AND ${listed.sql}` : ""}`,
+      ...(viewerScoped ? [viewer.userId] : []),
       spaceId,
+      ...(viewerScoped ? listed.binds : []),
     ).one().count;
   }
 

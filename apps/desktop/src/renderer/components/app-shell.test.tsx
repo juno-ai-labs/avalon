@@ -13,7 +13,6 @@ import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { patchCachedWorkstream, setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
   applyArchivedSpace,
-  associativeSpacesForSidebar,
   associativeWorkstreamsForSidebar,
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
@@ -176,7 +175,7 @@ describe('spacesEnabledForSession', () => {
   });
 });
 
-describe('associative guest navigation', () => {
+describe('associativeWorkstreamsForSidebar', () => {
   const directory: SharedNavigationDirectory = {
     spaces: [{
       id: asSpaceId('00000000-0000-7000-8000-0000000000f1'),
@@ -196,61 +195,30 @@ describe('associative guest navigation', () => {
     }],
   };
 
-  it('adapts only allowed Space presentation and marks it read-only', () => {
-    expect(associativeSpacesForSidebar(directory)).toEqual([
-      expect.objectContaining({
-        id: directory.spaces[0]!.id,
-        name: 'Private planning',
-        iconKey: 'star',
-        colorKey: 'red',
-        scope: 'personal',
-        reach: 'through_channel',
-        participants: [],
-        defaultResourceIds: [],
-        defaultSidekickIds: [],
-      }),
-    ]);
-  });
-
-  it('keeps fresher socket metadata while attaching canonical guest placements and destination', () => {
-    const hidden = summary('completed', '00000000-0000-7000-8000-0000000000f9');
-    expect(associativeWorkstreamsForSidebar(directory, [summary('completed'), hidden])).toEqual([
+  it('opens a socket row whose Main is not listed on its first listed conversation', () => {
+    const other = summary('completed', '00000000-0000-7000-8000-0000000000f9');
+    expect(associativeWorkstreamsForSidebar(directory, [other, summary('completed')])).toEqual([
+      other,
       expect.objectContaining({
         id: workstreamId,
         title: 'Draft the reply',
-        scope: 'workspace',
-        associativeSubstreamId: directory.workstreams[0]!.conversations[0]!.substreamId,
-        spaceIds: [directory.spaces[0]!.id],
+        associativeSubstreamId: '00000000-0000-7000-8000-0000000000f2',
       }),
     ]);
   });
 
-  it('adds a member\'s breakout-only Channel after their own, and leaves a Channel they already list alone', () => {
-    const own = summary('completed', '00000000-0000-7000-8000-0000000000f9');
-    expect(associativeWorkstreamsForSidebar(directory, [own], true)).toEqual([
-      own,
-      expect.objectContaining({
-        id: workstreamId,
-        title: 'Launch plan',
-        associativeSubstreamId: directory.workstreams[0]!.conversations[0]!.substreamId,
-        spaceIds: [directory.spaces[0]!.id],
-      }),
-    ]);
+  it('adds no row the socket did not list, and leaves a row whose Main is listed alone', () => {
+    expect(associativeWorkstreamsForSidebar(directory, [])).toEqual([]);
+    const withMain: SharedNavigationDirectory = {
+      ...directory,
+      workstreams: [{
+        ...directory.workstreams[0]!,
+        conversations: [{ substreamId: asSubstreamId('0'), title: 'Main', scope: 'personal', archived: false }],
+      }],
+    };
     const listed = summary('completed');
-    expect(associativeWorkstreamsForSidebar(directory, [listed], true)).toEqual([listed]);
-    expect(associativeWorkstreamsForSidebar(undefined, [listed], true)).toEqual([listed]);
-  });
-
-  it('synthesizes the Channel ancestor when only one Breakout is shared', () => {
-    expect(associativeWorkstreamsForSidebar(directory, [])).toEqual([
-      expect.objectContaining({
-        id: workstreamId,
-        title: 'Launch plan',
-        appearance: { icon: 'rocket', color: 'violet' },
-        scope: 'personal',
-        associativeSubstreamId: directory.workstreams[0]!.conversations[0]!.substreamId,
-      }),
-    ]);
+    expect(associativeWorkstreamsForSidebar(withMain, [listed])).toEqual([listed]);
+    expect(associativeWorkstreamsForSidebar(undefined, [listed])).toEqual([listed]);
   });
 });
 

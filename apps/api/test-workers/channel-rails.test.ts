@@ -510,6 +510,46 @@ describe("channel_rails for a guest, and a row that no longer parses", () => {
     connection.socket.close(1000, "done");
   });
 
+  it("lists a guest the Channel they take part in, and nothing of an Organization-wide one they are not in", async () => {
+    const connection = await connect(guest);
+    const sidebar = connection.sync.sidebar as { workstreams: { items: Array<{ id: string }> }; automations: { items: unknown[] } };
+    // Channel A is Organization-wide; Channel C is one the guest takes part in.
+    expect(sidebar.workstreams.items.map((item) => item.id)).toEqual([channelC]);
+    // The Sidekick library is a member's.
+    expect(sidebar.automations.items).toEqual([]);
+
+    requestSeq += 1;
+    const requestId = `00000000-0000-7000-8002-${String(requestSeq).padStart(12, "0")}`;
+    const page = connection.stream.next((frame) => frame.type === "workspace_workstream_page" && frame.requestId === requestId, "page");
+    connection.socket.send(JSON.stringify({ type: "list_workstreams", requestId, limit: 50, includeSystem: true }));
+    expect(((await page) as { items: Array<{ id: string }> }).items.map((item) => item.id)).toEqual([channelC]);
+
+    // Somebody joins each Channel's Main: the guest is pushed Channel C's row
+    // and nothing for Channel A, which a member watching does see move.
+    const owners = await connect(owner);
+    const ownerSawA = rowPast(owners, channelA, (await railOf(owners, channelA)).railWaterline);
+    const guestSawC = rowPast(connection, channelC, (await railOf(connection, channelC)).railWaterline);
+    await publish(channelA, [viewer(reader, true, "2026-09-25T12:30:00.000Z")]);
+    await publish(channelC, [viewer(reader, true, "2026-09-25T12:30:00.000Z")]);
+    await ownerSawA;
+    await guestSawC;
+    owners.socket.close(1000, "done");
+
+    // Bringing Channel C to the foreground answers with its recency row.
+    const recency = connection.stream.next((frame) => frame.type === "workspace_workstream_recency", "recency");
+    connection.socket.send(JSON.stringify({
+      type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: channelC,
+    }));
+    expect(((await recency) as { workstream: { id: string } }).workstream.id).toBe(channelC);
+
+    const frames = await askRails(connection, { workstreamIds: [channelA, channelC] });
+    expect(frames.flatMap((frame) => frame.rails).map((rail) => rail.workstreamId)).toEqual([channelC]);
+    expect(frames.flatMap((frame) => frame.unavailable)).toEqual([channelA]);
+    expect(connection.stream.received.filter((frame) => frame.type === "workspace_workstream_state"
+      && frame.workstreamId === channelA)).toEqual([]);
+    connection.socket.close(1000, "done");
+  });
+
   it("answers the retired Space target with one empty final frame, and keeps the socket", async () => {
     await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelC]));
     const connection = await connect(owner);
@@ -570,9 +610,12 @@ describe("space_channels and the sidebar without Channel rows", () => {
     expect(owners.items.map((item) => item.id)).toEqual([channelA, channelC]);
     ownerConnection.socket.close(1000, "done");
 
+    // A guest lists the Channel they take part in, and not the
+    // Organization-wide ones beside it.
     const guestConnection = await connect(guest);
-    expect(await askSpace(guestConnection, { spaceId, rails: true }))
-      .toMatchObject({ items: [], stateVersions: [], rails: [], nextAfter: null });
+    const guests = await askSpace(guestConnection, { spaceId, rails: true });
+    expect(guests.items.map((item) => item.id)).toEqual([channelC]);
+    expect(guests.rails.map((rail) => rail.workstreamId)).toEqual([channelC]);
     guestConnection.socket.close(1000, "done");
   });
 
@@ -654,12 +697,17 @@ describe("space_channels and the sidebar without Channel rows", () => {
     expect((retired.sync.sidebar as { channelsBySpace?: true }).channelsBySpace).toBe(true);
     retired.socket.close(1000, "done");
 
-    // A guest is sent no Spaces and no Channel page either: the page follows
-    // member rules, and a guest's rail is the grant-scoped shared navigation.
+    // A guest is answered the same way, with the Spaces their own Channels
+    // reach: Channel C, which they take part in, puts this Space in theirs.
     const guestConnection = await connect(guest);
-    const guestSidebar = guestConnection.sync.sidebar as { workstreams: { items: unknown[] }; channelsBySpace?: true };
-    expect(guestSidebar.channelsBySpace).toBeUndefined();
+    const guestSidebar = guestConnection.sync.sidebar as {
+      workstreams: { items: unknown[] };
+      spaces?: { active: { items: Array<{ id: string; reach: string }> } };
+      channelsBySpace?: true;
+    };
+    expect(guestSidebar.channelsBySpace).toBe(true);
     expect(guestSidebar.workstreams.items).toEqual([]);
+    expect(guestSidebar.spaces?.active.items.map((space) => [space.id, space.reach])).toEqual([[spaceId, "through_channel"]]);
     guestConnection.socket.close(1000, "done");
   });
 });
