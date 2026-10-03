@@ -3094,6 +3094,8 @@ export interface HarnessToolContext {
    * recorded receipt never used.
    */
   effectIntentId?: string;
+  /** Host-only: executing the input already stored in a durable receipt. */
+  replaying?: boolean;
   executionPrincipal: ExecutionPrincipal;
   /** Stable per-receipt key for provider APIs that support idempotent writes. */
   providerIdempotencyKey?: string;
@@ -3600,6 +3602,8 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
 
 export interface HarnessTool {
   definition: ToolDefinition;
+  /** Host-owned writes wait for their receipt under the run lifecycle, without a second tool timer. */
+  deadline?: "run";
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
   /** Resolve a host-only execution deadline after validated input is known. */
   resolveTimeoutMs?: (input: unknown) => number | undefined;

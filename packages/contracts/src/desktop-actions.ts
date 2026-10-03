@@ -38,6 +38,11 @@ export type SessionImportFailureReason = z.infer<typeof SessionImportFailureReas
 
 /** Model-reported observations, not an independent browser attestation. */
 export const SessionImportVerificationSchema = z.strictObject({
+  checks: z.array(z.strictObject({
+    name: z.string().trim().min(1).describe("The observed check, including text, branch, page and file comparisons you actually performed."),
+    passed: z.boolean().describe("The actual result. A false result must be repaired or resolved by a new comparison before finishing."),
+    basis: z.string().trim().min(1).describe("What was compared and what the result established. Rendering differences need a successful content comparison, not an ignored mismatch."),
+  })).min(1).describe("Latest actual results for the current extraction, one per check. Keep unresolved failures false; after repair, repeat the comparison and record the discrepancy and repair in basis."),
   branch: z.strictObject({
     complete: z.literal(true).describe("The selected history reaches its established beginning, without missing ancestors or unresolved pagination."),
     basis: z.string().trim().min(1).describe("How you established selection and completeness from the current source; do not assume an array is linear."),
@@ -53,11 +58,19 @@ export const SessionImportVerificationSchema = z.strictObject({
 });
 export type SessionImportVerification = z.infer<typeof SessionImportVerificationSchema>;
 
+/** Contract-2 actions and recorded tool inputs must survive deployment and replay. */
+export const RecordedSessionImportVerificationSchema = SessionImportVerificationSchema.extend({
+  checks: SessionImportVerificationSchema.shape.checks.optional(),
+});
+
 /** Check the report against the payload before any import write. */
 export function verifySessionImport(
   messages: readonly { role: string; sourceMessageId?: string; files?: readonly unknown[] }[],
-  verification: SessionImportVerification,
+  verification: z.infer<typeof RecordedSessionImportVerificationSchema>,
 ): void {
+  for (const [index, check] of (verification.checks ?? []).entries()) {
+    if (!check.passed) throw new Error(`verification.checks[${index}].passed failed. Repair the extraction or resolve the comparison and repeat it before finishing.`);
+  }
   if (verification.page.messageCount !== messages.length) {
     throw new Error('verification.page.messageCount does not match the stored messages. Resolve missing messages or explain and account for grouped turns before finishing.');
   }
@@ -124,7 +137,7 @@ export const DesktopActionSchema = z.discriminatedUnion("kind", [
     length: z.number().int().positive().optional(),
   }),
   /** Hand the conversation the agent assembled to the desktop that started the import. */
-  z.strictObject({ kind: z.literal("session_import.finish"), title: z.string().min(1), messages: z.string().min(1), verification: SessionImportVerificationSchema }),
+  z.strictObject({ kind: z.literal("session_import.finish"), title: z.string().min(1), messages: z.string().min(1), verification: RecordedSessionImportVerificationSchema }),
   z.strictObject({ kind: z.literal("session_import.fail"), reason: SessionImportFailureReasonSchema }),
 ]);
 export type DesktopAction = z.infer<typeof DesktopActionSchema>;

@@ -103,7 +103,7 @@ async function request(
   auth: AuthContext,
   body?: unknown,
   method = body === undefined ? "GET" : "POST",
-  clientContract: string | null = "2",
+  clientContract: string | null = "3",
 ): Promise<{ status: number; body: unknown }> {
   const token = await new SignJWT({ sid: auth.sessionId, wid: auth.workspaceId, region: auth.region })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
@@ -401,7 +401,7 @@ describe("conversation import routes", () => {
     });
   }
 
-  it.each([null, "1"])("refuses import admission from unsupported client contract %s", async (contract) => {
+  it.each([null, "1", "2"])("refuses import admission from unsupported client contract %s", async (contract) => {
     const before = await request("/workstreams", OWNER_AUTH);
     const body = { sourceUrl: SOURCE_URL, title: "Unsupported import", clientMessageId: "00000000-0000-7000-8000-00000000d299", spaceIds: [] };
     const started = await request("/workstreams/import/runs", OWNER_AUTH, body, "POST", contract);

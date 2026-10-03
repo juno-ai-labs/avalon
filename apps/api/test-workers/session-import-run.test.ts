@@ -13,12 +13,13 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { asSpaceId, asSubstreamId, asUserId, asWorkspaceId, type SpaceId } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import { prepareSessionImport } from "../src/services/session-import-files";
 import { SessionImportRunService } from "../src/services/session-import-run-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
@@ -27,6 +28,7 @@ import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 const verification = {
+  checks: [{ name: "page content", passed: true, basis: "Compared every displayed turn." }],
   branch: { complete: true as const, basis: 'Selected leaf reaches the root.' },
   page: { messageCount: 2, firstSourceMessageId: 'm1', lastSourceMessageId: 'm2', sampledSourceMessageIds: ['m2'], basis: 'Both rendered turns compared.' },
   fileCount: 0,
@@ -159,7 +161,116 @@ async function openDesktop(workstreamId: string, substreamId: string, membership
   return { socket, frames, nextAction, answer };
 }
 
+afterEach(() => { delete (env as { TOOL_DEFAULT_TIMEOUT_MS?: string }).TOOL_DEFAULT_TIMEOUT_MS; });
+
 describe("a conversation import run", () => {
+  it("keeps a committing import alive past the ordinary tool deadline and settles its durable receipt", async () => {
+    (env as { TOOL_DEFAULT_TIMEOUT_MS?: string }).TOOL_DEFAULT_TIMEOUT_MS = "1000";
+    const service = new SessionImportRunService(creationEnv(), AUTH);
+    const clientMessageId = crypto.randomUUID();
+    const spaceIds = [await personalSpace()];
+    const run = await service.start({ sourceUrl: SOURCE_URL, title: "Slow save", spaceIds, clientMessageId });
+    const admission = await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: run.workstreamId,
+      userId: USER_ID, substreamId: asSubstreamId(run.substreamId) });
+    const desktop = await openDesktop(run.workstreamId, run.substreamId, admission.membershipVersion ?? 0);
+    const alarm = runDurableObjectAlarm(child(run.workstreamId, run.substreamId));
+    const evaluate = await desktop.nextAction("browser.script");
+    desktop.answer(evaluate.id, { ok: true, result: { output: [] } });
+    const finish = await desktop.nextAction("session_import.finish");
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1100));
+      await service.complete(run.workstreamId, { title: "Slow save", clientMessageId, spaceIds,
+        source: { provider: "chatgpt", url: SOURCE_URL, sessionId: CONVERSATION_ID },
+        content: { messages: [{ role: "user", text: "Question", sourceMessageId: "m1" },
+          { role: "assistant", text: "Answer", sourceMessageId: "m2" }] } });
+      desktop.answer(finish.id, { ok: true, result: { workstreamId: run.workstreamId, messages: 2 } });
+      await alarm;
+      await expect.poll(() => runInDurableObject(child(run.workstreamId, run.substreamId), (_instance, state) =>
+        state.storage.sql.exec("SELECT status, error_json FROM runs").one()), { timeout: 10_000 })
+        .toMatchObject({ status: "completed", error_json: null });
+      expect(await runInDurableObject(child(run.workstreamId, run.substreamId), (_instance, state) =>
+        state.storage.sql.exec("SELECT tool_name,status FROM tool_effects WHERE tool_name='import_finish'").one()))
+        .toEqual({ tool_name: "import_finish", status: "completed" });
+    } finally { desktop.socket.close(); await alarm.catch(() => undefined); }
+  }, 60_000);
+
+  it.each([undefined, 2])("uploads files across messages with width %s through real R2 and preserves source order", async (width) => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started: string[] = [];
+    // Gate the real binding's writes to expose the interleave; every write still reaches real R2.
+    const payloads = new Proxy(env.PAYLOADS, { get(target, property) {
+      if (property === "put") return async (...args: Parameters<R2Bucket["put"]>) => {
+        started.push(String(args[0]));
+        await gate;
+        return target.put(...args);
+      };
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    } });
+    const testEnv = new Proxy(creationEnv(), { get(target, property, receiver) {
+      return property === "PAYLOADS" ? payloads : Reflect.get(target, property, receiver);
+    } });
+    const operationId = "parallel-files";
+    const pending = prepareSessionImport(testEnv, AUTH, {
+      title: "Files", source: { provider: "chatgpt", url: SOURCE_URL, sessionId: CONVERSATION_ID },
+      content: { messages: [
+        { role: "user", text: "Uploads", sourceMessageId: "m1", files: ["one.txt", "two.txt"].map(name => ({
+          name, mimeType: "text/plain", kind: "attachment" as const, source: { kind: "inline" as const, encoding: "utf8" as const, data: name } })) },
+        { role: "assistant", text: "Generated", sourceMessageId: "m2", files: [{ name: "three.txt", mimeType: "text/plain",
+          kind: "artifact", source: { kind: "inline", encoding: "utf8", data: "three.txt" } }] },
+      ] },
+    }, operationId, new Map(), width);
+    try { await expect.poll(() => started.length).toBe(width ?? 3); }
+    finally { release(); await pending.catch(() => undefined); }
+    const prepared = await pending;
+    expect(prepared.messages.map(message => message.text)).toEqual(["Uploads", "Generated"]);
+    const ids = prepared.messages.flatMap(message => message.attachmentIds ?? []);
+    const titles = await runInDurableObject(workspace(), (_instance, state) => ids.map(id =>
+      state.storage.sql.exec<{ title: string }>("SELECT title FROM resources WHERE id=?", id).one().title));
+    expect(titles).toEqual(["one.txt", "two.txt", "three.txt"]);
+  });
+  it("drains a failed upload batch, stops later files, and reuses successful drafts on retry", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let writes = 0;
+    const payloads = new Proxy(env.PAYLOADS, { get(target, property) {
+      if (property === "put") return async (...args: Parameters<R2Bucket["put"]>) => {
+        writes += 1;
+        if (writes === 1) throw new Error("R2 unavailable");
+        await gate;
+        return target.put(...args);
+      };
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    } });
+    const testEnv = new Proxy(creationEnv(), { get(target, property, receiver) {
+      return property === "PAYLOADS" ? payloads : Reflect.get(target, property, receiver);
+    } });
+    const preview = { title: "Files", source: { provider: "chatgpt" as const, url: SOURCE_URL, sessionId: CONVERSATION_ID },
+      content: { messages: ["one", "two", "three"].map(name => ({ role: "user" as const, text: name, sourceMessageId: name,
+        files: [{ name: `${name}.txt`, mimeType: "text/plain", kind: "attachment" as const,
+          source: { kind: "inline" as const, encoding: "utf8" as const, data: name } }] })) } };
+    let settled = false;
+    const pending = prepareSessionImport(testEnv, AUTH, preview, "partial-files", new Map(), 2)
+      .then(value => ({ value }), error => ({ error })).finally(() => { settled = true; });
+    try {
+      await expect.poll(() => writes).toBe(2);
+      expect(settled).toBe(false);
+    } finally { release(); await pending; }
+    expect(await pending).toMatchObject({ error: { message: "R2 unavailable" } });
+    expect(writes).toBe(2);
+    const firstDrafts = await runInDurableObject(workspace(), (_instance, state) =>
+      state.storage.sql.exec("SELECT id,title,content_ref FROM resources WHERE resource_type='uploaded_file'").toArray());
+    expect(firstDrafts).toMatchObject([{ title: "two.txt" }]);
+    const retried = await prepareSessionImport(creationEnv(), AUTH, preview, "partial-files", new Map(), 2);
+    expect(retried.messages.map(message => message.attachmentIds?.length)).toEqual([1, 1, 1]);
+    const after = await runInDurableObject(workspace(), (_instance, state) =>
+      state.storage.sql.exec("SELECT id,title,content_ref FROM resources WHERE resource_type='uploaded_file'").toArray());
+    expect(after).toHaveLength(3);
+    expect(after.find(row => row['title'] === 'two.txt')).toEqual(firstDrafts[0]);
+  });
+
   it("reads the page through the desktop and opens the Channel with what it read", async () => {
     const spaceId = await personalSpace();
     const clientMessageId = crypto.randomUUID();
