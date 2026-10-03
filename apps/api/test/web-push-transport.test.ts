@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { encryptWebPushPayload, sendWebPush, vapidAuthorization } from "../src/services/push/web-push-transport";
 import type { PushDevice } from "../src/services/push-device-service";
+import { renderWebPushPayload } from "../src/services/push/push-payload";
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -73,5 +74,24 @@ describe("Web Push transport", () => {
     expect(await sendWebPush(env, device, "{}", "c")).toMatchObject({ outcome: "unregistered" });
     request.mockResolvedValueOnce(new Response(null, { status: 503 }));
     expect(await sendWebPush(env, device, "{}", "c")).toMatchObject({ outcome: "transient" });
+    // A refused VAPID token is the deployment's credential, not this device.
+    request.mockResolvedValueOnce(new Response(null, { status: 403 }));
+    expect(await sendWebPush(env, device, "{}", "c")).toMatchObject({ outcome: "provider_auth_failed", reason: "push_service_403" });
+    request.mockResolvedValueOnce(new Response(null, { status: 401 }));
+    expect(await sendWebPush(env, device, "{}", "c")).toMatchObject({ outcome: "provider_auth_failed", reason: "push_service_401" });
+    const calls = request.mock.calls.length;
+    // Keys that are not a P-256 point retire the subscription without a request.
+    expect(await sendWebPush(env, { ...device, web_push_p256dh: `B${"A".repeat(86)}` }, "{}", "c"))
+      .toEqual({ outcome: "unregistered", reason: "subscription_keys_invalid" });
+    expect(request.mock.calls.length).toBe(calls);
+  });
+
+  it("shortens the title as well as the body to fit the payload limit", () => {
+    const data = { v: 1 as const, kind: "mention" as const, url: "https://app.example.test/c", workspaceId: "w", region: "global" as const };
+    const payload = renderWebPushPayload({ title: "T".repeat(5000), body: "B".repeat(5000), threadKey: "thread", data, maxBytes: 3900 });
+    expect(new TextEncoder().encode(payload).byteLength).toBeLessThanOrEqual(3900);
+    const parsed = JSON.parse(payload) as { title: string; body: string };
+    expect(parsed.body).toBe("…");
+    expect(parsed.title.endsWith("…")).toBe(true);
   });
 });
