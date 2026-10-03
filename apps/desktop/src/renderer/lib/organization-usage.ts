@@ -47,7 +47,10 @@ export const usageCacheSlice = defineLocalCacheSlice<UsageReading>({
   parse: parseUsageReading,
 });
 
-export const organizationUsageQueryKey = ['workspace-usage'] as const;
+/** Keyed by the cache scope (user, region, workspace), so a switch never reads another Organization's answer. */
+export function organizationUsageQueryKey(scope: string | null): readonly ['workspace-usage', string | null] {
+  return ['workspace-usage', scope] as const;
+}
 
 export type OrganizationUsageState =
   | { status: 'loading' }
@@ -67,7 +70,7 @@ export function useOrganizationUsage(api: OrganizationUsageApi | null): Organiza
   const online = useSyncExternalStore(subscribeOnline, readOnline);
   const [seed, setSeed] = useState<UsageReading | null>(null);
   const query = useQuery({
-    queryKey: organizationUsageQueryKey,
+    queryKey: organizationUsageQueryKey(scope),
     queryFn: async ({ signal }): Promise<UsageReading> => {
       // Stated before the request so a sign-out while it is in flight drops
       // the write rather than restoring a row the wipe removed.
@@ -83,6 +86,8 @@ export function useOrganizationUsage(api: OrganizationUsageApi | null): Organiza
   });
 
   useEffect(() => {
+    // A seed belongs to one scope; never paint it under another.
+    setSeed(null);
     if (!scope) return undefined;
     let current = true;
     const epoch = localCacheEpoch();
