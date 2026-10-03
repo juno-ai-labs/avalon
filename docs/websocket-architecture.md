@@ -677,7 +677,9 @@ move the workspace synchronization socket or dictation transport into Node.
   ([PRD](PRDs/2026-10-03_full-browser-client/prd.md), decision 3). A tab
   Chromium freezes reports `suspended` through the Page Lifecycle `freeze`
   event and `resumed` on `resume`, so the workspace socket closes and redials as
-  the desktop does around sleep.
+  the desktop does around sleep. The feed swarm does not listen for either: a
+  feed socket that died while frozen is found by its 45 to 55 second heartbeat,
+  which is also the desktop's behaviour around sleep.
 
 ## Testing
 
@@ -786,23 +788,20 @@ explicit product states rather than speculative guesses.
 
 ## Changelog
 
-### 2026-10-03 — Browser member tabs run the swarm
+### 2026-10-03 — A frozen browser tab redials its workspace socket
 
-**What changed:** A member's browser tab mounts the desktop shell, so it opens
-the full workspace socket and the proactive feed swarm over native sockets and
-publishes presence. The browser bridge maps Page Lifecycle `freeze` and
-`resume` onto the power-state events the workspace socket already handles.
+**What changed:** The browser bridge reports Page Lifecycle `freeze` and
+`resume` as `suspended` and `resumed`.
 
-**Why:** The full browser client PRD chose desktop switching speed over a
-smaller socket set (decision 3).
+**Why:** A tab Chromium froze otherwise found its dead workspace socket only by
+heartbeat, so a member returning to a background tab saw stale Organization
+state for up to a minute.
 
-**Considered and rejected:** The iOS-style navigation-shaped set (slower
-switching), a focus-only or leader-tab swarm, a SharedWorker broker, and a
-multiplexed socket — each recorded in the PRD.
+**Considered and rejected:** Treating `visibilitychange` as suspend, which
+would drop the socket every time a tab is hidden for a moment.
 
-**Consequences:** Worst case per member is about 20 feeds times open tabs, each
-handshaken in turn. If the first-frame watch or ticket volume shows strain, the
-cheapest reversal is the navigation-shaped set for browser tabs only.
+**Consequences:** Only the workspace socket redials on resume; the feed swarm
+still relies on its heartbeat, as on the desktop.
 
 Shipped in #1080. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
