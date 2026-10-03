@@ -1,4 +1,5 @@
 import {
+  GUEST_WORKSPACES_CLIENT_CONTRACT,
   MINIMUM_SERVED_CLIENT_CONTRACT,
   SESSION_IMPORT_CLIENT_CONTRACT,
   RALLY_HEADERS,
@@ -63,4 +64,16 @@ export function requireSessionImportClientContract(header: ClientRequestHeaders)
     || !Number.isSafeInteger(Number(declared)) || Number(declared) < SESSION_IMPORT_CLIENT_CONTRACT) {
     throw new ApiError(426, "client_update_required", "Update Rally to import conversations with this version of the browser tools.");
   }
+}
+
+/**
+ * Whether this client opens a guest relationship. A desktop build before the
+ * guest contract asks member-only routes (attention, push registration, the
+ * Channel list) with every stored credential, and one guest's refusal fails
+ * the rest, so platform discovery does not offer it one.
+ */
+export function clientOpensGuestWorkspaces(header: ClientRequestHeaders): boolean {
+  const declared = readRallyHeader(header, RALLY_HEADERS.CLIENT_CONTRACT);
+  return declared !== undefined && /^\d+$/u.test(declared)
+    && Number(declared) >= GUEST_WORKSPACES_CLIENT_CONTRACT;
 }

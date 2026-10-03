@@ -4,6 +4,7 @@ import { publishWorkspaceSync } from '../services/workspace-realtime-service';
 import { AccountOnboardingService } from '../services/account-onboarding-service';
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema } from '@rally/contracts';
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { clientOpensGuestWorkspaces } from "../lib/client-contract";
 import { zValidator } from "../middleware/validation";
 import {
   ActivateWorkspaceRequestSchema,
@@ -82,7 +83,8 @@ function onboardingFailureResult(
 
 onboardingRoutes.get("/", async (c) =>
   c.json(WorkspaceOnboardingStateSchema.parse(
-    await new PlatformOnboardingService(c.env, getIdentityAuth(c)).state())),
+    await new PlatformOnboardingService(c.env, getIdentityAuth(c))
+      .state({ guests: clientOpensGuestWorkspaces((name) => c.req.header(name)) }))),
 );
 
 onboardingRoutes.post("/workspace", zValidator("json", CreateWorkspaceRequestSchema), async (c) => {
@@ -111,7 +113,7 @@ onboardingRoutes.post(
     const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
     try {
       const session = SessionSchema.parse(await new PlatformOnboardingService(c.env, auth)
-        .activate(body.region, body.workspaceId));
+        .activate(body.region, body.workspaceId, { guests: clientOpensGuestWorkspaces((name) => c.req.header(name)) }));
       deferOnboardingOutcome(c, auth, session, 'workspace_activation_completed', body.region, operationId, 'success');
       return c.json(SessionSchema.parse(session));
     } catch (error) {

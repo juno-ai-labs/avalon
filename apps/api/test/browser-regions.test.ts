@@ -132,13 +132,16 @@ it("lists and activates another deployment's guest relationship for the Mac app"
   // Both guest relationships follow the membership, though each was joined
   // first and one is in the deployment listed first: a device with nothing
   // selected opens the first workspace, and that is the person's own.
-  const state = await platform.state();
+  const state = await platform.state({ guests: true });
   expect(state.workspaces.map((workspace) => [workspace.id, workspace.role, workspace.accessClass])).toEqual([
     [enterpriseWorkspaceId, "member", undefined],
     [globalGuestWorkspaceId, null, "guest"],
     [strangerWorkspaceId, null, "guest"],
   ]);
-  const session = await platform.activate("enterprise", strangerWorkspaceId);
+  // A build that has not declared the guest contract is offered neither.
+  expect((await platform.state()).workspaces.map((workspace) => workspace.id)).toEqual([enterpriseWorkspaceId]);
+  await expect(platform.activate("enterprise", strangerWorkspaceId)).rejects.toMatchObject({ status: 403 });
+  const session = await platform.activate("enterprise", strangerWorkspaceId, { guests: true });
   expect(session.workspace).toMatchObject({ id: strangerWorkspaceId, region: "enterprise", role: null, accessClass: "guest" });
   expect(enterpriseDb.prepare("SELECT user_id, workspace_id FROM sessions WHERE workspace_id = ?").all(strangerWorkspaceId))
     .toEqual([{ user_id: enterpriseUserId, workspace_id: strangerWorkspaceId }]);

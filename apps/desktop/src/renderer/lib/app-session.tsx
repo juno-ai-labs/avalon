@@ -971,6 +971,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (intent.kind === 'slack-link') {
         const linkSlack = async (targetApi: RallyApi): Promise<void> => {
           setDeepLinkError(null);
+          // Linking reads `/connections`, which refuses a guest. The workspace
+          // the link ran in is the session by now, whether or not it switched.
+          if (sessionRef.current?.workspace?.accessClass === 'guest') {
+            reportDeepLinkFailure('Connecting Slack is available to members of this organization.');
+            return;
+          }
           try {
             const preview = await targetApi.previewSlackUserLink(intent.token);
             const confirmed = window.confirm(

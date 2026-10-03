@@ -1043,10 +1043,17 @@ export class PlatformOnboardingService {
     this.createId = dependencies.newId ?? newId;
   }
 
-  async state(): Promise<WorkspaceOnboardingState> {
+  /**
+   * `guests` is whether the asking client opens a guest relationship
+   * (`clientOpensGuestWorkspaces`). Bindings reconcile against every
+   * relationship either way, so two devices on different builds agree on them;
+   * only the answer leaves guests out.
+   */
+  async state(options: { guests?: boolean } = {}): Promise<WorkspaceOnboardingState> {
     const identity = await this.loadPlatformIdentity();
     const discovery = await this.discover(identity);
-    const workspaces = await this.reconcileWorkspaceBindings(identity.platformUserId, discovery);
+    const workspaces = (await this.reconcileWorkspaceBindings(identity.platformUserId, discovery))
+      .filter((workspace) => options.guests || workspace.accessClass !== "guest");
     return {
       // Compatibility for desktop builds released before plural discovery.
       workspace: workspaces[0] ?? null,
@@ -1055,11 +1062,12 @@ export class PlatformOnboardingService {
     };
   }
 
-  async activate(region: Region, workspaceId: string): Promise<Session> {
+  async activate(region: Region, workspaceId: string, options: { guests?: boolean } = {}): Promise<Session> {
     const identity = await this.loadPlatformIdentity();
     const discovery = await this.discover(identity);
     const workspace = discovery.flatMap((item) => item.workspaces)
-      .find((item) => item.region === region && item.id === workspaceId);
+      .find((item) => item.region === region && item.id === workspaceId
+        && (options.guests || item.accessClass !== "guest"));
     if (!workspace) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
     await this.reconcileWorkspaceBindings(identity.platformUserId, discovery);
     return this.issueExistingSession(

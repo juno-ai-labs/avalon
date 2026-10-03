@@ -28,7 +28,7 @@ import {
   DESKTOP_DEEP_LINK_PROTOCOL,
   DESKTOP_DEEP_LINK_PROTOCOLS,
 } from '@rally/contracts/desktop-deep-link';
-import { RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
 import type { Region } from "@rally/contracts/regions";
 import { regions } from "@rally/contracts/regions";
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
@@ -236,6 +236,7 @@ import { WorkspaceSyncRelay } from './workspace-sync-relay';
 import { registerWorkspaceSyncRelayIpc } from './workspace-sync-relay-ipc';
 import {
   activeStoredCredential,
+  activeStoredCredentialIsGuest,
   activeStoredWorkspaceCredential,
   mergeStoredSession,
   parseStoredAuthSet,
@@ -244,7 +245,7 @@ import {
   sessionFromStoredState,
   sessionsShareBinding,
   storedAuthFromSession,
-  storedCredentialIsGuest,
+  memberStoredCredentials,
   storedProfileForCredential,
   storedWorkspaceCredential,
   type StoredAuth,
@@ -1139,7 +1140,7 @@ async function recoverGlobalSessionWithoutKeystore(): Promise<void> {
 
 async function clearCredentialsForLockdownRelogin(): Promise<void> {
   closeAndForgetArtifactWindows();
-  desktopPush.signOut(inMemoryAuthSet?.workspaces);
+  desktopPush.signOut(inMemoryAuthSet ? memberStoredCredentials(inMemoryAuthSet.workspaces, inMemoryProfileSet) : undefined);
   sessionLifecycleEpoch += 1;
   desktopAuthAttempts.clear();
   inMemoryAuthSet = null;
@@ -1279,7 +1280,9 @@ const developerSettingsFlagController = new DeveloperSettingsFlagController({
 const menuBarContentStore = new MenuBarContentStore({
   requestJson: rallyApiRequest,
   onChange: () => menuBarController.refresh(),
-  available: () => inMemorySession?.workspace?.accessClass !== 'guest',
+  // From storage rather than `inMemorySession`, which a login launch has not
+  // set when the status item first asks.
+  available: async () => !activeStoredCredentialIsGuest(await loadStoredAuthSet(), await loadStoredProfileSet()),
   logWarning: (message, error) => logWarn('rally', message, error),
 });
 
@@ -1354,10 +1357,8 @@ const menuBarController = new MenuBarController({
 });
 
 const desktopPush = new DesktopPushNotifications({
-  credentials: async () => {
-    const [auth, profiles] = await Promise.all([loadStoredAuthSet(), loadStoredProfileSet()]);
-    return (auth?.workspaces ?? []).filter((credential) => !storedCredentialIsGuest(profiles, credential));
-  },
+  // Every caller passes `memberStoredCredentials`: `/push-devices` refuses a guest.
+  credentials: async () => memberStoredCredentials((await loadStoredAuthSet())?.workspaces ?? [], await loadStoredProfileSet()),
   request: async (credential, path, init = {}) => {
     const ask = (auth: StoredAuth) => net.fetch(`${apiBaseForAuth(auth)}${path}`, {
       ...init, headers: { ...init.headers, Authorization: `Bearer ${auth.accessToken}` },
@@ -2260,6 +2261,8 @@ async function discoverWorkspaces(): Promise<WorkspaceDiscovery> {
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${credential.accessToken}`,
+        // Declares that this build opens a guest relationship it is offered.
+        [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION),
       },
     },
   ));
@@ -2509,6 +2512,7 @@ async function requestOnboardingSession(
         Accept: 'application/json',
         'Content-Type': 'application/json',
         Authorization: `Bearer ${credential.accessToken}`,
+        [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION),
         ...(operationId ? { [RALLY_HEADERS.OPERATION_ID]: operationId } : {}),
       },
       body: JSON.stringify(body),
@@ -2779,7 +2783,7 @@ async function logout(): Promise<void> {
   const failures: unknown[] = [];
   try {
     const stored = await loadStoredAuthSet();
-    desktopPush.signOut(stored?.workspaces);
+    desktopPush.signOut(stored ? memberStoredCredentials(stored.workspaces, await loadStoredProfileSet()) : undefined);
     try {
       await clearStoredSession();
     } catch (error) {

@@ -328,7 +328,7 @@ is the point of the module being there rather than beside either one.
 | Situation | Behavior |
 | --- | --- |
 | A refresh fails | The last good menu stays. A warning is logged once per attempt. |
-| The active workspace is a guest's | The menu is emptied and no request is made: `GET /workstreams` refuses a guest, and the last good menu belongs to the workspace this device switched away from, whose rows would open in this one. |
+| The active workspace is a guest's | Emptied; no request is made. |
 | Signed out | The menu is a **Recent** header over one disabled **Sign in to Rally** row, a rule, and the two trailing controls. Content refreshes are skipped entirely rather than failing once per pointer arrival. |
 | A label runs long | Truncated to 60 characters at the last word boundary in the final 20, hard otherwise. |
 | Nothing recent | A **Recent** header over one disabled row. This is the only state that draws that header: with rows, the recency groups name themselves. |

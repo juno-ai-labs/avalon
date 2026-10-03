@@ -2547,7 +2547,6 @@ export function Sidebar({
           closeable.
         */}
         {/* <OnboardingChecklist /> */}
-        {/* Brought back, it would be a footer item rather than drawn here. */}
 
         {footerItems && <SidebarFooterItems>{footerItems}</SidebarFooterItems>}
         <SidebarHorizontalLine className="sidebar-footer-line" />

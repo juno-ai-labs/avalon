@@ -10,22 +10,12 @@ Read this before changing plural onboarding, stored desktop sessions, workspace
 switching, background attention, leaving, or abandonment.
 
 Desktop platform discovery and activation offer guest relationships as well as
-memberships. A guest row carries `accessClass: guest` and a null role through
-discovery, the stored profile and the renderer's session, and discovery lists
-memberships first so a device with nothing selected opens the person's own
-Organization. The shell opens for a guest the way it does in the browser; what a
-guest is refused is decided by `useShellCapabilities().guest`, and the Mac app's
-own background work skips guest credentials: the account menu reads no attention
-for a guest row (`/workspace/attention` is member-only, so the row shows no
-count) nor shows the usage meter (`/workspace/usage`), push registration skips
-them (`/push-devices`), and the menu bar empties
-rather than asking for the Channel list. A push registration belongs to the
-account in a deployment, so a guest workspace's notifications still reach a
-device a membership there registered. A guest's Settings window opens on
-Account whatever section it was asked for, its Sidekicks window offers neither
-the library nor creation, and a guest is handed no connector setup on either
-host. A guest cannot leave from the Mac app: `DELETE /workspaces/:id/membership`
-is member-only, and Leave lives in the member-only Organization section.
+memberships, to a client that declares `GUEST_WORKSPACES_CLIENT_CONTRACT`;
+memberships are listed first. What a guest is refused is decided by
+`useShellCapabilities().guest`, and the Mac app's background work (attention,
+push registration, the menu bar) skips guest credentials, because those routes
+are member-only. A guest cannot leave from the Mac app: Leave is in the
+member-only Organization section. The 2026-10-03 entry lists every path.
 The ordinary member directory includes guests with `accessClass: guest`, a null
 administrative role and a Guest badge. It also carries the current incarnation
 and revision. An owner or administrator can use Make member in desktop Settings;
@@ -414,7 +404,12 @@ now skip a guest: background attention in the account menu, push registration
 the Sidekicks window's library and creation routes. A guest's Channel rows
 offer only Share, a stale new-Channel link goes to the landing route, and the
 renderer renews the session when the workspace profile reports a different
-access class, so a promotion takes effect without waiting out the access token. `AppSessionValueProvider`
+access class, so a promotion takes effect without waiting out the access token.
+Speak and the Slack-link deep link are withheld from a guest, sign-out skips
+their push deregistration, and the menu bar decides from the stored profile,
+so a login launch with a guest workspace active asks nothing. Global offers
+guest rows only to a client declaring contract 3 (`clientOpensGuestWorkspaces`);
+bindings still reconcile against every relationship. `AppSessionValueProvider`
 withholds connector setup and Sidekick creation from a guest on both hosts,
 replacing the browser shell's own copy of that rule.
 
@@ -428,13 +423,15 @@ registration ended the loop before the credentials after it.
 to guests. Both are Organization-wide reads or registrations that need a
 product decision about what a guest is told, not a compatibility fix. Ordering
 discovery by `joined_at` alone, which lands a fresh sign-in in whichever
-Organization the person was shared into first.
+Organization the person was shared into first. Lifting the filter for every
+client, which hands shipped desktops guest rows they would fail on.
 
-**Consequences:** A desktop build from before guest relationships (migration
-0109, 2026-09-16) parses discovery all-or-nothing and rejects a guest row, so an
-account with a guest relationship cannot use discovery on such a build until it
-updates. A new Electron path that calls a member-only route must check guest
-first; `desktop-guest-collaboration.test.tsx` mounts the real `App` for a guest in
+**Consequences:** A build that does not declare contract 3, including every
+desktop shipped before this change, is offered no guest rows and cannot activate
+one, so it never meets the member-only paths above. A push registration belongs
+to the account in a deployment, so a guest workspace's notifications still reach
+a device a membership there registered. A new Electron path that calls a
+member-only route must check guest first; `desktop-guest-collaboration.test.tsx` mounts the real `App` for a guest in
 the main, Settings and Sidekicks windows and fails on any such request. The
 browser's list of other deployments' workspaces uses the same discovery, so it
 now includes guest relationships there too.
