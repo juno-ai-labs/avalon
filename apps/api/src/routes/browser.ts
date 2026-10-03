@@ -42,6 +42,14 @@ function writeCookie(c: Context<HonoAppEnv>, value: string, expiresAt: string) {
   setCookie(c,cookie.name,value,{ ...cookie.attributes,expires:new Date(expiresAt) });
 }
 
+/**
+ * The business route families a browser cookie may reach. The member shell
+ * needs the Space directory, onboarding, Suggested Work, digests, push devices
+ * and workspace membership as well as what guests use; `auth`, `internal`,
+ * `ingest`, `access`, `slack`, `sideline` and `dev` stay outside.
+ */
+const BROWSER_ROUTE_FAMILIES = /^\/(conversations|sharing|resources|feature-flags|telemetry|workspace|workspaces|workstreams|spaces|projects|onboarding|work-opportunities|digest|push-devices|sidekicks|automations|connections|favicons|search|speech|realtime)(\/|$)/u;
+
 /** Same-origin cookie transport over the existing regional business API. */
 export function createBrowserRoutes(dispatch: (request:Request, context:Context<HonoAppEnv>) => Response | Promise<Response>) {
   const routes = new Hono<HonoAppEnv>();
@@ -116,9 +124,10 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     const url = new URL(c.req.url);
     url.pathname = url.pathname.replace(/^\/browser\/api\/[^/]+/u,"");
     // Keep auth/token minting, ingress and internal routes outside this adapter.
-    // Business routes retain their ordinary role and scope authorization; lite
-    // describes the UI, not an additional permission system.
-    if (!/^\/(conversations|sharing|resources|feature-flags|telemetry|workspace|workstreams|sidekicks|automations|connections|favicons|search|speech|realtime)(\/|$)/u.test(url.pathname)) {
+    // Business routes retain their ordinary role and scope authorization; the
+    // browser's guest and member shells describe the UI, not an additional
+    // permission system.
+    if (!BROWSER_ROUTE_FAMILIES.test(url.pathname)) {
       throw new ApiError(404,"not_found","This browser operation is unavailable");
     }
     if (c.req.header("upgrade")) throw new ApiError(400,"browser_socket_route_required","Use the socket ticket endpoint");
