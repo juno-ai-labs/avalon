@@ -5,6 +5,7 @@ import { EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema 
 export { EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema } from "@rally/contracts/browser-session";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { browserOrigin } from "../lib/browser-origin";
 import { decryptString, encryptString, hmacSha256, randomToken, timingSafeEqualText } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
 import { resolveVerifiedEmailIdentity } from "./login-identity-service";
@@ -30,12 +31,12 @@ const refused = () => new ApiError(401,"email_login_invalid","This sign-in link 
 export function configuredEmailLoginPolicy(env: Env): EmailLoginPolicy {
   try {
     if (!env.RESEND_FROM_EMAIL?.trim() || !env.EMAIL_LOGIN_POLICY_JSON || !env.BROWSER_APP_ORIGIN || !env.SESSION_SIGNING_KEY || !env.OAUTH_STATE_ENCRYPTION_KEY) throw new Error("missing");
-    const origin = new URL(env.BROWSER_APP_ORIGIN);
-    if (origin.origin !== env.BROWSER_APP_ORIGIN || (origin.protocol !== "https:" && env.APP_ENV !== "development")) throw new Error("origin");
+    browserOrigin(env);
     return EmailLoginPolicySchema.parse(JSON.parse(env.EMAIL_LOGIN_POLICY_JSON));
   } catch (error) {
     logWarn(env, "email_login_configuration_invalid", {
       reason: error instanceof z.ZodError ? describeZodIssues(error)
+        : error instanceof ApiError ? error.code
         : error instanceof SyntaxError ? "EMAIL_LOGIN_POLICY_JSON:invalid_json" : "required_configuration_missing_or_invalid",
     });
     throw new ApiError(503,"email_login_unavailable","Email sign-in is not configured");
