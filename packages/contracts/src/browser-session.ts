@@ -7,9 +7,8 @@ import { HttpsUrlSchema } from "./url-schemas";
 export const BrowserSessionSchema = SessionSchema.pick({ user: true, workspace: true, expiresAt: true });
 export type BrowserSession = z.infer<typeof BrowserSessionSchema>;
 export const BrowserWorkspacesSchema = z.object({ workspaces: z.array(WorkspaceSchema) });
-/** Starts Google sign-in for a tab; `returnPath` is a path on the browser host. */
-export const BrowserGoogleStartSchema = z.strictObject({ returnPath: z.string().max(2048).optional() });
-/** Where the tab goes next: Google's authorization page. */
+/** Starts Google sign-in for a browser; `returnPath` is a path on the browser host. */
+export const BrowserGoogleStartSchema = z.strictObject({ returnPath: z.string().optional() });
 export const BrowserGoogleStartedSchema = z.object({ url: HttpsUrlSchema });
 export const EmailLoginStartSchema = z.strictObject({
   challengeId: IdSchema,
