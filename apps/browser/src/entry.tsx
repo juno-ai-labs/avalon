@@ -1,5 +1,6 @@
-import { clearAllDrafts } from '../../desktop/src/renderer/lib/draft-cache';
-import { useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
+import { clearAllDrafts as clearAllDraftsOnly } from '../../desktop/src/renderer/lib/draft-cache';
+import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema } from "@rally/contracts/regions";
 import { BrowserSessionSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
@@ -13,10 +14,15 @@ import { parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/
 import { WorkspaceIdSchema } from "@rally/contracts";
 
 const initialRegion = configuredRegions[0]!;
+
+/** An account change wipes drafts and, for the member shell, the transcript cache. */
+async function clearAllDrafts(): Promise<void> {
+  await Promise.all([clearAllDraftsOnly(), clearAllLocalCache()]);
+}
 type Proof = { region: string; challengeId: string; credential: string; redemptionId: string };
 
 /** This entry has no account setup step. Collaboration mounts after authentication. */
-export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void) => ReactNode } = {}) {
+export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void, onRevalidate: () => void) => ReactNode } = {}) {
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
   const [workspaceSession, setWorkspaceSession] = useState<BrowserSession | null>(null);
   const [region, setRegion] = useState(initialRegion);
@@ -236,6 +242,13 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     finally { setBusy(false); }
   }
 
+  // The member shell keys its session value, and so its sockets, on these.
+  // Keep them stable across renders; each call reads the latest closure.
+  const latestSignOut = useRef(signOut);
+  useEffect(() => { latestSignOut.current = signOut; });
+  const signOutStable = useCallback(() => { void latestSignOut.current(); }, []);
+  const revalidate = useCallback(() => refreshSession.current?.(false), []);
+
   async function acceptInvitation() {
     if (!invitation || busy) return;
     const read = sessionRead.current;
@@ -268,7 +281,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   if (!proof && destination && workspaceSession && session && workspaceSession.user.id === session.user.id && renderCollaboration) {
     return <div className="browser-shell">
       {error && <p role="alert">{error}</p>}
-      <div className="browser-conversation">{renderCollaboration(destination.region, workspaceSession, () => { void signOut(); })}</div>
+      <div className="browser-conversation">{renderCollaboration(destination.region, workspaceSession, signOutStable, revalidate)}</div>
     </div>;
   }
 
