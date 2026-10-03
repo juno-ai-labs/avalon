@@ -826,11 +826,24 @@ describe("space dashboard conversation page", () => {
         return state.success && state.data.workstream?.title === "Renamed roadmap";
       })).toBe(true);
     }, { timeout: 5_000 });
-    const guestRows = guest.frames.flatMap((frame) => {
-      const state = WorkspaceWorkstreamStateEventSchema.safeParse(frame);
-      return state.success && state.data.workstream ? [state.data.workstream.id] : [];
-    });
-    expect(guestRows).toEqual([]);
+    // Not a row, and not a tombstone either: its id alone names the Channel.
+    expect(guest.frames.filter((frame) => WorkspaceWorkstreamStateEventSchema.safeParse(frame).success)).toEqual([]);
+
+    // Foregrounding it records nothing and answers nothing, and the socket
+    // stays open: a guest's own Channel (a shared Breakout) is not one this
+    // object can check, so the same message must not close it.
+    guest.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: CHANNEL_A }));
+    // Its rail is not theirs either.
+    const railRequestId = "00000000-0000-7000-8000-00000000d1fe";
+    guest.socket.send(JSON.stringify({ type: "channel_rails", requestId: railRequestId, workstreamIds: [CHANNEL_A] }));
+    await vi.waitFor(() => {
+      expect(guest.frames.some((frame) => (frame as { requestId?: string }).requestId === railRequestId)).toBe(true);
+    }, { timeout: 5_000 });
+    const rails = guest.frames.find((frame) => (frame as { requestId?: string }).requestId === railRequestId) as { rails: unknown[]; unavailable: string[] };
+    expect(rails.rails).toEqual([]);
+    expect(rails.unavailable).toEqual([CHANNEL_A]);
+    expect(guest.frames.some((frame) => (frame as { type?: string }).type === "workspace_workstream_recency")).toBe(false);
+    expect(guest.socket.readyState).toBe(WebSocket.OPEN);
   });
 
   it("keeps Channel badge totals inside the parent Channel and guest visibility boundaries", async () => {
