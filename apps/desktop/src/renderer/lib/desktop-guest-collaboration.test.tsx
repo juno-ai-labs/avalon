@@ -32,7 +32,12 @@ const directory: DesktopWorkspaceOnboardingState = {
  */
 const MEMBER_ONLY = /^\/(workspace\/(?!socket$)|workspaces|workstreams|sideline|work-opportunities|projects|spaces|digest|push-devices|connections|favicons|search|speech|realtime|(sidekicks|automations)\/?$)/u;
 
+const spaceId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+
 let requested: string[];
+let refreshes: number;
+/** What `GET /workspace` reports: the guest, unless a test promotes them. */
+let served: typeof workspace | typeof member;
 let attention: string[];
 
 /** Every bridge method the shell does not need answered resolves to nothing. */
@@ -49,6 +54,7 @@ function bridge(): RallyDesktopBridge {
       return { unreadCount: 0, attentionCount: 0 };
     },
     consumePendingDeepLinks: async () => [],
+    refreshSession: async () => { refreshes++; return session; },
     // No main window is publishing its socket, so Settings and Sidekicks dial their own.
     getWorkspaceSyncSource: async () => ({ revision: 0, source: null }),
     openRealtimeSocket: async () => ({ socketId: 'socket' }),
@@ -65,12 +71,14 @@ function bridge(): RallyDesktopBridge {
 beforeEach(() => {
   requested = [];
   attention = [];
+  refreshes = 0;
+  served = workspace;
   vi.stubGlobal('rally', bridge());
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   vi.stubGlobal('fetch', vi.fn(async (input: string) => {
     const path = new URL(String(input)).pathname;
     requested.push(path);
-    if (path === '/workspace') return Response.json(workspace);
+    if (path === '/workspace') return Response.json({ ...served, id: workspace.id });
     if (path === '/workspace/socket') return Response.json({ url: `wss://api.rallywith.ai/socket/workspaces/${workspace.id}`, ticket: 'ticket' });
     if (path === '/feature-flags') return Response.json({ multipleWorkspacesEnabled: true, liveArtifactsEnabled: false });
     if (path === '/sharing/navigation') return Response.json({ spaces: [], workstreams: [] });
@@ -104,6 +112,21 @@ it('opens a guest in the main window without asking for anything a guest is refu
   const triggers = await screen.findAllByRole('button', { name: /Guest/u });
   fireEvent.pointerDown(triggers[triggers.length - 1]!, { button: 0, ctrlKey: false });
   await screen.findByRole('menuitem', { name: /Settings/u });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+  expect(refused()).toEqual([]);
+  // The profile agrees with the session, so nothing is renewed early.
+  expect(refreshes).toBe(0);
+});
+
+it('renews the session when the Organization reports a promotion', async () => {
+  served = member;
+  await open('', '#/');
+  await waitFor(() => expect(refreshes).toBe(1));
+});
+
+it('lands a stale new-Channel link on the guest\'s own conversations', async () => {
+  await open('', `#/spaces/${spaceId}/workstreams/new`);
+  await waitFor(() => expect(window.location.hash).not.toContain('/workstreams/new'));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
   expect(refused()).toEqual([]);
 });

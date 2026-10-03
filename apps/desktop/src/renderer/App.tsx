@@ -198,7 +198,7 @@ function endSessionFor(
 }
 
 export function WorkspaceApp(): React.JSX.Element {
-  const { api, session, signOut, signOutIfCredentialCleared, surrenderActiveWorkspace } = useAppSession();
+  const { api, session, refreshSession, signOut, signOutIfCredentialCleared, surrenderActiveWorkspace } = useAppSession();
   // Every surface used to hold its whole tree behind this one read — the screen
   // below was `Opening workspace…` until it landed, so a window opened onto
   // Settings had not mounted the settings screen, let alone started any of its
@@ -211,6 +211,14 @@ export function WorkspaceApp(): React.JSX.Element {
   // is no longer good enough for a gate.
   const workspace = useWorkspaceQuery({ api, session });
   const { guest } = useShellCapabilities();
+  // What a guest may do is read from the session, which is only renewed on
+  // its own schedule. A promotion or demotion refetches this profile at once,
+  // so when the two disagree the session is renewed now and the shell
+  // follows, rather than a promoted member waiting out the access token.
+  const servedGuest = workspace.data ? workspace.data.currentUser.accessClass === 'guest' : guest;
+  useEffect(() => {
+    if (servedGuest !== guest) void refreshSession().catch(() => undefined);
+  }, [guest, refreshSession, servedGuest]);
   useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),

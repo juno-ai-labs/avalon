@@ -1517,6 +1517,31 @@ describe('Sidebar channel markers', () => {
     await waitFor(() => expect(onRemoveChannelFromSpace).toHaveBeenCalledWith(hiring.id, target.id));
   });
 
+  it('offers a guest only the row actions their routes admit', async () => {
+    const hiring = space();
+    const target = placedIn(workstream('guest-row', 'Quarterly planning', 'completed'), hiring.id);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            onSignOut={vi.fn()}
+            spaces={[hiring]}
+            spacesReadOnly
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    selectSpace('Hiring');
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+
+    const menuItems = await screen.findAllByRole('menuitem');
+    expect(menuItems.map((item) => item.textContent?.trim())).toEqual(['Share']);
+  });
+
   it('explains that a channel cannot be removed from its final space', async () => {
     const hiring = space();
     const target = placedIn(workstream('final-placement', 'Quarterly planning', 'completed'), hiring.id);
