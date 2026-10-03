@@ -57,7 +57,7 @@ export default {
     const socketOrigin = `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}`;
     // Shared dialogs inject scroll-lock CSS and components use dynamic styles,
     // matching the desktop renderer's style policy. Scripts remain self-only.
-    response.headers.set("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ${socketOrigin}; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
+    response.headers.set("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ${socketOrigin}; worker-src 'self'; frame-src https://*.${env.ARTIFACT_SERVING_DOMAIN}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
     return response;
   },
 } satisfies ExportedHandler<Cloudflare.Env>;

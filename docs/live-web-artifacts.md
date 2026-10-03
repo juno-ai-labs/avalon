@@ -294,13 +294,37 @@ is the only place that can forward into it.
   can spell those headers itself. `GET` and `HEAD` may fall back to the public
   representation, while every unsafe method still requires a valid Rally
   viewer session.
-- **The renderer never embeds, fetches, or parses artifact content.** An
+- **The desktop renderer never embeds, fetches, or parses artifact content.** An
   `<iframe>` would widen the renderer's CSP to a wildcard artifact host and graft
   remote model-authored content into the application DOM as a navigable,
   `postMessage`-reachable child. The main process owns both viewing surfaces and
   composites the preview over the rail; the renderer can only *ask for an
   artifact*, and the URL it supplies is checked here against the serving domain
   on a label boundary before anything loads.
+- **The browser client is the one exception, and it frames.** A browser has no
+  main process to composite a view, so its guest and member shells preview a
+  live artifact in an `<iframe>` with
+  `sandbox="allow-scripts allow-same-origin allow-forms"`, a constant beside the
+  element in `site-resource-detail.tsx`.
+  `allow-same-origin` keeps the artifact in *its own* origin on the artifact
+  domain, never the app's, which its code redemption needs. The serving Worker's
+  `allowBrowserFraming` gives a response carrying the default policy
+  `artifactContentSecurityPolicy(origin)`, naming exactly `BROWSER_APP_ORIGIN`,
+  and drops `X-Frame-Options`; an unset or unreadable origin leaves every
+  response closed. So the browser client may
+  frame an artifact and nothing else may, including another artifact. A
+  redemption from inside the frame (`Sec-Fetch-Dest: iframe`) sets the viewer
+  cookie `SameSite=None; Partitioned`, kept for this artifact under that one
+  top-level site; a top-level navigation keeps `Lax`. A browser that refuses
+  the partitioned cookie, such as Safari, which blocks third-party cookies,
+  shows the public representation, where writes answer 401. The shell's
+  `frame-src` admits the whole artifact domain, so the serving Worker refuses
+  a framed navigation that arrives `same-site`
+  (`isFramedHopFromAnotherArtifact`): that is one artifact moving its frame to
+  another, the hop the desktop's `confineToArtifactOrigin` refuses. What is
+  accepted:
+  model-authored content renders inside the app's window and can `postMessage`
+  its parent, which the app does not listen for.
 - **The pane distinguishes "not attempted" from "refused".** A boolean cannot,
   and the gap between access arriving and the main process answering is not a
   failure — a component that used one flashes an unavailable message on every
@@ -537,6 +561,26 @@ mint one; that is inside that console's stated authority rather than a boundary
 this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
 ## Changelog
+
+### 2026-10-03 — The browser client may frame an artifact
+
+**What changed:** With `BROWSER_APP_ORIGIN` configured, artifact responses
+allow that one origin in `frame-ancestors` and drop `X-Frame-Options`, and a
+redemption inside a frame sets a partitioned `SameSite=None` viewer cookie. The
+browser client, guest and member shells alike, previews live artifacts in a
+sandboxed iframe.
+
+**Why:** A browser has no main process to composite the preview, and the full
+browser client PRD chose an inline preview over opening a tab (decision 6).
+
+**Considered and rejected:** Keeping the new-tab pop-out only. A `frame-ancestors` allowlist of every Rally surface, when only the
+browser client frames.
+
+**Consequences:** This reverses, for one origin, the rule that nothing Rally
+owns frames an artifact. The desktop still composites. Changing who may frame
+an artifact is a change to `allowBrowserFraming` and this document together.
+
+Shipped in #1082. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
 ### 2026-09-21 — Receipt drift cannot block a live page
 
