@@ -19,10 +19,14 @@ const api = vi.hoisted(() => ({
 const retainedSocket = vi.hoisted(() => vi.fn());
 const currentSession = vi.hoisted(() => vi.fn());
 
-vi.mock('../lib/collaboration-session', () => ({
-  useOptionalCollaborationSession: () => null,
-  useCollaborationSession: () => ({ api, session: currentSession() }),
-}));
+vi.mock('../lib/collaboration-session', async (importOriginal) => {
+  const actual = await importOriginal<typeof CollaborationSessionModule>();
+  return {
+    useOptionalCollaborationSession: () => null,
+    useCollaborationSession: () => ({ api, session: currentSession() }),
+    useShellCapabilities: () => actual.shellCapabilities({ host: 'desktop', session: currentSession() }),
+  };
+});
 
 vi.mock('../lib/use-client-feature-flags', () => ({
   useClientFeatureFlags: () => ({ data: {} }),
@@ -70,6 +74,7 @@ import { useUiStore } from '../lib/ui-store';
 import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import type { WorkstreamAutomationSummary, WorkstreamBoot, WorkstreamDetail } from '../lib/types';
+import type * as CollaborationSessionModule from '../lib/collaboration-session';
 
 const workstreamId = '00000000-0000-7000-8000-000000000901';
 const childId = '00000000-0000-7000-8000-000000000902';

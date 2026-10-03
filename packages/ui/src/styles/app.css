@@ -7610,6 +7610,10 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .single-sidebar .channel-row-subtitle { font-size: 13px; line-height: 18px; }
 .single-sidebar .channel-row-time { color: var(--av-sys-color-text-disabled); }
 .single-sidebar .sidebar-footer-line { margin-inline: 16px; width: auto; }
+/* The browser's Mac app download. The slot pads the row as `.sidebar-scroll`
+   pads a Space row, compact included, so it lines up with the rows above. */
+.sidebar-download-slot { flex: none; padding: 4px 12px 0; transition: padding var(--sidebar-layout-motion); }
+.resizable-sidebar.is-compact .sidebar-download-slot { padding-inline: calc((100% - 54px) / 2); }
 .single-sidebar .sidebar-footer { padding-inline: 10px; }
 .single-sidebar .account-trigger .avatar { height: 28px; width: 28px; }
 .single-sidebar .account-trigger { font-weight: 500; }

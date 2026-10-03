@@ -14,6 +14,7 @@ import { ConnectorInstallationProviders, PERSONAL_COLOR_KEYS, OnboardingJourneyS
 import { Button, ConnectorMark, InlineError, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor, personalColorInk } from '../components/personal-avatar';
 import { useAppSession } from '../lib/app-session';
+import { useShellCapabilities } from '../lib/collaboration-session';
 import { desktopBridge } from '../lib/platform';
 import { OnboardingIntroduction } from '../components/onboarding-introduction';
 import type { Workspace } from '../lib/types';
@@ -26,8 +27,11 @@ export function useOnboardingAccount(): AccountOnboarding | null { return useCon
 
 export function AccountOnboardingGate({ children }: { children: ReactNode }): React.JSX.Element {
   const { api, session, signOut, updateCurrentUserName, getAccountOnboarding, updateAccountOnboarding } = useAppSession();
+  const { guest } = useShellCapabilities();
   const [previewed, setPreviewed] = useState(false);
-  const members = useQuery({ queryKey: ['workspace-members'], queryFn: () => api!.getWorkspaceMembers(), enabled: Boolean(api && session?.workspace) });
+  // A guest has no member directory to read; their people come from each
+  // conversation's own detail.
+  const members = useQuery({ queryKey: ['workspace-members'], queryFn: () => api!.getWorkspaceMembers(), enabled: Boolean(api && session?.workspace && !guest) });
   const account = useQuery({ queryKey: ['account-onboarding', session?.user.email],
     queryFn: () => getAccountOnboarding(), enabled: Boolean(session), refetchOnWindowFocus: 'always' });
   const queryClient = useQueryClient();
@@ -66,7 +70,7 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
     if (account.error) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
     return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
   }
-  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={account.isPending || account.isFetching}><ConversationAdmissionProvider allowed={Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{account.data?.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
+  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={account.isPending || account.isFetching}><ConversationAdmissionProvider allowed={guest || Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{!guest && account.data?.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
 }
 
 export function OnboardingPage({ title, subtitle, children, footer }: { title: string; subtitle?: string; children: ReactNode; footer?: ReactNode }): React.JSX.Element {
@@ -178,11 +182,14 @@ function AccountProfileFields({ editor, profileDetails }: { editor: AccountProfi
 export function WorkspaceOnboardingJourney({ workspace, children }: { workspace: Workspace | null; children: ReactNode }): React.JSX.Element {
   const account = useOnboardingAccount();
   const { api, session, setPendingConnectorOAuth } = useAppSession();
+  const { guest } = useShellCapabilities();
+  // The journey sets up an Organization; a guest has none of theirs to set up.
+  const eligible = Boolean(account?.eligible) && !guest;
   const connectorStartAvailable = useConnectorStartAvailable(api, session);
   const queryClient = useQueryClient();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const key = ['onboarding-journey', workspace?.region, workspace?.id, workspace?.currentUser.id];
-  const journey = useQuery({ queryKey: key, queryFn: () => api!.getOnboardingJourney(), enabled: Boolean(api && workspace && account?.eligible) });
+  const journey = useQuery({ queryKey: key, queryFn: () => api!.getOnboardingJourney(), enabled: Boolean(api && workspace && eligible) });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -215,7 +222,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   };
   const content = (allowed: boolean): React.JSX.Element => <ConversationAdmissionProvider allowed={allowed}>{children}</ConversationAdmissionProvider>;
   if (!workspace) return content(false);
-  if (!account?.eligible) return content(true);
+  if (!eligible) return content(true);
   if (journey.error && !journey.data) return <OnboardingPage title="Resume your setup" footer={<Button onClick={() => void journey.refetch()}>Retry</Button>}><InlineError>{journey.error.message}</InlineError></OnboardingPage>;
   const state = journey.data;
   // A workspace session can render while setup progress loads; only a known

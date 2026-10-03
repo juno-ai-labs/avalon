@@ -27,16 +27,18 @@ export interface ConnectorSetupCapability {
 export interface CollaborationSessionValue {
   api: RallyApi | null;
   session: ClientSession | null;
-  /** The lite browser uses existing connectors and supplies no setup capability. */
+  /** Which app is drawing this: the Mac app or a browser tab. */
+  host: 'desktop' | 'browser';
+  /** Absent where a host cannot start a connection; existing connectors still work. */
   connectorSetup: ConnectorSetupCapability | null;
   createSidekick: (() => Promise<void>) | null;
 }
 
 const CollaborationSessionContext = createContext<CollaborationSessionValue | null>(null);
 
-export function CollaborationSessionProvider({ api, session, connectorSetup = null, createSidekick = null, children }:
-  PropsWithChildren<Pick<CollaborationSessionValue, 'api' | 'session'> & Partial<Pick<CollaborationSessionValue, 'connectorSetup' | 'createSidekick'>>>): React.JSX.Element {
-  const value = useMemo(() => ({ api, session, connectorSetup, createSidekick }), [api, session, connectorSetup, createSidekick]);
+export function CollaborationSessionProvider({ api, session, host = 'desktop', connectorSetup = null, createSidekick = null, children }:
+  PropsWithChildren<Pick<CollaborationSessionValue, 'api' | 'session'> & Partial<Pick<CollaborationSessionValue, 'host' | 'connectorSetup' | 'createSidekick'>>>): React.JSX.Element {
+  const value = useMemo(() => ({ api, session, host, connectorSetup, createSidekick }), [api, session, host, connectorSetup, createSidekick]);
   return <CollaborationSessionContext.Provider value={value}>{children}</CollaborationSessionContext.Provider>;
 }
 
@@ -48,4 +50,33 @@ export function useCollaborationSession(): CollaborationSessionValue {
   const context = useOptionalCollaborationSession();
   if (!context) throw new Error('Collaboration requires a CollaborationSessionProvider');
   return context;
+}
+
+/**
+ * What the person in front of this shell can do, from the two facts that
+ * decide it: which app is drawing (`host`) and whether they belong to the
+ * Organization or were shared into some of its conversations (`guest`).
+ *
+ * The one place a surface asks. Members and guests, in the Mac app or a tab,
+ * mount the same shell; what differs is read here rather than by a second
+ * shell. A guest has no member directory, Space directory, Channel list,
+ * workspace settings or account onboarding: those routes refuse them, so the
+ * shell neither requests nor offers them. The server still authorizes every
+ * call; this only keeps the shell from making ones that would be refused.
+ */
+export interface ShellCapabilities {
+  host: 'desktop' | 'browser';
+  guest: boolean;
+}
+
+export function shellCapabilities(value: Pick<CollaborationSessionValue, 'host' | 'session'> | null): ShellCapabilities {
+  return {
+    host: value?.host ?? 'desktop',
+    guest: value?.session?.workspace?.accessClass === 'guest',
+  };
+}
+
+export function useShellCapabilities(): ShellCapabilities {
+  const value = useOptionalCollaborationSession();
+  return useMemo(() => shellCapabilities(value), [value?.host, value?.session?.workspace?.accessClass]);
 }
