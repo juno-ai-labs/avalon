@@ -8,7 +8,7 @@ it('maps provider answers without disabling devices on a provider credential fai
     INFERENCE_PRICING_CACHE: { get: async () => ({ token: 'cached', iat: Math.floor(Date.now() / 1000) }), delete: del } });
   const request = vi.fn(async () => Response.json({ reason: 'TooManyProviderTokenUpdates' }, { status: 429 }));
   vi.stubGlobal('fetch', request);
-  const device = { id: 'device', token: 'ab'.repeat(32), topic: 'ai.rallywith.desktop', apns_environment: 'production', last_seen_at: '2026-09-14', transport: 'apns', web_push_p256dh: null, web_push_auth: null };
+  const device = { id: 'device', token: 'ab'.repeat(32), topic: 'ai.rallywith.desktop', apns_environment: 'production', last_seen_at: '2026-09-14', transport: 'apns' as const, web_push_p256dh: null, web_push_auth: null };
   expect((await sendApns(env, device, '{}', 'collapse')).outcome).toBe('provider_token_throttled');
   expect(del).not.toHaveBeenCalled();
   request.mockResolvedValueOnce(Response.json({ reason: 'InvalidProviderToken' }, { status: 403 }));
@@ -26,8 +26,8 @@ it('sends a sandbox device to Apple sandbox and a production device to Apple pro
     INFERENCE_PRICING_CACHE: { get: async () => ({ token: 'cached', iat: Math.floor(Date.now() / 1000) }), delete: vi.fn() } });
   const request = vi.fn(async () => new Response(null, { status: 200 }));
   vi.stubGlobal('fetch', request);
-  const production = { id: 'mac', token: 'ab'.repeat(32), topic: 'ai.rallywith.desktop', apns_environment: 'production', last_seen_at: '2026-09-14', transport: 'apns', web_push_p256dh: null, web_push_auth: null };
-  const sandbox = { id: 'phone', token: 'cd'.repeat(32), topic: 'ai.rallywith.ios', apns_environment: 'sandbox', last_seen_at: '2026-09-14', transport: 'apns', web_push_p256dh: null, web_push_auth: null };
+  const production = { id: 'mac', token: 'ab'.repeat(32), topic: 'ai.rallywith.desktop', apns_environment: 'production', last_seen_at: '2026-09-14', transport: 'apns' as const, web_push_p256dh: null, web_push_auth: null };
+  const sandbox = { id: 'phone', token: 'cd'.repeat(32), topic: 'ai.rallywith.ios', apns_environment: 'sandbox', last_seen_at: '2026-09-14', transport: 'apns' as const, web_push_p256dh: null, web_push_auth: null };
   expect((await sendApns(env, production, '{}', 'collapse')).outcome).toBe('sent');
   expect((await sendApns(env, sandbox, '{}', 'collapse')).outcome).toBe('sent');
   expect(request).toHaveBeenNthCalledWith(1, `https://api.push.apple.com/3/device/${production.token}`, expect.anything());

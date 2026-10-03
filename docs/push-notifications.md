@@ -1,15 +1,19 @@
-# Apple push notifications
+# Push notifications
 
-Rally sends mentions and additions to signed-in Macs and iPhones through APNs, using the
-existing workspace notification intent. Push is enabled for everyone from launch through
+Rally sends mentions and additions to signed-in Macs and iPhones through APNs,
+and to signed-in browser tabs through Web Push, using the existing workspace
+notification intent. Each device registers with one transport and is sent only
+that transport's payload. Push is enabled for everyone from launch through
 `push-notifications-enabled`; Slack also sends when available, and email is the
 fallback when neither Slack nor push accepted the notification.
 
 ## Where the code lives
 
 - `apps/api/src/services/push-device-service.ts`: regional D1 device/session registry.
-- `apps/api/src/services/push/`: provider authentication and payload rendering.
-- `apps/api/src/queues/push-delivery-consumer.ts`: intent read, existing access check, send, receipt.
+- `apps/api/src/services/push/`: provider authentication and payload rendering; `apns-transport.ts` for Apple, `web-push-transport.ts` for browsers.
+- `apps/api/src/queues/push-delivery-consumer.ts`: intent read, existing access check, send by transport, receipt.
+- `packages/contracts/src/push-notifications.ts`: the registration contract and the Web Push service host allowlist (`isWebPushServiceUrl`).
+- `apps/desktop/src/renderer/lib/web-push.ts` and `apps/browser/public/sw.js`: browser subscription and the service worker that shows the notification.
 - `apps/desktop/src/main/push-notifications.ts` and `apps/desktop/native/push-notifications/`: Mac registration and native response/permission callbacks.
 - `apps/ios/Rally/App/RallyPush.swift`, `RallyAppDelegate.swift`, and `AppModel` reconcile: iPhone registration, permission, and tap routing.
 
@@ -56,8 +60,10 @@ APNs retains undelivered alerts for
 no coordination object is introduced. Enqueue and send share the same
 production/staging availability check. Queue retries and dead-letter queues own
 transient delivery failures. Provider-auth failures notify operations without
-disabling devices; one provider fault stops the remaining batch sends and
-produces one operator notice per batch. Token-update throttling keeps the cached
+disabling devices. A provider fault is scoped to its transport: the rest of the
+batch skips that transport's devices and retries those messages, the other
+transport keeps sending, and each faulted transport produces one operator
+notice per batch. Token-update throttling keeps the cached
 provider token.
 
 The main process uses Electron for APNs registration and a small native delegate
@@ -109,13 +115,40 @@ subscription carries no timestamp and never comes back. Enqueueing requires a
 live device whose own transport is available, so either transport can run
 without the other configured. A `401` or `403` means the push service refused
 the deployment's VAPID credentials: like an APNs provider-token failure, the
-message retries and operators get one notice. Keys that are not a P-256 point
-retire the device without a request; registration already checks their shape.
-A device with any other transport is rejected rather than sent to APNs.
+message retries and operators get one Web Push notice, while APNs devices keep
+receiving. Keys that are not a P-256 point retire the device without a request;
+registration already checks their shape. A device with any other transport is
+rejected rather than sent to APNs.
 
-The service worker shows the title and body, groups by work stream with `tag`,
-and opens the canonical Channel path on the browser host, focusing a tab
-already there.
+A subscription endpoint is a URL the Worker POSTs to, so only known push
+services are accepted: `fcm.googleapis.com`, `updates.push.services.mozilla.com`,
+`web.push.apple.com` and any `*.notify.windows.com`, over HTTPS, with no
+userinfo and the default port. The contract refuses any other endpoint at
+registration, and the transport checks again before each send and retires a
+stored row that fails. The request does not follow redirects; a `3xx` is a
+rejection. Only an allowlisted push service can report a credential failure, so
+a hostile endpoint cannot pause a batch or notify operations. No request
+timeout is set; that number is the team's to choose.
+
+The service worker shows the title and body. Its `tag` is the intent's collapse
+id: a Web Notification with the same tag replaces the earlier one rather than
+grouping with it, so a retry replaces itself and two mentions in one channel
+both stay on screen. There is no browser counterpart to APNs `thread-id`
+grouping. A click opens the link's path and query on the worker's own origin,
+never another host, focusing a tab already on that page or navigating an open
+`/app/` tab before opening a new one.
+
+One VAPID key pair is shared by every region. The browser host is one origin
+with one subscription per browser profile, and a subscription is bound to the
+key it was made with, so per-region keys would make one region's sends fail.
+When the configured key differs from the subscription's, the browser
+unsubscribes and subscribes again before registering.
+
+Known gaps: a browser registers only with the active workspace's region, so a
+member with workspaces in both regions gets browser pushes only from that one.
+Signing in over an existing cookie leaves the earlier session unrevoked, so a
+device bound to it keeps receiving until that session ends; this predates Web
+Push.
 
 ## Operations and release
 
@@ -123,7 +156,7 @@ Set `APNS_AUTH_KEY` and `APNS_KEY_ID` separately on both regional API Workers.
 For browsers, set `WEB_PUSH_VAPID_PUBLIC_KEY` (base64url uncompressed P-256
 point), the secret `WEB_PUSH_VAPID_PRIVATE_KEY` (base64url `d` of the same key)
 and `WEB_PUSH_SUBJECT` (`mailto:` or `https:` contact) on each regional API
-Worker; one key pair per deployment. Without them, browsers are told
+Worker, with the same key pair in every region. Without them, browsers are told
 notifications are unavailable and APNs is unaffected; the health check does not
 cover these variables. Without the APNs variables, health reports push as not
 configured and existing email delivery continues. Local/test transports do not contact Apple. APNs requires the device address in
@@ -163,6 +196,11 @@ signed-Mac delivery.
 - Queue messages and application logs contain no notification content or device tokens.
 - Only explicit notification responses navigate; remote alerts are not reposted locally.
 - A device-wide delivery timestamp must never suppress a different intent.
+- A device is sent only its own transport's payload, and enqueue requires a live device whose own transport is available.
+- A provider credential fault pauses only its own transport.
+- A Web Push `404` or `410` disables the browser device at once.
+- The Worker contacts only allowlisted Web Push service hosts and follows no redirect.
+- `sw.js` opens links only on its own origin.
 
 ## Testing
 
@@ -174,7 +212,13 @@ and that `aps.badge` is the workspace attention count of unread and needs-input
 streams. `workspace-attention.test.ts` covers that count against the same
 directory projection. Desktop push/link tests cover registration and routing; existing settings and
 release suites cover the integration. iOS XCTest covers payload parse and the
-PUT body. The provider itself and macOS/iOS alert
+PUT body. For Web Push, `web-push-transport.test.ts` reproduces RFC 8291's
+worked example, checks the VAPID token and maps push service answers, redirects
+and hosts outside the allowlist. The workerd suite covers routing each device to
+its own transport, disabling a dropped browser subscription at once, and an
+APNs credential fault that leaves Web Push sending. The contract test covers the
+host allowlist and key shapes, and `web-push.test.ts` covers registration,
+re-subscribing on a key change, and the permission prompt coming first. The provider itself and macOS/iOS alert
 presentation require a signed installed build.
 
 Local acceptance on 2026-09-14: lint/typecheck, scoped API and desktop tests,
@@ -192,6 +236,8 @@ signed-Mac APNs/universal-link acceptance is claimed.
 **What changed:** A browser tab can subscribe to Web Push. Devices gain a
 `webpush` transport with the subscription's keys, the consumer sends each device
 its own transport's payload, and the browser host serves a root service worker.
+Endpoints are limited to known push service hosts, and a provider credential
+fault now pauses only its own transport.
 
 **Why:** Members who use Rally in a browser need the same mentions and additions
 the Mac shows ([PRD](PRDs/2026-10-03_full-browser-client/prd.md) goal 8).
@@ -199,12 +245,16 @@ the Mac shows ([PRD](PRDs/2026-10-03_full-browser-client/prd.md) goal 8).
 **Considered and rejected:** A Web Push library, which would bring Node crypto
 into the Worker for two primitives WebCrypto already has. Suppressing pushes
 to one client while another is in the foreground; the PRD leaves duplicates
-across devices as an open question.
+across devices as an open question. Accepting any HTTPS endpoint, which let any
+member make the Worker POST anywhere. Keeping one batch-wide stop on a provider
+fault, which let an APNs key problem stall every browser. Per-region VAPID keys,
+which one browser origin with one subscription cannot hold.
 
 **Consequences:** A member with the Mac app and a browser gets each push on
-both. VAPID keys are per deployment; rotating one invalidates every browser
-subscription made with it, and the push service's refusal reaches operators
-as a provider authentication failure.
+both. One VAPID key pair serves every region; rotating it makes each browser
+re-subscribe on its next visit, and until then the push service's refusal
+reaches operators as a Web Push authentication failure. A new browser push
+service needs its host added to the allowlist before its users can subscribe.
 
 Shipped in #1081. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 

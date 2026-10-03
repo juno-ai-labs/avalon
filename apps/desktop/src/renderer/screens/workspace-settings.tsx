@@ -139,7 +139,6 @@ function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Elem
       <div className="settings-pane-heading"><h2>In this browser</h2></div>
       <div className="settings-list-card">
         <SettingToggle setting={settings.pushNotifications}
-          aria-label="Notify me in this browser about mentions and additions"
           checked={current === 'on'}
           disabled={!current || current === 'unsupported' || current === 'unavailable' || current === 'denied' || update.isPending}
           onChange={(event) => update.mutate(event.currentTarget.checked)}
@@ -148,7 +147,9 @@ function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Elem
       {current === 'unsupported' && <p className="settings-section-copy">This browser cannot show Rally notifications.</p>}
       {current === 'unavailable' && <p className="settings-section-copy">Browser notifications are not available yet.</p>}
       {current === 'denied' && <p className="settings-section-copy">Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on.</p>}
-      {update.error && <InlineError>{update.error.message}</InlineError>}
+      {state.error && <InlineError>{state.error.message}</InlineError>}
+      {/* A browser's own subscribe() error names its internals, not anything the member can act on. */}
+      {update.error && <InlineError>{update.error instanceof ApiError ? update.error.message : 'Rally could not change notifications in this browser. Try again.'}</InlineError>}
     </section>
   );
 }

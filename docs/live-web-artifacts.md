@@ -316,7 +316,13 @@ is the only place that can forward into it.
   redemption from inside the frame (`Sec-Fetch-Dest: iframe`) sets the viewer
   cookie `SameSite=None; Partitioned`, kept for this artifact under that one
   top-level site; a top-level navigation keeps `Lax`. A browser that refuses
-  the partitioned cookie shows the public representation. What is accepted:
+  the partitioned cookie, such as Safari, which blocks third-party cookies,
+  shows the public representation, where writes answer 401. The shell's
+  `frame-src` admits the whole artifact domain, so the serving Worker refuses
+  a framed navigation that arrives `same-site`
+  (`isFramedHopFromAnotherArtifact`): that is one artifact moving its frame to
+  another, the hop the desktop's `confineToArtifactOrigin` refuses. What is
+  accepted:
   model-authored content renders inside the app's window and can `postMessage`
   its parent, which the app does not listen for.
 - **The pane distinguishes "not attempted" from "refused".** A boolean cannot,
