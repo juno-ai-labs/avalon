@@ -29,9 +29,6 @@ export async function mintProviderToken(pem: string, kid: string, iat: number): 
   const signature = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, new TextEncoder().encode(body));
   return `${body}.${base64url(new Uint8Array(signature))}`;
 }
-/** The rendered alert for each transport; a device is sent the one it registered for. */
-export interface PushPayloads { apns: string; web: string }
-
 export async function sendApns(env: Env, device: PushDevice, payload: string, collapseId: string): Promise<ApnsOutcome> {
   if (!pushAvailable(env)) return { outcome: "skipped" };
   if (new TextEncoder().encode(payload).byteLength > APNS_PAYLOAD_BYTES) return { outcome: "rejected", reason: "payload_too_large" };

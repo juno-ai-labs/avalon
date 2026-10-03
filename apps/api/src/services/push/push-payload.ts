@@ -2,6 +2,8 @@ import { PUSH_BODY_PREVIEW_CHARACTERS, type PushNotificationData } from "@rally/
 
 // APNs regular alert payload ceiling, Apple Sending notification requests.
 export const APNS_PAYLOAD_BYTES = 4096;
+/** The rendered alert for each transport; a device is sent the one it registered for. */
+export interface PushPayloads { apns: string; web: string }
 export function renderPushPayload(input: {
   title: string; body: string; threadKey: string; data: PushNotificationData; badge: number;
 }): string {
@@ -25,11 +27,14 @@ export async function pushCollapseId(workspaceId: string, intentId: string): Pro
 
 /**
  * The Web Push payload the browser's service worker shows: the same title,
- * body and target as the APNs alert, as plain JSON. `tag` groups a work
- * stream's notifications the way APNs `thread-id` does.
+ * body and target as the APNs alert, as plain JSON. A Web Notification `tag`
+ * does not group like APNs `thread-id`: a later notification with the same tag
+ * replaces the earlier one. So `tag` is the intent's collapse id, the same one
+ * APNs gets as `apns-collapse-id`: a retry replaces itself, and two mentions in
+ * one channel both stay on screen.
  */
 export function renderWebPushPayload(input: {
-  title: string; body: string; threadKey: string; data: PushNotificationData; maxBytes: number;
+  title: string; body: string; collapseId: string; data: PushNotificationData; maxBytes: number;
 }): string {
   const characters = Array.from(input.body);
   const title = Array.from(input.title);
@@ -37,7 +42,7 @@ export function renderWebPushPayload(input: {
   const encode = (length: number) => JSON.stringify({
     title: title.slice(0, titleLength).join("") + (titleLength < title.length ? "…" : ""),
     body: characters.slice(0, length).join("") + (length < characters.length ? "…" : ""),
-    tag: input.threadKey,
+    tag: input.collapseId,
     rally: input.data,
   });
   // The body gives way first, then the title, as in the APNs alert.
