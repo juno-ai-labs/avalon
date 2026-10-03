@@ -61,17 +61,3 @@ export function ChannelRowContent({ id, title, appearance, naming, marks, titleP
     </span>
   </>;
 }
-
-export function NavigationRowContent({ id, title, appearance, naming, marks, titlePrefix, activity }: {
-  id: string; title: string; appearance?: WorkstreamAppearance; naming?: boolean;
-  marks?: ReactNode; titlePrefix?: ReactNode; activity?: ReactNode;
-}): React.JSX.Element {
-  return <SidebarNavigationRowContent
-    activity={activity}
-    icon={<WorkstreamGlyph appearance={appearance} id={id} size={36} />}
-    marks={marks}
-    naming={naming}
-    title={title}
-    titlePrefix={titlePrefix}
-  />;
-}

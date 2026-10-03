@@ -1,7 +1,7 @@
 import { ShareConversationDialog } from './scope-sharing-panel';
 import { useOptionalCollaborationSession } from '../lib/collaboration-session';
 import { IconPin, IconShare2 } from '@tabler/icons-react';
-import { ChannelRowContent, NavigationRowContent } from '@rally/ui/components/navigation';
+import { ChannelRowContent } from '@rally/ui/components/navigation';
 import {
   ResizableSidebar,
   SidebarFooter,
@@ -476,9 +476,9 @@ function PendingWorkstreamRow({ workstream }: { workstream: WorkstreamSummary })
           ? `Importing ${workstream.title}`
           : naming ? 'Creating channel' : `Creating ${workstream.title}`}
         as="div"
-        className="workstream-row is-pending"
+        className="workstream-row channel-row is-pending"
       >
-        <NavigationRowContent appearance={workstream.appearance} id={workstream.id} naming={naming} title={workstream.title} />
+        <ChannelRowContent appearance={workstream.appearance} id={workstream.id} naming={naming} title={workstream.title} />
       </SidebarRow>
     </div>
   );
