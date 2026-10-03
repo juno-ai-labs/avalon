@@ -2,11 +2,8 @@
 
 > Created 2026-10-03.
 >
-> Every Organization gets a plan and a pooled weekly inference quota. Any member
-> can see the quota as a percentage left, in Settings and in the Organization
-> menu. Usage past the quota builds up as monthly overage, which is shown but
-> not charged. Metering runs off the agent loop's path, best effort, a few
-> minutes behind. No card is collected and nothing is charged yet.
+> A pooled weekly inference quota per Organization, metered off the agent
+> loop's path and shown as a percentage, with overage shown but not charged.
 > Architecture: [`design.md`](design.md). Platform research:
 > [`research.md`](research.md). State: [`state.md`](state.md).
 > Standing contract: [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
@@ -19,12 +16,17 @@
 
 Each Organization is on one of two plans: **Starter** at $100 a month or
 **Growth** at $250 a month. Each plan includes twice its price in inference,
-split evenly across four weeks:
+and the weekly quota is that amount divided by four:
 
-| Plan | Price per month | Included per month | Weekly quota |
+| Plan | Price per month | Twice the price | Weekly quota |
 | --- | --- | --- | --- |
 | Starter | $100 | $200 | $50 |
 | Growth | $250 | $500 | $125 |
+
+A month averages about 4.35 weeks, not four, so an Organization that uses every
+week's quota gets about 8.7% more than twice its price: about $217 a month on
+Starter and $543 on Growth. That is deliberate. Dividing by four keeps the
+weekly figure round, and the extra is a small, predictable cost to Rally.
 
 Everyone in the Organization draws on one shared pool. The pool starts each
 week at 100% and runs down as Rally does work for the Organization. The week
@@ -107,7 +109,7 @@ lost.
    a percentage. Overage is the one dollar figure, because it is what an
    Organization would pay.
 5. **Self-serve plan choice or upgrade.** Deferred until there is checkout. An
-   operator sets the plan.
+   operator sets the plan from a plan control on Ace's workspaces tab.
 6. **Usage by person, Space, Channel or Sidekick.** Deferred. The pool is the
    unit. The usage record keeps those IDs, so a later breakdown needs no new
    instrumentation.
@@ -252,8 +254,8 @@ None yet.
    are applied only when an invoice is finalized, so they cannot drive a live
    percentage, and a weekly reset fits them badly. Stripe's real-time credit
    burndown now runs through Metronome, which is more than this needs before
-   anyone pays. The ledger keeps every event ID, so it can be sent to Stripe
-   Meters later. Stripe accepts meter events backdated up to 35 days, so history
+   anyone pays. The ledger keeps every event, with its ID, cost and activity, so
+   it can be sent to Stripe Meters later. Stripe accepts meter events backdated up to 35 days, so history
    older than that stays ours.
 5. **The payer map is code, exhaustive by type, not a Flagship flag.** A
    `Record<MeteredActivity, boolean>` in `@rally/contracts` fails typecheck when
@@ -296,9 +298,11 @@ None yet.
 Sketch; [`design.md`](design.md) has the DDL and the consumer algorithm.
 
 - `workspaces.plan`: `'starter' | 'growth'`, not null, default `'starter'`.
-- `usage_events_seen`: `event_id` primary key, `workspace_id`, `received_at`.
-  Deduplicates redelivery. Rows older than the usage queue's configured message
-  retention are pruned, because no copy can be redelivered after that.
+- `usage_events`: one append-only row per event, with `event_id` as primary
+  key, `workspace_id`, `activity`, `occurred_at`, `cost_microusd`, `model`, and
+  the user, Channel, Breakout and Sidekick IDs. The primary key deduplicates
+  redelivery. This is the per-event history for a later breakdown and for
+  Stripe.
 - `usage_weeks`: (`workspace_id`, `week_start`) primary key,
   `organization_microusd`, `overage_microusd`, `rally_microusd`.
 - `usage_months`: (`workspace_id`, `period_start`) primary key,
