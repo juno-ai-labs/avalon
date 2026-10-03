@@ -53,6 +53,13 @@ describe('settings registry', () => {
     }
     expect(new Set(coreSettingsProvider.entries.map((entry) => entry.key)).size).toBe(coreSettingsProvider.entries.length);
   });
+  it('finds the Usage section by quota, usage and plan for a member who is not an administrator', () => {
+    const entries = collectSettings([coreSettingsProvider], { ...context, admin: false });
+    for (const query of ['quota', 'usage', 'plan']) {
+      expect(searchSettings(entries, query).map((entry) => entry.definition.id), query).toContain('usage');
+    }
+    expect(searchSettings(entries, 'usage')[0]?.definition.label).toBe('Usage');
+  });
   it('ranks competing labels before metadata and non-actions before tied actions', () => {
     const entries = collectSettings([coreSettingsProvider], context);
     expect(searchSettings(entries, 'email')[0]?.definition.id).toBe('digestEmail');
