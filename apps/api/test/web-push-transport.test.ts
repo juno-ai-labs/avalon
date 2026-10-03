@@ -34,6 +34,16 @@ async function serverKeys(): Promise<CryptoKeyPair> {
   };
 }
 
+async function configured(): Promise<{ env: ReturnType<typeof createTestEnv>; device: PushDevice }> {
+  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]) as CryptoKeyPair;
+  const env = createTestEnv({ APP_ENV: "production",
+    WEB_PUSH_VAPID_PUBLIC_KEY: base64url(new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey) as ArrayBuffer)),
+    WEB_PUSH_VAPID_PRIVATE_KEY: (await crypto.subtle.exportKey("jwk", pair.privateKey)).d!, WEB_PUSH_SUBJECT: "mailto:ops@example.test" });
+  const device: PushDevice = { id: "browser", token: "https://fcm.googleapis.com/fcm/send/abc", topic: "web", apns_environment: "none",
+    last_seen_at: "2026-10-03", transport: "webpush", web_push_p256dh: RFC.uaPublic, web_push_auth: RFC.auth };
+  return { env, device };
+}
+
 describe("Web Push transport", () => {
   it("encrypts exactly as RFC 8291's worked example does", async () => {
     const body = await encryptWebPushPayload(new TextEncoder().encode(RFC.plaintext), { p256dh: RFC.uaPublic, auth: RFC.auth },
@@ -55,12 +65,7 @@ describe("Web Push transport", () => {
   });
 
   it("posts an encrypted record and reads a dropped subscription as unregistered", async () => {
-    const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]) as CryptoKeyPair;
-    const env = createTestEnv({ APP_ENV: "production",
-      WEB_PUSH_VAPID_PUBLIC_KEY: base64url(new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey) as ArrayBuffer)),
-      WEB_PUSH_VAPID_PRIVATE_KEY: (await crypto.subtle.exportKey("jwk", pair.privateKey)).d!, WEB_PUSH_SUBJECT: "mailto:ops@example.test" });
-    const device: PushDevice = { id: "browser", token: "https://fcm.googleapis.com/fcm/send/abc", topic: "web", apns_environment: "none",
-      last_seen_at: "2026-10-03", transport: "webpush", web_push_p256dh: RFC.uaPublic, web_push_auth: RFC.auth };
+    const { env, device } = await configured();
     const request = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () => new Response(null, { status: 201 }));
     vi.stubGlobal("fetch", request);
     expect(await sendWebPush(env, device, '{"title":"t"}', "a".repeat(64))).toMatchObject({ outcome: "sent" });
@@ -86,10 +91,43 @@ describe("Web Push transport", () => {
     expect(request.mock.calls.length).toBe(calls);
   });
 
+  it("reads each other push service answer by what it says about the device", async () => {
+    const { env, device } = await configured();
+    const request = vi.fn<(url: string, init: RequestInit) => Promise<Response>>();
+    vi.stubGlobal("fetch", request);
+    for (const status of [400, 413]) {
+      request.mockResolvedValueOnce(new Response(null, { status }));
+      expect(await sendWebPush(env, device, "{}", "c")).toEqual({ outcome: "rejected", status, reason: `push_service_${status}` });
+    }
+    request.mockResolvedValueOnce(new Response(null, { status: 429 }));
+    expect(await sendWebPush(env, device, "{}", "c")).toEqual({ outcome: "transient", status: 429, reason: "push_service_429" });
+    request.mockRejectedValueOnce(new TypeError("network"));
+    expect(await sendWebPush(env, device, "{}", "c")).toEqual({ outcome: "transient", reason: "request_failed" });
+  });
+
+  it("does not follow a redirect from the push service", async () => {
+    const { env, device } = await configured();
+    const request = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
+      new Response(null, { status: 307, headers: { location: "https://internal.example.test/" } }));
+    vi.stubGlobal("fetch", request);
+    expect(await sendWebPush(env, device, "{}", "c")).toEqual({ outcome: "rejected", status: 307, reason: "push_service_redirect" });
+    expect(request.mock.calls[0]![1].redirect).toBe("manual");
+  });
+
+  it("never contacts an endpoint outside the push service allowlist", async () => {
+    const { env, device } = await configured();
+    const request = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () => new Response(null, { status: 403 }));
+    vi.stubGlobal("fetch", request);
+    for (const token of ["https://internal.example.test/push", "https://user@fcm.googleapis.com/fcm/send/abc", "https://fcm.googleapis.com:8443/fcm/send/abc"]) {
+      expect(await sendWebPush(env, { ...device, token }, "{}", "c")).toEqual({ outcome: "unregistered", reason: "push_service_not_allowed" });
+    }
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it("shortens the title as well as the body to fit the payload limit", () => {
     const data = { v: 1 as const, kind: "mention" as const, url: "https://app.example.test/c", workspaceId: "w", region: "global" as const };
-    const payload = renderWebPushPayload({ title: "T".repeat(5000), body: "B".repeat(5000), threadKey: "thread", data, maxBytes: 3900 });
-    expect(new TextEncoder().encode(payload).byteLength).toBeLessThanOrEqual(3900);
+    const payload = renderWebPushPayload({ title: "T".repeat(5000), body: "B".repeat(5000), collapseId: "intent", data, maxBytes: 3993 });
+    expect(new TextEncoder().encode(payload).byteLength).toBeLessThanOrEqual(3993);
     const parsed = JSON.parse(payload) as { title: string; body: string };
     expect(parsed.body).toBe("…");
     expect(parsed.title.endsWith("…")).toBe(true);

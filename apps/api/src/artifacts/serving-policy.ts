@@ -179,6 +179,24 @@ export function classifyFetchMetadata(
 }
 
 /**
+ * Whether a frame is being navigated here from another artifact.
+ *
+ * The browser client frames an artifact, and its own shell CSP lets that frame
+ * hold any page on the artifact domain. So script in one artifact could move
+ * its frame to another, carrying page data in the URL, while Rally's chrome
+ * still names the first. The desktop refuses that hop in
+ * `confineToArtifactOrigin`; a browser gives the parent no such hook, so the
+ * server refuses it. Rally's own framed load comes from the app (`cross-site`)
+ * and an artifact's own navigations are `same-origin`; only a hop between two
+ * artifact hosts arrives framed and `same-site`.
+ */
+export function isFramedHopFromAnotherArtifact(request: Request): boolean {
+  return request.headers.get("sec-fetch-dest") === "iframe"
+    && request.headers.get("sec-fetch-mode") === "navigate"
+    && request.headers.get("sec-fetch-site") === "same-site";
+}
+
+/**
  * Split a request path into the version it is mounted under and the path the
  * module should see.
  *

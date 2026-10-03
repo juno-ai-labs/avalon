@@ -56,6 +56,7 @@ import {
   browserFrameAncestor,
   classifyFetchMetadata,
   injectVersionBase,
+  isFramedHopFromAnotherArtifact,
   refuseUnsafeVersionRequest,
   resolveAssetPath,
   splitVersionMount,
@@ -196,6 +197,7 @@ const artifactServer = {
     // — and serving it would move workspace content across a boundary
     // regionalization says has no path.
     if (host.region !== env.AVALON_REGION) return html(neutralPage(), 404);
+    if (isFramedHopFromAnotherArtifact(request)) return html(neutralPage(), 403);
 
     let artifactId = host.legacyArtifactId;
     if (!artifactId && host.hostnameStub) {

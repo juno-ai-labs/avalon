@@ -4,7 +4,7 @@ import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 
 export interface PushDevice {
   id: string; token: string; topic: string; apns_environment: string; last_seen_at: string;
-  transport: string; web_push_p256dh: string | null; web_push_auth: string | null;
+  transport: "apns" | "webpush"; web_push_p256dh: string | null; web_push_auth: string | null;
 }
 export async function registerPushDevice(env: Env, auth: AuthContext, installationId: string, input: RegisterPushDeviceRequest): Promise<void> {
   const db = workspaceRegionalDatabase(env);
