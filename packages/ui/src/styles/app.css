@@ -4871,6 +4871,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   background: var(--av-sys-color-surface-raised);
   overflow: hidden;
 }
+/* The browser host's preview fills the pane the composited view would cover. */
+.site-detail-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--av-sys-color-surface-raised); }
 /* Carries its own gutter: it is the first frame of the data view, which is
    reached by an early return above that view's padded wrapper, and the lightbox
    body around it has no padding of its own since the preview went full bleed. */

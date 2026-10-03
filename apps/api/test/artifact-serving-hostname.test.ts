@@ -210,6 +210,37 @@ describe("artifact serving hostname routes", () => {
     expect(redeemCode).not.toHaveBeenCalled();
   });
 
+  it("lets only the browser client frame an artifact, and partitions a framed viewer session", async () => {
+    const { env, redeemCode } = fixture({ hostname_stub: STUB, artifact_id: ARTIFACT, region: "global" });
+    const origin = `https://${STUB}-g.rallyusercontent.test`;
+    redeemCode.mockResolvedValue({ session: "viewer-session", expiresAt: Date.now() + 60_000 });
+    const framing = { ...env, BROWSER_APP_ORIGIN: "https://app.example.test" };
+    const redeem = (dest: string) => artifactWorker.fetch(new Request(`${origin}/__rally/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin,
+        "sec-fetch-dest": dest, "sec-fetch-mode": "navigate", "sec-fetch-site": "same-origin" },
+      body: "code=one-use",
+    }), framing, context());
+
+    const bootstrap = await artifactWorker.fetch(new Request(`${origin}/__rally/open`), framing, context());
+    expect(bootstrap.headers.get("content-security-policy")).toContain("frame-ancestors https://app.example.test");
+    expect(bootstrap.headers.get("content-security-policy")).not.toContain("frame-ancestors 'none'");
+    expect(bootstrap.headers.get("x-frame-options")).toBeNull();
+
+    const framed = await redeem("iframe");
+    expect(framed.status).toBe(303);
+    expect(framed.headers.get("set-cookie")).toContain("SameSite=None");
+    expect(framed.headers.get("set-cookie")).toContain("Partitioned");
+    const topLevel = await redeem("document");
+    expect(topLevel.headers.get("set-cookie")).toContain("SameSite=Lax");
+    expect(topLevel.headers.get("set-cookie")).not.toContain("Partitioned");
+
+    // Without a configured browser origin nothing may frame an artifact.
+    const unframed = await artifactWorker.fetch(new Request(`${origin}/__rally/open`), env, context());
+    expect(unframed.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(unframed.headers.get("x-frame-options")).toBe("DENY");
+  });
+
   it("serves a public artifact to a crawler without a Rally session", async () => {
     const { env, checkSession, currentState } = fixture({
       hostname_stub: STUB,

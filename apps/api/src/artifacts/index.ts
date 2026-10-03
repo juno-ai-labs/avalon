@@ -78,6 +78,11 @@ export interface ArtifactServingEnv {
   APP_ENV: "development" | "test" | "staging" | "production";
   AVALON_REGION: Region;
   ARTIFACT_SERVING_DOMAIN: string;
+  /**
+   * The browser client's origin, the one page allowed to frame an artifact for
+   * its inline preview. Unset, nothing may frame one.
+   */
+  BROWSER_APP_ORIGIN?: string;
   ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
   PLATFORM_DB: D1Database;
   PAYLOADS: R2Bucket;
@@ -171,6 +176,12 @@ export { ArtifactAssetLoopback } from "./asset-loopback";
 
 export default {
   async fetch(request: Request, env: ArtifactServingEnv, ctx: ExecutionContext): Promise<Response> {
+    return allowBrowserFraming(await serveArtifact(request, env, ctx), env.BROWSER_APP_ORIGIN);
+  },
+};
+
+async function serveArtifact(request: Request, env: ArtifactServingEnv, ctx: ExecutionContext): Promise<Response> {
+  {
     const url = new URL(request.url);
     const host = parseArtifactHost(url.host);
     // Not an artifact host at all. Answered as the neutral page rather than an
@@ -229,6 +240,11 @@ export default {
       const redeemed = code ? await artifact.redeemCode(code) : null;
       if (!redeemed) return html(neutralPage(), 403);
       const headers = new Headers({ location: "/" });
+      // Redeemed inside the browser client's preview frame, the artifact is a
+      // cross-site frame, and a `Lax` cookie would never be sent with its
+      // requests. A partitioned `None` cookie is kept only for this artifact
+      // under that one top-level site, so it is no wider than the frame.
+      const framed = request.headers.get("sec-fetch-dest") === "iframe" && Boolean(env.BROWSER_APP_ORIGIN);
       headers.append("set-cookie", [
         `${SESSION_COOKIE}=${redeemed.session}`,
         "Path=/",
@@ -236,7 +252,7 @@ export default {
         "Secure",
         // `Lax` rather than `Strict` so the desktop's own top-level navigation
         // to the artifact carries the cookie it just set.
-        "SameSite=Lax",
+        ...(framed ? ["SameSite=None", "Partitioned"] : ["SameSite=Lax"]),
         `Max-Age=${Math.max(0, Math.floor((redeemed.expiresAt - Date.now()) / 1_000))}`,
       ].join("; "));
       return withSecurityHeaders(new Response(null, { status: 303, headers }));
@@ -323,8 +339,8 @@ export default {
     }
 
     return serveCurrent(env, ctx, artifact, artifactId, request, url, admitted);
-  },
-};
+  }
+}
 
 type Admitted = {
   viewerId: string | null;
@@ -539,4 +555,23 @@ function assetLoopback(ctx: ExecutionContext, artifactId: string, manifest: Arti
       })),
     },
   });
+}
+
+/**
+ * Lets exactly the browser client frame an artifact, for its inline preview.
+ *
+ * Every response leaves `serveArtifact` refusing all framing
+ * (`frame-ancestors 'none'`, `X-Frame-Options: DENY`). With a browser origin
+ * configured, the CSP names that one origin instead and the legacy header,
+ * which cannot express an allowlist, is dropped. Another artifact still cannot
+ * frame this one: its host is not that origin.
+ */
+export function allowBrowserFraming(response: Response, browserOrigin: string | undefined): Response {
+  if (!browserOrigin || response.status === 101) return response;
+  const origin = new URL(browserOrigin).origin;
+  const headers = new Headers(response.headers);
+  const policy = headers.get("content-security-policy");
+  if (policy) headers.set("content-security-policy", policy.replace("frame-ancestors 'none'", `frame-ancestors ${origin}`));
+  headers.delete("x-frame-options");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
