@@ -123,15 +123,16 @@ function servingNumber(value: unknown): Partial<Flagship> {
 
 /** The JSON capability list the browser's connector screens read. */
 function servingObject(value: unknown, errorCode?: string): Partial<Flagship> {
-  return {
-    getObjectDetails: vi.fn(async (flagKey: string) => ({
-      flagKey,
-      value: value as object,
-      variant: "current",
-      reason: "STATIC",
-      ...(errorCode ? { errorCode: errorCode as FlagshipEvaluationDetails<object>["errorCode"] } : {}),
-    })),
-  };
+  const getObjectDetails = vi.fn(async (flagKey: string) => ({
+    flagKey,
+    value,
+    variant: "current",
+    reason: "STATIC",
+    ...(errorCode ? { errorCode } : {}),
+  }));
+  // The stub answers whatever it is given, which is the point: the resolver
+  // has to cope with a served value of the wrong shape.
+  return { getObjectDetails: getObjectDetails as unknown as Flagship["getObjectDetails"] };
 }
 
 function contextOf(flags: Partial<Flagship>): FlagshipEvaluationContext {
