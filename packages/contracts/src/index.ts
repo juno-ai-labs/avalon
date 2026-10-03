@@ -462,7 +462,6 @@ export const ClientFeatureFlagsSchema = z.object({
   browserConnectableCapabilities: z.array(z.string().min(1)).default(() => [...BROWSER_CONNECTABLE_CAPABILITIES_DEFAULT]),
 });
 
-
 /** Product flags Ace is allowed to manage and publish to connected clients. */
 export const ProductFeatureFlagKeySchema = z.enum([
   "suggested-work-enabled",
