@@ -595,6 +595,52 @@ export function Badge({ children, className, ...props }: PropsWithChildren<HTMLA
   );
 }
 
+export type MeterTone = 'normal' | 'warning';
+
+/**
+ * A measured share drawn as a fill on a track: the week's quota left, the
+ * onboarding steps done. Every bar of that kind draws through here, so the
+ * track, the fill, the warning colour and the value attributes are decided once
+ * and the next meter costs no new CSS.
+ *
+ * `label` is required because a meter with no name is announced as a bare
+ * number. A null `value` is the measurement not having arrived: the empty track
+ * is drawn so the layout does not jump when it does, and it is hidden from the
+ * accessibility tree, since a meter with no value has nothing to say and the
+ * surface beside it says what it is waiting for.
+ */
+export function Meter({
+  className,
+  label,
+  max = 100,
+  size = 'regular',
+  tone = 'normal',
+  value,
+}: {
+  className?: string;
+  label: string;
+  max?: number;
+  size?: 'regular' | 'thin';
+  tone?: MeterTone;
+  value: number | null;
+}): React.JSX.Element {
+  const classes = clsx('meter', size === 'thin' && 'meter-thin', tone === 'warning' && 'meter-warning', className);
+  if (value === null) return <div aria-hidden="true" className={classes} />;
+  const clamped = Math.min(max, Math.max(0, value));
+  return (
+    <div
+      aria-label={label}
+      aria-valuemax={max}
+      aria-valuemin={0}
+      aria-valuenow={clamped}
+      className={classes}
+      role="meter"
+    >
+      <span className="meter-fill" style={{ width: `${max > 0 ? (clamped / max) * 100 : 0}%` }} />
+    </div>
+  );
+}
+
 /**
  * Stands in for a work stream's title while Rally is choosing one.
  *

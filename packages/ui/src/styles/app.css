@@ -628,6 +628,17 @@ pre {
   white-space: nowrap;
 }
 
+/* The shared `Meter`: a brand fill on its own track, warning-coloured when the
+   caller says the value is low. The track and both fills are `cmp.meter.*`, so
+   a surface that draws a meter never names a colour. */
+.meter { background: var(--av-cmp-meter-track); border-radius: var(--av-sys-size-radius-pill); height: 6px; overflow: hidden; }
+.meter-thin { height: 3px; }
+.meter-fill { background: var(--av-cmp-meter-fill); border-radius: inherit; display: block; height: 100%; transition: width 180ms ease; }
+.meter-warning > .meter-fill { background: var(--av-cmp-meter-fill-warning); }
+@media (prefers-reduced-motion: reduce) {
+  .meter-fill { transition: none; }
+}
+
 .avatar {
   align-items: center;
   background: var(--av-ref-color-neutral-5);
@@ -1804,6 +1815,12 @@ pre {
   padding: 6px 10px;
 }
 
+/* The active Organization's usage line, set under its name: the inset is the
+   row's padding plus the 18px mark and the row's 8px gap. After the popup's
+   rule above, which it has to override at the same specificity. */
+.menu-content .workspace-usage-item.menu-item { align-items: stretch; flex-direction: column; gap: 5px; min-height: 0; padding: 0 10px 8px 36px; }
+.workspace-usage-item small { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-font-size-meta); }
+
 .account-menu-item-with-value.menu-item { grid-template-columns: 18px minmax(0, 1fr) auto 14px; }
 .account-menu-item.menu-item[data-highlighted] { background-image: var(--hover-layer); }
 .account-menu-item > svg { height: 16px; stroke-width: 1.8; width: 16px; }
@@ -2219,6 +2236,18 @@ pre {
 .settings-pane-heading-count { align-items: end; display: flex; justify-content: space-between; }
 .settings-pane-heading-count > span { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
 .settings-subsection { margin-top: 30px; }
+
+/* Settings → Organization → Usage. */
+.usage-summary { display: flex; flex-direction: column; gap: 4px; padding: 14px; }
+.usage-summary .meter { margin: 6px 0 4px; }
+.usage-plan { font-size: 13px; font-weight: 500; }
+.usage-remaining { display: flex; flex-wrap: wrap; font-size: 13px; gap: 6px; margin: 0; }
+.usage-as-of,
+.usage-summary small { color: var(--av-sys-color-text-muted); font-size: 12px; }
+.usage-summary + .usage-overage::before { background: var(--av-sys-color-border-subtle); content: ''; height: .5px; left: 14px; position: absolute; right: 14px; top: 0; }
+.usage-overage-value { align-items: center; display: inline-flex; font-size: 13px; gap: 8px; }
+.usage-overage-value s { color: var(--av-sys-color-text-muted); }
+.usage-not-billed:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 1px; }
 
 .settings-list-card,
 .settings-profile-card {
@@ -3133,8 +3162,7 @@ pre {
 .onboarding-checklist > header { align-items: baseline; display: flex; justify-content: space-between; }
 .onboarding-checklist > header h2 { color: var(--av-sys-color-text-default); font-size: var(--av-cmp-control-font-size); font-weight: 540; margin: 0; }
 .onboarding-checklist > header span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
-.onboarding-progress { background: var(--av-sys-color-surface-sunken); border-radius: var(--av-sys-size-radius-pill); height: 5px; margin: 9px 0 10px; overflow: hidden; }
-.onboarding-progress > span { background: var(--av-sys-color-brand-base); border-radius: inherit; display: block; height: 100%; transition: width 180ms ease; }
+.onboarding-checklist > .meter { margin: 9px 0 10px; }
 .onboarding-items { display: grid; gap: 1px; }
 .onboarding-items > button { align-items: flex-start; background: transparent; border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); display: flex; gap: 8px; padding: 7px 3px; text-align: left; width: 100%; }
 .onboarding-items > button:hover { background-image: var(--hover-layer); }

@@ -26,6 +26,7 @@ socket hooks' first frame.
 | `apps/desktop/src/renderer/lib/local-cache-mirror.ts` | `mirrorQueriesToLocalCache`: keep a slice equal to a family of query-cache entries, coalescing a burst of writes into one; `LOCAL_CACHE_WRITE_COALESCE_MS`. |
 | `apps/desktop/src/renderer/lib/local-cache-scope.tsx` | `LocalCacheScopeProvider` and `useLocalCacheScope`: the regional workspace every row below it belongs to. No provider, no cache. |
 | `apps/desktop/src/renderer/lib/conversation-cache.ts` | The `conversation` slice: one row per `(parent, substream)`, `hydrateConversation`, `mirrorConversation`, the seed marker, and the pruning and forgetting entry points. |
+| `apps/desktop/src/renderer/lib/organization-usage.ts` | The `usage` slice: one row per Organization scope holding the last `GET /workspace/usage` answer and when it arrived; `useOrganizationUsage`, which seeds from it and writes each answer back. |
 | `apps/desktop/src/renderer/lib/workspace-directory-cache.ts` | The `directory` slice: one row per workspace holding the Channel list, the automation and note lists, and both Space directories; `hydrateWorkspaceDirectory`, `mirrorWorkspaceDirectory`. |
 | `apps/desktop/src/renderer/lib/transcript.ts` (`openingTranscriptSnapshot`) | The shape a transcript is persisted in: its opening ranges only. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Hydrates a conversation at effect start, mirrors it while mounted, and treats a seed as neither a completed opening nor a snapshot fence. |
@@ -110,13 +111,14 @@ one `parse` refuses, is dropped on read and deleted: the cache holds nothing
 that cannot be fetched again, so a migration would be work spent on rows the
 next socket answer replaces anyway.
 
-Two slices exist today, and the third surface that wants to paint before its
-socket answers defines a third:
+Three slices exist today, and the next surface that wants to paint before its
+answer arrives defines another:
 
 | Slice | Key | Subject | Holds |
 | --- | --- | --- | --- |
 | `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, each of those Channels' breakout lists and rails, the automation list, the active and archived Space directories, and the compatible personal-order payload used by the manually arranged Space rail. |
 | `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a private child's inherited context. |
+| `usage` | `usage` | `usage` | The last `OrganizationUsage` answer, the plan, the share of the week's quota left, the reset instant and the month's overage, and `fetchedAt`, the time it arrived. |
 
 The store is best-effort by construction, like the draft cache beside it: every
 operation resolves to its fallback rather than throwing. A renderer with no
@@ -328,6 +330,27 @@ are disabled while `directoryFromLocalCache` holds, the card's second line says
 editing is available once Rally connects, and the Channel links and the **New
 channel** plus still navigate.
 
+### What the usage meter paints
+
+The `usage` slice is the one slice with no socket behind it. Usage is a REST
+read, `GET /workspace/usage`, and it is fetched when a surface that shows it
+opens: the Usage section of Settings → Organization, and the Organization
+menu, whose usage line mounts with the menu's content. The settings window is
+kept and reused, so a request for the Organization pane while it is already
+mounted counts as an opening too. There is no push and no polling; the
+figure may lag by minutes and nothing gains from watching it.
+
+`useOrganizationUsage` reads the row when it mounts and shows it while the
+request is in flight. The row is held beside the query rather than written
+into it, so an answer already in memory from earlier in the session always
+wins over the disk without a check. Each answer is written back whole, under
+the epoch read before the request, so a sign-out during the request drops the
+write. The row's `fetchedAt` is what **as of 2:14 PM** names when the device is
+offline and the row is all there is. A failed request is the PRD's error state
+even over a row: Settings says usage is unavailable with **Try again**, and the
+menu hides its line. `docs/PRDs/2026-10-03_usage-quota-metering/prd.md` owns
+the states.
+
 ### What leaves the cache
 
 The bound on this cache is membership, not a number or an age:
@@ -514,7 +537,8 @@ same way it backs the draft cache. Two traps, both already paid for once:
   renderer's test setup calls `closeLocalCache()` after every test; no file
   has to know.
 
-The suites are `lib/local-cache.test.ts`, `lib/local-cache-mirror.test.ts`,
+The suites are `components/organization-usage.test.tsx` (the `usage` slice: cached paint, the offline label, the write-back),
+`lib/local-cache.test.ts`, `lib/local-cache-mirror.test.ts`,
 `lib/conversation-cache.test.ts`, `lib/workspace-directory-cache.test.ts`,
 `components/connecting-card.test.tsx`, the `openingTranscriptSnapshot` cases in
 `lib/transcript.test.ts`, and the local-cache blocks appended to
@@ -558,6 +582,29 @@ is small. The cost that would grow is the persisted transcript, and
 scrolling.
 
 ## Changelog
+
+### 2026-10-03: Usage is the first slice without a socket
+
+**What changed:** A `usage` slice holds the last `GET /workspace/usage` answer
+per Organization, with the time it arrived. Settings → Organization → Usage and
+the Organization menu paint it while their request is in flight, and show it
+labelled **as of** when the device is offline.
+
+**Why:** The usage quota PRD asks for the cached value right away and a
+background refresh when either surface opens. Without a row, every open of
+the menu starts with no line and grows one a moment later, and an offline
+reader sees nothing at all.
+
+**Considered and rejected:** Seeding the query cache from the row, the way the
+directory and conversation slices do. Those need it because socket hooks read
+the query entries; usage has one reader, so keeping the seed beside the query
+gives "an answer in memory wins" for free and leaves no seed to fence.
+Reusing `mirrorQueriesToLocalCache`: one write per answer needs no coalescing.
+
+**Consequences:** The row is bounded like every other row, by membership and
+sign-out wipes, and holds no dollar amount the response does not already
+carry. A shape change the schema cannot parse drops the row on read; bump the
+slice version only when the schema can no longer absorb an old row.
 
 ### 2026-09-27 — The Channel rail paints without waiting for the conversation
 
