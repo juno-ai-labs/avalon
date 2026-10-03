@@ -90,6 +90,38 @@ describe("applyUsageBatch", () => {
   });
 });
 
+describe("rollup quota", () => {
+  const quotas = (usage: DatabaseSync) => usage.prepare(
+    `SELECT week_start, quota_microusd FROM usage_rollups ORDER BY week_start`,
+  ).all();
+
+  it("prices a late event's past week with the plan in force that week, not today's", async () => {
+    const { usage, env } = seed();
+    // Upgraded during the week of Oct 8; an event from the week of Oct 1 arrives after.
+    await setWorkspacePlan(env, WORKSPACE, "growth", Date.parse("2026-10-10T00:00:00.000Z"));
+    await applyUsageBatch(env, [
+      event("inf:late", { occurredAt: "2026-10-02T12:00:00.000Z" }),
+      event("inf:now", { occurredAt: "2026-10-10T12:00:00.000Z" }),
+    ], "2026-10-10T13:00:00.000Z");
+
+    expect(quotas(usage)).toEqual([
+      { week_start: "2026-10-01T09:00:00.000Z", quota_microusd: 50_000_000 },
+      { week_start: "2026-10-08T09:00:00.000Z", quota_microusd: 125_000_000 },
+    ]);
+  });
+
+  it("takes a plan change recorded after the consumer read the workspace", async () => {
+    const { usage, env } = seed();
+    // The change has committed to the ledger, but this batch read `DB` before it.
+    usage.prepare(
+      `INSERT INTO usage_plan_changes (workspace_id, effective_at, plan, previous_plan) VALUES (?, ?, 'growth', 'starter')`,
+    ).run(WORKSPACE, "2026-10-02T11:00:00.000Z");
+    await applyUsageBatch(env, [event("inf:racing")], RECEIVED);
+
+    expect(quotas(usage)).toEqual([{ week_start: "2026-10-01T09:00:00.000Z", quota_microusd: 125_000_000 }]);
+  });
+});
+
 describe("readOrganizationUsage", () => {
   it("derives the same overage whichever order the events arrive in", async () => {
     const before = event("inf:before", { occurredAt: "2026-10-30T12:00:00.000Z", costMicrousd: 40_000_000 });
