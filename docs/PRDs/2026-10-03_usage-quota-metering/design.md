@@ -11,9 +11,9 @@
 call site (DO or Worker)            usage consumer (regional Worker)        D1 `DB`
 ─────────────────────────           ────────────────────────────────        ──────────
 cost known  ──ctx.waitUntil──▶  USAGE_QUEUE  ──batch ≤100, ≤60 s──▶  dedupe, apply payer map,
-            (never awaited)       + DLQ          max_concurrency 1         split quota vs overage
-                                                                          ──▶ usage_weeks / usage_months
-desktop  ──GET /usage (workspace auth)──▶  API Worker  ──one indexed read──▶  usage_weeks, usage_months, workspaces
+            (never awaited)       + DLQ          max_concurrency 1         add to totals
+                                                                          ──▶ usage_events, usage_rollups
+desktop  ──GET /usage (workspace auth)──▶  API Worker  ──one range read──▶  usage_rollups, workspaces
 ```
 
 Four parts, each usable on its own:
@@ -45,6 +45,7 @@ interface UsageEvent {
   v: 1;
   eventId: string;            // stable; see "Event IDs"
   workspaceId: string;
+  region: string;             // the producing deployment; see the consumer
   activity: MeteredActivity;
   occurredAt: string;         // ISO instant the call finished
   costMicrousd: number;       // integer, >= 0
@@ -149,33 +150,33 @@ and the meter lags. That is the failure the PRD says it can live with.
 `apps/api/src/queues/usage-consumer.ts`. One run per batch:
 
 1. Parse each message with the Zod schema. Ack and log any that are invalid;
-   retrying will not fix them.
+   retrying will not fix them. A message whose `region` is not this
+   deployment's is a misrouted producer. It fails and retries here until it
+   reaches the dead-letter queue, and is never rerouted, per
+   [choosing a Queue or RPC](../../choosing-queues-or-rpc.md#splitting-per-region).
 2. Drop repeated `eventId`s within the batch, keeping the first. Then select
    the IDs already in `usage_events` and drop those messages too. Without the
    in-batch step, two copies in one batch would both be applied.
-3. Read each affected Organization's `plan` and `created_at` from `workspaces`,
-   and its current `usage_weeks` row for each week the batch touches.
-4. For each event, in arrival order:
+3. Read each affected Organization's `plan` and `created_at` from `workspaces`.
+4. For each event, sum into its rollup key:
    - `weekStart = created_at + 7d × floor((occurredAt − created_at) / 7d)`
    - `periodStart`: the latest monthly sign-up anniversary at or before
      `occurredAt`, clamped to the month's last day (PRD decision 10).
-   - If `ORGANIZATION_PAYS[activity]` is false, add the cost to `rally_microusd`
-     and stop.
-   - Otherwise, set `room = max(0, quota − organization_microusd)` and
-     `overage = max(0, cost − room)`. Add `cost − overage` to
-     `organization_microusd`, and add `overage` to both
-     `usage_weeks.overage_microusd` and `usage_months.overage_microusd`.
+   - If `ORGANIZATION_PAYS[activity]` is true, add the cost to
+     `organization_microusd`; otherwise to `rally_microusd`.
 5. Write everything in one `DB.batch()`: insert the events with
    `ON CONFLICT (event_id) DO NOTHING` as a safety net, then upsert the
-   rollups with `ON CONFLICT … DO UPDATE SET x = x + excluded.x`. A D1 batch is
+   rollups with `ON CONFLICT … DO UPDATE SET x = x + excluded.x`. A new rollup
+   row takes `quota_microusd` from the current plan; an existing row's quota is
+   left alone. A D1 batch is
    one transaction, so a crash leaves nothing half applied, and the redelivery
    is dropped at step 2.
 6. Log one `usage_batch_applied` line with counts per activity. This line is
    the monitoring, per
    [deciding without measurement](../../choosing-queues-or-rpc.md#deciding-without-measurement).
 
-`organization_microusd` holds only usage inside the quota. The week's total
-Organization-paid spend is `organization_microusd + overage_microusd`.
+The consumer computes no overage. Addition commutes, so the rollups come out
+the same whatever order events arrive in.
 
 **Retention.** `usage_events` is kept. It is the history the PRD exists to
 collect, and the only per-event source a Stripe sink could replay from. Its
@@ -202,10 +203,22 @@ may call it:
 }
 ```
 
-It reads one row from each of `workspaces`, `usage_weeks` (current week) and
-`usage_months` (current period), all by primary key. A missing week row means
-100%. The percentage is computed against the current plan, per PRD decision
-12.
+It reads the Organization's `workspaces` row and its `usage_rollups` rows with
+`week_start` from seven days before the current period's start up to now. That
+is one range on the primary key, about a dozen rows at most. Then:
+
+- **Percentage:** the current week's `organization_microusd` summed across its
+  rows, against `quota_microusd`. No rows means 100%.
+- **Overage, per week:** with `Q` the week's quota, `A` the earlier period's
+  total and `B` the later one's, the earlier part's overage is
+  `max(0, A − Q)` and the later part's is `max(0, A + B − Q) − max(0, A − Q)`.
+  A week inside one period has only `A`.
+- **Overage, this month:** the sum of the overage parts whose `period_start` is
+  the current period.
+
+A plan change applies at once (PRD decision 12) because Ace rewrites
+`quota_microusd` on the current week's rows. A Starter Organization that has
+spent $70 and moves to Growth reads 44% left, with no overage for the week.
 
 Allowance dollars and spend dollars are never in the response. The quota stays
 opaque on the wire as well as in the interface.
@@ -217,8 +230,10 @@ refreshes when the Usage section or the Organization menu opens.
 ## Setting a plan
 
 Ace's workspaces tab, which already finds any workspace and retires it, gains a
-plan control: Starter or Growth. It writes `workspaces.plan` through the same
-regional path the retire action uses. There is no customer-facing control.
+plan control: Starter or Growth. It writes `workspaces.plan`, and rewrites
+`quota_microusd` on the Organization's current-week `usage_rollups` rows, in one
+D1 batch through the same regional path the retire action uses. Past weeks keep
+the quota they had. There is no customer-facing control.
 
 ## DDL sketch
 
@@ -242,24 +257,18 @@ CREATE TABLE usage_events (
 CREATE INDEX usage_events_workspace_occurred
   ON usage_events (workspace_id, occurred_at);
 
-CREATE TABLE usage_weeks (
+CREATE TABLE usage_rollups (
   workspace_id TEXT NOT NULL,
   week_start TEXT NOT NULL,
-  organization_microusd INTEGER NOT NULL DEFAULT 0,
-  overage_microusd INTEGER NOT NULL DEFAULT 0,
-  rally_microusd INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (workspace_id, week_start)
-);
-
-CREATE TABLE usage_months (
-  workspace_id TEXT NOT NULL,
   period_start TEXT NOT NULL,
-  overage_microusd INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (workspace_id, period_start)
+  quota_microusd INTEGER NOT NULL,
+  organization_microusd INTEGER NOT NULL DEFAULT 0,
+  rally_microusd INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (workspace_id, week_start, period_start)
 );
 ```
 
-The rollups are small, one row per Organization per week and one per month,
+The rollups are small, at most two rows per Organization per week,
 and they are what the read path uses. `usage_events` is the history behind
 them.
 
@@ -270,7 +279,7 @@ this PRD. Each needs a cost before Goal 2 holds:
 
 | Activity | Site | Proposed cost |
 | --- | --- | --- |
-| `memory_embedding`, `search_embedding` | `runEmbeddingInference` drops `usage` (`structured-inference.ts`) | Keep the OpenRouter `usage.cost` it already receives |
+| `memory_embedding`, `search_embedding` | `runEmbeddingInference` drops `usage` (`structured-inference.ts`) | `usage.cost` alone is not enough: on a bring-your-own-key account it is only OpenRouter's fee, and the SDK's embeddings shape omits `cost_details.upstream_inference_cost` ([inference lakehouse](../../inference-lakehouse.md)). Read both fields from the raw `/v1/embeddings` response that `OpenRouterClient.embed` already fetches, and add them as `openRouterCallCostUsd` does for chat. If the upstream field is absent, price from the rate card. |
 | `audio_generation` | `multimodal-generation/plugin.ts` logs `usage_unavailable` | Azure rate card by characters or seconds |
 | `message_speech` | `message-speech-service.ts` | Same rate card |
 | `dictation` | `realtime-transcription-service.ts` captures nothing | Azure realtime rate card by audio seconds |
@@ -283,8 +292,10 @@ Rate cards extend the existing `INFERENCE_PRICING_CACHE` and
 ## Testing
 
 - **Node suite, real migrations:** the consumer applied to a batch with a
-  duplicate, a split event, a Rally-paid activity and two weeks. Assert the
-  rollup rows against literals. Prove it can fail by removing the in-batch dedupe.
+  duplicate, a Rally-paid activity and a week that straddles a monthly
+  boundary, delivered in two different orders. Assert the rollup rows and the
+  read's percentage and overage against literals. Prove it can fail by removing
+  the in-batch dedupe.
 - **Unit:** week and period boundaries, including month-end clamping and
   daylight-saving weeks. Payer map exhaustiveness is enforced by typecheck and
   needs no test.
