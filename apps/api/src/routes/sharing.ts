@@ -65,6 +65,7 @@ sharingRoutes.get("/navigation", requireWorkspaceAuth, async (c) => {
   return c.json(SharedNavigationDirectorySchema.parse(
     await listSharedNavigationDirectory(
       c.env, auth.workspaceId, auth.userId, c.req.query("attention") === "1", c.req.query("shell") === "1",
+      c.req.query("member") === "1",
     ),
   ));
 });

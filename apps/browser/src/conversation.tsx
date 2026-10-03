@@ -20,7 +20,7 @@ import {
   SidebarScroll,
 } from '@rally/ui/components/resizable-sidebar';
 import { SINGLE_SIDEBAR_DEFAULT_WIDTH } from '@rally/ui/lib/sidebar-geometry';
-import { browserSidebarVisible, browserSidebarWidth } from './sidebar-layout';
+import { browserSidebarWidth } from './sidebar-layout';
 import { MacDownloadLink } from './mac-download';
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { BreakoutMenu, ChannelMenu } from '@rally/ui/components/conversation-menus';
@@ -43,6 +43,14 @@ import '@rally/ui/styles/app.css';
 const SHARED_CHANNELS_SPACE_ID = 'shared-channels';
 
 type SharedNavigationDirectory = Awaited<ReturnType<RallyApi['getSharedNavigationDirectory']>>;
+
+/**
+ * The tab's whole sidebar, so a member's own Channels come with it: the browser
+ * has no member directory to list them from, as the desktop's socket does.
+ */
+function readSharedNavigation(api: RallyApi, signal?: AbortSignal): Promise<SharedNavigationDirectory> {
+  return api.getSharedNavigationDirectory(signal, { memberChannels: true });
+}
 
 
 /** The directory's Spaces, plus a local **Shared channels** group for Channels no visible Space holds. */
@@ -84,7 +92,7 @@ function SharedConversationRoute(): React.JSX.Element {
 function SharedSpaceRoute(): React.JSX.Element {
   const { spaceId: encodedSpaceId } = useParams();
   const { api } = useCollaborationSession();
-  const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal), enabled: Boolean(api) });
+  const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => readSharedNavigation(api!, signal), enabled: Boolean(api) });
   if (directory.isPending) return <div className="browser-empty"><p>Opening Space…</p></div>;
   if (directory.isError) return <InlineError>Unable to open this Space.</InlineError>;
   return <SharedSpaceOverview encodedSpaceId={encodedSpaceId ?? ''} directory={directory.data} />;
@@ -166,7 +174,7 @@ function SharedConversation({ parentId, substreamId, spaceId }: { parentId: stri
   const railScope = useUiStore((state) => state.railScope);
   const closeRail = useUiStore((state) => state.closeRail);
   const directory = useQuery({ queryKey: ['shared-navigation'], enabled: Boolean(api),
-    queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
+    queryFn: ({ signal }) => readSharedNavigation(api!, signal), refetchOnWindowFocus: 'always' });
   const parent = directory.data?.workstreams.find((item) => item.parentId === parentId);
   const archived = parent?.conversations.find((item) => item.substreamId === substreamId)?.archived ?? false;
   const parentArchived = parent?.archived === true || (substreamId === '0' && archived);
@@ -481,9 +489,8 @@ function SharedNavigation({ accountMenu, directory, navigationSpaces }: {
 }
 
 /**
- * With nothing to choose between — the case the sidebar is hidden for — the one
- * Channel opens in place of the empty chooser. Lives beside the sidebar rather
- * than in it, since the sidebar is not mounted then.
+ * With one Channel to choose, it opens in place of the empty chooser; the
+ * sidebar stays beside it.
  */
 function OpenLoneWorkstream({ directory, navigationSpaces }: {
   directory: SharedNavigationDirectory | undefined;
@@ -494,9 +501,7 @@ function OpenLoneWorkstream({ directory, navigationSpaces }: {
   const canonicalHost = !location.pathname.startsWith('/app/workspaces/');
   const routeParentId = pathname.match(/^\/workstreams\/([^/]+)/u)?.[1]
     ?? (/^\/s\/[^/]+\/c\/[^/]+/u.test(pathname) ? pathname : null);
-  const onlyWorkstream = directory && !browserSidebarVisible({
-    spaceCount: navigationSpaces.length, channelCount: directory.workstreams.length,
-  }) ? directory.workstreams[0] : undefined;
+  const onlyWorkstream = directory?.workstreams.length === 1 ? directory.workstreams[0] : undefined;
   useEffect(() => {
     if (!onlyWorkstream || routeParentId) return;
     const target = sharedWorkstreamTarget(onlyWorkstream, canonicalHost ? navigationSpaces[0]?.id ?? null : null);
@@ -507,14 +512,8 @@ function OpenLoneWorkstream({ directory, navigationSpaces }: {
 
 function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => void }): React.JSX.Element {
   const { session } = useCollaborationSession();
-  const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => api.getSharedNavigationDirectory(signal), refetchOnWindowFocus: 'always' });
+  const directory = useQuery({ queryKey: ['shared-navigation'], queryFn: ({ signal }) => readSharedNavigation(api, signal), refetchOnWindowFocus: 'always' });
   const navigationSpaces = useMemo(() => sharedNavigationSpaces(directory.data), [directory.data]);
-  // A failed refetch keeps the last data; the sidebar still shows so the error
-  // inside it can be seen.
-  const sidebarVisible = browserSidebarVisible(directory.data && !directory.isError ? {
-    spaceCount: navigationSpaces.length,
-    channelCount: directory.data.workstreams.length,
-  } : undefined);
   const accountMenu = useMemo(() => {
     if (!session) return null;
     const user = { ...session.user, name: session.user.name ?? session.user.email, timezone: session.user.timezone ?? 'UTC', avatarUrl: session.user.avatarUrl ?? undefined };
@@ -538,14 +537,9 @@ function BrowserWorkspace({ api, onSignOut }: { api: RallyApi; onSignOut: () => 
       <p>Shared conversations aren’t supported at this width yet.</p>
     </section>
   </main>;
-  // The sidebar writes its own width while it is mounted; without it the main
-  // pane must not keep the width's initial value as a blank gutter.
-  return <div className="browser-workspace workspace-shell" style={sidebarVisible ? undefined : { '--av-cmp-sidebar-width': '0px' } as React.CSSProperties}>
+  return <div className="browser-workspace workspace-shell">
     <OpenLoneWorkstream directory={directory.data} navigationSpaces={navigationSpaces} />
-    {sidebarVisible
-      ? <SharedNavigation accountMenu={accountMenu} directory={directory} navigationSpaces={navigationSpaces} />
-      // With no sidebar the account menu floats over the corner it would sit in.
-      : <div className="browser-account-fallback"><MacDownloadLink />{accountMenu}</div>}
+    <SharedNavigation accountMenu={accountMenu} directory={directory} navigationSpaces={navigationSpaces} />
     <main className="browser-feed main-pane"><Routes>
       <Route path="/s/:spaceId" element={<SharedSpaceRoute />} />
       <Route path="/s/:spaceId/c/:parentId" element={<SharedConversationRoute />} />

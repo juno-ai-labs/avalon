@@ -566,6 +566,32 @@ describe("space dashboard conversation page", () => {
     expect(await candidates(OWNER)).toEqual([]);
   });
 
+  it("given a member who asks for visible Channels, then the candidates are what the member directory lists them", async () => {
+    await openChannelObject(CHANNEL_A);
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Roadmap"), viewerEffect(OWNER)]);
+    await openChannelObject(PRIVATE_CHANNEL);
+    await publishChannel(PRIVATE_CHANNEL, [
+      channelCommonEffect("Private Channel", { scope: "personal" }),
+      viewerEffect(OWNER),
+    ]);
+    await openChannelObject(CHANNEL_B);
+    await publishChannel(CHANNEL_B, [
+      channelCommonEffect("Old plan", { archivedAt: "2026-09-19T01:00:00.000Z" }),
+      viewerEffect(OWNER),
+    ]);
+    const candidates = (userId: UserId, includeVisibleChannels?: boolean) => workspace().listScopeGrantCandidates({
+      workspaceId: WORKSPACE_ID, userId, membershipIncarnation: userId,
+      ...(includeVisibleChannels === undefined ? {} : { includeVisibleChannels }),
+    });
+    // The Organization-wide Channel for anyone; the private one only for the
+    // person in it; the archived one for nobody.
+    expect(await candidates(OWNER, true)).toEqual([CHANNEL_A, PRIVATE_CHANNEL]);
+    expect(await candidates(MEMBER, true)).toEqual([CHANNEL_A]);
+    // Without asking, the member directory's Channels stay out, as the
+    // desktop's read relies on.
+    expect(await candidates(OWNER)).toEqual([]);
+  });
+
   it("given a breakout whose viewer row is not listable, when that person reads the page, then it is absent", async () => {
     const spaceId = await reserve("Hiring");
     await openChannelObject(CHANNEL_A);

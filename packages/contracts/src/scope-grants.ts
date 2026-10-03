@@ -237,6 +237,7 @@ export const SharedNavigationSpacesRequestSchema = z.strictObject({
   userId: UserIdSchema,
   membershipIncarnation: z.string().min(1),
   workstreamIds: z.array(IdSchema),
+  includeVisibleChannels: z.boolean().optional(),
 });
 
 

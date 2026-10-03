@@ -48,9 +48,14 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
  * `includeShellFields` adds each Breakout's `originTurnId` and each Space's
  * `systemRole`. Released desktops parse this read strictly and reject keys
  * they do not know, so only a client that asks for them gets them.
+ *
+ * `includeMemberChannels` adds, for a member, every Channel the member
+ * directory would list them. The browser asks for it because this read is its
+ * whole sidebar; the desktop does not, since its socket already lists those.
  */
 export async function listSharedNavigationDirectory(
   env: Env, workspaceId: WorkspaceId, userId: UserId, includeAttention = false, includeShellFields = false,
+  includeMemberChannels = false,
 ) {
   const relationship = await readWorkspaceRelationship(env.DB, workspaceId, userId);
   if (relationship?.status !== "active") {
@@ -58,8 +63,9 @@ export async function listSharedNavigationDirectory(
   }
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
     workspaceDOName(env.AVALON_REGION, workspaceId));
+  const includeVisibleChannels = includeMemberChannels && relationship.accessClass === "member";
   const candidates = ScopeGrantCandidatesSchema.parse(await workspace.listScopeGrantCandidates({
-    workspaceId, userId, membershipIncarnation: relationship.incarnation,
+    workspaceId, userId, membershipIncarnation: relationship.incarnation, includeVisibleChannels,
   }));
   // Every candidate Channel is hosted in this one object, so one RPC answers
   // for all of them; each Channel still decides what it releases. Nobody
@@ -75,6 +81,7 @@ export async function listSharedNavigationDirectory(
     userId,
     membershipIncarnation: relationship.incarnation,
     workstreamIds: workstreams.map((workstream) => workstream.parentId),
+    includeVisibleChannels,
   }));
   const current = await readWorkspaceRelationship(env.DB, workspaceId, userId);
   if (current?.status !== "active" || current.incarnation !== relationship.incarnation

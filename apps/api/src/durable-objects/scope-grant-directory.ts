@@ -4,6 +4,8 @@ import { ParentEffectEnvelopeSchema, conversationEffectHash, type ParentEffectEn
 
 export const ScopeGrantCandidatesRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, userId: UserIdSchema, membershipIncarnation: z.string().min(1),
+  /** Also name every Channel this member can see; see `channelsVisibleTo`. */
+  includeVisibleChannels: z.boolean().optional(),
 });
 export const ScopeGrantCandidatesSchema = z.array(IdSchema);
 

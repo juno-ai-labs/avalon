@@ -12,7 +12,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | Path | Responsibility |
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
-| `apps/browser/src/mac-download.tsx` | The Mac app download, pinned above the account menu in the sidebar, or floating with it when there is no sidebar. |
+| `apps/browser/src/mac-download.tsx` | The Mac app download, pinned above the account menu in the sidebar. |
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, invitation acceptance, session restore and workspace list. |
 | `apps/browser/src/invitation.ts` | Tokenized and addressed invitation fragments, and exact canonical scope destinations. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
@@ -152,10 +152,16 @@ It holds one workspace socket per tab, through `watchWorkspaceReach`, and reads
 the shared navigation again when that socket reports this person's reach
 changed ([`realtime-sockets.md`](realtime-sockets.md)).
 
-The sidebar is hidden when there is nothing to choose: one Channel and at most
-one Space (`browserSidebarVisible`). The lone Channel then opens directly and the
-account menu floats at the bottom left. The sidebar stays while the directory is
-loading, failed or empty. Its width is the reader's preference clamped by
+The browser asks the navigation read for `member=1`. For a member, the
+directory then also names every Channel the member directory would list them
+(Organization-wide, or one they take part in), beside the Channels reached
+through a grant or a Breakout. The desktop leaves it off, since its socket
+already lists those. Each named Channel still decides what it releases, so a
+guest's answer is unchanged, and the server never names Organization-wide
+Channels for a guest.
+
+The sidebar is always drawn. When the directory holds one Channel, that Channel
+opens directly beside it. Its width is the reader's preference clamped by
 `browserSidebarWidth`; it does not collapse.
 
 ### Shared collaboration transport
@@ -406,6 +412,29 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-03 — Members see their own Channels, and the sidebar always shows
+
+**What changed:** `/sharing/navigation?member=1` adds, for a member, every
+Channel the member directory would list them, and the browser asks for it. The
+sidebar is drawn whatever the directory holds; `browserSidebarVisible` and the
+floating account menu are gone.
+
+**Why:** The directory was built for guests, so a member opening the browser
+saw only Channels shared to them by grant: a Channel they were in, or a public
+one, was missing, and with one listed Channel the sidebar hid itself and left
+no way to the rest.
+
+**Considered and rejected:** Reading the member directory in the browser, as
+the desktop does over its socket. It needs the paging and sidebar store the
+lite client deliberately does not install. Widening the read for every caller
+would make each desktop member re-read, Channel by Channel, what its socket
+already lists.
+
+**Consequences:** The member half runs only when asked and only for a member;
+each Channel is still re-read from its own parent, so the cost grows with the
+Channels a member can see. A Space with no Channel visible to the reader is
+still not listed.
 
 ### 2026-09-30 — The account rail offers the Mac app
 

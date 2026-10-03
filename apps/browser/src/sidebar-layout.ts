@@ -5,17 +5,6 @@ import {
 } from '@rally/ui/lib/sidebar-geometry';
 
 /**
- * Whether the tab draws its navigation sidebar at all. A guest shared one
- * Channel and nothing else has no choice to make, so the Channel opens alone;
- * until the directory answers, and when it holds nothing, the sidebar stays,
- * since it carries the loading, error and empty states.
- */
-export function browserSidebarVisible(counts: { spaceCount: number; channelCount: number } | undefined): boolean {
-  if (!counts) return true;
-  return counts.channelCount !== 1 || counts.spaceCount > 1;
-}
-
-/**
  * The sidebar's width: the reader's preference between the shared clamps, and
  * never more than the window leaves after the conversation minimum.
  */

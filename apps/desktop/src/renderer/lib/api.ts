@@ -1052,8 +1052,15 @@ export class RallyApi {
     return this.request('/sharing/directory', { schema: SharedDirectorySchema, signal });
   }
 
-  async getSharedNavigationDirectory(signal?: AbortSignal) {
-    return this.request('/sharing/navigation?attention=1&shell=1', { schema: SharedNavigationDirectorySchema, signal });
+  /**
+   * `memberChannels` also lists every Channel a member can see, for a client
+   * with no member directory of its own. The desktop's socket already lists
+   * those, so it leaves this off.
+   */
+  async getSharedNavigationDirectory(signal?: AbortSignal, { memberChannels = false } = {}) {
+    return this.request(`/sharing/navigation?attention=1&shell=1${memberChannels ? '&member=1' : ''}`, {
+      schema: SharedNavigationDirectorySchema, signal,
+    });
   }
 
   /**

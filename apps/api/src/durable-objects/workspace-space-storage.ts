@@ -1807,6 +1807,33 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
+   * Every live Channel this person can see as a member: Organization-wide, or
+   * one they take part in. The same predicate the member directory lists by.
+   *
+   * Candidates for the browser's conversation directory, which has no member
+   * directory of its own; each is still re-asked of its own work stream, which
+   * decides every conversation it releases. Only a member's read asks this —
+   * a guest is never released an Organization-wide Channel, so naming every
+   * one of them to a guest would only cost reads that answer nothing.
+   */
+  channelsVisibleTo(userId: string): string[] {
+    if (!this.ready()) return [];
+    return this.storage.sql.exec<{ workstream_id: string }>(
+      `SELECT directory.workstream_id
+         FROM channels directory
+         LEFT JOIN channel_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?
+          AND viewer.authority_generation = directory.authority_generation
+        WHERE directory.archived_at IS NULL
+          AND directory.system_kind IS NULL
+          AND ${channelVisibleToViewerSql("directory", "viewer")}
+        ORDER BY directory.workstream_id`,
+      userId,
+    ).toArray().map((row) => row.workstream_id);
+  }
+
+  /**
    * The Channels this person reaches only through a breakout: they may list
    * one of its breakouts, and cannot see the Channel itself.
    *

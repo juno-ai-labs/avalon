@@ -11678,19 +11678,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = ScopeGrantCandidatesRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return this.conversationCandidates(request.userId, request.membershipIncarnation);
+    return this.conversationCandidates(request.userId, request.membershipIncarnation, request.includeVisibleChannels);
   }
 
   /**
    * The Channels where this person may be able to read some conversation
    * without reaching the Channel through the member directory: an explicit
-   * scope grant, or membership of one of its breakouts. Discovery only; every
-   * Channel named here decides for itself which conversations it releases.
+   * scope grant, or membership of one of its breakouts. With
+   * `includeVisibleChannels`, also every Channel the member directory would
+   * list, for a client that has no member directory of its own. Discovery
+   * only; every Channel named here decides for itself which conversations it
+   * releases.
    */
-  private conversationCandidates(userId: string, membershipIncarnation: string): string[] {
+  private conversationCandidates(userId: string, membershipIncarnation: string, includeVisibleChannels = false): string[] {
+    const spaces = this.spaceStorage();
     return [...new Set([
       ...scopeGrantCandidates(this.state.storage, userId, membershipIncarnation),
-      ...this.spaceStorage().channelsReachedOnlyThroughBreakouts(userId),
+      ...spaces.channelsReachedOnlyThroughBreakouts(userId),
+      ...(includeVisibleChannels ? spaces.channelsVisibleTo(userId) : []),
     ])].sort();
   }
 
@@ -11698,7 +11703,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = SharedNavigationSpacesRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const candidates = new Set(this.conversationCandidates(request.userId, request.membershipIncarnation));
+    const candidates = new Set(this.conversationCandidates(
+      request.userId, request.membershipIncarnation, request.includeVisibleChannels,
+    ));
     const admittedIds = request.workstreamIds.filter((workstreamId) => candidates.has(workstreamId));
     return this.spaceStorage().sharedNavigationSpaces(admittedIds).map((space) =>
       SharedNavigationSpaceSchema.parse(space));
