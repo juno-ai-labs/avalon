@@ -165,6 +165,7 @@ section, loading and failed included, so a search result always has somewhere
 to land. `components/organization-usage.tsx` draws the section;
 [`local-cache.md`](local-cache.md) owns the row it paints from.
 
+## Changelog
 
 ### 2026-09-15 — Make the desktop release channel a searchable device preference
 

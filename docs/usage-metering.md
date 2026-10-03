@@ -64,8 +64,7 @@ the SDK's embeddings shape drops the bring-your-own-key upstream charge.
 
 ### Applying
 
-The consumer runs one batch at a time (up to 100 messages or 60 seconds). It
-drops repeated event IDs within the batch, then IDs already in `usage_events`,
+The consumer runs one batch at a time (up to 100 messages or 60 seconds).
 First it sends the whole batch to the usage lakehouse. Only then does it touch
 D1: it drops repeated event IDs within the batch, then IDs already in
 `usage_events`, reads each Organization's plan and creation time from `DB`, and
@@ -75,7 +74,8 @@ in one `USAGE_DB.batch()`:
   paid (`ORGANIZATION_PAYS` at apply time);
 - adds its cost into the `usage_rollups` row for its quota week and monthly
   period, into `organization_microusd` or `rally_microusd`. A new row takes the
-  current plan's weekly quota.
+  weekly quota of the plan in force at the end of its week (see
+  [Plans](#plans)).
 
 The consumer computes no overage. Addition commutes, so the totals do not
 depend on arrival order.
