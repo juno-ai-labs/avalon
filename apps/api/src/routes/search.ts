@@ -6,13 +6,20 @@ import { Hono } from 'hono';
 import { SearchRequestSchema, SearchResponseSchema } from '@rally/contracts/search';
 import type { HonoAppEnv } from '../env';
 import { zValidator } from '../middleware/validation';
-import { authenticate, getAuth } from '../middleware/auth';
+import { authenticate, getWorkspaceAuth, requireWorkspaceAuth } from '../middleware/auth';
 import { ApiError } from '../lib/api-error';
 import { searchWorkspacePage } from '../services/workspace-search-service';
 
 export const searchRoutes = new Hono<HonoAppEnv>();
+searchRoutes.use('*', requireWorkspaceAuth);
+
+/** Whether the session still holds the workspace relationship the search was answered for. */
+function stillHolds(current: Awaited<ReturnType<typeof authenticate>>, auth: { workspaceId: string; userId: string }): boolean {
+  return current.workspaceId === auth.workspaceId && current.userId === auth.userId
+    && (Boolean(current.role) || current.accessClass === 'guest');
+}
 searchRoutes.post('/', zValidator('json', SearchRequestSchema), async (c) => {
-  const auth = getAuth(c);
+  const auth = getWorkspaceAuth(c);
   const started = performance.now();
   let results;
   try { results = await searchWorkspacePage(c.env, auth, c.req.valid('json'), c.req.raw.signal); }
@@ -25,7 +32,7 @@ searchRoutes.post('/', zValidator('json', SearchRequestSchema), async (c) => {
     throw new ApiError(503, 'search_unavailable', 'Search is temporarily unavailable');
   }
   const current = await authenticate(c);
-  if (current.workspaceId !== auth.workspaceId || current.userId !== auth.userId || !current.role) {
+  if (!stillHolds(current, auth)) {
     throw new ApiError(403, 'search_access_revoked', 'Workspace access has changed');
   }
   return c.json(SearchResponseSchema.parse({ ...results,
@@ -34,11 +41,11 @@ searchRoutes.post('/', zValidator('json', SearchRequestSchema), async (c) => {
 });
 
 searchRoutes.get('/resources/:id/preview', zValidator('param', z.strictObject({ id: IdSchema })), async (c) => {
-  const auth = getAuth(c);
+  const auth = getWorkspaceAuth(c);
   const response = await new ResourceService(c.env, auth).searchPreview(c.req.valid('param').id, c.req.raw.signal);
   try {
     const current = await authenticate(c);
-    if (current.workspaceId !== auth.workspaceId || current.userId !== auth.userId || !current.role) {
+    if (!stillHolds(current, auth)) {
       throw new ApiError(403, 'search_access_revoked', 'Workspace access has changed');
     }
     return response;

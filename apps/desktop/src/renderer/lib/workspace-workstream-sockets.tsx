@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import type { WorkstreamSummary } from './types';
 import type { WorkstreamSocketApi } from './use-workstream-socket';
 import { useCachedWorkstreams } from './use-workstreams-query';
+import { mainReachable, useConversationDirectory } from './conversation-directory';
 import { firstLandingWorkstream, openWorkstreamId, skippedWorkstreamIds } from './workstream-landing';
 import { WorkstreamSocketPool } from './workstream-socket-pool';
 
@@ -43,22 +44,24 @@ export function activeRealtimeWorkstreamId(
 }
 
 /** Start the existing pool from the directory, independently of workspace details. */
-export function WorkspaceWorkstreamSockets({ api, enabled = true, children }: PropsWithChildren<{
+export function WorkspaceWorkstreamSockets({ api, children }: PropsWithChildren<{
   api: WorkstreamSocketApi | null;
-  enabled?: boolean;
 }>): React.JSX.Element {
   const location = useLocation();
   const workstreams = useCachedWorkstreams();
-  const activeWorkstreamId = enabled
-    ? activeRealtimeWorkstreamId(openWorkstreamId(location.pathname), workstreams)
-    : null;
+  const directory = useConversationDirectory();
+  // The pool dials Main, so it leaves out a Channel whose Main is not this
+  // person's (`mainReachable`), whether they are a member or a guest.
+  const reachable = (id: string) => mainReachable(workstreams?.find((row) => row.id === id), directory, id) !== false;
+  const routed = activeRealtimeWorkstreamId(openWorkstreamId(location.pathname), workstreams);
+  const activeWorkstreamId = routed !== null && reachable(routed) ? routed : null;
   const backgroundIds = useMemo(() => {
-    if (!enabled) return [];
     const selected = backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams);
-    if (location.pathname !== '/' || !workstreams) return selected;
+    if (location.pathname !== '/' || !workstreams) return selected.filter(reachable);
     const skipped = skippedWorkstreamIds(location.state);
     const first = firstLandingWorkstream(workstreams.filter((row) => !skipped.has(row.id)));
-    return first ? [...new Set([first.id, ...selected])] : selected;
-  }, [activeWorkstreamId, enabled, location.pathname, location.state, workstreams]);
-  return <WorkstreamSocketPool api={enabled ? api : null} activeWorkstreamId={activeWorkstreamId} backgroundWorkstreamIds={backgroundIds}>{children}</WorkstreamSocketPool>;
+    return (first ? [...new Set([first.id, ...selected])] : selected).filter(reachable);
+    // `reachable` reads only `workstreams` and `directory`.
+  }, [activeWorkstreamId, directory, location.pathname, location.state, workstreams]);
+  return <WorkstreamSocketPool api={api} activeWorkstreamId={activeWorkstreamId} backgroundWorkstreamIds={backgroundIds}>{children}</WorkstreamSocketPool>;
 }

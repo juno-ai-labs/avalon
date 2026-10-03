@@ -297,9 +297,9 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
            w.placement_affinity, m.role, m.access_class
          FROM workspace_members m
          JOIN workspaces w ON w.id = m.workspace_id
-         WHERE m.user_id = ? AND m.status = 'active' AND m.access_class = 'member' AND w.region = ?
+         WHERE m.user_id = ? AND m.status = 'active' AND w.region = ?
            AND w.abandoned_at IS NULL
-         ORDER BY m.joined_at, w.created_at, w.id`,
+         ORDER BY m.access_class = 'guest', m.joined_at, w.created_at, w.id`,
       ).bind(user.id, this.env.AVALON_REGION).all<Record<string, unknown>>(),
       this.env.DB.prepare(
         `SELECT i.id, i.workspace_id, w.name AS workspace_name,
@@ -314,6 +314,9 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          ORDER BY i.created_at DESC LIMIT 100`,
       ).bind(identity.email, nowIso(), this.env.AVALON_REGION).all<InvitationDiscoveryRow>(),
     ]);
+    // Memberships before guest relationships: a device with nothing selected
+    // opens the first one, and that should be the person's own Organization
+    // rather than one they were shared into earlier.
     const memberships = (workspaceResult.results ?? []).map(mapWorkspace);
     // Two workspaces a member holds but is not offered: the demo template, and a
     // demo still being prepared. Both are withheld from the list rather than
@@ -616,7 +619,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     const membership = await this.env.DB.prepare(
       `SELECT 1 AS present FROM workspace_members m
        JOIN workspaces w ON w.id = m.workspace_id
-       WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active' AND m.access_class = 'member'
+       WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active'
          AND w.region = ? AND w.abandoned_at IS NULL`,
     ).bind(userId, workspaceId, this.env.AVALON_REGION).first<{ present: number }>();
     if (!membership) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
@@ -1040,10 +1043,17 @@ export class PlatformOnboardingService {
     this.createId = dependencies.newId ?? newId;
   }
 
-  async state(): Promise<WorkspaceOnboardingState> {
+  /**
+   * `guests` is whether the asking client opens a guest relationship
+   * (`clientOpensGuestWorkspaces`). Bindings reconcile against every
+   * relationship either way, so two devices on different builds agree on them;
+   * only the answer leaves guests out.
+   */
+  async state(options: { guests?: boolean } = {}): Promise<WorkspaceOnboardingState> {
     const identity = await this.loadPlatformIdentity();
     const discovery = await this.discover(identity);
-    const workspaces = await this.reconcileWorkspaceBindings(identity.platformUserId, discovery);
+    const workspaces = (await this.reconcileWorkspaceBindings(identity.platformUserId, discovery))
+      .filter((workspace) => options.guests || workspace.accessClass !== "guest");
     return {
       // Compatibility for desktop builds released before plural discovery.
       workspace: workspaces[0] ?? null,
@@ -1052,11 +1062,12 @@ export class PlatformOnboardingService {
     };
   }
 
-  async activate(region: Region, workspaceId: string): Promise<Session> {
+  async activate(region: Region, workspaceId: string, options: { guests?: boolean } = {}): Promise<Session> {
     const identity = await this.loadPlatformIdentity();
     const discovery = await this.discover(identity);
     const workspace = discovery.flatMap((item) => item.workspaces)
-      .find((item) => item.region === region && item.id === workspaceId);
+      .find((item) => item.region === region && item.id === workspaceId
+        && (options.guests || item.accessClass !== "guest"));
     if (!workspace) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
     await this.reconcileWorkspaceBindings(identity.platformUserId, discovery);
     return this.issueExistingSession(
@@ -1312,7 +1323,12 @@ export class PlatformOnboardingService {
   ): Promise<RegionalWorkspace[]> {
     const workspaces = discovery.flatMap((item) => item.workspaces);
     const unique = new Map(workspaces.map((workspace) => [`${workspace.region}:${workspace.id}`, workspace]));
-    const ordered = [...unique.values()];
+    // Memberships before guest relationships across every deployment, not only
+    // within one: a device with nothing selected opens the first, and that
+    // should be the person's own Organization. The sort is stable, so each
+    // group keeps the deployment and discovery order it came in.
+    const ordered = [...unique.values()].sort((left, right) =>
+      Number(left.accessClass === "guest") - Number(right.accessClass === "guest"));
     const current = await this.bindings.list(platformUserId);
     await this.bindings.reconcile(platformUserId, ordered.map((workspace) => ({
       region: workspace.region,

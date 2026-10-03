@@ -15,7 +15,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 
 import type { HonoAppEnv } from "../env";
-import { getAuth } from "../middleware/auth";
+import { getAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { SpaceService } from "../services/space-service";
 
@@ -47,12 +47,20 @@ spaceRoutes.post("/", zValidator("json", CreateSpaceRequestSchema), async (c) =>
   ), 201),
 );
 
-spaceRoutes.get(
+/**
+ * A Space's reads, for a member or a guest: WorkspaceDO lists what this
+ * person may see by the listing rules (`docs/listing-rules.md`). Mounted ahead
+ * of the member-only writes below.
+ */
+export const spaceReadRoutes = new Hono<HonoAppEnv>();
+
+spaceReadRoutes.get(
   "/:id/channels",
+  requireWorkspaceAuth,
   zValidator("param", idParam),
   zValidator("query", channelPageQuery),
   async (c) => c.json(SpaceChannelPageSchema.parse(
-    await new SpaceService(c.env, getAuth(c)).listChannels(
+    await new SpaceService(c.env, getWorkspaceAuth(c)).listChannels(
       c.req.valid("param").id,
       c.req.valid("query").cursor ?? null,
     ),

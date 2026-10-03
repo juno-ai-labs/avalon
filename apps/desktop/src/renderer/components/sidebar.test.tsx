@@ -1517,6 +1517,31 @@ describe('Sidebar channel markers', () => {
     await waitFor(() => expect(onRemoveChannelFromSpace).toHaveBeenCalledWith(hiring.id, target.id));
   });
 
+  it('offers a guest only the row actions their routes admit', async () => {
+    const hiring = space();
+    const target = placedIn(workstream('guest-row', 'Quarterly planning', 'completed'), hiring.id);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            onSignOut={vi.fn()}
+            spaces={[hiring]}
+            spacesReadOnly
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    selectSpace('Hiring');
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+
+    const menuItems = await screen.findAllByRole('menuitem');
+    expect(menuItems.map((item) => item.textContent?.trim())).toEqual(['Share']);
+  });
+
   it('explains that a channel cannot be removed from its final space', async () => {
     const hiring = space();
     const target = placedIn(workstream('final-placement', 'Quarterly planning', 'completed'), hiring.id);
@@ -1697,11 +1722,10 @@ describe('Sidebar channel markers', () => {
   // The section is showing its opening card and no rows, so there is nothing to
   // drop a Channel on and nothing to add it to — the server refuses either with
   // `space_bootstrap_pending`.
-  // The guest shell is handed no directory at all: guest access to Spaces is
-  // deferred, and the host decides that rather than the sidebar inferring it
-  // from controls that would only be refused.
+  // A shell with no Space navigation is handed no directory at all; the host
+  // decides that rather than the sidebar inferring it from refused controls.
   it('given no space directory, then the sidebar draws no space navigation', async () => {
-    const target = workstream('guest-shell', 'Quarterly planning', 'completed');
+    const target = workstream('no-spaces', 'Quarterly planning', 'completed');
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -3278,8 +3302,8 @@ describe('Sidebar channel paging', () => {
 
 /**
  * Every Channel belongs to a Space, so a member's sidebar says where each one
- * lives rather than listing them all again by time. The guest shell has no
- * hierarchy to say it with and keeps the flat list.
+ * lives rather than listing them all again by time. A shell with no Space
+ * directory has no hierarchy to say it with and keeps the flat list.
  */
 describe('the sidebar without a recency list', () => {
   beforeEach(() => {
@@ -3345,11 +3369,9 @@ describe('the sidebar without a recency list', () => {
     expect(screen.getAllByRole('link', { name: /Roadmap review/u })).toHaveLength(1);
   });
 
-  // The guest shell is handed no Space directory at all — Space discovery is
-  // deferred for a guest, and the host decides that rather than the component
-  // inferring it. Absent is not empty, so this is the one session that keeps
-  // the flat list.
-  it('given a guest shell, when the sidebar is drawn, then the time-grouped list is untouched', () => {
+  // A shell handed no Space directory at all keeps the flat list. Absent is
+  // not empty: the host decides that rather than the component inferring it.
+  it('given no Space directory, when the sidebar is drawn, then the time-grouped list is untouched', () => {
     // The group a row lands in is read off the clock, so the clock is held.
     vi.useFakeTimers({ now: new Date('2026-08-01T12:00:00.000Z'), toFake: ['Date'] });
     renderSidebar({ workstreams: [today] });

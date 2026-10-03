@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { ApiError } from "../src/lib/api-error";
 import {
+  clientOpensGuestWorkspaces,
   requireCurrentClientContract,
   type ClientRequestHeaders,
 } from "../src/lib/client-contract";
@@ -73,5 +74,13 @@ describe("the client contract gate", () => {
     // iOS and the desktop main process send no `Origin` and decode with
     // schemas that ignore unknown keys. The new payload costs them nothing.
     expect(refusal({})).toBeNull();
+  });
+});
+
+describe("whether a client opens a guest relationship", () => {
+  it("is false for a build that declares nothing or an older contract, and true from the guest contract on", () => {
+    expect([undefined, "1", "2", "3", "4", "5", "three"].map((declared) =>
+      clientOpensGuestWorkspaces(request(declared === undefined ? {} : { "x-rally-client-contract": declared }))))
+      .toEqual([false, false, false, false, true, true, false]);
   });
 });

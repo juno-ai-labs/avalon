@@ -86,8 +86,8 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   }
   if (first) return <Navigate replace to={`/workstreams/${encodeURIComponent(first.id)}`} />;
   // No Channel to open. Every Channel is started from a Space, so an empty
-  // Organization lands on General, whose dashboard says so. (A guest lands
-  // through `SharedLanding` instead.)
+  // Organization lands on General, whose dashboard says so. A guest is not
+  // listed General, and is told their shared Channels appear in the sidebar.
   const general = spaces?.items.find((row) => row.systemRole === 'general');
   if (general) return <Navigate replace to={`/spaces/${encodeURIComponent(general.id)}`} />;
   if (!spaces && state !== 'unavailable'

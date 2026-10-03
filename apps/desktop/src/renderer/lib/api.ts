@@ -388,6 +388,7 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     // id, all of them opening this same row.
     spaceIds: [...workstream.spaceIds],
     breakoutAttentionCount: workstream.breakoutAttentionCount ?? 0,
+    ...(workstream.mainWithheld ? { mainWithheld: true as const } : {}),
     preview: workstream.objective,
   };
 }

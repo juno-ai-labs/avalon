@@ -12,7 +12,7 @@ const parentId = "00000000-0000-4000-8000-000000000082";
 const userId = asUserId("00000000-0000-4000-8000-000000000083");
 const childId = "00000000-0000-4000-8000-000000000084";
 const workspace = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
-const candidates = (membershipIncarnation = "first") => workspace().listScopeGrantCandidates({ workspaceId, userId, membershipIncarnation });
+const candidates = (membershipIncarnation = "first") => workspace().listScopeGrantCandidates({ workspaceId, userId, membershipIncarnation, accessClass: "guest" });
 function envelope(version: number, active = true, incarnation = "first", generation = 1) {
   const grant = ScopeGrantSchema.parse({ id: "00000000-0000-4000-8000-000000000085", userId,
     target: { kind: "conversation", workspaceId, parentId, substreamId: childId },
