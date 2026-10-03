@@ -124,10 +124,10 @@ as the guest host does today.
 
 ### Realtime
 
-Each tab opens the same proactive feed set the Mac app does: the active
-Channel, every pin, the five most recent unpinned Channels, every running
-Channel, the landing candidate, and a hover warmup. Recently viewed feeds are
-retained on the same window as desktop. Breakouts open a feed only while viewed.
+Each tab opens the same proactive feed set the Mac app does, as defined in
+[`websocket-architecture.md`](../../websocket-architecture.md): the active
+Channel, pins, recent and running Channels, the landing candidate and a hover
+warmup, with the same retention. Breakouts open a feed only while viewed.
 Every tab holds its own set; tabs do not coordinate.
 
 The tab publishes presence from page visibility and focus, the way desktop
@@ -160,6 +160,10 @@ same content and targets as on the Mac; clicking one focuses an open Rally tab
 on that conversation or opens a new one. Denying it changes nothing else; the
 email fallback still applies.
 
+The service worker is served from the app root (`/sw.js`), so its default scope
+covers `/app/`. The browser Worker adds that one path to what it serves today,
+and the shell's CSP gains `worker-src 'self'`.
+
 ### Artifacts
 
 The details rail previews a live artifact in a sandboxed iframe on the artifact
@@ -167,9 +171,18 @@ host. Pop-out still opens the artifact in a new tab. Where the browser refuses
 the artifact's framed viewer cookie (see **Security and trust model**), the
 preview shows the artifact's public representation and the pop-out link.
 
+### Existing client flags
+
+The browser shell reads the same client flags as the Mac app.
+`multiple-workspaces-enabled` decides whether workspace switching is offered,
+and `live-artifacts-enabled` decides whether the artifact rail and inline
+preview exist. Shipping the browser to everybody does not turn on a surface the
+Mac keeps dark.
+
 ### Regions
 
-A member's workspace list covers every configured deployment. Selecting a
+A member's workspace list covers every configured deployment, subject to
+`multiple-workspaces-enabled` as above. Selecting a
 workspace routes its requests and sockets to that deployment.
 
 ## Impact on the product contract
@@ -217,11 +230,12 @@ None yet.
    API: a member's cookie session could already start any connector, and the
    flag does not change who may connect what. Rejected: a registry field, which
    needs a deploy to change.
-6. **Inline artifact preview uses a sandboxed iframe.** This reverses, for the
-   browser host only, the recorded rule in
-   [`live-web-artifacts.md`](../../live-web-artifacts.md) that the renderer
-   never embeds artifact content, and changes the artifact serving policy to
-   allow exactly one framing origin. See **Security and trust model**.
+6. **Inline artifact preview uses a sandboxed iframe.** This reverses the
+   recorded rule in [`live-web-artifacts.md`](../../live-web-artifacts.md) that
+   the renderer never embeds artifact content. The Mac app keeps its
+   `WebContentsView`, but the serving-policy change applies to every artifact
+   response, whatever client loads it: artifacts become frameable by exactly
+   one origin. See **Security and trust model**.
    Rejected: new tab only, which the guest host does today.
 7. **Region support is built now**, before a second deployment exists. It
    cannot be proven against production until one does.
@@ -249,8 +263,12 @@ desktop's identity session plus one regional credential per workspace.
 - **Artifact iframe, app side.** The browser shell's CSP gains `frame-src` for
   the artifact serving host. The artifact host is a different registrable
   domain, so framed artifact script runs in the artifact's own origin and cannot
-  read the app's cookies or DOM. The `sandbox` attribute withholds top
-  navigation and popups beyond what artifacts already need. What is accepted:
+  read the app's cookies or DOM. The `sandbox` attribute must include
+  `allow-same-origin`, `allow-scripts` and `allow-forms`: without
+  `allow-same-origin` the artifact gets an opaque origin, its code-redemption
+  POST sends `Origin: null` and the fetch-metadata check refuses it, and its own
+  `connect-src 'self'` calls lose their identity. The sandbox withholds top
+  navigation and popups. What is accepted:
   remote model-authored content renders inside the app's window and can
   `postMessage` the parent, so the app must ignore messages it does not expect.
 - **Artifact iframe, serving side.** Every artifact response sends
@@ -347,6 +365,7 @@ navigation for every session; members keep using the Mac app.
 
 - **Popup or full-page redirect for OAuth?** A popup keeps the member's place;
   a redirect is simpler and immune to popup blockers. Does not block the build.
-- **Push from several browsers.** Each browser registers its own subscription.
-  Is a member with three browsers expected to get three pushes? Does not block
-  the build.
+- **Duplicate pushes.** Each browser registers its own subscription, and a
+  member with the Mac app and a browser gets each push on both. Should a push be
+  sent to every registered client, or suppressed for the others while one client
+  is in the foreground? Does not block the build.
