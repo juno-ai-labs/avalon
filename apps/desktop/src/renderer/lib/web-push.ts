@@ -1,4 +1,5 @@
-import type { RallyApi } from './api';
+import { isWebPushServiceUrl } from '@rally/contracts/push-notifications';
+import { ApiError, type RallyApi } from './api';
 
 /**
  * Browser notifications for a member tab: one service worker at the root, one
@@ -35,19 +36,55 @@ function applicationServerKey(publicKey: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
 }
 
-/** Registers this browser's subscription as a device bound to the current session. */
-async function registerSubscription(api: WebPushApi, subscription: PushSubscription): Promise<void> {
+function sameKey(subscription: PushSubscription, key: Uint8Array<ArrayBuffer>): boolean {
+  const current = subscription.options?.applicationServerKey;
+  if (!current) return false;
+  const bytes = new Uint8Array(current);
+  return bytes.length === key.length && bytes.every((byte, index) => byte === key[index]);
+}
+
+/** The Web Push key, or null where this API deployment cannot send Web Push. */
+async function configuredKey(api: WebPushApi): Promise<string | null> {
+  try {
+    return (await api.getWebPushConfiguration()).publicKey;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && error.code === 'web_push_unavailable') return null;
+    throw error;
+  }
+}
+
+/**
+ * This browser's subscription for the current key. A subscription made with an
+ * earlier key would be refused by the push service, so it is replaced.
+ */
+async function subscriptionFor(registration: ServiceWorkerRegistration, publicKey: string): Promise<PushSubscription> {
+  const key = applicationServerKey(publicKey);
+  const existing = await registration.pushManager.getSubscription();
+  if (existing && sameKey(existing, key)) return existing;
+  await existing?.unsubscribe();
+  return registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+}
+
+/**
+ * Registers this browser's subscription as a device bound to the current
+ * session. A push service the API does not accept is reported as unsupported.
+ */
+async function registerSubscription(api: WebPushApi, subscription: PushSubscription): Promise<boolean> {
+  if (!isWebPushServiceUrl(subscription.endpoint)) return false;
   const json = subscription.toJSON();
   await api.registerPushDevice(installationId(), {
     platform: 'web', transport: 'webpush', endpoint: subscription.endpoint,
     keys: { p256dh: json.keys?.p256dh ?? '', auth: json.keys?.auth ?? '' }, appVersion: 'web',
   });
+  return true;
 }
 
-async function grantedSubscription(): Promise<PushSubscription | null> {
+/** The current subscription where permission is granted and one exists, on the current key. */
+async function grantedSubscription(publicKey: string): Promise<PushSubscription | null> {
   if (Notification.permission !== 'granted') return null;
   const registration = await navigator.serviceWorker.getRegistration('/');
-  return await registration?.pushManager.getSubscription() ?? null;
+  if (!registration || !await registration.pushManager.getSubscription()) return null;
+  return subscriptionFor(registration, publicKey);
 }
 
 /**
@@ -57,34 +94,39 @@ async function grantedSubscription(): Promise<PushSubscription | null> {
  * Mac app does the same from its main process on every session change.
  */
 export async function reconcileWebPush(api: WebPushApi): Promise<void> {
-  if (!supported()) return;
-  const subscription = await grantedSubscription();
+  if (!supported() || Notification.permission !== 'granted') return;
+  const publicKey = await configuredKey(api);
+  if (!publicKey) return;
+  const subscription = await grantedSubscription(publicKey);
   if (subscription) await registerSubscription(api, subscription);
 }
 
 /** Reports "on" only once the subscription is registered for this session. */
 export async function webPushState(api: WebPushApi): Promise<WebPushState> {
   if (!supported()) return 'unsupported';
-  try { await api.getWebPushConfiguration(); } catch { return 'unavailable'; }
+  const publicKey = await configuredKey(api);
+  if (!publicKey) return 'unavailable';
   if (Notification.permission === 'denied') return 'denied';
-  const subscription = await grantedSubscription();
+  const subscription = await grantedSubscription(publicKey);
   if (!subscription) return 'off';
-  await registerSubscription(api, subscription);
-  return 'on';
+  return await registerSubscription(api, subscription) ? 'on' : 'unsupported';
 }
 
-/** Asks for permission, subscribes this browser, and registers it. Call from a click. */
+/**
+ * Asks for permission, subscribes this browser, and registers it. Call from a
+ * click: the permission prompt comes first, before any network wait, so Safari
+ * and Firefox still count it as the member's own action.
+ */
 export async function enableWebPush(api: WebPushApi): Promise<WebPushState> {
   if (!supported()) return 'unsupported';
-  const { publicKey } = await api.getWebPushConfiguration();
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') return permission === 'denied' ? 'denied' : 'off';
+  const publicKey = await configuredKey(api);
+  if (!publicKey) return 'unavailable';
   const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
   await navigator.serviceWorker.ready;
-  const subscription = await registration.pushManager.getSubscription()
-    ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: applicationServerKey(publicKey) });
-  await registerSubscription(api, subscription);
-  return 'on';
+  const subscription = await subscriptionFor(registration, publicKey);
+  return await registerSubscription(api, subscription) ? 'on' : 'unsupported';
 }
 
 export async function disableWebPush(api: WebPushApi): Promise<WebPushState> {

@@ -44,7 +44,7 @@ Notification text is plain: formatting is removed and mentions appear as
 ## Notifications on your Mac
 
 Open **Settings → Notifications**. Under **On this Mac** there is one switch:
-**Notify me on this Mac about mentions and additions**. It is on unless you
+**Notify me about mentions and additions**. It is on unless you
 turn it off.
 
 - Alerts arrive even when Rally is closed.
