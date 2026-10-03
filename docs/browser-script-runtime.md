@@ -61,6 +61,10 @@ its earlier observations and an error so the model can repair the next call.
 `rally.pageScript(callbackOrBody)` is a writable page extraction extension, explicitly
 separate from the orchestration scope. Callbacks are serialized into the page and cannot capture orchestration variables. Function expressions passed as strings are refused with a repair instruction instead of silently returning null. It retains the existing async wrapper,
 `await rally.store`, text normalization and signed-in page fetch behavior.
+`rally.downloadFiles(files)` fetches and stores independent files concurrently,
+preserves source order, checks declared original sizes, and returns stored
+references or named unavailable entries. Resolve provider download links in
+parallel before calling it; credentials stay in page-local `RequestInit` values.
 `rally.network.list/read` reuse recorded page responses; `rally.load` reuses
 signed-in file loading. Store bytes transfer into the owning renderer's store
 at the end of each script call; only references reach the API/model.
@@ -148,6 +152,16 @@ binding or input dispatch and fail the corresponding smoke assertion before
 restoring the code.
 
 ## Changelog
+
+### 2026-10-03 — Concurrent page file downloads
+
+**Why:** The import model downloaded independent originals in sequential loops, paying each network delay in turn.
+
+**Changed:** The page-local `rally.downloadFiles` helper concurrently fetches and stores files, returns outcomes in source order, and names missing originals and size mismatches. Provider-specific link resolution remains in page script; credentials never cross to the model.
+
+**Considered and rejected:** A fixed worker-pool cap and provider-specific downloader. Existing browser and store boundaries own resource limits; the helper works with ordinary page fetch descriptors.
+
+**Consequences:** Callers resolve provider links with `Promise.all`, preserve returned ordering when attaching files, and repair or explicitly account for unavailable originals.
 
 ### 2026-10-02 — Persistent browser handles with a model-neutral contract
 

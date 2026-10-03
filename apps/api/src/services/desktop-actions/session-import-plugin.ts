@@ -37,6 +37,9 @@ export function createSessionImportPlugin(
   executor: DesktopActionExecutor | undefined,
 ): HarnessPlugin {
   const finish: HarnessTool = {
+    // The desktop uploads and durably commits the history before answering.
+    // Its run owns cancellation; the ordinary tool timer cannot decide whether that write committed.
+    deadline: "run",
     definition: {
       name: "import_finish",
       description: "Hand the stored conversation to Rally. Succeeds once; on a problem it names what to fix.",

@@ -51,6 +51,7 @@ function invocation(fields: Record<string, unknown>) {
 }
 
 const verification = {
+  checks: [{ name: "page content", passed: true, basis: "Compared every displayed turn." }],
   branch: { complete: true as const, basis: 'Selected leaf reaches the root.' },
   page: { messageCount: 2, firstSourceMessageId: 'm0', lastSourceMessageId: 'm1', sampledSourceMessageIds: ['m1'], basis: 'Both rendered turns compared.' },
   fileCount: 0,
@@ -125,6 +126,37 @@ describe('running an import', () => {
     });
     return { run, discards };
   }
+
+  it('refuses failed page checks before saving and accepts a repaired comparison', async () => {
+    sockets.length = 0;
+    const complete = vi.fn(async () => 'w1');
+    const data = JSON.stringify([{ role: 'user', text: 'Question', sourceMessageId: 'm0' },
+      { role: 'assistant', text: 'Answer', sourceMessageId: 'm1' }]);
+    const bridge = {
+      getEmbeddedBrowserState: async () => ({ tabs: [{ id: 't1', url: source.url, title: 'Chat' }] }),
+      commandEmbeddedBrowser: async () => ({ kind: 'value' as const, value: { ok: true, value: 1,
+        url: source.url, title: 'Chat', stored: [{ handle: 'messages', kind: 'json', name: 'messages',
+          mimeType: 'application/json', size: data.length, data }] } }),
+    } as never;
+    const { run } = started(undefined, { bridge, completeSessionImport: complete });
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit('open');
+    socket.emit('message', wire('harness_status_changed', { status: 'running' }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'read', action: { kind: 'browser.evaluate', script: 'return 1' } } }));
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'failed-check', action: { kind: 'session_import.finish',
+      title: 'Chat', messages: 'messages', verification: { ...verification,
+        checks: [{ name: 'user text', passed: false, basis: 'The full text comparison returned false.' }] } } } }));
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(3));
+    expect(socket.sent[2]).toMatchObject({ type: 'answer_desktop_action',
+      outcome: { ok: false, code: 'invalid_conversation', message: expect.stringContaining('verification.checks[0].passed') } });
+    expect(complete).not.toHaveBeenCalled();
+    socket.emit('message', wire('desktop_action_requested', { request: { id: 'repaired', action: { kind: 'session_import.finish',
+      title: 'Chat', messages: 'messages', verification } } }));
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    socket.emit('message', wire('harness_status_changed', { status: 'completed' }));
+    await expect(run.done).resolves.toEqual({ kind: 'imported', workstreamId: 'w1' });
+  });
 
   it('ends a failed run while its browser command is blocked, skips queued work, and traces the boundary', async () => {
     sockets.length = 0;

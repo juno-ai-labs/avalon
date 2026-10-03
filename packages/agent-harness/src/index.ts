@@ -3580,6 +3580,8 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
 
 export interface HarnessTool {
   definition: ToolDefinition;
+  /** Host-owned writes wait for their receipt under the run lifecycle, without a second tool timer. */
+  deadline?: "run";
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
   /** Resolve a host-only execution deadline after validated input is known. */
   resolveTimeoutMs?: (input: unknown) => number | undefined;

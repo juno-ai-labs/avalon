@@ -38,6 +38,11 @@ export type SessionImportFailureReason = z.infer<typeof SessionImportFailureReas
 
 /** Model-reported observations, not an independent browser attestation. */
 export const SessionImportVerificationSchema = z.strictObject({
+  checks: z.array(z.strictObject({
+    name: z.string().trim().min(1).describe("The observed check, including text, branch, page and file comparisons you actually performed."),
+    passed: z.boolean().describe("The actual result. A false result must be repaired or resolved by a new comparison before finishing."),
+    basis: z.string().trim().min(1).describe("What was compared and what the result established. Rendering differences need a successful content comparison, not an ignored mismatch."),
+  })).min(1).describe("Results of the verification probes performed. Include failures; never replace a failed result with an unsupported claim of success."),
   branch: z.strictObject({
     complete: z.literal(true).describe("The selected history reaches its established beginning, without missing ancestors or unresolved pagination."),
     basis: z.string().trim().min(1).describe("How you established selection and completeness from the current source; do not assume an array is linear."),
@@ -58,6 +63,9 @@ export function verifySessionImport(
   messages: readonly { role: string; sourceMessageId?: string; files?: readonly unknown[] }[],
   verification: SessionImportVerification,
 ): void {
+  for (const [index, check] of verification.checks.entries()) {
+    if (!check.passed) throw new Error(`verification.checks[${index}].passed failed. Repair the extraction or resolve the comparison and repeat it before finishing.`);
+  }
   if (verification.page.messageCount !== messages.length) {
     throw new Error('verification.page.messageCount does not match the stored messages. Resolve missing messages or explain and account for grouped turns before finishing.');
   }
