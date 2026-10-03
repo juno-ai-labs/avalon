@@ -45,7 +45,7 @@ function entry(id: string, title: string, lastActivityAt = LAST_ACTIVITY): MenuB
   return { id, title, lastActivityAt };
 }
 
-function harness(): Harness {
+function harness(available?: () => boolean): Harness {
   let now = 1_000_000;
   const requestJson = vi.fn<MenuBarContentDependencies['requestJson']>();
   const onChange = vi.fn();
@@ -55,6 +55,7 @@ function harness(): Harness {
     onChange,
     logWarning,
     now: () => now,
+    ...(available ? { available } : {}),
   });
   return {
     store,
@@ -267,6 +268,24 @@ describe('menu bar content', () => {
     // not held on an empty cache for another fifteen seconds.
     await subject.store.refreshIfStale(15_000);
     expect(subject.requestJson).toHaveBeenCalledTimes(2);
+  });
+
+  it('empties the menu and asks nothing while a guest workspace is active', async () => {
+    let guest = false;
+    subject = harness(() => !guest);
+    respond(subject.requestJson, {
+      '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]),
+    });
+    await subject.store.refresh();
+
+    // Switching into a guest workspace: the member workspace's rows would open
+    // in it, and its own Channel list is refused.
+    guest = true;
+    await subject.store.refresh();
+    await subject.store.refreshIfStale(0);
+
+    expect(subject.store.content()).toEqual({ recents: [], pinned: [] });
+    expect(subject.requestJson).toHaveBeenCalledTimes(1);
   });
 
   it('rejects an unreadable response rather than emptying the menu', async () => {

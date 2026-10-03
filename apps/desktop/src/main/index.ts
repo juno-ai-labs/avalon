@@ -244,6 +244,7 @@ import {
   sessionFromStoredState,
   sessionsShareBinding,
   storedAuthFromSession,
+  storedCredentialIsGuest,
   storedProfileForCredential,
   storedWorkspaceCredential,
   type StoredAuth,
@@ -1278,6 +1279,7 @@ const developerSettingsFlagController = new DeveloperSettingsFlagController({
 const menuBarContentStore = new MenuBarContentStore({
   requestJson: rallyApiRequest,
   onChange: () => menuBarController.refresh(),
+  available: () => inMemorySession?.workspace?.accessClass !== 'guest',
   logWarning: (message, error) => logWarn('rally', message, error),
 });
 
@@ -1352,7 +1354,10 @@ const menuBarController = new MenuBarController({
 });
 
 const desktopPush = new DesktopPushNotifications({
-  credentials: async () => (await loadStoredAuthSet())?.workspaces ?? [],
+  credentials: async () => {
+    const [auth, profiles] = await Promise.all([loadStoredAuthSet(), loadStoredProfileSet()]);
+    return (auth?.workspaces ?? []).filter((credential) => !storedCredentialIsGuest(profiles, credential));
+  },
   request: async (credential, path, init = {}) => {
     const ask = (auth: StoredAuth) => net.fetch(`${apiBaseForAuth(auth)}${path}`, {
       ...init, headers: { ...init.headers, Authorization: `Bearer ${auth.accessToken}` },

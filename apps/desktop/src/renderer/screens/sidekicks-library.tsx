@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { HashRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
+import { useShellCapabilities } from '../lib/collaboration-session';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { EmptyState, InlineError, OpeningState } from '../components/primitives';
 
@@ -42,6 +43,13 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
   </main>;
 }
 
+function GuestSidekicksLibrary(): React.JSX.Element {
+  return <main className="sidekicks-library">
+    <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1></div></header>
+    <EmptyState title="Sidekicks open from conversations" description="Open a Sidekick from a conversation shared with you to see it here." />
+  </main>;
+}
+
 /** Retained main-window links hand library navigation to its dedicated window. */
 export function SidekicksWindowRedirect(): React.JSX.Element {
   const openFirstWorkstream = useOpenFirstWorkstream();
@@ -66,12 +74,17 @@ export function SidekicksWindowRedirect(): React.JSX.Element {
  */
 export function SidekicksWindow(): React.JSX.Element {
   const { api } = useAppSession();
+  // A guest opens the Sidekicks a conversation offers them, one at a time. The
+  // library lists the Organization's and creation makes one there; both routes
+  // refuse a guest, so this window offers neither.
+  const { guest } = useShellCapabilities();
   useEscapeClosesWindow();
   return (
     <SpeechPlaybackProvider api={api!}>
       <HashRouter useTransitions={false}>
         <Routes>
-          <Route element={<SidekicksLibraryScreen />} path="/sidekicks" />
+          <Route element={guest ? <GuestSidekicksLibrary /> : <SidekicksLibraryScreen />} path="/sidekicks" />
+          {guest && <Route element={<Navigate replace to="/sidekicks" />} path="/sidekicks/new" />}
           <Route element={<AutomationScreen />} path="/sidekicks/:id" />
           <Route element={<AutomationScreen />} path="/automations/:id" />
           <Route element={<Navigate replace to="/sidekicks" />} path="*" />

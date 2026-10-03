@@ -254,6 +254,16 @@ export function storedProfileForCredential(
   )) ?? null;
 }
 
+/**
+ * Whether a stored credential is a guest's. A guest is refused the member-only
+ * routes (attention, push devices, the Channel list), so background work that
+ * asks them skips these credentials rather than fail on them. A credential with
+ * no cached profile counts as a member's: that is the pre-guest shape.
+ */
+export function storedCredentialIsGuest(profiles: StoredProfileSet | null, auth: StoredAuth): boolean {
+  return profiles ? storedProfileForCredential(profiles, auth)?.workspace?.accessClass === 'guest' : false;
+}
+
 export function selectStoredWorkspace(auth: StoredAuthSet, workspaceId: string, region: Region): StoredAuthSet {
   if (!storedWorkspaceCredential(auth, workspaceId, region)) {
     throw new Error('The selected organization credential is not stored');
