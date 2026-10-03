@@ -1255,6 +1255,14 @@ conversation's scope and participant rows or by the grant ledger. See
 [authorization](authorization.md) for what a Space-derived grant does and does
 not reach.
 
+## Usage metering
+
+Migration 0117 adds `workspaces.plan` (`starter` or `growth`, default
+`starter`), the append-only `usage_events` ledger keyed by `event_id`, and
+`usage_rollups`, one row per workspace per quota week and monthly period with
+the week's quota and the Organization-paid and Rally-paid totals. Overage is
+not stored; it is derived on read. See [usage metering](usage-metering.md).
+
 ## Push devices
 
 Migration 0107 adds regional `user_push_devices`, `user_push_device_sessions`, and

@@ -194,6 +194,10 @@ model-routing control, or the owning execution object's operational
 `substream_id`, and `inference_request_id`, but none may use lakehouse arrival
 as proof that a model call committed product state.
 
+Usage quotas and overage read the separate D1 usage ledger, which the same call
+sites feed through `emitInferenceUsage`, not this projection. See
+[usage metering](usage-metering.md).
+
 ## Failure modes and limits
 
 - A capture archive or Queue-send failure emits `inference_lakehouse_stage_failed`

@@ -232,7 +232,49 @@ should add a clause to the brief saying what a plan entitles an Organization to.
 
 ## Decision log
 
-None yet.
+### 2026-10-03: Five activities ship unpriced
+
+**Decided:** The JEV leg of `addressing_classifier` and `semantic_trigger_gate`,
+`audio_generation`, `message_speech`, `dictation` and `document_ocr` emit no
+usage event. Each logs `usage_unpriced` with its event ID and activity, so the
+gap is counted, and none of them moves the meter.
+
+**Why:** None has a price the repository can read. The JEV provider returns no
+cost (open question 1). The pricing cache has no entry for the text-to-speech
+or realtime transcription models, and Workers AI returns no price for a
+conversion. Writing a rate in by hand would be a guessed number, which
+[the limits rule](../../adding-security-defensive-and-other-limits.md) forbids.
+Converting audio seconds to tokens is possible from OpenAI's published rates
+(1 token per 100 ms of input audio, 1 per 50 ms of output, checked 2026-10-03),
+but it still needs a per-token price for these models.
+
+**Changes:** Goal 2 is narrowed: every priced activity is metered, and every
+unpriced one is counted but not metered. To pick it back up, add each model to
+the pricing cache (or supply the JEV rate) and pass the computed cost where the
+call site now passes `undefined`.
+
+### 2026-10-03: The usage route is `GET /workspace/usage`
+
+**Decided:** The meter is served from the existing member-only `/workspace`
+routes rather than a new `/usage` route.
+
+**Why:** Every other Organization-scoped read the desktop makes lives there,
+behind the same auth, so the new read inherits the membership check without a
+new mount.
+
+**Changes:** Nothing in the agreed scope. Supersedes the path named in
+[`design.md`](design.md#read-path).
+
+### 2026-10-03: The ledger records who paid when the event was applied
+
+**Decided:** `usage_events` also stores `organization_pays`, the payer map's
+answer when the consumer applied the event.
+
+**Why:** Decision 5 makes a change to the map apply from the next event on. A
+later Stripe sink replaying `usage_events` needs to know which events the
+Organization paid for at the time, which the current map cannot tell it.
+
+**Changes:** Nothing in the agreed scope. Adds one column to the design's DDL.
 
 ## Key design decisions
 
