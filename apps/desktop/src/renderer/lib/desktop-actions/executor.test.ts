@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EmbeddedBrowserCommand, EmbeddedBrowserResult, EmbeddedBrowserTab } from '../../../common/embedded-browser';
-import { createDesktopActionExecutor } from './executor';
-import { DesktopActionStore } from './store';
+import { createDesktopActionExecutor } from '../../../common/desktop-actions/executor';
+import { DesktopActionStore } from '../../../common/desktop-actions/store';
 
 const tab = (id: string, url: string): EmbeddedBrowserTab => ({
   id, title: 'Chat', url, loading: false, canGoBack: false, canGoForward: false, favicon: null,

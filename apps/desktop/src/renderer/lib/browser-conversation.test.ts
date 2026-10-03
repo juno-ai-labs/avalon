@@ -1,6 +1,7 @@
+import { loadThroughTab } from '../../common/browser-loader';
 import { describe, expect, it, vi } from 'vitest';
 import type { EmbeddedBrowserCommand, EmbeddedBrowserResult, EmbeddedBrowserTab } from '../../common/embedded-browser';
-import { browserConversation, loadThroughTab } from './browser-conversation';
+import { browserConversation } from './browser-conversation';
 
 const tab = (id: string, title: string, url: string): EmbeddedBrowserTab => ({
   id, title, url, loading: false, canGoBack: false, canGoForward: false, favicon: null,

@@ -10,6 +10,7 @@ import {
 import {
   emitProductUsageTelemetry,
   resourceTelemetryEventId,
+  runTelemetryOperationId,
   telemetryJourneyDuration,
 } from './product-usage';
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
@@ -52,7 +53,7 @@ async function acceptAgentToolStartedTelemetry(
       runKind: input.runKind,
       executionScope: userOwned ? 'user' : 'workspace',
     },
-    input.harnessRunId,
+    runTelemetryOperationId(input.harnessRunId),
     userOwned ? 'workspace-user' : 'workspace',
     env.AVALON_REGION,
     input.invocationId,
@@ -214,7 +215,7 @@ async function acceptAgentToolTerminalTelemetry(
         : 'unknown',
       replayed: input.replayed ?? false,
     },
-    operationId: input.harnessRunId,
+    operationId: runTelemetryOperationId(input.harnessRunId),
     eventId: resourceTelemetryEventId(input.invocationId, 1),
   }, defer);
 }

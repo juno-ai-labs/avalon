@@ -133,6 +133,10 @@ same as desktop.
   conversation its agent runs in, and it closes that socket when the window
   navigates, crashes or closes. See [`desktop-actions.md`](desktop-actions.md)
   and [`session-import.md`](session-import.md).
+- Browser orchestration scripts execute in a separate sandboxed, ephemeral
+  WebContents with no Node/preload and a network/frame-denying CSP. Only closed,
+  typed requests reach the pinned browser tab; browser/tab closure or run
+  termination disposes that realm. See [browser script runtime](browser-script-runtime.md).
 - A strict Content Security Policy allows bundled content and the configured
   regional API only.
 - Markdown treats model, member, email, and attachment text as untrusted.
@@ -1075,6 +1079,20 @@ regional Web Lock so an older renewal cannot replace a later login cookie.
 [Browser client](browser-client.md) owns these host-specific boundaries.
 
 ## Changelog
+
+### 2026-10-02 — Isolate persistent browser orchestration from the app
+
+**What changed:** Browser model code runs in an ephemeral sandboxed WebContents,
+with no preload/Node, denied network/frames and a typed pinned-tab RPC binding.
+
+**Why:** Persistent browser handles need a JavaScript realm independent of both
+provider-page navigation and Rally's authenticated renderer. Running orchestration
+in the renderer would expose the app's trusted bridge; running it in the provider
+page would lose bindings on navigation and grant unnecessary session authority.
+
+**Consequences:** Native adapters remain trusted code, never arbitrary model
+JavaScript. Realm reset and run termination dispose orchestration only; signed-in
+page operations already sent to Chromium can finish after disposal.
 
 ### 2026-09-24 — Two Rally windows may drive a signed-in local browser
 

@@ -900,13 +900,17 @@ describe("agent harness", () => {
       reasoningEffort: "none",
     });
     await client.structured({ ...structuredInput, model: "google/gemini-3.8-flash" });
+    await client.structured({ ...structuredInput, model: "openai/gpt-6.1-sol" });
+    await client.structured({ ...structuredInput, model: "openai/gpt-6.1-sol", reasoningEffort: "high" });
 
-    expect(requestBodies).toHaveLength(4);
+    expect(requestBodies).toHaveLength(6);
     expect(requestBodies[0]).not.toHaveProperty("reasoning");
     expect(requestBodies[0]).not.toHaveProperty("parallel_tool_calls");
     expect(requestBodies[1]?.reasoning).toEqual({ effort: "low" });
     expect(requestBodies[2]?.reasoning).toEqual({ effort: "none" });
     expect(requestBodies[3]?.reasoning).toEqual({ effort: "low" });
+    expect(requestBodies[4]?.reasoning).toEqual({ effort: "low" });
+    expect(requestBodies[5]?.reasoning).toEqual({ effort: "high" });
   });
 
   it("keeps the intended model in structured fallback trace metadata", async () => {

@@ -1,6 +1,7 @@
-import { safeParseSocketEvent, ServerSocketEventSchema, type ConversationFile, type SessionImportPreview } from '@rally/contracts';
+import { safeParseSocketEvent, ServerSocketEventSchema, type ConversationFile, type SessionImportPreview, type TelemetryEventProperties } from '@rally/contracts';
 import {
   BrowserImportMessagesSchema,
+  verifySessionImport,
   type DesktopActionOutcome,
   type SessionImportFailureReason,
 } from '@rally/contracts/desktop-actions';
@@ -9,9 +10,10 @@ import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
 import type { RallyDesktopBridge } from '../../common/desktop';
 import type { RallyApi } from './api';
 import { conversationAt } from './browser-conversation';
-import { createDesktopActionExecutor } from './desktop-actions/executor';
-import { DesktopActionStore } from './desktop-actions/store';
+import { createDesktopActionExecutor } from '../../common/desktop-actions/executor';
+import { DesktopActionStore } from '../../common/desktop-actions/store';
 import { createRealtimeSocket, type RealtimeSocket } from './realtime-socket';
+import { reportTelemetryProductIntent } from './telemetry';
 
 const TYPE_EXTENSIONS: Record<string, string> = {
   'text/markdown': '.md', 'text/html': '.html', 'application/json': '.json', 'image/svg+xml': '.svg',
@@ -166,9 +168,23 @@ export function startSessionImportRun(input: {
   let refusal: string | null = null;
   /** The finish's answer once the Channel opened, repeated to a retried finish. */
   let imported: { workstreamId: string; messages: number } | null = null;
+  const actionClocks = new Map<string, number>();
+  const pendingActions = new Set<string>();
+  let activeActionId: string | null = null;
+  let completingImport = false;
+  let runEnded = false;
+  const observe = (actionId: string, phase: TelemetryEventProperties<'desktop_action_phase'>['phase']) => {
+    reportTelemetryProductIntent({
+      kind: 'desktop_action_phase', actionId, phase,
+      elapsedMs: Math.max(0, Math.round(performance.now() - (actionClocks.get(actionId) ?? performance.now()))),
+      windowVisible: document.visibilityState === 'visible',
+    });
+  };
   const finish = (result: SessionImportRunResult) => {
     if (finished) return;
     finished = true;
+    executor.dispose();
+    for (const actionId of pendingActions) observe(actionId, 'run_ended');
     socket?.close(1000, 'import ended');
     // A new Channel that will never open is discarded rather than left listed.
     if (result.kind !== 'imported' && result.kind !== 'cancelled') void discard();
@@ -179,11 +195,13 @@ export function startSessionImportRun(input: {
     bridge: input.bridge,
     tabId: input.tabId,
     store,
+    onPhase: (phase) => { if (activeActionId) observe(activeActionId, phase); },
     handlers: {
       'session_import.finish': async (action): Promise<DesktopActionOutcome> => {
         if (!run || !conversation) return { ok: false, code: 'import_rejected', message: 'The import has not started.' };
         // A repeated finish after the Channel opened changes nothing, and is told so in the same words.
         if (imported) return { ok: true, result: imported };
+        if (finished || cancelled || runEnded) return { ok: false, code: 'import_rejected', message: 'The import run has ended.' };
         let preview: SessionImportPreview;
         try {
           const source = input.mode.kind === 'update'
@@ -197,9 +215,12 @@ export function startSessionImportRun(input: {
             messagesHandle: action.messages,
             source: { provider: source.provider, url: source.url, sessionId: source.sessionId },
           });
+          verifySessionImport(preview.content.messages, action.verification);
         } catch (error) {
           return { ok: false, code: 'invalid_conversation', message: error instanceof Error ? error.message : String(error) };
         }
+        if (finished || cancelled || runEnded) return { ok: false, code: 'import_rejected', message: 'The import run has ended.' };
+        completingImport = true;
         try {
           if (input.mode.kind === 'create') {
             await input.api.completeSessionImport(run.workstreamId, preview, {
@@ -211,6 +232,8 @@ export function startSessionImportRun(input: {
         } catch (error) {
           refusal = error instanceof Error && error.message.trim() ? error.message : 'Rally refused the import.';
           return { ok: false, code: 'import_rejected', message: refusal };
+        } finally {
+          completingImport = false;
         }
         ending = { kind: 'imported', workstreamId: run.workstreamId };
         imported = { workstreamId: run.workstreamId, messages: preview.content.messages.length };
@@ -230,9 +253,12 @@ export function startSessionImportRun(input: {
   const seen = new Set<string>();
   const answers = new Map<string, DesktopActionOutcome>();
   const answer = (id: string, outcome: DesktopActionOutcome) => {
+    if (finished || cancelled) return;
     try {
       socket?.send(JSON.stringify({ type: 'answer_desktop_action', actionId: id, outcome }));
+      observe(id, 'answer_sent');
     } catch {
+      observe(id, 'answer_deferred');
       // The socket is between connections; the room offers this action again
       // on the next one, and the stored answer goes then.
     }
@@ -247,6 +273,11 @@ export function startSessionImportRun(input: {
     const frame = parsed.data;
     if (frame.type === 'desktop_action_requested') {
       const request = frame.request;
+      if (finished || cancelled || runEnded) return;
+      if (!actionClocks.has(request.id)) {
+        actionClocks.set(request.id, performance.now());
+        observe(request.id, 'received');
+      } else observe(request.id, 'reoffered');
       const answered = answers.get(request.id);
       if (answered) {
         answer(request.id, answered);
@@ -254,10 +285,26 @@ export function startSessionImportRun(input: {
       }
       if (seen.has(request.id)) return;
       seen.add(request.id);
+      pendingActions.add(request.id);
       queue = queue.then(async () => {
-        const outcome = await executor.execute(request.action);
-        answers.set(request.id, outcome);
-        answer(request.id, outcome);
+        if (finished || cancelled || runEnded) return;
+        activeActionId = request.id;
+        observe(request.id, 'execution_started');
+        try {
+          const outcome = await executor.execute(request.action);
+          observe(request.id, outcome.ok ? 'execution_completed' : 'execution_failed');
+          answers.set(request.id, outcome);
+          answer(request.id, outcome);
+        } catch {
+          observe(request.id, 'execution_failed');
+          const outcome: DesktopActionOutcome = { ok: false, code: 'browser_command_failed', message: 'The desktop action could not complete.' };
+          answers.set(request.id, outcome);
+          answer(request.id, outcome);
+        } finally {
+          pendingActions.delete(request.id);
+          activeActionId = null;
+          if (runEnded && !finished) finish(ending?.kind === 'imported' ? ending : refusal ? { kind: 'unfinished', refusal } : { kind: 'unfinished' });
+        }
       });
     } else if (frame.type === 'tool_started' || frame.type === 'tool_completed' || frame.type === 'tool_failed') {
       const invocation = frame.invocation;
@@ -284,7 +331,10 @@ export function startSessionImportRun(input: {
     } else if (frame.type === 'harness_status_changed' && ENDED.has(frame.status) && (started || steps.length > 0)) {
       // Finishing answers before the run ends; an end with no finish means the agent gave up.
       // An opened Channel stays imported even when the finish's own tool row never completed.
-      void queue.then(() => finish(ending?.kind === 'imported' ? ending : refusal ? { kind: 'unfinished', refusal } : { kind: 'unfinished' }));
+      runEnded = true;
+      // Only an in-flight commit can still decide whether a Channel opened.
+      // Browser work cannot turn a terminal run into a successful import.
+      if (!completingImport) finish(ending?.kind === 'imported' ? ending : refusal ? { kind: 'unfinished', refusal } : { kind: 'unfinished' });
     }
   };
 

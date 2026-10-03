@@ -126,6 +126,7 @@ export type DesktopTelemetrySemanticEventName =
   | 'automation_opened'
   | 'workstream_resource_action_completed'
   | 'realtime_socket_state'
+  | 'desktop_action_phase'
   | 'workspace_socket_handshake';
 
 export type DesktopTelemetrySemanticIntent = {

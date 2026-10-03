@@ -13,6 +13,7 @@ export interface ModelInferenceDefaults {
  * request still overrides the value here.
  */
 export const MODEL_INFERENCE_DEFAULTS: Readonly<Record<string, ModelInferenceDefaults>> = {
+  "openai/gpt-6.1-sol": { reasoningEffort: "low" },
   "x-ai/grok-4.6": { reasoningEffort: "low" },
   "google/gemini-3.8-flash": { reasoningEffort: "low" },
 };

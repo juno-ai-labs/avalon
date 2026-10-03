@@ -83,7 +83,10 @@ returns the main window to where it was. The pending-row rule is in
    input, navigation and cross-site file loads, to any site. The prompt points the agent at the JSON the page itself loads, because
    long conversations render lazily and a DOM read drops messages silently. Page
    script keeps bytes and the assembled messages with the desktop through
-   `rally.store`; the model and the API see only handles.
+   `await rally.store`; the model and the API see only handles. The prompt
+   supplies an awaited file-loop/JSON-store contract and directs the model to
+   `rally.normalizeText` for citations and Markdown-safe control removal,
+   returning compact summaries rather than entire source records.
 
    The agent loads two [skills](agent-harness.md#skills) first: the generic
    `reading-an-ai-chat` procedure and its site's companion
@@ -100,14 +103,31 @@ returns the main window to where it was. The pending-row rule is in
    each step in the harness's words (`activityName`) and then the tool's own
    summary of what it did; past three, the oldest fold into one "N previous
    actions" line, and between tools a "Deciding the next step…" row shows the
-   model is still working. The page itself is parked out of the window at full
+   model is still working. The description reads: “Rally is using a large language
+   model and computer use to read the page. This can take between 20 and 60 seconds.”
+   The page itself is parked out of the window at full
    size ([embedded browser](embedded-browser.md)), so the person cannot click,
    type or navigate into what the agent is reading, and the window's browser
    shortcuts are off. Cancel is the only way out. The modal's ⋯ menu has
    **Copy import id**, which copies
    `/app/<region>/<organization>/i/<agent conversation>/c/<Channel>`
    (`sessionImportCanonicalUrl`) for a bug report once the API has answered.
-4. **Finish.** `import_finish` names the stored messages array. The desktop
+Import admission requires client contract 2, which supports persistent browser
+scripting. Older desktops receive an update-required error before either a new
+Channel or an update run is reserved; ordinary Channel access still accepts
+contract 1.
+
+4. **Finish.** `import_finish` names the stored messages array and a compact
+   `verification` report: selected-branch completeness and its basis, page-accounted
+   message count, first/last source ids, assistant ids actually compared with the
+   page, the observation basis, and file count including unavailable files.
+   The shared `SessionImportVerificationSchema` requires evidence; the desktop's
+   `verifySessionImport` checks counts, endpoints and assistant sample membership
+   against the assembled history before any import write. A mismatch returns a
+   field-named repair reason. This is model-reported evidence, not independent
+   proof that the page was checked. Rendered turns may group several messages;
+   observations explain the correspondence without assuming a DOM layout.
+   The desktop
    checks it against `BrowserImportMessagesSchema`, turns each file handle into
    inline bytes, and posts the ordinary import request: `POST
    /workstreams/:id/import/complete` initializes the reserved Channel with the
@@ -130,6 +150,11 @@ returns the main window to where it was. The pending-row rule is in
    `session_import_discarded`) and is archived out of every listing
    (`discardReservedMain`). A Cancel pressed before the reservation comes back
    discards it when it does, without ever reporting it to the main window.
+   A terminal harness status releases the progress modal immediately even if a
+   browser command remains blocked; queued actions do not execute and late
+   answers are not sent after the run closes. The exception is an import commit
+   already in flight: the window waits for that request to decide whether the
+   Channel opened, preserving the imported ending when it did.
 6. **Reclaim.** The window's discard is not the only way out: a window that
    closes or crashes mid-run sends none. So the `session_import` [agent
    profile](agent-harness.md#agent-profiles)'s `ended` hook runs once the run's
@@ -347,7 +372,10 @@ HTML/code artifacts remain stored files; importing does not launch a site.
 - `test/session-import.test.ts`: which conversation and provider a source URL names.
 - `test/desktop-action-tools.test.ts`: the import tools' finish and fail, and
   the profile lookup.
-- `apps/desktop/src/renderer/lib/session-import-run.test.ts`: assembling stored
+- `packages/contracts/src/session-import-verification.test.ts`: layout-independent
+  report validation, grouped replies, changed endpoints, and file accounting.
+- `apps/desktop/src/renderer/lib/session-import-run.test.ts`: refusal before writes
+  followed by repaired evidence, assembling stored
   messages and files into the import request, the errors that name what to fix,
   re-sent answers, Cancel before the reservation, and an opened Channel's ending
   staying final.
@@ -368,6 +396,32 @@ HTML/code artifacts remain stored files; importing does not launch a site.
   Whether the agent reads a real provider page correctly is verified in a real
   Electron window against a real model: no test double can prove what a
   provider's page returns or what a model makes of it.
+
+The browser tool surface is now `browser_js` / `browser_js_reset`, with a
+persistent browser/tab handle session. The importer loads the supported API at
+discovery and uses the explicit `rally.pageScript` extension for writable
+extraction. See [browser script runtime](browser-script-runtime.md) for scope
+and lifecycle; import finish/fail remain separate tools.
+
+## Procedure evaluation
+
+Evaluate the actual model calls and imported history, not just completion:
+
+| Variation | Required observation |
+| --- | --- |
+| Edited prompt / regenerated reply | Selected branch only, root reached, old siblings absent |
+| Partial response / long virtualized history | Missing ancestors or pages recovered; page coverage explained |
+| Grouped replies / changed DOM structure | Source-message count reconciled with visible turns, representative replies compared |
+| Attachments / generated documents / writing blocks | Original bytes or named unavailability; converted text and files appear once |
+| Conversation changes during reading | Selection refreshed and affected verification repeated |
+
+Use fresh page observations and source shapes for each run. Provider routes and
+field names in companion skills are discovery hints, not fixed acceptance
+fixtures. Record compact branch/page/file evidence, actual tool errors, and the
+ordered imported ids/text/files. Contract tests cover inconsistent reports and
+file accounting; desktop tests cover refusal before writes followed by repair.
+These deterministic checks do not measure model compliance: live runs across
+these variations are still required to establish it.
 
 ## Changelog
 
@@ -394,6 +448,29 @@ A future route must read the `/c/` segment rather than look the Channel up,
 since no lookup from a hidden child to its Channel exists.
 
 Shipped in juno-ai-labs/avalon#1065.
+
+### 2026-10-02 — End failed imports independently of blocked browser work
+
+**What changed:** The agent's storage and normalization protocol is explicit,
+the browser protocol uses persistent handles with explicit page extraction and descriptive call titles,
+a layout-independent verification report is required before import writes,
+and a terminal run closes the desktop's progress state without waiting for a
+pending browser command. Work queued behind it is skipped. Only an import
+commit already in flight is awaited, so an opened Channel stays imported.
+
+**Why:** A two-message Claude import timed out on the server while its desktop
+answer arrived minutes later; the window queued its terminal handling behind
+that same action. A live Terra import also wasted calls on unexecuted function strings and an incomplete flat ChatGPT response; callbacks now execute explicitly and the provider skill directs missing ancestors to the full mapping. The verification probe subsequently used prefix matches and pagination flags as proof; the generic guidance now explicitly distinguishes identifying a reply from verifying its entire content, and pagination from resolving ancestry. A separate ChatGPT import repeatedly prepared invalid file
+handles and damaged text instead of finishing.
+
+**Considered and rejected:** Extending the timeout or finishing every terminal
+run immediately, including an in-flight commit. The former hides the stalled
+boundary; the latter can report failure for a Channel that actually opened.
+
+**Consequences:** Verification checks payload consistency but trusts the model to make the reported observations; it does not certify extraction independently. Missing ancestors or unfinished pagination must be resolved before visibility filtering, and page grouping must be accounted for rather than assuming array or DOM order. Late browser work cannot resume an ended import. Ending a run disposes its
+isolated orchestration realm and stops further browser requests. The commit
+result remains authoritative, and the UI does not claim that closing a run
+aborted JavaScript already executing in the provider's page.
 
 ### 2026-10-01 — Read conversations with an agent instead of fixed readers
 

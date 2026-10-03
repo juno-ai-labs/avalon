@@ -304,6 +304,11 @@ ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
 Changing that managed provider list remains an explicit Access administration
 decision.
 
+Model routes support optional `routing.reasoningEffort` (`low`, `medium`, or
+`high`) through `list_model_flags` and `update_model_flag`. Omission restores
+each selected model's configured default; an explicit value applies to the
+primary and fallbacks. Ace owns validation and the atomic write.
+
 ### 2026-10-02 — Read and change managed flags through Ace
 
 **What changed:** `list_feature_flags`, `update_feature_flag`,

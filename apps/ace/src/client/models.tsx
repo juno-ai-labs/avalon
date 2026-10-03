@@ -40,11 +40,11 @@ function checkedInConfigurations(): ModelConfiguration[] {
   return MANAGED_MODELS.map((definition) => ({
     role: definition.role,
     routing: {
-      model: definition.defaultRouting.model,
+      ...definition.defaultRouting,
       fallbackModels: [...definition.defaultRouting.fallbackModels],
     },
     persistedRouting: {
-      model: definition.defaultRouting.model,
+      ...definition.defaultRouting,
       fallbackModels: [...definition.defaultRouting.fallbackModels],
     },
     source: 'checked-in',
@@ -58,14 +58,14 @@ export function routingFromFlag(flag: FlagshipModelFlag | undefined, role: Manag
     : undefined;
   const parsed = AgentModelRoutingSchema.safeParse(variation);
   const routing = parsed.success ? parsed.data : {
-    model: definition.defaultRouting.model,
+    ...definition.defaultRouting,
     fallbackModels: [...definition.defaultRouting.fallbackModels],
   };
   return {
     role,
     routing,
     persistedRouting: {
-      model: routing.model,
+      ...routing,
       fallbackModels: [...routing.fallbackModels],
     },
     source: parsed.success ? 'flagship' : 'checked-in',
@@ -224,7 +224,15 @@ export function ModelsView(): React.JSX.Element {
       <section className="model-routing"><div className="section-title"><div><h3>Default route</h3><p>The primary model is tried first. Fallbacks are traversed in the order shown when Bind classifies a failure as routable.</p></div></div>
         <Panel className="model-route-card">
           <Field label="Primary model"><input aria-invalid={invalidModelIds.has(selected.routing.model) || selected.routing.model.trim().length === 0} list="ace-model-choices" onChange={(event) => updateRouting({ ...selected.routing, model: event.target.value })} placeholder="provider/model" spellCheck={false} value={selected.routing.model} /></Field>
-          <small className="model-input-help">Choose a known model or enter a model ID allowed for this role. Sol appears only when the entire role is Azure-routed.</small>
+          <small className="model-input-help">Choose a known model or enter a model ID allowed for this role. GPT-5.6 Sol is available only for roles routed entirely through Azure.</small>
+          <Field label="Reasoning effort"><select value={selected.routing.reasoningEffort ?? ''} onChange={(event) => {
+            const routing = { ...selected.routing };
+            delete routing.reasoningEffort;
+            const effort = event.target.value;
+            updateRouting(effort === 'low' || effort === 'medium' || effort === 'high'
+              ? { ...routing, reasoningEffort: effort } : routing);
+          }}><option value="">Model default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field>
+          <small className="model-input-help">Applies to the primary model and fallbacks. Model default uses each model's configured default.</small>
           <div className="fallback-heading"><div><h3>Fallback model array</h3><p>Ordered from first backup to last.</p></div><Button onClick={() => updateRouting({ ...selected.routing, fallbackModels: [...selected.routing.fallbackModels, ''] })} type="button">＋ Add fallback</Button></div>
           <div className="fallback-stack">
             {selected.routing.fallbackModels.map((model, index) => <div className="fallback-row" key={index}>

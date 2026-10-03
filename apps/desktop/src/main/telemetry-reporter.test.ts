@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TelemetryReporter } from './telemetry-reporter';
 import { TelemetrySpool } from './telemetry-spool';
+import { parseTelemetryProductIntent } from './telemetry-intent';
 
 const roots: string[] = [];
 const identity = {
@@ -54,6 +55,26 @@ afterEach(async () => {
 });
 
 describe('TelemetryReporter', () => {
+  it('spools desktop action diagnostics through the authenticated semantic path and respects opt-out', async () => {
+    const intent = {
+      kind: 'desktop_action_phase' as const, actionId: '018f22f2-4c22-7abc-8def-0123456789ab',
+      phase: 'answer_deferred' as const, elapsedMs: 350, windowVisible: false,
+    };
+    const auth = { apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' };
+    const { reporter, spool } = await harness({ auth });
+    const parsed = parseTelemetryProductIntent(intent);
+    if (!parsed || parsed.kind !== 'desktop_action_phase') throw new Error('Desktop action diagnostic was rejected at IPC.');
+    await reporter.semanticProductIntent(parsed);
+    const rows = await spool.ready(new Date('2026-08-12T20:00:01.000Z'));
+    expect(rows.map(row => ({ name: row.event.name, source: row.event.source, properties: row.event.properties }))).toEqual([{
+      name: 'desktop_action_phase', source: 'desktop-renderer',
+      properties: { actionId: '018f22f2-4c22-7abc-8def-0123456789ab', phase: 'answer_deferred', elapsedMs: 350, windowVisible: false },
+    }]);
+    const optedOut = await harness({ auth, enabled: false });
+    await optedOut.reporter.semanticProductIntent(intent);
+    expect(await optedOut.spool.ready(new Date('2026-08-12T20:00:01.000Z'))).toEqual([]);
+  });
+
   it('keeps essential lifecycle signals while suppressing product signals after opt-out', async () => {
     const { reporter, spool } = await harness({ enabled: false });
     await reporter.applicationLifecycle('ready');

@@ -40,7 +40,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
 import { getAuth } from "../middleware/auth";
 import { ApiError } from "../lib/api-error";
-import { requireCurrentClientContract } from "../lib/client-contract";
+import { requireCurrentClientContract, requireSessionImportClientContract } from "../lib/client-contract";
 import { requestFlowSpan, type FlowSpan, type PerfFlow } from "../observability/tracing";
 import { ChannelAccessService } from "../services/channel-access-service";
 import { ConversationService } from "../services/conversation-service";
@@ -179,11 +179,13 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
  * drives the agent's browser actions on the returned conversation's socket.
  */
 workstreamRoutes.post("/import/runs", zValidator("json", SessionImportStartRequestSchema), async (c) => {
+  requireSessionImportClientContract((name) => c.req.header(name));
   const result = await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c)).start(c.req.valid("json"));
   return c.json(SessionImportRunSchema.parse(result), 201);
 });
 /** Run the import agent again on a Channel imported before. */
 workstreamRoutes.post("/:id/import/runs", zValidator("param", idParam), async (c) => {
+  requireSessionImportClientContract((name) => c.req.header(name));
   const result = await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c)).startUpdate(c.req.valid("param").id);
   return c.json(SessionImportRunSchema.parse(result), 201);
 });

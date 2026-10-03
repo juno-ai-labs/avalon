@@ -22,10 +22,11 @@ schema, handled by the import window's own handlers.
 | `apps/api/src/durable-objects/substream-agent.ts` | `requestDesktopAction` (the executor a run reaches), `answerDesktopAction`, and re-offering pending actions to a subscriber. |
 | `apps/api/src/runtime/local-authorities.ts` | `desktopAction`, the in-object authority a run's tools read. |
 | `apps/api/src/services/desktop-actions/browser-plugin.ts` | The browser tools and `runDesktopAction`, which turns an answer into a tool result or a typed error. |
-| `apps/desktop/src/renderer/lib/desktop-actions/executor.ts` | The desktop side: parse, pin to one tab, run through the browser command path. |
-| `apps/desktop/src/renderer/lib/desktop-actions/page-script.ts` | The page-script wrapper and its `rally.store` helper. |
-| `apps/desktop/src/renderer/lib/desktop-actions/store.ts` | What page script stored, by handle, and the per-file cap. |
-| `apps/desktop/src/renderer/lib/desktop-actions/ax-outline.ts` | The accessibility tree as an indented outline. |
+| `apps/desktop/src/common/desktop-actions/executor.ts` | The desktop side: parse, pin to one tab, run through the browser command path. |
+| `apps/desktop/src/common/desktop-actions/page-script.ts` | The page-script wrapper and its `rally.store` helper. |
+| `apps/desktop/src/common/desktop-actions/page-text.ts` | Text normalization embedded in page script: citation marker replacement and Markdown-safe control removal. |
+| `apps/desktop/src/common/desktop-actions/store.ts` | What page script stored, by handle, and the per-file cap. |
+| `apps/desktop/src/common/desktop-actions/ax-outline.ts` | The accessibility tree as an indented outline. |
 
 ## How it works
 
@@ -52,13 +53,39 @@ a tool waits, the run's crash repair re-enters the tool (every browser tool is
 that arrived meanwhile or asks again. A run that stops or a tool that times out
 marks its pending action `abandoned`, which is no longer offered to subscribers.
 
+The model uses `browser_js` and `browser_js_reset`; the persistent handle API
+and isolated realm are owned by [browser script runtime](browser-script-runtime.md).
+`browser.script` carries one orchestration call; the older browser action kinds
+remain internal primitives. Their durable transport and receipts are unchanged.
+
 Page script runs as the body of an async function given `rally`.
-`rally.store(value, { name, mimeType })` keeps a Blob, Response, string or JSON
-value with the desktop and returns `{ handle, kind, name, mimeType, size }`;
+`await rally.store(value, { name, mimeType })` keeps a Blob, Response, string or JSON
+value with the desktop and resolves to `{ handle, kind, name, mimeType, size }`;
 the bytes travel back with the call's answer into the window's store, and only
 the description reaches the API and the model. A later action of the same work
 — the import's finish — reads them by handle. Screenshots are scaled to the
 page's size in DIPs, so a point read off the image is the point `click` sends.
+
+Reading a store Promise's reference fields without awaiting it throws a
+`script_error` naming the missing await; returning that Promise inside JSON
+likewise names the error instead of serializing `{}`. The wrapper observes and
+drains every store before its answer leaves, even when a script ignores the
+reference, so file reads cannot silently finish after the answer is serialized.
+
+`rally.normalizeText(text, [{ marker, text }])` replaces private-use citation
+markers with their written-out text. Ordinary provider-reference spaces and
+prose are ignored. It removes remaining private-use syntax and invalid controls,
+preserving tabs, newlines and carriage returns for Markdown. This is a generic
+page helper; provider document and writing-block conversion remains the agent's
+job.
+
+The importer emits the governed `desktop_action_phase` diagnostic with an action
+UUID and elapsed time from receipt: queue admission, browser-state reads,
+browser-command round trips, execution completion, answer send or defer, and a
+run ending while an action is pending. A re-offer is identified separately.
+Join the action UUID to `desktop_actions.created_at` and `answered_at` to
+separate server-to-desktop delivery from execution and answer delivery. No
+script, URL, title, tool output or file content enters these observations.
 
 `browser.network_list` and `browser.network_read` are the browser's network
 panel. The [embedded browser](embedded-browser.md) records every response a
@@ -70,6 +97,11 @@ parsed when it is JSON — so page script works on it there, and returns its
 size, type and top-level keys; with `length` it also returns that slice of the
 body's text, from `offset`. Nothing is redacted: the page already received the
 body, and the model reads it as it reads any page content.
+
+The older snapshot/click/scroll/type/key action schemas remain readable for
+durable replay of imports started before the script tool cutover. New model
+inventories expose only the script/reset tools; these legacy actions are not
+advertised to models.
 
 A desktop keeps every answer it computed. The room offers an unanswered action
 again to each new subscription, so a desktop that is offered an action it has
@@ -158,6 +190,29 @@ process, and the desktop validates every action and every stored value it
 hands on.
 
 ## Changelog
+
+### 2026-10-02 — Make storage and text conversion observable and explicit
+
+**What changed:** Store references require an awaited Promise, pending stores
+drain with the call, page script gains Markdown-safe citation normalization, and
+the importer records content-free action phases through main-owned telemetry.
+The model now uses persistent script/reset tools over shared desktop primitives;
+[browser script runtime](browser-script-runtime.md) owns their handle API.
+
+**Why:** Production imports generated missing file handles by reading a Promise,
+deleted spaces through a provider reference whose marker was a space, and
+mistook paragraphs for invalid controls. Another action's successful answer
+arrived 223 seconds after dispatch, after the server timeout, with no evidence
+separating delivery, queueing and browser execution.
+
+**Considered and rejected:** Raising the tool timeout, adding a second importer,
+or copying scripts and results into diagnostic events. None fixes the identified
+contract errors or locates the wait. The shared helpers and phase observations
+keep browser capabilities reusable and preserve the existing privacy boundary.
+
+**Consequences:** Models await stores and normalize text through the helper.
+Phase telemetry requires the registry reader to deploy before the desktop
+producer; a successful socket send alone does not prove server receipt.
 
 ### 2026-10-01 — Introduce desktop actions for the conversation importer
 

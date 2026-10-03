@@ -287,6 +287,10 @@ describe("boundary contracts", () => {
       "agent-model-workstream-description",
       "agent-model-session-import",
     ]);
+    expect(AgentModelRoutingSchema.parse({ model: "openai/gpt-6.1-sol", reasoningEffort: "low" })).toEqual({
+      model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "low",
+    });
+    expect(AgentModelRoutingSchema.safeParse({ model: "test/model", reasoningEffort: "unsupported" }).success).toBe(false);
     expect(AgentModelRoutingSchema.parse({ model: " x-ai/grok-4.3 " })).toEqual({
       model: "x-ai/grok-4.3",
       fallbackModels: [],

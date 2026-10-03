@@ -22,6 +22,16 @@ describe('parseTelemetryProductIntent', () => {
     expect(parseTelemetryProductIntent({ ...socketIntent })).toEqual(socketIntent);
   });
 
+  it('admits desktop action phases with only correlation and timing fields', () => {
+    const intent = {
+      kind: 'desktop_action_phase', actionId: '018f22f2-4c22-7abc-8def-0123456789ab',
+      phase: 'browser_command_requested', elapsedMs: 42, windowVisible: false,
+    };
+    expect(parseTelemetryProductIntent(intent)).toEqual(intent);
+    expect(() => parseTelemetryProductIntent({ ...intent, script: 'secret' })).toThrow('Invalid telemetry intent');
+    expect(() => parseTelemetryProductIntent({ ...intent, phase: 'unknown' })).toThrow('Invalid telemetry intent');
+  });
+
   it('accepts only content-free workspace handshake phases with a UUIDv7 attempt', () => {
     const intent = {
       kind: 'workspace_socket_handshake',
