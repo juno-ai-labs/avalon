@@ -195,7 +195,7 @@ function endSessionFor(
   }
 }
 
-function WorkspaceApp(): React.JSX.Element {
+export function WorkspaceApp(): React.JSX.Element {
   const { api, session, signOut, signOutIfCredentialCleared, surrenderActiveWorkspace } = useAppSession();
   // Every surface used to hold its whole tree behind this one read — the screen
   // below was `Opening workspace…` until it landed, so a window opened onto

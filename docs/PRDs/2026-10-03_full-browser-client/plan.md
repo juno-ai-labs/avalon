@@ -5,16 +5,16 @@ done only when its acceptance gate holds.
 
 ## Phase 1: member shell
 
-- [ ] The cookie adapter forwards the member route families (`spaces`,
+- [x] The cookie adapter forwards the member route families (`spaces`,
       `projects`, `onboarding`, `work-opportunities`, `digest`,
       `push-devices`, `workspaces`) and still refuses `auth`, `internal`,
       `ingest`, `access`, `slack`, `sideline` and `dev`.
-- [ ] A member's workspace in the browser mounts the desktop shell: sidebar
+- [x] A member's workspace in the browser mounts the desktop shell: sidebar
       from the workspace socket provider, Spaces, Channels, Breakouts and the
       details rail. Guests keep the guest shell.
-- [ ] Settings opens as a route; OS-level sections read "Available in the Mac
+- [x] Settings opens as a route; OS-level sections read "Available in the Mac
       app". Sidekicks open in a named tab.
-- [ ] The shell reads `multiple-workspaces-enabled` and
+- [x] The shell reads `multiple-workspaces-enabled` and
       `live-artifacts-enabled` as the Mac app does.
 
 **Gate:** a member signed in by email sees a Channel reached only through

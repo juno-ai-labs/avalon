@@ -18,7 +18,7 @@ import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { reportTelemetryProductIntent, telemetryVisibility, uuidV7 } from '../lib/telemetry';
 import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-trace';
 
-import { desktopBridge } from '../lib/platform';
+import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { AppearancePicker, AppearanceSubmenu } from '../components/appearance-picker';
@@ -728,7 +728,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
           }}
         >Copy channel email address</TitleMenuItem> : undefined}
         breakouts={breakoutMarks}
-        onImportUpdates={api && importedSourceUpdatable(importedSource.data) ? () => setImportUpdateOpen(true) : undefined}
+        // The update re-runs the import in the embedded browser, which only the Mac app has.
+        onImportUpdates={api && desktopServicesAvailable() && importedSourceUpdatable(importedSource.data) ? () => setImportUpdateOpen(true) : undefined}
         onOpenArtifact={context?.openArtifact}
         onOpenBreakout={openBreakout}
         onOpenSidekick={(sidekickId) => void desktopBridge().openSidekicks(sidekickId)}

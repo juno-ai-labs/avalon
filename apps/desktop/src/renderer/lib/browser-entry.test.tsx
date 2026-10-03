@@ -3,7 +3,9 @@ import { afterEach, expect, it, vi } from 'vitest';
 // These cases control the session clock; IndexedDB transactions have their own
 // runtime suite and must not be coupled to fake session deadlines.
 vi.mock('./draft-cache', () => ({ clearAllDrafts: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('./local-cache', () => ({ clearAllLocalCache: vi.fn().mockResolvedValue(undefined) }));
 import { BrowserEntry } from '../../../../browser/src/entry';
+import { clearAllLocalCache } from './local-cache';
 
 const user = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'guest@example.test', name: 'Guest',
   avatarUrl: null, timezone: 'UTC', createdAt: '2026-09-17T00:00:00.000Z' };
@@ -119,6 +121,8 @@ it('ignores a renewal response delivered after sign-out', async () => {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Sign out' })); });
     await act(async () => { finishRenewal!(Response.json({ ...metadata, expiresAt: new Date(now + 200_000).toISOString() })); });
     expect(screen.getByRole('heading', { name: 'Welcome to Rally' })).toBeInTheDocument();
+    // The member shell keeps transcripts in the local cache; signing out wipes it with the drafts.
+    expect(clearAllLocalCache).toHaveBeenCalled();
   } finally { view?.unmount(); }
 });
 

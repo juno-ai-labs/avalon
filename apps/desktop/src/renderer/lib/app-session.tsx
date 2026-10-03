@@ -10,7 +10,8 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
+import type { AccountOnboarding, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
+import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 import {
   workspaceTargetsEqual,
@@ -26,7 +27,7 @@ import { accountReconnectRequired, workspaceActivationFailureCode } from '../../
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
 import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
-import { CollaborationSessionProvider, type PendingConnectorOAuth } from './collaboration-session';
+import { CollaborationSessionProvider, type ConnectorSetupCapability, type PendingConnectorOAuth } from './collaboration-session';
 export type { PendingConnectorOAuth } from './collaboration-session';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
@@ -96,11 +97,14 @@ export class AccountSignInFailedError extends Error {
 }
 
 export interface AppSessionValue {
+  /** Which client is running the shell: the Mac app, or a browser tab. */
+  host: 'desktop' | 'browser';
   booting: boolean;
   runtime: RuntimeConfig | null;
   region: Region | null;
   workspaceName: string;
-  session: DesktopSession | null;
+  /** A desktop bearer session, or the browser's credential-free cookie session. */
+  session: ClientSession | null;
   api: RallyApi | null;
   invitationApi: RallyApi | null;
   deepLinkError: string | null;
@@ -136,7 +140,10 @@ export interface AppSessionValue {
     operationId?: string,
     progress?: AccountActionProgress,
   ) => Promise<void>;
-  refreshSession: () => Promise<DesktopSession>;
+  refreshSession: () => Promise<ClientSession>;
+  /** The signed-in person's account onboarding, read and written at identity scope. */
+  getAccountOnboarding: () => Promise<AccountOnboarding>;
+  updateAccountOnboarding: (input: UpdateAccountOnboarding) => Promise<AccountOnboarding>;
   signOut: () => Promise<void>;
   signOutIfCredentialCleared: () => Promise<void>;
   surrenderActiveWorkspace: () => Promise<void>;
@@ -157,6 +164,8 @@ export type AppSessionDesktopBridge = Pick<
   | 'declineInvitation'
   | 'exchangeDesktopTicket'
   | 'getOnboardingState'
+  | 'getAccountOnboarding'
+  | 'updateAccountOnboarding'
   | 'getRuntimeConfig'
   | 'getSession'
   | 'hasStoredCredential'
@@ -1193,6 +1202,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
 
   const value = useMemo<AppSessionValue>(
     () => ({
+      host: 'desktop' as const,
       booting,
       runtime,
       region,
@@ -1224,6 +1234,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       createDevelopmentSession,
       finishWorkspaceSetup,
       refreshSession,
+      getAccountOnboarding: () => bridge.getAccountOnboarding(),
+      updateAccountOnboarding: (input) => bridge.updateAccountOnboarding(input),
       reconnectAccountIdentity,
       abandonAccountSignIn,
       signOut,
@@ -1233,6 +1245,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     }),
     [
       abandonAccountSignIn,
+      bridge,
       api,
       acceptInvitation,
       activateWorkspace,
@@ -1267,8 +1280,21 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const connectorSetup = useMemo(() => ({ pendingConnectorOAuth, setPendingConnectorOAuth,
     resourceAuthorizationAttempts, setResourceAuthorizationAttempt,
     openExternal: (url: string) => bridge.openExternal(url) }), [bridge, pendingConnectorOAuth, resourceAuthorizationAttempts, setResourceAuthorizationAttempt]);
+  return <AppSessionValueProvider value={value} connectorSetup={connectorSetup} createSidekick={createSidekick}>{children}</AppSessionValueProvider>;
+}
+
+/**
+ * Installs a host's session value and the smaller collaboration context every
+ * shared surface reads. The desktop builds its value from the bridge; the
+ * browser builds one over its cookie session.
+ */
+export function AppSessionValueProvider({ value, connectorSetup, createSidekick, children }: PropsWithChildren<{
+  value: AppSessionValue;
+  connectorSetup: ConnectorSetupCapability | null;
+  createSidekick: (() => Promise<void>) | null;
+}>): React.JSX.Element {
   return <AppSessionContext.Provider value={value}>
-    <CollaborationSessionProvider api={api} session={session} connectorSetup={connectorSetup} createSidekick={createSidekick}>{children}</CollaborationSessionProvider>
+    <CollaborationSessionProvider api={value.api} session={value.session} connectorSetup={connectorSetup} createSidekick={createSidekick}>{children}</CollaborationSessionProvider>
   </AppSessionContext.Provider>;
 }
 
