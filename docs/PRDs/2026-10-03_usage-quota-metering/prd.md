@@ -77,6 +77,10 @@ lost.
    twice the monthly price divided by four.
 2. Every inference Rally runs for an Organization produces exactly one metered
    usage record with a cost. No activity is left out or recorded at zero cost.
+   The one accepted loss is a queue send that fails. It is logged as
+   `usage_emit_failed` with the event ID and cost, so the loss is counted
+   rather than silent. Whether that loss is acceptable for invoicing is for the
+   PRD that adds charging to decide; a durable outbox is the answer if not.
 3. Metering adds no awaited work to the agent loop, a Channel open, or any other
    user-facing request. A failure anywhere in metering never fails or slows the
    work it measures.
@@ -158,7 +162,8 @@ week". Selecting it opens Settings → Organization at the Usage section. Other
 Organizations in the list show no meter.
 
 The meter is a new shared `Meter` primitive in `packages/ui`: a track, a fill,
-`role="meter"` with the value attributes, and design tokens for track and fill.
+`role="meter"` with the value attributes, a required accessible label (for
+example "Weekly quota left"), and design tokens for track and fill.
 It replaces the one-off `.onboarding-progress` bar, so the next meter costs no
 new CSS. It uses the theme's existing colors: brand fill on a sunken track, in
 both light and dark. Below 20% left, the fill switches to the theme's warning

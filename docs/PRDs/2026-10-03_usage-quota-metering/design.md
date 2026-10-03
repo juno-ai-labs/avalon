@@ -296,6 +296,11 @@ Rate cards extend the existing `INFERENCE_PRICING_CACHE` and
   boundary, delivered in two different orders. Assert the rollup rows and the
   read's percentage and overage against literals. Prove it can fail by removing
   the in-batch dedupe.
+- **Emitters, one per activity:** run each call site with the provider stubbed
+  to return a known cost, and assert it sends exactly one `UsageEvent` with the
+  expected activity, cost and event ID. Run it twice and assert the event ID is
+  the same both times. This is what catches a call site that emits nothing,
+  emits twice, or mints a new ID when it retries.
 - **Unit:** week and period boundaries, including month-end clamping and
   daylight-saving weeks. Payer map exhaustiveness is enforced by typecheck and
   needs no test.
@@ -311,3 +316,5 @@ this subsystem. [`data-model.md`](../../data-model.md) gains the tables.
 billing reads the usage ledger, not the lakehouse.
 [`settings-search.md`](../../settings-search.md) gains the Usage entry.
 [`ace.md`](../../ace.md) gains the plan control.
+[`local-cache.md`](../../local-cache.md) gains the usage slice, with a changelog
+entry, because the client caches the last response there.
