@@ -19,9 +19,9 @@ avalon-api-global  →  DemoAdministration (WorkerEntrypoint, no HTTP route)
   │  calls the same service functions as /internal/demos:
   │  startDemoOperation, retryDemoOperation, abandonDemoOperation,
   │  demoTemplate, listDemoCastCandidates, retirement walk
-  │  plus new: scenario store, check, preview
+  │  plus new: scenario store, check
   ▼
-Global D1 (demo_operations, demo_scenarios, demo_scenario_revisions, ...)
+Global D1 (demo_operations, demo_scenario_revisions, ...)
 DemoPreparationWorkflow → seeder → readiness → Ready
 ```
 
@@ -33,11 +33,12 @@ New code:
   that logs codes only).
 - `apps/api/src/demo-administration.ts`: the `DemoAdministration`
   entrypoint, exported from `apps/api/src/index.ts`. Every method takes the
-  actor `{ subject, email }` from the MCP Worker, which got it from the verified
-  Access assertion. The entrypoint answers `demo_region_unsupported` outside
-  Global, like the routes.
-- `apps/api/src/services/demo-scenarios.ts`: the scenario store, check and
-  preview.
+  actor `{ subject, email }` as an argument. The MCP Worker takes it from the
+  Access assertion it verified; the entrypoint cannot verify it and trusts the
+  binding, exactly as `EngineeringInspectionBridge` trusts its caller. The
+  entrypoint answers `demo_region_unsupported` outside Global, like the routes.
+- `apps/api/src/services/demo-scenarios.ts`: the revision store and the check
+  (including its preview text).
 - `packages/contracts/src/demo-administration.ts`: the RPC vocabulary both
   Workers parse with strict schemas.
 
@@ -46,16 +47,31 @@ Changed code:
 - `demo-preparation.ts`: `activeDemoPack()` becomes "the pack this operation
   recorded": the built-in pack by version for `builtin` rows (today's
   behavior, `demo_pack_changed` included), or the stored revision's
-  `pack_json` for `stored` rows (no version comparison). The start path takes
-  `organizationName` and `connectionSelection`.
-- `demo-connection-copy.ts`: copies only the selected IDs when a selection is
-  given. A selected ID that is not copyable fails `checking_template` with the
-  reason, before anything is written.
+  `pack_json` for `stored` rows (no version comparison). `startDemoOperation`
+  takes an optional stored revision ID and the requester. Its first statement
+  stays the replay lookup, before any validation, as the comment there
+  requires.
 - `DemoOperationStartRequestSchema` and `DemoOperationStatusSchema` gain the
-  new optional fields. Optional and omitted, never required and nullable, so
-  Ace and the API can deploy in either order (the same rule
+  new fields as optional. Optional and omitted, never required and nullable,
+  so Ace and the API can deploy in either order (the same rule
   [`engineering-mcp.md`](../../engineering-mcp.md#invariants-and-contracts)
-  records for mid-rollout strict parsing).
+  records for mid-rollout strict parsing). Ace keeps sending and reading what
+  it does today.
+- The pack schema's `superRefine` issues gain stable codes (see
+  `check_demo_scenario`). Messages are unchanged.
+
+## Phases
+
+The tools ship in two phases. Phase 1 is the primitive the PRD needs: run any
+checked pack, pinned to immutable bytes. Phase 2 adds what is cheap to add
+later and costly to take back once people depend on it, and is built when
+somebody asks for it.
+
+| Phase | What | Goals |
+| --- | --- | --- |
+| 1 | Built-in scenarios, check with preview, inline packs stored as unnamed revisions, cast candidates, create, follow, retry, abandon, retire | 1, 2, 3, 4, 6 (names, presenter, cast), 7, 8 |
+| 2 | A named, shared scenario library (save, revise, archive) | 5 |
+| 2 | Choosing which template connections a demo receives | 6 (connections) |
 
 ## Conventions every tool follows
 
@@ -70,9 +86,9 @@ Changed code:
   without echoing the key, per
   [naming a schema failure](../../naming-a-schema-failure.md)).
 - **Issue shape.** `{ "path": string, "code": string, "message": string }`.
-  `path` is a JSON path into the submitted value (`steps[4].as`). `code` is
-  the Zod issue code or a pack rule code (below). `message` is the pack rule's
-  own sentence.
+  `path` is a JSON path into the submitted value, with array indexes
+  (`steps[4].as`, `expect[0]`). `code` is the Zod issue code or a pack rule
+  code (below). `message` is the pack rule's own sentence.
 - **Annotations.** Read tools: `readOnlyHint: true, openWorldHint: false`.
   Write tools: `readOnlyHint: false`, with `destructiveHint` and
   `idempotentHint` as listed per tool.
@@ -80,6 +96,9 @@ Changed code:
   Sidekick) in descriptions. Pack field names stay as the schema spells them
   (`create_workstream`, `create_substream`), and descriptions say what each
   means.
+- **Shipped codes.** Every refusal a shipped function already makes keeps its
+  shipped code. New codes are only for checks that do not exist yet, and the
+  failure table marks them.
 - **No limits of our own.** No page size, rate, or pack size is chosen here.
   Lists return everything the D1 statement returns, chunked to the bound
   parameter ceiling as `demo-operations` already is. Platform limits are the
@@ -90,22 +109,21 @@ Changed code:
 Order is the order `tools/list` returns, which is also the order a session
 usually uses them.
 
-| # | Tool | Mode | Idempotent | Destructive |
-| --- | --- | --- | --- | --- |
-| 1 | `list_demo_scenarios` | read | yes | no |
-| 2 | `get_demo_scenario` | read | yes | no |
-| 3 | `check_demo_scenario` | read | yes | no |
-| 4 | `preview_demo_scenario` | read | yes | no |
-| 5 | `save_demo_scenario` | write | with `expectedRevision` | no |
-| 6 | `archive_demo_scenario` | write | yes | no |
-| 7 | `list_demo_cast_candidates` | read | yes | no |
-| 8 | `list_template_connections` | read | yes | no |
-| 9 | `create_demo_organization` | write | yes, by `requestKey` | no |
-| 10 | `list_demo_operations` | read | yes | no |
-| 11 | `get_demo_operation` | read | yes | no |
-| 12 | `retry_demo_operation` | write | yes, by attempt | no |
-| 13 | `abandon_demo_operation` | write | yes | yes |
-| 14 | `retire_demo_organization` | write | yes | yes |
+| # | Tool | Phase | Mode | Idempotent | Destructive |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `list_demo_scenarios` | 1 | read | yes | no |
+| 2 | `get_demo_scenario` | 1 | read | yes | no |
+| 3 | `check_demo_scenario` | 1 | read | yes | no |
+| 4 | `list_demo_cast_candidates` | 1 | read | yes | no |
+| 5 | `create_demo_organization` | 1 | write | yes, by `requestKey` | no |
+| 6 | `list_demo_operations` | 1 | read | yes | no |
+| 7 | `get_demo_operation` | 1 | read | yes | no |
+| 8 | `retry_demo_operation` | 1 | write | with `expectedAttempt` | no |
+| 9 | `abandon_demo_operation` | 1 | write | yes | yes |
+| 10 | `retire_demo_organization` | 1 | write | yes | yes |
+| 11 | `save_demo_scenario` | 2 | write | with `expectedRevision` | no |
+| 12 | `archive_demo_scenario` | 2 | write | yes | no |
+| 13 | `list_template_connections` | 2 | read | yes | no |
 
 Timeouts are the platform's: each tool is one RPC to the entrypoint and
 returns when its D1 work does. `create_demo_organization` returns once the
@@ -117,30 +135,25 @@ revision rows carry their own fences.
 
 ```ts
 type ScenarioRef =
-  | { scenarioId: string; revision?: number }   // saved; latest live revision when omitted
   | { scenarioId: "builtin:multiplayer" }        // built-in; revision is its pack version
-  | { pack: DemoPack };                          // inline; stored as an unnamed revision
+  | { revisionId: string }                       // a stored revision, from a check or a create
+  | { scenarioId: string; revision?: number }    // phase 2: a saved scenario; latest when omitted
+  | { pack: DemoPack };                          // inline; stored as an unnamed revision on create
 
+// The shipped DemoCastEntrySchema, unchanged, so Ace and the MCP send the same cast.
 type CastEntry =
-  | { userId: string }        // a colleague's account, from list_demo_cast_candidates
-  | { email: string }         // a colleague by address; must resolve to exactly one account
+  | string                    // a colleague's user ID, from list_demo_cast_candidates
   | { name: string };         // a typed name; played by a persona minted for this operation
-
-type ConnectionSelection =
-  | { mode: "all" }                               // default: every copyable connection
-  | { mode: "none" }
-  | { mode: "only"; connectionIds: string[] };    // from list_template_connections
 
 type DemoPack = /* exactly DemoPackSchema in apps/api/src/services/demo-pack.ts */;
 ```
 
 ### 1. `list_demo_scenarios`
 
-> List the demo scenarios that can be used to create a demo Organization: the
-> built-in one and every saved one. Use `get_demo_scenario` to read a scenario's
-> full content before editing it.
+> List the demo scenarios that can be used to create a demo Organization. Use
+> `get_demo_scenario` to read one's full content before editing it.
 
-Input: `{ includeArchived?: boolean }` (default `false`).
+Input: `{}` in phase 1; phase 2 adds `{ includeArchived?: boolean }`.
 
 Output:
 
@@ -153,42 +166,39 @@ Output:
       "name": "Multiplayer",
       "description": "Acme proposal, vendor selection, Acme demo follow-up, Sales demo reviews.",
       "revision": "multiplayer-2026-09",
-      "summary": { "spaces": 3, "channels": 4, "breakouts": 3, "sidekicks": 1, "uploads": 7, "parts": ["priya", "marcus", "dana"], "seededRuns": 9 },
-      "savedBy": null,
-      "savedAt": null,
-      "archivedAt": null
+      "summary": { "spaces": 3, "channels": 4, "breakouts": 3, "sidekicks": 1, "uploads": 7, "parts": ["priya", "marcus", "dana"], "seededRuns": 9 }
     }
   ]
 }
 ```
 
-A built-in's `revision` is its version string; a saved scenario's is an
-integer. `summary.seededRuns` is the number of seeded runs preparation will
-start and wait on one at a time, which is what makes a scenario slow to
-prepare.
+A built-in's `revision` is its version string; a saved scenario's (phase 2) is
+an integer, with `savedBy`, `savedAt` and `archivedAt` beside it.
+`summary.seededRuns` is the number of seeded runs preparation will start and
+wait on one at a time, which is what makes a scenario slow to prepare.
 
 ### 2. `get_demo_scenario`
 
-> Read the full content of one scenario revision as a pack. Edit the returned
-> `pack` and pass it to `check_demo_scenario`. Keep `revision` if you intend to
-> save the edit back to the same scenario.
+> Read the full content of one scenario as a pack. Edit the returned `pack` and
+> pass it to `check_demo_scenario`.
 
 Input: `ScenarioRef` minus the inline form.
 
-Output: `{ scenarioId, name, description, revision, contentHash, pack }`.
-`pack` is normalized (derived `expect` present). For a saved scenario,
-`revision` is what `save_demo_scenario` takes as `expectedRevision`.
+Output: `{ scenarioId, revisionId, name, description, revision, contentHash, pack }`.
+`pack` is normalized (derived `expect` present). In phase 2, `revision` is what
+`save_demo_scenario` takes as `expectedRevision`.
 
 ### 3. `check_demo_scenario`
 
-> Check a pack without writing anything. Returns either the normalized pack and
-> a summary, or every problem with the path of the field and what to change.
-> Fix every issue and check again before saving or creating a demo.
+> Check a pack without writing anything, and show it as the presenter will read
+> it. Returns either the normalized pack, a summary and a readable preview, or
+> every problem with the path of the field and what to change. Fix every issue
+> and check again before creating a demo.
 
 Input: `{ pack: unknown, cast?: Record<string, CastEntry> }`. `pack` is
 `unknown` on purpose: the tool parses it, so a malformed pack is a list of
-issues, not a transport error. `cast` is optional; when given, the cast checks
-(duplicate person, duplicate display name, not a colleague) run too.
+issues, not a transport error. `cast` is optional; when given, the shipped cast
+checks run too and the preview uses the cast's names.
 
 Output on success:
 
@@ -196,11 +206,27 @@ Output on success:
 {
   "ok": true,
   "contentHash": "sha256:…",
-  "pack": { "…": "normalized, with derived presenter expect" },
+  "pack": { "…": "normalized, with the presenter's expect derived" },
   "summary": { "spaces": 2, "channels": 3, "breakouts": 1, "sidekicks": 0, "uploads": 4, "parts": ["priya", "marcus"], "seededRuns": 5 },
-  "derived": ["expect[presenter]"]
+  "derived": ["expect[0]"],
+  "preview": "## Customer: Northwind\n\n### Evaluation & decision · seated, new\n…"
 }
 ```
+
+**The presenter's `expect` is always derived.** Whatever the pack says for the
+presenter, the check replaces it with `demoIdleViewerExpectation`'s answer and
+lists that entry's path in `derived`. The presenter never acts, so their flags
+have one right answer, and a pack cannot be refused for getting it wrong. An
+entry for a cast member, whose flags depend on what they did, is kept as
+written and checked by the existing rules.
+
+**`preview`** is Markdown: one section per Space, then per room in the order the
+presenter's sidebar will list them, each headed with what the presenter finds
+(`seated` or `visible`, `new`, `mentioned`, `waiting on a question`), then each
+Sidekick with its schedule in its time zone. `@{role}` becomes the cast name,
+or `[<label>]` when no cast is given. It is built from the same planner
+(`planDemoSeed`) and room facts (`packRoomFacts`, `visibleRoomsFor`)
+preparation uses, so it cannot drift from what is seeded.
 
 Output on failure (`isError: false`, because a refused pack is the normal answer
 of a check, not a failed call):
@@ -209,10 +235,8 @@ of a check, not a failed call):
 {
   "ok": false,
   "issues": [
-    { "path": "steps[4].as", "code": "demo_pack_role_not_in_cast", "message": "Role \"dana\" is not in the cast. Add it to roles and roleLabels, or change who speaks." },
-    { "path": "expect[0]", "code": "demo_pack_presenter_expect_mismatch", "message": "The presenter's expectation differs from what their flags derive to. Remove the presenter's entry to have it derived." }
-  ],
-  "derivedPresenterExpect": { "…": "present only for the mismatch issue" }
+    { "path": "steps[4].as", "code": "demo_pack_role_not_in_cast", "message": "Role \"dana\" is not in the cast" }
+  ]
 }
 ```
 
@@ -234,38 +258,179 @@ message today. This change gives each a stable code and keeps its message:
 | `demo_pack_substream_mention_not_member` | A mention in a Breakout names somebody not in it. |
 | `demo_pack_personal_substream_outsider` | A Breakout of a personal room adds somebody not in the room. |
 | `demo_pack_after_question` | A step follows an `ask` in the same conversation. |
-| `demo_pack_history_mention` | A room with `execution: "history"` carries mentions, which prepared history cannot apply. |
+| `demo_pack_history_live_effects` | A room with `execution: "history"` opens with anything but a `say`, or carries a mention. |
 | `demo_pack_sidekick_name_duplicate` | Two Sidekicks share a name (case folded). |
 | `demo_pack_viewer_duplicate` / `demo_pack_viewer_not_in_cast` | Each `expect` viewer appears once and is in the cast. |
 | `demo_pack_expect_rooms_mismatch` | A viewer's `expect.rooms` is not exactly the rooms visible to them. |
 
-Two codes are new rules rather than names for existing ones:
+One code is a new rule rather than a name for an existing one:
 
 | Code | Rule |
 | --- | --- |
 | `demo_pack_personal_room_unsupported` | A `personal` room. The seeder refuses one today with `demo_seed_personal_room_unsupported`, after earlier steps have run; the check reports it before anything is written. |
-| `demo_pack_presenter_expect_mismatch` | See prd.md, **The readiness block is derived, not written**. |
 
-### 4. `preview_demo_scenario`
+### 4. `list_demo_cast_candidates`
 
-> Show a scenario as the presenter will read it: rooms in sidebar order, who
-> says what, Rally's turns, documents, Breakouts and Sidekicks, with each part's
-> name filled in. Use it to review a scenario with the operator before creating
-> a demo.
+> List who can present a demo, who can play a part, and the parts a scenario
+> needs cast. Use the returned `userId`s in `create_demo_organization`'s
+> `presenterUserId` and `cast`, or a `{ name }` for somebody who is not a
+> colleague.
 
-Input: `{ scenario: ScenarioRef, cast?: Record<string, CastEntry> }`.
+Input: `{ scenario?: ScenarioRef }`.
 
-Output: `{ contentHash, markdown }`. `markdown` is one section per Space, then
-per room in the order the presenter's sidebar will list them, each headed with
-what the presenter finds (`seated`, `visible`, `new`, `mentioned`,
-`waiting on a question`), then each Sidekick with its schedule in its time zone.
-`@{role}` becomes the cast name, or `[<label>]` when no cast is given. The
-preview is built from the same planner (`planDemoSeed`) and room facts
-(`packRoomFacts`, `visibleRoomsFor`) preparation uses, so it cannot drift from
-what is seeded. The pack is checked first; an invalid pack answers with the
-check's issues.
+Output: `{ presenters: [{ userId, name, email }], colleagues: [{ userId, name, email }], parts?: [{ role, label }] }`.
+`presenters` are active members of `demo-template`; `colleagues` are signed-in
+accounts on the company's domain (`listDemoCastCandidates`). `parts` is present
+when a scenario is given.
 
-### 5. `save_demo_scenario`
+### 5. `create_demo_organization`
+
+> Create a new demo Organization from a scenario and start preparing it. Returns
+> at once with the operation's status; call `get_demo_operation` to follow it to
+> Ready. Calling again with the same `requestKey` returns the same operation and
+> never creates a second Organization.
+
+Input:
+
+```ts
+{
+  requestKey: string;                         // client-chosen, [a-z0-9-], one per demo you mean
+  scenario: ScenarioRef;
+  companyName: string;                        // the Organization is named `${companyName}-demo`
+  presenterUserId: string;                    // from list_demo_cast_candidates.presenters
+  cast: Record<string, CastEntry>;            // every part but presenter
+  connections?: ConnectionSelection;          // phase 2; see list_template_connections
+}
+```
+
+What happens, in order:
+
+1. **Replay first.** The operation ID is derived from
+   `(actor.subject, requestKey)`. If that operation exists, its status is
+   returned and nothing else runs: no pack is resolved, checked or stored, and
+   the inputs are not compared. This is `startDemoOperation`'s shipped rule,
+   for its shipped reason: re-checking a repeat against a directory that has
+   moved since would refuse a retry of a preparation that is running fine. A
+   different `requestKey` is a different demo.
+2. The pack is resolved and checked (`check_demo_scenario`'s rules). A failing
+   pack is refused with `demo_scenario_invalid` and its issues; nothing is
+   written.
+3. The shipped start checks run, with their shipped codes (`demo_pack_role_unbound`,
+   `demo_pack_role_unknown`, `demo_presenter_cast`, `demo_cast_duplicate`,
+   `demo_cast_name_duplicate`, `demo_cast_not_a_colleague`,
+   `demo_presenter_not_in_template`).
+4. An inline pack is stored as an unnamed revision. Unnamed revisions are
+   unique by content hash, so storing the same pack again finds the existing
+   row and writes nothing. A create refused in steps 2 or 3 has stored nothing.
+5. The operation row is written with the revision, the request key and the
+   requester, and the Workflow is launched, as today.
+
+Output: the status shape of `get_demo_operation`.
+
+### 6. `list_demo_operations`
+
+> List demo operations, newest first, with their status. Use it to find a demo
+> you started earlier.
+
+Input: `{ status?: "running" | "failed" | "ready" | "abandoned" }`.
+
+Output: `{ operations: Status[] }`, as the shipped list returns them.
+
+### 7. `get_demo_operation`
+
+> Read one demo operation's progress. While it is running, call again to follow
+> it; the waiting phase's gaps say what has not arrived yet. When it fails,
+> `recovery` names the tool that recovers it.
+
+Input: `{ operationId: string }`.
+
+Output (`Status`): the shipped `DemoOperationStatusSchema`, returned as is,
+plus optional fields that Ace ignores:
+
+```json
+{
+  "operationId": "…",
+  "companyName": "Northwind",
+  "presenterUserId": "…",
+  "presenterName": "…",
+  "packVersion": "stored:sha256:…",
+  "cast": { "presenter": "…", "priya": "…", "marcus": "…", "dana": "…" },
+  "castNames": { "presenter": "…", "priya": "…", "marcus": "Sam Lee", "dana": "Dana (persona)" },
+  "workspaceId": "…",
+  "workspaceName": "Northwind-demo",
+  "status": "running",
+  "attempt": 1,
+  "failedPhase": null,
+  "error": null,
+  "createdAt": "…",
+  "updatedAt": "…",
+  "readyAt": null,
+  "retiredAt": null,
+  "phases": [
+    { "phase": "waiting_for_workspace", "status": "running", "attempt": 1, "detail": { "gaps": [ { "viewerUserId": "…", "room": "vendor-selection", "code": "mention_missing", "detail": "…" } ] }, "error": null, "startedAt": "…", "finishedAt": null }
+  ],
+  "seeding": { "confirmed": 14, "total": 14 },
+
+  "requestKey": "…",
+  "scenario": { "source": "stored", "revisionId": "…", "scenarioId": null, "contentHash": "sha256:…" },
+  "requestedBy": "…",
+  "recovery": null,
+  "notices": []
+}
+```
+
+Everything above the blank line is the shipped shape, unchanged. `packVersion`
+is the built-in version for a built-in scenario and `stored:<contentHash>` for a
+stored one, so the shipped field stays meaningful without a second one.
+Connection results stay where they are today, in the `copying_connections`
+phase's `detail`.
+
+The optional fields:
+
+- `recovery`: when `status` is `failed`, the tool that recovers it:
+  `retry_demo_operation`, or `abandon_demo_operation` for a seeded run's own
+  failure (`demo_seed_run_failed`, `demo_seed_run_outcome_mismatch`), which a
+  retry cannot reach. Otherwise `null`.
+- `notices` on Ready: `{ code: "presenter_cannot_see_organizations", message }`
+  when `multiple-workspaces-enabled` is off for the presenter.
+
+### 8. `retry_demo_operation`
+
+> Start the next attempt of a failed or stalled operation. Every phase resumes
+> from what the last attempt finished. A failed seeded run cannot be retried
+> into success; for `demo_seed_run_failed`, abandon and create a new demo.
+
+Input: `{ operationId: string, expectedAttempt: number }`. `expectedAttempt` is
+the `attempt` the caller read. **New:** if the row's attempt has moved past it,
+the call answers `demo_operation_changed` (the shipped code for a retry that
+raced) and starts nothing, so a replayed retry does not supersede the driver
+the first one started. Otherwise it calls the shipped `retryDemoOperation`.
+
+Output: `Status`.
+
+### 9. `abandon_demo_operation`
+
+> Abandon an unfinished demo and retire its candidate Organization. Cannot be
+> undone. Repeat the operation ID in `confirmOperationId`.
+
+Input: `{ operationId: string, confirmOperationId: string }`, as the shipped
+abandon request.
+
+Output: `Status` with `status: "abandoned"`. An incomplete retirement answers
+the shipped `demo_abandon_incomplete`; calling again resumes it.
+
+### 10. `retire_demo_organization`
+
+> Retire a published demo Organization permanently: it closes for everyone in
+> it and cannot be reopened. Only Organizations created by demo preparation can
+> be retired here. Repeat the Organization's name in `confirmName`.
+
+Input: `{ organizationId: string, confirmName: string }`.
+
+Output: `{ organizationId, retiredAt, complete: boolean }`. Calling again
+resumes an incomplete walk.
+
+### 11. `save_demo_scenario` (phase 2)
 
 > Save a checked pack as a named scenario, or as a new revision of one. Pass
 > `expectedRevision: null` to create a new scenario, or the revision you read
@@ -285,34 +450,19 @@ Input:
 ```
 
 `scenarioId` present with `expectedRevision: null`, or absent with a number, is
-refused with `invalid_input`.
+refused with `invalid_input`. Saving content identical to the latest revision
+returns that revision and writes nothing.
 
-Output: `{ scenarioId, revision, contentHash }`.
+Output: `{ scenarioId, revision, revisionId, contentHash }`.
 
-Saving identical content to the latest revision returns that revision and
-writes nothing, so a replayed save does not make a new revision.
-
-### 6. `archive_demo_scenario`
+### 12. `archive_demo_scenario` (phase 2)
 
 > Hide a saved scenario from `list_demo_scenarios`. Its revisions stay, and
 > demos made from it are unaffected. Archiving twice is harmless.
 
 Input: `{ scenarioId: string }`. Output: `{ scenarioId, archivedAt }`.
 
-### 7. `list_demo_cast_candidates`
-
-> List who can present a demo, who can play a part, and the parts a scenario
-> needs cast. Use the returned `userId`s in `create_demo_organization`'s
-> `presenterUserId` and `cast`.
-
-Input: `{ scenario?: ScenarioRef }`.
-
-Output: `{ presenters: [{ userId, name, email }], colleagues: [{ userId, name, email }], parts?: [{ role, label }] }`.
-`presenters` are active members of `demo-template`; `colleagues` are signed-in
-accounts on the company's domain (`listDemoCastCandidates`). `parts` is present
-when a scenario is given.
-
-### 8. `list_template_connections`
+### 13. `list_template_connections` (phase 2)
 
 > List the connections in the demo template and whether each can be copied into
 > a demo. Use the `connectionId`s of copyable ones in
@@ -324,124 +474,17 @@ Output: `{ connections: [{ connectionId, connectorType, displayName, scope, copy
 `skipReason` is `null`, `personal_scope` or `shared_grant`. No credential,
 account token or provider account identifier is returned.
 
-### 9. `create_demo_organization`
-
-> Create a new demo Organization from a scenario and start preparing it. Returns
-> at once with the operation's status; call `get_demo_operation` to follow it to
-> Ready. Calling again with the same `requestKey` returns the same operation and
-> never creates a second Organization.
-
-Input:
+`create_demo_organization` then accepts:
 
 ```ts
-{
-  requestKey: string;                         // client-chosen, [a-z0-9-], unique per demo you mean
-  scenario: ScenarioRef;
-  companyName: string;
-  organizationName?: string;                  // default `${companyName}-demo`
-  presenterUserId: string;                    // from list_demo_cast_candidates.presenters
-  cast: Record<string, CastEntry>;            // every part but presenter
-  connections?: ConnectionSelection;          // default { mode: "all" }
-}
+type ConnectionSelection =
+  | { mode: "all" }                               // the default, and today's behavior
+  | { mode: "none" }
+  | { mode: "only"; connectionIds: string[] };
 ```
 
-What happens, in order:
-
-1. The pack is resolved (stored inline packs become an unnamed revision) and
-   checked. A failing pack is refused with `demo_scenario_invalid` and its
-   issues; nothing is written.
-2. The operation ID is derived from `(actor.subject, requestKey)`. If a row
-   exists, its status is returned unchanged, **unless** its recorded inputs
-   differ from this call's, which is refused with
-   `demo_request_key_reused` naming the differing field.
-3. The shipped start checks run (cast complete, no duplicate person or name,
-   presenter in the template, colleagues on the domain), plus connection
-   selection against the template.
-4. The row is written with the scenario revision, the requester, and the
-   selection; the Workflow is launched.
-
-Output: the status shape of `get_demo_operation`.
-
-### 10. `list_demo_operations`
-
-> List demo operations, newest first, with their status. Use it to find a demo
-> you started earlier.
-
-Input: `{ status?: "running" | "failed" | "ready" | "abandoned"; mine?: boolean }`.
-`mine` filters to the caller's Access subject.
-
-Output: `{ operations: Status[] }` with each operation's latest phase only.
-
-### 11. `get_demo_operation`
-
-> Read one demo operation's progress. While it is running, call again to follow
-> it; the gaps in `waiting_for_workspace` say what has not arrived yet. When
-> it fails, `error.next` names the tool that recovers it.
-
-Input: `{ operationId: string }`.
-
-Output (`Status`), extending `DemoOperationStatusSchema`:
-
-```json
-{
-  "operationId": "…",
-  "requestKey": "…",
-  "status": "running",
-  "scenario": { "scenarioId": "…", "name": "Northwind logistics", "revision": 3, "contentHash": "sha256:…" },
-  "companyName": "Northwind",
-  "organization": { "id": "…", "name": "Northwind-demo" },
-  "presenter": { "userId": "…", "name": "…" },
-  "attempt": 1,
-  "phases": [ { "phase": "seeding_conversations", "status": "running", "detail": { "confirmed": 6, "total": 14 } } ],
-  "connections": { "copied": ["Google Drive"], "skipped": [ { "displayName": "Linear", "reason": "shared_grant" } ] },
-  "gaps": [ { "viewer": "presenter", "kind": "mention_missing", "room": "vendor-selection" } ],
-  "error": null,
-  "notices": [],
-  "readyAt": null,
-  "retiredAt": null,
-  "requestedBy": "…@rallywith.ai"
-}
-```
-
-`error`, when present: `{ phase, code, message, next }` where `next` is
-`"retry_demo_operation"`, `"abandon_demo_operation"` or `null`. `notices` on
-Ready may include `{ code: "presenter_cannot_see_organizations", message }`
-when `multiple-workspaces-enabled` is off for the presenter.
-
-### 12. `retry_demo_operation`
-
-> Start the next attempt of a failed or stalled operation. Every phase resumes
-> from what the last attempt finished. A failed seeded run cannot be retried
-> into success; for `demo_seed_run_failed`, abandon and create a new demo.
-
-Input: `{ operationId: string, attempt: number }`. `attempt` is the attempt the
-caller read; a retry against an attempt the row has moved past returns the
-current status and starts nothing, so a replayed retry does not launch a
-second driver.
-
-Output: `Status`.
-
-### 13. `abandon_demo_operation`
-
-> Abandon an unfinished demo and retire its candidate Organization. Cannot be
-> undone. Repeat the operation ID in `confirmOperationId`.
-
-Input: `{ operationId: string, confirmOperationId: string }`.
-
-Output: `Status` with `status: "abandoned"` and whether retirement finished. An
-incomplete retirement is answered with `demo_abandon_incomplete`; calling again
-resumes it.
-
-### 14. `retire_demo_organization`
-
-> Retire a published demo Organization permanently: it closes for everyone in
-> it and cannot be reopened. Only Organizations created by demo preparation can
-> be retired here. Repeat the Organization's name in `confirmName`.
-
-Input: `{ organizationId: string, confirmName: string }`.
-
-Output: `{ organizationId, retiredAt, complete: boolean }`. Calling again
-resumes an incomplete walk.
+The copier copies only the selected IDs. A selected ID that is not copyable is
+refused in step 3 of the create, before a row is written.
 
 ## Discovery and sequencing
 
@@ -449,78 +492,87 @@ Where every input comes from:
 
 | Input | Producer |
 | --- | --- |
-| `scenarioId`, `revision` | `list_demo_scenarios`, `get_demo_scenario`, `save_demo_scenario` |
+| `scenarioId`, `revisionId` | `list_demo_scenarios`, `get_demo_scenario`; `revisionId` also from `get_demo_operation.scenario` |
 | `pack` | `get_demo_scenario` (edited by the client), or written by the client |
-| `expectedRevision` | `get_demo_scenario.revision`; `null` to create |
 | role tokens for `cast` | `pack.roles` minus `presenter`, or `list_demo_cast_candidates.parts` |
 | `userId` | `list_demo_cast_candidates` |
-| `connectionId` | `list_template_connections` |
 | `requestKey` | the client |
 | `operationId` | `create_demo_organization`, `list_demo_operations` |
-| `attempt` | `get_demo_operation.attempt` |
-| `organizationId`, its name | `get_demo_operation.organization` |
+| `expectedAttempt` | `get_demo_operation.attempt` |
+| `organizationId`, its name | `get_demo_operation.workspaceId`, `.workspaceName` |
+| `expectedRevision` (phase 2) | `get_demo_scenario.revision`; `null` to create |
+| `connectionId` (phase 2) | `list_template_connections` |
 
 Common sequences:
 
 - **Built-in, as is:** `list_demo_cast_candidates({ scenario })` →
   `create_demo_organization` → `get_demo_operation` until `ready` or `failed`.
 - **Customized:** `get_demo_scenario` → edit → `check_demo_scenario` (repeat
-  until `ok`) → `preview_demo_scenario` → operator confirms →
+  until `ok`; show the operator `preview`) → operator confirms →
   `create_demo_organization({ scenario: { pack } })` → `get_demo_operation`.
-- **Save for the team:** … `check_demo_scenario` → `save_demo_scenario`
-  (`expectedRevision: null`). Later: `get_demo_scenario` → edit →
-  `save_demo_scenario({ scenarioId, expectedRevision })`; on
+- **Recover:** `get_demo_operation` → `recovery` → that tool.
+- **Phase 2, save for the team:** … `check_demo_scenario` →
+  `save_demo_scenario` (`expectedRevision: null`). Later: `get_demo_scenario` →
+  edit → `save_demo_scenario({ scenarioId, expectedRevision })`; on
   `demo_scenario_revision_conflict`, read again and rebuild the edit.
-- **Recover:** `get_demo_operation` → `error.next` → that tool.
 
 ## Failures
 
-`message` below is the exact sentence returned. Structured detail keys are the
-ones listed; nothing else is added.
+`message` below is the exact sentence returned. A shipped code keeps its
+shipped HTTP meaning and message text, with the next step appended; it is
+marked **shipped**. Structured detail keys are the ones listed; nothing else is
+added.
 
-| Code | Tools | Message | Model should |
-| --- | --- | --- | --- |
-| `invalid_input` | all | "The input does not match this tool's schema at `<path>`. Fix that field and call again." | correct and retry |
-| `demo_scenario_invalid` | 5, 9 | "The scenario has problems listed in `issues`. Fix every issue, check it with check_demo_scenario, and call again." (`issues`) | correct and retry |
-| `demo_scenario_not_found` | 2, 4, 5, 6, 7, 9 | "No scenario has this ID and revision. Call list_demo_scenarios for the current ones." | inspect first |
-| `demo_scenario_revision_conflict` | 5 | "The scenario changed after you read it (now revision `<n>`). Read it again with get_demo_scenario and rebuild the edit." (`currentRevision`) | re-read, rebuild |
-| `demo_scenario_name_taken` | 5 | "Another live scenario has this name. Choose a different name, or revise that scenario instead." | correct and retry |
-| `demo_scenario_builtin_readonly` | 5, 6 | "Built-in scenarios change only through the code. Save your edit under a new name." | correct and retry |
-| `demo_scenario_too_large` | 5, 9 | "The pack is larger than D1's row limit of `<bytes>` bytes. Shorten uploads or split the scenario." (`limitBytes`) | correct |
-| `demo_request_key_reused` | 9 | "This requestKey already started a demo with a different `<field>`. Use a new requestKey for a different demo, or call get_demo_operation for that one." (`operationId`, `field`) | stop or new key |
-| `demo_cast_incomplete` | 9 | "Part `<role>` has nobody cast. Give every part in the scenario a userId, email or name." (`role`) | correct and retry |
-| `demo_cast_duplicate` | 3, 9 | "One person is cast in two parts (`<role>`, `<role>`). Cast a different person or a typed name in one of them." | correct and retry |
-| `demo_cast_name_duplicate` | 3, 9 | "Two people in this demo share the display name of part `<role>`. Use a typed name for one of them." | correct and retry |
-| `demo_cast_not_a_colleague` | 3, 9 | "The person cast in `<role>` is not a signed-in account on the company's domain. Pick one from list_demo_cast_candidates or type a name." | correct and retry |
-| `demo_cast_email_ambiguous` | 3, 9 | "The email for `<role>` matches no single colleague. Use a userId from list_demo_cast_candidates." | correct and retry |
-| `demo_presenter_not_in_template` | 9 | "The presenter must be a member of the demo template. Pick one from list_demo_cast_candidates.presenters." | correct and retry |
-| `demo_connection_not_copyable` | 9 | "Connection `<id>` cannot be copied (`<reason>`). Leave it out of connections." (`connectionId`, `reason`) | correct and retry |
-| `demo_operation_not_found` | 11–13 | "No demo operation has this ID. Call list_demo_operations." | inspect first |
-| `demo_operation_ready` | 13 | "This demo is already Ready. Use retire_demo_organization to close it." | switch tool |
-| `demo_confirmation_mismatch` | 13, 14 | "The confirmation does not match. Repeat the operation ID (or the Organization's exact name) to confirm." | correct, only on the operator's say-so |
-| `demo_not_a_demo_organization` | 14 | "This Organization was not created by demo preparation and cannot be retired here." | stop |
-| `demo_abandon_incomplete` | 13 | "Some objects are not retired yet. Call abandon_demo_operation again to resume." | retry once |
-| `demo_region_unsupported` | all | "Demos are prepared only in Global." | stop |
-| `demo_preparation_unavailable` | 9, 12 | "Demo preparation is not available in this deployment." | stop |
-| `regional_unavailable` | all | "Rally's API did not answer. Try again in a moment." | retry once |
+| Code | Origin | Tools | Message | Model should |
+| --- | --- | --- | --- | --- |
+| `invalid_input` | new | all | "The input does not match this tool's schema at `<path>`. Fix that field and call again." | correct and retry |
+| `demo_scenario_invalid` | new | 5 | "The scenario has problems listed in `issues`. Fix every issue, check it with check_demo_scenario, and call again." (`issues`) | correct and retry |
+| `demo_scenario_not_found` | new | 2, 4, 5 | "No scenario has this ID or revision. Call list_demo_scenarios for the current ones." | inspect first |
+| `demo_scenario_too_large` | new | 5, 11 | "The pack is larger than D1's row limit of `<bytes>` bytes. Shorten uploads or split the scenario." (`limitBytes`) | correct |
+| `demo_pack_role_unbound` | shipped | 5 | "Nobody is cast as `<role>`. Give every part a userId or a { name }." | correct and retry |
+| `demo_pack_role_unknown` | shipped | 5 | "`<role>` is not a part in this scenario. Remove it from cast." | correct and retry |
+| `demo_presenter_cast` | shipped | 5 | "The presenter is chosen by presenterUserId, not in cast. Remove presenter from cast." | correct and retry |
+| `demo_cast_duplicate` | shipped | 3, 5 | "One person is cast in two parts. Cast a different person or a typed name in one of them." | correct and retry |
+| `demo_cast_name_duplicate` | shipped | 3, 5 | "Two people in this demo share a display name. Use a typed name for one of them." | correct and retry |
+| `demo_cast_not_a_colleague` | shipped | 3, 5 | "The person cast in `<role>` is not a signed-in account on the company's domain. Pick one from list_demo_cast_candidates or type a name." | correct and retry |
+| `demo_presenter_not_in_template` | shipped | 5 | "The presenter must be a member of the demo template. Pick one from list_demo_cast_candidates.presenters." | correct and retry |
+| `demo_preparation_launch_failed` | shipped | 5, 8 | "The preparation could not be started. Call retry_demo_operation for this operation." (`operationId`) | retry once |
+| `demo_operation_not_found` | shipped | 7–9 | "No demo operation has this ID. Call list_demo_operations." | inspect first |
+| `demo_operation_not_retryable` | shipped | 8 | "A `<status>` demo cannot be retried. Create a new demo instead." | stop |
+| `demo_operation_changed` | shipped | 8 | "The operation changed after you read it. Read it again with get_demo_operation before retrying." | re-read |
+| `demo_operation_ready` | shipped | 9 | "This demo is already Ready. Use retire_demo_organization to close it." | switch tool |
+| `demo_abandon_unconfirmed` | shipped | 9 | "The confirmation does not match. Repeat the operation ID to confirm." | correct, only on the operator's say-so |
+| `demo_abandon_incomplete` | shipped | 9 | "Some objects are not retired yet. Call abandon_demo_operation again to resume." | retry once |
+| `demo_retire_unconfirmed` | new | 10 | "The confirmation does not match. Repeat the Organization's exact name to confirm." | correct, only on the operator's say-so |
+| `demo_not_a_demo_organization` | new | 10 | "This Organization was not created by demo preparation and cannot be retired here." | stop |
+| `demo_region_unsupported` | shipped | all | "Demos are prepared only in Global." | stop |
+| `demo_preparation_unavailable` | shipped | 5, 8 | "Demo preparation is not available in this deployment." | stop |
+| `regional_unavailable` | new | all | "Rally's API did not answer. Try again in a moment." | retry once |
+| `demo_scenario_revision_conflict` | new, phase 2 | 11 | "The scenario changed after you read it (now revision `<n>`). Read it again with get_demo_scenario and rebuild the edit." (`currentRevision`) | re-read, rebuild |
+| `demo_scenario_name_taken` | new, phase 2 | 11 | "Another live scenario has this name. Choose a different name, or revise that scenario instead." | correct and retry |
+| `demo_scenario_builtin_readonly` | new, phase 2 | 11, 12 | "Built-in scenarios change only through the code. Save your edit under a new name." | correct and retry |
+| `demo_connection_not_copyable` | new, phase 2 | 5 | "Connection `<id>` cannot be copied (`<reason>`). Leave it out of connections." (`connectionId`, `reason`) | correct and retry |
 
 Phase failures inside a running operation are not tool errors: they arrive in
 `get_demo_operation.error` with the shipped codes (`demo_seed_run_failed`,
 `demo_seed_run_outcome_mismatch`, `demo_projection_wait_exhausted`,
-`demo_cast_not_a_colleague`, …) and `next`.
+`demo_template_missing`, `demo_presenter_unknown`, `demo_cast_not_a_colleague`,
+…) and `recovery`. Ace's handling of every shipped code is unchanged.
 
 **Ambiguous writes.** If `create_demo_organization`'s response is lost, the
-client calls it again with the same `requestKey` and gets the operation. If
-`save_demo_scenario`'s is lost, saving the same content again returns the
-existing revision. Abandon and retire resume. No write needs a blind retry.
+client calls it again with the same `requestKey` and gets the operation. A
+retry whose response is lost is repeated with the same `expectedAttempt` and
+answers `demo_operation_changed` instead of starting a third attempt. Abandon
+and retire resume. No write needs a blind retry.
 
 ## Authority and lifecycle
 
-- **Model choice:** the pack, scenario names, cast entries, company and
-  Organization names, connection selection, `requestKey`.
-- **Host-derived:** the actor (from the verified Access assertion only), the
-  operation ID, the template, the region, the presenter's eligibility, which
-  connections are copyable, every destination ID in the demo.
+- **Model choice:** the pack, the company name, cast entries, `requestKey`, and
+  in phase 2 scenario names and the connection selection.
+- **Host-derived:** the actor (from the Access assertion the MCP Worker
+  verified), the operation ID, the template, the region, the presenter's
+  eligibility, which connections are copyable, every destination ID in the
+  demo.
 - **Never accepted:** a source workspace ID, a template ID, credential bytes, a
   seed for a single message outside a pack, a timestamp.
 - **Cancellation:** closing the client cancels nothing; operations are
@@ -530,12 +582,14 @@ existing revision. Abandon and retire resume. No write needs a blind retry.
 ## Model-usability acceptance
 
 - Schema snapshot tests for every tool's input and output, including each
-  refused shape above.
+  refused shape above, and a test that `get_demo_operation`'s output still
+  parses with the shipped `DemoOperationStatusSchema` once its optional fields
+  are removed.
 - Contract tests through the real MCP handler, as
   `apps/engineering-mcp/test/server.test.ts` does, with a double only for the
   regional binding.
 - Prompt evaluations on the configured medium fallback model covering:
   discovery from nothing to a Ready demo of the built-in scenario; a customized
   demo from a plain-language request; fixing a pack from check issues; a
-  revision conflict; a replayed create with a lost response; and stopping on
+  replayed create with a lost response; and stopping on
   `demo_not_a_demo_organization` instead of retrying.
