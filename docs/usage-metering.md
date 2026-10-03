@@ -202,9 +202,10 @@ desktop meter is owned by the settings screens and
 - **`USAGE_DB` fills:** only metering stops. At about 12,000 events a day and
   391 bytes a row, 90 days is about 0.4 GB; the limit is about 20 times today's
   volume away.
-- **An unprovisioned lakehouse:** the manifest ships an all-zero stream ID until
-  `pnpm cloudflare:lakehouses:ensure` pins the real one, and materializing the
-  deploy bindings refuses it, so the deploy fails rather than every batch.
+- **An unprovisioned lakehouse:** a manifest with the all-zero stream ID is
+  refused when the deploy materializes bindings, so a new region's deploy fails
+  until `pnpm cloudflare:lakehouses:ensure` creates the stream and its ID is
+  pinned, rather than every batch failing.
 - **Numbers:** batch size 100 and wait 60 seconds are the Queues platform
   maxima (checked 2026-10-03).
 
