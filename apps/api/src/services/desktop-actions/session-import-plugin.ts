@@ -1,6 +1,6 @@
 import type { HarnessPlugin, HarnessTool } from "@rally/agent-harness";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
-import { SessionImportFailureReasonSchema, SessionImportVerificationSchema } from "@rally/contracts/desktop-actions";
+import { RecordedSessionImportVerificationSchema, SessionImportFailureReasonSchema, SessionImportVerificationSchema } from "@rally/contracts/desktop-actions";
 import { z } from "zod";
 
 import { runDesktopAction } from "./browser-plugin";
@@ -17,6 +17,7 @@ const FinishArgumentsSchema = z.strictObject({
   title: z.string().trim().min(1).max(180).describe("The conversation's title as the provider shows it, or a short one you write when it has none."),
   messages: z.string().min(1).describe("The handle rally.store returned for the stored messages array."),
 });
+const RecordedFinishArgumentsSchema = FinishArgumentsSchema.extend({ verification: RecordedSessionImportVerificationSchema });
 const FailArgumentsSchema = z.strictObject({
   reason: SessionImportFailureReasonSchema.describe("sign_in_required: the page asks the person to sign in. not_a_conversation: the tab does not show a conversation. page_unavailable: the page will not load or refuses access. unreadable: the conversation shows, but its messages cannot be read with their ids, or import_finish refuses for a reason the stored messages cannot fix."),
 });
@@ -37,6 +38,9 @@ export function createSessionImportPlugin(
   executor: DesktopActionExecutor | undefined,
 ): HarnessPlugin {
   const finish: HarnessTool = {
+    // The desktop uploads and durably commits the history before answering.
+    // Its run owns cancellation; the ordinary tool timer cannot decide whether that write committed.
+    deadline: "run",
     definition: {
       name: "import_finish",
       description: "Hand the stored conversation to Rally. Succeeds once; on a problem it names what to fix.",
@@ -47,7 +51,7 @@ export function createSessionImportPlugin(
     },
     reenterable: true,
     execute: async (raw, context) => {
-      const args = FinishArgumentsSchema.parse(raw);
+      const args = (context.replaying ? RecordedFinishArgumentsSchema : FinishArgumentsSchema).parse(raw);
       const result = await runDesktopAction(executor, input, context, {
         kind: "session_import.finish", title: args.title, messages: args.messages, verification: args.verification,
       });

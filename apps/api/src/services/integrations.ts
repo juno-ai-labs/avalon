@@ -283,7 +283,7 @@ import {
 } from "./memory-service";
 import { automationScopeMemoryTables, createMemoryTableTools } from "./memory-table-service";
 import type { MaterializedMemoryTable } from "./memory-table-service";
-import { workstreamRunLimits } from "./workstream-run-policy";
+import { MAX_SESSION_IMPORT_RUN_MS, workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import {
   CONVERSATIONS_WIRE_PREFIX,
@@ -2994,7 +2994,11 @@ export async function runWorkstreamHarness(
       recordActivationDuration(pluginId, name, durationMs);
     }
   };
-  const runLimits = workstreamRunLimits();
+  const runLimitsAtMs = Date.now();
+  const runLimits = workstreamRunLimits(
+    profile?.role === "session_import" ? MAX_SESSION_IMPORT_RUN_MS : undefined,
+    initialRun.started_at > 0 ? Math.max(0, runLimitsAtMs - initialRun.started_at) : 0,
+  );
   const runScopeLimits = {
     ...runLimits,
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
@@ -3848,6 +3852,9 @@ export async function runWorkstreamHarness(
           expectedInputHash: inputHash,
           policyMatches,
           expectedPolicy,
+          ...(runLimits.maxWallClockMs !== undefined ? {
+            maxWallClockMs: Math.max(0, runLimits.maxWallClockMs - (Date.now() - runLimitsAtMs)),
+          } : {}),
           plugins: harnessTools.plugins,
           context: {
             workspaceId: input.workspaceId,
@@ -6948,6 +6955,8 @@ async function reenterInterruptedWrite(input: {
   };
   expectedInputHash: string;
   policyMatches: boolean;
+  /** Remaining parent-run time, including receipt recovery outside Bind dispatch. */
+  maxWallClockMs?: number;
   expectedPolicy: { pluginId: string; definition: ToolDefinition };
   plugins: readonly HarnessPlugin[];
   /**
@@ -6992,12 +7001,15 @@ async function reenterInterruptedWrite(input: {
   // ceiling: it is the same `resolveTimeoutMs`/`timeoutMs` the interrupted
   // attempt ran under, and without it a re-entry inherits only the caller's
   // signal — which, from crash repair, is the attempt lease and nothing else.
-  const budgetMs = tool.resolveTimeoutMs?.(recordedInput) ?? tool.definition.timeoutMs;
-  const deadline = budgetMs === undefined ? null : toolReentryDeadline(input.context.signal, budgetMs);
+  const toolBudgetMs = tool.deadline === "run" ? undefined
+    : tool.resolveTimeoutMs?.(recordedInput) ?? tool.definition.timeoutMs;
+  const budgetMs = Math.min(toolBudgetMs ?? Number.POSITIVE_INFINITY, input.maxWallClockMs ?? Number.POSITIVE_INFINITY);
+  const deadline = Number.isFinite(budgetMs) ? toolReentryDeadline(input.context.signal, budgetMs) : null;
   const callContext = {
     ...input.context,
     ...(deadline ? { signal: deadline.signal } : {}),
     effectIntentId: input.row.id,
+    replaying: true,
     ...(input.row.providerIdempotencyKey !== null
       ? { providerIdempotencyKey: input.row.providerIdempotencyKey }
       : {}),

@@ -67,8 +67,27 @@ describe("Terminal command receipt recovery", () => {
     // and nothing else in this context names it.
     expect(execute).toHaveBeenCalledWith(
       { command: "pwd" },
-      { ...context, effectIntentId: RECEIPT },
+      { ...context, replaying: true, effectIntentId: RECEIPT },
     );
+  });
+
+  it("bounds run-owned receipt re-entry by the remaining parent lifetime", async () => {
+    const plugin = terminalPlugin({
+      deadline: "run",
+      definition: { name: "finish", description: "Finish", capability: "test.finish", mode: "write",
+        idempotency: "record_before_execute", inputSchema: { type: "object" } },
+      reenterable: true,
+      execute: async (_args, call) => await new Promise((_resolve, reject) => {
+        call.signal.addEventListener("abort", () => reject(call.signal.reason), { once: true });
+      }),
+    });
+    await expect(__integrationTesting.reenterInterruptedWrite({
+      row: { id: RECEIPT, status: "started", inputHash: "same", inputJson: '{}',
+        attemptStartedAt: ATTEMPT_STARTED_AT, providerIdempotencyKey: null },
+      expectedInputHash: "same", policyMatches: true, maxWallClockMs: 5,
+      expectedPolicy: { pluginId: "rally:terminal", definition: plugin.tools[0]!.definition },
+      plugins: [plugin], context,
+    })).rejects.toMatchObject({ name: "TimeoutError" });
   });
 
   it("does not recover another write tool or a mismatched durable input", async () => {
@@ -301,7 +320,7 @@ describe("Terminal command receipt recovery", () => {
     // write wearing the name of a retry.
     expect(execute).toHaveBeenCalledWith(
       { filePath: "prd.md" },
-      { ...context, effectIntentId: RECEIPT, providerIdempotencyKey: admittedKey },
+      { ...context, replaying: true, effectIntentId: RECEIPT, providerIdempotencyKey: admittedKey },
     );
   });
 });

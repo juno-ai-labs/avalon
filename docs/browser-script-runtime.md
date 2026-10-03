@@ -61,6 +61,15 @@ its earlier observations and an error so the model can repair the next call.
 `rally.pageScript(callbackOrBody)` is a writable page extraction extension, explicitly
 separate from the orchestration scope. Callbacks are serialized into the page and cannot capture orchestration variables. Function expressions passed as strings are refused with a repair instruction instead of silently returning null. It retains the existing async wrapper,
 `await rally.store`, text normalization and signed-in page fetch behavior.
+`rally.downloadFiles(files)` fetches and stores independent files concurrently,
+preserves source order, checks declared original sizes, and returns stored
+references or named unavailable entries. Resolve provider download links in
+parallel before calling it; credentials stay in page-local `RequestInit` values.
+The host controls download batch width with `MAX_PAGE_PARALLEL_DOWNLOADS`;
+it remains open until the team selects a value. A finite width limits concurrent
+fetch, body allocation and base64 conversion, and each batch drains before the
+next starts. Completed file bytes remain retained until the script returns, so
+this controls transient fan-out rather than aggregate result memory.
 `rally.network.list/read` reuse recorded page responses; `rally.load` reuses
 signed-in file loading. Store bytes transfer into the owning renderer's store
 at the end of each script call; only references reach the API/model.
@@ -148,6 +157,16 @@ binding or input dispatch and fail the corresponding smoke assertion before
 restoring the code.
 
 ## Changelog
+
+### 2026-10-03 — Concurrent page file downloads
+
+**Why:** The import model downloaded independent originals in sequential loops, paying each network delay in turn.
+
+**Changed:** The page-local `rally.downloadFiles` helper concurrently fetches and stores files, returns outcomes in source order, and names missing originals and size mismatches. Declared oversized responses are rejected before body consumption; actual byte sizes are checked before storage. Handled per-file store failures retain successful siblings while every started store drains. One host-owned batch-width control bounds active downloads and conversions when a finite value is supplied; the production value remains open pending a team decision. Provider-specific link resolution remains in page script; credentials never cross to the model. Successful references must be projected to `{ handle, name, mimeType }` for the strict import payload, optionally adding `attachment`/`artifact` kind. Transient network, 429 and 5xx failures require retry or route repair.
+
+**Considered and rejected:** A guessed concurrency value and provider-specific downloader. A configurable batch queue provides the mechanism while the team owns its memory policy; the helper works with ordinary page fetch descriptors.
+
+**Consequences:** Callers resolve provider links with `Promise.all`, preserve returned ordering when attaching files, and repair or explicitly account for unavailable originals.
 
 ### 2026-10-02 — Persistent browser handles with a model-neutral contract
 
