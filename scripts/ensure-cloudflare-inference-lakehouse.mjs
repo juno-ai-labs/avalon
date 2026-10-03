@@ -21,6 +21,7 @@ import { parseWranglerConfig } from './wrangler-config.mjs';
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const manifestPath = join(repositoryDirectory, 'config/inference-lakehouse.json');
 const analyticsManifestPath = join(repositoryDirectory, 'config/analytics-events-lakehouse.json');
+const usageManifestPath = join(repositoryDirectory, 'config/usage-lakehouse.json');
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 const SAFE_BUCKET = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u;
 const SAFE_PIPELINE_ENTITY = /^[a-z][a-z0-9_]{2,127}$/u;
@@ -166,10 +167,10 @@ function jurisdictionHeaders(region) {
 
 function assertManifest(manifest) {
   if (manifest.schemaVersion !== 5
-    || !['INFERENCE_LAKEHOUSE', 'ANALYTICS_LAKEHOUSE'].includes(manifest.binding)) {
+    || !['INFERENCE_LAKEHOUSE', 'ANALYTICS_LAKEHOUSE', 'USAGE_LAKEHOUSE'].includes(manifest.binding)) {
     throw new Error('Unsupported lakehouse manifest version or binding');
   }
-  const label = manifest.binding === 'INFERENCE_LAKEHOUSE' ? 'Inference' : 'Analytics events';
+  const label = { INFERENCE_LAKEHOUSE: 'Inference', ANALYTICS_LAKEHOUSE: 'Analytics events', USAGE_LAKEHOUSE: 'Usage' }[manifest.binding];
   if (!['account', 'user'].includes(manifest.deploymentTokenOwner)) {
     throw new Error(`${label} lakehouse manifest must declare its deployment token owner`);
   }
@@ -236,6 +237,16 @@ export async function loadInferenceLakehouseManifest() {
   const streamSchema = JSON.parse(await readFile(schemaPath, 'utf8'));
   if (!Array.isArray(streamSchema.fields) || streamSchema.fields.length === 0) {
     throw new Error('Inference lakehouse stream schema must declare fields');
+  }
+  return { ...manifest, streamSchema };
+}
+
+export async function loadUsageLakehouseManifest() {
+  const manifest = assertManifest(JSON.parse(await readFile(usageManifestPath, 'utf8')));
+  const schemaPath = join(repositoryDirectory, manifest.streamSchema);
+  const streamSchema = JSON.parse(await readFile(schemaPath, 'utf8'));
+  if (!Array.isArray(streamSchema.fields) || streamSchema.fields.length === 0) {
+    throw new Error('Usage lakehouse stream schema must declare fields');
   }
   return { ...manifest, streamSchema };
 }
@@ -500,6 +511,7 @@ export async function materializePinnedLakehouseWranglerConfigs(options = {}) {
   const manifests = options.manifests ?? await Promise.all([
     loadInferenceLakehouseManifest(),
     loadAnalyticsLakehouseManifest(),
+    loadUsageLakehouseManifest(),
   ]);
   assertDistinctPinnedStreamIds(manifests);
   const configs = await writePinnedLakehouseWranglerConfigs(manifests, options);
@@ -548,6 +560,7 @@ export async function ensureCloudflareLakehouses(options = {}) {
   const manifests = options.manifests ?? await Promise.all([
     loadInferenceLakehouseManifest(),
     loadAnalyticsLakehouseManifest(),
+    loadUsageLakehouseManifest(),
   ]);
   assertDistinctPinnedStreamIds(manifests);
   const provisioned = [];

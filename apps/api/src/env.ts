@@ -99,6 +99,8 @@ export interface Env {
   PUSH_DELIVERY_QUEUE?: Queue;
   /** Usage quota metering events, sent in the background. See docs/usage-metering.md. */
   USAGE_QUEUE?: Queue;
+  /** Every usage event, kept for good in the usage lakehouse in R2. */
+  USAGE_LAKEHOUSE?: Pipeline;
   APNS_AUTH_KEY?: string;
   APNS_KEY_ID?: string;
   /** Web Push VAPID public key, the base64url 65-byte uncompressed P-256 point. */
@@ -445,6 +447,7 @@ const EnvContractSchema = z.object({
   ANALYTICS_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
   ACCESS_REVOCATION_QUEUE: binding<Queue>(),
   USAGE_QUEUE: binding<Queue>().optional(),
+  USAGE_LAKEHOUSE: binding<Pipeline>().optional(),
   INFERENCE_LAKEHOUSE: binding<Pipeline>().optional(),
   ANALYTICS_LAKEHOUSE: binding<Pipeline>().optional(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
@@ -573,6 +576,7 @@ const productionOnlyBindings = [
   { key: "ANALYTICS_LAKEHOUSE_QUEUE", regions: configuredRegions },
   { key: "ANALYTICS_LAKEHOUSE", regions: configuredRegions },
   { key: "USAGE_QUEUE", regions: configuredRegions },
+  { key: "USAGE_LAKEHOUSE", regions: configuredRegions },
   // `DEMO_PREPARATION_WORKFLOW` is deliberately absent: it drives an operator
   // tool, and a missing binding is that tool's 503, not a region-wide fault.
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];

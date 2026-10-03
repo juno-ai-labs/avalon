@@ -38,5 +38,7 @@ CREATE TABLE usage_rollups (
 );
 
 -- Serves the scheduled prune of rows past the D1 retention window. Every row
--- is also in the usage lakehouse in R2, which keeps them.
-CREATE INDEX usage_events_occurred ON usage_events(occurred_at);
+-- is also in the usage lakehouse in R2, which keeps them. Keyed on receipt,
+-- not occurrence: dedupe needs a row for as long as its message can be
+-- redelivered, and that is measured from when the ledger received it.
+CREATE INDEX usage_events_received ON usage_events(received_at);
