@@ -57,4 +57,10 @@ regexes = [
   # renderer tests, not a credential any deployment minted. Pinned literally, so
   # an `inv_` shape exception cannot hide a token that was really issued.
   '''^inv_Nf3Qpx8Kd1ZrLm7Ty2Vb4Hs6Wg0Jc9Ae5Ru1Ok3Xi2$''',
+  # The auth secret from RFC 8291 Appendix A, the published Web Push worked
+  # example. `web-push-transport.test.ts` reproduces that example byte for byte
+  # to prove the encryption, so it needs the RFC's own values. They are printed
+  # in the RFC and protect nothing. Pinned literally, so no auth-secret shape
+  # is exempt.
+  '''^BTBZMqHH6r4Tts7J_aSIgg$''',
 ]
