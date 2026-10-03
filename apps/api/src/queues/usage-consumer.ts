@@ -1,5 +1,5 @@
 import { configuredRegions } from "@rally/contracts/regions";
-import { UsageEventSchema, type UsageEvent } from "@rally/contracts/usage";
+import { ORGANIZATION_PAYS, UsageEventSchema, type UsageEvent } from "@rally/contracts/usage";
 import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
@@ -19,7 +19,7 @@ export function isUsageQueue(queue: string): boolean {
  */
 export async function consumeUsageQueue(
   batch: MessageBatch<unknown>,
-  env: Pick<Env, "DB" | "USAGE_DB" | "AVALON_REGION" | "APP_ENV" | "LOG_LEVEL">,
+  env: Pick<Env, "DB" | "USAGE_DB" | "USAGE_LAKEHOUSE" | "AVALON_REGION" | "APP_ENV" | "LOG_LEVEL">,
   now: () => number = Date.now,
 ): Promise<void> {
   const accepted: { message: Message<unknown>; event: UsageEvent }[] = [];
@@ -48,7 +48,16 @@ export async function consumeUsageQueue(
     }
     accepted.push({ message, event: parsed.data });
   }
-  const outcome = await applyUsageBatch(env, accepted.map((entry) => entry.event), new Date(now()).toISOString());
+  const receivedAt = new Date(now()).toISOString();
+  const events = accepted.map((entry) => entry.event);
+  // The lakehouse first, and the whole batch: if this send fails the batch
+  // retries before D1 has seen it, so no event can reach D1 and miss R2.
+  // A retry can therefore write an event to R2 twice; readers deduplicate by
+  // event_id. Local hosts without the binding skip it.
+  if (env.USAGE_LAKEHOUSE && events.length > 0) {
+    await env.USAGE_LAKEHOUSE.send(events.map((event) => usageLakehouseRecord(event, receivedAt)));
+  }
+  const outcome = await applyUsageBatch(env, events, receivedAt);
   for (const entry of accepted) entry.message.ack();
   logStructuredEvent(env, "info", "usage_batch_applied", {
     queue: batch.queue,
@@ -60,4 +69,24 @@ export async function consumeUsageQueue(
     misrouted,
     per_activity: JSON.stringify(outcome.perActivity),
   });
+}
+
+/** One `avalon.usage_events` row; see config/usage-lakehouse-stream-schema.json. */
+export function usageLakehouseRecord(event: UsageEvent, receivedAt: string): Record<string, unknown> {
+  return {
+    schema_version: event.v,
+    event_id: event.eventId,
+    workspace_id: event.workspaceId,
+    region: event.region,
+    activity: event.activity,
+    occurred_at: event.occurredAt,
+    received_at: receivedAt,
+    cost_microusd: event.costMicrousd,
+    organization_pays: ORGANIZATION_PAYS[event.activity],
+    model: event.model,
+    user_id: event.refs.userId ?? null,
+    workstream_id: event.refs.workstreamId ?? null,
+    substream_id: event.refs.substreamId ?? null,
+    sidekick_id: event.refs.sidekickId ?? null,
+  };
 }
