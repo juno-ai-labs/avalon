@@ -184,6 +184,25 @@ desktop row (one with a desktop attempt) and the desktop callback refuses a
 browser row. The redirect URI must be registered on Google's identity OAuth
 client; see the PRD's provider configuration.
 
+### Connectors
+
+A member can start the connections the served `browserConnectableCapabilities`
+list names: by default the two Google connections, Gmail with Calendar and Drive
+with Docs and Sheets. A connection is offered only when every capability it asks
+for is listed (`browserCanConnect`). Every other connector, in Settings, account
+onboarding and a conversation's connection card, is shown with its buttons
+disabled and "Download the Mac app to connect this." linking to the Mac build.
+The list is presentation only; the connection routes do not read it.
+
+A cookie session's `RallyApi` starts with `?handoff=browser`. The API stores
+`<browser origin>/connections/complete` as the return, accepts exactly that
+page in `connectorAttemptTarget`, and the callback redirects there directly
+instead of through the site's desktop handoff page. The browser's
+`openExternal` opens the provider in a new tab and falls back to this tab when a
+popup is blocked. The completion page says what happened and closes itself
+when a script opened it; the tab that started the connection reconciles from the
+attempt read, as on the desktop.
+
 ### Member shell
 
 `browserShellFor` in `session.ts` picks the shell from the selected workspace:
@@ -470,6 +489,26 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-03 — Connect Gmail and Drive from the browser
+
+**What changed:** Connector authorization can return to a browser completion
+page (`?handoff=browser`). The member shell supplies a connector-setup
+capability. A served JSON list, `browser-connectable-capabilities`, decides which
+connections the browser may start; every other connector is disabled there with
+a pointer to the Mac app.
+
+**Why:** Connecting is part of a member's daily setup, and the product chose a
+small launch set with the rest in the Mac app
+([PRD](PRDs/2026-10-03_full-browser-client/prd.md) goal 7).
+
+**Considered and rejected:** Landing the popup on the site's desktop handoff
+page and relying on polling, which tells a browser user to return to an app they
+may not have. A registry field for the list, which needs a deploy to change.
+
+**Consequences:** A connection tile is offered only when its whole capability
+set is listed. The list is edited in Flagship, not in Ace. Reconnecting an
+existing connection is not gated.
 
 ### 2026-10-03 — Sign in with Google in the browser
 

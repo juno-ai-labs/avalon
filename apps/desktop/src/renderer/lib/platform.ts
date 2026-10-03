@@ -521,7 +521,12 @@ const browserBridge: RallyDesktopBridge = {
     throw new Error('Saving a message needs the Rally desktop application.');
   },
   async openExternal(url) {
-    window.open(url, '_blank', 'noopener,noreferrer');
+    // A popup keeps the person's place. When the browser blocks it — the
+    // gesture can expire while a start request is in flight — leave for the
+    // page in this tab instead; a connector returns to its completion page.
+    const opened = window.open(url, '_blank');
+    if (opened) opened.opener = null;
+    else window.location.assign(url);
   },
   // The browser build has no main process to composite a view, and an iframe
   // is exactly what the desktop's design refuses. So the preview is absent
