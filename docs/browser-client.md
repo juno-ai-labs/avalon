@@ -168,7 +168,8 @@ The entry offers **Continue with Google** under the email form, except on an
 invitation page, where leaving for Google would drop the invitation held only in
 the page's memory. `POST /browser/google/start` stores the OAuth state with no
 desktop attempt and a return path on the browser host, and sets a ten-minute
-HttpOnly `<cookie>-google-state` cookie holding the same state. Google returns
+HttpOnly `<cookie>-google-<state>` cookie holding the same state; one cookie per
+state, so two tabs signing in at once keep their own bindings. Google returns
 to `/regional/<region>/browser/google/callback` on the browser host, which the
 Worker forwards like any `/browser/*` request; the API host could not set the
 browser's host-only cookie. The callback requires the state cookie to match the
@@ -177,11 +178,14 @@ callback cannot sign this browser in as them. It then exchanges the code, links
 the Google identity to the same user an email sign-in with that verified address
 reaches, registers a browser session, sets the cookie and redirects to the
 return path. A declined or failed sign-in returns with `#google_error=<code>`,
-which the entry reads, removes from history and explains.
+which the entry reads, removes from history and explains: `google_oauth_denied`
+only when the person declined, `google_oauth_failed` for any other Google error,
+and `google_sign_in_failed` when the exchange or ID token check threw, which the
+log names.
 
 Each callback accepts only its own kind of state: the browser callback refuses a
-desktop row (one with a desktop attempt) and the desktop callback refuses a
-browser row. The redirect URI must be registered on Google's identity OAuth
+desktop row (one with a desktop attempt) without consuming it, and the desktop
+callback refuses a browser row. The redirect URI must be registered on Google's identity OAuth
 client; see the PRD's provider configuration.
 
 ### Member shell
@@ -492,6 +496,8 @@ the same job with no migration.
 `https://app.rallywith.ai/regional/global/browser/google/callback` registered on
 the identity OAuth client before the button works there. Google identity stays
 Global; the route refuses other deployments.
+
+Shipped in #1078. Design: [Full browser client PRD](PRDs/2026-10-03_full-browser-client/prd.md).
 
 ### 2026-10-03 — Members get the desktop shell
 
