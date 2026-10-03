@@ -159,7 +159,8 @@ The meter is a new shared `Meter` primitive in `packages/ui`: a track, a fill,
 `role="meter"` with the value attributes, and design tokens for track and fill.
 It replaces the one-off `.onboarding-progress` bar, so the next meter costs no
 new CSS. It uses the theme's existing colors: brand fill on a sunken track, in
-both light and dark.
+both light and dark. Below 20% left, the fill switches to the theme's warning
+color. There is no notification.
 
 ### States
 
@@ -169,6 +170,7 @@ both light and dark.
 | Loading, cached value | Cached value right away, refreshed in the background | Same |
 | No usage yet (new week or new Organization) | 100%, full bar | "100% left this week" |
 | Partly used | Percentage and bar | Percentage and bar |
+| Low (below 20%) | Bar in the warning color | Bar in the warning color |
 | Quota spent | 0%, empty bar, "Quota used for this week" | "Quota used this week" |
 | Overage this month | Overage line, struck through, **Not billed** | Not shown |
 | Error | "Usage isn't available right now." with **Try again** | Line hidden |
@@ -270,6 +272,24 @@ None yet.
 8. **No enforcement.** A spent quota never stops a run. Enforcing would put a
    read on the agent loop's path for a number that is minutes stale. Charging
    overage is the planned answer to heavy use.
+9. **Every Organization starts on Starter**, Juno Labs' own and demo
+   Organizations included. Nothing is exempt, so internal use shows up in the
+   same ledger as customer use. An operator moves an Organization to Growth.
+10. **The overage month runs from the sign-up anniversary**: the Organization's
+    creation instant on the same day each month, clamped to the last day for
+    short months. This matches Stripe's default billing date, so charging lines
+    up later. Calendar months were rejected because they need a time zone, and
+    they would make the first month a partial one.
+11. **Overage is priced at cost**, exactly what Rally pays for the call, with no
+    markup. A later markup changes only the displayed figure.
+12. **A plan change applies at once.** The new weekly quota applies immediately,
+    and the percentage is recomputed against it. An Organization moved from
+    Starter to Growth at 0% shows 60% left. Waiting until the next reset was
+    rejected because the change is something an operator does for a reason.
+13. **The bar turns to the warning color below 20% left**, with no
+    notification. The 20% is a product limit set by this PRD and lives in
+    `LOW_QUOTA_PERCENT` in `@rally/contracts`. A notification was rejected
+    for now; the meter is passive until charging begins.
 
 ## Data model
 
@@ -330,19 +350,7 @@ in the product depends on the ledger.
 
 ## Open questions
 
-1. **Default plan.** This PRD puts every Organization on Starter, including
-   Juno Labs' own and demo Organizations. Should internal and demo
-   Organizations be exempt, or put on Growth?
-2. **Monthly period.** This PRD anchors the overage month to the creation
-   instant's day of month (clamped for short months), which matches Stripe's
-   default billing anchor. The alternative is calendar months, which means
-   picking a time zone. The answer changes when overage resets.
-3. **Overage price.** This PRD prices overage at cost, with no markup. If there
-   will be a markup, it changes only the displayed figure.
-4. **Costing the addressing classifier and trigger gate.** The JEV provider
+1. **Costing the addressing classifier and trigger gate.** The JEV provider
    returns tokens but no cost. Someone needs to supply its rate, or Goal 2
-   cannot be met for those two activities.
-5. **Plan change mid-week.** Proposed: the new quota applies at once, and the
-   percentage is recomputed against it.
-6. **A low-quota signal.** This PRD adds no warning color or notice as the quota
-   runs low. If one is wanted, its threshold is a product number to set.
+   cannot be met for those two activities. This blocks only those two
+   activities; the rest of the build can go ahead.

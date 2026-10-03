@@ -87,6 +87,7 @@ export const PLANS = {
   growth:  { monthlyPriceUsd: 250 },
 } as const;
 export const INCLUDED_USAGE_MULTIPLIER = 2;  // product limit, this PRD
+export const LOW_QUOTA_PERCENT = 20;        // warning color below this; PRD decision 13
 export const weeklyQuotaMicrousd = (plan) =>
   PLANS[plan].monthlyPriceUsd * INCLUDED_USAGE_MULTIPLIER / 4 * 1_000_000;
 ```
@@ -158,8 +159,8 @@ million. Ten million events a month costs about $12.
    and its current `usage_weeks` row for each week the batch touches.
 4. For each event, in arrival order:
    - `weekStart = created_at + 7d × floor((occurredAt − created_at) / 7d)`
-   - `periodStart`: the monthly anchor at or before `occurredAt`. Open question
-     2 in the PRD decides the anchor.
+   - `periodStart`: the latest monthly sign-up anniversary at or before
+     `occurredAt`, clamped to the month's last day (PRD decision 10).
    - If `ORGANIZATION_PAYS[activity]` is false, add the cost to `rally_microusd`
      and stop.
    - Otherwise, set `room = max(0, quota − organization_microusd)` and
@@ -201,8 +202,8 @@ which cites the configured value. It is a platform setting, not a new limit.
 
 It reads one row from each of `workspaces`, `usage_weeks` (current week) and
 `usage_months` (current period), all by primary key. A missing week row means
-100%. The percentage is computed against the current plan, which is what open
-question 5 proposes.
+100%. The percentage is computed against the current plan, per PRD decision
+12.
 
 Allowance dollars and spend dollars are never in the response. The quota stays
 opaque on the wire as well as in the interface.
@@ -257,7 +258,7 @@ this PRD. Each needs a cost before Goal 2 holds:
 | `message_speech` | `message-speech-service.ts` | Same rate card |
 | `dictation` | `realtime-transcription-service.ts` captures nothing | Azure realtime rate card by audio seconds |
 | `document_ocr` | `attachment-derivative-service.ts` (`ai.toMarkdown`) | Workers AI published price per page or neuron |
-| `addressing_classifier` (JEV leg), `semantic_trigger_gate` | `jev/client.ts` returns tokens only | Needs a rate from the provider (PRD open question 4) |
+| `addressing_classifier` (JEV leg), `semantic_trigger_gate` | `jev/client.ts` returns tokens only | Needs a rate from the provider (PRD open question 1) |
 
 Rate cards extend the existing `INFERENCE_PRICING_CACHE` and
 `createAzureModelPricingResolver` rather than adding a second pricing store.
