@@ -32,6 +32,7 @@ export class BrowserScriptDriver {
   readonly store = new DesktopActionStore();
   private readonly executor;
   private readonly indexes = new Map<number, number>();
+  private readonly nodeIndexes = new Map<number, number>();
   private disposed = false;
   private nextIndex = 0;
   private stopWaiting!: () => void;
@@ -40,13 +41,26 @@ export class BrowserScriptDriver {
   private ensureOpen() { if (this.disposed) throw new Error('The browser runtime is closed.'); }
   private previousState = '';
   private previousUrl = '';
-  constructor(private readonly tabId: string, private readonly bridge: {
+  private readonly bridge: {
     commandEmbeddedBrowser(command: EmbeddedBrowserCommand): Promise<EmbeddedBrowserResult>;
     getEmbeddedBrowserState(): Promise<EmbeddedBrowserState>;
-  }) { this.executor = createDesktopActionExecutor({ tabId, bridge, store: this.store }); }
+  };
+  constructor(private readonly tabId: string, bridge: {
+    commandEmbeddedBrowser(command: EmbeddedBrowserCommand): Promise<EmbeddedBrowserResult>;
+    getEmbeddedBrowserState(): Promise<EmbeddedBrowserState>;
+  }) {
+    this.bridge = {
+      commandEmbeddedBrowser: command => {
+        const cleanup = command.action === 'cdp' && ['IO.close', 'Runtime.releaseObject'].includes(command.method);
+        if (!cleanup) this.ensureOpen();
+        return bridge.commandEmbeddedBrowser(command);
+      },
+      getEmbeddedBrowserState: () => { this.ensureOpen(); return bridge.getEmbeddedBrowserState(); },
+    };
+    this.executor = createDesktopActionExecutor({ tabId, bridge: this.bridge, store: this.store });
+  }
 
   private async cdp<T>(method: string, params?: Record<string, unknown>): Promise<T> {
-    this.ensureOpen();
     const reply = await this.bridge.commandEmbeddedBrowser({ action: 'cdp', tabId: this.tabId, method, params });
     if (reply.kind !== 'value') throw new Error(`Browser command ${method} did not return a value.`);
     return reply.value as T;
@@ -55,7 +69,7 @@ export class BrowserScriptDriver {
     const state = await this.bridge.getEmbeddedBrowserState();
     const page = state.tabs.find(tab => tab.id === this.tabId);
     if (!page) throw new Error('The pinned tab is closed.');
-    if (page.url !== this.previousUrl) { this.indexes.clear(); this.previousState = ''; this.previousUrl = page.url; }
+    if (page.url !== this.previousUrl) { this.indexes.clear(); this.nodeIndexes.clear(); this.previousState = ''; this.previousUrl = page.url; }
     return { id: page.id, title: page.title, url: page.url };
   }
   private async nodes() { return (await this.cdp<{ nodes: AxNode[] }>('Accessibility.getFullAXTree')).nodes; }
@@ -64,13 +78,13 @@ export class BrowserScriptDriver {
     const lines = [`URL: ${page.url}`, `Title: ${page.title}`];
     const currentNodes = await this.nodes();
     const liveIds = new Set(currentNodes.filter(node => !node.ignored).map(node => node.backendDOMNodeId));
-    for (const [index, id] of this.indexes) if (!liveIds.has(id)) this.indexes.delete(index);
+    for (const [index, id] of this.indexes) if (!liveIds.has(id)) { this.indexes.delete(index); this.nodeIndexes.delete(id); }
     for (const node of currentNodes) {
       if (node.ignored || !node.backendDOMNodeId || !node.role?.value) continue;
       const role = node.role.value;
       if (['InlineTextBox', 'LineBreak', 'none', 'generic'].includes(role)) continue;
-      let index = [...this.indexes].find(([, id]) => id === node.backendDOMNodeId)?.[0];
-      if (index === undefined) { index = this.nextIndex++; this.indexes.set(index, node.backendDOMNodeId); }
+      let index = this.nodeIndexes.get(node.backendDOMNodeId);
+      if (index === undefined) { index = this.nextIndex++; this.indexes.set(index, node.backendDOMNodeId); this.nodeIndexes.set(node.backendDOMNodeId, index); }
       lines.push(`[${index}] ${role} ${JSON.stringify(node.name?.value ?? '')}`);
     }
     const text = lines.join('\n');
@@ -141,14 +155,16 @@ export class BrowserScriptDriver {
         if (request.operation === 'count') return ids.length;
         if (request.operation === 'texts') return await Promise.all(ids.map(id => this.call<string>(id, 'function() { return this.textContent ?? ""; }')));
         if (request.operation === 'wait') {
-          const visible = ids.length === 1 && await this.visible(ids[0]!);
           const state = request.state ?? 'visible';
+          if (ids.length > 1 && (state === 'visible' || state === 'hidden')) throw new Error(`Strict locator matched ${ids.length} elements; use nth() or a more specific locator.`);
+          const visible = ids.length === 1 && await this.visible(ids[0]!);
           if (state === 'attached' ? ids.length > 0 : state === 'detached' ? ids.length === 0 : state === 'visible' ? visible : !visible) return;
         } else {
           if (ids.length > 1) throw new Error(`Strict locator matched ${ids.length} elements; use nth() or a more specific locator.`);
           const id = ids[0];
           if (!id) {
             if (request.operation === 'visible' || request.operation === 'enabled') return false;
+            if (request.timeoutMs === undefined) throw new Error('The locator matched no elements. Read fresh state or supply timeoutMs to wait.');
           } else {
             if (request.operation === 'visible') return await this.visible(id);
             if (request.operation === 'enabled') return await this.call<boolean>(id, 'function() { return !this.disabled && this.getAttribute("aria-disabled") !== "true"; }');
@@ -160,8 +176,16 @@ export class BrowserScriptDriver {
         }
       } finally { await this.release(ids); }
       if (request.timeoutMs !== undefined && performance.now() - started >= request.timeoutMs) throw new Error(`Locator ${request.operation} did not reach the requested state within timeoutMs.`);
-      // Chromium's next animation frame is the observation boundary, not a guessed retry delay.
-      await Promise.race([this.stopped, this.cdp('Runtime.evaluate', { expression: 'new Promise(resolve => requestAnimationFrame(() => resolve(null)))', awaitPromise: true })]);
+      if (request.timeoutMs === undefined) throw new Error('The locator has not reached the requested state. Supply timeoutMs to wait.');
+      // The caller's deadline runs in main: a hidden page may never paint another frame.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          this.stopped,
+          this.cdp('Runtime.evaluate', { expression: 'new Promise(resolve => requestAnimationFrame(() => resolve(null)))', awaitPromise: true }),
+          new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(`Locator ${request.operation} did not reach the requested state within timeoutMs.`)), Math.max(0, request.timeoutMs! - (performance.now() - started))); }),
+        ]);
+      } finally { clearTimeout(timer); }
     }
   }
   async invoke(raw: unknown): Promise<unknown> {
@@ -169,8 +193,8 @@ export class BrowserScriptDriver {
     const parsed = BrowserScriptRequestSchema.safeParse(raw);
     if (!parsed.success) throw new Error(`Invalid browser request: ${describeZodIssues(parsed.error)}.`);
     const request = parsed.data;
-    await this.page();
-    if (request.method === 'metadata') return this.page();
+    const page = await this.page();
+    if (request.method === 'metadata') return page;
     if (request.method === 'ax') return this.snapshot(request.disableDiffing ?? false);
     if (request.method === 'navigation') { await this.bridge.commandEmbeddedBrowser({ action: request.action, tabId: this.tabId }); return; }
     if (request.method === 'locator') return this.locator(request);

@@ -82,6 +82,7 @@ export const DesktopActionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("browser.script_reset") }),
   /** An async function body run in the page, with the `rally` helper in scope. */
   z.strictObject({ kind: z.literal("browser.evaluate"), script: z.string().min(1) }),
+  // Retained for durable action replay from imports started before browser.script.
   z.strictObject({ kind: z.literal("browser.snapshot") }),
   z.strictObject({ kind: z.literal("browser.screenshot") }),
   z.strictObject({ kind: z.literal("browser.click"), x: coordinate, y: coordinate }),

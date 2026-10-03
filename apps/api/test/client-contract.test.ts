@@ -39,7 +39,7 @@ describe("the client contract gate", () => {
   it("given a browser build older than the served contract, when it asks, then it is told to update", () => {
     expect(refusal({
       origin: "app://rallywithai",
-      "x-rally-client-contract": String(CLIENT_CONTRACT_VERSION - 1),
+      "x-rally-client-contract": "0",
     })?.code).toBe("client_update_required");
     // A value that is not a number is not a contract, and reading it as zero
     // would admit whatever sent it.
@@ -63,6 +63,10 @@ describe("the client contract gate", () => {
       origin: "app://rallywithai",
       "x-avalon-client-contract": String(CLIENT_CONTRACT_VERSION),
     })).toBeNull();
+  });
+
+  it("keeps the hierarchy readable for contract 1 desktops", () => {
+    expect(refusal({ origin: "app://rallywithai", "x-rally-client-contract": "1" })).toBeNull();
   });
 
   it("given a native client, when it declares no contract, then it is admitted", () => {

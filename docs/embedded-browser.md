@@ -183,20 +183,24 @@ show whether Electron honors the flag. On macOS or Linux, evaluate
 
 The model-facing orchestration realm and its handles are owned by
 [browser script runtime](browser-script-runtime.md). This browser owns the
-run-to-realm map and disposes associated realms when tabs or the browser close.
+run-to-realm map and disposes associated realms when tabs or the browser close,
+or when the owning renderer reloads or loses its process.
 
 ## Changelog
 
 ### 2026-10-02 — Own disposable browser script realms beside pinned tabs
 
 **What changed:** The native browser maps executor-owned runtime IDs to one pinned
-tab and disposes those isolated realms on reset, tab close or browser teardown.
+tab and disposes those isolated realms on reset, tab close, browser teardown,
+renderer reload or renderer process loss.
 
 **Why:** Models need persistent orchestration handles without moving execution
 into Rally's authenticated renderer or losing bindings when a provider page
 navigates. Tab ownership belongs here; the API cannot select another native tab.
 
-**Consequences:** Keep native tab and runtime lifetimes linked. The model-facing
+**Consequences:** Keep native tab and runtime lifetimes linked. Reloading or
+losing the owning renderer disposes its script realms while preserving native
+tabs; an abandoned renderer cannot leave hidden orchestration views alive. The model-facing
 subset and realm internals live in [browser script runtime](browser-script-runtime.md),
 while this module continues to own signed-in tabs, input and recorded responses.
 

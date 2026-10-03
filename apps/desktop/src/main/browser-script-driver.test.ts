@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BrowserScriptDriver } from './browser-script-driver';
 import type { EmbeddedBrowserCommand, EmbeddedBrowserResult } from '../common/embedded-browser';
 
@@ -21,7 +21,7 @@ function fixture() {
       return { kind: 'value', value };
     }),
   };
-  return { driver: new BrowserScriptDriver('pinned', bridge), commands, setNodes: (next: typeof nodes) => { nodes = next; }, hide: () => { visible = false; } };
+  return { bridge, driver: new BrowserScriptDriver('pinned', bridge), commands, setNodes: (next: typeof nodes) => { nodes = next; }, hide: () => { visible = false; } };
 }
 
 describe('pinned browser script driver', () => {
@@ -52,6 +52,75 @@ describe('pinned browser script driver', () => {
     await expect(driver.invoke({ method: 'locator', locator: { kind: 'css', value: 'input' }, operation: 'fill' })).rejects.toThrow('value');
     await expect(driver.invoke({ method: 'action', action: { kind: 'browser.script', code: '1' } })).rejects.toThrow('not a browser capability');
     await expect(driver.invoke({ method: 'action', action: { kind: 'session_import.fail', reason: 'unreadable' } })).rejects.toThrow('not a browser capability');
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it.each(['visible', 'hidden'])("rejects ambiguous %s waits", async state => {
+    const { driver, setNodes } = fixture();
+    setNodes([{ backendDOMNodeId: 10, role: { value: 'button' }, name: { value: 'Expand' } }, { backendDOMNodeId: 11, role: { value: 'button' }, name: { value: 'Expand' } }]);
+    await expect(driver.invoke({ method: 'locator', locator: { kind: 'role', value: 'button' }, operation: 'wait', state })).rejects.toThrow('matched 2 elements');
+  });
+
+  it('returns a repairable missing-target error without an implicit wait', async () => {
+    const { driver, setNodes } = fixture();
+    setNodes([]);
+    await expect(driver.invoke({ method: 'locator', locator: { kind: 'role', value: 'button' }, operation: 'click' })).rejects.toThrow('matched no elements');
+  });
+
+  it('honors the caller deadline even when Chromium never paints a frame', async () => {
+    vi.useFakeTimers();
+    const { driver, bridge, setNodes } = fixture();
+    setNodes([]);
+    const command = bridge.commandEmbeddedBrowser.getMockImplementation()!;
+    bridge.commandEmbeddedBrowser.mockImplementation(input => input.action === 'cdp' && input.method === 'Runtime.evaluate' ? new Promise(() => {}) : command(input));
+    const call = driver.invoke({ method: 'locator', locator: { kind: 'role', value: 'button' }, operation: 'wait', timeoutMs: 25 });
+    const rejected = expect(call).rejects.toThrow('within timeoutMs');
+    await vi.advanceTimersByTimeAsync(25);
+    await rejected;
+  });
+
+  it('does not send native input after disposal during bounds lookup', async () => {
+    const { driver, bridge, commands } = fixture();
+    const command = bridge.commandEmbeddedBrowser.getMockImplementation()!;
+    let release!: (value: EmbeddedBrowserResult) => void;
+    let started!: () => void;
+    const bounds = new Promise<void>(resolve => { started = resolve; });
+    bridge.commandEmbeddedBrowser.mockImplementation(input => {
+      if (input.action === 'cdp' && String(input.params?.functionDeclaration).includes('scrollIntoView')) {
+        started(); return new Promise(resolve => { release = resolve; });
+      }
+      return command(input);
+    });
+    const call = driver.invoke({ method: 'locator', locator: { kind: 'role', value: 'button' }, operation: 'click' });
+    await bounds;
+    driver.dispose();
+    release({ kind: 'value', value: { result: { value: { x: 15, y: 20, height: 800 } } } });
+    await expect(call).rejects.toThrow('runtime is closed');
+    expect(commands.filter(input => input.action === 'click')).toEqual([]);
+    expect(commands.filter(input => input.action === 'cdp' && input.method === 'Runtime.releaseObject')).toHaveLength(1);
+  });
+
+  it('closes a file stream without reading it after disposal during load', async () => {
+    const { driver, bridge, commands } = fixture();
+    const command = bridge.commandEmbeddedBrowser.getMockImplementation()!;
+    let release!: (value: EmbeddedBrowserResult) => void;
+    let started!: () => void;
+    const loading = new Promise<void>(resolve => { started = resolve; });
+    bridge.commandEmbeddedBrowser.mockImplementation(input => {
+      if (input.action === 'cdp' && input.method === 'Page.getFrameTree') return Promise.resolve({ kind: 'value', value: { frameTree: { frame: { id: 'frame' } } } });
+      if (input.action === 'cdp' && input.method === 'Network.loadNetworkResource') {
+        started(); return new Promise(resolve => { release = resolve; });
+      }
+      return command(input);
+    });
+    const call = driver.invoke({ method: 'action', action: { kind: 'browser.load', url: 'https://claude.ai/file' } });
+    await loading;
+    driver.dispose();
+    release({ kind: 'value', value: { resource: { stream: 'stream', success: true, httpStatusCode: 200 } } });
+    await expect(call).rejects.toThrow('runtime is closed');
+    expect(commands.filter(input => input.action === 'cdp' && input.method === 'IO.read')).toEqual([]);
+    expect(commands.filter(input => input.action === 'cdp' && input.method === 'IO.close')).toEqual([{ action: 'cdp', tabId: 'pinned', method: 'IO.close', params: { handle: 'stream' } }]);
   });
 
   it('stops locator work when the runtime is disposed', async () => {
