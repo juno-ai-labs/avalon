@@ -97,6 +97,39 @@ it('opens a workspace in another deployment through Global the first time, then 
   } finally { view.unmount(); }
 });
 
+it('signs out of every deployment, so no other deployment keeps a session in this browser', async () => {
+  const logouts: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
+    if (path === '/logout') { logouts.push(input); return new Response(null, { status: 204 }); }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry />);
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+    await screen.findByRole('heading', { name: 'Welcome to Rally' });
+    expect(logouts.sort()).toEqual(['/regional/enterprise/browser/logout', '/regional/global/browser/logout']);
+  } finally { view.unmount(); }
+});
+
+it('says so when a deployment does not answer sign-out', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
+    if (input === '/regional/enterprise/browser/logout') return Response.json({ error: { message: 'Unavailable' } }, { status: 503 });
+    if (path === '/logout') return new Response(null, { status: 204 });
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry />);
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+    await screen.findByText('Signed out here, but a Rally deployment did not respond. Sign out again to finish.');
+  } finally { view.unmount(); }
+});
+
 it.each([false, true])('renews before expiry and respects an unchanged absolute ceiling (extended=%s)', async (extended) => {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
   const now = Date.parse('2026-09-17T00:00:00.000Z');

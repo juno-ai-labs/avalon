@@ -250,25 +250,11 @@ bearer session, and a browser holds only its HttpOnly cookie.
 ### Other deployments
 
 Sign-in goes to Global, which holds the identity; an invitation's sign-in stays
-in the deployment that issued it. On Global, `GET /browser/workspaces` adds
-every other deployment's memberships to the local list, through the same
-discovery desktop onboarding runs. It skips that discovery when only one
-deployment is configured or the identity has no Google subject (only a Google
-identity is linked across deployments), and a deployment that fails discovery
-is logged and left out rather than hiding the rest. Each workspace links to its
-own region's path.
-
-Opening a workspace selects it in its own deployment. A deployment other than
-Global with no cookie for this browser answers 401; the client then posts
-`{ region, workspaceId }` to Global's `/browser/workspace/activate` and retries
-once. Global admits the workspace through discovery, and the target, over the
-identity bridge's `activateBrowser`, runs desktop activation's admission,
-creates its own identity session, registers it as a browser session and selects
-the workspace. Only the cookie credential comes back, and Global sets it as
-`__Host-rally-browser-<region>` on the browser host. Regional user ids differ
-from Global's, so the client never compares a session across deployments.
-Sign-out leaves the deployment in view and Global. The contract is in the PRD's
-[`design.md`](PRDs/2026-10-03_full-browser-client/design.md).
+in the deployment that issued it. On Global the workspace list covers every
+deployment, and opening a workspace in another one activates it through Global,
+which sets that deployment's own cookie. The browser host forwards only the
+target deployment's cookies, and sign-out reaches every deployment. The PRD's
+[`design.md`](PRDs/2026-10-03_full-browser-client/design.md) is the contract.
 
 ### Shared collaboration transport
 
@@ -538,12 +524,9 @@ goes to Global.
 member in any configured deployment can use the browser. The product chose to
 build this before a second deployment exists.
 
-**Considered and rejected:** Global proxying regional API calls, which puts
-every request on two hops and makes Global a dependency of other deployments'
-data. A one-use handoff code redeemed by the browser, which puts a credential
-in JavaScript and a URL. One cookie shared across deployments, which needs a
-shared session ledger. The PRD's [`design.md`](PRDs/2026-10-03_full-browser-client/design.md)
-has the contract.
+**Considered and rejected:** Global proxying regional API calls, a handoff code
+the browser redeems, and one shared cookie. The PRD's
+[`design.md`](PRDs/2026-10-03_full-browser-client/design.md) has why.
 
 **Consequences:** A new deployment is reachable from the browser only once it
 has a `<bindingPrefix>_API` binding on the browser Worker and an identity bridge

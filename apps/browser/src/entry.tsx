@@ -233,13 +233,17 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const read = ++sessionRead.current;
     await clearAllDrafts();
     if (read !== sessionRead.current) return;
-    sessionUser.current = current.user.id;
-    setSession(current);
     setProof(null);
     sessionChannel.current?.postMessage("session-changed");
     // A destination in another deployment is opened from there, with its own
-    // session and user id; the restore path does that through Global.
-    if (destination && destination.region !== (proof?.region ?? signInRegion)) refreshSession.current?.(false);
+    // session and user id. Leave that to the restore path, which activates it
+    // through Global, rather than showing this deployment's session first.
+    if (destination && destination.region !== (proof?.region ?? signInRegion)) {
+      refreshSession.current?.(false);
+      return;
+    }
+    sessionUser.current = current.user.id;
+    setSession(current);
     if (!destination) {
       const result = await browserRequest(proof?.region ?? signInRegion, "/workspaces", BrowserWorkspacesSchema);
       if (read === sessionRead.current) setWorkspaces(result.workspaces);
@@ -280,14 +284,18 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   async function signOut() {
     setBusy(true); setError(null);
     try {
-      // Each deployment holds its own cookie; leave the one in view and Global.
-      await Promise.all([...new Set([region, IDENTITY_REGION])].map((target) => browserRequest(target, "/logout", z.undefined(), {})));
+      // Each deployment holds its own cookie, and a past sign-in may have left
+      // one in any of them. A deployment this host cannot reach (404) has none.
+      const results = await Promise.allSettled(configuredRegions.map((target) => browserRequest(target, "/logout", z.undefined(), {})));
+      const unreached = results.some((result) => result.status === "rejected"
+        && !(result.reason instanceof BrowserApiError && result.reason.status === 404));
       const read = ++sessionRead.current;
       await clearAllDrafts();
       if (read !== sessionRead.current) return;
       sessionUser.current = null;
       setSession(null); setWorkspaces([]); setChallenge(null); setAccepted(null); setCode(""); issuance.current = null;
       sessionChannel.current?.postMessage("session-changed");
+      if (unreached) setError("Signed out here, but a Rally deployment did not respond. Sign out again to finish.");
     } catch { setError("Unable to sign out. Please try again."); }
     finally { setBusy(false); }
   }
