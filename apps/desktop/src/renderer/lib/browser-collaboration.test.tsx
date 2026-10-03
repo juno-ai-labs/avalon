@@ -51,9 +51,10 @@ afterEach(() => {
 });
 
 /**
- * The route families that refuse a guest (mounted under `requireAuth` in the
- * API), with the one exception the API makes for them: the Organization's
- * profile and the socket ticket under `/workspace`.
+ * The route families that refuse a guest, with the exceptions the API makes
+ * under `/workspace` (the profile and the socket ticket). Copied from the
+ * `protectedApi` mounts in `apps/api/src/app.ts`; a family added there belongs
+ * here too.
  */
 const MEMBER_ONLY = /\/browser\/api\/[^/]+\/(workspace\/(?!socket$)|workspaces|workstreams|sideline|work-opportunities|projects|spaces|digest|push-devices|connections|favicons|search|speech|realtime)/u;
 

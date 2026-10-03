@@ -8,8 +8,10 @@ import {
   parseWorkstreamLink,
   parseWorkstreamLinkTarget,
   parseWorkstreamLinkPath,
+  workstreamAddressedUrl,
   workstreamCanonicalUrl,
   workstreamDeepLink,
+  parseWorkstreamLinkPathTarget,
   spaceCanonicalUrl,
   sessionImportCanonicalUrl,
   sidekickCanonicalUrl,
@@ -134,6 +136,20 @@ describe("canonical work-stream links", () => {
       .toBe(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/i/${ENCODED_WORKSTREAM_ID}/c/${ENCODED_SPACE_ID}`);
     expect(() => sessionImportCanonicalUrl(WEB_BASE_URL, { ...target, importId: "0" })).toThrow();
     expect(() => sessionImportCanonicalUrl(WEB_BASE_URL, { ...target, workstreamId: "0" })).toThrow();
+  });
+});
+
+describe("a Channel link with no Space", () => {
+  it("names the Organization and Channel, and reads back to the same target", () => {
+    const url = workstreamAddressedUrl(WEB_BASE_URL, { region: "enterprise", workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, substreamId: CHILD_ID });
+    expect(url).toBe(`https://rallywith.ai/app/workspaces/enterprise/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}/substreams/${CHILD_ID}`);
+    expect(parseWorkstreamLinkPathTarget(new URL(url).pathname)).toEqual({
+      region: "enterprise", workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, substreamId: CHILD_ID,
+    });
+  });
+
+  it("refuses a target that is not a Channel", () => {
+    expect(() => workstreamAddressedUrl(WEB_BASE_URL, { region: "enterprise", workspaceId: WORKSPACE_ID, workstreamId: "not-an-id" })).toThrow();
   });
 });
 
