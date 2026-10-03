@@ -139,6 +139,7 @@ async function establishWorkspace(): Promise<void> {
 
 interface ChannelState {
   appearance?: WorkstreamAppearance;
+  description?: string;
   scope?: "personal" | "workspace";
   state?: string;
   lastActivityAt?: string;
@@ -151,7 +152,7 @@ function channelCommonEffect(title: string, overrides: ChannelState = {}): Paren
     kind: "directory_common",
     ...(overrides.appearance ? { appearance: overrides.appearance } : {}),
     title,
-    description: "",
+    description: overrides.description ?? "",
     preview: "",
     scope: overrides.scope ?? "workspace",
     state: overrides.state ?? "idle",
@@ -576,6 +577,55 @@ describe("space dashboard conversation page", () => {
     // The Breakout the member opens lists its Channel, and so the Space, for
     // them; Main, which they cannot open, stays off their page.
     expect((await page(spaceId, MEMBER)).items.map((item) => item.title)).toEqual(["Offer letter"]);
+  });
+
+  it("given a Channel this viewer reaches only through a Breakout, when their socket lists it, then it carries its name and none of Main", async () => {
+    await openChannelObject(PRIVATE_CHANNEL);
+    await publishChannel(PRIVATE_CHANNEL, [
+      channelCommonEffect("Private Channel", {
+        scope: "personal", state: "needs_input", latestAttentionOrdinal: 4, description: "Who we hire next",
+      }),
+      viewerEffect(OWNER),
+    ]);
+    await publishBreakout(PRIVATE_CHANNEL, BREAKOUT_ONE, [
+      breakoutCommonEffect("Offer letter"),
+      viewerEffect(OWNER) as ConversationEffect,
+      viewerEffect(MEMBER) as ConversationEffect,
+    ]);
+    const listed = async (userId: UserId) => {
+      const connection = await connectRaw(userId);
+      const requestId = `00000000-0000-7000-8000-0000000${userId.slice(-5)}`;
+      connection.socket.send(JSON.stringify({ type: "list_workstreams", requestId, limit: 50, includeSystem: false }));
+      await vi.waitFor(() => {
+        expect(connection.frames.some((frame) => (frame as { requestId?: string }).requestId === requestId)).toBe(true);
+      }, { timeout: 5_000 });
+      const page = connection.frames.find((frame) => (frame as { requestId?: string }).requestId === requestId) as {
+        items: Array<Record<string, unknown>>;
+      };
+      return { connection, row: page.items.find((item) => item.id === PRIVATE_CHANNEL) };
+    };
+    const main = ["objective", "createdByUserId", "harnessStatus", "hasUnread", "participantUserIds"] as const;
+    const pick = (row: Record<string, unknown> | undefined) => Object.fromEntries(main.map((key) => [key, row?.[key]]));
+
+    // The owner, a participant of Main, is told Main's own fields.
+    expect(pick((await listed(OWNER)).row)).toEqual({
+      objective: "Who we hire next", createdByUserId: OWNER, harnessStatus: "needs_input", hasUnread: true, participantUserIds: [OWNER],
+    });
+    // The member is told the Channel exists, so the Breakout has a place to
+    // sit, and nothing that is Main's.
+    const member = await listed(MEMBER);
+    expect(member.row?.title).toBe("Private Channel");
+    expect(pick(member.row)).toEqual({
+      objective: "", createdByUserId: null, harnessStatus: "idle", hasUnread: false, participantUserIds: [],
+    });
+    // Main's rail is Main's too.
+    const railRequestId = "00000000-0000-7000-8000-00000000d1fd";
+    member.connection.socket.send(JSON.stringify({ type: "channel_rails", requestId: railRequestId, workstreamIds: [PRIVATE_CHANNEL] }));
+    await vi.waitFor(() => {
+      expect(member.connection.frames.some((frame) => (frame as { requestId?: string }).requestId === railRequestId)).toBe(true);
+    }, { timeout: 5_000 });
+    const rails = member.connection.frames.find((frame) => (frame as { requestId?: string }).requestId === railRequestId) as { rails: unknown[]; unavailable: string[] };
+    expect(rails).toMatchObject({ rails: [], unavailable: [PRIVATE_CHANNEL] });
   });
 
   it("given a breakout in a Channel this viewer cannot see, then that Channel is a conversation-directory candidate for them alone", async () => {
