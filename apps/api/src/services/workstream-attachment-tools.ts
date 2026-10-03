@@ -821,7 +821,8 @@ async function ensureReadyTextDerivative(
   const result = await materializeAttachmentDerivative(env.DB, env.PAYLOADS, authorizedDerivativeResource(row), {
     signal: context.signal,
     pdfExtractor: (bytes) => env.DOCUMENT_PROCESSOR.extractText(bytes),
-    ocr: (bytes, pageCount) => ocrPdfWithWorkersAi(env.AI, row.title, bytes, pageCount, context.signal),
+    ocr: (bytes, pageCount) => ocrPdfWithWorkersAi(env.AI, row.title, bytes, pageCount, context.signal,
+      { env, workspaceId: row.workspace_id, resourceId: row.id }),
     onPhase: (event) => logStructuredEvent(env, "info", "attachment_derivative_phase_finished", {
       workspace_id: context.workspaceId,
       workstream_id: context.workstreamId,

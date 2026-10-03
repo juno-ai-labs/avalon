@@ -13,8 +13,8 @@ let root: Root;
 
 const WORKSPACE_ID = '00000000-0000-7000-8000-0000000000f1';
 const OTHER_ID = '00000000-0000-7000-8000-0000000000f2';
-const ROW = { id: WORKSPACE_ID, name: 'Alto Capital-demo', slug: 'alto-capital-demo', region: 'enterprise' as const };
-const OTHER_ROW = { id: OTHER_ID, name: 'Birch Partners', slug: 'birch', region: 'global' as const };
+const ROW = { id: WORKSPACE_ID, name: 'Alto Capital-demo', slug: 'alto-capital-demo', plan: 'starter' as const, region: 'enterprise' as const };
+const OTHER_ROW = { id: OTHER_ID, name: 'Birch Partners', slug: 'birch', plan: 'growth' as const, region: 'global' as const };
 
 /** The app holds the retired marks; the tab reports into it. */
 function Harness(): React.JSX.Element {
@@ -145,5 +145,36 @@ describe('the workspaces tab', () => {
     expect(container.textContent).toContain('The enterprise directory did not answer, so a workspace there would not be listed.');
     expect(container.textContent).toContain('enterprise directory did not answer');
     expect(container.textContent).not.toContain('Both regions searched');
+  });
+
+  it('moves a workspace to another plan in the region that owns it and shows the saved plan', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes('/api/directory/workspaces')) return Response.json({ results: [ROW], unavailableRegions: [] });
+      if (url.endsWith('/plan') && init?.method === 'POST') return Response.json({ workspaceId: WORKSPACE_ID, plan: 'growth' });
+      return Response.json({ error: 'not_found' }, { status: 404 });
+    });
+    await act(async () => { root.render(<Harness />); });
+    await search('Alto');
+    await act(async () => { buttonContaining('Alto Capital-demo').click(); });
+
+    // The plan control is the tab's only select.
+    const select = container.querySelector('select')!;
+    expect(select.getAttribute('aria-label')).toBe('Plan');
+    expect(select.value).toBe('starter');
+    // Nothing to save until the plan differs from the current one.
+    expect(buttonContaining('Save plan').disabled).toBe(true);
+    await act(async () => {
+      select.value = 'growth';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => { buttonContaining('Save plan').click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const call = fetchMock.mock.calls.find((candidate) => String(candidate[0]).endsWith('/plan'));
+    expect(String(call?.[0])).toBe(`/api/workspaces/${WORKSPACE_ID}/plan`);
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ region: 'enterprise', plan: 'growth' });
+    expect(container.querySelector('select')!.value).toBe('growth');
+    expect(buttonContaining('Save plan').disabled).toBe(true);
   });
 });

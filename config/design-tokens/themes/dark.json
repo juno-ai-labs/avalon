@@ -179,6 +179,8 @@
     "cmp.segmented.track": "#111111",
     "cmp.toggle.track": "#2a2318",
     "cmp.toggle.knob-off": "#8a8070",
+    "cmp.meter.track": "{sys.color.surface.sunken}",
+    "cmp.meter.fill-warning": "{sys.color.warning.base}",
     "cmp.button.primary-background": "#fcfcfc",
     "cmp.button.primary-color": "#070707",
     "cmp.button.primary-hover": "#dedede"

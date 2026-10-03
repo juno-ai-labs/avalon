@@ -15,6 +15,8 @@ import {
   isInferenceLakehouseQueue,
 } from "./queues/inference-lakehouse-consumer";
 import { consumeMigrationCommandQueue } from "./queues/migration-command-consumer";
+import { consumeUsageQueue, isUsageQueue } from "./queues/usage-consumer";
+import { pruneUsageEvents } from "./services/usage-metering";
 import {
   consumeProductFeatureFlagQueue,
   isProductFeatureFlagQueue,
@@ -165,6 +167,11 @@ export default {
     if (isAnalyticsLakehouseQueue(batch.queue)) {
       return consumeAnalyticsLakehouseQueue(batch, env);
     }
+    // Usage metering records work that already happened, like the lakehouse
+    // projections, so it drains through product maintenance as well.
+    if (isUsageQueue(batch.queue)) {
+      return consumeUsageQueue(batch, env);
+    }
     // Forced migrations dispatch before the gate too, and for a closely related
     // reason: a migration pass is schema work, not new work-stream work — it
     // wakes an object, applies whatever its ledger is missing, and says where it
@@ -195,6 +202,7 @@ export default {
         recoverEmailLoginDeliveries(env),
         purgeExpiredEmailLoginChallenges(env),
         purgeExpiredLinkPayloads(env.DB),
+        pruneUsageEvents(env, Date.now()),
         processTelemetry(env),
       ]);
     })());

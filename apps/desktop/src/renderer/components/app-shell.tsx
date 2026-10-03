@@ -41,6 +41,7 @@ import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
 import { SearchModal } from './search-modal';
 import { Sidebar } from './sidebar';
+import { OrganizationUsageMenuItem } from './organization-usage';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
 
 interface AppShellProps extends PropsWithChildren {
@@ -764,6 +765,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         accountMenu={(
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}
+            activeUsage={(
+              <OrganizationUsageMenuItem
+                api={api ?? null}
+                onSelect={() => { void desktopBridge().openSettings('workspace'); }}
+              />
+            )}
             attention={workspaceAttention.data ?? {}}
             currentUser={{ ...workspace.currentUser, name: personalPresentation?.displayName ?? workspace.currentUser.name }}
             enabled={multipleWorkspacesEnabled}

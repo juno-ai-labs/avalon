@@ -724,13 +724,14 @@ export class OpenRouterClient {
             fallbackAttempt,
             inferenceRequestId,
             usage: parsed.value.usage
-              ? {
-                  prompt_tokens: parsed.value.usage.promptTokens,
-                  total_tokens: parsed.value.usage.totalTokens,
-                  ...(typeof parsed.value.usage.cost === "number"
-                    ? { cost: parsed.value.usage.cost }
-                    : {}),
-                }
+              ? (() => {
+                  const cost = embeddingCallCostUsd(payload.usage);
+                  return {
+                    prompt_tokens: parsed.value.usage.promptTokens,
+                    total_tokens: parsed.value.usage.totalTokens,
+                    ...(cost !== undefined ? { cost } : {}),
+                  };
+                })()
               : null,
           };
         } catch (error) {
@@ -1792,6 +1793,25 @@ export function openRouterCallCostUsd(usage: Pick<ChatUsage, "cost" | "isByok" |
   const providerCharge = typeof upstream === "number" && Number.isFinite(upstream) ? upstream : undefined;
   if (fee === undefined && providerCharge === undefined) return undefined;
   return (fee ?? 0) + (providerCharge ?? 0);
+}
+
+/**
+ * What one embeddings call cost, in dollars, read from the raw response. The
+ * SDK's embeddings usage shape omits `is_byok` and
+ * `cost_details.upstream_inference_cost`, so on a bring-your-own-key account it
+ * would report only OpenRouter's fee; the raw body still carries both.
+ */
+export function embeddingCallCostUsd(rawUsage: unknown): number | undefined {
+  if (!rawUsage || typeof rawUsage !== "object") return undefined;
+  const usage = rawUsage as { cost?: unknown; is_byok?: unknown; cost_details?: { upstream_inference_cost?: unknown } | null };
+  const details = usage.cost_details && typeof usage.cost_details === "object" ? usage.cost_details : undefined;
+  return openRouterCallCostUsd({
+    cost: typeof usage.cost === "number" ? usage.cost : undefined,
+    isByok: usage.is_byok === true,
+    costDetails: typeof details?.upstream_inference_cost === "number"
+      ? { upstreamInferenceCost: details.upstream_inference_cost }
+      : undefined,
+  } as Pick<ChatUsage, "cost" | "isByok" | "costDetails">);
 }
 
 function sdkUsageRecord(usage: ChatUsage): Record<string, number> {

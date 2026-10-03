@@ -15,7 +15,7 @@ function binding(): never {
 
 export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
   return createTestEnv({
-    DB: binding(), TELEMETRY_DB: binding(), AUDIT_DB: binding(), PLATFORM_DB: binding(), PAYLOADS: binding(), TELEMETRY_PAYLOADS: binding(),
+    DB: binding(), TELEMETRY_DB: binding(), AUDIT_DB: binding(), USAGE_DB: binding(), PLATFORM_DB: binding(), PAYLOADS: binding(), TELEMETRY_PAYLOADS: binding(),
     INFERENCE_PRICING_CACHE: binding(), FAVICON_CACHE: binding(),
     IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
     RUN_ANALYTICS: binding(), TERMINAL_ANALYTICS: binding(),
@@ -29,6 +29,8 @@ export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
     INFERENCE_LAKEHOUSE_QUEUE: binding(),
     INFERENCE_LAKEHOUSE: binding(),
     ANALYTICS_LAKEHOUSE_QUEUE: binding(),
+    USAGE_QUEUE: binding(),
+    USAGE_LAKEHOUSE: binding(),
     ANALYTICS_LAKEHOUSE: binding(),
     ACCESS_REVOCATION_QUEUE: binding(),
     CONNECTOR_POLL_WORKFLOW: binding(),

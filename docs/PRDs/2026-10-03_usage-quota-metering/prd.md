@@ -232,7 +232,86 @@ should add a clause to the brief saying what a plan entitles an Organization to.
 
 ## Decision log
 
-None yet.
+### 2026-10-03: Five activities ship unpriced
+
+**Decided:** The JEV leg of `addressing_classifier` and `semantic_trigger_gate`,
+`audio_generation`, `message_speech`, `dictation` and `document_ocr` emit no
+usage event. Each logs `usage_unpriced` with its event ID and activity, so the
+gap is counted, and none of them moves the meter.
+
+**Why:** None has a price the repository can read. The JEV provider returns no
+cost (open question 1). The pricing cache has no entry for the text-to-speech
+or realtime transcription models, and Workers AI returns no price for a
+conversion. Writing a rate in by hand would be a guessed number, which
+[the limits rule](../../adding-security-defensive-and-other-limits.md) forbids.
+Converting audio seconds to tokens is possible from OpenAI's published rates
+(1 token per 100 ms of input audio, 1 per 50 ms of output, checked 2026-10-03),
+but it still needs a per-token price for these models.
+
+**Changes:** Goal 2 is narrowed: every priced activity is metered, and every
+unpriced one is counted but not metered. To pick it back up, add each model to
+the pricing cache (or supply the JEV rate) and pass the computed cost where the
+call site now passes `undefined`.
+
+### 2026-10-03: The usage route is `GET /workspace/usage`
+
+**Decided:** The meter is served from the existing member-only `/workspace`
+routes rather than a new `/usage` route.
+
+**Why:** Every other Organization-scoped read the desktop makes lives there,
+behind the same auth, so the new read inherits the membership check without a
+new mount.
+
+**Changes:** Nothing in the agreed scope. Supersedes the path named in
+[`design.md`](design.md#read-path).
+
+### 2026-10-03: The ledger records who paid when the event was applied
+
+**Decided:** `usage_events` also stores `organization_pays`, the payer map's
+answer when the consumer applied the event.
+
+**Why:** Decision 5 makes a change to the map apply from the next event on. A
+later Stripe sink replaying `usage_events` needs to know which events the
+Organization paid for at the time, which the current map cannot tell it.
+
+**Changes:** Nothing in the agreed scope. Adds one column to the design's DDL.
+
+### 2026-10-03: The ledger keeps 90 days in its own D1 and the history in R2
+
+**Decided:** `usage_events` and `usage_rollups` live in a separate D1
+database, `USAGE_DB`, not in the regional `DB`. D1 keeps events for 90 days
+from receipt and the weekly totals for good. Every event is also sent, after
+D1 has applied it, to a Pipeline that writes the Iceberg table `avalon.usage_events`
+in R2, which keeps it for good and is read with Basin SQL.
+
+**Why:** D1's 10 GB limit is per database. At about 12,000 events a day and 391
+bytes a row (measured), events alone would reach it in 3 to 6 years at today's
+volume and in months at ten times it, and in `DB` a full database would stop
+sign-in and membership writes, not just metering. Analytics Engine was
+rejected because it samples and keeps 3 months; a monthly export job because
+Basin SQL reads only Parquet, which a Worker would have to write; Turbopuffer
+because it has no multi-document atomicity or increment, and its vendor does
+not recommend aggregations for latency-sensitive reads past 1M documents.
+
+**Changes:** Supersedes design decision 3's single D1 ledger and the "kept, not
+pruned" history in the data model. Goal 8 now rests on the lakehouse for
+history older than 90 days.
+
+### 2026-10-03: D1 before the lakehouse, and an event counts once by its insert
+
+**Decided:** The consumer writes D1 first and the lakehouse second, and an
+event's rollup increment runs only if its `usage_events` insert added a row.
+`workspaces.plan` carries no CHECK.
+
+**Why:** With the lakehouse first, a Pipelines outage stalled the meter and,
+past the retries, lost the events from both stores. Gating the increment on the
+insert makes "counted once" hold even if two batches overlap, rather than
+resting on `max_concurrency: 1`. The plan set is a moving product decision and
+SQLite cannot alter a CHECK; `PlanIdSchema` checks the value on every read.
+
+**Changes:** Events in the dead-letter queue after a lakehouse outage are in D1
+but not R2 until replayed. Supersedes the DDL's CHECK on `plan` in
+[`design.md`](design.md).
 
 ## Key design decisions
 

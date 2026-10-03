@@ -12,7 +12,11 @@ drawing a second design.
   ticks, the split layout), navigation frame and rows, resource rows, Sidekick
   section/picker, account trigger, glyphs, avatars and visual primitives — and
   the Space surfaces: `space-icon.tsx` (`SpaceIcon`),
-  `space-dashboard.tsx` (`SpaceDashboardHeader`, `SpaceDashboardSection`). The
+  `space-dashboard.tsx` (`SpaceDashboardHeader`, `SpaceDashboardSection`). A measured share is drawn
+  by `Meter` in `primitives.tsx`: a track and a fill, `role="meter"` (or
+  `progressbar` for a task moving towards done) with its value attributes, a required label, and a `normal` or `warning` tone, painted
+  from the `cmp.meter.*` tokens. The Organization usage line and the onboarding
+  checklist both use it, so a new bar adds no CSS. The
   icon catalog's glyphs are `appearance-icons.ts` (`APPEARANCE_ICON_COMPONENTS`)
   and its sectioned grid is `icon-catalog.tsx` (`IconCatalog`), drawn by
   `AppearancePicker`, the one picker a Space and a Channel both open.
@@ -127,6 +131,27 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-03 — One Meter primitive for every measured share (#1086)
+
+**What changed:** `Meter` is new in `primitives.tsx`. Settings → Organization →
+Usage and the Organization menu draw the weekly quota with it, and the
+onboarding checklist's one-off `.onboarding-progress` bar is replaced by it.
+
+**Why:** The usage quota PRD needs the same bar in two sizes and two tones, and
+the onboarding bar was already a hand-rolled copy of it with its colours named
+inline. A third copy would have been the next drift. Its colours are the new
+`cmp.meter.*` tokens: in light a settings card is the same `#f3f3f3` as the
+sunken surface, so a meter on `sys.color.surface.sunken` lost its empty track,
+and the light track is `ref.color.neutral.5` instead.
+
+**Considered and rejected:** Darkening `sys.color.surface.sunken` in light,
+which every other sunken surface reads. A second primitive for progress: the
+drawing is the same, so `role` is a prop.
+
+**Consequences:** A meter with no value yet draws its empty track hidden from
+the accessibility tree rather than claiming zero, so a caller shows its own
+loading text beside it. The label is required by the type.
 
 ### 2026-09-30 — One helper keeps a sidebar's size across launches
 
