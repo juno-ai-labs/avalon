@@ -10,6 +10,7 @@ import { ApiError } from "../lib/api-error";
 import { zValidator } from "../middleware/validation";
 import { AuthService, issueAccessToken } from "../services/auth-service";
 import { BrowserSessionService, BrowserSessionSchema, BrowserWorkspacesSchema } from "../services/browser-session-service";
+import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema } from "@rally/contracts/browser-session";
 import { UNAVAILABLE_INVITATION, describeScopeInvitation } from "../services/scope-invitation-link";
 import { startEmailLogin, deliverEmailLogin, redeemEmailLogin, EmailLoginStartSchema,
   EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
@@ -29,6 +30,17 @@ function cookieOptions(env: Env) {
   const secure = browserOrigin(env).protocol === "https:";
   return { name:`${secure ? "__Host-" : ""}rally-browser-${env.AVALON_REGION}`,
     attributes:{ secure,httpOnly:true,sameSite:"Lax" as const,path:"/" } };
+}
+
+/**
+ * Binds a Google sign-in to the tab that started it. The OAuth state is also
+ * stored server-side; the callback requires this cookie to carry the same
+ * value, so a link to someone else's callback cannot sign this browser in as
+ * them.
+ */
+function googleStateCookie(env: Env) {
+  const cookie = cookieOptions(env);
+  return { name:`${cookie.name}-google-state`,attributes:{ ...cookie.attributes,maxAge:600 } };
 }
 
 function credential(c: Context<HonoAppEnv>): string {
@@ -67,6 +79,35 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     const started = await startEmailLogin(c.env,c.req.valid("json"));
     await deliverEmailLogin(c.env,started.challengeId);
     return c.json(EmailLoginStartedSchema.parse(started),202);
+  });
+  routes.post("/google/start",authBodyLimit,zValidator("json",BrowserGoogleStartSchema),async (c) => {
+    const { url,state } = await new AuthService(c.env).beginBrowserIdentity({ returnPath:c.req.valid("json").returnPath });
+    const binding = googleStateCookie(c.env);
+    setCookie(c,binding.name,state,binding.attributes);
+    return c.json(BrowserGoogleStartedSchema.parse({ url }));
+  });
+  routes.get("/google/callback",zValidator("query",z.object({ code:z.string().optional(),state:z.string().min(1),error:z.string().optional() })),async (c) => {
+    const query = c.req.valid("query");
+    const origin = browserOrigin(c.env).origin;
+    const binding = googleStateCookie(c.env);
+    const bound = getCookie(c,binding.name);
+    deleteCookie(c,binding.name,binding.attributes);
+    const failed = (code: string) => c.redirect(`${origin}/#google_error=${encodeURIComponent(code)}`,302);
+    if (!bound || bound !== query.state) return failed("google_state_mismatch");
+    const service = new AuthService(c.env);
+    try {
+      if (query.error || !query.code) {
+        const returnUrl = await service.consumeBrowserIdentityDenial(query.state);
+        return c.redirect(`${returnUrl}#google_error=google_oauth_denied`,302);
+      }
+      const { session,returnUrl } = await service.consumeBrowserIdentityCallback(query.code,query.state);
+      const cookie = await new BrowserSessionService(c.env).register(session);
+      writeCookie(c,cookie.credential,cookie.expiresAt);
+      return c.redirect(returnUrl,302);
+    } catch (error) {
+      if (error instanceof ApiError) return failed(error.code);
+      throw error;
+    }
   });
   routes.get("/email/redeem",(c) => { c.header("Allow","POST");return c.body(null,405); });
   routes.post("/email/redeem",authBodyLimit,zValidator("json",EmailLoginRedeemSchema),async (c) => {

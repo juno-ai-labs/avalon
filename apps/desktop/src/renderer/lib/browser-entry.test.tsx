@@ -239,3 +239,21 @@ it('fills the invited mailbox into the sign-in form and accepts by the opaque to
   fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
   await waitFor(() => expect(bodies.get('/email/start')).toMatchObject({ email: 'invited@example.test' }));
 });
+
+it('starts Google sign-in for the page it was opened on and explains a declined one on return', async () => {
+  const starts: unknown[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const path = input.split('/browser')[1];
+    if (path === '/workspace/select' || path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/google/start') { starts.push(JSON.parse(String(init?.body))); return Response.json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=s' }); }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}#google_error=google_oauth_denied`);
+  const view = render(<BrowserEntry />);
+  try {
+    expect(await screen.findByRole('alert')).toHaveTextContent('Google sign-in was cancelled.');
+    expect(location.hash).toBe('');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
+    await waitFor(() => expect(starts).toEqual([{ returnPath: `/app/workspaces/global/${workspace.id}` }]));
+  } finally { view.unmount(); }
+});

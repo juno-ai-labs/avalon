@@ -22,9 +22,9 @@ General, in a real browser window, and a guest still sees the guest shell.
 
 ## Phase 2: Google sign-in
 
-- [ ] `/browser/google/start` and `/browser/google/callback`, with the callback
+- [x] `/browser/google/start` and `/browser/google/callback`, with the callback
       on the app host, set the browser cookie.
-- [ ] **Continue with Google** on the entry.
+- [x] **Continue with Google** on the entry.
 - [ ] Google redirect URI registered (provider configuration).
 
 **Gate:** Google and email sign-in with one address reach one identity.
