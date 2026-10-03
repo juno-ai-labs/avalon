@@ -30,10 +30,14 @@ const restoreTranscriptPosition = vi.hoisted(() => vi.fn());
 
 /** Set by the tests that need a signed-in author; null everywhere else. */
 const session = vi.hoisted(() => ({ current: null as unknown }));
-vi.mock('../lib/collaboration-session', () => ({
-  useOptionalCollaborationSession: () => null,
-  useCollaborationSession: () => ({ api, session: session.current }),
-}));
+vi.mock('../lib/collaboration-session', async (importOriginal) => {
+  const actual = await importOriginal<typeof CollaborationSessionModule>();
+  return {
+    useOptionalCollaborationSession: () => null,
+    useCollaborationSession: () => ({ api, session: session.current }),
+    useShellCapabilities: () => actual.shellCapabilities({ host: 'desktop', session: session.current as ClientSession | null }),
+  };
+});
 
 vi.mock('../lib/use-client-feature-flags', () => ({
   useClientFeatureFlags: () => ({ data: {} }),
@@ -88,6 +92,8 @@ import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { WorkstreamScreen } from './workstream';
 import type { HarnessRunMetadata, HarnessStatus, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type * as CollaborationSessionModule from '../lib/collaboration-session';
+import type { ClientSession } from '@rally/contracts/client-session';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
 

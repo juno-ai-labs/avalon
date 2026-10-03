@@ -1,5 +1,6 @@
 import { ShareConversationDialog } from './scope-sharing-panel';
-import { useOptionalCollaborationSession } from '../lib/collaboration-session';
+import { useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
+import { MacDownloadLink } from './mac-download-link';
 import { IconPin, IconShare2 } from '@tabler/icons-react';
 import { ChannelRowContent, NavigationRowContent } from '@rally/ui/components/navigation';
 import {
@@ -1106,6 +1107,7 @@ export function Sidebar({
   loadingMoreWorkstreams = false,
   onLoadMoreWorkstreams,
 }: SidebarProps): React.JSX.Element {
+  const { host } = useShellCapabilities();
   const debugEnabled = useDebugEnabled();
   const location = useLocation();
   const navigate = useNavigate();
@@ -2184,9 +2186,11 @@ export function Sidebar({
           {downloadedUpdate !== null && <IconButton className="sidebar-top-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
             <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
           </IconButton>}
-          <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
+          {/* A guest's sidebar is read-only and their reach is a few
+              conversations, which the Organization's search does not serve. */}
+          {!spacesReadOnly && <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
             <IconSearch aria-hidden="true" size={16} stroke={1.9} />
-          </IconButton>
+          </IconButton>}
           {!spacesReadOnly && openBrowserImport && <IconButton
             disabled={importSpaces.length === 0}
             label="Import from ChatGPT or Claude"
@@ -2543,6 +2547,7 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
+        {host === 'browser' && <MacDownloadLink />}
         <SidebarHorizontalLine className="sidebar-footer-line" />
         <SidebarFooter leading={<div className="sidebar-account-slot" ref={setAccountSlot} />} />
         {accountSlot && createPortal(accountMenu ?? <DropdownMenu.Root>

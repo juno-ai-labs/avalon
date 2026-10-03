@@ -9,7 +9,7 @@ import { WorkspaceApp } from '../../desktop/src/renderer/App';
 import { AccountOnboardingGate } from '../../desktop/src/renderer/screens/guided-onboarding';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
 import { AppSessionValueProvider, type AppSessionValue } from '../../desktop/src/renderer/lib/app-session';
-import type { ConnectorSetupCapability, PendingConnectorOAuth } from '../../desktop/src/renderer/lib/collaboration-session';
+import { shellCapabilities, type ConnectorSetupCapability, type PendingConnectorOAuth } from '../../desktop/src/renderer/lib/collaboration-session';
 import { clearWorkspaceDrafts } from '../../desktop/src/renderer/lib/draft-cache';
 import { FaviconApiProvider } from '../../desktop/src/renderer/lib/favicon-api';
 import { clearWorkspaceLocalCache } from '../../desktop/src/renderer/lib/local-cache';
@@ -17,7 +17,7 @@ import { desktopBridge } from '../../desktop/src/renderer/lib/platform';
 import { reconcileWebPush } from '../../desktop/src/renderer/lib/web-push';
 import { createQueryClient } from '../../desktop/src/renderer/lib/query-client';
 import { NEW_SIDEKICK_TARGET } from '../../desktop/src/common/sidekicks';
-import { memberShellLocation } from './session';
+import { shellLocation } from './session';
 import { browserRequest } from './transport';
 
 const MAC_APP_ONLY = 'Available in the Mac app.';
@@ -37,12 +37,13 @@ function useCookieApi(session: CookieClientSession): RallyApi {
 }
 
 /**
- * The desktop shell for an Organization member, over the browser's cookie
- * session. The desktop builds its session value from the bridge; this one
- * builds it from the cookie session the entry restored. Anything that only
- * the Mac app can do rejects with one sentence saying so.
+ * The desktop shell over the browser's cookie session, for members and guests
+ * alike. The desktop builds its session value from the bridge; this one builds
+ * it from the cookie session the entry restored. Anything only the Mac app can
+ * do rejects with one sentence saying so; what a guest may do is the shell's
+ * own question (`useShellCapabilities`), answered the same way in both hosts.
  */
-function MemberSession({ region, session, onSignOut, onRevalidate }: {
+function BrowserSession({ region, session, onSignOut, onRevalidate }: {
   region: Region;
   session: CookieClientSession;
   onSignOut: () => void;
@@ -122,14 +123,22 @@ function MemberSession({ region, session, onSignOut, onRevalidate }: {
     clearDeepLinkError: () => undefined,
   }), [api, getAccountOnboarding, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
   const createSidekick = useCallback(() => desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET), []);
-  return <AppSessionValueProvider value={value} connectorSetup={connectorSetup} createSidekick={createSidekick}>
+  // Starting a connection and authoring a Sidekick are a member's: their
+  // routes refuse a guest, so a guest's shell is handed neither and offers
+  // neither. Existing connectors and attached Sidekicks still work.
+  const { guest } = shellCapabilities({ host: 'browser', session });
+  return <AppSessionValueProvider value={value} connectorSetup={guest ? null : connectorSetup} createSidekick={guest ? null : createSidekick}>
     <FaviconApiProvider>
       <AccountOnboardingGate><WorkspaceApp /></AccountOnboardingGate>
     </FaviconApiProvider>
   </AppSessionValueProvider>;
 }
 
-export function BrowserMemberShell(props: {
+/**
+ * The signed-in application, and the browser's one lazy boundary: sign-in
+ * never downloads the renderer.
+ */
+export default function BrowserShell(props: {
   region: Region;
   session: CookieClientSession;
   onSignOut: () => void;
@@ -139,10 +148,10 @@ export function BrowserMemberShell(props: {
   // The desktop shell routes by hash. Rewrite a canonical link into that form
   // once, before its router first reads the location.
   useState(() => {
-    const next = memberShellLocation(location.pathname, location.hash);
+    const next = shellLocation(location.pathname, location.hash);
     if (next) history.replaceState(history.state, '', next);
   });
   return <QueryClientProvider client={queryClient}>
-    <Tooltip.Provider><MemberSession {...props} /></Tooltip.Provider>
+    <Tooltip.Provider><BrowserSession {...props} /></Tooltip.Provider>
   </QueryClientProvider>;
 }

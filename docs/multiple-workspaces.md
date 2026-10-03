@@ -10,8 +10,10 @@ Read this before changing plural onboarding, stored desktop sessions, workspace
 switching, background attention, leaving, or abandonment.
 
 Desktop platform discovery and activation currently require `access_class = member`.
-Guest relationships are withheld until the guest shell can bootstrap without the
-member-only `/workspace` endpoint. Guest-aware regional `/auth/workspaces` and
+Guest relationships are withheld from the Mac app. The shell itself now opens for
+a guest (`GET /workspace` answers them, and the browser mounts the same shell for
+guests), but the Electron-only paths (background workspace attention, the
+Sidekicks window, native connector flows) have not been checked for a guest. Guest-aware regional `/auth/workspaces` and
 `/auth/workspace/select` remain available to the browser/API integration. This is
 a client compatibility gate; it does not remove the relationship or its shares.
 The ordinary member directory includes guests with `accessClass: guest`, a null

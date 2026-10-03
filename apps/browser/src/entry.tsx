@@ -40,7 +40,7 @@ async function openWorkspace(region: string, workspaceId: string): Promise<Brows
   return await select();
 }
 
-/** An account change wipes drafts and, for the member shell, the transcript cache. */
+/** An account change wipes drafts and the transcript cache the shell keeps. */
 async function clearAllDrafts(): Promise<void> {
   await Promise.all([clearAllDraftsOnly(), clearAllLocalCache()]);
 }
@@ -307,7 +307,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     finally { setBusy(false); }
   }
 
-  // The member shell keys its session value, and so its sockets, on these.
+  // The shell keys its session value, and so its sockets, on these.
   // Keep them stable across renders; each call reads the latest closure.
   const latestSignOut = useRef(signOut);
   useEffect(() => { latestSignOut.current = signOut; });
