@@ -21,7 +21,7 @@ describe("RegisterPushDeviceRequestSchema", () => {
       apnsEnvironment: "sandbox",
       token,
       appVersion: "1.0.0",
-    }).apnsEnvironment).toBe("sandbox");
+    })).toMatchObject({ apnsEnvironment: "sandbox" });
     expect(RegisterPushDeviceRequestSchema.parse({
       platform: "ios",
       transport: "apns",
@@ -29,7 +29,7 @@ describe("RegisterPushDeviceRequestSchema", () => {
       apnsEnvironment: "production",
       token,
       appVersion: "1.0.0",
-    }).topic).toBe("ai.rallywith.ios");
+    })).toMatchObject({ topic: "ai.rallywith.ios" });
   });
 
   it("rejects a Mac sandbox token and a mismatched iOS topic", () => {
