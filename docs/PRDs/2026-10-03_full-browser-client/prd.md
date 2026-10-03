@@ -248,12 +248,29 @@ already per region (`__Host-rally-browser-<region>`), so one host origin holds
 one cookie per deployment. Each deployment adds `app.rallywith.ai` to its
 `ALLOWED_ORIGINS` and sets `BROWSER_APP_ORIGIN`.
 
-Workspace discovery across deployments needs a cookie-addressable equivalent of
-the Global discovery that desktop runs through `/onboarding`. Scoped invitation
-links name no region, so a second deployment needs its own invitation routing,
-per [`regionalization.md`](../../regionalization.md). Google identity remains a
-Global identity; regional cookies are minted per activated workspace, mirroring
-desktop's identity session plus one regional credential per workspace.
+Google identity remains a Global identity. Discovery and activation stay on
+Global, because `PlatformOnboardingService` is Global-only:
+
+1. The browser lists workspaces through a new Global `/browser` route that
+   resolves the Global browser cookie and runs the same cross-region discovery
+   desktop runs through `/onboarding`.
+2. Activating a workspace in another deployment posts to a Global `/browser`
+   route. Global activates it over the existing cross-region bridge and asks
+   the target deployment, server to server, to register a browser session for
+   that identity. The target's `BrowserSessionService.register` needs a
+   region-local unbound identity session, so the bridge call creates one there
+   first, as desktop activation does for its regional credential.
+3. Global's response carries `Set-Cookie` for `__Host-rally-browser-<region>`.
+   It reaches the browser through the browser Worker on the app host, so the
+   host-only cookie is valid. No bearer or regional credential passes through
+   JavaScript or a URL.
+
+From then on, requests for that workspace go to `/regional/<region>/browser/*`
+and the target deployment resolves its own cookie. The exact bridge contract
+belongs in a `design.md` before this goal is built.
+
+Scoped invitation links name no region, so a second deployment needs its own
+invitation routing, per [`regionalization.md`](../../regionalization.md).
 
 ## Security and trust model
 
@@ -290,8 +307,10 @@ desktop's identity session plus one regional credential per workspace.
   cookie: `__Host-rally-browser-<region>` is host-only to `app.rallywith.ai`.
   The browser therefore gets its own Google identity redirect URI on the app
   host, `https://app.rallywith.ai/regional/global/browser/google/callback`,
-  which the browser Worker forwards to the API's `/browser` routes like every
-  other browser request. The API completes Google's code exchange there and its
+  which the browser Worker forwards to a new `/browser/google/*` route on the
+  API, alongside the existing `/browser/email/*`. It is not under `/auth` and not
+  behind the `/browser/api` adapter, and it has its own browser-specific start
+  route that is not tied to a desktop PKCE attempt. The API completes Google's code exchange there and its
   `Set-Cookie` reaches the browser as a same-origin response. No Rally
   credential appears in a URL or in JavaScript; the only value in the URL is
   Google's one-use authorization code, as in any web OAuth flow. Rejected: an
