@@ -377,16 +377,6 @@ export async function ocrPdfWithWorkersAi(
   metering: { env: Parameters<typeof emitInferenceUsage>[0]; workspaceId: string; resourceId: string },
 ): Promise<AttachmentOcrText> {
   if (signal.aborted) throw signal.reason;
-  // Workers AI returns no price for a conversion, so the call is metered as
-  // unpriced until a rate card exists (docs/usage-metering.md).
-  emitInferenceUsage(metering.env, runtimeDeferral, {
-    eventId: `ocr:${metering.resourceId}:${crypto.randomUUID()}`,
-    workspaceId: metering.workspaceId,
-    activity: "document_ocr",
-    costCents: undefined,
-    model: null,
-    refs: {},
-  });
   const response = await ai.toMarkdown({
     name: title.toLowerCase().endsWith(".pdf") ? title : `${title}.pdf`,
     blob: new Blob([exactArrayBuffer(bytes)], { type: "application/pdf" }),
@@ -395,6 +385,19 @@ export async function ocrPdfWithWorkersAi(
       output: { format: "text" },
       pdf: { images: { convert: true, maxConvertedImages: Math.min(pageCount, MAX_PDF_PAGES) } },
     },
+  });
+  // Metered once the provider has answered, since that is the call that cost
+  // something; a call that threw or was never made is not. Workers AI returns
+  // no price for a conversion, so it is metered as unpriced until a rate card
+  // exists (docs/usage-metering.md). Each conversion is a separate call, so
+  // each gets its own event ID.
+  emitInferenceUsage(metering.env, runtimeDeferral, {
+    eventId: `ocr:${metering.resourceId}:${crypto.randomUUID()}`,
+    workspaceId: metering.workspaceId,
+    activity: "document_ocr",
+    costCents: undefined,
+    model: null,
+    refs: {},
   });
   if (signal.aborted) throw signal.reason;
   if (response.format === "error" || response.data.trim().length === 0) {
