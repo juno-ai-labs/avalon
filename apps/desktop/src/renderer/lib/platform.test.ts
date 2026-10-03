@@ -44,6 +44,16 @@ describe('browser fallback single-platform identity boundary', () => {
     open.mockRestore();
   });
 
+  it('reports a frozen and resumed tab as the desktop reports sleep and wake', () => {
+    const states: string[] = [];
+    const stop = desktopBridge().onPowerStateChanged((state) => states.push(state));
+    document.dispatchEvent(new Event('freeze'));
+    document.dispatchEvent(new Event('resume'));
+    stop();
+    document.dispatchEvent(new Event('freeze'));
+    expect(states).toEqual(['suspended', 'resumed']);
+  });
+
   it('opens an external page in a new tab with no opener, and reports a blocked popup', async () => {
     const popup = { opener: window as Window | null, location: { href: '' } };
     const open = vi.spyOn(window, 'open').mockReturnValueOnce(popup as unknown as Window).mockReturnValueOnce(null);
