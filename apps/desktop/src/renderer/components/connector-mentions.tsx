@@ -1,4 +1,5 @@
 import { startConnectorAuthorization } from '../lib/start-connector-authorization';
+import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOAD_URL, useConnectorStartAvailable } from '../lib/browser-connectors';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ConnectorConnectionCardCatalog,
@@ -315,6 +316,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
   const capabilities = scope === 'you' && 'personalCapabilities' in provider
     ? [...provider.personalCapabilities]
     : [...provider.capabilities];
+  const connectorStartAvailable = useConnectorStartAvailable(api, session);
   const connect = useMutation({
     mutationFn: async () => {
       if (!api || !session?.workspace) throw new Error('Rally is not ready to connect this account.');
@@ -359,6 +361,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
       checkingAvailability={availability.isLoading}
       connected={connected}
       error={connect.error?.message}
+      macAppOnly={!connectorStartAvailable(capabilities)}
       onConnect={() => connect.mutate()}
       pending={pending}
       provider={provider}
@@ -375,6 +378,7 @@ export function ConnectorConnectionCardView({
   checkingAvailability,
   connected,
   error,
+  macAppOnly = false,
   onConnect,
   pending,
   provider,
@@ -386,6 +390,8 @@ export function ConnectorConnectionCardView({
   checkingAvailability?: boolean;
   connected: boolean;
   error?: string;
+  /** This client cannot start this connection; point at the Mac app instead of a button. */
+  macAppOnly?: boolean;
   onConnect: () => void;
   pending: boolean;
   provider: OAuthConnectorProviderCatalogEntry;
@@ -418,6 +424,8 @@ export function ConnectorConnectionCardView({
         </div>
         {connected ? (
           <span aria-live="polite" className="connector-connection-card-status" role="status"><Check aria-hidden="true" size={14} /> Connected</span>
+        ) : macAppOnly ? (
+          <a className="connector-connection-card-status" href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a>
         ) : (
           <Button
             className="connector-connection-card-action button-primary"

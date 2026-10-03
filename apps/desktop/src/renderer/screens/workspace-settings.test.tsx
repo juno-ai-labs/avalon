@@ -80,7 +80,8 @@ vi.mock('../lib/app-session', () => ({
         api: { global: 'https://api.rallywith.ai', enterprise: 'https://enterprise.api.rallywith.ai' },
         devAuthEnabled: true,
       },
-      session: { apiBaseUrl: 'https://enterprise.api.rallywith.ai', user: { id: 'user-1', name: 'Adam', email: 'adam@example.com' } },
+      session: { apiBaseUrl: 'https://enterprise.api.rallywith.ai', user: { id: 'user-1', name: 'Adam', email: 'adam@example.com' },
+        ...(sessionHost.current === 'browser' ? { authentication: 'cookie' } : {}) },
       leaveWorkspace,
       signOut,
       pendingConnectorOAuth,
@@ -2188,6 +2189,22 @@ describe('Organization settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use the system icon' }));
     await waitFor(() => expect(resetApplicationIcon).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Using dark automatically with the system appearance.')).toBeVisible();
+  });
+
+  it('starts only the connections the browser list names, and points at the Mac app for the rest', async () => {
+    sessionHost.current = 'browser';
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ browserConnectableCapabilities: [
+      'drive.read', 'docs.read', 'docs.write', 'sheets.read', 'sheets.write',
+    ] }));
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const drive = (await screen.findByText('Google Drive + Docs + Sheets')).closest('.provider-card') as HTMLElement;
+    await waitFor(() => expect(within(drive).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
+    expect(within(drive).queryByText('Download the Mac app to connect this.')).toBeNull();
+    const linear = screen.getByText('Linear').closest('.provider-card') as HTMLElement;
+    expect(within(linear).getByRole('link', { name: 'Download the Mac app to connect this.' })).toBeVisible();
+    for (const button of within(linear).getAllByRole('button')) expect(button).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('offers only appearance in a browser and names the Mac app for the rest', async () => {

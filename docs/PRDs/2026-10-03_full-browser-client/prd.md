@@ -203,7 +203,36 @@ session could not.
 
 ## Decision log
 
-None yet.
+### 2026-10-03 — The browser connector list names whole Google connections
+
+**Decided:** `browser-connectable-capabilities` defaults to every capability of
+the two Google connections the UI offers: Gmail with Calendar
+(`gmail.*`, `calendar.*`) and Drive with Docs and Sheets (`drive.read`,
+`docs.*`, `sheets.*`). A connection is offered in the browser only when every
+capability it asks for is listed.
+
+**Why:** Each tile starts one authorization for its whole set, so a list of
+Gmail and `drive.read` alone would have left both tiles disabled. This answers
+the open question on what counts as "Google Drive".
+
+**Changes:** Supersedes the Rollout default of four capabilities. The open
+question is removed.
+
+### 2026-10-03 — The capability list is a JSON flag Ace provisions but does not edit
+
+**Decided:** Ace's deploy creates `browser-connectable-capabilities` as a JSON
+flag, the way it creates the agent model flags, and the API reads it with
+`getObjectDetails`. Its value is edited in the Flagship console; Ace's own
+editor manages Booleans and model routes only. It falls back to the launch set,
+not to nothing.
+
+**Why:** Ace has no list editor, and building one for a ten-item list nobody
+has asked to change yet is more than the decision needs. The flag can still
+change without a deploy, which is what the product asked for.
+
+**Changes:** Narrows the Rollout statement that the flag is "registered in
+Ace": it is provisioned by Ace, edited in Flagship. Adding an Ace editor is
+deferred until the list needs changing often.
 
 ## Key design decisions
 
@@ -384,11 +413,6 @@ navigation for every session; members keep using the Mac app.
   marked Mac-only.
 
 ## Open questions
-
-- **Which Google capabilities count as "Google Drive"?** Docs and Sheets read
-  and write live in Drive files but are separate capabilities, and Calendar is
-  on the same connector. The default above takes Gmail and `drive.read` only.
-  Does not block the build; it is the flag's value.
 
 - **Popup or full-page redirect for OAuth?** A popup keeps the member's place;
   a redirect is simpler and immune to popup blockers. Does not block the build.

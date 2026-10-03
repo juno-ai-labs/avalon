@@ -37,7 +37,7 @@ export default {
     }
     if (url.pathname.startsWith("/assets/")) return env.ASSETS.fetch(request);
     if (!["GET", "HEAD"].includes(request.method)) return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
-    if (!(url.pathname === "/" || url.pathname === "/login/email" || url.pathname === "/invite" || url.pathname.startsWith("/app/"))) return unavailable();
+    if (!(url.pathname === "/" || url.pathname === "/login/email" || url.pathname === "/invite" || url.pathname === "/connections/complete" || url.pathname.startsWith("/app/"))) return unavailable();
     const index = new URL("/index.html", url.origin);
     const asset = await env.ASSETS.fetch(new Request(index));
     if (!asset.ok) return new Response("Rally is temporarily unavailable", { status: 503 });

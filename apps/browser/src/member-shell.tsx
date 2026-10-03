@@ -8,7 +8,7 @@ import { WorkspaceApp } from '../../desktop/src/renderer/App';
 import { AccountOnboardingGate } from '../../desktop/src/renderer/screens/guided-onboarding';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
 import { AppSessionValueProvider, type AppSessionValue } from '../../desktop/src/renderer/lib/app-session';
-import type { PendingConnectorOAuth } from '../../desktop/src/renderer/lib/collaboration-session';
+import type { ConnectorSetupCapability, PendingConnectorOAuth } from '../../desktop/src/renderer/lib/collaboration-session';
 import { clearWorkspaceDrafts } from '../../desktop/src/renderer/lib/draft-cache';
 import { FaviconApiProvider } from '../../desktop/src/renderer/lib/favicon-api';
 import { clearWorkspaceLocalCache } from '../../desktop/src/renderer/lib/local-cache';
@@ -51,6 +51,20 @@ function MemberSession({ region, session, onSignOut, onRevalidate }: {
   // Account onboarding is identity-scoped, so it goes through the `_` workspace.
   const identityApi = useMemo(() => new RallyApi(`/regional/${region}/browser/api/_`, { ...session, workspace: null }), [region, session]);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
+  const [resourceAuthorizationAttempts, setResourceAuthorizationAttempts] = useState<Readonly<Record<string, PendingConnectorOAuth>>>({});
+  const setResourceAuthorizationAttempt = useCallback((key: string, attempt: PendingConnectorOAuth | null) => {
+    setResourceAuthorizationAttempts((current) => {
+      const next = { ...current };
+      if (attempt) next[key] = attempt; else delete next[key];
+      return next;
+    });
+  }, []);
+  // Connectors return to /connections/complete, which closes its own tab; the
+  // pending cards reconcile from the attempt read, as on the desktop.
+  const connectorSetup = useMemo<ConnectorSetupCapability>(() => ({
+    pendingConnectorOAuth, setPendingConnectorOAuth, resourceAuthorizationAttempts, setResourceAuthorizationAttempt,
+    openExternal: (url: string) => desktopBridge().openExternal(url),
+  }), [pendingConnectorOAuth, resourceAuthorizationAttempts, setResourceAuthorizationAttempt]);
   const revalidate = useCallback(async () => { onRevalidate(); }, [onRevalidate]);
   const signOut = useCallback(async () => { onSignOut(); }, [onSignOut]);
   const value = useMemo<AppSessionValue>(() => ({
@@ -100,7 +114,7 @@ function MemberSession({ region, session, onSignOut, onRevalidate }: {
     clearDeepLinkError: () => undefined,
   }), [api, identityApi, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut]);
   const createSidekick = useCallback(() => desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET), []);
-  return <AppSessionValueProvider value={value} connectorSetup={null} createSidekick={createSidekick}>
+  return <AppSessionValueProvider value={value} connectorSetup={connectorSetup} createSidekick={createSidekick}>
     <FaviconApiProvider>
       <AccountOnboardingGate><WorkspaceApp /></AccountOnboardingGate>
     </FaviconApiProvider>
