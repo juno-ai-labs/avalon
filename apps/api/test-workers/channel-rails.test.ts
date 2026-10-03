@@ -627,7 +627,7 @@ describe("space_channels and the sidebar without Channel rows", () => {
     connection.socket.close(1000, "done");
   });
 
-  it("sends a member the Spaces and no Channel rows once the Space hierarchy is whole, and a guest the page", async () => {
+  it("sends a member the Spaces and no Channel rows once the Space hierarchy is whole, and a guest neither", async () => {
     await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelB, channelC]));
     // Still opening: a Channel may sit in no Space, so the page is sent as before.
     const opening = await connect(member);
@@ -654,11 +654,12 @@ describe("space_channels and the sidebar without Channel rows", () => {
     expect((retired.sync.sidebar as { channelsBySpace?: true }).channelsBySpace).toBe(true);
     retired.socket.close(1000, "done");
 
-    // A guest is sent no Spaces, so the page stays theirs.
+    // A guest is sent no Spaces and no Channel page either: the page follows
+    // member rules, and a guest's rail is the grant-scoped shared navigation.
     const guestConnection = await connect(guest);
     const guestSidebar = guestConnection.sync.sidebar as { workstreams: { items: unknown[] }; channelsBySpace?: true };
     expect(guestSidebar.channelsBySpace).toBeUndefined();
-    expect(guestSidebar.workstreams.items.length).toBeGreaterThan(0);
+    expect(guestSidebar.workstreams.items).toEqual([]);
     guestConnection.socket.close(1000, "done");
   });
 });
