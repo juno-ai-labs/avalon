@@ -38,9 +38,9 @@ demo. A name written into the text would read as a stranger.
 | Token | Labelled | Plays |
 | --- | --- | --- |
 | `presenter` | — | the real person signing in, who is showing the demo |
-| `priya` | Product | product |
-| `marcus` | Sales | sales |
-| `dana` | Legal | legal |
+| `priya` | Solutions engineer / IT | the technical expert |
+| `marcus` | Sales lead / business owner | the account and business owner |
+| `dana` | Manager / finance approver | the person who signs off |
 
 The **label** is `roleLabels[token]` in the pack, and it is what the New demo
 form titles that part's dropdown. A role token is this pack's own character name
@@ -65,6 +65,8 @@ played by a different signed-in account on the company's domain.
 | They say | The pack calls it | Step |
 | --- | --- | --- |
 | a conversation, a thread, a project | a work stream | `create_workstream` |
+| a customer, an area, a group of conversations | a Space | an entry in `spaces`, named by the room's `space` |
+| work that happened before, earlier history | prepared history | `execution: "history"` on `create_workstream` |
 | a private side chat, taking it offline | a substream | `create_substream` |
 | a doc, a draft, an attachment | an upload | `upload` |
 | an automation, a bot, a daily thing | a Sidekick | `sidekick` |
@@ -75,9 +77,10 @@ Ask only what changes the work, in **one** `AskUserQuestion` batch, once:
 
 1. Which of the three are in it, and who starts it.
 2. Does it end with Rally answering, or with Rally asking the presenter to
-   decide? (One room ending on a question is the demo's opening beat. The
-   shipped pack already has one, in the renewal room — a second is a second
-   thing waiting for the presenter, so confirm that is wanted.)
+   decide? (The shipped pack ends no room on a question: every story ends on
+   a human next action, and `demo-pack.test.ts` asserts there is no `ask`.
+   A question changes what the presenter's home screen opens on, so confirm
+   it is wanted before writing one.)
 3. Is there a document, and does it go through versions?
 4. Is anything said privately, away from the main thread?
 
@@ -86,7 +89,9 @@ not ask at all — write it and show them the words.
 
 ## Writing the steps
 
-Add them to `PLACEHOLDER_DEMO_PACK.steps`. Position matters: the sidebar orders
+Add them to `PLACEHOLDER_DEMO_PACK.steps`, and put the room in a Space: an
+existing one from `spaces` (`acme`, `vendors`, `sales`) or a new entry there.
+Position matters: the sidebar orders
 rooms by the index of each room's **last main-conversation step**, so steps
 appended at the end make the new room list first. Decide where the scenario
 should sit in that order and say which you chose.
@@ -95,6 +100,14 @@ The schema refuses an unplayable pack before the first write. Write so you never
 meet these:
 
 - A room is created once, by `create_workstream`, before anything else in it.
+- A room is `scope: "workspace"`. The schema accepts `personal`, but the seeder
+  refuses it (`demo_seed_personal_room_unsupported`) after earlier steps have
+  already run, so the demo fails partway.
+- A room's `space` must be declared in `spaces`, whose `as` is somebody in the
+  cast.
+- A room with `execution: "history"` is earlier work shown as it was, with no
+  run: its opening `assistant` must be a `say`, and neither the opening message
+  nor Rally's turn may mention anybody.
 - Only somebody already in a conversation may speak in it. A mention in a room's
   main conversation seats the person mentioned; a mention **inside a substream
   does not** — a substream's roster belongs to its parent, so anyone mentioned
@@ -159,7 +172,7 @@ only adds a private side thread leaves `expect` untouched.
 | File | What to change |
 | --- | --- |
 | `apps/api/src/services/demo-pack.ts` | The steps, the `expect` block, and the doc comment above `PLACEHOLDER_DEMO_PACK` that lists what the pack carries. |
-| `apps/api/test/demo-pack.test.ts` | `accepts the placeholder pack` hard-codes the room keys, the id of every `ask`, every Sidekick's name/scope/zone, and every substream. Extend those lists. |
+| `apps/api/test/demo-pack.test.ts` | `accepts the placeholder pack` hard-codes each room with its Space, that no step is an `ask`, every Sidekick's name/scope/zone, and every substream with its participants. Extend those lists. |
 | `apps/api/test/demo-readiness.test.ts` | A new room needs an id in `WORKSTREAM_IDS`; `derives the presenter's view of the placeholder pack` asserts the room order, each room's participants, attachments and closing state. |
 | `docs/demo-workspaces.md` | The prose naming the pack's scenarios, and a changelog entry. |
 
