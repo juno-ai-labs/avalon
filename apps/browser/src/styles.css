@@ -4,6 +4,11 @@ a { color: inherit; }
 /* The entry draws the desktop's sign-in card (`.onboarding-shell`, `.signin-card`
    in app.css); these rules only fill what a browser page adds to it. */
 .entry { height: 100dvh; font-synthesis: none; }
+/* The shared shell centers with `align-items`, which pushes a card taller than
+   the window above the scroll origin. Auto margins center a short card and
+   collapse to zero for a tall one, so a long organization list scrolls from its top. */
+.entry.onboarding-shell { align-items: flex-start; }
+.entry.onboarding-shell > * { margin-block: auto; }
 .entry .entry-mark { display: block; width: fit-content; margin: 0 auto; color: var(--av-sys-color-text-default); }
 .entry .entry-mark:focus-visible, .entry-choice:focus-visible { outline: 2px solid var(--av-sys-color-accent-base); outline-offset: 3px; }
 .entry form { margin-top: 6px; }
