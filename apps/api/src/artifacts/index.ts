@@ -50,7 +50,10 @@ import type { ArtifactHostDO } from "../durable-objects/artifact-host-do";
 import { durableObjectStubForArtifact } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import {
+  ARTIFACT_CONTENT_SECURITY_POLICY,
+  artifactContentSecurityPolicy,
   artifactSecurityHeaders,
+  browserFrameAncestor,
   classifyFetchMetadata,
   injectVersionBase,
   refuseUnsafeVersionRequest,
@@ -176,12 +179,12 @@ export { ArtifactAssetLoopback } from "./asset-loopback";
 
 export default {
   async fetch(request: Request, env: ArtifactServingEnv, ctx: ExecutionContext): Promise<Response> {
-    return allowBrowserFraming(await serveArtifact(request, env, ctx), env.BROWSER_APP_ORIGIN);
+    return allowBrowserFraming(await artifactServer.fetch(request, env, ctx), browserFrameAncestor(env.BROWSER_APP_ORIGIN));
   },
 };
 
-async function serveArtifact(request: Request, env: ArtifactServingEnv, ctx: ExecutionContext): Promise<Response> {
-  {
+const artifactServer = {
+  async fetch(request: Request, env: ArtifactServingEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const host = parseArtifactHost(url.host);
     // Not an artifact host at all. Answered as the neutral page rather than an
@@ -339,8 +342,8 @@ async function serveArtifact(request: Request, env: ArtifactServingEnv, ctx: Exe
     }
 
     return serveCurrent(env, ctx, artifact, artifactId, request, url, admitted);
-  }
-}
+  },
+};
 
 type Admitted = {
   viewerId: string | null;
@@ -560,18 +563,18 @@ function assetLoopback(ctx: ExecutionContext, artifactId: string, manifest: Arti
 /**
  * Lets exactly the browser client frame an artifact, for its inline preview.
  *
- * Every response leaves `serveArtifact` refusing all framing
- * (`frame-ancestors 'none'`, `X-Frame-Options: DENY`). With a browser origin
- * configured, the CSP names that one origin instead and the legacy header,
- * which cannot express an allowlist, is dropped. Another artifact still cannot
- * frame this one: its host is not that origin.
+ * Every response leaves `artifactServer` with `artifactSecurityHeaders()`,
+ * which refuses all framing. With a frame ancestor configured, a response
+ * carrying exactly that default policy gets the same policy naming the one
+ * origin, and loses the legacy `X-Frame-Options`, which cannot name an origin.
+ * A response with any other policy is left closed. Another artifact still cannot frame this one: its host is not
+ * that origin.
  */
-export function allowBrowserFraming(response: Response, browserOrigin: string | undefined): Response {
-  if (!browserOrigin || response.status === 101) return response;
-  const origin = new URL(browserOrigin).origin;
+export function allowBrowserFraming(response: Response, frameAncestor: string | null): Response {
+  if (!frameAncestor || response.status === 101) return response;
+  if (response.headers.get("content-security-policy") !== ARTIFACT_CONTENT_SECURITY_POLICY) return response;
   const headers = new Headers(response.headers);
-  const policy = headers.get("content-security-policy");
-  if (policy) headers.set("content-security-policy", policy.replace("frame-ancestors 'none'", `frame-ancestors ${origin}`));
+  headers.set("content-security-policy", artifactContentSecurityPolicy(frameAncestor));
   headers.delete("x-frame-options");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

@@ -1380,7 +1380,7 @@ export function ConversationSurface({
         // artifact instead. allow-same-origin keeps the artifact in its own
         // origin (not an opaque one), which its code redemption needs; the
         // frame still cannot navigate the app or open popups.
-        ...(browserHost ? { frameSandbox: 'allow-scripts allow-same-origin allow-forms' } : {}),
+        ...(browserHost ? { framed: true as const } : {}),
       },
     };
   }, [browserHost, api, featureFlags.data?.liveArtifactsEnabled]);

@@ -47,34 +47,54 @@ import { rallyHeaderAliases } from "@rally/contracts/http-headers";
  * `img-src` gains `data:` for the same reason: a model embedding a small inline
  * image is ordinary, and `'self'` alone would drop it silently.
  *
- * `frame-ancestors` is `'none'` here. The desktop never frames an artifact:
- * its rail preview is a top-level `WebContentsView` and the pop-out is a
- * window. The one exception, the browser client's inline preview, is added by
- * `allowBrowserFraming` in `index.ts` for exactly `BROWSER_APP_ORIGIN`, so the
- * default stays closed wherever that is unset.
+ * `frame-ancestors` is `'none'` by default. The desktop never frames an
+ * artifact: its rail preview is a top-level `WebContentsView` and the pop-out
+ * is a window. The one exception is the browser client's inline preview:
+ * `artifactContentSecurityPolicy(frameAncestor)` names exactly that origin,
+ * from `browserFrameAncestor`, so the default stays closed wherever
+ * `BROWSER_APP_ORIGIN` is unset or unreadable.
  */
-export const ARTIFACT_CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
-  "font-src 'self' data:",
-  "media-src 'self' data:",
-  "connect-src 'self'",
-  "form-action 'self'",
-  "base-uri 'self'",
-  "object-src 'none'",
-  "frame-ancestors 'none'",
-  // Written out, like the two above, because inheriting `default-src 'self'`
-  // would *permit* a same-origin service worker — and a service worker is the
-  // one thing an artifact can install that answers requests without reaching
-  // Rally. A root-scoped one could cache authenticated responses and keep
-  // serving them after the viewer's session ended, after their work-stream
-  // visibility was revoked, and after a republish: it would silently defeat
-  // revocation, the current-version guarantee, and the offline honesty all at
-  // once. Nothing an artifact does needs one.
-  "worker-src 'none'",
-].join("; ");
+export function artifactContentSecurityPolicy(frameAncestor: string | null = null): string {
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "media-src 'self' data:",
+    "connect-src 'self'",
+    "form-action 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    `frame-ancestors ${frameAncestor ?? "'none'"}`,
+    // Written out, like the two above, because inheriting `default-src 'self'`
+    // would *permit* a same-origin service worker — and a service worker is the
+    // one thing an artifact can install that answers requests without reaching
+    // Rally. A root-scoped one could cache authenticated responses and keep
+    // serving them after the viewer's session ended, after their work-stream
+    // visibility was revoked, and after a republish: it would silently defeat
+    // revocation, the current-version guarantee, and the offline honesty all at
+    // once. Nothing an artifact does needs one.
+    "worker-src 'none'",
+  ].join("; ");
+}
+
+export const ARTIFACT_CONTENT_SECURITY_POLICY = artifactContentSecurityPolicy();
+
+/**
+ * The one origin that may frame an artifact: the browser client's, when it is
+ * configured. A value that is not an http(s) URL frames nothing, so a bad
+ * setting keeps the default closed rather than failing every response.
+ */
+export function browserFrameAncestor(browserOrigin: string | undefined): string | null {
+  if (!browserOrigin) return null;
+  try {
+    const url = new URL(browserOrigin);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Headers every artifact response carries, whatever it is serving.
