@@ -42,6 +42,15 @@ describe('push device registry', () => {
     expect(await livePushDevices(env, auth.userId)).toEqual([]);
     expect(await livePushDevices(env, otherUser)).toHaveLength(1);
   });
+  it('registers a browser subscription with its endpoint and keys, bound to the session', async () => {
+    const { db, env, auth } = fixture();
+    const endpoint = 'https://fcm.googleapis.com/fcm/send/AbC-123';
+    const keys = { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) };
+    await registerPushDevice(env, auth, 'browser', { platform: 'web', transport: 'webpush', endpoint, keys, appVersion: 'web' });
+    expect(await livePushDevices(env, auth.userId)).toMatchObject([{ token: endpoint, transport: 'webpush', web_push_p256dh: keys.p256dh, web_push_auth: keys.auth }]);
+    db.prepare(`UPDATE sessions SET revoked_at = '2026-01-02' WHERE id = 'a'`).run();
+    expect(await livePushDevices(env, auth.userId)).toEqual([]);
+  });
   it('deletes a device and its session bindings', async () => {
     const { db, env, auth, input } = fixture();
     await registerPushDevice(env, auth, 'first', input);

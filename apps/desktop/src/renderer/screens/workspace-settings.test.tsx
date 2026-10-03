@@ -2207,6 +2207,20 @@ describe('Organization settings', () => {
     for (const button of within(linear).getAllByRole('button')) expect(button).toHaveAttribute('aria-disabled', 'true');
   });
 
+  it('offers browser notifications in a browser and says when this browser cannot show them', async () => {
+    sessionHost.current = 'browser';
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
+    renderSettings();
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'Notifications' }));
+
+    expect(await screen.findByRole('heading', { name: 'In this browser' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'On this Mac' })).toBeNull();
+    // jsdom has no service worker, which is exactly the unsupported browser.
+    expect(await screen.findByText('This browser cannot show Rally notifications.')).toBeVisible();
+    expect(screen.getByRole('switch', { name: 'Notify me in this browser about mentions and additions' })).toBeDisabled();
+  });
+
   it('offers only appearance in a browser and names the Mac app for the rest', async () => {
     sessionHost.current = 'browser';
     renderSettings();

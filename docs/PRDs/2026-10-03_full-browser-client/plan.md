@@ -49,9 +49,9 @@ warmed pinned Channel shows no loading state.
 
 ## Phase 5: Web Push
 
-- [ ] Web device type and VAPID provider on the server.
-- [ ] `/sw.js` served from the app root; `worker-src 'self'`.
-- [ ] **Turn on notifications** in the account menu.
+- [x] Web device type and VAPID provider on the server.
+- [x] `/sw.js` served from the app root; `worker-src 'self'`.
+- [x] A notifications switch for this browser (Settings → Notifications; see the decision log).
 
 **Gate:** a push arrives with the tab closed and opens the conversation.
 
