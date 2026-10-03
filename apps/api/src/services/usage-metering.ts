@@ -12,7 +12,7 @@ import {
   type PlanId,
   type UsageEvent,
 } from "@rally/contracts/usage";
-import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
+import { describeZodIssues, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type { Env } from "../env";
 import type { WorkDeferral } from "../lib/defer";
 import { logStructuredEvent } from "../observability/logger";
@@ -70,15 +70,11 @@ interface WorkspacePlanRow {
   created_at: string;
 }
 
-interface RollupDelta {
-  workspaceId: string;
-  weekStart: string;
-  weekEnd: string;
-  periodStart: string;
-  /** The plan `DB` holds now; the quota's fallback when no plan change is recorded. */
-  currentPlan: PlanId;
-  organizationMicrousd: number;
-  rallyMicrousd: number;
+/** The row's plan, or an error naming why it is not one: `plan` has no CHECK, so the schema is the guard. */
+function workspacePlanId(row: WorkspacePlanRow): PlanId {
+  const parsed = PlanIdSchema.safeParse(row.plan);
+  if (!parsed.success) throw new Error(zodDiagnosticCode(parsed.error, "workspace_plan") ?? "workspace_plan_invalid");
+  return parsed.data;
 }
 
 /** The plan in force at `?` (a week's end), mapped to its weekly quota. */
@@ -105,8 +101,12 @@ function placeholders(count: number): string {
  *
  * Repeated event IDs inside the batch are dropped first, then IDs already in
  * `usage_events`; without the first step two copies in one batch would both
- * be counted. Costs are only added into totals, never split into overage, so
- * the result does not depend on the order events arrive in.
+ * be counted. Those two reads only keep the count honest: what guarantees an
+ * event is added once is that its rollup increment runs only if its
+ * `usage_events` insert did (`changes() = 1`), inside the same transaction,
+ * so two batches carrying one event count it once even if they overlap.
+ * Costs are only added into totals, never split into overage, so the result
+ * does not depend on the order events arrive in.
  */
 export async function applyUsageBatch(
   env: Pick<Env, "DB" | "USAGE_DB">,
@@ -137,7 +137,6 @@ export async function applyUsageBatch(
   ).bind(...workspaceIds).all<WorkspacePlanRow>();
   const byId = new Map(workspaces.results.map((row) => [row.id, row]));
 
-  const deltas = new Map<string, RollupDelta>();
   const statements: D1PreparedStatement[] = [];
   for (const event of unique.values()) {
     const workspace = byId.get(event.workspaceId);
@@ -146,25 +145,14 @@ export async function applyUsageBatch(
       outcome.unknownWorkspace += 1;
       continue;
     }
-    const plan = PlanIdSchema.parse(workspace.plan);
+    const plan = workspacePlanId(workspace);
     const createdAtMs = Date.parse(workspace.created_at);
     const occurredAtMs = Date.parse(event.occurredAt);
-    const weekStart = new Date(usageWeekStart(createdAtMs, occurredAtMs)).toISOString();
+    const weekStartMs = usageWeekStart(createdAtMs, occurredAtMs);
+    const weekStart = new Date(weekStartMs).toISOString();
+    const weekEnd = new Date(weekStartMs + WEEK_MS).toISOString();
     const periodStart = new Date(usagePeriod(createdAtMs, occurredAtMs).start).toISOString();
     const organizationPays = ORGANIZATION_PAYS[event.activity];
-    const key = `${event.workspaceId}|${weekStart}|${periodStart}`;
-    const delta = deltas.get(key) ?? {
-      workspaceId: event.workspaceId,
-      weekStart,
-      weekEnd: new Date(Date.parse(weekStart) + WEEK_MS).toISOString(),
-      periodStart,
-      currentPlan: plan,
-      organizationMicrousd: 0,
-      rallyMicrousd: 0,
-    };
-    if (organizationPays) delta.organizationMicrousd += event.costMicrousd;
-    else delta.rallyMicrousd += event.costMicrousd;
-    deltas.set(key, delta);
     statements.push(env.USAGE_DB.prepare(
       `INSERT INTO usage_events (event_id, workspace_id, activity, occurred_at, cost_microusd, organization_pays,
          model, user_id, workstream_id, substream_id, sidekick_id, received_at)
@@ -175,39 +163,44 @@ export async function applyUsageBatch(
       organizationPays ? 1 : 0, event.model, event.refs.userId ?? null, event.refs.workstreamId ?? null,
       event.refs.substreamId ?? null, event.refs.sidekickId ?? null, receivedAt,
     ));
-    outcome.applied += 1;
-    outcome.perActivity[event.activity] = (outcome.perActivity[event.activity] ?? 0) + 1;
-  }
-  for (const delta of deltas.values()) {
-    // A new row's quota is the plan in force at the end of its week, read from
-    // `usage_plan_changes` inside this insert: the latest change before the
-    // week ended, else the plan the first later change replaced, else the
-    // plan `DB` holds. Reading it here rather than from the batch's earlier
-    // read is what keeps a late event's past week on that week's plan and a
-    // concurrent plan change from being lost. An existing row keeps its quota,
-    // which only a plan change rewrites.
+    // Runs only if the insert above added the event. A new row's quota is
+    // the plan in force at the end of its week, read from
+    // `usage_plan_changes` inside this statement: the latest change before
+    // the week ended, else the plan the first later change replaced, else the
+    // plan `DB` holds now. Reading it here rather than from the batch's
+    // earlier read is what keeps a late event's past week on that week's plan
+    // and a concurrent plan change from being lost. An existing row keeps its
+    // quota, which only a plan change rewrites.
     statements.push(env.USAGE_DB.prepare(
       `INSERT INTO usage_rollups (workspace_id, week_start, period_start, quota_microusd, organization_microusd, rally_microusd)
-       VALUES (?, ?, ?, ${PLAN_QUOTA_SQL}, ?, ?)
+       SELECT ?, ?, ?, ${PLAN_QUOTA_SQL}, ?, ? WHERE changes() = 1
        ON CONFLICT (workspace_id, week_start, period_start) DO UPDATE SET
          organization_microusd = organization_microusd + excluded.organization_microusd,
          rally_microusd = rally_microusd + excluded.rally_microusd`,
     ).bind(
-      delta.workspaceId, delta.weekStart, delta.periodStart,
-      delta.workspaceId, delta.weekEnd, delta.workspaceId, delta.weekEnd, delta.currentPlan,
+      event.workspaceId, weekStart, periodStart,
+      event.workspaceId, weekEnd, event.workspaceId, weekEnd, plan,
       ...PLAN_QUOTA_BINDINGS,
-      delta.organizationMicrousd, delta.rallyMicrousd,
+      organizationPays ? event.costMicrousd : 0, organizationPays ? 0 : event.costMicrousd,
     ));
+    outcome.applied += 1;
+    outcome.perActivity[event.activity] = (outcome.perActivity[event.activity] ?? 0) + 1;
   }
   if (statements.length > 0) await env.USAGE_DB.batch(statements);
   return outcome;
 }
 
-async function workspacePlan(env: Pick<Env, "DB">, workspaceId: string): Promise<{ plan: PlanId; createdAtMs: number } | null> {
-  const row = await env.DB.prepare(`SELECT id, plan, created_at FROM workspaces WHERE id = ?`)
-    .bind(workspaceId).first<WorkspacePlanRow>();
+async function workspacePlan(
+  env: Pick<Env, "DB">,
+  workspaceId: string,
+  region?: string,
+): Promise<{ plan: PlanId; createdAtMs: number } | null> {
+  const row = region === undefined
+    ? await env.DB.prepare(`SELECT id, plan, created_at FROM workspaces WHERE id = ?`).bind(workspaceId).first<WorkspacePlanRow>()
+    : await env.DB.prepare(`SELECT id, plan, created_at FROM workspaces WHERE id = ? AND region = ?`)
+      .bind(workspaceId, region).first<WorkspacePlanRow>();
   if (!row) return null;
-  return { plan: PlanIdSchema.parse(row.plan), createdAtMs: Date.parse(row.created_at) };
+  return { plan: workspacePlanId(row), createdAtMs: Date.parse(row.created_at) };
 }
 
 /**
@@ -259,10 +252,7 @@ export async function setWorkspacePlan(
 ): Promise<boolean> {
   // Only a workspace this region owns: a row for another region's workspace
   // can sit in the table, and its ledger is not here.
-  const owned = await env.DB.prepare(`SELECT 1 AS owned FROM workspaces WHERE id = ? AND region = ?`)
-    .bind(workspaceId, env.AVALON_REGION).first<{ owned: number }>();
-  if (!owned) return false;
-  const workspace = await workspacePlan(env, workspaceId);
+  const workspace = await workspacePlan(env, workspaceId, env.AVALON_REGION);
   if (!workspace) return false;
   const weekStart = new Date(usageWeekStart(workspace.createdAtMs, nowMs)).toISOString();
   const at = new Date(nowMs).toISOString();

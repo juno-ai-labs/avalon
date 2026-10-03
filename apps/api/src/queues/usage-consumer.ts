@@ -50,14 +50,14 @@ export async function consumeUsageQueue(
   }
   const receivedAt = new Date(now()).toISOString();
   const events = accepted.map((entry) => entry.event);
-  // The lakehouse first, and the whole batch: if this send fails the batch
-  // retries before D1 has seen it, so no event can reach D1 and miss R2.
-  // A retry can therefore write an event to R2 twice; readers deduplicate by
-  // event_id. Local hosts without the binding skip it.
+  const outcome = await applyUsageBatch(env, events, receivedAt);
+  // D1 first, so a Pipelines outage never stalls the meter. If this send
+  // fails the batch retries: D1 skips what it already holds, and the whole
+  // batch is sent again, so R2 can hold an event twice and readers
+  // deduplicate by event_id. Local hosts without the binding skip it.
   if (env.USAGE_LAKEHOUSE && events.length > 0) {
     await env.USAGE_LAKEHOUSE.send(events.map((event) => usageLakehouseRecord(event, receivedAt)));
   }
-  const outcome = await applyUsageBatch(env, events, receivedAt);
   for (const entry of accepted) entry.message.ack();
   logStructuredEvent(env, "info", "usage_batch_applied", {
     queue: batch.queue,
