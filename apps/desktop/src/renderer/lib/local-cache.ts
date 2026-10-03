@@ -97,9 +97,15 @@ export function localCacheEpoch(): number {
  * workspace therefore never read each other's rows, whatever order a wipe and
  * a hydration run in; the wipe is what takes the rows off the disk, the scope
  * is what keeps them apart while they are on it.
+ *
+ * A guest's rows sit in a scope of their own. Someone removed as a member and
+ * later shared in as a guest would otherwise hydrate transcripts they read as
+ * a member before the socket refuses them; a separate scope means a guest only
+ * ever reads what they cached as a guest.
  */
-export function localCacheScope(userId: string, region: RallyRegion, workspaceId: string): string {
-  return `${userId}:${desktopWorkspaceIdentityKey(region, workspaceId)}`;
+export function localCacheScope(userId: string, region: RallyRegion, workspaceId: string, accessClass: 'member' | 'guest' = 'member'): string {
+  const base = `${userId}:${desktopWorkspaceIdentityKey(region, workspaceId)}`;
+  return accessClass === 'guest' ? `${base}:guest` : base;
 }
 
 /** Remove structured meeting snapshots; never inspect or rewrite conversation prose. */
@@ -264,9 +270,10 @@ export async function clearAllLocalCache(): Promise<void> {
 /** An account leaving one workspace removes only the rows it wrote under that scope. */
 export async function clearWorkspaceLocalCache(userId: string, region: RallyRegion, workspaceId: string): Promise<void> {
   store.advanceEpoch();
-  const scope = localCacheScope(userId, region, workspaceId);
   await withEntries('readwrite', async (store) => {
-    store.delete(prefixRange([scope]));
+    for (const accessClass of ['member', 'guest'] as const) {
+      store.delete(prefixRange([localCacheScope(userId, region, workspaceId, accessClass)]));
+    }
   }, undefined);
 }
 

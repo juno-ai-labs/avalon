@@ -455,7 +455,6 @@ export function WorkspaceSettingsScreen({
 }: { standaloneWindow?: boolean; workspace: Workspace }): React.JSX.Element {
   const {
     api,
-    host,
     session,
     runtime,
     leaveWorkspace,
@@ -463,8 +462,8 @@ export function WorkspaceSettingsScreen({
     pendingConnectorOAuth,
     setPendingConnectorOAuth,
   } = useAppSession();
+  const { host, guest } = useShellCapabilities();
   const browserHost = host === 'browser';
-  const { guest } = useShellCapabilities();
   const connectorStartAvailable = useConnectorStartAvailable(api, session);
   const workspaceSocket = useOptionalWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
@@ -479,7 +478,10 @@ export function WorkspaceSettingsScreen({
   const webhookRefreshCancelRef = useRef<HTMLButtonElement | null>(null);
   const reconnectCancelRef = useRef<HTMLButtonElement | null>(null);
   const disconnectCancelRef = useRef<HTMLButtonElement | null>(null);
-  const [activeSection, setActiveSection] = useState<SettingsSection>(initialSettingsSection);
+  const [requestedSection, setActiveSection] = useState<SettingsSection>(initialSettingsSection);
+  // Clamped while rendering, not after: a link or the hash can name a member's
+  // section, and its reads would start in the frame before an effect moved on.
+  const activeSection: SettingsSection = guest && !GUEST_SETTINGS_SECTIONS.has(requestedSection) ? 'account' : requestedSection;
   const [navigationQuery, setNavigationQuery] = useState('');
   const [connectionFilter, setConnectionFilter] = useState<ConnectionFilter>('not_connected');
   const [githubSettingsConnectionId, setGitHubSettingsConnectionId] = useState<string | null>(null);

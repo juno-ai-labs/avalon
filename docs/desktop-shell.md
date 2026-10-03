@@ -296,6 +296,8 @@ known items, which would make the sidebar decide what a host offers.
 sidebar goes through `footerItems` as `SidebarRow`s, not into the list. The
 host decides what appears; the sidebar only places it.
 
+Shipped in #1088.
+
 
 ### 2026-10-02 — Space pickers lead with All
 
