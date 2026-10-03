@@ -38,6 +38,18 @@ describe('layout-independent import verification', () => {
       .toThrow('verification.checks[0].passed');
     expect(SessionImportVerificationSchema.safeParse({ ...evidence, checks: [] }).success).toBe(false);
   });
+  it('reads persisted contract-2 finish actions while requiring checks in new model inputs', () => {
+    const legacy = { branch: evidence.branch, page: evidence.page, fileCount: evidence.fileCount };
+    expect(DesktopActionSchema.parse({ kind: 'session_import.finish', title: 'Chat', messages: 'handle', verification: legacy }))
+      .toMatchObject({ verification: legacy });
+    expect(SessionImportVerificationSchema.safeParse(legacy).success).toBe(false);
+    expect(() => verifySessionImport(messages, legacy)).not.toThrow();
+  });
+  it('accepts a repaired comparison only after its latest result succeeds', () => {
+    expect(() => verifySessionImport(messages, { ...evidence, checks: [{ name: 'user text', passed: true,
+      basis: 'The collapsed paragraph was missing; expanded it, repaired the text and compared the full prompt again.' }] }))
+      .not.toThrow();
+  });
   it('refuses missing file accounting', () => {
     expect(() => verifySessionImport(messages, { ...evidence, fileCount: 1 })).toThrow('verification.fileCount');
   });

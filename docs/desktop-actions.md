@@ -164,6 +164,10 @@ same frames. Per Rally's policy, no action asks the person to confirm it.
   receipt under the run lifecycle (`HarnessTool.deadline: "run"`), so a generic
   tool timer cannot turn a committed import into an ambiguous failure. For other
   tools, `TOOL_DEFAULT_TIMEOUT_MS` ends a wait. The person's Cancel stops the run.
+  Import runs also accept a run-wide wall-clock policy; it remains open pending
+  a team-set value (`MAX_SESSION_IMPORT_RUN_MS`). A desktop that quits without
+  cancelling can therefore still leave its finish pending. Reconnect reoffers
+  the recorded action; this is not currently guaranteed to end within a finite time.
 - A dropped socket reconnects after a second and is offered every pending action
   again.
 
@@ -197,7 +201,7 @@ hands on.
 
 **Why:** A committed import's success arrived 1.2 seconds after the generic 30-second tool timer. The durable desktop answer said success while the tool receipt and run said failure.
 
-**Changed:** `import_finish` selects the host-only run deadline policy and waits for the desktop's durable answer without a second tool timer. Browser tools keep their ordinary deadlines.
+**Changed:** `import_finish` selects the host-only run deadline policy and waits for the desktop's durable answer without a second tool timer. Browser tools keep their ordinary deadlines. The import-wide lifetime control subtracts elapsed durable run time on resume; it is open until the team chooses a value. Persisted contract-2 finish actions and their recorded inputs keep their original wire shape on replay, while newly advertised model inputs require checks.
 
 **Considered and rejected:** Increasing the generic timer or treating every timeout as success. Neither establishes whether a write committed. Run cancellation still stops waiting and retains uncertain-write semantics.
 

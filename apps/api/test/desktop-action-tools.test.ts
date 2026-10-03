@@ -29,6 +29,17 @@ function tool(name: string, executor: DesktopActionExecutor | undefined) {
 }
 
 describe("desktop action tools", () => {
+  it("executes recorded contract-2 tool input without synthesizing checks", async () => {
+    const legacy = { branch: verification.branch, page: verification.page, fileCount: verification.fileCount };
+    const executor = vi.fn<DesktopActionExecutor>(async () => ({ ok: true, result: { workstreamId: "channel", messages: 4 } }));
+    expect((await tool("import_finish", executor).execute({ title: "Old", messages: "old-handle", verification: legacy }, { ...context, replaying: true })).output)
+      .toEqual({ imported: true, messages: 4 });
+    await expect(tool("import_finish", executor).execute({ title: "New", messages: "handle", verification: legacy }, context))
+      .rejects.toThrow();
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(executor.mock.calls[0]?.[0].action).toEqual({ kind: "session_import.finish", title: "Old", messages: "old-handle", verification: legacy });
+  });
+
   it("keeps the browser call's title in its settled summary", async () => {
     const executor: DesktopActionExecutor = async () => ({ ok: true, result: { output: [] } });
     const result = await tool("browser_js", executor).execute({ code: "await rally.network.list()", title: "Find conversation data" }, context);

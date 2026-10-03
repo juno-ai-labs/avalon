@@ -157,7 +157,7 @@ restoring the code.
 
 **Why:** The import model downloaded independent originals in sequential loops, paying each network delay in turn.
 
-**Changed:** The page-local `rally.downloadFiles` helper concurrently fetches and stores files, returns outcomes in source order, and names missing originals and size mismatches. Provider-specific link resolution remains in page script; credentials never cross to the model.
+**Changed:** The page-local `rally.downloadFiles` helper concurrently fetches and stores files, returns outcomes in source order, and names missing originals and size mismatches. Declared oversized responses are rejected before body consumption; actual byte sizes are checked before storage. Handled per-file store failures retain successful siblings while every started store drains. Provider-specific link resolution remains in page script; credentials never cross to the model. Successful references must be projected to `{ handle, name, mimeType }` for the strict import payload, optionally adding `attachment`/`artifact` kind. Transient network, 429 and 5xx failures require retry or route repair.
 
 **Considered and rejected:** A fixed worker-pool cap and provider-specific downloader. Existing browser and store boundaries own resource limits; the helper works with ordinary page fetch descriptors.
 
