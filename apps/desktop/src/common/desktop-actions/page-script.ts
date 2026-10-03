@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { normalizePageText } from './page-text';
-import { downloadPageFiles } from './page-files';
+import { downloadPageFiles, MAX_PAGE_PARALLEL_DOWNLOADS } from './page-files';
 import { MAX_STORED_FILE_BYTES } from './store';
 
 const PageStoredSchema = z.object({
@@ -40,7 +40,7 @@ export type PageStored = z.infer<typeof PageStoredSchema>;
  * syntax error therefore fails the whole expression, and the caller reports
  * that as a script error.
  */
-export function pageScript(body: string): string {
+export function pageScript(body: string, maxParallelDownloads = MAX_PAGE_PARALLEL_DOWNLOADS): string {
   return `(async () => {
     const maxFileBytes = ${MAX_STORED_FILE_BYTES};
     const pending = [];
@@ -92,7 +92,7 @@ export function pageScript(body: string): string {
       normalizeText: ${normalizePageText.toString()},
       // The helper catches each store failure and returns its named outcome.
       // Ordinary unawaited stores still fail the page call; every operation drains.
-      downloadFiles: (files) => (${downloadPageFiles.toString()})(files, maxFileBytes, (value, options) => store(value, options, true)),
+      downloadFiles: (files) => (${downloadPageFiles.toString()})(files, maxFileBytes, (value, options) => store(value, options, true), ${maxParallelDownloads}),
       store: (value, options) => store(value, options),
     });
     try {
