@@ -626,6 +626,19 @@ describe("space dashboard conversation page", () => {
     }, { timeout: 5_000 });
     const rails = member.connection.frames.find((frame) => (frame as { requestId?: string }).requestId === railRequestId) as { rails: unknown[]; unavailable: string[] };
     expect(rails).toMatchObject({ rails: [], unavailable: [PRIVATE_CHANNEL] });
+
+    // Main's face pile is Main's audience. The member has the Channel in front
+    // of them, and neither joins it nor is told who is in it.
+    const owner = await listed(OWNER);
+    const presence = (frames: unknown[]) => frames.filter((frame) => (frame as { type?: string }).type === "workspace_presence") as Array<{ userIds: string[] }>;
+    member.connection.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: PRIVATE_CHANNEL }));
+    await vi.waitFor(() => {
+      expect(member.connection.frames.some((frame) => (frame as { type?: string }).type === "workspace_workstream_recency")).toBe(true);
+    }, { timeout: 5_000 });
+    owner.connection.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: PRIVATE_CHANNEL }));
+    await vi.waitFor(() => { expect(presence(owner.connection.frames).length).toBeGreaterThan(0); }, { timeout: 5_000 });
+    expect(presence(owner.connection.frames).flatMap((frame) => frame.userIds)).not.toContain(MEMBER);
+    expect(presence(member.connection.frames)).toEqual([]);
   });
 
   it("given a breakout in a Channel this viewer cannot see, then that Channel is a conversation-directory candidate for them alone", async () => {
@@ -848,6 +861,16 @@ describe("space dashboard conversation page", () => {
   it("sends a guest's workspace socket nothing of an Organization-wide Channel they are not in", async () => {
     await openChannelObject(CHANNEL_A);
     await publishChannel(CHANNEL_A, [channelCommonEffect("Org-wide roadmap"), viewerEffect(OWNER)]);
+    // A pin outlives a change of relationship: somebody who pinned this
+    // Channel as a member and is a guest now keeps the row.
+    const spaceId = await reserve("Roadmap");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workspace_workstream_pins (user_id, space_id, workstream_id, position, created_at, updated_at)
+         VALUES (?, ?, ?, 0, 0, 0)`,
+        GUEST, spaceId, CHANNEL_A,
+      );
+    });
 
     // The member sees the Organization-public Channel; the guest, never shared
     // into it, must not, by any of the socket's three paths.
