@@ -134,13 +134,18 @@ it("forwards the member shell's route families and still refuses token minting a
   const browser = new Hono<HonoAppEnv>();
   browser.route("/browser",createBrowserRoutes((forwarded,c) => api.fetch(forwarded,c.env)));
   browser.onError(errorHandler);
-  for (const family of ["spaces","projects","onboarding","work-opportunities","digest","push-devices","workspaces"]) {
+  for (const family of ["spaces","projects","onboarding/account","work-opportunities","digest","push-devices","workspaces"]) {
     const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/${family}/probe`,{ headers:{ cookie:entry.cookie } },bindings());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ path:`/${family}/probe`,workspaceId });
   }
   for (const family of ["auth","internal","ingest","access","slack","sideline","dev"]) {
     const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/${family}/probe`,{ headers:{ cookie:entry.cookie } },bindings());
+    expect(response.status).toBe(404);
+  }
+  // These onboarding steps answer with bearer tokens, which browser JavaScript must never hold.
+  for (const path of ["onboarding","onboarding/workspace","onboarding/workspace/activate","onboarding/invitations/abc/accept","onboarding-account"]) {
+    const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/${path}`,{ headers:{ cookie:entry.cookie } },bindings());
     expect(response.status).toBe(404);
   }
 });
