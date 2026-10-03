@@ -12,21 +12,28 @@ const token = z.string().regex(/^[0-9a-f]+$/i);
 
 /**
  * The push services browsers subscribe through. A subscription endpoint is a
- * URL the Worker later POSTs to, so only these hosts are accepted: at
+ * URL the Worker later POSTs to, so only these are accepted: at
  * registration, and again before each send. Chrome and Edge on FCM, Firefox on
- * Mozilla autopush, Safari on Apple, and Edge on Windows on WNS.
+ * Mozilla autopush, Safari on Apple, and Edge on Windows on WNS. Each is held
+ * to the path its subscription URLs take: the same hosts also serve
+ * credential-gated APIs (FCM's HTTP v1, WNS app channels), whose `401` must not
+ * read as this deployment's VAPID key being refused.
  */
-export const WEB_PUSH_SERVICE_HOSTS = ["fcm.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com"] as const;
-/** WNS hands out per-region hosts under this suffix. */
-export const WEB_PUSH_SERVICE_HOST_SUFFIXES = [".notify.windows.com"] as const;
+const WEB_PUSH_SERVICES: ReadonlyArray<{ host: string | RegExp; path: RegExp }> = [
+  { host: "fcm.googleapis.com", path: /^\/(?:fcm\/send|wp)\/[^/]+$/u },
+  { host: "updates.push.services.mozilla.com", path: /^\/wpush\/v[12]\/[^/]+$/u },
+  { host: "web.push.apple.com", path: /^\/[^/]+$/u },
+  // WNS hands out per-region hosts.
+  { host: /^[a-z0-9-]+\.notify\.windows\.com$/u, path: /^\/w\/$/u },
+];
 
-/** An HTTPS URL on a known push service, with no userinfo and the default port. */
+/** A subscription URL on a known push service: HTTPS, no userinfo, the default port, its own path shape. */
 export function isWebPushServiceUrl(value: string): boolean {
   let url: URL;
   try { url = new URL(value); } catch { return false; }
   if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
-  return (WEB_PUSH_SERVICE_HOSTS as readonly string[]).includes(url.hostname)
-    || WEB_PUSH_SERVICE_HOST_SUFFIXES.some((suffix) => url.hostname.endsWith(suffix));
+  return WEB_PUSH_SERVICES.some(({ host, path }) =>
+    (typeof host === "string" ? url.hostname === host : host.test(url.hostname)) && path.test(url.pathname));
 }
 
 const appVersion = z.string();
