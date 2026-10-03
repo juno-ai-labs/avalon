@@ -7,7 +7,6 @@ import { createApp } from "../src/app";
 import type { HonoAppEnv } from "../src/env";
 import { SessionSchema, WorkspaceMemberSchema } from "@rally/contracts";
 import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
-import { asWorkspaceId } from "@rally/contracts";
 import { AuthService } from "../src/services/auth-service";
 import { sha256 } from "../src/lib/crypto";
 import { requireAuth } from "../src/middleware/auth";
@@ -69,20 +68,16 @@ beforeEach(() => {
 afterEach(() => { database.close(); });
 
 describe("authentication in the complete application router", () => {
-  it("withholds guest workspaces from desktop discovery and activation", async () => {
+  // Activation of a guest relationship is proved across deployments in browser-regions.test.ts.
+  it("offers a guest relationship to desktop discovery as a guest", async () => {
     const service = new RegionalOnboardingService(env());
     const identity = { platformUserId: userId, googleSubject: "google-subject",
       email: "member@example.com", name: "Member", avatarUrl: null,
       timezone: "UTC", createdAt: at };
     expect((await service.discover(identity)).workspaces.map((workspace) => workspace.id)).toContain(workspaceId);
     database.prepare("UPDATE workspace_members SET access_class = 'guest', role = NULL WHERE user_id = ?").run(userId);
-    expect((await service.discover(identity)).workspaces).toEqual([]);
-    await expect(service.activate({ identity, operationId: sessionId,
-      workspaceId: asWorkspaceId(workspaceId), placementAffinity: "wnam",
-      preference: { preferenceSubjectHandle: sessionId, enabled: false, version: 2 },
-    })).rejects.toMatchObject({ status: 403, code: "workspace_access_denied" });
-    // Browser/API discovery remains available through the guest-aware path.
-    expect((await new AuthService(env()).listRegionalWorkspaces(userId)).map((workspace) => workspace.id)).toContain(workspaceId);
+    expect((await service.discover(identity)).workspaces.map((workspace) => [workspace.id, workspace.role, workspace.accessClass]))
+      .toEqual([[workspaceId, null, "guest"]]);
   });
 
   it("serializes a guest in the ordinary workspace member directory", async () => {
