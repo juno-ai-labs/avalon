@@ -1801,7 +1801,7 @@ describe('Sidebar channel markers', () => {
 
     expect(pill('Hiring')).toBeVisible();
     expect(screen.queryByText('These spaces may be out of date.')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh spaces' }));
     expect(onRetrySpaces).toHaveBeenCalled();
   });
 
