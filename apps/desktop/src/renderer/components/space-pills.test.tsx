@@ -233,7 +233,11 @@ describe('SpacePills', () => {
     const onRetry = vi.fn();
     renderPills({ onRetry, outOfDate: true });
 
+    expect(screen.getByRole('button', { name: 'New space' })).toBeInTheDocument();
     expect(pill('Launch')).toBeInTheDocument();
+    const spaces = screen.getByRole('group', { name: 'Spaces' });
+    expect(within(spaces).getByRole('button', { name: 'All' })).toBeInTheDocument();
+    expect(within(spaces).queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(onRetry).toHaveBeenCalledOnce();
   });
