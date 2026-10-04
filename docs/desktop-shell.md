@@ -303,6 +303,8 @@ window actions.
 `space-pill-add` mark (or it will be clipped by the 40px lock). `SidebarRefreshRow`
 stays the right control for an actual navigation list, such as Sidekicks.
 
+Shipped in #1090.
+
 ### 2026-10-03 — Footer items above the account menu
 
 **What changed:** The sidebar takes `footerItems`, rows drawn above the line
