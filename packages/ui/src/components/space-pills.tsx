@@ -1,4 +1,4 @@
-import { IconFolderPlus, IconRefresh } from '@tabler/icons-react';
+import { IconFolderPlus, type TablerIcon } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ComponentPropsWithRef, ReactNode } from 'react';
 
@@ -30,26 +30,21 @@ export function SpacePill({ className, selected, ...props }: ComponentPropsWithR
   />;
 }
 
-/** The round New space control that leads the strip. The host supplies its tip. */
-export function SpacePillAddButton({ className, label = 'New space', ...props }: ComponentPropsWithRef<'button'> & {
-  label?: string;
+/** A round 28px mark that leads the strip. The host supplies the icon, name, and any tip. */
+export function SpacePillIconButton({ className, icon: Icon, label, ...props }: ComponentPropsWithRef<'button'> & {
+  icon: TablerIcon;
+  label: string;
 }): React.JSX.Element {
   return <button aria-label={label} className={clsx('space-pill-add', className)} type="button" {...props}>
-    <IconFolderPlus aria-hidden="true" size={15} stroke={1.8} />
+    <Icon aria-hidden="true" size={15} stroke={1.8} />
   </button>;
 }
 
-/**
- * The round Refresh control that sits with the pills when the directory is
- * stale. Same 28px mark as New space, so it cannot grow the strip the way a
- * navigation row would.
- */
-export function SpacePillRefreshButton({ className, label = 'Refresh', ...props }: ComponentPropsWithRef<'button'> & {
+/** The round New space control that leads the strip. The host supplies its tip. */
+export function SpacePillAddButton({ label = 'New space', ...props }: ComponentPropsWithRef<'button'> & {
   label?: string;
 }): React.JSX.Element {
-  return <button aria-label={label} className={clsx('space-pill-add', className)} type="button" {...props}>
-    <IconRefresh aria-hidden="true" size={15} stroke={1.8} />
-  </button>;
+  return <SpacePillIconButton icon={IconFolderPlus} label={label} {...props} />;
 }
 
 /**
