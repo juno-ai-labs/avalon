@@ -229,12 +229,14 @@ describe('SpacePills', () => {
     expect(within(screen.getByRole('group', { name: 'Spaces' })).queryAllByRole('button')).toHaveLength(0);
   });
 
-  it('keeps stale pills and offers a refresh', () => {
+  it('keeps stale pills and offers a refresh outside the scrolling Spaces group', () => {
     const onRetry = vi.fn();
     renderPills({ onRetry, outOfDate: true });
 
     expect(pill('Launch')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    const spaces = screen.getByRole('group', { name: 'Spaces' });
+    expect(within(spaces).queryByRole('button', { name: 'Refresh spaces' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh spaces' }));
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
