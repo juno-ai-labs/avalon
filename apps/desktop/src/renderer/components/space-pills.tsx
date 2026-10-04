@@ -2,8 +2,7 @@ import { IconArchive, IconRestore } from '@tabler/icons-react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-icon';
-import { SpacePill, SpacePillAddButton, SpacePillStrip } from '@rally/ui/components/space-pills';
-import { SidebarRefreshRow } from '@rally/ui/components/sidebar-refresh-row';
+import { SpacePill, SpacePillAddButton, SpacePillRefreshButton, SpacePillStrip } from '@rally/ui/components/space-pills';
 import { compareAlphabeticalName } from '@rally/ui/lib/alphabetical';
 import clsx from 'clsx';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react';
@@ -181,16 +180,21 @@ export function SpacePills({
       </ContextMenu.Content>
     </ContextMenu.Portal>
   </ContextMenu.Root>;
+  const refreshButton = ready && outOfDate
+    ? <SpacePillRefreshButton onClick={onRetry} />
+    : null;
+  const leading = addButton || refreshButton
+    ? <>{addButton}{refreshButton}</>
+    : undefined;
 
   return (
     <>
-      <SpacePillStrip leading={addButton || undefined} ref={scrollRef}>
+      <SpacePillStrip leading={leading} ref={scrollRef}>
         {!ready ? (
           <span className="space-pill-strip-note">Opening this organization…</span>
         ) : loading && spaces.length === 0 ? (
           <span aria-hidden="true" className="skeleton-bar space-pill-skeleton" />
         ) : <>
-          {outOfDate && <SidebarRefreshRow onRefresh={onRetry} />}
           <SpacePill onClick={() => onSelect(null)} selected={selectedSpaceId === null}>All</SpacePill>
           {orderedSpaces.map((space) => (
             <ContextMenu.Root key={space.id}>
