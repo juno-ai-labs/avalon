@@ -7516,8 +7516,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   display: flex;
   flex: 0 0 56px;
   height: 56px;
-  max-height: 56px;
-  min-height: 0;
   padding: 0 14px 0 calc(18px + var(--window-controls-inset));
 }
 .sidebar-top-actions { align-items: center; display: flex; gap: 8px; margin-left: auto; }
@@ -7550,21 +7548,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   color: var(--av-sys-color-palette-ink-light);
 }
 
-/* 40px is the 28px pills plus this padding-bottom. `max-height` plus
-   `overflow: hidden` is what stops a 54px navigation row (the stale-directory
-   refresh used to be one) stretching the strip and painting over the titlebar. */
-.space-pill-strip {
-  align-items: center;
-  display: flex;
-  flex: 0 0 40px;
-  gap: 6px;
-  height: 40px;
-  max-height: 40px;
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-  padding: 0 14px 10px;
-}
+.space-pill-strip { align-items: center; display: flex; flex: 0 0 auto; gap: 6px; min-width: 0; padding: 0 14px 10px; }
 .space-pill-strip-scroll {
   display: flex;
   flex: 1;

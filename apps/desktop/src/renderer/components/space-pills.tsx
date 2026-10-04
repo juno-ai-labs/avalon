@@ -1,8 +1,8 @@
-import { IconArchive, IconRestore } from '@tabler/icons-react';
+import { IconArchive, IconRefresh, IconRestore } from '@tabler/icons-react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-icon';
-import { SpacePill, SpacePillAddButton, SpacePillRefreshButton, SpacePillStrip } from '@rally/ui/components/space-pills';
+import { SpacePill, SpacePillAddButton, SpacePillIconButton, SpacePillStrip } from '@rally/ui/components/space-pills';
 import { compareAlphabeticalName } from '@rally/ui/lib/alphabetical';
 import clsx from 'clsx';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react';
@@ -12,7 +12,7 @@ import { blockedChannelLabel, spaceFailureSentence, spaceRefusalChannelIds } fro
 import type { WorkstreamSummary } from '../lib/types';
 import { NewWorkstreamMenu } from './new-workstream-menu';
 import { AcknowledgedErrorDialog, type AcknowledgedError } from './acknowledged-error-dialog';
-import { Button, InlineError, Modal } from './primitives';
+import { Button, InlineError, Modal, Tip } from './primitives';
 
 interface SpacePillsProps {
   inactiveSpaces: SpaceSummary[];
@@ -181,7 +181,9 @@ export function SpacePills({
     </ContextMenu.Portal>
   </ContextMenu.Root>;
   const refreshButton = ready && outOfDate
-    ? <SpacePillRefreshButton onClick={onRetry} />
+    ? <Tip describesTrigger={false} label="Refresh spaces">
+        <SpacePillIconButton icon={IconRefresh} label="Refresh spaces" onClick={onRetry} />
+      </Tip>
     : null;
   const leading = addButton || refreshButton
     ? <>{addButton}{refreshButton}</>

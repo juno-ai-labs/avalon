@@ -16,7 +16,7 @@ right panel.
 | Path | Responsibility |
 | --- | --- |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
-| `packages/ui/src/components/space-pills.tsx` | `SidebarTopActions` (the round buttons beside the window controls), `SpacePillStrip`, `SpacePill`, `SpacePillAddButton`, `SpacePillRefreshButton` (the 28px stale-directory control). |
+| `packages/ui/src/components/space-pills.tsx` | `SidebarTopActions` (the round buttons beside the window controls), `SpacePillStrip`, `SpacePill`, `SpacePillAddButton`, `SpacePillIconButton` (the 28px marks that lead the strip). |
 | `packages/ui/src/components/navigation.tsx` | `ChannelRowContent`: glyph, title, time, Space subtitle, activity dot. |
 | `packages/ui/src/components/title-pill.tsx` | `TitlePill`, `TitlePillHeader` (ancestors left, current centred, trailing right), the menu building blocks, `TitlePillClose`. |
 | `packages/ui/src/components/conversation-menus.tsx` | `ChannelMenu` and `BreakoutMenu`: everything the deleted Channel sidebar held, as title-pill menus. Also `ConversationRowActions` and `PENDING_SUBSTREAM_DRAFT_ID`. |
@@ -51,9 +51,7 @@ shared-navigation directory.
 
 Under it, the Space pills, whose row fades at whichever edge has pills scrolled past it (the app's scroll-edge fade, on the inline axis). The round **New space** button, a folder with a plus, leads, and its
 right-click offers **Restore archived space**. When the Space directory is
-stale (`spacesOutOfDate`), a second round **Refresh** control of the same 28px
-size sits beside it in the strip's leading slot — not a navigation row, which
-is 54px and would drop the pills off the titlebar. Then **All**, then each Space by
+stale (`spacesOutOfDate`), a round 28px **Refresh** sits beside it. Then **All**, then each Space by
 name, case-insensitive A to Z (`compareAlphabeticalName`). Pills cannot be
 reordered by drag or keyboard; dragging a Channel onto a pill still places it
 in that Space. **General has no pill.** It is where a Channel lives
@@ -284,25 +282,21 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 **What changed:** When the Space directory is out of date, the strip now shows
 a round **Refresh** control the same 28px as **New space**, in the leading slot
-that does not scroll. The 54px `SidebarRefreshRow` is gone from this strip, and
-the strip itself is locked at 40px with `overflow: hidden` so a navigation row
-cannot stretch it or paint over the titlebar.
+that does not scroll. The 54px `SidebarRefreshRow` is gone from this strip.
 
 **Why:** Opening a Channel can mark the organization socket unavailable, which
 painted the list-row refresh between **New space** and **All**. A 54px row in a
-28px strip dropped the pills and the titlebar actions off the traffic-light
-line. Quit and reopen looked fine because the socket was connected and the row
-was not mounted.
+28px strip dropped the pills off the titlebar. Quit and reopen looked fine
+because the socket was connected and the row was not mounted.
 
-**Considered and rejected:** Keeping the list row and clipping it with
-`overflow: hidden` on the strip, which would still leave a 54px-wide flex item
-shoving **All** aside and would clip focus rings. Putting Refresh in the
+**Considered and rejected:** Clipping a still-present list row, which would
+leave a 54px-wide flex item shoving **All** aside. Putting Refresh in the
 titlebar next to Search, which would bury a directory recovery action among
 window actions.
 
 **Consequences:** A recovery control in this strip has to be a 28px
-`space-pill-add` mark (or it will be clipped by the 40px lock). `SidebarRefreshRow`
-stays the right control for an actual navigation list, such as Sidekicks.
+`space-pill-add` mark. `SidebarRefreshRow` stays the right control for an
+actual navigation list, such as Sidekicks.
 
 Shipped in #1090.
 
