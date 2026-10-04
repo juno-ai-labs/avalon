@@ -285,7 +285,8 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 **What changed:** When the Space directory is out of date, the strip now shows
 a round **Refresh** control the same 28px as **New space**, in the leading slot
 that does not scroll. The 54px `SidebarRefreshRow` is gone from this strip, and
-the strip itself is locked at 40px so a navigation row cannot stretch it.
+the strip itself is locked at 40px with `overflow: hidden` so a navigation row
+cannot stretch it or paint over the titlebar.
 
 **Why:** Opening a Channel can mark the organization socket unavailable, which
 painted the list-row refresh between **New space** and **All**. A 54px row in a
