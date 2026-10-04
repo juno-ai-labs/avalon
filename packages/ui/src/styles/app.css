@@ -7550,9 +7550,9 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   color: var(--av-sys-color-palette-ink-light);
 }
 
-/* 40px is the 28px pills plus this padding-bottom. `max-height` is what
-   stops a 54px navigation row (the stale-directory refresh used to be one)
-   stretching the strip and dropping the pills off the titlebar's line. */
+/* 40px is the 28px pills plus this padding-bottom. `max-height` plus
+   `overflow: hidden` is what stops a 54px navigation row (the stale-directory
+   refresh used to be one) stretching the strip and painting over the titlebar. */
 .space-pill-strip {
   align-items: center;
   display: flex;
@@ -7562,6 +7562,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   max-height: 40px;
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
   padding: 0 14px 10px;
 }
 .space-pill-strip-scroll {
