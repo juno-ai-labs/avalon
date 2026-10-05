@@ -6,6 +6,7 @@ import { RegionSchema } from "@rally/contracts/regions";
 import { paginatedResult } from "./tool-pagination";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
+  ATTACHMENT_MAX_SOURCE_BYTES,
   ConnectorManifestSchema,
   NormalizedActivitySchema,
   type ConnectorActivityFilterField,
@@ -24,6 +25,7 @@ import {
   pollCheckpointedActivityStreams,
   zodToolInputValidationError,
   type ConnectorAdapter,
+  type ConnectorBinaryResource,
   type ConnectorConnectionContext,
   type ConnectorPollingActivitySource,
   type ConnectorObserver,
@@ -121,6 +123,7 @@ export {
   type ResolvedConnectorAdapter,
   type ConnectorToolContext,
   type ConnectorToolResult,
+  type ConnectorBinaryResource,
   type ConnectorNativeAgentAdapter,
   type ConnectorNativeAgentExecutionContext,
   type ConnectorMessagingAgentAdapter,
@@ -2545,6 +2548,24 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const hydrated = sanitizeDriveFile(payload);
         const mimeType = readString(payload, "mimeType") ?? "application/octet-stream";
         const declaredSize = Number(readString(payload, "size") ?? Number.NaN);
+        if (isMicrosoftOfficeMimeType(mimeType)) {
+          if (Number.isFinite(declaredSize) && declaredSize > ATTACHMENT_MAX_SOURCE_BYTES) {
+            throw new ConnectorError("payload_too_large", "Google Drive file exceeds the attachment conversion limit");
+          }
+          const downloadUrl = new URL(
+            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(providerResourceId)}`
+          );
+          downloadUrl.searchParams.set("alt", "media");
+          downloadUrl.searchParams.set("supportsAllDrives", "true");
+          const response = await api(connection, downloadUrl.toString(), { signal });
+          const bytes = await readBounded(response, ATTACHMENT_MAX_SOURCE_BYTES);
+          return {
+            kind: "binary",
+            bytes,
+            fileName: readString(payload, "name") ?? providerResourceId,
+            declaredMimeType: mimeType,
+          } satisfies ConnectorBinaryResource;
+        }
         let textContent: string | null = null;
         let contentOmittedReason: string | null = "Unsupported or potentially large file type";
 
@@ -4881,6 +4902,11 @@ function isTextLikeMimeType(mimeType: string): boolean {
     mimeType.startsWith("text/") ||
     ["application/json", "application/xml", "application/javascript", "application/x-yaml"].includes(mimeType)
   );
+}
+
+function isMicrosoftOfficeMimeType(mimeType: string): boolean {
+  return mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    || mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 }
 
 async function mapWithConcurrency<T, U>(

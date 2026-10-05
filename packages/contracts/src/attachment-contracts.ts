@@ -33,6 +33,9 @@ export const ATTACHMENT_PROCESSING_LEASE_MS = 5 * 60_000;
  */
 export const ATTACHMENT_CONVERTER_TIMEOUT_MS = 30_000;
 
+/** Largest original the in-isolate attachment converter accepts. */
+export const ATTACHMENT_MAX_SOURCE_BYTES = 8 * 1_024 * 1_024;
+
 export const ATTACHMENT_KIND_ENTRIES = [
   { kind: "image", description: "an image the agent can view" },
   { kind: "audio", description: "an audio file the user can play" },

@@ -1,5 +1,5 @@
 import { protectCanvaReference, readCanvaReference } from "./canva-resource-access";
-import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
+import { ConnectorError, type ConnectorBinaryResource, type ConnectorConnectionContext } from "@rally/connectors";
 import {
   classifyAttachmentKind,
   IdSchema,
@@ -551,9 +551,17 @@ export class ResourceService {
     if (JSON.stringify(context.credentials) !== before) {
       await this.persistConnectionCredentials(connection, context.credentials);
     }
-    const serialized = JSON.stringify(hydrated);
-    const contentSha256 = await sha256Hex(serialized);
-    const idKey = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}/hydrated/${contentSha256}/${crypto.randomUUID()}.json`;
+    const binary = connectorBinaryResource(hydrated);
+    const content = binary?.bytes ?? JSON.stringify(hydrated);
+    if (binary) {
+      const verifiedMimeType = verifyAttachmentMimeType(binary.bytes, binary.fileName, binary.declaredMimeType);
+      if (verifiedMimeType !== binary.declaredMimeType) {
+        throw new ApiError(422, "resource_mime_mismatch", "The downloaded Drive file did not match its declared type");
+      }
+    }
+    const contentSha256 = await sha256Hex(content);
+    const suffix = binary ? "source" : "json";
+    const idKey = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}/hydrated/${contentSha256}/${crypto.randomUUID()}.${suffix}`;
     const at = nowIso();
     if (resource.content_sha256 === contentSha256) {
       await (await this.workspaceDirectory()).refreshResourceHydration({
@@ -576,8 +584,8 @@ export class ResourceService {
         workspaceId: this.auth.workspaceId,
         resourceId: id,
         objectKind: "original",
-        value: serialized,
-        options: { httpMetadata: { contentType: "application/json" } },
+        value: content,
+        options: { httpMetadata: { contentType: binary?.declaredMimeType ?? "application/json" } },
         at,
       });
       // An RPC failure keeps the object staged because WorkspaceDO may have
@@ -921,6 +929,18 @@ function authorizedDerivativeResource(row: Record<string, unknown>): AuthorizedD
     modelContentClaimedAt: nullableString(row.model_content_claimed_at),
     modelContentClaimId: nullableString(row.model_content_claim_id),
   };
+}
+
+function connectorBinaryResource(value: unknown): ConnectorBinaryResource | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<ConnectorBinaryResource>;
+  if (candidate.kind !== "binary") return null;
+  if (!(candidate.bytes instanceof Uint8Array
+    && typeof candidate.fileName === "string"
+    && typeof candidate.declaredMimeType === "string")) {
+    throw new ApiError(422, "invalid_connector_binary", "The connector returned an invalid binary resource");
+  }
+  return candidate as ConnectorBinaryResource;
 }
 
 function nullableString(value: unknown): string | null {
