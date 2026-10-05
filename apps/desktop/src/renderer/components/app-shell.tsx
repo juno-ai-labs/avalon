@@ -670,12 +670,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',
   ].filter(Boolean).join(' ');
   const {
-    loadedSpaceIds, prioritizeSpace, reconnect, setForegroundWorkstreamId, sidebarConnect, state: workspaceSocketState,
+    loadedSpaceIds, prioritizeSpace, setForegroundWorkstreamId, sidebarConnect, state: workspaceSocketState,
   } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
-  // A pending Channel may not be in the Organization's directory yet, and the
-  // workspace socket closes for good on presence naming a Channel it cannot see.
+  // A pending Channel may not be in the Organization's directory yet, and
+  // WorkspaceDO records presence naming one it has not listed as no Channel.
   const foregroundWorkstreamId = activeRealtimeWorkstreamId(activeWorkstreamId, workstreams.data);
   useEffect(() => {
     setForegroundWorkstreamId(foregroundWorkstreamId);
@@ -803,8 +803,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // The rows on screen are the last ones the socket delivered and the
         // connection is down. They stay, marked out of date, with the one retry
         // there is: a list nothing fetches has nothing to refetch.
-        spacesOutOfDate={workspaceSocketState === 'unavailable'}
-        onRetrySpaces={reconnect}
         onArchiveWorkstream={async (workstream) => {
           // Thrown rather than returned, unlike the handlers around it. The
           // sidebar treats this promise resolving as the archive having

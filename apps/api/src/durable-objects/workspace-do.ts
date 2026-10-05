@@ -6116,32 +6116,45 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // fence the older command before it can restore stale presence.
       const currentAttachment = readAttachment(socket);
       if (!currentAttachment || parsed.data.revision <= currentAttachment.presenceRevision) return;
-      if (!currentAttachment.subscribed
-        || (parsed.data.foregroundWorkstreamId !== null
-          && !this.directoryVisible(viewerOf(currentAttachment), parsed.data.foregroundWorkstreamId))) {
+      if (!currentAttachment.subscribed) {
         this.closeSocket(socket, currentAttachment, {
           code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
           reason: "Invalid workspace presence",
-          cause: currentAttachment.subscribed
-            ? "presence_workstream_inaccessible"
-            : "presence_before_subscribe",
+          cause: "presence_before_subscribe",
           operation: "presence",
         });
         return;
       }
+      // A Channel the viewer cannot see is recorded as no Channel at all. The
+      // renderer can route to one the directory has not listed for it yet (a
+      // Channel still being created, a link from elsewhere), and closing here
+      // ended the whole Organization socket for good: 4400 is permanent to the
+      // client, so the sidebar stayed stale until a restart.
+      const requestedWorkstreamId = parsed.data.foregroundWorkstreamId;
+      const foregroundWorkstreamId = requestedWorkstreamId !== null
+        && this.directoryVisible(viewerOf(currentAttachment), requestedWorkstreamId)
+        ? requestedWorkstreamId
+        : null;
+      if (requestedWorkstreamId !== null && foregroundWorkstreamId === null) {
+        logInfo(this.env, "workspace_presence_unlisted", {
+          workspace_id: currentAttachment.workspaceId,
+          user_id: currentAttachment.userId,
+          connection_id: currentAttachment.connectionId,
+        });
+      }
       const presenceChanged = currentAttachment.applicationState !== parsed.data.applicationState
-        || currentAttachment.foregroundWorkstreamId !== parsed.data.foregroundWorkstreamId;
+        || currentAttachment.foregroundWorkstreamId !== foregroundWorkstreamId;
       socket.serializeAttachment({
         ...currentAttachment,
         presenceRevision: parsed.data.revision,
         applicationState: parsed.data.applicationState,
-        foregroundWorkstreamId: parsed.data.foregroundWorkstreamId,
+        foregroundWorkstreamId,
       } satisfies WorkspaceSocketAttachment);
       if (presenceChanged) this.broadcastPresence();
       if (presenceChanged && parsed.data.applicationState === "foreground"
-        && parsed.data.foregroundWorkstreamId !== null) {
+        && foregroundWorkstreamId !== null) {
         const now = Date.now();
-        const workstreamId = parsed.data.foregroundWorkstreamId;
+        const workstreamId = foregroundWorkstreamId;
         // Opening a Channel is the moment its Main is about to be read. The
         // Channel control socket used to start this wake; a desktop that no
         // longer opens one says it here instead, ahead of its feed ticket.

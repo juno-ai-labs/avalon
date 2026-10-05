@@ -246,16 +246,6 @@ interface WorkspaceSocketContextValue {
    * while the organization is not connected.
    */
   refreshChannelRails(workstreamIds: readonly string[]): Promise<void>;
-  /**
-   * Abandon the backoff and try the organization connection now.
-   *
-   * The one refresh a surface painting socket-owned state can offer. Every
-   * list here is pushed rather than fetched, so a **Refresh** row beside a stale
-   * one reconnects instead — the same step the `online` listener already takes
-   * when the machine comes back.
-   * A no-op while the provider is unmounted or already connecting.
-   */
-  reconnect: () => void;
 }
 
 const WorkspaceSocketContext = createContext<WorkspaceSocketContextValue | null>(null);
@@ -395,7 +385,6 @@ export function WorkspaceSocketProvider({
     : 'connecting';
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
-  const reconnectRef = useRef<() => void>(() => undefined);
   const scheduleRailPrefetchRef = useRef<() => void>(() => undefined);
   const refreshChannelRailsRef = useRef<(workstreamIds: readonly string[]) => Promise<void>>(
     () => Promise.reject(new ApiError('The organization is not connected.', 409, 'workspace_socket_unavailable')),
@@ -1375,8 +1364,6 @@ export function WorkspaceSocketProvider({
       clearReconnect();
       void connect();
     };
-    // Same step, asked for by a person rather than by the machine coming back.
-    reconnectRef.current = online;
     const offline = (): void => {
       clearReconnect();
       clearSocketTimers();
@@ -1455,7 +1442,6 @@ export function WorkspaceSocketProvider({
       document.removeEventListener('visibilitychange', observeWindowFocus);
       stopApplicationFocus();
       reportPresenceRef.current = () => undefined;
-      reconnectRef.current = () => undefined;
       subscribed = false;
       clearReconnect();
       clearSocketTimers();
@@ -1535,7 +1521,6 @@ export function WorkspaceSocketProvider({
     (input) => listWorkstreamsRef.current(input),
     [],
   );
-  const reconnect = useCallback((): void => reconnectRef.current(), []);
   const setForegroundWorkstreamId = useCallback((workstreamId: string | null): void => {
     const parsed = WorkstreamIdSchema.safeParse(workstreamId);
     const validatedWorkstreamId = parsed.success ? parsed.data : null;
@@ -1573,7 +1558,6 @@ export function WorkspaceSocketProvider({
       walkSpaceChannels,
       prioritizeSpace,
       loadedSpaceIds,
-      reconnect,
       refreshChannelRails,
     }),
     [
@@ -1583,7 +1567,6 @@ export function WorkspaceSocketProvider({
       walkSpaceChannels,
       refreshChannelRails,
       presenceUserIdsByWorkstream,
-      reconnect,
       setForegroundWorkstreamId,
       sidebarConnect,
       exposedState,
