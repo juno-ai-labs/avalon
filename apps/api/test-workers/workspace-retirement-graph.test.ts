@@ -337,17 +337,21 @@ describe("workspace retirement graph", () => {
     expect(receipt.parents).toBe(4);
   });
 
-  it("leaves a parent that disagrees about its own identity unreceipted, and says so", async () => {
-    // The one outcome that is a failure: a directory row naming an object that
-    // holds a different identity. Tombstoning it would close the wrong object,
-    // so the walk records the node as failed and the pass reports incomplete —
-    // which is also the only path that produces a non-empty `failed`, the
-    // receipt shape the route and the Ace page render. A hosted Channel or
-    // Space parent is keyed by the id the directory names and cannot disagree,
-    // so the Sidekick, still its own object, is the parent that can.
+  it("leaves a Sidekick whose import fails unreceipted, and says so", async () => {
+    // The one outcome that is a failure: the retirement read imports a
+    // Sidekick still in its legacy object first, and an import that fails
+    // leaves nothing to close. The walk records the node as failed and the
+    // pass reports incomplete, which is also the only path that produces a
+    // non-empty `failed`, the receipt shape the route and the Ace page render.
+    // Every parent is hosted by the Organization object and keyed by the id
+    // its directory row names, so none can disagree about its own identity;
+    // a legacy object holding another Sidekick's row is what fails here.
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
     await seedDirectory(stub, workspaceId);
+    await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(`INSERT INTO sidekick_imports (sidekick_id, state) VALUES (?, 'pending')`, SIDEKICK_ID);
+    });
     const sidekick = sidekickStub(workspaceId);
     await runInDurableObject(sidekick, (instance: SidekickDO, state) => {
       state.storage.sql.exec(
@@ -382,7 +386,7 @@ describe("workspace retirement graph", () => {
     expect(receipt.complete).toBe(false);
     expect(receipt.remaining).toBe(1);
     expect(receipt.failed).toEqual([
-      { parentKind: "automation", parentId: SIDEKICK_ID, error: "conversation_parent_identity_mismatch" },
+      { parentKind: "automation", parentId: SIDEKICK_ID, error: "sidekick_export_identity_mismatch" },
     ]);
     // Not tombstoned: the mismatched object is left exactly as it was.
     expect((await sidekick.objectRetirementState()).retired).toBe(false);
