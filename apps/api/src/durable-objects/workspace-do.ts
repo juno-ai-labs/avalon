@@ -5937,7 +5937,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const now = Date.now();
       reregister = this.state.storage.transactionSync(() => this.writeSidekickImport(automationId, workspaceId, exported, now));
     } catch (error) {
-      const code = diagnosticErrorCode(error, "sidekick_import_failed");
+      // A failure that carries no code of its own is named by its class: the
+      // ledger row and the operator notice need more than the fallback, and
+      // the message itself, which may quote a stored row, stays in the log.
+      let code = diagnosticErrorCode(error, "sidekick_import_failed");
+      if (code === "sidekick_import_failed" && error instanceof Error && /^[A-Za-z]{1,60}$/u.test(error.name)) {
+        code = `sidekick_import_failed:${error.name}`;
+      }
       const attempts = this.state.storage.sql.exec<{ attempts: number }>(
         "SELECT attempts FROM sidekick_imports WHERE sidekick_id = ?", automationId,
       ).toArray()[0]?.attempts ?? 0;
@@ -5953,8 +5959,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         event: "sidekick_import_failed",
         summary: "A Sidekick could not be moved into its Organization object; its runs do not fire until it is repaired and `retry_sidekick_import` succeeds.",
         attempt: attempts + 1,
-        fields: { workspace_id: workspaceId, automation_id: automationId },
-        error: new Error(code),
+        fields: { workspace_id: workspaceId, automation_id: automationId, code },
+        error,
       });
       await this.armNextAlarm();
       throw new ApiError(503, code, "This Sidekick is being moved; try again shortly");
@@ -6085,6 +6091,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         automationId, projection.substream_id, projection.source_version, projection.payload_hash,
         projection.effect_json, projection.updated_at,
       );
+    }
+    // A pending run is started whether or not its legacy entry survived:
+    // one that lost it would otherwise stay pending for good.
+    for (const run of exported.runs) {
+      if (run.state === "pending" && this.scheduledAlarms.get(AUTOMATION_RUN_ALARM_KIND, sidekickAlarmKey(automationId, run.run_id)) === null) {
+        this.scheduledAlarms.schedule({ kind: AUTOMATION_RUN_ALARM_KIND, key: sidekickAlarmKey(automationId, run.run_id), dueAt: now }, now);
+      }
     }
     for (const alarm of exported.alarms) {
       if (alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND || alarm.kind === AUTOMATION_RUN_ALARM_KIND) {
