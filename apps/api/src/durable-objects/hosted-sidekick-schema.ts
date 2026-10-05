@@ -1,5 +1,5 @@
 /**
- * WorkspaceDO migration 88: Sidekick parents move into the Organization object.
+ * WorkspaceDO migration 91: Sidekick parents move into the Organization object.
  *
  * The directory row becomes the definition row. `automation_directory` already
  * held what the rail, the sidebar, search and retirement read about a

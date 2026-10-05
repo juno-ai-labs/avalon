@@ -16,7 +16,7 @@ conversation-parent state, as `parent_*` rows keyed by parent id
 Each automation is a conversation parent hosted in `WorkspaceDO` beside the
 Channel and Space parents: its `automation_directory` row is its definition
 row, and its revisions, schedules, runs and receipts are the `sidekick_*`
-tables keyed by `sidekick_id` (WorkspaceDO migration 88). A legacy
+tables keyed by `sidekick_id` (WorkspaceDO migration 91). A legacy
 `SidekickDO` holds a Sidekick's rows only until it is imported. See
 [`automation-lifecycle.md`](automation-lifecycle.md). D1 keeps no rebuildable
 workspace product serving projection. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
@@ -482,6 +482,12 @@ SQL joins.
   `workspace_pinned_order` (migration 87) is one person's order for the Pinned
   section under All, kept apart so older Workers and clients never meet it — and
   `workspace_space_state` is the one waterline both directories share.
+  `member_personal_system_prompts` (migration 88) is each member's personal
+  system prompt for this Organization, copied into each SubstreamAgent's
+  `personal_system_prompt_copies` (its migration 72); see
+  [`personal-system-prompt.md`](personal-system-prompt.md).
+  `member_preferences` (migration 89) holds each member's display preferences;
+  see [`member-preferences.md`](member-preferences.md).
   `space_channel_memberships` is keyed by Space and Channel with **no**
   uniqueness on the Channel, because a Channel belongs to as many Spaces as it
   was added to. `space_intents` is one row per staged cross-object operation

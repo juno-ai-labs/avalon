@@ -125,6 +125,7 @@ import {
   ExternalBindingResolutionSchema,
   ExternalBindingSuspendResultSchema,
   ExternalRoomLinkResultSchema,
+  ExternalRoomSpaceMatchResultSchema,
   type ExternalBindingClaim,
   type ExternalBindingConversationTarget,
   type ExternalBindingResolution,
@@ -1629,6 +1630,7 @@ export class SlackAgentService {
           spaceId: resolution.spaceId,
           spaceScope: resolution.space?.scope ?? "personal",
           spaceActorUserId: resolution.space?.createdByUserId ?? null,
+          spaceMatched: resolution.spaceMatched,
           claim: {
             installationId,
             path,
@@ -1699,6 +1701,26 @@ export class SlackAgentService {
       });
       await this.postRoutingFailure(
         token, channelId, channelResolution.threadable === false ? undefined : rootTs, "room_narrower_than_space", claimKey,
+      );
+      return;
+    }
+    // A room that joined an existing Space by name, rather than getting its
+    // own, may since have been shared through Slack Connect: an outside
+    // organization's thread must not open work in this Organization's Space.
+    // The binding records which it is; a room's own Space pays nothing, and
+    // Slack is asked again only when the lookup above did not ask it.
+    if (route?.kind === "spawn" && route.spaceMatched
+      && (channelResolution.externallyShared
+        ?? slackExternalRoom((await slackApi(token, "conversations.info", { channel: channelId }, AbortSignal.timeout(5_000))).channel)
+          .externallyShared)) {
+      logWarn(this.env, "external_binding_placement_refused", {
+        workspace_id: connection.workspace_id,
+        connection_id: connection.id,
+        space_id: route.spaceId,
+        code: "room_shared_externally",
+      });
+      await this.postRoutingFailure(
+        token, channelId, channelResolution.threadable === false ? undefined : rootTs, "room_shared_externally", claimKey,
       );
       return;
     }
@@ -1807,7 +1829,7 @@ export class SlackAgentService {
         outcome: linked.outcome,
         ...(linked.outcome === "blocked" || linked.outcome === "ignored" ? { reason: linked.reason } : {}),
       });
-      if (linked.outcome === "linked" && linked.created) {
+      if (linked.outcome === "linked" && linked.newlyLinked) {
         // One line, once per room: what inviting Rally did, and how to use it.
         await slackApi(token, "chat.postMessage", {
           channel: channelId,
@@ -1884,7 +1906,7 @@ export class SlackAgentService {
      */
     unverifiable: "throw" | "fall_through" = "throw",
   ): Promise<
-    | { outcome: "linked"; spaceId: string; created?: boolean }
+    | { outcome: "linked"; spaceId: string; newlyLinked?: boolean }
     | { outcome: "ignored"; reason: string; channel?: SlackChannelResolution }
     | { outcome: "unresolved"; channel?: SlackChannelResolution }
     | { outcome: "blocked"; reason: string }
@@ -1923,6 +1945,7 @@ export class SlackAgentService {
       channelName: room.kind === "shared" ? room.displayName.slice(0, 255) : null,
       failure: null,
       threadable: room.threadable,
+      externallyShared: room.externallyShared,
     };
     if (room.kind === "direct") return { outcome: "ignored", reason: "direct_message", channel };
     if (room.archived) return { outcome: "ignored", reason: "room_archived", channel };
@@ -1959,10 +1982,6 @@ export class SlackAgentService {
         ? { outcome: "unresolved", channel }
         : { outcome: "blocked", reason: "no_rally_member_in_private_room" };
     }
-    // Named by the room, so two invitations racing (or an invitation retried
-    // after its link committed) claim one anchor, and the loser's link reads
-    // back `existing` instead of leaving an anchor for a Space never made.
-    const spaceId = await stableUuid(`external-room-space:${installationId}:${channelId}`);
     let linked: ExternalRoomLinkResult;
     try {
       // The creation coordinator's gate: no Space is written while the
@@ -1971,18 +1990,35 @@ export class SlackAgentService {
       if (control.phase !== "durable_object_open") {
         throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");
       }
-      // Asked before the D1 anchor, as `SpaceService.create` asks, so a
-      // refused actor leaves no anchor behind.
-      const admitted = await workspace.admitSpaceCreation({
-        workspaceId: asWorkspaceId(connection.workspace_id),
-        userId: asUserId(actorUserId),
-      });
-      if (!admitted.ok) {
-        return room.visibility === "public"
-          ? { outcome: "unresolved", channel }
-          : { outcome: "blocked", reason: admitted.code };
+      // A public room joins the Organization-wide Space its name matches. A
+      // private room never does, and neither does a Slack Connect room: their
+      // audience is not the Organization's.
+      const matchable = room.visibility === "public" && !room.externallyShared;
+      const matched = matchable
+        ? ExternalRoomSpaceMatchResultSchema.parse(await workspace.externalRoomSpaceMatch({
+          workspaceId: connection.workspace_id,
+          name: room.displayName,
+        })).spaceId
+        : null;
+      // Otherwise named by the room, so two invitations racing (or an
+      // invitation retried after its link committed) claim one anchor, and the
+      // loser's link reads back `existing` instead of leaving an anchor for a
+      // Space never made.
+      const spaceId = matched ?? await stableUuid(`external-room-space:${installationId}:${channelId}`);
+      if (!matched) {
+        // Asked before the D1 anchor, as `SpaceService.create` asks, so a
+        // refused actor leaves no anchor behind.
+        const admitted = await workspace.admitSpaceCreation({
+          workspaceId: asWorkspaceId(connection.workspace_id),
+          userId: asUserId(actorUserId),
+        });
+        if (!admitted.ok) {
+          return room.visibility === "public"
+            ? { outcome: "unresolved", channel }
+            : { outcome: "blocked", reason: admitted.code };
+        }
+        await claimParentAnchor(this.env, connection.workspace_id, spaceId, "space");
       }
-      await claimParentAnchor(this.env, connection.workspace_id, spaceId, "space");
       linked = ExternalRoomLinkResultSchema.parse(await workspace.linkExternalRoom({
         workspaceId: connection.workspace_id,
         installationId,
@@ -1991,6 +2027,7 @@ export class SlackAgentService {
         spaceId,
         space: { name: room.displayName, scope: room.visibility === "public" ? "workspace" : "personal" },
         participantUserIds: room.visibility === "private" ? audience.userIds : [],
+        ...(matchable ? { spaceMatch: matched ? "matched" as const : "unmatched" as const } : {}),
         at: nowIso(),
       }));
     } catch (error) {
@@ -2010,7 +2047,7 @@ export class SlackAgentService {
         ? { outcome: "unresolved", channel }
         : { outcome: "blocked", reason: codeShaped(linked.code) };
     }
-    return { outcome: "linked", spaceId: linked.spaceId, created: linked.outcome === "linked" };
+    return { outcome: "linked", spaceId: linked.spaceId, newlyLinked: linked.outcome === "linked" };
   }
 
   /** The active Rally member a Slack user is, when Rally knows; never a guest. */
@@ -4175,7 +4212,9 @@ function slackRoutingFailureText(reason: string): string {
     case "space_archived":
       return "This conversation's Rally Space is archived, so Rally did not start work here. A Rally admin can restore the Space in Rally.";
     case "room_narrower_than_space":
-      return "This conversation is private now, but its Rally Space is open to the whole organization, so Rally did not start work here. A Rally admin can make the Space private in Rally.";
+      return "This conversation is private now, but its Rally Space is open to the whole organization, so Rally did not start work here. Make the conversation public again, or ask a Rally admin to make the Space private if nothing else uses it.";
+    case "room_shared_externally":
+      return "This conversation is now shared with another organization, and its Rally Space holds this organization's own work, so Rally did not start work here.";
     case "no_rally_member_in_private_room":
       return "Rally didn't start work here because nobody in this private conversation has a Rally account it can recognize yet. Connect your Rally account in App Home, then mention Rally again.";
     case "space_access_denied":
@@ -4192,6 +4231,8 @@ type SlackChannelResolution = {
   failure: SlackPromptSource["channelResolutionFailure"];
   /** Absent reads as threadable: only Slack's explicit flag turns threads off. */
   threadable?: boolean;
+  /** Shared through Slack Connect; absent when the source did not ask Slack. */
+  externallyShared?: boolean;
 };
 
 type SlackThreadRoute =
@@ -4201,6 +4242,8 @@ type SlackThreadRoute =
       spaceId: string;
       spaceScope: "personal" | "workspace";
       spaceActorUserId: string | null;
+      /** The room joined this Space by name rather than getting its own. */
+      spaceMatched: boolean;
       claim: ExternalBindingClaim;
     };
 
@@ -4427,10 +4470,11 @@ async function resolveSlackChannelType(
     // a conversation as public; anything else stays private, because this
     // classification gates whether Avalon will start a workspace task here.
     const threadable = result.channel.is_non_threadable !== true;
+    const externallyShared = result.channel.is_ext_shared === true || result.channel.is_pending_ext_shared === true;
     if (result.channel.is_mpim === true || result.channel.is_private !== false) {
-      return { channelType: "private", channelName, failure: null, threadable };
+      return { channelType: "private", channelName, failure: null, threadable, externallyShared };
     }
-    return { channelType: "public", channelName, failure: null, threadable };
+    return { channelType: "public", channelName, failure: null, threadable, externallyShared };
   } catch (error) {
     const reason = slackErrorReason(error);
     logWarn(env, "slack_conversation_privacy_lookup_failed", {

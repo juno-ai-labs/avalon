@@ -121,6 +121,7 @@ const EXPECTED_TABLES = [
   "pending_attachment_reservation_recovery",
   "pending_loop_input_mailbox",
   "pending_loop_inputs",
+  "personal_system_prompt_copies",
   "plugin_activation_hints",
   "prepared_conversation_receipts",
   "private_child_lifecycle_authority",

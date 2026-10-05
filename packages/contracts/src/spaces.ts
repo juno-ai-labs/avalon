@@ -266,7 +266,11 @@ export type SpaceSnapshot = z.infer<typeof SpaceSnapshotSchema>;
 
 export const CreateSpaceRequestSchema = z.strictObject({
   name: z.string().trim().min(1),
-  iconKey: SpaceIconKeySchema,
+  /**
+   * Absent when the person chose no icon: Rally then picks one from the name,
+   * a moment after the Space is created. See `docs/spaces.md#the-icon-rally-chooses`.
+   */
+  iconKey: SpaceIconKeySchema.optional(),
   colorKey: SpaceColorKeySchema,
   scope: SpaceScopeSchema,
 });

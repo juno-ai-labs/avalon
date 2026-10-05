@@ -49,9 +49,7 @@ function renderPills(props: Partial<React.ComponentProps<typeof SpacePills>> = {
           onCreateSpace={vi.fn(async () => undefined)}
           onMoveChannel={vi.fn(async () => undefined)}
           onRestore={vi.fn(async () => undefined)}
-          onRetry={vi.fn()}
           onSelect={onSelect}
-          outOfDate={false}
           ready
           selectedSpaceId={null}
           spaces={[general, launch, hiring]}
@@ -227,17 +225,6 @@ describe('SpacePills', () => {
     renderPills({ loading: true, spaces: [] });
 
     expect(within(screen.getByRole('group', { name: 'Spaces' })).queryAllByRole('button')).toHaveLength(0);
-  });
-
-  it('keeps stale pills and offers a refresh outside the scrolling Spaces group', () => {
-    const onRetry = vi.fn();
-    renderPills({ onRetry, outOfDate: true });
-
-    expect(pill('Launch')).toBeInTheDocument();
-    const spaces = screen.getByRole('group', { name: 'Spaces' });
-    expect(within(spaces).queryByRole('button', { name: 'Refresh spaces' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh spaces' }));
-    expect(onRetry).toHaveBeenCalledOnce();
   });
 
   describe('archiving a Space', () => {

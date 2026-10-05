@@ -108,6 +108,8 @@ import {
   WorkspacePresenceEventSchema,
   WorkspaceReachChangedEventSchema,
   WorkspaceSocketSyncEventSchema,
+  DEFAULT_MEMBER_PREFERENCES,
+  type MemberPreferences,
   WorkspaceSyncTopicSchema,
   WORKSTREAM_NAMING_GRACE_MS,
   WorkstreamIdSchema,
@@ -745,6 +747,21 @@ import {
   type WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
 import { SpaceChannelAccess } from "./workspace-space-channel-access";
+import {
+  PersonalSystemPromptReadRequestSchema,
+  PersonalSystemPromptWriteRequestSchema,
+  WORKSPACE_PERSONAL_SYSTEM_PROMPT_MIGRATION,
+  type PersonalSystemPromptReadRequest,
+  type PersonalSystemPromptRecord,
+  type PersonalSystemPromptWriteRequest,
+} from "./personal-system-prompt";
+import {
+  MemberPreferencesReadRequestSchema,
+  MemberPreferencesWriteRequestSchema,
+  WORKSPACE_MEMBER_PREFERENCES_MIGRATION,
+  type MemberPreferencesReadRequest,
+  type MemberPreferencesWriteRequest,
+} from "./member-preferences";
 import { ObservedChannelSchema } from "./workstream-access-protocol";
 import {
   SELECT_WORKSPACE_BREAKOUT,
@@ -985,11 +1002,14 @@ import {
   ExternalBindingSuspendRequestSchema,
   ExternalBindingSuspendResultSchema,
   ExternalRoomLinkRequestSchema,
+  ExternalRoomSpaceMatchRequestSchema,
+  type ExternalRoomSpaceMatchResult,
   type ExternalBindingResolution,
   type ExternalRoomLinkResult,
 } from "./workspace-external-binding-protocol";
 import {
   EXTERNAL_CONVERSATION_BINDINGS_MIGRATION,
+  EXTERNAL_BINDING_SPACE_MATCHED_MIGRATION,
   ExternalConversationBindingStorage,
 } from "./workspace-external-binding-storage";
 import {
@@ -1192,6 +1212,12 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
   presenceRevision: number;
   applicationState: "foreground" | "background";
   foregroundWorkstreamId: string | null;
+  /**
+   * A Channel this window foregrounded before the directory listed it for the
+   * viewer. Presence promotes it when a directory change makes it visible,
+   * since the renderer does not resend for a route it has not left.
+   */
+  pendingForegroundWorkstreamId?: string | null;
 }
 
 /** One person's subscribed sockets, under the relationship they were admitted with. */
@@ -4139,6 +4165,20 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: WORKSPACE_PINNED_ORDER_MIGRATION,
 }, {
   version: 88,
+  description: "a member's personal system prompt",
+  statements: WORKSPACE_PERSONAL_SYSTEM_PROMPT_MIGRATION,
+}, {
+  version: 89,
+  description: "a member's display preferences",
+  statements: WORKSPACE_MEMBER_PREFERENCES_MIGRATION,
+}, {
+  version: 90,
+  description: "record whether a room's Space is one it joined by name",
+  // Provenance the Slack Connect spawn check needs, which neither the room
+  // id nor the Space's scope keeps; see docs/external-conversation-bindings.md.
+  statements: EXTERNAL_BINDING_SPACE_MATCHED_MIGRATION,
+}, {
+  version: 91,
   description: "Sidekick parents move into the Organization object",
   // The directory row becomes the definition row, beside the revisions,
   // schedules, runs and children the Sidekick's own object held, and a ledger
@@ -4210,6 +4250,7 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       presenceRevision: z.number().int().nonnegative().default(0),
       applicationState: z.enum(["foreground", "background"]).default("background"),
       foregroundWorkstreamId: WorkstreamIdSchema.nullable().default(null),
+      pendingForegroundWorkstreamId: WorkstreamIdSchema.nullable().default(null),
       // Defaulted for the same reason, and to the reading that changes nothing
       // for a socket that predates it: `member` is what every attachment
       // written before Spaces existed meant.
@@ -5775,7 +5816,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Set by a hosted Sidekick write that moved a directory row; the sidebar list is published after it. */
   private sidekickDirectoryMoved = false;
 
-  /** Whether migration 88 has run; an Organization held below it has no Sidekick tables. */
+  /** Whether migration 91 has run; an Organization held below it has no Sidekick tables. */
   private sidekickSchemaPresent(): boolean {
     if (this.sidekickSchemaKnown) return true;
     this.sidekickSchemaKnown = this.state.storage.sql.exec(
@@ -5903,11 +5944,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private async ensureSidekickImported(automationId: string): Promise<void> {
-    const ledger = this.state.storage.sql.exec<{ state: string }>(
-      `SELECT state FROM sidekick_imports WHERE sidekick_id = ?`, automationId,
+    const ledger = this.state.storage.sql.exec<{ state: string; not_before: number; last_error_code: string | null }>(
+      `SELECT state, not_before, last_error_code FROM sidekick_imports WHERE sidekick_id = ?`, automationId,
     ).toArray()[0];
     if (!ledger || ledger.state !== "pending") return;
     let running = this.sidekickImports.get(automationId);
+    // A failed import waits out its backoff: a request in the meantime fails
+    // with the last attempt's code rather than asking the frozen legacy object
+    // again. The alarm takes it when it is due, and an operator's retry clears
+    // the wait.
+    if (!running && ledger.not_before > Date.now()) {
+      const code = ledger.last_error_code ?? "sidekick_import_pending";
+      throw new ApiError(503, code, code);
+    }
     if (!running) {
       running = this.importSidekick(automationId).finally(() => this.sidekickImports.delete(automationId));
       this.sidekickImports.set(automationId, running);
@@ -5974,6 +6023,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // A legacy object that held nothing leaves the listing as it was, so
     // there is nothing to push; a push here would race a directory write.
     if (!moved) return;
+    // An archive of its home that ran while this import was failing could not
+    // tell the Sidekick, and nothing tells it again: the room's state now is
+    // applied here instead, to this Sidekick alone.
+    const home = this.state.storage.sql.exec<{ owning_workstream_id: string | null }>(
+      `SELECT owning_workstream_id FROM automation_directory WHERE automation_id = ?`, automationId,
+    ).toArray()[0]?.owning_workstream_id ?? null;
+    if (home !== null) await this.notifyOwningRoomArchival(workspaceId, [home], [], automationId);
     this.publishSidebarList("automations");
     await this.armNextAlarm();
   }
@@ -6801,71 +6857,47 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // fence the older command before it can restore stale presence.
       const currentAttachment = readAttachment(socket);
       if (!currentAttachment || parsed.data.revision <= currentAttachment.presenceRevision) return;
-      if (!currentAttachment.subscribed
-        || (parsed.data.foregroundWorkstreamId !== null
-          && !this.directoryVisible(viewerOf(currentAttachment), parsed.data.foregroundWorkstreamId))) {
+      if (!currentAttachment.subscribed) {
         this.closeSocket(socket, currentAttachment, {
           code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
           reason: "Invalid workspace presence",
-          cause: currentAttachment.subscribed
-            ? "presence_workstream_inaccessible"
-            : "presence_before_subscribe",
+          cause: "presence_before_subscribe",
           operation: "presence",
         });
         return;
       }
+      // A Channel the viewer cannot see is recorded as no Channel at all. The
+      // renderer can route to one the directory has not listed for it yet (a
+      // Channel still being created, a link from elsewhere), and closing here
+      // ended the whole Organization socket for good: 4400 is permanent to the
+      // client, so the sidebar stayed stale until a restart. It is kept as
+      // pending so the directory change that lists it promotes it.
+      const requestedWorkstreamId = parsed.data.foregroundWorkstreamId;
+      const foregroundWorkstreamId = requestedWorkstreamId !== null
+        && this.directoryVisible(viewerOf(currentAttachment), requestedWorkstreamId)
+        ? requestedWorkstreamId
+        : null;
+      if (requestedWorkstreamId !== null && foregroundWorkstreamId === null) {
+        logInfo(this.env, "workspace_presence_unlisted", {
+          workspace_id: currentAttachment.workspaceId,
+          user_id: currentAttachment.userId,
+          connection_id: currentAttachment.connectionId,
+        });
+      }
       const presenceChanged = currentAttachment.applicationState !== parsed.data.applicationState
-        || currentAttachment.foregroundWorkstreamId !== parsed.data.foregroundWorkstreamId;
+        || currentAttachment.foregroundWorkstreamId !== foregroundWorkstreamId;
       socket.serializeAttachment({
         ...currentAttachment,
         presenceRevision: parsed.data.revision,
         applicationState: parsed.data.applicationState,
-        foregroundWorkstreamId: parsed.data.foregroundWorkstreamId,
+        foregroundWorkstreamId,
+        pendingForegroundWorkstreamId: parsed.data.applicationState === "foreground"
+          && foregroundWorkstreamId === null ? requestedWorkstreamId : null,
       } satisfies WorkspaceSocketAttachment);
       if (presenceChanged) this.broadcastPresence();
       if (presenceChanged && parsed.data.applicationState === "foreground"
-        && parsed.data.foregroundWorkstreamId !== null) {
-        const now = Date.now();
-        const workstreamId = parsed.data.foregroundWorkstreamId;
-        // Opening a Channel is the moment its Main is about to be read. The
-        // Channel control socket used to start this wake; a desktop that no
-        // longer opens one says it here instead, ahead of its feed ticket.
-        // Somebody listed the Channel only through a Breakout opens that
-        // Breakout, not Main, so Main is not theirs to wake.
-        if (this.mainOpenable(viewerOf(currentAttachment), workstreamId)) this.wakeMainConversation(workstreamId);
-        this.state.storage.transactionSync(() => {
-          this.state.storage.sql.exec(
-            `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
-             VALUES (?, ?, ?) ON CONFLICT(user_id, workstream_id)
-             DO UPDATE SET last_accessed_at = excluded.last_accessed_at`,
-            currentAttachment.userId, workstreamId, now,
-          );
-          this.advanceDirectoryVersion(now);
-        });
-        // The presence check above has already found this Channel listed for
-        // this viewer, so its row is theirs to be sent.
-        const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
-          `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
-          currentAttachment.userId, currentAttachment.userId, workstreamId,
-        ).one();
-        const payload = JSON.stringify(WorkspaceWorkstreamRecencyEventSchema.parse({
-          type: "workspace_workstream_recency",
-          directoryWaterline: this.directoryWaterline(),
-          workstream: mapDirectoryWorkstreams(
-            this.state.storage.sql, [row], currentAttachment.workspaceId,
-            this.spaceStorage(), viewerOf(currentAttachment), true,
-          )[0],
-          stateVersion: directoryStateVersion(row),
-        }));
-        for (const peer of this.state.getWebSockets()) {
-          const peerAttachment = readAttachment(peer);
-          if (!peerAttachment?.subscribed || peerAttachment.userId !== currentAttachment.userId) continue;
-          try {
-            peer.send(payload);
-          } catch {
-            // Reconnecting reconstructs the saved order from SQLite.
-          }
-        }
+        && foregroundWorkstreamId !== null) {
+        this.recordChannelOpened(currentAttachment, foregroundWorkstreamId);
       }
       return;
     }
@@ -7119,16 +7151,81 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * The person in this window just opened a Channel listed for them: wake its
+   * Main and record when they opened it.
+   */
+  private recordChannelOpened(attachment: WorkspaceSocketAttachment, workstreamId: string): void {
+    const now = Date.now();
+    // Opening a Channel is the moment its Main is about to be read. The
+    // Channel control socket used to start this wake; a desktop that no
+    // longer opens one says it here instead, ahead of its feed ticket.
+    // Somebody listed the Channel only through a Breakout opens that
+    // Breakout, not Main, so Main is not theirs to wake.
+    if (this.mainOpenable(viewerOf(attachment), workstreamId)) this.wakeMainConversation(workstreamId);
+    this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(
+        `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
+         VALUES (?, ?, ?) ON CONFLICT(user_id, workstream_id)
+         DO UPDATE SET last_accessed_at = excluded.last_accessed_at`,
+        attachment.userId, workstreamId, now,
+      );
+      this.advanceDirectoryVersion(now);
+    });
+    // Every caller has already found this Channel listed for this viewer, so
+    // its row is theirs to be sent.
+    const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+      `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
+      attachment.userId, attachment.userId, workstreamId,
+    ).one();
+    const payload = JSON.stringify(WorkspaceWorkstreamRecencyEventSchema.parse({
+      type: "workspace_workstream_recency",
+      directoryWaterline: this.directoryWaterline(),
+      workstream: mapDirectoryWorkstreams(
+        this.state.storage.sql, [row], attachment.workspaceId,
+        this.spaceStorage(), viewerOf(attachment), true,
+      )[0],
+      stateVersion: directoryStateVersion(row),
+    }));
+    for (const peer of this.state.getWebSockets()) {
+      const peerAttachment = readAttachment(peer);
+      if (!peerAttachment?.subscribed || peerAttachment.userId !== attachment.userId) continue;
+      try {
+        peer.send(payload);
+      } catch {
+        // Reconnecting reconstructs the saved order from SQLite.
+      }
+    }
+  }
+
+  /**
    * Send each connection only the presence for the work stream it currently
    * foregrounds. This both avoids leaking personal work-stream identities and
    * keeps the frame equal to the one face pile the renderer can paint.
    */
   private broadcastPresence(excluding?: WebSocket): void {
     const sockets: Array<{ socket: WebSocket; attachment: WorkspaceSocketAttachment; inMain: boolean }> = [];
+    const opened: Array<{ attachment: WorkspaceSocketAttachment; workstreamId: string }> = [];
     for (const socket of this.state.getWebSockets()) {
       if (socket === excluding) continue;
-      const attachment = readAttachment(socket);
+      let attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
+      const pending = attachment.pendingForegroundWorkstreamId ?? null;
+      if (pending !== null && attachment.applicationState === "foreground"
+        && attachment.foregroundWorkstreamId === null
+        && this.directoryVisible(viewerOf(attachment), pending)) {
+        const promoted: WorkspaceSocketAttachment = {
+          ...attachment,
+          foregroundWorkstreamId: pending,
+          pendingForegroundWorkstreamId: null,
+        };
+        try {
+          socket.serializeAttachment(promoted);
+          attachment = promoted;
+          opened.push({ attachment, workstreamId: pending });
+        } catch {
+          // Stays as no Channel; the next focus change sends presence again.
+        }
+      }
       if (contributesPresence(attachment)
         && !this.directoryVisible(viewerOf(attachment), attachment.foregroundWorkstreamId)) {
         try {
@@ -7136,6 +7233,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             ...attachment,
             applicationState: "background",
             foregroundWorkstreamId: null,
+            pendingForegroundWorkstreamId: null,
           } satisfies WorkspaceSocketAttachment);
         } catch {
           // Fail closed: an attachment that cannot record lost visibility must
@@ -7178,6 +7276,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // foreground change. One stale socket must not block the others.
       }
     }
+    for (const { attachment, workstreamId } of opened) this.recordChannelOpened(attachment, workstreamId);
   }
 
   /**
@@ -9287,6 +9386,66 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
+  /** This person's personal system prompt here; empty text and revision 0 for none. */
+  async personalSystemPrompt(input: PersonalSystemPromptReadRequest): Promise<PersonalSystemPromptRecord> {
+    await this.initialized;
+    const request = parseRpcInput(PersonalSystemPromptReadRequestSchema, input, "personal_system_prompt");
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{ text: string; revision: number }>(
+      `SELECT text, revision FROM member_personal_system_prompts WHERE user_id = ?`,
+      request.userId,
+    ).toArray()[0];
+    return { personalSystemPrompt: row?.text ?? "", revision: row?.revision ?? 0 };
+  }
+
+  /** Replace this person's personal system prompt and answer with what was stored. */
+  async savePersonalSystemPrompt(input: PersonalSystemPromptWriteRequest): Promise<PersonalSystemPromptRecord> {
+    await this.initialized;
+    const request = parseRpcInput(PersonalSystemPromptWriteRequestSchema, input, "save_personal_system_prompt");
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{ text: string; revision: number }>(
+      `INSERT INTO member_personal_system_prompts (user_id, text, revision, updated_at) VALUES (?, ?, 1, ?)
+       ON CONFLICT (user_id) DO UPDATE SET text = excluded.text, revision = revision + 1,
+         updated_at = excluded.updated_at
+       RETURNING text, revision`,
+      request.userId,
+      request.personalSystemPrompt,
+      Date.now(),
+    ).one();
+    return { personalSystemPrompt: row.text, revision: row.revision };
+  }
+
+  async memberPreferences(input: MemberPreferencesReadRequest): Promise<MemberPreferences> {
+    await this.initialized;
+    const request = parseRpcInput(MemberPreferencesReadRequestSchema, input, "member_preferences");
+    this.assertWorkspace(request.workspaceId);
+    return this.readMemberPreferences(request.userId);
+  }
+
+  /** Replace this person's display preferences and answer with what was stored. */
+  async saveMemberPreferences(input: MemberPreferencesWriteRequest): Promise<MemberPreferences> {
+    await this.initialized;
+    const request = parseRpcInput(MemberPreferencesWriteRequestSchema, input, "save_member_preferences");
+    this.assertWorkspace(request.workspaceId);
+    this.state.storage.sql.exec(
+      `INSERT INTO member_preferences (user_id, show_agent_work, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET show_agent_work = excluded.show_agent_work,
+         updated_at = excluded.updated_at`,
+      request.userId,
+      request.preferences.showAgentWork ? 1 : 0,
+      Date.now(),
+    );
+    return request.preferences;
+  }
+
+  private readMemberPreferences(userId: string): MemberPreferences {
+    const row = this.state.storage.sql.exec<{ show_agent_work: number }>(
+      `SELECT show_agent_work FROM member_preferences WHERE user_id = ?`,
+      userId,
+    ).toArray()[0];
+    return row ? { showAgentWork: row.show_agent_work === 1 } : { ...DEFAULT_MEMBER_PREFERENCES };
+  }
+
   async spaceSummary(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "space_summary");
@@ -9509,6 +9668,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const space = this.spaceStorage().applyPresentation(request);
+    if (space === "stale") return { ok: false, code: "space_revision_conflict", unreachableUserIds: [], blockedWorkstreamIds: [] };
     if (space !== false) this.publishSpaceSnapshot();
     return WorkspaceSpaceMutationResultSchema.parse(space === false
       ? { ok: false, code: "space_not_found" }
@@ -12125,6 +12285,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return relationship;
   }
 
+  /** `activeSpaceMember` from the table alone, for a synchronous commit; unknown reads as no. */
+  private knownActiveMember(userId: string): boolean {
+    const known = this.knownRelationship(userId);
+    return known?.status === "active" && known.accessClass === "member";
+  }
+
   /** The table's answer, with no D1 read; `undefined` for somebody it has never heard of. */
   private knownRelationship(userId: string): WorkspaceRelationship | null | undefined {
     const row = this.state.storage.sql.exec<{ relationship_json: string | null }>(
@@ -12291,6 +12457,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     workspaceId: string,
     workstreamIds: readonly string[],
     breakoutKeys: readonly string[] = [],
+    onlyAutomationId: string | null = null,
   ): Promise<void> {
     const owned = this.state.storage.sql.exec<{
       automation_id: string;
@@ -12308,6 +12475,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           AND breakout.workstream_id = automation.owning_workstream_id
           AND breakout.substream_id = automation.owning_substream_id
         WHERE automation.lifecycle <> 'deleted'
+          AND (?3 IS NULL OR automation.automation_id = ?3)
           AND (automation.owning_workstream_id IN (SELECT value FROM json_each(?1))
             OR (automation.owning_substream_id <> '0'
               AND automation.owning_workstream_id || '/' || automation.owning_substream_id
@@ -12315,6 +12483,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         ORDER BY automation.automation_id`,
       JSON.stringify(workstreamIds),
       JSON.stringify(breakoutKeys),
+      onlyAutomationId,
     ).toArray();
     if (owned.length === 0) return;
     // Each Sidekick is this object's own row now: its pause or resume, its
@@ -13974,6 +14143,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * The Organization-wide Space a public room should join instead of making
+   * its own. A Space whose creator is no longer an active member is not
+   * offered: an unlinked sender's Channel is placed as that creator.
+   */
+  async externalRoomSpaceMatch(input: unknown): Promise<ExternalRoomSpaceMatchResult> {
+    await this.initialized;
+    const request = parseRpcInput(ExternalRoomSpaceMatchRequestSchema, input, "external_room_space_match");
+    this.assertWorkspace(request.workspaceId);
+    return { spaceId: (await this.roomSpaceMatch(request.workspaceId, request.name)).usable };
+  }
+
+  /** The Space `name` matches (`found`), and that Space if it may be offered (`usable`). */
+  private async roomSpaceMatch(workspaceId: string, name: string): Promise<{ found: string | null; usable: string | null }> {
+    const match = this.spaceStorage().organizationSpaceNamed(name);
+    const usable = match?.createdByUserId != null && await this.activeSpaceMember(workspaceId, match.createdByUserId);
+    return { found: match?.spaceId ?? null, usable: usable ? match.spaceId : null };
+  }
+
+  /**
    * Link a shared provider room: its Space and its room binding in one
    * transaction, or the Space an existing binding already names.
    *
@@ -14006,32 +14194,47 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal };
-    const parent = await this.spaceParentReservation(request.spaceId);
+    // This link decides the match, whatever the caller's earlier ask answered:
+    // a Space that now matches is joined, and a `matched` id that no longer
+    // does is refused, since it has no anchor of its own to be created under.
+    const match = request.spaceMatch ? await this.roomSpaceMatch(request.workspaceId, request.space.name) : null;
+    if (request.spaceMatch === "matched" && match?.usable !== request.spaceId) return { ok: false, code: "space_not_found" };
+    const spaceId = match?.usable ?? request.spaceId;
+    const parent = await this.spaceParentReservation(spaceId);
     if (!parent.ok) return { ok: false, code: parent.code };
     const storage = this.spaceStorage();
     const reservation: WorkspaceSpaceReserveRequest = {
       workspaceId: asWorkspaceId(request.workspaceId),
       userId: asUserId(request.userId),
-      spaceId: asSpaceId(request.spaceId),
+      spaceId: asSpaceId(spaceId),
       space: { name: request.space.name, iconKey: "users", colorKey: "blue", scope: request.space.scope },
     };
     const participants = [...new Set([request.userId, ...request.participantUserIds])];
     const linked = await this.withMembersLearned(() => this.state.storage.transactionSync(() => (
       bindings.linkRoom(request.installationId, request.path, request.at, () => {
-        const reserved = storage.reserveForCreation(reservation, request.spaceId);
+        // The awaits above let a Space edit or a departure in; the match, and
+        // whether its creator may still be offered, must be the ones decided.
+        if (match) {
+          const current = storage.organizationSpaceNamed(request.space.name);
+          const usable = current?.createdByUserId != null && this.knownActiveMember(current.createdByUserId)
+            ? current.spaceId
+            : null;
+          if ((current?.spaceId ?? null) !== match.found || usable !== match.usable) return null;
+        }
+        const reserved = storage.reserveForCreation(reservation, spaceId);
         if (!reserved.space) return null;
         if (reserved.created) parent.reserve(request.userId, reserved.space);
         if (request.space.scope === "personal" && participants.length > 1) {
           const seated = storage.applyAudience({
             workspaceId: asWorkspaceId(request.workspaceId),
             userId: asUserId(request.userId),
-            spaceId: asSpaceId(request.spaceId),
+            spaceId: asSpaceId(spaceId),
             operationId: uuidV7(),
             audience: { scope: "personal", participantUserIds: participants.map(asUserId) },
           });
           if (seated === false || seated === "self_excluded") throw new Error("external_room_audience_refused");
         }
-        return request.spaceId;
+        return { spaceId, matched: match?.usable != null };
       })
     )));
     if (!linked) return { ok: false, code: "space_not_found" };
@@ -16904,6 +17107,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // ignore.
     const sidebar = this.sidebarPayload(attachment);
     this.logWorkspaceSocketHandshake(attachment, "sidebar_built", diagnosticAttemptId);
+    const viewerPreferences = this.readMemberPreferences(attachment.userId);
     let events: WorkspaceSocketSyncEvent[];
     if (afterWaterline === 0) {
       events = [{
@@ -16977,7 +17181,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
     this.logWorkspaceSocketHandshake(attachment, "flags_resolved", diagnosticAttemptId);
     for (const event of events) {
-      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({ ...event, featureFlags })));
+      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({ ...event, featureFlags, viewerPreferences })));
     }
     this.logWorkspaceSocketHandshake(attachment, "sync_sent", diagnosticAttemptId);
     socket.serializeAttachment({

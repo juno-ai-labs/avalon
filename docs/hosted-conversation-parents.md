@@ -35,7 +35,7 @@ it, is [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel rows on the workspace socket (with each viewer's breakouts and running background agents), the retired Channel control socket kept for older clients, the in-transaction apply of what a parent publishes, the outbox drain, and the workspace relationship table. |
 | `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts`, `workstream-access-storage.ts` | The grant, invitation and Space-provenance repositories, now scoped by `parent_id`. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: one Sidekick's parent and lifecycle, scoped to a `sidekick_id` inside `WorkspaceDO`'s SQLite. The port of what `SidekickDO` did for one object. Also `sidekickReaderAllows`, the read rule the library listing shares. |
-| `apps/api/src/durable-objects/hosted-sidekick-schema.ts` | `WorkspaceDO` migration 88: the definition columns on `automation_directory`, the `sidekick_*` tables and the `sidekick_imports` ledger. |
+| `apps/api/src/durable-objects/hosted-sidekick-schema.ts` | `WorkspaceDO` migration 91: the definition columns on `automation_directory`, the `sidekick_*` tables and the `sidekick_imports` ledger. |
 | `apps/api/src/durable-objects/sidekick-do.ts` | The legacy `SidekickDO`, reduced to its migration ledger, `exportForImport` and an alarm that asks for the import. Deleted in the PRD's step 3. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: the Queue consumer step that opens a run's conversation and starts its loop, off the Organization's alarm. |
 | `apps/api/src/services/conversation-parent-client.ts` | `hostedParentStub` and `conversationParentStub`: `WorkspaceDO` for every parent. |
@@ -393,7 +393,7 @@ listed, which costs no read beyond this object's. A Breakout-homed one admits
 the Breakout's members for both. The library listing takes the caller's access
 class and role from its authentication rather than reading them again.
 
-**The import.** Migration 88 put every Sidekick the directory held on the
+**The import.** Migration 91 put every Sidekick the directory held on the
 `sidekick_imports` ledger as `pending`, and a legacy directory row that lands
 later adds its Sidekick. A request that needs a pending Sidekick imports it
 first, one import at a time per Sidekick; the alarm's `sidekick_import` phase
@@ -480,7 +480,7 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | A stored row fails the rail's schema | That rail is sent as `oversized` and logged `channel_rail_invalid` naming the field; the answer still ends with its `final` frame. A Sidekick whose stored appearance no longer parses is listed without one and logged `automation_directory_appearance_invalid`. |
 | A drained rail change's row push fails | Logged `channel_rows_publish_failed`; nothing retries it, because rows are best effort and a reconnect reads the current waterline. The change is not lost, only the prompt to ask for it. |
 | The drain itself throws | Logged `channel_rail_drain_failed`. The ledger keeps its rows and the next write's drain takes them; nothing arms the alarm for them. |
-| A Sidekick's export is refused | The ledger row stays `pending` with the code and a backoff; the request that needed it fails with `503` and that code. `sidekick_import_failed` is reported to ops at the third attempt. The Sidekick is still listed; its runs do not fire until `retry_sidekick_import` succeeds. |
+| A Sidekick's export is refused | The ledger row stays `pending` with the code and a backoff; the request that needed it fails with `503` and that code, and so does every request until the backoff ends, without asking the legacy object again. `sidekick_import_failed` is reported to ops at the third attempt. The Sidekick is still listed; its runs do not fire until `retry_sidekick_import` succeeds, which clears the wait. A successful import then applies its home's archive state as it is now, so an archive or restore that ran while the import was failing is not lost. |
 | A run's provisioning message is lost | The run's entry sends it again; the wait grows with the run's age until `sidekickRunProvisioned` settles it. |
 | The Organization object is unavailable | Channels and Spaces cannot be opened, listed or changed. That was already true of the sidebar; it is now true of a Channel's viewer check too. |
 
@@ -596,7 +596,7 @@ Space in an Organization now shares one SQLite database and one socket set.
 ### 2026-10-05 — Sidekick parents move into WorkspaceDO
 
 **What changed:** A Sidekick's parent, definition, revisions, schedules, runs,
-inbound-email receipts and child registry live in `WorkspaceDO` (migration 88,
+inbound-email receipts and child registry live in `WorkspaceDO` (migration 91,
 `HostedSidekick`), beside Channels and Spaces. `automation_directory` became the
 Sidekick's definition row. Each Sidekick moves on first use or on the alarm's
 `sidekick_import` phase, from a legacy `SidekickDO` that freezes on export and

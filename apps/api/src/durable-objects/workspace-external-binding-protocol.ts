@@ -121,12 +121,14 @@ export const ExternalBindingResolutionSchema = deferredZodSchema(() => z.discrim
    * An addressed message under an active Space: create a Channel there.
    * `space` is the Space as WorkspaceDO holds it now: who it is for, and the
    * member who linked it, who places a Channel opened for a Slack sender with
-   * no Rally identity. Absent only if the Space row is gone.
+   * no Rally identity. Absent only if the Space row is gone. `spaceMatched`:
+   * the room joined this Space by name rather than getting its own.
    */
   z.strictObject({
     outcome: z.literal("spawn"),
     spaceId: IdSchema,
     roomPath: ExternalPathSchema,
+    spaceMatched: z.boolean(),
     space: z.strictObject({
       scope: z.enum(["personal", "workspace"]),
       createdByUserId: IdSchema.nullable(),
@@ -251,8 +253,24 @@ export const ExternalRoomLinkRequestSchema = deferredZodSchema(() => BindingKeyS
   }),
   /** Seated beside the actor in a private room's Space. */
   participantUserIds: z.array(IdSchema),
+  /**
+   * Present when the room may join an existing Space its name matches, which
+   * the link decides. `matched`: `spaceId` is the Space `externalRoomSpaceMatch`
+   * answered, with no anchor of its own. `unmatched`: `spaceId` is the room's
+   * own, anchor claimed, used only if nothing matches.
+   */
+  spaceMatch: z.enum(["matched", "unmatched"]).optional(),
   at: TimestampSchema,
-}).strict());
+}).strict().superRefine((request, context) => {
+  // Only an Organization-wide room may join an existing Space: a private
+  // room's audience is its own.
+  if (request.spaceMatch && request.space.scope !== "workspace") {
+    context.addIssue({ code: "custom", path: ["space", "scope"], message: "space_match_requires_workspace_scope" });
+  }
+  if (request.spaceMatch && request.participantUserIds.length > 0) {
+    context.addIssue({ code: "custom", path: ["participantUserIds"], message: "space_match_requires_no_participants" });
+  }
+}));
 export type ExternalRoomLinkRequest = z.infer<typeof ExternalRoomLinkRequestSchema>;
 
 export const ExternalRoomLinkResultSchema = z.discriminatedUnion("ok", [
@@ -264,3 +282,13 @@ export const ExternalRoomLinkResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(false), code: z.string().min(1) }),
 ]);
 export type ExternalRoomLinkResult = z.infer<typeof ExternalRoomLinkResultSchema>;
+
+/** The existing Organization-wide Space a public room's name matches. */
+export const ExternalRoomSpaceMatchRequestSchema = z.strictObject({
+  workspaceId: IdSchema,
+  name: z.string(),
+});
+export const ExternalRoomSpaceMatchResultSchema = z.strictObject({
+  spaceId: IdSchema.nullable(),
+});
+export type ExternalRoomSpaceMatchResult = z.infer<typeof ExternalRoomSpaceMatchResultSchema>;

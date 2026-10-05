@@ -108,6 +108,11 @@ export const SPACE_CHANNEL_PAGE_SIZE = 250;
  */
 export const SPACE_BOOTSTRAP_PAGE_SIZE = 50;
 
+/** A Space name as `organizationSpaceNamed` compares it: no case, spaces, dashes or underscores. */
+function spaceMatchName(name: string): string {
+  return name.toLowerCase().replace(/[\s_-]+/gu, "");
+}
+
 const SPACE_ICON_FALLBACK = "briefcase";
 const SPACE_COLOR_FALLBACK = "blue";
 
@@ -1248,19 +1253,22 @@ export class WorkspaceSpaceStorage {
    * the same change at a higher source version and overwrites this, which is
    * what keeps the Space's own object authoritative for what a Space is.
    */
-  applyPresentation(request: WorkspaceSpacePresentationRequest, now = Date.now()): SpaceSummary | false {
+  applyPresentation(request: WorkspaceSpacePresentationRequest, now = Date.now()): SpaceSummary | "stale" | false {
     return this.storage.transactionSync(() => {
       if (!this.canEdit(request.userId, request.spaceId)) return false;
       const updated = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE spaces
             SET title = ?, appearance_json = ?, revision = revision + 1, updated_at = ?
-          WHERE space_id = ? RETURNING space_id`,
+          WHERE space_id = ? AND (? IS NULL OR revision = ?) RETURNING space_id`,
         request.presentation.name.trim(),
         JSON.stringify({ icon: request.presentation.iconKey, color: request.presentation.colorKey }),
         now,
         request.spaceId,
+        request.ifRevision ?? null,
+        request.ifRevision ?? null,
       ).toArray()[0];
-      if (!updated) return false;
+      // `canEdit` found the row, so a miss here is the revision fence.
+      if (!updated) return request.ifRevision === undefined ? false : "stale";
       this.advanceWaterline(now);
       return this.space(request.spaceId, member(request.userId));
     });
@@ -3279,6 +3287,29 @@ export class WorkspaceSpaceStorage {
     return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
       "SELECT space_id FROM spaces WHERE system_role = 'general'",
     ).toArray()[0]?.space_id ?? null;
+  }
+
+  /**
+   * The oldest live Organization-wide Space named `name`, compared as
+   * `spaceMatchName` reads both, or nothing. Compared in TypeScript because the
+   * separators it drops and SQLite's ASCII-only `NOCASE` are both out of reach
+   * of an index.
+   */
+  organizationSpaceNamed(name: string): { spaceId: string; createdByUserId: string | null } | null {
+    if (!this.ready()) return null;
+    const wanted = spaceMatchName(name);
+    if (wanted === "") return null;
+    const rows = this.storage.sql.exec<
+      { space_id: string; title: string; created_by_user_id: string | null } & Record<string, SqlStorageValue>
+    >(
+      `SELECT space_id, title, created_by_user_id FROM spaces
+        WHERE scope = 'workspace' AND archived_at IS NULL
+        ORDER BY created_at, space_id`,
+    );
+    for (const row of rows) {
+      if (spaceMatchName(row.title) === wanted) return { spaceId: row.space_id, createdByUserId: row.created_by_user_id };
+    }
+    return null;
   }
 
   /**

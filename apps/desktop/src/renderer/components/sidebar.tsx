@@ -46,6 +46,7 @@ import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
+import { channelDestination } from '../lib/workstream-landing';
 import { Avatar, Button, IconButton, InlineError, Meter, Modal, StatusDot, Tip } from './primitives';
 import { AcknowledgedErrorDialog } from './acknowledged-error-dialog';
 import { ManageAccessDialog } from './manage-access-dialog';
@@ -72,9 +73,6 @@ interface SidebarProps {
   inactiveSpaces?: SpaceSummary[];
   /** False while the Organization has not finished its one-time cutover. */
   spacesReady?: boolean;
-  /** The Space directory on screen is the last one the socket delivered. */
-  spacesOutOfDate?: boolean;
-  onRetrySpaces?: () => void;
   workstreams: WorkstreamSummary[];
   /** Whether a page of work streams remains beyond the ones listed. */
   hasMoreWorkstreams?: boolean;
@@ -549,9 +547,7 @@ function WorkstreamRow({
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
   const attentionCount = workstreamAttentionCount(workstream);
   const hasActivityForViewer = workstreamHasActivityForViewer(workstream);
-  const destination = `/workstreams/${workstream.id}${workstream.associativeSubstreamId && workstream.associativeSubstreamId !== '0'
-    ? `?substream=${encodeURIComponent(workstream.associativeSubstreamId)}`
-    : ''}`;
+  const destination = channelDestination(workstream);
   const [previewOpen, setPreviewOpen] = useState(false);
   const previewOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1075,8 +1071,6 @@ export function Sidebar({
   spacesReadOnly = false,
   inactiveSpaces = [],
   spacesReady = true,
-  spacesOutOfDate = false,
-  onRetrySpaces = () => undefined,
   workstreams,
   loadedSpaceIds,
   onViewSpace,
@@ -2101,7 +2095,8 @@ export function Sidebar({
     }
   }, [onCreateChannel]);
   const createSpaceFromSidebar = useCallback(async (name: string): Promise<void> => {
-    const created = await onCreateSpace({ name, colorKey: 'blue', iconKey: 'briefcase', scope: 'personal' });
+    // No icon: Rally chooses one from the name a moment later.
+    const created = await onCreateSpace({ name, colorKey: 'blue', scope: 'personal' });
     void navigate(`/spaces/${created.id}`);
   }, [navigate, onCreateSpace]);
 
@@ -2220,11 +2215,9 @@ export function Sidebar({
           onCreateChannel={createChannelFromSidebar}
           onCreateSpace={createSpaceFromSidebar}
           onMoveChannel={moveChannelFromSelectedSpace}
-          onRetry={onRetrySpaces}
           onRestore={onRestoreSpace}
           onSelect={selectSpaceFromPill}
           ready={spacesReady}
-          outOfDate={spacesOutOfDate}
           selectedSpaceId={selectedSpaceId}
           revealSelection={activeDeepLinkReveal?.spaceId == null ? null : {
             revision: activeDeepLinkReveal.revision,

@@ -957,7 +957,7 @@ siblings in `test-workers/helpers/conversation-effects.ts`.
 ## Data model
 
 A Sidekick's rows are `WorkspaceDO`'s: `automation_directory` (with the
-definition columns migration 88 added), `sidekick_revisions`,
+definition columns migration 91 added), `sidekick_revisions`,
 `sidekick_schedules`, `sidekick_runs`, `sidekick_email_receipts`, the child
 tables, and alarm entries keyed `<sidekickId>:<key>`;
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them)

@@ -1,6 +1,6 @@
 import { promoteWorkspaceGuest } from "./workspace-relationship-service";
 import type { Region } from "@rally/contracts/regions";
-import { PersonalPresentationSchema } from '@rally/contracts';
+import { MemberPreferencesSchema, PersonalPresentationSchema, type MemberPreferences } from '@rally/contracts';
 import {
   AssignableMemberRoleSchema,
   asUserId,
@@ -28,6 +28,9 @@ import { dispatchWorkspaceRelationshipChanges } from "./workspace-relationship-d
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { rebuildDigestSchedulesForTimezone } from "./digest-service";
+import { workspaceDOName } from "../durable-objects/names";
+import { PersonalSystemPromptRecordSchema } from "../durable-objects/personal-system-prompt";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   emitProductUsageTelemetry,
   resourceTelemetryEventId,
@@ -381,6 +384,49 @@ export class WorkspaceService {
       ...(row.access_class === "guest" ? { accessClass: "guest" as const } : {}),
       createdAt: String(row.created_at),
     };
+  }
+
+  private workspaceObject() {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
+  }
+
+  async getMyPreferences() {
+    return MemberPreferencesSchema.parse(await (await this.workspaceObject()).memberPreferences({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: this.auth.userId,
+    }));
+  }
+
+  async updateMyPreferences(preferences: MemberPreferences) {
+    return MemberPreferencesSchema.parse(await (await this.workspaceObject()).saveMemberPreferences({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: this.auth.userId,
+      preferences,
+    }));
+  }
+
+  async getMyPersonalSystemPrompt() {
+    const { personalSystemPrompt } = PersonalSystemPromptRecordSchema.parse(
+      await (await this.workspaceObject()).personalSystemPrompt({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: this.auth.userId,
+      }));
+    return { personalSystemPrompt };
+  }
+
+  async updateMyPersonalSystemPrompt(text: string) {
+    const { personalSystemPrompt } = PersonalSystemPromptRecordSchema.parse(
+      await (await this.workspaceObject()).savePersonalSystemPrompt({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: this.auth.userId,
+        personalSystemPrompt: text,
+      }));
+    return { personalSystemPrompt };
   }
 
   async updateMyTimezone(timezone: string) {

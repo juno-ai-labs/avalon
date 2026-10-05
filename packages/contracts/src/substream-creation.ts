@@ -32,7 +32,7 @@ export type ContextPluginRef = z.infer<typeof ContextPluginRefSchema>;
 export const SubstreamContextMessageSchema = z.strictObject({
   turnId: TranscriptTurnIdSchema,
   transcriptSequence: z.number().int().positive(),
-  actor: z.enum(["human", "assistant", "external"]),
+  actor: z.enum(["human", "assistant", "external", "sidekick"]),
   authorUserId: UserIdSchema.nullable(),
   authorLabel: z.string().nullable(),
   createdAt: z.string().datetime({ offset: true }),
