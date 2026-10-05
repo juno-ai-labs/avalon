@@ -4,7 +4,6 @@ import {
   type WorkstreamNameContextMessage,
 } from "@rally/agent-harness";
 import {
-  WORKSTREAM_ICON_KEYS,
   WORKSTREAM_NAME_RESULT_MAX_LENGTH,
   WorkstreamNameResultSchema,
   type WorkstreamIconKey,
@@ -66,13 +65,13 @@ const nameJsonSchema = {
   additionalProperties: false,
   properties: {
     title: { type: "string", minLength: 1, maxLength: WORKSTREAM_NAME_RESULT_MAX_LENGTH },
-    // Required rather than optional because the request goes out `strict: true`,
-    // which is what makes the enum a decoding constraint: the provider can only
-    // emit one of these keys, so the catalog in the prompt and the catalog here
-    // cannot disagree about what the model is allowed to answer. An answer that
-    // reaches the parser off the catalog anyway is dropped to "no icon" there
-    // rather than failing the name with it.
-    icon: { type: "string", enum: [...WORKSTREAM_ICON_KEYS] },
+    // A plain string, not an enum of the catalog: Google AI Studio refuses a
+    // 253-value enum as "too much branching for serving", which failed every
+    // naming call on a Gemini route, fallbacks included. The catalog is in the
+    // prompt, and an answer off it is dropped to "no icon" at the parse rather
+    // than failing the name with it. Required, so a provider honouring
+    // `strict: true` cannot answer with a name and no icon.
+    icon: { type: "string" },
   },
   required: ["title", "icon"],
 };
@@ -186,6 +185,30 @@ export async function chooseWorkstreamIcon(env: Env, input: {
       icon: result.icon,
     });
   });
+}
+
+/**
+ * Icon-only pass for a Space created without one, read from its name alone;
+ * see `docs/spaces.md#the-icon-rally-chooses`. Returns the icon, or `null` when
+ * the model offered none, and never rejects. The caller writes it, because a
+ * Space's appearance belongs to WorkspaceDO rather than to a work-stream
+ * object.
+ */
+export async function chooseSpaceIcon(env: Env, input: {
+  workspaceId: string;
+  spaceId: string;
+  name: string;
+  userId?: string | undefined;
+}): Promise<WorkstreamIconKey | null> {
+  const generated = await generateName(env, {
+    workspaceId: input.workspaceId,
+    spaceId: input.spaceId,
+    userId: input.userId,
+    objective: input.name,
+    openingMessage: "",
+    iconOnly: true,
+  });
+  return generated.icon;
 }
 
 /**
@@ -352,13 +375,17 @@ const NOTHING_GENERATED: GeneratedName = { title: null, icon: null };
  * thinking about it buys nothing and only adds latency to a rename the person
  * who created the work stream is watching for — asking for the lowest *effort*
  * instead would switch thinking on for a model that does none by default.
+ * A fallback whose provider refuses `none` is served its default instead; see
+ * `reasoningEffortFor` in the agent harness.
  *
  * Never throws. Every caller's alternative is the title and icon already on the
  * work stream, so a failure is logged and reported as "nothing generated".
  */
 async function generateName(env: Env, input: {
   workspaceId: string;
-  workstreamId: string;
+  /** The conversation being named, or the Space whose icon is chosen. */
+  workstreamId?: string;
+  spaceId?: string;
   userId?: string | undefined;
   objective: string;
   openingMessage: string;
@@ -373,7 +400,7 @@ async function generateName(env: Env, input: {
       activity: "channel_naming",
       context: {
         workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
+        ...(input.workstreamId ? { workstreamId: input.workstreamId } : {}),
         ...(input.userId ? { userId: input.userId } : {}),
       },
       messages: renderWorkstreamNameMessages({
@@ -399,6 +426,7 @@ async function generateName(env: Env, input: {
     logStructuredEvent(env, "warn", "workstream_naming_failed", {
       workspace_id: input.workspaceId,
       workstream_id: input.workstreamId,
+      space_id: input.spaceId,
       stage: "model",
       error_name: error instanceof Error ? error.name : "UnknownError",
       error_message: error instanceof Error ? error.message : "Work-stream naming failed",

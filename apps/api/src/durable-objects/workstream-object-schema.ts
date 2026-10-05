@@ -1,3 +1,4 @@
+import { SUBSTREAM_PERSONAL_SYSTEM_PROMPT_MIGRATION } from "./personal-system-prompt";
 import { CONVERSATION_LINK_SEARCH_SCHEMA } from './conversation-link-search';
 import { TOOL_PAGE_SCHEMA, TOOL_PAGE_CONSUMER_INDEX } from './tool-page-storage';
 import { PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA } from "./participant-authority-transfer";
@@ -24,7 +25,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 71;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 72;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3416,6 +3417,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       // prompt, model role and tool surface; see `agent-profiles.ts`.
       `ALTER TABLE workstream ADD COLUMN agent_profile TEXT`,
     ],
+  },
+  {
+    version: 72,
+    description: "this conversation's copy of members' personal system prompts",
+    statements: SUBSTREAM_PERSONAL_SYSTEM_PROMPT_MIGRATION,
   },
 ];
 

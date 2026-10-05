@@ -111,6 +111,8 @@ async function linkRoom(roomId: string, spaceId: string, input: {
   scope?: "personal" | "workspace";
   userId?: UserId;
   participantUserIds?: UserId[];
+  spaceMatch?: "matched" | "unmatched";
+  name?: string;
 } = {}) {
   return workspace().linkExternalRoom({
     workspaceId: WORKSPACE_ID,
@@ -118,8 +120,9 @@ async function linkRoom(roomId: string, spaceId: string, input: {
     path: [roomId],
     userId: input.userId ?? USER_ID,
     spaceId,
-    space: { name: `room ${roomId}`, scope: input.scope ?? "workspace" },
+    space: { name: input.name ?? `room ${roomId}`, scope: input.scope ?? "workspace" },
     participantUserIds: input.participantUserIds ?? [],
+    ...(input.spaceMatch ? { spaceMatch: input.spaceMatch } : {}),
     at: at(),
   });
 }
@@ -272,6 +275,126 @@ describe("linking a shared room", () => {
       target: { kind: "conversation", parentKind: "workstream", parentId: created.workstream.id, substreamId: "0" },
     });
     expect(await spaceIds()).toEqual([linked.spaceId]);
+  });
+});
+
+describe("a room named for an existing Space", () => {
+  const match = async (name: string) => (await workspace().externalRoomSpaceMatch({ workspaceId: WORKSPACE_ID, name })).spaceId;
+  const generalId = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ space_id: string }>(
+    "SELECT space_id FROM spaces WHERE system_role = 'general'",
+  ).one().space_id);
+
+  it("matches the live Organization-wide Space of that name ignoring case, and links the room into it", async () => {
+    const general = await generalId();
+    const privateRoom = await linkRoom("G1", "00000000-0000-7000-8000-000000000e31", { scope: "personal" });
+    const archived = await linkRoom("C2", "00000000-0000-7000-8000-000000000e32");
+    if (!privateRoom.ok || !archived.ok) throw new Error("link refused");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE spaces SET archived_at = 1 WHERE space_id = ?", archived.spaceId);
+    });
+
+    expect(await match("  gEnErAl ")).toBe(general);
+    expect(await match("ROOM G1")).toBeNull();
+    expect(await match("ROOM C2")).toBeNull();
+    expect(await match("generals")).toBeNull();
+
+    const linked = await linkRoom("C1", general, { spaceMatch: "matched", name: "general" });
+    expect(linked).toEqual({ ok: true, outcome: "linked", spaceId: general });
+    expect(await spaceIds()).toEqual([privateRoom.spaceId, archived.spaceId].sort());
+    expect(await resolve(["C1", "1.0"], { addressed: true, claimKey: "event:general" }))
+      .toMatchObject({ outcome: "spawn", spaceId: general, spaceMatched: true });
+    // The record survives Slack renumbering the room, which the id could not.
+    await workspace().moveExternalConversationBindings({
+      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, from: ["C1"], to: ["C9"], at: at(),
+    });
+    expect(await resolve(["C9", "1.0"], { addressed: true, claimKey: "event:moved" }))
+      .toMatchObject({ outcome: "spawn", spaceId: general, spaceMatched: true });
+    // A room's own Space is recorded as its own.
+    const own = await linkRoom("C5", "00000000-0000-7000-8000-000000000e39", { spaceMatch: "unmatched", name: "launch" });
+    if (!own.ok) throw new Error("link refused");
+    expect(await resolve(["C5", "1.0"], { addressed: true, claimKey: "event:own" }))
+      .toMatchObject({ outcome: "spawn", spaceId: own.spaceId, spaceMatched: false });
+  });
+
+  it("ignores spaces, dashes and underscores in a room's name, so `#room-c3`, `#room_c3` and `#roomc3` match \"room C3\"", async () => {
+    const spaced = await linkRoom("C3", "00000000-0000-7000-8000-000000000e33");
+    if (!spaced.ok) throw new Error("link refused");
+    expect(await match("ROOM-C3")).toBe(spaced.spaceId);
+    expect(await match("room--c3")).toBe(spaced.spaceId);
+    expect(await match("roomc3")).toBe(spaced.spaceId);
+    expect(await match("room_c3")).toBe(spaced.spaceId);
+    expect(await match("room.c3")).toBeNull();
+    // A name that is only separators matches nothing, not every such Space.
+    const dashes = await linkRoom("C4", "00000000-0000-7000-8000-000000000e34", { name: "-" });
+    if (!dashes.ok) throw new Error("link refused");
+    expect(await match("--")).toBeNull();
+  });
+
+  it("does not offer a Space whose creator is no longer a member, so the room gets its own", async () => {
+    const general = await generalId();
+    expect(await match("general")).toBe(general);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE spaces SET created_by_user_id = '00000000-0000-7000-8000-000000000ec9' WHERE space_id = ?", general,
+      );
+    });
+    expect(await match("general")).toBeNull();
+  });
+
+  it("joins a Space that started matching after the caller's ask, rather than making a second one", async () => {
+    const general = await generalId();
+    // The caller asked while nothing matched and minted the room's own id.
+    const linked = await linkRoom("C1", "00000000-0000-7000-8000-000000000e35", { spaceMatch: "unmatched", name: "general" });
+    expect(linked).toEqual({ ok: true, outcome: "linked", spaceId: general });
+    expect(await spaceIds()).toEqual([]);
+    // Without a match, the room's own id is used.
+    const own = await linkRoom("C2", "00000000-0000-7000-8000-000000000e36", { spaceMatch: "unmatched", name: "launch" });
+    expect(own).toEqual({ ok: true, outcome: "linked", spaceId: "00000000-0000-7000-8000-000000000e36" });
+  });
+
+  it("refuses the link when the matched Space's creator leaves while the link is in flight", async () => {
+    const general = await generalId();
+    const result = await runInDurableObject(workspace(), async (instance) => {
+      const target = instance as unknown as { spaceParentReservation: (spaceId: string) => Promise<unknown> };
+      const original = target.spaceParentReservation.bind(instance);
+      // The creator check has passed by now; the creator leaves before the commit.
+      vi.spyOn(target, "spaceParentReservation").mockImplementation(async (spaceId: string) => {
+        const state = (instance as unknown as { state: DurableObjectState }).state;
+        state.storage.sql.exec("UPDATE workspace_member_status SET relationship_json = NULL WHERE user_id = ?", USER_ID);
+        return original(spaceId);
+      });
+      return instance.linkExternalRoom({
+        workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["C1"], userId: USER_ID, spaceId: general,
+        space: { name: "general", scope: "workspace" }, participantUserIds: [], spaceMatch: "matched", at: at(),
+      });
+    });
+    expect(result).toEqual({ ok: false, code: "space_not_found" });
+    expect(await bindingRows()).toEqual([]);
+  });
+
+  it("refuses a match request for a private room or one that seats participants", async () => {
+    await expect(linkRoom("G1", "00000000-0000-7000-8000-000000000e37", { spaceMatch: "unmatched", scope: "personal" }))
+      .rejects.toThrow();
+    await expect(linkRoom("C1", "00000000-0000-7000-8000-000000000e38", {
+      spaceMatch: "unmatched", participantUserIds: [OTHER_USER_ID],
+    })).rejects.toThrow();
+    expect(await bindingRows()).toEqual([]);
+  });
+
+  it("refuses to link a room into a matched Space that was renamed, made private or archived before the link", async () => {
+    const general = await generalId();
+    const edits = [
+      "UPDATE spaces SET title = 'Everyone' WHERE space_id = ?",
+      "UPDATE spaces SET title = 'General', scope = 'personal' WHERE space_id = ?",
+      "UPDATE spaces SET scope = 'workspace', archived_at = 1 WHERE space_id = ?",
+    ];
+    for (const edit of edits) {
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(edit, general);
+      });
+      expect(await linkRoom("C1", general, { spaceMatch: "matched", name: "general" })).toEqual({ ok: false, code: "space_not_found" });
+    }
+    expect(await bindingRows()).toEqual([]);
   });
 });
 

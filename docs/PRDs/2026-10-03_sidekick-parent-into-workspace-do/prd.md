@@ -233,7 +233,7 @@ below. Newest first.
 - **2026-10-05: The definition row is `automation_directory`, not a new
   `sidekicks` table.** About fifty readers and triggers already read the
   directory row, and a Sidekick still pending import is served by the row its
-  legacy object published. Migration 88 adds the definition columns, all
+  legacy object published. Migration 91 adds the definition columns, all
   nullable; `region IS NOT NULL` marks a row an import or a hosted write has
   filled.
 - **2026-10-05: A Sidekick's children have their own tables, and

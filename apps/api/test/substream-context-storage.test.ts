@@ -203,6 +203,65 @@ describe("substream context storage", () => {
     expect(JSON.stringify(capture)).not.toContain("private tool protocol payload");
   });
 
+  it("exports only what was said: text, and a Sidekick's result under its name", async () => {
+    const { transcript } = open();
+    const seedTurn = (
+      sequence: number,
+      actor: "assistant" | "system",
+      messageType: "system" | "elicitation" | "automation_activation",
+      text: string,
+      structuredContent: unknown,
+    ) => transcript.seedDevelopmentConversationTurn({
+      turnId: `turn-${sequence}`,
+      expectedTranscriptSequence: sequence,
+      actor,
+      authorUserId: null,
+      authorSnapshot: null,
+      clientMessageId: `client-${sequence}`,
+      externalActorJson: null,
+      messageType,
+      text,
+      structuredContentJson: JSON.stringify(structuredContent),
+      producedByRunId: null,
+      createdAtUtc: new Date(NOW + sequence).toISOString(),
+    });
+    await seedText(transcript, 1, "question");
+    await seedTurn(2, "system", "automation_activation", "Weekly pipeline: 4 new deals", {
+      type: "automation_activation",
+      schemaVersion: 1,
+      automationId: "00000000-0000-7000-8000-000000000010",
+      automationName: "Pipeline digest",
+      runId: "00000000-0000-7000-8000-000000000011",
+      deliveryId: "delivery-1",
+      occurredAt: NOW,
+    });
+    await seedTurn(3, "system", "system", "Ada joined the conversation", null);
+    await seedTurn(4, "assistant", "elicitation", "Which deal first?", { question: "Which deal first?" });
+    // A result whose payload does not parse still arrives, under the generic name.
+    await seedTurn(5, "system", "automation_activation", "Unnamed result", { type: "automation_activation" });
+    await seedText(transcript, 6, "answer", "assistant");
+
+    const capture = transcript.captureSubstreamContext({
+      operationId: "capture-sidekick",
+      source,
+      throughTurnId: "turn-6",
+    });
+
+    expect(capture.messages.map((message) => [message.actor, message.authorLabel, message.blocks[0]?.text]))
+      .toEqual([
+        ["human", "Ada", "question"],
+        ["sidekick", "Pipeline digest", "Weekly pipeline: 4 new deals"],
+        ["sidekick", "Sidekick", "Unnamed result"],
+        ["assistant", "Rally", "answer"],
+      ]);
+    // A Sidekick's result is a cutoff a Breakout can be started from.
+    expect(transcript.captureSubstreamContext({
+      operationId: "capture-at-sidekick",
+      source,
+      throughTurnId: "turn-2",
+    })).toMatchObject({ throughTurnId: "turn-2", messages: [{ turnId: "turn-1" }, { turnId: "turn-2" }] });
+  });
+
   it("installs an immutable idle seed without creating transcript input", () => {
     const { transcript, storage } = open();
     const context = SubstreamInitialContextSchema.parse({

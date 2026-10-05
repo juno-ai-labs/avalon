@@ -40,19 +40,29 @@ jobs:
           - name: desktop-tests-2-of-n
             command: pnpm --filter @rally/desktop exec vitest run --shard=2/2
           - name: api-tests-1-of-n
-            command: pnpm --filter @rally/api exec vitest run --shard=1/3
+            command: pnpm --filter @rally/api exec vitest run --shard=1/4
           - name: api-tests-2-of-n
-            command: pnpm --filter @rally/api exec vitest run --shard=2/3
+            command: pnpm --filter @rally/api exec vitest run --shard=2/4
           - name: api-tests-3-of-n
-            command: pnpm --filter @rally/api exec vitest run --shard=3/3
+            command: pnpm --filter @rally/api exec vitest run --shard=3/4
+          - name: api-tests-4-of-n
+            command: pnpm --filter @rally/api exec vitest run --shard=4/4
           - name: api-tests-workers-1-of-n
-            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=1/4
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=1/8
           - name: api-tests-workers-2-of-n
-            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=2/4
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=2/8
           - name: api-tests-workers-3-of-n
-            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=3/4
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=3/8
           - name: api-tests-workers-4-of-n
-            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=4/4
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=4/8
+          - name: api-tests-workers-5-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=5/8
+          - name: api-tests-workers-6-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=6/8
+          - name: api-tests-workers-7-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=7/8
+          - name: api-tests-workers-8-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=8/8
           - name: crash-symbolicator-container
             command: pnpm --filter @rally/api test:crash-symbolicator-container
           - name: remaining-tests

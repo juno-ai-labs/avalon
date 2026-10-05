@@ -185,7 +185,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "opportunity_provenance_edges",
   "opportunity_provenance_nodes",
   "scope_grant_directory", // Typed candidate projection/read RPCs own this table.
-  // A hosted Sidekick's tables (migration 88). `HostedSidekick` reads and
+  // A hosted Sidekick's tables (migration 91). `HostedSidekick` reads and
   // writes them through the object's own storage, behind the `sidekick*`
   // facade, and they are named in `WORKSPACE_TYPED_RPC_ONLY_TABLES`.
   "sidekick_revisions",
@@ -225,6 +225,8 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_batch_dispatches",
   "workspace_container_order",
   "workspace_pinned_order", // All's Pinned order; read and written only by the Space authority.
+  "member_personal_system_prompts", // Read and written only by the personal system prompt RPCs.
+  "member_preferences", // Read and written only by the member preference RPCs.
   "workspace_directory_state",
   "workspace_external_event_registrations",
   "external_registration_generations", // Owned by typed registration RPC only.

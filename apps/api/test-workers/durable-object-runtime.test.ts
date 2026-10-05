@@ -1961,6 +1961,94 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("keeps the socket open on presence for an unlisted Channel and applies it once the Channel is listed", async () => {
+    await seedOpenAuthority();
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const socket = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-000000000419");
+    const closed = nextClose(socket).then((event) => {
+      throw new Error(`workspace socket closed with ${event.code}`);
+    });
+    try {
+      socket.send(JSON.stringify({
+        type: "set_presence",
+        revision: 1,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      // Frames are handled in order, so a page answered after the presence
+      // frame proves the socket outlived it.
+      const page = nextMessageOfType(socket, "workspace_workstream_page");
+      socket.send(JSON.stringify({
+        type: "list_workstreams",
+        requestId: "00000000-0000-7000-8000-00000000041a",
+        limit: 20,
+        includeSystem: false,
+      }));
+      await Promise.race([page, closed]);
+      const attachment = await runInDurableObject(workspace, (_instance, state) =>
+        state.getWebSockets()[0]!.deserializeAttachment() as Record<string, unknown>);
+      expect(attachment).toMatchObject({
+        presenceRevision: 1,
+        applicationState: "foreground",
+        foregroundWorkstreamId: null,
+      });
+
+      // The renderer does not resend for a route it has not left, so the
+      // directory change that lists the Channel is what applies the presence.
+      const at = "2026-08-26T20:00:00.000Z";
+      const opened = nextMessageOfType(socket, "workspace_workstream_recency");
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [
+          parentEffectEnvelope({
+            kind: "directory_common",
+            title: "Listed after it was opened",
+            description: "",
+            preview: "idle",
+            scope: "workspace",
+            state: "idle",
+            systemKind: null,
+            lastActivityAt: at,
+            completedAt: null,
+            archivedAt: null,
+            createdByUserId: null,
+            latestAttentionOrdinal: 0,
+            unreadTrackingStartOrdinal: 0,
+            createdAt: at,
+            updatedAt: at,
+          }, "00000000-0000-7000-8000-00000000041b"),
+          parentEffectEnvelope({
+            kind: "directory_user",
+            userId: USER_ID,
+            isParticipant: true,
+            unreadCount: 0,
+            youAreMentioned: false,
+            listable: true,
+            seenAttentionOrdinal: 0,
+            manualUnreadFromOrdinal: null,
+            manualUnreadGeneration: 0,
+            latestMentionAttentionOrdinal: 0,
+          }, "00000000-0000-7000-8000-00000000041c"),
+        ],
+      });
+      expect(await Promise.race([opened, closed])).toMatchObject({
+        workstream: { id: WORKSTREAM_ID, lastAccessedAt: expect.any(String) },
+      });
+      const promoted = await runInDurableObject(workspace, (_instance, state) =>
+        state.getWebSockets()[0]!.deserializeAttachment() as Record<string, unknown>);
+      expect(promoted).toMatchObject({
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+        pendingForegroundWorkstreamId: null,
+      });
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
   it("re-evaluates a changed product flag privately for subscribed users", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
@@ -2769,6 +2857,46 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(page.notes.waterline).toBeGreaterThanOrEqual(0);
     } finally {
       socket!.close(1000, "test complete");
+    }
+  });
+
+  it("answers subscribe with the viewer's stored display preferences", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // Nothing stored is every default.
+    await expect(stub.memberPreferences({ workspaceId: WORKSPACE_ID, userId: USER_ID }))
+      .resolves.toEqual({ showAgentWork: true });
+    await expect(stub.saveMemberPreferences({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      preferences: { showAgentWork: false },
+    })).resolves.toEqual({ showAgentWork: false });
+
+    const response = await stub.fetch("https://workspace.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000709",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    try {
+      const answer = nextMessage(socket);
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      const event = JSON.parse(String((await answer).data)) as { viewerPreferences?: unknown };
+      // On the answer itself, so the first frame hides the calls without a read.
+      expect(event.viewerPreferences).toEqual({ showAgentWork: false });
+    } finally {
+      socket.close(1000, "test complete");
     }
   });
 

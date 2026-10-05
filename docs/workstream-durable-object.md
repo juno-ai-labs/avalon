@@ -514,7 +514,13 @@ parent work stream's REST boot into the child cache.
 The same persistent workspace socket carries explicit foreground presence. Each
 hibernation attachment records whether Rally itself is foregrounded and which
 work stream, if any, is foreground in that renderer window. WorkspaceDO
-validates that work stream against its local viewer directory, reconstructs the
+validates that work stream against its local viewer directory and records one
+the viewer cannot see as no work stream, logging `workspace_presence_unlisted`;
+it never closes the socket for it. The attachment keeps it as
+`pendingForegroundWorkstreamId`, and the next presence rebuild after a directory
+change that lists it promotes it, with the same Main wake and recency write a
+direct open gets. Losing visibility clears both, so regaining it restores
+nothing. It then reconstructs the
 present-user set from all healthy attachments, and sends each connection only
 the set for its own foreground work stream. The recipient's user ID is omitted.
 Presence is not inferred from the selected work stream's retained metadata or
@@ -1568,7 +1574,7 @@ already have committed across the object boundary.
 | `connector_connections`, `external_user_identities` | Workspace connector credentials, cursor/configuration/health, model plugin identity, refresh lease, and verified provider-user mappings. Global/provider ingress routes retain only the opaque fields needed to find this object. |
 | `slack_agent_*`, `slack_delivery_preferences`, `slack_user_links`, `slack_ingress_jobs`, `slack_link_challenges`, `slack_unfurled_links` | Workspace-local Slack policy, allowlist, identity, execution session, queued handoff, delivery preference, and shared-link state. Global Slack installation routing remains outside the object because the workspace is not known at initial ingress. |
 | `workspace_sandbox_network_policies`, `workspace_sandbox_network_domains`, `workspace_sandbox_network_policy_mutations` | Terminal network/egress authority, current verified revision, domain set, and complete preview/confirm/result history. Substream terminal state stores only the applied revision and rechecks this object before reuse. |
-| `automation_directory`, `workspace_external_event_registrations` | The workspace's whole automation surface: one row per Sidekick, which since migration 88 is its definition row too (lifecycle, scope, home, title, accepted revision, bindings, appearance, email address); and the typed external-event registration index, shared with work-stream resource watches, replaced whole per destination with the `effective_after_event_sequence` cutoff. A Sidekick's revisions, runs, schedules and receipts are the `sidekick_*` tables beside it; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them). Migration 31 dropped the delivery ledger, the creation claims, the cutover campaign, and the template tables. |
+| `automation_directory`, `workspace_external_event_registrations` | The workspace's whole automation surface: one row per Sidekick, which since migration 91 is its definition row too (lifecycle, scope, home, title, accepted revision, bindings, appearance, email address); and the typed external-event registration index, shared with work-stream resource watches, replaced whole per destination with the `effective_after_event_sequence` cutoff. A Sidekick's revisions, runs, schedules and receipts are the `sidekick_*` tables beside it; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them). Migration 31 dropped the delivery ledger, the creation claims, the cutover campaign, and the template tables. |
 | `digest_schedules`, `digest_schedule_times`, `digest_delivery_targets`, `digest_deliveries`, `schedules` | User digest configuration/cursor/history plus the canonical due-work index for digests and connector polling — automations left `schedules` in the durable-lifecycle cutover and keep their own `sidekick_schedules` entries. This object's own alarm reads them directly and mirrors each due time into `_internal_durable_alarms`; see [`durable-object-alarms.md`](durable-object-alarms.md). |
 | `resources`, `resource_versions`, `resource_watches` | Workspace resource metadata, monotonic semantic history, and workspace-level attachment/watch relationships. Every numbered version retains its original and derivative regional R2 refs; each SubstreamAgent separately owns its work-stream link and resource inventory revision. |
 | `resource_object_deletion_outbox`, `note_resource_deletion_outbox` | Durable lifecycle ownership for original, derivative, receipt, and note-linked R2 refs. Deletion bytes is a regional side effect performed only after an object-owned outbox claim. |
@@ -1817,6 +1823,35 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-05 — Presence for an unlisted Channel no longer closes the socket
+
+**What changed:** `set_presence` naming a Channel the viewer's directory does
+not list now records `foregroundWorkstreamId: null`, keeps the Channel as
+`pendingForegroundWorkstreamId`, and logs `workspace_presence_unlisted`. When a
+directory change later lists it, `broadcastPresence` promotes it and runs the
+open (Main wake, recency) through `recordChannelOpened`. It used to close the
+workspace socket with 4400 (`presence_workstream_inaccessible`). Presence before
+`subscribe` still closes.
+
+**Why:** The desktop sends the routed Channel as soon as it opens, and the
+route can name a Channel this viewer's directory has not listed yet. Electron
+treats 4400 as permanent, so one such frame ended the Organization socket until
+a restart: the sidebar went stale and the strip showed a Refresh that could not
+reconnect.
+
+**Considered and rejected:** Filtering harder on the desktop. It cannot know
+what WorkspaceDO lists at the instant the frame arrives, and the server must
+not trust it anyway. Dropping the frame without recording it would leave the
+previous Channel's presence standing. Recording `null` alone loses the open
+when the frame races the effect that lists the Channel: the renderer does not
+resend for a route it has not left.
+
+**Consequences:** 4400 stays reserved for frames that break the protocol. A
+frame that is well formed but names something the viewer cannot see gets the
+answer it would get for "no Channel", not a close.
+
+Shipped in [#1093](https://github.com/juno-ai-labs/avalon/pull/1093).
 
 ### 2026-10-01 — A person added by somebody else keeps the newest message unread
 

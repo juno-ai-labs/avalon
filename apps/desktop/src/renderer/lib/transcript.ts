@@ -170,6 +170,31 @@ export function optimisticMentionRendering(
   selected: readonly MentionIdentity[],
   members: readonly WorkspaceMember[],
 ): { text: string; mentions: MessageMention[] } {
+  const prepared = prepareDraftMentions(text, selected, members);
+  return {
+    text: prepared.text,
+    mentions: prepared.mentions.map((mention) => ({
+      type: mention.type,
+      ...(mention.userId ? { personId: mention.userId } : {}),
+      ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
+      ...(mention.displayName ? { displayName: mention.displayName } : {}),
+      ...(mention.avatarUrl ? { avatarUrl: mention.avatarUrl } : {}),
+      startOffset: mention.startOffset,
+      endOffset: mention.endOffset,
+    })),
+  };
+}
+
+/**
+ * The room's rewrite of a draft and its popover selections, in the wire shape
+ * a transcript block stores. `optimisticMentionRendering` reads it into a
+ * `Message`; a launcher seeding a transcript cache keeps it as is.
+ */
+export function prepareDraftMentions(
+  text: string,
+  selected: readonly MentionIdentity[],
+  members: readonly WorkspaceMember[],
+): ReturnType<typeof prepareMentionMarkdown> {
   const offsetSelections = selected.flatMap((mention) =>
     mention.startOffset === undefined || mention.endOffset === undefined ? [] : [{
       type: mention.type,
@@ -184,19 +209,7 @@ export function optimisticMentionRendering(
     name: member.name,
     avatarUrl: member.avatarUrl ?? null,
   }]));
-  const prepared = prepareMentionMarkdown(text, offsetSelections, people);
-  return {
-    text: prepared.text,
-    mentions: prepared.mentions.map((mention) => ({
-      type: mention.type,
-      ...(mention.userId ? { personId: mention.userId } : {}),
-      ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
-      ...(mention.displayName ? { displayName: mention.displayName } : {}),
-      ...(mention.avatarUrl ? { avatarUrl: mention.avatarUrl } : {}),
-      startOffset: mention.startOffset,
-      endOffset: mention.endOffset,
-    })),
-  };
+  return prepareMentionMarkdown(text, offsetSelections, people);
 }
 
 export function createToolEventMessage({ toolEvent, ...message }: ToolEventMessageInput): Message {
@@ -1404,6 +1417,34 @@ function continuesPluginActivityRun(message: Message): boolean {
   return message.messageType === 'tool_event'
     || message.messageType === 'plugin_activity'
     || message.messageType === 'thought';
+}
+
+/**
+ * The transcript without the agent's work (its thinking, tool calls and plugin
+ * calls), for a member who turned it off.
+ *
+ * Messages between agents stay too; they are not calls. The response's own
+ * `working` row stays: it is the live "Rally is working"
+ * timer and, once settled, the "Worked for" total, and without it a long run
+ * shows nothing between the question and the answer. `keep` spares the tool
+ * rows that ask the reader to act (connecting an account, authorizing a
+ * resource): hiding those would leave the agent waiting on a request nobody
+ * can see.
+ */
+export function withoutAgentWork(
+  messages: readonly Message[],
+  keep: (message: Message) => boolean,
+): Message[] {
+  return messages.filter((message) => {
+    if (message.messageType === 'thought') {
+      return !message.thoughtEvent || !isThinkingEvent(message.thoughtEvent);
+    }
+    // A counted row is a message between agents, not a call: it carries its
+    // turn's attention ordinal and is all that turn has to read, so hiding it
+    // would leave the conversation unread with nothing to read.
+    if (message.messageType === 'plugin_activity') return message.pluginActivity?.count !== undefined;
+    return message.messageType !== 'tool_event' || keep(message);
+  });
 }
 
 /**
