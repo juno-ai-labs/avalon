@@ -1,4 +1,4 @@
-import { LoaderCircle, Sparkles, Square, UserPlus } from 'lucide-react';
+import { LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { RallyApi, MentionIdentity } from '../lib/api';
 import {
@@ -433,7 +433,7 @@ export function WorkstreamComposer({
               <span aria-hidden="true" className="mention-icon">
                 {candidate.member
                   ? <Avatar member={candidate.member} size="small" />
-                  : <span className="rally-mention-icon"><Sparkles size={14} /></span>}
+                  : <span className="avatar avatar-small avatar-rally"><span className="avatar-fallback">R</span></span>}
               </span>
               <span className="mention-popover-copy">
                 <strong>{candidate.label}</strong>

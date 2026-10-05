@@ -664,6 +664,10 @@ pre {
 .avatar-fallback { color: var(--av-ref-color-neutral-14); font-size: 9px; font-weight: 650; text-box: trim-both cap alphabetic; }
 .avatar-medium .avatar-fallback { font-size: 10px; }
 .avatar-large .avatar-fallback { font-size: 11px; }
+/* Rally's own mark: brand yellow on a fixed near-black disc, so the yellow
+   keeps its contrast in both appearances. */
+.avatar-rally { background: var(--av-sys-color-brand-on); }
+.avatar-rally .avatar-fallback { color: var(--av-sys-color-brand-base); }
 
 .avatar-stack {
   align-items: center;
@@ -3550,6 +3554,8 @@ pre {
 }
 .mention-chip-connector-icon.provider-icon .connector-mark { height: 14px; width: 14px; }
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Rally's avatar, as in the mention list: brand yellow on a fixed near-black disc. */
+.mention-chip-avatar-rally { background: var(--av-sys-color-brand-on); color: var(--av-sys-color-brand-base); font-size: 8px; }
 .mention-chip-status {
   display: none;
   flex: 0 0 auto;
@@ -5985,7 +5991,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .composer-toolbar { min-height: 34px; padding: 1px 6px 5px; }
 .composer-tools > .icon-button { border-radius: var(--av-sys-size-radius-pill); }
 .composer-send { height: 30px; width: 30px; }
-.rally-mention-icon { align-items: center; background: var(--av-sys-color-text-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-on-inverse); display: flex; height: 24px; justify-content: center; width: 24px; }
 
 @media (min-width: 1181px) {
   .workspace-shell.rail-open .main-pane { padding-right: var(--rail-slot); }
