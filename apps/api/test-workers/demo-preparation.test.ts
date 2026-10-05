@@ -42,6 +42,7 @@ import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
+import { useSidekickRunProvisionConsumer } from "./helpers/sidekick";
 
 const PRESENTER_ID = "00000000-0000-7000-8000-00000000d6a1";
 const PRIYA_ID = "00000000-0000-7000-8000-00000000d6a2";
@@ -59,6 +60,7 @@ useOpenRouterDouble(() => ({
   httpError: { status: 503, body: { error: { message: "a seeded run reached the provider" } } },
 }));
 useSelectedModel();
+useSidekickRunProvisionConsumer();
 useHeldEffectQueue();
 
 /**

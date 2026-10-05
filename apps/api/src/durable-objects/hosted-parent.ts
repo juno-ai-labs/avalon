@@ -1670,13 +1670,14 @@ export class HostedParent {
 
   async setSidekickRecommendation(input: {
     workspaceId: string; parentId: string; userId: string; sidekickId: string; attached: boolean;
-  }): Promise<string[]> {
+  }, assertRecommendable: (sidekickId: string) => void = () => {}): Promise<string[]> {
     const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
       userId: UserIdSchema, sidekickId: IdSchema, attached: z.boolean() }), input, "sidekick_recommendation");
     this.assertParent(request.workspaceId, request.parentId);
     const access = await this.readManagementAccess({ workspaceId: request.workspaceId, parentId: request.parentId, userId: request.userId });
     if (!access.allowed) throw new Error("sidekick_attachment_participant_required");
     if (!access.writable) throw new Error("sidekick_attachment_workstream_archived");
+    if (request.attached) assertRecommendable(request.sidekickId);
     this.writeSidekickRecommendation(request.sidekickId, request.attached);
     return this.recommendedSidekickIds({ workspaceId: request.workspaceId, parentId: request.parentId });
   }

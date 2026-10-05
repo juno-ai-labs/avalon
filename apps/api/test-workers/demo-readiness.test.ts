@@ -25,7 +25,6 @@ import { SpaceService } from "../src/services/space-service";
 import { demoReadinessManifest, checkDemoReadiness } from "../src/services/demo-readiness";
 import { demoSeedReceipts, demoSeedSpaceId, openDemoSeedSession } from "../src/services/demo-seeder";
 import {
-  consumeEffectBodies,
   deliverChildEffects,
   parentStubFor,
   pendingParentEffects,
@@ -46,6 +45,7 @@ import {
   seedDemoWorkspaceControlPlane,
 } from "./helpers/demo-workspace-fixture";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { useSidekickRunProvisionConsumer } from "./helpers/sidekick";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 
@@ -54,6 +54,7 @@ useOpenRouterDouble(() => ({
 }));
 useSelectedModel();
 useHeldEffectQueue();
+useSidekickRunProvisionConsumer();
 
 beforeEach(async () => {
   await reset();
@@ -122,14 +123,6 @@ describe("the readiness barrier", () => {
     for (const room of manifest.views[0]!.rooms) await deliverRoomEffects(room.workstreamId);
     const published = receipts.find((receipt) => receipt.kind === "sidekick")!;
     await deliverChildEffects(env, demoRunStub(published.sidekickId!, published.sidekickRunId!));
-    const sidekick = parentStubFor(env, "global", {
-      workspaceId: DEMO_WORKSPACE_ID, parentKind: "automation", parentId: published.sidekickId!,
-    });
-    for (const envelope of await pendingParentEffects(sidekick)) {
-      if (envelope.effect.kind.startsWith("directory_")) {
-        expect((await consumeEffectBodies(env, [envelope])).retried).toBe(0);
-      }
-    }
     const check = () => checkDemoReadiness(demoSeedEnv(), {
       operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest,
     });
@@ -201,26 +194,18 @@ describe("the readiness barrier", () => {
       ["Morning briefing", "workspace"],
     ]);
 
-    // Publication and the briefing are both done, and neither has reached the
-    // presenter: a Sidekick's directory row rides the effect Queue, as a room's does.
+    // Publication and the briefing are both done. The Sidekick is listed at
+    // once, since its directory row is the definition its Organization object
+    // holds, but its history still shows the briefing running.
     const before = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
     expect(before.ready).toBe(false);
-    expect(before.gaps.map((gap) => gap.code)).toContain("sidekick_missing");
+    const codes = before.gaps.map((gap) => gap.code);
+    expect(codes).not.toContain("sidekick_missing");
+    expect(codes).toContain("sidekick_run_state");
 
-    // The run's own conversation reports up to the Sidekick, and the Sidekick
-    // to the workspace. A Sidekick is not a hosted parent, so it keeps the
-    // second Queue leg a room's projection no longer takes.
+    // The run's own conversation reports up to the Sidekick, in the same
+    // object that answers the library, so there is no second Queue leg.
     await deliverChildEffects(env, demoRunStub(published.sidekickId!, published.sidekickRunId!));
-    const sidekick = parentStubFor(env, "global", {
-      workspaceId: DEMO_WORKSPACE_ID,
-      parentKind: "automation",
-      parentId: published.sidekickId!,
-    });
-    for (const envelope of await pendingParentEffects(sidekick)) {
-      if (!envelope.effect.kind.startsWith("directory_")) continue;
-      const result = await consumeEffectBodies(env, [envelope]);
-      if (result.retried > 0) throw new Error(`sidekick effect retried: ${envelope.effect.kind}`);
-    }
     for (const room of manifest.views[0]!.rooms) await deliverRoomEffects(room.workstreamId);
 
     const after = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });

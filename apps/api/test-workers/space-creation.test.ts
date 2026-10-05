@@ -322,6 +322,15 @@ describe("a Channel created inside a Space", () => {
     if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
     const spaceId = asSpaceId(reserved.space.id);
     const sidekickId = "00000000-0000-7000-8000-000000000cc9";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_directory
+           (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
+            owning_workstream_id, title, description, next_run_at, projected_at)
+         VALUES (?, ?, ?, 1, 'test', 'active', 'workspace', NULL, 'Shared', '', NULL, 0)`,
+        sidekickId, WORKSPACE_ID, USER_ID,
+      );
+    });
     const added = await workspace().addSpaceDefault({
       workspaceId: WORKSPACE_ID, userId: USER_ID, spaceId, kind: "sidekick", targetId: sidekickId,
     });

@@ -1795,6 +1795,15 @@ describe("WorkspaceDO space authority", () => {
   it("given a participant added after creation, when they add and remove a Sidekick default, then the Space's recommendation follows", async () => {
     const sidekickId = "00000000-0000-7000-8000-00000000cf1c";
     const spaceId = await reserve("Hiring", "personal");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_directory
+           (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
+            owning_workstream_id, title, description, next_run_at, projected_at)
+         VALUES (?, ?, ?, 1, 'test', 'active', 'workspace', NULL, 'Shared', '', NULL, 0)`,
+        sidekickId, WORKSPACE_ID, OWNER,
+      );
+    });
     await workspace().applyMemberStatus({
       workspaceId: WORKSPACE_ID, sequence: 1, removed: false,
       relationship: { workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member", role: "member",

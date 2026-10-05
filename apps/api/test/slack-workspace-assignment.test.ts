@@ -13,7 +13,7 @@ import {
   type WorkspaceScheduleContext,
   type WorkspaceScheduleTarget,
 } from "../src/services/workspace-schedule-execution";
-import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   createTestWorkspaceDO,

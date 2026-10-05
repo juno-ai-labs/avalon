@@ -1,10 +1,13 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { env as workerEnv } from "cloudflare:workers";
+import { afterEach, beforeEach, vi } from "vitest";
 import { asWorkspaceId } from "@rally/contracts";
 
 import { HostedSidekick, type HostedSidekickHost } from "../../src/durable-objects/hosted-sidekick";
 import type { WorkspaceDO } from "../../src/durable-objects/workspace-do";
 import { workspaceDOName } from "../../src/durable-objects/names";
 import type { Env } from "../../src/env";
+import { SidekickRunProvisionQueueMessageSchema } from "../../src/durable-objects/automation-do-protocol";
 import { provisionSidekickRun } from "../../src/services/sidekick-run-provisioning";
 
 /**
@@ -78,5 +81,32 @@ export async function writeSidekickRegistrations(
       writeRegistrations: (evaluators: readonly unknown[], now: number) => void;
     };
     state.storage.transactionSync(() => sidekick.writeRegistrations(evaluators, Date.now()));
+  });
+}
+
+type QueueSend = { send: (body: unknown, options?: QueueSendOptions) => Promise<void> };
+
+/**
+ * Stand in for the activity Queue's consumer for run provisioning, for a file
+ * whose runs start on their own (a native alarm inside a seeding request)
+ * rather than at a point the test can call `runSidekickAlarms`.
+ *
+ * The test Worker's `ACTIVITY_QUEUE` has no consumer, so a provisioning
+ * message would be lost. This runs the real consumer step for that message
+ * kind only, before the send returns; every other message passes through.
+ */
+export function useSidekickRunProvisionConsumer(): void {
+  beforeEach(() => {
+    const prototype = Object.getPrototypeOf(workerEnv.ACTIVITY_QUEUE) as QueueSend;
+    const original = prototype.send;
+    const consumerEnv: Env = workerEnv;
+    vi.spyOn(prototype, "send").mockImplementation(async function (this: QueueSend, body, options) {
+      const provision = SidekickRunProvisionQueueMessageSchema.safeParse(body);
+      if (provision.success) return provisionSidekickRun(consumerEnv, provision.data);
+      return original.call(this, body, options);
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 }
