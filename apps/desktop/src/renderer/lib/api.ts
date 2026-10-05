@@ -1,7 +1,7 @@
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
 import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
-import { PersonalSystemPromptSchema, SessionImportRunSchema, type SessionImportPreview } from "@rally/contracts";
+import { MemberPreferencesSchema, PersonalSystemPromptSchema, SessionImportRunSchema, type MemberPreferences, type SessionImportPreview } from "@rally/contracts";
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
@@ -855,6 +855,18 @@ export class RallyApi {
       timezone: raw.timezone,
       currentUser,
     };
+  }
+
+  async getMyPreferences(signal?: AbortSignal): Promise<MemberPreferences> {
+    return this.request('/workspace/me/preferences', { schema: MemberPreferencesSchema, signal });
+  }
+
+  async updateMyPreferences(preferences: MemberPreferences): Promise<MemberPreferences> {
+    return this.request('/workspace/me/preferences', {
+      method: 'PUT',
+      body: preferences,
+      schema: MemberPreferencesSchema,
+    });
   }
 
   /** Text the agent reads in its system prompt on every turn this person starts. */
