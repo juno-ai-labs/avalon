@@ -55,7 +55,8 @@ The regional bridge uses D1 only for identity and routing:
 | `list_artifacts` | Regional workspace identity at the open authority generation | `artifact_registry` in WorkspaceDO |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the open workspace authority generation | WorkspaceDO SQLite |
 | `run_substream_sql` | Resolve the active work-stream route and child membership (the Organization's hosted parent, or a Sidekick's own registry), select one region, then revalidate | SubstreamAgent SQLite |
-| `run_sidekick_sql` | Resolve the regional workspace identity and `automation_directory` membership, select one region, then revalidate | SidekickDO SQLite |
+| `run_sidekick_sql` | Resolve the regional workspace identity and `automation_directory` membership, select one region, then revalidate | The legacy SidekickDO SQLite (frozen once imported) |
+| `retry_sidekick_import` | The same resolution as `run_sidekick_sql` | `WorkspaceDO.retrySidekickImport`; answers the Sidekick's `sidekick_imports` state |
 | `run_artifact_sql` | Resolve the regional workspace identity and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
@@ -63,9 +64,10 @@ IDs are not redundant: all three are part of the Durable Object's stable name.
 `list_substreams` returns the complete tuple so an MCP client can pass it to the
 SQL tool without reconstructing identity. A Sidekick's conversations are
 reached the same way, with the Sidekick's ID as the work-stream ID: its Main
-through its route, and a run conversation through the Sidekick's own
-`conversation_children`, consulted only after its `automation_directory` row
-proves the Sidekick exists. `run_sidekick_sql` takes a workspace ID
+through its route, and a run conversation through the Sidekick's
+`sidekick_children` in the Organization object (or, for one not yet imported,
+its legacy object's `conversation_children`), consulted only after its
+`automation_directory` row proves the Sidekick exists. `run_sidekick_sql` takes a workspace ID
 for the same reason, and `list_sidekicks` returns the pair.
 
 A Sidekick's ID is an `AutomationId`: the product renamed the concept, not the
@@ -184,8 +186,12 @@ inspection and repair are the product requirement. Product code must continue
 to use typed domain RPCs and must never depend on this surface.
 
 A Sidekick has two inspectable halves and they are reached by different tools.
-`run_sidekick_sql` opens SidekickDO itself — its definition revisions,
-schedules, and run history. Its *conversations* are `SubstreamAgent`s, reached
+Its definition revisions, schedules and run history are the Organization's
+`sidekick_*` tables, read with `run_workspace_sql` filtered by `sidekick_id`.
+`run_sidekick_sql` opens its legacy `SidekickDO`, which holds the rows only
+until the Sidekick is imported and is frozen after; both it and
+`retry_sidekick_import`, which re-runs a failed import after a repair, go when
+the legacy class is deleted. Its *conversations* are `SubstreamAgent`s, reached
 with the substream tools under the Sidekick's ID as the parent, exactly as a
 work stream's are.
 
@@ -308,6 +314,22 @@ Model routes support optional `routing.reasoningEffort` (`low`, `medium`, or
 `high`) through `list_model_flags` and `update_model_flag`. Omission restores
 each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
+
+### 2026-10-05 — Retry a stuck Sidekick import
+
+**What changed:** `retry_sidekick_import` calls a new bridge method and
+`WorkspaceDO.retrySidekickImport`, fenced like `run_sidekick_sql`, and returns
+the Sidekick's `sidekick_imports` state and last code. A Sidekick's run
+conversations are found in the Organization's `sidekick_children` first.
+
+**Why:** Sidekicks move from `SidekickDO` into `WorkspaceDO` the way Channels
+did, and the legacy object freezes before the import commits, so a refused
+export needs a repair and a re-run that SQL cannot express. The
+2026-09-25 entry's reasoning for `retry_parent_import` applies unchanged.
+
+**Consequences:** `run_sidekick_sql` now reads a frozen copy for an imported
+Sidekick; `run_workspace_sql` is the live source. Both Sidekick tools are
+deleted with the legacy class.
 
 ### 2026-10-02 — Read and change managed flags through Ace
 

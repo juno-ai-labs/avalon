@@ -55,7 +55,7 @@ everything above it that can return.
 `submit_draft` type enum with its own `resourceId`
 (`packages/agent-harness/src/index.ts:2444`), defined in the trigger union
 (`packages/contracts/src/index.ts:1205`) and mapped through
-(`index.ts:2992`). But `SidekickDO`'s accept path builds it nothing. The
+(`index.ts:2992`). But `HostedSidekick`'s accept path builds it nothing. The
 schedule loop handles `interval` and returns early on anything that is not
 `calendar` (`apps/api/src/durable-objects/sidekick-do.ts:1913-1933`), and
 `isExternalEventTrigger` covers only `connector_activity`,

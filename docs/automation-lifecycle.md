@@ -1,8 +1,10 @@
 # Sidekick lifecycle
 
-A Sidekick lets a person delegate work or knowledge. `SidekickDO` owns its
-identity, authoring conversation, immutable definitions, optional triggers, and
-runs. The deployed automation namespace and object-name bytes remain compatible.
+A Sidekick lets a person delegate work or knowledge. Its Organization's
+`WorkspaceDO` holds its identity, immutable definitions, optional triggers, and
+runs, through `HostedSidekick`; how it got there and how it is stored are
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them)'s.
+The legacy `SidekickDO` only exports its rows until it is deleted.
 Substream `0` is the authoring conversation; delegated runs are child substreams.
 
 ## Sidekick publication and loading
@@ -192,7 +194,7 @@ rows, `parent_sidekicks`, and the attachment list Main reports on its
 `directory_common` effect. A Main that has never reported is asked to when its
 Channel is opened; until it reports, its rail omits `attached` and the desktop
 reads that list over REST. A listed Sidekick is named by its title and shown under the
-one audience predicate `SidekickDO.readSkillSummary` applies
+one audience predicate `HostedSidekick.readSkillSummary` applies
 (`sidekick-audience.ts`, shared by both), with the directory row's
 `run_as_user_id`, which is null until the Sidekick next publishes and leaves the
 author alone until then. The directory cannot see a Sidekick's accepted revision
@@ -218,19 +220,23 @@ are translated at dispatch to the new class; the tracker accepts both names so
 pre-rename inventory and reports remain actionable during regional rollout.
 The final cleanup removes the old Worker export only after verifying the rename.
 An internal source-import shim still exposes the historical type name; it does
-not export a Cloudflare class from the Worker entrypoint.
+not export a Cloudflare class from the Worker entrypoint. The class itself is
+now a frozen exporter, deleted with its binding once every Organization has
+imported its Sidekicks.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/sidekick-do.ts` | The object: its v1 schema, `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract (`onChildCommonProjection` moves the run row), the schedule and run-provisioning alarms, and the sidebar row it enqueues. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract (`onChildCommonProjection` moves the run row), and the schedule, run and memory-table alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
+| `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: opens a run's conversation and starts its loop from the `sidekick_run_provision` Queue message the run's alarm entry sends. |
+| `apps/api/src/durable-objects/sidekick-do.ts` | The legacy object, reduced to its migration ledger and `exportForImport`. |
 | `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; and the refusal text the run's transcript records. |
 | `apps/api/src/durable-objects/substream-agent.ts` | `claimPersistentLoopExecution`, which continues a run from a run child's pending input, and `refuseSidekickRunInput`, which settles one the Sidekick refused. |
 | `apps/api/src/services/workstream-participant-model-message.ts` | `renderRunContinuationNote`, and `externalInputFraming`, which renders outside text in a run child as evidence. |
 | `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it, and the two alarm kinds `automation_schedule` and `automation_run`. |
-| `apps/api/src/durable-objects/conversation-parent-object.ts` | The parent half it inherits: child registry, projections, receipts, aggregation, the outbox and its drain. See [`workstream-durable-object.md`](workstream-durable-object.md). |
-| `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through, which resolves whether the caller is in the owning room before asking the object. |
+| `apps/api/src/durable-objects/conversation-parent-object.ts` | The request shapes and aggregation helpers every hosted parent shares. |
+| `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through. It passes who is asking; whether they manage a room's Sidekick is decided where the Sidekick lives. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
 | `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a room. |
 | `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 86), and the conversation scope a Sidekick or a Channel or Breakout loop reaches. |
@@ -240,7 +246,7 @@ not export a Cloudflare class from the Worker entrypoint.
 | `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `matching` over leaves), the preprocess that still accepts the pre-rename `all` on rows already stored, the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read. |
 | `apps/api/src/services/external-event-evaluator.ts` | The pure predicate evaluator WorkspaceDO matches registrations with. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `applyAutomationDirectory`, `listAutomationDirectory`, `listWorkstreamAutomations`, `automationOwner`, `workstreamParticipant`, `applyExternalEventRegistrations`, `matchExternalEventDestinations`, and the owning-room archive fan-out `notifyOwningRoomArchival`. |
-| `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `admitExternalEvent`, and a run child's effects to the object through the shared effect leg. |
+| `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `sidekickAdmitExternalEvent`, a run child's effects through the shared effect leg, and a `sidekick_run_provision` message to `provisionSidekickRun`. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
 | `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
@@ -315,7 +321,7 @@ its title menu. A running Sidekick still carries `SIDEKICK_RUNNING_MARKER`, the
 **play** in `success-base` cut out of its hexagon, wherever its glyph is drawn.
 
 ### Drafting in the conversation
-`sidekick_submit_draft` calls `SidekickDO.saveDefinition` under the submitting
+`sidekick_submit_draft` calls `WorkspaceDO.sidekickSaveDefinition` under the submitting
 actor's management authority. The owner appends an immutable revision and publishes
 it immediately when ready. New definitions carry `definitionVersion: 2`; inbound
 email is explicit. There is no instruction editor, type selector, or Create/Apply
@@ -369,7 +375,7 @@ alarms, external-event registrations and triggered memory tables. It records
 from the accepted revision's persisted setup, without asking the user to press
 Apply. Removing triggers leaves admitted runs pinned to their original revision.
 
-`SidekickDO.reconcileLoadable` is the explicit object-owned operation for a future
+`HostedSidekick.reconcileLoadable` is the explicit object-owned operation for a future
 policy change. It reads the accepted definition, preserves legacy implicit email
 semantics, writes the capability and republishes the directory. It does not accept
 a boolean from the caller. Consumers continue to read stored `loadable` unchanged.
@@ -536,10 +542,10 @@ auto-delete set and is retired by the provider alone;
 
 The run reports its state the way every conversation does: its
 `directory_common` effect reaches the parent through the child effect leg, and
-`AutomationDO.onChildCommonProjection` maps the accepted conversation state
-onto `runs.state`, as [continuing a run](#continuing-a-run) describes. Nothing
-a run says leaves the object: `forwardsChildEffect` is false, so a run produces
-no sidebar row, no activity, and no notification.
+`HostedSidekick.onChildCommonProjection` maps the accepted conversation state
+onto `sidekick_runs.state`, as [continuing a run](#continuing-a-run) describes.
+Nothing a run says leaves the Sidekick: a run produces no sidebar row, no
+activity, and no notification.
 
 ### Continuing a run
 
@@ -551,7 +557,7 @@ one identity and one history, and can complete more than once.
 
 1. `SubstreamAgent.claimPersistentLoopExecution` takes the next pending input.
    When the object's parent kind is `automation` and its substream is not
-   `"0"`, it calls `SidekickDO.continueRun(runId)` before building the loop
+   `"0"`, it calls `WorkspaceDO.sidekickContinueRun(runId)` before building the loop
    input (`continueSidekickRun` in `services/sidekick-run-continuation.ts`).
 2. `continueRun` is a read with no side effects. It answers a refusal code, or
    the `automationRun` block and run-as `executionPrincipal` the scheduled
@@ -635,9 +641,8 @@ is false), so a second completion sends no notification, and the Slack
 
 A room's Sidekick has a **home conversation**: `owning_workstream_id` names the
 Channel and `owning_substream_id` the conversation in it, `"0"` for its Main
-conversation or a Breakout id. Both are on SidekickDO's `automation` row and
-projected onto WorkspaceDO's `automation_directory` through the
-`directory_automation` effect. A Sidekick created in a Breakout (a room agent's
+conversation or a Breakout id. Both are on the Sidekick's
+`automation_directory` row. A Sidekick created in a Breakout (a room agent's
 first `submit_draft`, or `create_sidekick`) takes that Breakout as its home; one
 created by a background agent takes Main, because a background agent's
 conversation is not one anybody reads. The creator must be able to open the
@@ -683,17 +688,16 @@ workspace connection, reporting what it could not rebind.
 
 ### The directory row
 
-Every change enqueues the automation's own `directory_automation` effect
-(`enqueueDirectory`) under the projection key `automation`: id, author,
-lifecycle, scope, owning work stream, title, description, next run. It travels
-the parent outbox and the Queue like a work stream's aggregate and lands in
-`WorkspaceDO.applyAutomationDirectory`, which accepts a strictly newer
-`sourceVersion`, ignores an older one, refuses an equal one with a different
-hash, bumps the `automations` sidebar waterline, and republishes the list. An
-applied row that changes something a rail shows (not its run times) also
-advances the rail waterline of the Channel that owns it and of every Channel
-recommending or attaching it. The row is content-free by design; `GET /automations/:id` reads the
-object.
+A Sidekick's `automation_directory` row is its definition row: id, author,
+lifecycle, scope, home, title, description and next run beside the accepted
+revision, bindings and appearance. Every change writes it in place, bumps the
+`automations` sidebar waterline and republishes the list, in the same call.
+The `directory_automation` effect is still accepted from a legacy object that
+has not been imported, which is how such a Sidekick is enrolled for its
+import; it never overwrites an imported Sidekick's row. An applied row that
+changes something a rail shows (not its run times) also advances the rail
+waterline of the Channel that owns it and of every Channel recommending or
+attaching it.
 
 ### Memory
 
@@ -715,7 +719,7 @@ the colour vocabulary and the deterministic default all belong to
 [`workstream-appearance.md`](workstream-appearance.md); what belongs here is
 where the value lives and how it travels.
 
-`SidekickDO` stores it, in `automation.appearance_json`, beside the title and
+The Sidekick's directory row stores it, in `appearance_json`, beside the title and
 the lifecycle. The work stream keeps its appearance on the *main conversation*
 and reaches it with a socket command, and the difference is not an
 inconsistency: for a work stream the conversation is the room, while for a
@@ -792,11 +796,10 @@ Sidekick's id.
   the run rows and the lifecycle, and `assertRunAuthorityStillValid` reads the
   live state before every provider write. The lifecycle row fences run authority;
   a separate registration generation orders asynchronous event-registration effects.
-- **A directory row locates; it never authorizes.** `automation_directory` holds
-  no definition and no run content; every content read goes to the object, which
-  re-derives authority from its own row, asking WorkspaceDO only whether a
-  viewer is in the owning room.
-- **`AutomationDO` forwards nothing its children say.** The workspace hears the
+- **A Sidekick's directory row is its authority.** It holds the definition
+  columns, and every content read re-derives access from it and from the
+  Organization's own tables.
+- **A Sidekick forwards nothing its children say.** The workspace hears the
   automation's row and nothing else; forwarding a run's aggregate would put
   every run in the work-stream directory, which is the design this replaced.
 - **The one way a result reaches a room is `conversation_post`.** Rally
@@ -823,7 +826,8 @@ Sidekick's id.
   drafts, applies and activates, and then differs from a working Sidekick with
   nothing to do only in that it never fires.
 - **A room's automation is the room's.** Its scope is fixed at creation, its
-  managers are the room's participants, it is listed only in the room's Channel menu,
+  managers are whoever may manage the room (grants and an archive included),
+  its viewers the room's participants, it is listed only in the room's Channel menu,
   and the room's archive pauses it. Authorship confers nothing on it.
 
 ## Boundary
@@ -835,8 +839,9 @@ tools that read and post through that scope are
 [`conversation-tools.md`](conversation-tools.md)'s.
 
 It depends on the conversation hierarchy for its conversations and its runs
-(`SubstreamAgent`, the shared parent base, the effect legs;
-[`workstream-durable-object.md`](workstream-durable-object.md)); on WorkspaceDO
+(`SubstreamAgent` and the effect legs;
+[`workstream-durable-object.md`](workstream-durable-object.md)); on WorkspaceDO,
+which hosts it ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)),
 for the directory row, the registrations and the matcher, the owning-room
 participation answer, and **every workspace-product table it reads**
 (`connector_connections`, `resources`, `users`' timezones through regional D1
@@ -951,19 +956,28 @@ siblings in `test-workers/helpers/conversation-effects.ts`.
 
 ## Data model
 
-`SidekickDO` SQLite retains the namespace renamed from `AutomationDO`, with seven
+A Sidekick's rows are `WorkspaceDO`'s: `automation_directory` (with the
+definition columns migration 88 added), `sidekick_revisions`,
+`sidekick_schedules`, `sidekick_runs`, `sidekick_email_receipts`, the child
+tables, and alarm entries keyed `<sidekickId>:<key>`;
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them)
+maps them to the legacy tables. The legacy `SidekickDO` schema below stays
+until the class is deleted, because an object not yet imported is read through
+it.
+
+`SidekickDO` SQLite retains the namespace renamed from `AutomationDO`, with
 ordered object migrations: `automation`, `definition_revisions`,
 `schedules`, `runs`, `inbound_email_receipts`, the shared parent tables,
 `_internal_durable_alarms`, and the `object_retirement` tombstone
-([`workspace-retirement.md`](workspace-retirement.md)). [`workstream-durable-object.md`](workstream-durable-object.md#automationdo)
-catalogs the columns; the occurrence keys and run states are in the tables
-above. `run_id` is the child substream id, and `harness_run_id` is unique per
-run. Migration 6 adds `runs.seed_json`, null on every run but one a demo
-seeded; migration 7 adds `automation.appearance_json`, null until somebody
-picks an icon or a colour. Migration 9 adds `automation.chat_appearance_json`, the
-appearance the setup chat last submitted, null until it first does. Migration 11
-adds `automation.owning_substream_id`, `NOT NULL DEFAULT '0'`: the home
-conversation under the owning Channel.
+([`workspace-retirement.md`](workspace-retirement.md)). `run_id` is the child
+substream id, and `harness_run_id` is unique per run. Migration 6 adds
+`runs.seed_json`, null on every run but one a demo seeded; migration 7 adds
+`automation.appearance_json`, null until somebody picks an icon or a colour.
+Migration 9 adds `automation.chat_appearance_json`, the appearance the setup chat
+last submitted, null until it first does. Migration 11 adds
+`automation.owning_substream_id`, `NOT NULL DEFAULT '0'`: the home conversation
+under the owning Channel. Migration 14 adds the export freeze and its alarm
+snapshot.
 
 `WorkspaceDO` migration 32 rebuilt `automation_directory` (automation id,
 workspace, author, `source_version`, hash, lifecycle, scope, owning work stream,
@@ -1045,13 +1059,15 @@ conversations through `listChildren`.
 ## Operations
 
 A run's state, its trigger, and its summary are on `GET /automations/:id/runs`
-and in the object's `runs` table. A sidebar row that disagrees with the object
-is a Queue delivery that has not landed: read the object's `durable_outbox` and
-the regional activities dead-letter queue, per
-[`workstream-durable-object.md`](workstream-durable-object.md#operations). A
-missing scheduled run is a schedule row whose `next_due_at` is null or an
-alarm entry behind its backoff gate in `_internal_durable_alarms`;
-`sidekick_scheduled_alarm_failed` names the entry and the handler's code. When
+and in the Organization's `sidekick_runs` (`run_workspace_sql`, filtered by
+`sidekick_id`). A missing scheduled run is a `sidekick_schedules` row whose
+`next_due_at` is null or an entry keyed `<sidekickId>:<scheduleId>` behind its
+backoff gate in `_internal_durable_alarms`; the Organization's alarm report
+names the entry and the handler's code. A run stuck `pending` with its child
+registered is waiting on its `sidekick_run_provision` message, which its entry
+sends again. A Sidekick whose `sidekick_imports` row is `pending` has not moved
+yet; `last_error_code` says why, and `retry_sidekick_import` moves it after a
+repair. When
 that code is a schema rejection it names the schema and the failing paths — a
 bare `ZodError` there is a parse that has not yet been moved onto
 `parseRpcInput`, and is itself the defect to fix before diagnosing further. A
@@ -1069,6 +1085,27 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-10-05 — A Sidekick lives in its Organization object
+
+**What changed:** Every Sidekick's definition, revisions, schedules, runs and
+receipts moved from its own `SidekickDO` into its Organization's `WorkspaceDO`
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md) owns the
+mechanism and the import). Its directory row is its definition row. A run's
+conversation is opened by a Queue consumer the run's alarm entry sends to,
+not in the alarm. `AutomationService` no longer asks whether the caller is in
+the owning room; the Sidekick decides, from the Organization's rows: a room
+Sidekick is managed, and its detail read, by whoever may manage the room, and
+viewed and listed by the room's participants.
+
+**Why:** See the PRD (`docs/PRDs/2026-10-03_sidekick-parent-into-workspace-do/`).
+The two access rules are the ones the Worker and the object applied between
+them before the move; the port briefly used the participant rule for both,
+which refused a member a grant had made a manager.
+
+**Consequences:** A caller passes who is asking and nothing it concluded about
+them. Provisioning a run is idempotent on the run id and may run more than once;
+its report, `sidekickRunProvisioned`, is what ends the resends.
 
 ### 2026-10-02 — The sidebar no longer shows Sidekicks
 

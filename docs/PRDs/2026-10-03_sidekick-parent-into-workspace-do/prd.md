@@ -208,7 +208,54 @@ those viewers.
 
 ## Decision log
 
-None yet.
+Decisions made while building step 1 that differ from, or add to, the design
+below. Newest first.
+
+- **2026-10-05: No compatibility client; batch reads instead.** The first cut
+  kept `SidekickDO`'s method names in a client so each caller changed one line.
+  It was removed in the same change: it hid that every call lands on one
+  single-threaded object, so callers that fanned out one call per Sidekick kept
+  doing it. Callers call the Organization's `sidekick*` methods; skill
+  summaries, skill sources and details are batch reads that select by ids, by a
+  Channel's recommended and owned Sidekicks, or by every loadable one; pure
+  reads skip the alarm re-arm; a recommendation's scope check and an external
+  event's plan ride the write or admission they guard.
+- **2026-10-05: The definition row is `automation_directory`, not a new
+  `sidekicks` table.** About fifty readers and triggers already read the
+  directory row, and a Sidekick still pending import is served by the row its
+  legacy object published. Migration 88 adds the definition columns, all
+  nullable; `region IS NOT NULL` marks a row an import or a hosted write has
+  filled.
+- **2026-10-05: A Sidekick's children have their own tables, and
+  `HostedSidekick` is a sibling class.** Channel code scans `parent_*` across
+  every parent, where a Sidekick's runs would read as Breakouts; and a
+  Sidekick's lifecycle shares nothing with a `HostedParent` role.
+- **2026-10-05: Access keeps the two rules it had.** A Channel-scoped
+  Sidekick's managers, and its detail readers, are whoever may manage the
+  owning Channel (grants and an archive included), as the Worker computed
+  before; its viewers and its library listing use the Channel's participant
+  rows. Decision 4's narrowing to a Breakout home applies to both. Collapsing
+  them refused a granted manager and admitted a participant of an archived
+  room.
+- **2026-10-05: A run's alarm entry moves itself later.** The drain deletes an
+  entry at the instant that ran whatever its handler returned; `{ waitMs }`
+  holds only an entry the object re-derives. A run entry is not re-derived, so
+  after each provisioning send it reschedules itself, the wait growing with
+  the run's age, and the provisioning report settles it.
+- **2026-10-05: The import arms every pending run, and freezes with a
+  snapshot.** The legacy object snapshots its alarm entries into
+  `sidekick_export_alarms` on the first export and cancels them, so a retried
+  import reads the same entries and nothing fires in two places; the import
+  also arms a run entry for any pending run whose legacy entry was lost.
+- **2026-10-05: Registrations keep their evaluator ids.** Hosted writes parse
+  registrations with `sourceGeneration: 1`, so registration ids stay the
+  evaluator ids run admission matches against.
+- **2026-10-05: An archive pauses each owned Sidekick in its own local
+  transaction, after the archive commits,** and runs the post-commit
+  registration step after; the memory tables ride a stored
+  `sidekick_memory_tables` entry plus one immediate attempt; viewer projections
+  are not imported; the access-revocation `automation` hop stays, routed to
+  `WorkspaceDO`; Organization retirement no longer tombstones legacy objects.
 
 ## Key design decisions
 

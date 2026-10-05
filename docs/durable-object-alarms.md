@@ -8,9 +8,9 @@ covers the shared capability that makes that decision once: a SQLite-backed list
 of scheduled alarms per object, and a base class that keeps the object's single
 alarm pointed at the earliest thing on it.
 
-Read this before adding a wake reason to `WorkspaceDO`, `SubstreamAgent`, or
-`AutomationDO`, before changing when any of them fires, and before giving a
-fourth object its own alarm. The objects themselves — their
+Read this before adding a wake reason to `WorkspaceDO` or `SubstreamAgent`
+(a hosted Sidekick's entries are `WorkspaceDO`'s), before changing when any of
+them fires, and before giving another object its own alarm. The objects themselves — their
 hierarchy, schemas, sockets, and effects — belong to
 [`workstream-durable-object.md`](workstream-durable-object.md) and, for
 automations, [`automation-lifecycle.md`](automation-lifecycle.md).
@@ -243,24 +243,33 @@ derived source has no way to carry that distinction.
 
 ### An automation's wake reasons
 
-`AutomationDO` is the fourth adopter. It stores two kinds and derives one lane:
+A Sidekick's entries are `WorkspaceDO`'s, keyed `<sidekickId>:<key>` so each
+Sidekick can cancel its own by prefix:
 
 | Reason | Kind | Source |
 | --- | --- | --- |
 | Fire one calendar or interval occurrence | `automation_schedule` (stored) | the schedule id |
-| Provision one admitted occurrence into a child conversation and start its loop | `automation_run` (stored) | the run id |
-| Send the next parent-outbox row to the Queue | derived | `MIN(not_before)` over `durable_outbox` |
+| Hand one admitted occurrence to provisioning, which opens its child conversation and starts its loop | `automation_run` (stored) | the run id |
+| Materialize the memory tables an accepted revision declares | `sidekick_memory_tables` (stored) | the revision |
+| Import the next Sidekick still in its legacy object | derived | `MIN(not_before)` over pending `sidekick_imports` |
 
-The two stored kinds are entries rather than derived instants because each can
-fail on its own: a run that cannot be provisioned (a disabled connector, a
-deleted resource) must back off without holding a due schedule, and a broken
-schedule must not hold a run. Neither is reconciled from a canonical table the
-way `WorkspaceDO.refreshSchedule` works: apply, pause, resume, and delete
-schedule and cancel schedule entries explicitly, every admitted occurrence arms
-its own run entry for now, and `executeSchedule` writes its own next occurrence
-and re-arms before it returns. The outbox lane is the shared conversation-parent
-drain, so a run that cannot be provisioned cannot stop the
-automation's sidebar row from reaching the workspace.
+**A handler that wants to run again later moves its own entry.** The drain
+deletes an entry at the instant that ran whatever its handler returned, and
+`{ waitMs }` only holds an entry that the object re-derives from its own rows.
+A Sidekick's run entry is not re-derived, so after each provisioning send it
+schedules itself at a later instant, which the delete does not match; returning
+`waitMs` instead dropped the entry and left the run pending for good.
+
+The stored kinds are entries rather than derived instants because each can
+fail on its own: a run whose provisioning has not reported must be asked again
+without holding a due schedule, and a broken schedule must not hold a run.
+Neither is reconciled from a canonical table the way
+`WorkspaceDO.refreshSchedule` works: apply, pause, resume, and delete schedule
+and cancel a Sidekick's entries explicitly, by its key prefix, every admitted
+occurrence arms its own run entry for now, and `executeSchedule` writes its own
+next occurrence and re-arms before it returns. A run's provisioning leaves on
+the activity Queue, so a slow conversation does not hold the Organization's
+other entries.
 
 ## Invariants
 

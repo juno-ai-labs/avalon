@@ -7,22 +7,22 @@
 
 One pull request, one deploy.
 
-- [ ] `WorkspaceDO` migration: the Sidekick columns on the directory row, the
+- [x] `WorkspaceDO` migration: the Sidekick columns on the directory row, the
   revision, schedule, run, email-receipt and child tables, and the
   `sidekick_imports` ledger seeded from the directory.
-- [ ] `HostedSidekick`: every `SidekickDO` method, scoped by Sidekick id, over
+- [x] `HostedSidekick`: every `SidekickDO` method, scoped by Sidekick id, over
   `WorkspaceDO` storage; the four access functions; registrations in the
   change's own transaction; alarm entries keyed `<sidekickId>:<key>` and
   cancelled by prefix; run provisioning handed to the activity Queue.
-- [ ] The facade: Sidekick methods on `WorkspaceDO`, and kind dispatch for the
+- [x] The facade: Sidekick methods on `WorkspaceDO`, and kind dispatch for the
   parent contract that finds a Sidekick before the Channel fallback.
-- [ ] Import: the reduced `SidekickDO` (ledger, `exportForImport`, an alarm
+- [x] Import: the reduced `SidekickDO` (ledger, `exportForImport`, an alarm
   that asks to be imported, `sidekick_parent_moved` for everything else); the
   single-flight importer; the ledger's alarm lane; `retry_sidekick_import`.
-- [ ] Every caller addresses `WorkspaceDO`.
-- [ ] Tests: the suites that bind `SidekickDO` move to `WorkspaceDO`, and the
+- [x] Every caller addresses `WorkspaceDO`.
+- [x] Tests: the suites that bind `SidekickDO` move to `WorkspaceDO`, and the
   acceptance tests in the PRD are added, each proved able to fail.
-- [ ] Owning documents and their changelogs; the PRD's decision log.
+- [x] Owning documents and their changelogs; the PRD's decision log.
 
 **Gate:** lint, typecheck and the affected suites pass; the import test fails
 when the re-arm is skipped; CI green.

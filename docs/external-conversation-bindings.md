@@ -147,7 +147,7 @@ A reply in that thread resolves to `deliver` with the run child as target. The
 ingress admits it through `externalBindingReplyAdmission` to the run child's
 `admitExternalMessage` as an external message with the Slack actor. The run
 child frames it as evidence from that sender, and a wake of a run child calls
-`SidekickDO.continueRun`. The reply runs with the run's authority, not the
+`WorkspaceDO.sidekickContinueRun`. The reply runs with the run's authority, not the
 sender's: [`connectors.md`](connectors.md#invariants) owns that rule. The reply
 gets the installation's acknowledgement reaction, or its stopped reaction when
 the Sidekick is not active and the run will not act on it yet.
@@ -242,7 +242,7 @@ atomicity.
 It does not deliver Rally output to Slack (the session and delivery path in
 [`slack-integration.md`](slack-integration.md) does), does not decide who may
 continue a run (the run authority check does), and does not continue a run
-(`SidekickDO.continueRun` does). The `slack_thread` origin resource on a Channel
+(`WorkspaceDO.sidekickContinueRun` does). The `slack_thread` origin resource on a Channel
 is provenance only and is never read for routing
 ([`workstream-origin-attachments.md`](workstream-origin-attachments.md)).
 
