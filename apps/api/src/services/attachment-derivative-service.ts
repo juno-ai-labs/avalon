@@ -1,4 +1,4 @@
-import { ATTACHMENT_CONVERTER_TIMEOUT_MS, ATTACHMENT_PROCESSING_LEASE_MS, classifyAttachmentKind } from "@rally/contracts";
+import { ATTACHMENT_CONVERTER_TIMEOUT_MS, ATTACHMENT_MAX_SOURCE_BYTES, ATTACHMENT_PROCESSING_LEASE_MS, classifyAttachmentKind } from "@rally/contracts";
 import { unzipSync } from "fflate";
 import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
 import { runtimeDeferral } from "../lib/defer";
@@ -9,7 +9,6 @@ export const ATTACHMENT_TEXT_EXTRACTOR_VERSION = "attachment-text-v2";
 // Local conversion is an isolate-safe fast path. Provider-backed PDF OCR and
 // the document summarizer remain separate calls; no single conversion is
 // allowed to materialize the former 50 MiB/20M-character envelope in memory.
-const MAX_SOURCE_BYTES = 8 * 1_024 * 1_024;
 const MAX_EXPANDED_OFFICE_BYTES = 12 * 1_024 * 1_024;
 const MAX_OFFICE_XML_BYTES = 3 * 1_024 * 1_024;
 const MAX_DERIVATIVE_CHARACTERS = 2_000_000;
@@ -123,7 +122,7 @@ export async function buildAttachmentDerivative(
   input: BuildAttachmentDerivativeInput,
 ): Promise<AttachmentDerivativeResult> {
   if (input.bytes.byteLength === 0) return { status: "failed", errorCode: "empty_source" };
-  if (input.bytes.byteLength > MAX_SOURCE_BYTES) return { status: "failed", errorCode: "source_too_large" };
+  if (input.bytes.byteLength > ATTACHMENT_MAX_SOURCE_BYTES) return { status: "failed", errorCode: "source_too_large" };
   if (input.signal?.aborted) return { status: "failed", errorCode: "conversion_aborted" };
 
   try {
@@ -196,7 +195,7 @@ export async function materializeAttachmentDerivative(
     emitDerivativePhase(options, sourceReadStartedAt, "source_read", "failed", "source_unavailable");
     return updateTerminalState(database, resource, "failed", "source_unavailable", options);
   }
-  if (object.size > MAX_SOURCE_BYTES) {
+  if (object.size > ATTACHMENT_MAX_SOURCE_BYTES) {
     emitDerivativePhase(options, sourceReadStartedAt, "source_read", "failed", "source_too_large");
     return updateTerminalState(database, resource, "failed", "source_too_large", options);
   }

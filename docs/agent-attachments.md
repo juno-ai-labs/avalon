@@ -251,11 +251,19 @@ than replacing the only readable state, attributed to the run that published it.
 ### Regional lifecycle
 
 Uploads hash the exact bounded bytes before the resource row commits. Connector
-hydration hashes a serialized result, writes a hash-versioned R2 object, then
+hydration ordinarily hashes a serialized result, writes a hash-versioned R2 object, then
 atomically advances the resource and invalidates older model state. A legacy row
 with a valid model-native image remains ready; another historical row with
 original bytes becomes pending on first authorized use, while a missing original
 is failed rather than an empty success.
+
+Google Drive DOCX and XLSX hydration is the binary exception: the connector
+returns exact bounded `alt=media` bytes through a host-only typed result. The
+resource service verifies that the OOXML structure matches Drive's declared MIME
+before storing the original, and the ordinary derivative path performs the
+archive/XML-limited conversion when an authorized read or preview requests it.
+Those archive bytes are never serialized into a connector result or exposed to
+the model.
 
 Writers pre-register each generation-unique object in
 `resource_object_deletion_outbox` before its R2 write, with cleanup fenced while
@@ -659,6 +667,22 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-10-05 — Drive Office files enter the existing derivative pipeline
+
+**What changed:** Google Drive hydration now carries DOCX and XLSX downloads as
+host-only exact bytes. Resource hydration verifies their OOXML MIME, stores the
+original, and leaves text production to the existing attachment derivative.
+
+**Why:** Treating an Office ZIP as UTF-8 either produces unusable binary text or
+bypasses the parser and archive limits already protecting uploaded Office files.
+
+**Considered and rejected:** A second Office parser in the connector, and base64
+inside the JSON hydration record. Both duplicate conversion policy and risk
+making source bytes model-visible.
+
+**What a future change has to respect:** provider binaries remain bounded,
+MIME-verified originals; only the derivative is readable by the model.
 
 ### 2026-09-26 — Index the stored object a resource or version points at
 

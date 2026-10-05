@@ -1171,6 +1171,39 @@ describe("connectors", () => {
     expect(driveMetadataFields).toContain("capabilities(canEdit)");
   });
 
+  it.each([
+    ["report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1])],
+    ["forecast.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", new Uint8Array([0x50, 0x4b, 0x03, 0x04, 2])],
+  ])("returns exact %s bytes for host-side derivative processing", async (name, mimeType, bytes) => {
+    const requested: URL[] = [];
+    const adapter = googleAdapter(async (input) => {
+      const url = requestUrl(input);
+      requested.push(url);
+      if (url.searchParams.get("alt") === "media") return new Response(bytes);
+      return googleJson({ id: "office-1", name, mimeType, size: String(bytes.byteLength) });
+    });
+    const hydrated = await adapter.hydrateResource!(googleConnection(["drive.read"]),
+      { resource_type: "drive_file", provider_resource_id: "office-1" }, neverAborts());
+    expect(hydrated).toMatchObject({ kind: "binary", fileName: name, declaredMimeType: mimeType });
+    expect((hydrated as { bytes: Uint8Array }).bytes).toEqual(bytes);
+    expect(requested.at(-1)?.searchParams.get("alt")).toBe("media");
+  });
+
+  it("refuses an oversized Drive Office file before requesting its bytes", async () => {
+    let mediaRequested = false;
+    const adapter = googleAdapter(async (input) => {
+      const url = requestUrl(input);
+      if (url.searchParams.get("alt") === "media") mediaRequested = true;
+      return googleJson({ id: "large-office", name: "large.docx",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        size: String(8 * 1_024 * 1_024 + 1) });
+    });
+    await expect(adapter.hydrateResource!(googleConnection(["drive.read"]),
+      { resource_type: "drive_file", provider_resource_id: "large-office" }, neverAborts()))
+      .rejects.toMatchObject({ code: "payload_too_large" });
+    expect(mediaRequested).toBe(false);
+  });
+
   it("exposes bounded scoped read tools without raw Gmail parts or PDF base64", async () => {
     const requested: URL[] = [];
     const fetcher: typeof fetch = async (input) => {

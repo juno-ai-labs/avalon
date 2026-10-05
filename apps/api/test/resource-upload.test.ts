@@ -1,4 +1,6 @@
+import { authorizedConnection, createGoogleConnector } from "@rally/connectors";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { strToU8, zipSync } from "fflate";
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthContext, Env } from '../src/env';
@@ -338,6 +340,46 @@ describe('uploaded attachment drafts', () => {
     expect(stored.has(String(current.content_ref))).toBe(true);
   });
 
+  it.each([
+    ['drive.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      zipSync({ 'word/document.xml': strToU8('<w:document><w:body><w:p><w:r><w:t>Quarterly plan from Drive</w:t></w:r></w:p></w:body></w:document>') }), 'Quarterly plan from Drive'],
+    ['drive.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', zipSync({
+      'xl/workbook.xml': strToU8('<workbook xmlns:r="r"><sheets><sheet name="Budget" sheetId="1" r:id="rId1"/></sheets></workbook>'),
+      'xl/_rels/workbook.xml.rels': strToU8('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'),
+      'xl/worksheets/sheet1.xml': strToU8('<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Drive total</t></is></c><c r="B1"><v>42</v></c></row></sheetData></worksheet>'),
+    }), 'A1: Drive total'],
+  ])('hydrates and reads Microsoft Office bytes from Drive: %s', async (fileName, mimeType, bytes, expectedText) => {
+    const objects = new Map<string, Uint8Array>();
+    const { database, env } = fixture({
+      async put(key: string, value: string | Uint8Array | ArrayBuffer) { objects.set(key, typeof value === 'string' ? new TextEncoder().encode(value) : value instanceof Uint8Array ? value : new Uint8Array(value)); },
+      async get(key: string) { const value = objects.get(key); return value ? { size: value.byteLength, body: new Blob([exactArrayBuffer(value)]).stream(), httpEtag: '"drive-office"', arrayBuffer: async () => exactArrayBuffer(value), writeHttpMetadata(headers: Headers) { headers.set('content-type', mimeType); } } : null; },
+      async delete(key: string) { objects.delete(key); },
+    });
+    insertDriveResource(database, fileName, mimeType);
+    const drive = createGoogleConnector({ clientId: 'client', clientSecret: 'secret', redirectUri: 'https://example.test/callback', fetch: async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (url.searchParams.get('alt') === 'media') return new Response(exactArrayBuffer(bytes));
+      return new Response(JSON.stringify({ id: 'drive-office-1', name: fileName, mimeType, size: String(bytes.byteLength) }), { headers: { 'content-type': 'application/json' } });
+    } });
+    const hydrated = await drive.hydrateResource!(authorizedConnection({ id: connectionId, workspaceId, scope: 'workspace', ownerUserId: null,
+      grantedScopes: ['drive.read'], credentials: { accessToken: 'test-token' }, cursor: {}, config: {} }),
+    { resource_type: 'drive_file', provider_resource_id: 'drive-office-1' }, new AbortController().signal);
+    const service = new ResourceService(env, auth, fakeHydrationRegistry(hydrated));
+    await service.hydrate(connectorResourceId);
+    expect(await (await service.preview(connectorResourceId, new AbortController().signal)).text()).toContain(expectedText);
+  });
+
+  it('rejects Drive Office bytes whose archive does not match the declared MIME', async () => {
+    const bytes = zipSync({ 'xl/workbook.xml': strToU8('<workbook/>'), 'xl/worksheets/sheet1.xml': strToU8('<worksheet/>') });
+    const put = vi.fn(async () => undefined);
+    const { database, env } = fixture({ put, async get() { return null; } });
+    const declaredMimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    insertDriveResource(database, 'disguised.docx', declaredMimeType);
+    await expect(new ResourceService(env, auth, fakeHydrationRegistry({ kind: 'binary', bytes, fileName: 'disguised.docx', declaredMimeType }))
+      .hydrate(connectorResourceId)).rejects.toMatchObject({ status: 422, code: 'resource_mime_mismatch' });
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it('serves source Markdown and a ready Office derivative through the preview boundary', async () => {
     const contents = new Map([
       ['source-markdown', '# Source brief'],
@@ -497,6 +539,18 @@ function insertHydratedResource(database: DatabaseSync, contentRef: string, cont
             'text/markdown', ?, 'ready', '{}', 'attached',
             '2026-08-12T00:00:00.000Z', '2026-08-12T00:00:00.000Z')
   `).run(connectorResourceId, workspaceId, connectionId, contentRef, contentSha256, 'a'.repeat(64));
+}
+
+function insertDriveResource(database: DatabaseSync, title: string, mimeType: string): void {
+  database.prepare(`INSERT INTO connector_connections
+      (id, workspace_id, connector_type, scope, display_name, status, model_plugin_id, granted_scopes_json, created_at, updated_at)
+    VALUES (?, ?, 'google', 'workspace', 'Google Drive', 'healthy', 'google-plugin', '["drive.read"]',
+      '2026-08-12T00:00:00.000Z', '2026-08-12T00:00:00.000Z')`).run(connectionId, workspaceId);
+  database.prepare(`INSERT INTO resources
+      (id, workspace_id, connection_id, resource_type, provider, provider_resource_id, title, mime_type,
+       model_content_status, metadata_json, attachment_status, created_at, updated_at)
+    VALUES (?, ?, ?, 'drive_file', 'google', 'drive-office-1', ?, ?, 'pending', '{}', 'attached',
+      '2026-08-12T00:00:00.000Z', '2026-08-12T00:00:00.000Z')`).run(connectorResourceId, workspaceId, connectionId, title, mimeType);
 }
 
 function fakeHydrationRegistry(value: unknown): NonNullable<ConstructorParameters<typeof ResourceService>[2]> {

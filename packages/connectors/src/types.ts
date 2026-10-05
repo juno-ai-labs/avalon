@@ -222,6 +222,14 @@ export interface ConnectorToolResult {
   externalConversation?: { installationId: string; path: string[] };
 }
 
+/** Exact provider bytes for the host's verified attachment pipeline. */
+export interface ConnectorBinaryResource {
+  kind: "binary";
+  bytes: Uint8Array;
+  fileName: string;
+  declaredMimeType: string;
+}
+
 export interface ConnectorPollResult {
   activities: Omit<NormalizedActivity, "id">[];
   cursor: Record<string, unknown>;
