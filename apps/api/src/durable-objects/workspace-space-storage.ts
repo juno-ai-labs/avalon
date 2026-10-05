@@ -108,6 +108,11 @@ export const SPACE_CHANNEL_PAGE_SIZE = 250;
  */
 export const SPACE_BOOTSTRAP_PAGE_SIZE = 50;
 
+/** A Space name as `organizationSpaceNamed` compares it. */
+function spaceMatchName(name: string): string {
+  return name.toLowerCase().replace(/-/gu, " ").replace(/\s+/gu, " ").trim();
+}
+
 const SPACE_ICON_FALLBACK = "briefcase";
 const SPACE_COLOR_FALLBACK = "blue";
 
@@ -3282,10 +3287,11 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * The live Organization-wide Space named `name`, ignoring case and
-   * surrounding whitespace, or nothing. A connector room joins this Space
-   * rather than minting a second one beside it, so Slack's `#general` lands in
-   * "General". Oldest first when several share the name, so the answer does not
+   * The live Organization-wide Space named `name`, or nothing. Names compare
+   * ignoring case, with a dash read as a space and runs of spaces as one, so
+   * Slack's `#general` lands in "General" and `#product-launch` in "Product
+   * Launch". A connector room joins this Space rather than minting a second one
+   * beside it. Oldest first when several share the name, so the answer does not
    * change as newer ones arrive.
    *
    * Compared in TypeScript because SQLite's `NOCASE` folds ASCII only, and a
@@ -3293,12 +3299,12 @@ export class WorkspaceSpaceStorage {
    */
   organizationSpaceNamed(name: string): string | null {
     if (!this.ready()) return null;
-    const wanted = name.trim().toLowerCase();
+    const wanted = spaceMatchName(name);
     return this.storage.sql.exec<{ space_id: string; title: string } & Record<string, SqlStorageValue>>(
       `SELECT space_id, title FROM spaces
         WHERE scope = 'workspace' AND archived_at IS NULL
         ORDER BY created_at, space_id`,
-    ).toArray().find((row) => row.title.trim().toLowerCase() === wanted)?.space_id ?? null;
+    ).toArray().find((row) => spaceMatchName(row.title) === wanted)?.space_id ?? null;
   }
 
   /**
