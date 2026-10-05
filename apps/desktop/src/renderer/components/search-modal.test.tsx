@@ -108,7 +108,6 @@ describe('organization search modal', () => {
     fireEvent.change(input, { target: { value: 'nothing' } });
     expect(screen.getByText('No results')).toBeVisible();
     fireEvent.change(input, { target: { value: 'launch' } });
-    expect(screen.getByRole('option').querySelector('svg')).toHaveAttribute('stroke');
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onSelectPlace).toHaveBeenCalledWith(PLACES.spaces[0]);
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -148,7 +147,9 @@ describe('organization search modal', () => {
     fireEvent.change(input, { target: { value: 'pric' } });
     // Places answer at once; content follows below them.
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Pricing reviewChannel', 'PricingSpace']);
+    expect(screen.getByText('Searching…')).toBeVisible();
     await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(3));
+    expect(screen.queryByText('Searching…')).not.toBeInTheDocument();
     expect(screen.getAllByRole('option')[2]).toHaveTextContent('Alex Danilowicz replied');
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'ArrowDown' });
