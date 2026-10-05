@@ -17,8 +17,9 @@ import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { automationDOName, workspaceDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
+import { sidekickClient } from "./sidekick-client";
 
 const RESEND_RECEIVED_EMAIL_URL = "https://api.resend.com/emails/receiving";
 const DEFAULT_WORKSTREAM_EMAIL_DOMAIN = WORKSTREAM_EMAIL_DOMAIN;
@@ -658,12 +659,7 @@ export class ResendRegionalEmailService {
 
   private async ingestAutomation(input: AutomationRegionalEmailInput): Promise<ResendRegionalIngestionResult> {
     const automationId = asAutomationId(input.automationSubscriptionId);
-    const automation = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_DOS,
-      asWorkspaceId(input.workspaceId),
-      automationDOName(input.region, asWorkspaceId(input.workspaceId), automationId),
-    );
+    const automation = await sidekickClient(this.env, asWorkspaceId(input.workspaceId));
     // The message is fetched and stored before the automation decides: the
     // sender is inside the message, and the address is a routing identifier
     // every member can see rather than a secret. What the automation refuses

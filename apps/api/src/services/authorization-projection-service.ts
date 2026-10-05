@@ -1,12 +1,10 @@
-import { asAutomationId } from '@rally/contracts';
 import { ConversationParentKindSchema } from '@rally/contracts/conversation-parent';
 import type { Env } from '../env';
 import type { AuthorizationProjectionJob } from '../durable-objects/authorization-projection';
 import { authorizationWorkspace } from './authorization-service';
-import { durableObjectStubForWorkspace } from '../lib/durable-object-namespace';
-import { automationDOName } from '../durable-objects/names';
 import { createIdentityObjectPort } from '../runtime/identity-port';
 import { createResourceObjectPort } from '../runtime/resource-port';
+import { sidekickClient } from './sidekick-client';
 
 /** Reference-only Queue jobs always reload canonical state; old deliveries cannot resurrect links. */
 export async function projectAuthorization(env: Env, job: AuthorizationProjectionJob, refreshExisting = true): Promise<void> {
@@ -25,8 +23,7 @@ export async function projectAuthorization(env: Env, job: AuthorizationProjectio
     let substreamIds: string[];
     if (resolved.kind === 'workstream') substreamIds = (await workspace.listAuthorizationChildren(request)).substreamIds;
     else {
-      const automation = await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, job.workspaceId,
-        automationDOName(env.AVALON_REGION, job.workspaceId, asAutomationId(job.parentId)));
+      const automation = await sidekickClient(env, job.workspaceId);
       const present = await automation.authorizationDiscoveryChildren(request);
       substreamIds = present.substreamIds;
     }

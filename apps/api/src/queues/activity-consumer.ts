@@ -1,3 +1,5 @@
+import { SidekickRunProvisionQueueMessageSchema } from "../durable-objects/automation-do-protocol";
+import { provisionSidekickRun } from "../services/sidekick-run-provisioning";
 import { publishAccessRevocation } from "../services/access-revocation";
 import type { Region } from "@rally/contracts/regions";
 import { ConnectorMaintenanceQueueSchema, runConnectorMaintenance } from "../services/connector-maintenance-service";
@@ -18,12 +20,11 @@ import {
   ActivityQueueMessageSchema,
   SlackIngressQueueMessageSchema,
   WorkspaceExternalEventDeliveryQueueMessageSchema,
-  asAutomationId,
   asSubstreamId,
   asWorkspaceId,
   asUserId,
   WorkspaceExternalEventMatchResultSchema,
-  type WorkspaceId
+  type WorkspaceId,
 } from "@rally/contracts";
 import { z } from "zod";
 
@@ -38,7 +39,7 @@ import {
   SpaceDefaultQueueMessageSchema,
   SpaceIntentResumeQueueMessageSchema,
 } from "../durable-objects/workspace-space-protocol";
-import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventClaimResultSchema,
   WorkspaceConnectorEventProcessQueueMessageSchema,
@@ -73,6 +74,7 @@ import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-updat
 import { SpaceBootstrapService, spaceBootstrapDriver } from "../services/space-bootstrap-service";
 import { SpaceService } from "../services/space-service";
 import { WorkstreamService } from "../services/workstream-service";
+import { sidekickClient } from "../services/sidekick-client";
 
 /**
  * The shape of a Project default delivery, kept only to recognize one.
@@ -367,12 +369,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
     // registration, so a redelivery finds its own receipt and does nothing.
     try {
       if (input.destination.kind === "automation") {
-        const automation = await durableObjectStubForWorkspace(
-          env,
-          env.AUTOMATION_DOS,
-          input.workspaceId,
-          automationDOName(input.region, input.workspaceId, asAutomationId(input.destination.automationId)),
-        );
+        const automation = await sidekickClient(env, input.workspaceId);
         // A `semantic_activity` trigger's written condition is tested here,
         // between the object's plan and its admission: it is the only trigger
         // type whose gate is a sentence, and the classifier that judges it
@@ -707,6 +704,30 @@ async function consumeOne(message: Message<unknown>, env: Env,
     return;
   }
   if (await consumeWorkstreamBatchUpdate(message, env)) return;
+  const runProvision = SidekickRunProvisionQueueMessageSchema.safeParse(message.body);
+  if (runProvision.success) {
+    // A Sidekick's run, handed off by its Organization's alarm entry. The entry
+    // sends again on its own backoff until the run reports running, so a
+    // failure here is retried by the Queue and, past that, by the entry.
+    if (runProvision.data.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    try {
+      await provisionSidekickRun(env, runProvision.data);
+      message.ack();
+    } catch (error) {
+      logWarn(env, "sidekick_run_provision_retry", {
+        workspace_id: runProvision.data.workspaceId,
+        automation_id: runProvision.data.automationId,
+        run_id: runProvision.data.runId,
+        queue_attempts: message.attempts,
+        code: diagnosticErrorCode(error, "sidekick_run_provision_failed"),
+      });
+      message.retry();
+    }
+    return;
+  }
   const effect = EffectQueueMessageSchema.safeParse(message.body);
   if (effect.success) {
     await consumeEffect(message, effect.data, env);

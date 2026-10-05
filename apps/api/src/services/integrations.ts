@@ -129,7 +129,7 @@ import {
   type ResolvedConnectorAdapter,
 } from "@rally/connectors";
 import { z } from "zod";
-import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { AutomationService, createAutomation } from "./automation-service";
 import { WorkstreamService } from "./workstream-service";
 import { ResourceService } from "./resource-service";
@@ -293,6 +293,7 @@ import {
 import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
+import { sidekickClient } from "./sidekick-client";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
@@ -2021,12 +2022,7 @@ function createAvalonAutomationsPlugin(
           ids.push(...owned.automationIds);
         }
         const sidekicks = await Promise.all(ids.map(async (automationId) => {
-          const detail = AutomationDetailSchema.parse(await (await durableObjectStubForWorkspace(
-            env,
-            env.AUTOMATION_DOS,
-            workspaceId,
-            automationDOName(env.AVALON_REGION, workspaceId, asAutomationId(automationId)),
-          )).readDetail({ workspaceId, automationId: asAutomationId(automationId), actor }));
+          const detail = AutomationDetailSchema.parse(await (await sidekickClient(env, workspaceId)).readDetail({ workspaceId, automationId: asAutomationId(automationId), actor }));
           return {
             sidekickId: detail.id,
             canEdit: true,
@@ -2089,12 +2085,7 @@ function createAvalonAutomationsPlugin(
             automationId: authoredAutomationId,
           });
         }
-        const automation = await durableObjectStubForWorkspace(
-          env,
-          env.AUTOMATION_DOS,
-          asWorkspaceId(input.workspaceId),
-          automationDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), targetId),
-        );
+        const automation = await sidekickClient(env, asWorkspaceId(input.workspaceId));
         const membership = await env.DB.prepare(
           `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
         ).bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" }>();
@@ -6505,12 +6496,7 @@ async function readRunAuthority(
   // rather than finish on stale consent.
   const run = input.automationRun;
   startedAt = Date.now();
-  const live = await (await durableObjectStubForWorkspace(
-    env,
-    env.AUTOMATION_DOS,
-    asWorkspaceId(input.workspaceId),
-    automationDOName(input.region, asWorkspaceId(input.workspaceId), asAutomationId(run.automationId)),
-  )).readRunState({
+  const live = await (await sidekickClient(env, asWorkspaceId(input.workspaceId))).readRunState({
     workspaceId: asWorkspaceId(input.workspaceId),
     automationId: run.automationId,
     runId: run.runId,
@@ -6567,12 +6553,7 @@ async function readAutomationRunDefinition(
 ): Promise<AutomationRunDefinitionV1> {
   const run = input.automationRun;
   if (!run) throw new Error("sidekick_run_reference_missing");
-  const automation = await durableObjectStubForWorkspace(
-    env,
-    env.AUTOMATION_DOS,
-    asWorkspaceId(input.workspaceId),
-    automationDOName(input.region, asWorkspaceId(input.workspaceId), asAutomationId(run.automationId)),
-  );
+  const automation = await sidekickClient(env, asWorkspaceId(input.workspaceId));
   return AutomationRunDefinitionV1Schema.parse(await automation.readRunDefinition({
     workspaceId: asWorkspaceId(input.workspaceId),
     automationId: run.automationId,

@@ -6,6 +6,7 @@
 > Organization's `WorkspaceDO` as a third hosted parent role, beside Channels
 > and Spaces, and the `SidekickDO` class is deleted. Run conversations stay
 > `SubstreamAgent`s. Hop, table, caller and test inventory: [`design.md`](design.md).
+> Build plan: [`plan.md`](plan.md).
 > State: [`state.md`](state.md).
 > Standing contract: [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 > Read alongside [hosted conversation parents](../../hosted-conversation-parents.md),

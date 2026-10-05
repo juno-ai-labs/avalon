@@ -1,5 +1,4 @@
 import {
-  asAutomationId,
   asSpaceId,
   asUserId,
   asWorkspaceId,
@@ -21,7 +20,7 @@ import {
   type WorkstreamId,
 } from "@rally/contracts";
 
-import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDefaultResultSchema,
@@ -51,6 +50,7 @@ import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { spaceAccessError } from "./channel-access-service";
 import { ResourceService } from "./resource-service";
 import { claimParentAnchor } from "./workstream-runtime-database";
+import { sidekickClient } from "./sidekick-client";
 
 /**
  * One refusal per closed code, each naming the Space it is about.
@@ -742,12 +742,7 @@ export class SpaceService {
    * member Channel and runnable by nobody but its author.
    */
   private async assertSidekickScope(sidekickId: string): Promise<void> {
-    const source = await durableObjectStubForWorkspace(
-      this.env, this.env.AUTOMATION_DOS, this.auth.workspaceId,
-      automationDOName(
-        this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId), asAutomationId(sidekickId),
-      ),
-    );
+    const source = await sidekickClient(this.env, this.auth.workspaceId);
     const sidekick = await source.readAuthorizationFacts({
       workspaceId: this.auth.workspaceId,
       parentId: sidekickId,
