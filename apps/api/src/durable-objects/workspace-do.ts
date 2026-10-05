@@ -5647,6 +5647,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async reserveChild(input: Parameters<HostedParent["reserveChild"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.reserveChild(input);
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveChild(input));
   }
 
@@ -5688,6 +5690,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async childTerminalDeadlines(input: Parameters<HostedParent["childTerminalDeadlines"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.childTerminalDeadlines(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).childTerminalDeadlines(input);
   }
 
