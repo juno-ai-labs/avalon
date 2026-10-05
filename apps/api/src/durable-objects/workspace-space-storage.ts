@@ -3301,11 +3301,13 @@ export class WorkspaceSpaceStorage {
   organizationSpaceNamed(name: string): string | null {
     if (!this.ready()) return null;
     const wanted = spaceMatchName(name);
-    return this.storage.sql.exec<{ space_id: string; title: string } & Record<string, SqlStorageValue>>(
+    const rows = this.storage.sql.exec<{ space_id: string; title: string } & Record<string, SqlStorageValue>>(
       `SELECT space_id, title FROM spaces
         WHERE scope = 'workspace' AND archived_at IS NULL
         ORDER BY created_at, space_id`,
-    ).toArray().find((row) => spaceMatchName(row.title) === wanted)?.space_id ?? null;
+    );
+    for (const row of rows) if (spaceMatchName(row.title) === wanted) return row.space_id;
+    return null;
   }
 
   /**

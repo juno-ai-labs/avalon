@@ -251,6 +251,11 @@ export const ExternalRoomLinkRequestSchema = deferredZodSchema(() => BindingKeyS
   }),
   /** Seated beside the actor in a private room's Space. */
   participantUserIds: z.array(IdSchema),
+  /**
+   * `spaceId` is the existing Space `externalRoomSpaceMatch` answered. The link
+   * re-asks inside its transaction and binds only if that Space still matches.
+   */
+  matched: z.boolean().optional(),
   at: TimestampSchema,
 }).strict());
 export type ExternalRoomLinkRequest = z.infer<typeof ExternalRoomLinkRequestSchema>;
