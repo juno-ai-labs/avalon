@@ -136,7 +136,7 @@ interface PendingSpaceRequest {
   reject: (error: Error) => void;
   timeout: number;
 }
-type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'>;
+type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'> & Partial<Pick<RallyApi, 'confirmSocketTicket'>>;
 export type WorkspaceSocketState = WorkspaceSyncConnectionState;
 
 /**
@@ -1011,6 +1011,7 @@ export function WorkspaceSocketProvider({
             if (sync.data.sidebar && !firstSidebarApplied) {
               firstSidebarApplied = true;
               reportHandshake(diagnosticAttemptId, 'sync_applied');
+              api.confirmSocketTicket?.(ticket);
             }
             if (sync.data.sidebar) scheduleRailPrefetch();
             if (sync.data.waterline <= lastWaterline) return;

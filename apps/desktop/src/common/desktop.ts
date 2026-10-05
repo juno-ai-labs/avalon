@@ -1,4 +1,5 @@
 import type { ClientSession } from "@rally/contracts/client-session";
+import type { NetworkRecoveryState, NetworkTicketObservation } from './network-recovery';
 import type {
   TelemetryEventProperties,
   WorkspaceAttention,
@@ -379,6 +380,9 @@ export type DesktopUpdateStatus =
   | { readonly kind: 'downloaded'; readonly version: string };
 
 export interface RallyDesktopBridge {
+  getNetworkRecoveryState?: () => NetworkRecoveryState;
+  reportNetworkTicket?: (observation: NetworkTicketObservation) => Promise<void>;
+  onNetworkRecoveryState?: (listener: (state: NetworkRecoveryState) => void) => () => void;
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   /** Whether any Rally window currently owns application focus. */
   getApplicationForegroundState: () => Promise<boolean>;
