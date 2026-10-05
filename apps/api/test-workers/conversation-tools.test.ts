@@ -260,6 +260,48 @@ describe("a Sidekick's home conversation", () => {
       .rejects.toMatchObject({ code: "sidekick_owning_workstream_forbidden" });
   });
 
+  it("sends an archived Channel's row only once its Sidekicks are paused, with their list in the same turn", async () => {
+    await seedSidekick("0");
+    const response = await workspace().fetch("https://workspace.test/socket", { headers: {
+      Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-placement-affinity": "wnam",
+      "x-rally-user-id": AUTHOR_ID, "x-rally-session-id": SESSION_ID,
+      "x-rally-socket-ticket-id": crypto.randomUUID(),
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
+    } });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    const frames: Array<Record<string, unknown>> = [];
+    socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
+    try {
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync")).toBe(true);
+      frames.length = 0;
+
+      expect((await post(conversation(ROOM_ID), "/internal/product", {
+        operation: "update", auth: AUTH, input: { archived: true },
+      })).status).toBe(200);
+      await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
+
+      // The archived Channel's row, then the automations list the archive's
+      // pauses moved, sent together with nothing between them.
+      const archivedRow = () => frames.findIndex((frame) => frame.type === "workspace_workstream_state"
+        && frame.workstreamId === ROOM_ID && frame.workstream === null);
+      await expect.poll(archivedRow).toBeGreaterThanOrEqual(0);
+      const list = frames[archivedRow() + 1];
+      expect(list).toMatchObject({ type: "workspace_sidebar_list", list: "automations" });
+      // The row went out after the pause committed, so a rail it prompts the
+      // client to read already shows the Sidekick paused.
+      expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ paused_by: string | null }>(
+        `SELECT paused_by FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
+      ).one())).toEqual({ paused_by: "room_archive" });
+      // No earlier automations list told the client before its Channel did.
+      expect(frames.slice(0, archivedRow()).filter((frame) => frame.list === "automations")).toEqual([]);
+    } finally {
+      socket.close();
+    }
+  });
+
   it("pauses the Sidekick when its home Breakout is archived", async () => {
     const breakout = await seedBreakout("Weekly call");
     await seedSidekick(breakout);
