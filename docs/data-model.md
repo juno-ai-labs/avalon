@@ -13,15 +13,16 @@ first-party activity, suggested work, and every Channel's and Space's
 conversation-parent state, as `parent_*` rows keyed by parent id
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
 
-Each automation is authoritative in its own `AutomationDO`, a conversation
-parent beside the Channel and Space parents hosted in `WorkspaceDO`. WorkspaceDO stores only its content-free sidebar
-row plus the external-event registrations that fan a connector event out. See
+Each automation is a conversation parent hosted in `WorkspaceDO` beside the
+Channel and Space parents: its `automation_directory` row is its definition
+row, and its revisions, schedules, runs and receipts are the `sidekick_*`
+tables keyed by `sidekick_id` (WorkspaceDO migration 88). A legacy
+`SidekickDO` holds a Sidekick's rows only until it is imported. See
 [`automation-lifecycle.md`](automation-lifecycle.md). D1 keeps no rebuildable
 workspace product serving projection. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
-its non-agent parent (a hosted Channel or Space parent in `WorkspaceDO`, or
-`AutomationDO` for an automation) owns the aggregate metadata and the parent
-outbox. The stored `workstream.parent_kind` is the closed three-value
+its non-agent parent (a hosted Channel, Space or Sidekick parent in
+`WorkspaceDO`) owns the aggregate metadata and the parent outbox. The stored `workstream.parent_kind` is the closed three-value
 vocabulary those parents answer to, widened to admit `space` by conversation-object schema
 version 66. Legacy D1 workspace-product activity/opportunity rows are
 maintenance import input and are scrubbed before each verified WorkspaceDO route
@@ -380,7 +381,7 @@ SQL joins.
   scope**: its own chat seats the author, and each run, a child substream under
   the automation, seats exactly the run-as principal, for every trigger. A run
   is a nested execution record rather than a room; who may read the
-  automation's conversations is the `AutomationDO`'s decision, carried down at
+  automation's conversations is the hosted Sidekick's decision, carried down at
   admission. [`automation-lifecycle.md`](automation-lifecycle.md) owns that
   rule. A suggestion carries its own
   `audience_scope` across the same
@@ -646,10 +647,10 @@ no projection fallback when that object is unavailable.
 
 ### Automations and execution
 
-**An automation's own state is not here.** Each automation is a named
-`AutomationDO` Durable Object, a conversation parent like a Channel's, that
-owns its definition revisions, lifecycle, schedules, runs (each a child
-substream under it), and inbound-email receipts.
+**An automation's own state is hosted in `WorkspaceDO`.** Each automation is
+a conversation parent like a Channel's, whose rows (`automation_directory` and
+the `sidekick_*` tables) hold its definition revisions, lifecycle, schedules,
+runs (each a child substream under it), and inbound-email receipts.
 [`automation-lifecycle.md`](automation-lifecycle.md) is that schema's map and
 [`workstream-durable-object.md`](workstream-durable-object.md#automationdo) its
 column catalog; what follows is only what WorkspaceDO still holds.
@@ -705,7 +706,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   `automation` before WorkspaceDO migration 50) keyed by the Sidekick id, beside
   the workspace scope; there is no Sidekick memory engine elsewhere. A run creates the tables its definition describes through
   the memory tables plugin under that scope the first time it needs them.
-- A run's convergence is its `AutomationDO`'s `runs.occurrence_key`, unique per
+- A run's convergence is its Sidekick's `sidekick_runs.occurrence_key`, unique per
   automation and derived per trigger: `schedule:<scheduleId>:<plannedFor>` for a
   timer, `inbound_email:<resendEmailId>` for mail, `manual:<idempotencyKey>` for
   a **Run now**, and `external:<workspaceEventId>` for a connector event. The run
@@ -907,7 +908,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   started the thread); where a Slack message routes is decided by
   `external_conversation_bindings`, below.
 
-- An automation has no destinations anywhere: `AutomationDO` stores none, and
+- An automation has no destinations anywhere: its rows store none, and
   a run's loop input is a reference to its definition revision. A room-owned
   automation's result reaches its home conversation (a Channel's Main or a
   Breakout, `automation_directory.owning_workstream_id` and
@@ -1079,8 +1080,8 @@ The tables have distinct lifecycles rather than one catch-all event store:
 14. **An effect is acknowledged to the Queue only after the owning receiver
     commits the effect and its receipt together, and the sender's outbox row is
     deleted when `sendBatch` accepts the message, because retry is the Queue's.**
-    A child's effects commit in its parent (a hosted Channel or Space parent in
-    WorkspaceDO, or `AutomationDO`); directory/user effects, an automation's
+    A child's effects commit in its parent (a hosted Channel, Space or Sidekick
+    parent in WorkspaceDO); directory/user effects, an automation's
     row, and first-party activity/mention effects commit in WorkspaceDO. A
     hosted parent's directory effects are applied in the parent write's own
     transaction, with no Queue hop and no outbox row; its `parent_outbox` holds
@@ -1105,9 +1106,9 @@ has a document, and the column notes above point at it rather than restating it:
 | Which region a row lives in and what crosses | [`regionalization.md`](regionalization.md) |
 | The description refresh loop | [`workstream-descriptions.md`](workstream-descriptions.md) |
 | Pinning and the pinned sidebar section | [`workstream-pinning.md`](workstream-pinning.md) |
-| The automation lifecycle and every table `AutomationDO` owns | [`automation-lifecycle.md`](automation-lifecycle.md) |
+| The automation lifecycle and every `sidekick_*` table | [`automation-lifecycle.md`](automation-lifecycle.md) |
 | The conversation-parent contract and the effect legs between the objects | [`workstream-durable-object.md`](workstream-durable-object.md) |
-| Channel and Space parent tables in WorkspaceDO, and how they moved from the deleted legacy objects | [`hosted-conversation-parents.md`](hosted-conversation-parents.md) |
+| Channel, Space and Sidekick parent tables in WorkspaceDO, and how they moved from the legacy objects | [`hosted-conversation-parents.md`](hosted-conversation-parents.md) |
 | The activity log's semantics and the digest that reads it | [`digests.md`](digests.md) |
 | Model pinning and the flags it overrides | [`feature-flags.md`](feature-flags.md) |
 | Telemetry routing, identities, lifecycle, and destinations | [`telemetry.md`](telemetry.md) |

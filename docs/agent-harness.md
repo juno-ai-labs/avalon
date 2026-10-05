@@ -8,8 +8,8 @@ or identifies the loop. The loop is not a participant, separate persona,
 terminal, or general code-execution environment.
 
 A Sidekick is drafted in a conversation of its own, and every run of it is a
-conversation of its own, both `SubstreamAgent`s under the Sidekick's
-`SidekickDO`; there is no second host. The drafting tools are the loadable
+conversation of its own, both `SubstreamAgent`s under the Sidekick, which is
+hosted in its Organization's `WorkspaceDO`; there is no second host. The drafting tools are the loadable
 `rally:sidekicks` plugin (`rally_sidekicks` to the model), available in a work
 stream and in a Sidekick's chat alike and withheld from a run, and a run's loop
 reads its definition from the parent by revision at start. See
