@@ -51,6 +51,7 @@ import { conversationObjectName, workspaceDOName } from "../src/durable-objects/
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
+import { AuthorizationService } from "../src/services/authorization-service";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { bootstrapConversationChildRuntime, bootstrapWorkstreamRuntimeEnvironment, provisionWorkstreamObject } from "../src/services/workstream-runtime-database";
 import { readWorkstreamAuthorityControl } from "../src/services/workstream-authority";
@@ -1160,6 +1161,20 @@ describe("a hosted Sidekick", () => {
     expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND)).toHaveLength(1);
     const run = await settledChildRun(first.runId);
     expect(run).toMatchObject({ status: "completed" });
+  });
+
+  it("opens a Sidekick's conversation without its legacy object, which is never asked", async () => {
+    await activeAutomation();
+    // Any use of the legacy binding throws, so an allowed answer proves the
+    // whole decision was the Organization object's.
+    const legacy = new Proxy({}, { get: () => { throw new Error("legacy_sidekick_binding_used"); } });
+    const authorization = new AuthorizationService({ ...TEST_ENV, AUTOMATION_DOS: legacy as Env["AUTOMATION_DOS"] });
+    expect(await authorization.checkMany({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, delegation: null },
+      [{ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") }]))
+      .toMatchObject([{ status: "allowed" }]);
+    expect(await authorization.checkMany({ workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID, delegation: null },
+      [{ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") }]))
+      .toMatchObject([{ status: "denied" }]);
   });
 
   it("asks for a started run's provisioning again later, until the run reports in", async () => {
