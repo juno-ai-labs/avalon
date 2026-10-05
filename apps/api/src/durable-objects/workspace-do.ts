@@ -1166,6 +1166,12 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
   presenceRevision: number;
   applicationState: "foreground" | "background";
   foregroundWorkstreamId: string | null;
+  /**
+   * A Channel this window foregrounded before the directory listed it for the
+   * viewer. Presence promotes it when a directory change makes it visible,
+   * since the renderer does not resend for a route it has not left.
+   */
+  pendingForegroundWorkstreamId?: string | null;
 }
 
 /** One person's subscribed sockets, under the relationship they were admitted with. */
@@ -4177,6 +4183,7 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       presenceRevision: z.number().int().nonnegative().default(0),
       applicationState: z.enum(["foreground", "background"]).default("background"),
       foregroundWorkstreamId: WorkstreamIdSchema.nullable().default(null),
+      pendingForegroundWorkstreamId: WorkstreamIdSchema.nullable().default(null),
       // Defaulted for the same reason, and to the reading that changes nothing
       // for a socket that predates it: `member` is what every attachment
       // written before Spaces existed meant.
@@ -6116,71 +6123,47 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // fence the older command before it can restore stale presence.
       const currentAttachment = readAttachment(socket);
       if (!currentAttachment || parsed.data.revision <= currentAttachment.presenceRevision) return;
-      if (!currentAttachment.subscribed
-        || (parsed.data.foregroundWorkstreamId !== null
-          && !this.directoryVisible(viewerOf(currentAttachment), parsed.data.foregroundWorkstreamId))) {
+      if (!currentAttachment.subscribed) {
         this.closeSocket(socket, currentAttachment, {
           code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
           reason: "Invalid workspace presence",
-          cause: currentAttachment.subscribed
-            ? "presence_workstream_inaccessible"
-            : "presence_before_subscribe",
+          cause: "presence_before_subscribe",
           operation: "presence",
         });
         return;
       }
+      // A Channel the viewer cannot see is recorded as no Channel at all. The
+      // renderer can route to one the directory has not listed for it yet (a
+      // Channel still being created, a link from elsewhere), and closing here
+      // ended the whole Organization socket for good: 4400 is permanent to the
+      // client, so the sidebar stayed stale until a restart. It is kept as
+      // pending so the directory change that lists it promotes it.
+      const requestedWorkstreamId = parsed.data.foregroundWorkstreamId;
+      const foregroundWorkstreamId = requestedWorkstreamId !== null
+        && this.directoryVisible(viewerOf(currentAttachment), requestedWorkstreamId)
+        ? requestedWorkstreamId
+        : null;
+      if (requestedWorkstreamId !== null && foregroundWorkstreamId === null) {
+        logInfo(this.env, "workspace_presence_unlisted", {
+          workspace_id: currentAttachment.workspaceId,
+          user_id: currentAttachment.userId,
+          connection_id: currentAttachment.connectionId,
+        });
+      }
       const presenceChanged = currentAttachment.applicationState !== parsed.data.applicationState
-        || currentAttachment.foregroundWorkstreamId !== parsed.data.foregroundWorkstreamId;
+        || currentAttachment.foregroundWorkstreamId !== foregroundWorkstreamId;
       socket.serializeAttachment({
         ...currentAttachment,
         presenceRevision: parsed.data.revision,
         applicationState: parsed.data.applicationState,
-        foregroundWorkstreamId: parsed.data.foregroundWorkstreamId,
+        foregroundWorkstreamId,
+        pendingForegroundWorkstreamId: parsed.data.applicationState === "foreground"
+          && foregroundWorkstreamId === null ? requestedWorkstreamId : null,
       } satisfies WorkspaceSocketAttachment);
       if (presenceChanged) this.broadcastPresence();
       if (presenceChanged && parsed.data.applicationState === "foreground"
-        && parsed.data.foregroundWorkstreamId !== null) {
-        const now = Date.now();
-        const workstreamId = parsed.data.foregroundWorkstreamId;
-        // Opening a Channel is the moment its Main is about to be read. The
-        // Channel control socket used to start this wake; a desktop that no
-        // longer opens one says it here instead, ahead of its feed ticket.
-        // Somebody listed the Channel only through a Breakout opens that
-        // Breakout, not Main, so Main is not theirs to wake.
-        if (this.mainOpenable(viewerOf(currentAttachment), workstreamId)) this.wakeMainConversation(workstreamId);
-        this.state.storage.transactionSync(() => {
-          this.state.storage.sql.exec(
-            `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
-             VALUES (?, ?, ?) ON CONFLICT(user_id, workstream_id)
-             DO UPDATE SET last_accessed_at = excluded.last_accessed_at`,
-            currentAttachment.userId, workstreamId, now,
-          );
-          this.advanceDirectoryVersion(now);
-        });
-        // The presence check above has already found this Channel listed for
-        // this viewer, so its row is theirs to be sent.
-        const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
-          `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
-          currentAttachment.userId, currentAttachment.userId, workstreamId,
-        ).one();
-        const payload = JSON.stringify(WorkspaceWorkstreamRecencyEventSchema.parse({
-          type: "workspace_workstream_recency",
-          directoryWaterline: this.directoryWaterline(),
-          workstream: mapDirectoryWorkstreams(
-            this.state.storage.sql, [row], currentAttachment.workspaceId,
-            this.spaceStorage(), viewerOf(currentAttachment), true,
-          )[0],
-          stateVersion: directoryStateVersion(row),
-        }));
-        for (const peer of this.state.getWebSockets()) {
-          const peerAttachment = readAttachment(peer);
-          if (!peerAttachment?.subscribed || peerAttachment.userId !== currentAttachment.userId) continue;
-          try {
-            peer.send(payload);
-          } catch {
-            // Reconnecting reconstructs the saved order from SQLite.
-          }
-        }
+        && foregroundWorkstreamId !== null) {
+        this.recordChannelOpened(currentAttachment, foregroundWorkstreamId);
       }
       return;
     }
@@ -6434,16 +6417,81 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * The person in this window just opened a Channel listed for them: wake its
+   * Main and record when they opened it.
+   */
+  private recordChannelOpened(attachment: WorkspaceSocketAttachment, workstreamId: string): void {
+    const now = Date.now();
+    // Opening a Channel is the moment its Main is about to be read. The
+    // Channel control socket used to start this wake; a desktop that no
+    // longer opens one says it here instead, ahead of its feed ticket.
+    // Somebody listed the Channel only through a Breakout opens that
+    // Breakout, not Main, so Main is not theirs to wake.
+    if (this.mainOpenable(viewerOf(attachment), workstreamId)) this.wakeMainConversation(workstreamId);
+    this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(
+        `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
+         VALUES (?, ?, ?) ON CONFLICT(user_id, workstream_id)
+         DO UPDATE SET last_accessed_at = excluded.last_accessed_at`,
+        attachment.userId, workstreamId, now,
+      );
+      this.advanceDirectoryVersion(now);
+    });
+    // Every caller has already found this Channel listed for this viewer, so
+    // its row is theirs to be sent.
+    const row = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+      `${SELECT_WORKSPACE_DIRECTORY} WHERE directory.workstream_id = ?`,
+      attachment.userId, attachment.userId, workstreamId,
+    ).one();
+    const payload = JSON.stringify(WorkspaceWorkstreamRecencyEventSchema.parse({
+      type: "workspace_workstream_recency",
+      directoryWaterline: this.directoryWaterline(),
+      workstream: mapDirectoryWorkstreams(
+        this.state.storage.sql, [row], attachment.workspaceId,
+        this.spaceStorage(), viewerOf(attachment), true,
+      )[0],
+      stateVersion: directoryStateVersion(row),
+    }));
+    for (const peer of this.state.getWebSockets()) {
+      const peerAttachment = readAttachment(peer);
+      if (!peerAttachment?.subscribed || peerAttachment.userId !== attachment.userId) continue;
+      try {
+        peer.send(payload);
+      } catch {
+        // Reconnecting reconstructs the saved order from SQLite.
+      }
+    }
+  }
+
+  /**
    * Send each connection only the presence for the work stream it currently
    * foregrounds. This both avoids leaking personal work-stream identities and
    * keeps the frame equal to the one face pile the renderer can paint.
    */
   private broadcastPresence(excluding?: WebSocket): void {
     const sockets: Array<{ socket: WebSocket; attachment: WorkspaceSocketAttachment; inMain: boolean }> = [];
+    const opened: Array<{ attachment: WorkspaceSocketAttachment; workstreamId: string }> = [];
     for (const socket of this.state.getWebSockets()) {
       if (socket === excluding) continue;
-      const attachment = readAttachment(socket);
+      let attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
+      const pending = attachment.pendingForegroundWorkstreamId ?? null;
+      if (pending !== null && attachment.applicationState === "foreground"
+        && attachment.foregroundWorkstreamId === null
+        && this.directoryVisible(viewerOf(attachment), pending)) {
+        const promoted: WorkspaceSocketAttachment = {
+          ...attachment,
+          foregroundWorkstreamId: pending,
+          pendingForegroundWorkstreamId: null,
+        };
+        try {
+          socket.serializeAttachment(promoted);
+          attachment = promoted;
+          opened.push({ attachment, workstreamId: pending });
+        } catch {
+          // Stays as no Channel; the next focus change sends presence again.
+        }
+      }
       if (contributesPresence(attachment)
         && !this.directoryVisible(viewerOf(attachment), attachment.foregroundWorkstreamId)) {
         try {
@@ -6451,6 +6499,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             ...attachment,
             applicationState: "background",
             foregroundWorkstreamId: null,
+            pendingForegroundWorkstreamId: null,
           } satisfies WorkspaceSocketAttachment);
         } catch {
           // Fail closed: an attachment that cannot record lost visibility must
@@ -6493,6 +6542,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // foreground change. One stale socket must not block the others.
       }
     }
+    for (const { attachment, workstreamId } of opened) this.recordChannelOpened(attachment, workstreamId);
   }
 
   /**
