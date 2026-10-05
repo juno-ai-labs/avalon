@@ -254,6 +254,12 @@ describe("substream context storage", () => {
         ["sidekick", "Sidekick", "Unnamed result"],
         ["assistant", "Rally", "answer"],
       ]);
+    // A Sidekick's result is a cutoff a Breakout can be started from.
+    expect(transcript.captureSubstreamContext({
+      operationId: "capture-at-sidekick",
+      source,
+      throughTurnId: "turn-2",
+    })).toMatchObject({ throughTurnId: "turn-2", messages: [{ turnId: "turn-1" }, { turnId: "turn-2" }] });
   });
 
   it("installs an immutable idle seed without creating transcript input", () => {

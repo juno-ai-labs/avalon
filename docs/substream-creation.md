@@ -88,10 +88,12 @@ both sides of the submit, per
 
 What sits above that composer is the branch provenance:
 
-- **From a message** — the turn that was branched from and the four before it,
-  counted in turns of what was said (see the invariant below), faded out upward
-  under a gradient mask and inert to the pointer. They say what is being
-  branched out of. They are not what the substream inherits: the
+- **From a message** — offered on any settled turn the capture keeps: a
+  person's or Rally's text, or a Sidekick's result. Above the composer sit the
+  turn that was branched from and the four before it, counted in turns of what
+  was said (see the invariant below), faded out upward under a gradient mask
+  and inert to the pointer. They say what is being branched out of. They are
+  not what the substream inherits: the
   platform still freezes a summary of the conversation through that cutoff, and
   those turns are the only part of it anybody is shown. They are also part of
   composing rather than part of the substream, so the keystroke that submits is
@@ -570,13 +572,13 @@ substitute for real-provider latency or window-level acceptance.
 Sidekick's result, as a new `sidekick` actor, and drops elicitation and
 suggestion text it used to keep, so it admits what the launch pane draws. The
 pane counts five turns of that, ending at the turn branched from rather than at
-that turn's first row.
+that turn's first row. A Breakout can be started from a Sidekick result.
 
 **Why:** A Breakout started from a Rally answer showed "Worked for 6s" and not
 the answer: the window cut at the first row of the turn, and the work row comes
 first. Counting rows also let work rows crowd out the conversation. On the
 server, tool blocks were already excluded, but so were Sidekick results, which
-are written for the room and are context a Breakout started after them needs.
+are written for the room and are often what a Breakout is about.
 
 **Considered and rejected:** Admitting every `system` turn and letting the
 summary sort it out: most are Rally's bookkeeping, and the summary would spend
@@ -588,8 +590,9 @@ Rally said it.
 part carrying actor `sidekick`, and a frozen capture fails the same way on every
 snapshot. That is safe while `SUBSTREAM_CONTEXT_POLICY` is `summary`, whose
 parts carry no messages; moving to a history-carrying policy must wait until
-installed clients accept `sidekick`. Starting a Breakout from a Sidekick result
-itself is still not offered.
+installed clients accept `sidekick`. A cutoff is any settled turn the capture
+keeps; offering one the capture skips would fail creation as
+`substream_source_turn_not_completed`.
 
 Shipped in #1095.
 

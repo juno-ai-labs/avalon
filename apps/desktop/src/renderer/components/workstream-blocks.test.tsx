@@ -2819,19 +2819,28 @@ describe('MessageBlock breakout cutoff', () => {
     expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
 
     // The other two arms of the same predicate: a turn the transcript has no id
-    // for cannot be named as the cutoff, and a row that is not an authored
-    // message is not a place to cut. An automation result is the case that
-    // proves the second arm — it renders the same article a text turn does, so
-    // only the predicate keeps the control off it.
+    // for cannot be named as the cutoff, and a row that is not something said
+    // is not a place to cut. An elicitation row without its question renders
+    // the same article a text turn does, so only the predicate keeps the
+    // control off it.
     rerender(
       <MessageBlock {...actions} message={{ ...settledAgentTurn, transcriptTurnId: undefined }} onStartSubstream={onStartSubstream} />,
     );
     expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
 
     rerender(
+      <MessageBlock {...actions} message={{ ...settledAgentTurn, messageType: 'elicitation' }} onStartSubstream={onStartSubstream} />,
+    );
+    expect(screen.getByText('The settled answer.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
+  });
+
+  it('offers a cutoff on a Sidekick result, which the capture keeps', () => {
+    render(
       <MessageBlock {...actions} message={{ ...settledAgentTurn, messageType: 'automation_activation' }} onStartSubstream={onStartSubstream} />,
     );
     expect(screen.getByText('Automation')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'New breakout from this message' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'New breakout from this message' }));
+    expect(onStartSubstream).toHaveBeenCalledExactlyOnceWith('turn-9');
   });
 });
