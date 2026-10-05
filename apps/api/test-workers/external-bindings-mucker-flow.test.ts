@@ -36,9 +36,9 @@ import {
 } from "@rally/contracts";
 import { SlackWorkspaceBotScopes } from "@rally/connectors";
 
-import type { AutomationDO } from "../src/durable-objects/automation-do";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { EXTERNAL_BINDING_OUTBOX_CHANNEL } from "../src/durable-objects/external-binding-outbox";
-import { automationDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import { ExternalBindingResolutionSchema } from "../src/durable-objects/workspace-external-binding-protocol";
 import type { Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
@@ -49,11 +49,12 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
+import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { runSidekickAlarms } from "./helpers/sidekick";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000e2e0");
@@ -206,9 +207,6 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-function sidekick(): DurableObjectStub<AutomationDO> {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(automationDOName("global", WORKSPACE_ID, AUTOMATION_ID)));
-}
 
 function conversation(parentId: string, substreamId: SubstreamId | "0" = "0") {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
@@ -340,14 +338,13 @@ async function seedSidekick(home: SubstreamId): Promise<void> {
     owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId: AUTOMATION_ID,
   });
   const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
-  await sidekick().submitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
-  await runInDurableObject(sidekick(), (instance: AutomationDO) => instance.apply({
+  await workspace().sidekickSubmitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
+  await runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.sidekickApply({
     ...addressed, actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true },
   }));
-  await deliverParentEffects(TEST_ENV, sidekick());
   // The plugin a person picked for the Sidekick, as its row stores the pick.
-  await runInDurableObject(sidekick(), (_instance, state) => {
-    state.storage.sql.exec(`UPDATE automation SET default_plugin_ids_json = '["plugin_slack"]' WHERE id = 1`);
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`UPDATE automation_directory SET default_plugin_ids_json = '["plugin_slack"]' WHERE automation_id = ?`, AUTOMATION_ID);
   });
 }
 
@@ -385,12 +382,12 @@ async function settled(runId: string, count: number): Promise<ExecutionRow[]> {
 let runOrdinal = 0;
 async function startRun(): Promise<string> {
   runOrdinal += 1;
-  const started = await sidekick().runNow({
+  const started = await workspace().sidekickRunNow({
     workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
     actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true },
     idempotencyKey: `e2e-run-${runOrdinal}`,
   });
-  await runDurableObjectAlarm(sidekick());
+  await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
   return started.runId;
 }
 
@@ -477,7 +474,7 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
     });
     // The Sidekick has heard the run finish.
     await deliverChildEffects(TEST_ENV, runChild(runId));
-    expect((await sidekick().readRunState({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID, runId }))?.state)
+    expect((await workspace().sidekickReadRunState({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID, runId }))?.state)
       .toBe("completed");
 
     // 2. Adam replies in the thread. Ingress resolves the binding and lands
@@ -540,7 +537,7 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
     //    arrives, or the run still reads as open and the prompt is right.
     await expect.poll(async () => {
       await deliverChildEffects(TEST_ENV, runChild(runId));
-      return (await sidekick().readRunState({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID, runId }))?.state;
+      return (await workspace().sidekickReadRunState({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID, runId }))?.state;
     }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe("completed");
     const postsBefore = slackCalls.filter((call) => call.method === "chat.postMessage").length;
     await founderSays("EvE2EStray", { text: "Also, one more thing", ts: "1790000060.000300" }).catch(() => undefined);
