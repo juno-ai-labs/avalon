@@ -102,17 +102,17 @@ jobs:
               pnpm --filter @rally/api build:artifacts &&
               pnpm --filter @rally/engineering-mcp build &&
               pnpm --filter @rally/desktop test:release
-          - name: desktop-tests-1-of-2
+          - name: desktop-tests-1-of-n
             command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
-          - name: desktop-tests-2-of-2
+          - name: desktop-tests-2-of-n
             command: pnpm --filter @rally/desktop exec vitest run --shard=2/2
-          - name: api-tests-1-of-4
+          - name: api-tests-1-of-n
             command: pnpm --filter @rally/api exec vitest run --shard=1/4
-          - name: api-tests-2-of-4
+          - name: api-tests-2-of-n
             command: pnpm --filter @rally/api exec vitest run --shard=2/4
-          - name: api-tests-3-of-4
+          - name: api-tests-3-of-n
             command: pnpm --filter @rally/api exec vitest run --shard=3/4
-          - name: api-tests-4-of-4
+          - name: api-tests-4-of-n
             command: pnpm --filter @rally/api exec vitest run --shard=4/4
           - name: api-tests-workers-1-of-n
             command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=1/8
