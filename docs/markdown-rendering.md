@@ -236,6 +236,13 @@ The connector token is created once per mounted body, so a link keeps its
 identity across re-renders and a `connector:` string that merely appears in the
 model's text cannot impersonate one.
 
+Rally itself has no stored mention identity: the composer inserts plain
+`@Rally`. A body that passes `rallyMentions` (human bubbles only) runs
+`remarkRallyMentions`, which turns each `@Rally` in a text node into a chip
+with Rally's avatar, using the composer highlight's boundaries. It emits spans
+through `hName` nodes, not a link, so there is no scheme for message text to
+forge, and code and link labels stay as written.
+
 ### Web links and favicons
 
 `remark-gfm` owns autolinking as well as tables and footnotes. A naked
@@ -904,6 +911,24 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-10-05 — A person's typed `@Rally` draws as a chip
+
+**Changed:** Human bubbles opt into `remarkRallyMentions`, which renders
+`@Rally` as a mention chip with Rally's avatar (brand yellow "R" on a
+near-black disc), matching the mention list.
+
+**Why:** Person and connector mentions drew as chips while `@Rally` stayed
+plain text, so the one mention that wakes the agent was the least visible.
+Rally has no `MessageMention` row to resolve against, so the text match is the
+mention; it uses the composer highlight's boundaries so what was highlighted
+while typing is what draws as a chip.
+
+**Considered and rejected:** A tokened `rally://` link through the `a`
+override like connector chips. That needs the token inside a remark plugin,
+which would stop the plugin lists being hoisted constants; `hName` spans need
+no destination at all. Agent messages stay plain: a reply that tells someone
+to "mention @Rally" is text about Rally, not addressed to it.
 
 ### 2026-09-24 — A resource citation can carry a host's right-click menu
 
