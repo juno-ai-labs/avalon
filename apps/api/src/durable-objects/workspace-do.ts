@@ -742,6 +742,14 @@ import {
   type WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
 import { SpaceChannelAccess } from "./workspace-space-channel-access";
+import {
+  PersonalSystemPromptReadRequestSchema,
+  PersonalSystemPromptWriteRequestSchema,
+  WORKSPACE_PERSONAL_SYSTEM_PROMPT_MIGRATION,
+  type PersonalSystemPromptReadRequest,
+  type PersonalSystemPromptRecord,
+  type PersonalSystemPromptWriteRequest,
+} from "./personal-system-prompt";
 import { ObservedChannelSchema } from "./workstream-access-protocol";
 import {
   SELECT_WORKSPACE_BREAKOUT,
@@ -4117,6 +4125,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // A table of its own, not a new kind in `workspace_container_order`, so an
   // older Worker never reads a row it cannot parse; see docs/workstream-pinning.md.
   statements: WORKSPACE_PINNED_ORDER_MIGRATION,
+}, {
+  version: 88,
+  description: "a member's personal system prompt",
+  statements: WORKSPACE_PERSONAL_SYSTEM_PROMPT_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -8555,6 +8567,35 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
     this.publishSpaceSnapshot(request.userId);
     return result;
+  }
+
+  /** This person's personal system prompt here; empty text and revision 0 for none. */
+  async personalSystemPrompt(input: PersonalSystemPromptReadRequest): Promise<PersonalSystemPromptRecord> {
+    await this.initialized;
+    const request = parseRpcInput(PersonalSystemPromptReadRequestSchema, input, "personal_system_prompt");
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{ text: string; revision: number }>(
+      `SELECT text, revision FROM member_personal_system_prompts WHERE user_id = ?`,
+      request.userId,
+    ).toArray()[0];
+    return { personalSystemPrompt: row?.text ?? "", revision: row?.revision ?? 0 };
+  }
+
+  /** Replace this person's personal system prompt and answer with what was stored. */
+  async savePersonalSystemPrompt(input: PersonalSystemPromptWriteRequest): Promise<PersonalSystemPromptRecord> {
+    await this.initialized;
+    const request = parseRpcInput(PersonalSystemPromptWriteRequestSchema, input, "save_personal_system_prompt");
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{ text: string; revision: number }>(
+      `INSERT INTO member_personal_system_prompts (user_id, text, revision, updated_at) VALUES (?, ?, 1, ?)
+       ON CONFLICT (user_id) DO UPDATE SET text = excluded.text, revision = revision + 1,
+         updated_at = excluded.updated_at
+       RETURNING text, revision`,
+      request.userId,
+      request.personalSystemPrompt,
+      Date.now(),
+    ).one();
+    return { personalSystemPrompt: row.text, revision: row.revision };
   }
 
   async spaceSummary(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {

@@ -39,6 +39,7 @@ import {
   memberSafeHarnessFailureMessage,
   renderScheduledDigestBriefMessage,
   renderScheduledWakeupMessage,
+  renderPersonalSystemPrompt,
   renderWorkstreamSystemPrompt,
   renderCompactionCheckpointContent,
   rememberAutomationPeopleSearchResult,
@@ -2542,6 +2543,8 @@ export async function runWorkstreamHarness(
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
       contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>>;
+      /** This conversation's copy of a member's personal system prompt; empty for none. */
+      personalSystemPrompt?(userId: string): string;
       readSidekickSkills(): SidekickSkillSnapshot | null;
       assignSidekickSkillNames(sources: SidekickSkillSnapshot["sources"]): Map<string, string>;
       attachedSidekickIds(): string[];
@@ -2783,6 +2786,7 @@ export async function runWorkstreamHarness(
       memoryRecallRequired: false,
     })
     : loadRunPromptContext(env, input, attemptLease, workstream, runDefinitionPreparation));
+  const personalSystemPrompt = profile ? "" : personalSystemPromptFor(input, runtime?.persistentLoop?.personalSystemPrompt);
   const toolsPreparation = new Preparation(() => profile
     ? Promise.resolve(profileHarnessTools(profile.plugins(input,
       localWorkstreamAuthority(env, input.workspaceId, input.parentId, "desktopAction"))))
@@ -3383,6 +3387,8 @@ export async function runWorkstreamHarness(
           : input.executionPrincipal.workspaceId,
       },
       systemPrompt: promptContext.systemPrompt,
+      // Its own field so compaction can keep it out of the shared summary.
+      ...(personalSystemPrompt ? { principalSystemSection: personalSystemPrompt } : {}),
       // A persistent loop bootstraps from canonical transcript history once.
       // Activation-only wrappers cross the separately fenced durable boundary
       // below; a resumed execution must never replace the Bind head with a
@@ -4706,6 +4712,39 @@ async function loadConnectorTriggerContext(
     textSnippet: event.activity.textSnippet,
     metadata: event.activity.metadata,
   };
+}
+
+/**
+ * The rendered personal system prompt of the member whose own turn this is, or
+ * the empty string.
+ *
+ * Only a run a person started for themselves carries it, so the reason is an
+ * allowlist of their own acts: a message, an answer, or a retry, in Rally or
+ * from a linked Slack account. Every other reason runs as a user without that
+ * user acting (a digest, a wake-up an earlier run scheduled, a connector
+ * trigger, an inbound email), and a Sidekick run (`run_as_user_id`) or a
+ * background agent inherits a principal it was not given by a message. The
+ * text is the conversation's own copy; see docs/personal-system-prompt.md.
+ */
+const PERSONAL_SYSTEM_PROMPT_REASONS = new Set([
+  "opening_message",
+  "human_message",
+  "elicitation_answer",
+  "manual_retry",
+  // The member's own message, resumed after they authorized a resource for it.
+  "resource_authorization",
+  "slack_workspace_opening_message",
+  "slack_workspace_message",
+  "slack_workspace_elicitation_answer",
+]);
+
+function personalSystemPromptFor(
+  input: WorkstreamWorkflowInput,
+  read: ((userId: string) => string) | undefined,
+): string {
+  if (!read || input.executionPrincipal.type !== "user" || !PERSONAL_SYSTEM_PROMPT_REASONS.has(input.reason)
+    || input.automationRun || input.backgroundAgent || input.parentKind === "automation") return "";
+  return renderPersonalSystemPrompt(read(input.executionPrincipal.userId));
 }
 
 /**
@@ -8711,6 +8750,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  personalSystemPromptFor,
   executeAuthorizedConnectorTool,
   assertFrozenConnectionAuthorized,
   prePaginationTool,

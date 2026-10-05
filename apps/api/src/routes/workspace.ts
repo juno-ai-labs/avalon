@@ -10,6 +10,7 @@ import {
   CreateWorkspaceInvitationRequestSchema,
   IdSchema,
   CreateWorkspaceInvitationResponseSchema,
+  PersonalSystemPromptSchema,
   UpdateUserTimezoneRequestSchema,
   UpdateWorkspaceMemberRoleRequestSchema,
   UpdateWorkspaceRequestSchema,
@@ -107,6 +108,17 @@ workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), asy
 workspaceRoutes.patch("/me", zValidator("json", UpdateUserTimezoneRequestSchema), async (c) =>
   c.json(WorkspaceMemberSchema.parse(
     await new WorkspaceService(c.env, getAuth(c)).updateMyTimezone(c.req.valid("json").timezone))),
+);
+// Under `/me` and apart from the member record: other members read that record,
+// and only its author may read this.
+workspaceRoutes.get("/me/system-prompt", async (c) =>
+  c.json(PersonalSystemPromptSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).getMyPersonalSystemPrompt())),
+);
+workspaceRoutes.put("/me/system-prompt", zValidator("json", PersonalSystemPromptSchema), async (c) =>
+  c.json(PersonalSystemPromptSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).updateMyPersonalSystemPrompt(
+      c.req.valid("json").personalSystemPrompt))),
 );
 /**
  * One person's order for one list they arranged by hand.

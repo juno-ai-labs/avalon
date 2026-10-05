@@ -65,6 +65,11 @@ On successive compactions it also identifies any earlier
 `# Authoritative work-stream resource inventory` appendix as generated state
 that must not be copied or summarized; Rally replaces it after the new summary.
 
+The summariser's system message is rendered without the run's
+`principalSystemSection` (a member's personal system prompt). The summary becomes
+the loop's shared checkpoint, and one member's private instructions must not
+reach runs that other participants start.
+
 An empty completion is a defect and is retried by the route plan. The
 compaction's own tokens are accounted as auxiliary spend rather than an agent
 turn. When the caller supplied a run cost ceiling, it is checked against that
@@ -305,6 +310,25 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-10-05 — The summariser never sees the principal's own system section
+
+**What changed:** A harness input can carry `principalSystemSection`, which is
+appended last to every model turn's system message. `compact()` renders the
+summariser's system message without it.
+
+**Why:** Personal system prompts are private to the member whose turn carries
+them. The summary is the checkpoint every later run in the loop reads, whoever
+starts it, so a summariser that saw the section could carry it into other
+members' turns.
+
+**Considered and rejected:** Telling the summariser in its prompt not to repeat
+the section. The model might still follow that rule loosely, while leaving the
+text out of the request guarantees it.
+
+**Consequences:** Any future per-principal text has to arrive through
+`principalSystemSection`, not be appended to `systemPrompt`, or it will reach
+the shared checkpoint.
 
 ### 2026-09-23 — Move model-window discovery out of inference
 

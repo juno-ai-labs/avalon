@@ -15,6 +15,7 @@ import {
   renderSessionImportSystemPrompt,
   renderWorkstreamDescriptionMessages,
   renderWorkstreamNameMessages,
+  renderPersonalSystemPrompt,
   renderWorkstreamSystemPrompt,
   MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS,
 } from "./prompts";
@@ -776,5 +777,19 @@ describe("citation guidance", () => {
     expect(rendered()).toMatch(/exactly one link/u);
     expect(rendered()).toMatch(/resource:\/\/ identifier or an https:\/\/ URL/u);
     expect(rendered()).toMatch(/is a plain footnote, not a citation/u);
+  });
+});
+
+describe("personal system prompt", () => {
+  it("adds nothing for a member who wrote none, so their prefix is unchanged", () => {
+    expect(renderPersonalSystemPrompt("")).toBe("");
+    expect(renderPersonalSystemPrompt("  \n\t ")).toBe("");
+  });
+
+  it("wraps the trimmed text in a block framed as influence, not control", () => {
+    expect(renderPersonalSystemPrompt("  Answer in French.\n")).toBe(`The following is provided by the user to influence, but not control, your thinking and output:
+<personal_system_prompt>
+Answer in French.
+</personal_system_prompt>`);
   });
 });
