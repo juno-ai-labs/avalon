@@ -211,15 +211,16 @@ those viewers.
 Decisions made while building step 1 that differ from, or add to, the design
 below. Newest first.
 
-- **2026-10-05: An archive's Sidekick pauses reach the socket after the
-  archived Channel, not in its frame.** The pauses commit in the archive's
-  follow-up pass, one local transaction per Sidekick, and the rail drain sends
-  each as the Channel's row with a higher rail waterline once its write
-  finishes, so a client sees the archived Channel and then its paused
-  Sidekicks, milliseconds apart. Sharing one frame would mean pausing inside
-  the archive's directory transaction, which runs before the pass has imported
-  any pending Sidekick. The acceptance item "in one workspace-socket frame" is
-  not met; what a client converges on is the same.
+- **2026-10-05: "One frame" for an archive means one send, after the pauses.**
+  An archived Channel's row on the workspace socket is unlisted, and a
+  Channel-owned Sidekick is never in the sidebar automations list; its pause
+  shows on the Channel's rail, which a client reads when the row moves. So no
+  single message can carry both. Instead the archive's follow-up pass pauses
+  every Sidekick the Channel owns first, then sends the Channel's row and the
+  automations list together, with nothing awaited between them. A rail read
+  the row prompts already sees the Sidekicks paused. The first cut sent the
+  list before the row, while the pass was still running; a socket test now
+  fails if anything Sidekick-related goes out ahead of the row.
 - **2026-10-05: No compatibility client; batch reads instead.** The first cut
   kept `SidekickDO`'s method names in a client so each caller changed one line.
   It was removed in the same change: it hid that every call lands on one
@@ -600,7 +601,8 @@ the break that makes it fail, per
 - **One call to open.** A route test opens a Sidekick conversation with the
   `SidekickDO` binding unbound or throwing, and succeeds.
 - **Archive.** Archiving a Channel delivers the archived Channel and its paused
-  Sidekicks in one workspace-socket frame, observed on a real socket.
+  Sidekicks in one workspace-socket frame, observed on a real socket. Met as
+  one send after the pauses commit; see the decision log.
 - **After step 3**, the API deploys and typechecks with no `SidekickDO` class or
   `AUTOMATION_DOS` binding.
 
