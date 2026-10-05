@@ -9,9 +9,8 @@
  * desktop first is the one persisted — leaving the device holding a token
  * the service will only accept for the remainder of the grace window. The
  * next refresh after that is a 401, which the desktop reads as terminal and
- * answers by surrendering the credential. For the account identity that is
- * the "Reconnect account…" menu item and every discovered workspace gone
- * from the menu.
+ * answers by surrendering the credential. For the account identity that now
+ * ends the complete local session and shows the native sign-in notice.
  *
  * Every path that renews a stored credential therefore goes through here, so
  * that two requests which found the same access token expired share one
