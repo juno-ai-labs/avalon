@@ -72,9 +72,6 @@ interface SidebarProps {
   inactiveSpaces?: SpaceSummary[];
   /** False while the Organization has not finished its one-time cutover. */
   spacesReady?: boolean;
-  /** The Space directory on screen is the last one the socket delivered. */
-  spacesOutOfDate?: boolean;
-  onRetrySpaces?: () => void;
   workstreams: WorkstreamSummary[];
   /** Whether a page of work streams remains beyond the ones listed. */
   hasMoreWorkstreams?: boolean;
@@ -1075,8 +1072,6 @@ export function Sidebar({
   spacesReadOnly = false,
   inactiveSpaces = [],
   spacesReady = true,
-  spacesOutOfDate = false,
-  onRetrySpaces = () => undefined,
   workstreams,
   loadedSpaceIds,
   onViewSpace,
@@ -2220,11 +2215,9 @@ export function Sidebar({
           onCreateChannel={createChannelFromSidebar}
           onCreateSpace={createSpaceFromSidebar}
           onMoveChannel={moveChannelFromSelectedSpace}
-          onRetry={onRetrySpaces}
           onRestore={onRestoreSpace}
           onSelect={selectSpaceFromPill}
           ready={spacesReady}
-          outOfDate={spacesOutOfDate}
           selectedSpaceId={selectedSpaceId}
           revealSelection={activeDeepLinkReveal?.spaceId == null ? null : {
             revision: activeDeepLinkReveal.revision,

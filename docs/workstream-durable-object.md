@@ -510,7 +510,13 @@ parent work stream's REST boot into the child cache.
 The same persistent workspace socket carries explicit foreground presence. Each
 hibernation attachment records whether Rally itself is foregrounded and which
 work stream, if any, is foreground in that renderer window. WorkspaceDO
-validates that work stream against its local viewer directory, reconstructs the
+validates that work stream against its local viewer directory and records one
+the viewer cannot see as no work stream, logging `workspace_presence_unlisted`;
+it never closes the socket for it. The attachment keeps it as
+`pendingForegroundWorkstreamId`, and the next presence rebuild after a directory
+change that lists it promotes it, with the same Main wake and recency write a
+direct open gets. Losing visibility clears both, so regaining it restores
+nothing. It then reconstructs the
 present-user set from all healthy attachments, and sends each connection only
 the set for its own foreground work stream. The recipient's user ID is omitted.
 Presence is not inferred from the selected work stream's retained metadata or
@@ -1820,6 +1826,35 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-05 — Presence for an unlisted Channel no longer closes the socket
+
+**What changed:** `set_presence` naming a Channel the viewer's directory does
+not list now records `foregroundWorkstreamId: null`, keeps the Channel as
+`pendingForegroundWorkstreamId`, and logs `workspace_presence_unlisted`. When a
+directory change later lists it, `broadcastPresence` promotes it and runs the
+open (Main wake, recency) through `recordChannelOpened`. It used to close the
+workspace socket with 4400 (`presence_workstream_inaccessible`). Presence before
+`subscribe` still closes.
+
+**Why:** The desktop sends the routed Channel as soon as it opens, and the
+route can name a Channel this viewer's directory has not listed yet. Electron
+treats 4400 as permanent, so one such frame ended the Organization socket until
+a restart: the sidebar went stale and the strip showed a Refresh that could not
+reconnect.
+
+**Considered and rejected:** Filtering harder on the desktop. It cannot know
+what WorkspaceDO lists at the instant the frame arrives, and the server must
+not trust it anyway. Dropping the frame without recording it would leave the
+previous Channel's presence standing. Recording `null` alone loses the open
+when the frame races the effect that lists the Channel: the renderer does not
+resend for a route it has not left.
+
+**Consequences:** 4400 stays reserved for frames that break the protocol. A
+frame that is well formed but names something the viewer cannot see gets the
+answer it would get for "no Channel", not a close.
+
+Shipped in [#1093](https://github.com/juno-ai-labs/avalon/pull/1093).
 
 ### 2026-10-01 — A person added by somebody else keeps the newest message unread
 
