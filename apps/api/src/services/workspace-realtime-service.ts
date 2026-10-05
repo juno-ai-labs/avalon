@@ -137,6 +137,8 @@ export function workspaceSyncPublicationsForMutation(
   // A person's own onboarding journey; the Organization's profile is
   // `PATCH /workspace`.
   if (pathname === "/workspace/onboarding") return [{ topics: ["workspace_profile"], audience: ACTOR }];
+  // A person's own display preferences, for their other windows.
+  if (pathname === "/workspace/me/preferences") return [{ topics: ["viewer_preferences"], audience: ACTOR }];
   if (pathname === "/workspace/me") return organization("workspace_profile", "member_directory");
   if (pathname.startsWith("/workspace/terminal")) return organization("terminal_policy");
   if (pathname.startsWith("/workspace/invitations")) {

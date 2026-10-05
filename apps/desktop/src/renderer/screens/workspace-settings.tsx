@@ -7,6 +7,8 @@ import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL
 import { PersonalSetup } from './guided-onboarding';
 import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from '../settings/choices';
 import { SettingToggle } from '../settings/setting-toggle';
+import { memberPreferencesQueryKey, useMemberPreferences } from '../lib/use-member-preferences';
+import type { MemberPreferences } from '@rally/contracts';
 import { settings, collectSettings, coreSettingsProvider, defineSetting, isSettingAvailable, searchSettings, type SettingSearchResult, type SettingsSearchContext } from '../settings/registry';
 import { SettingCopy, SettingLabel } from '../settings/setting-label';
 import { SettingsSearchResults, useRevealSetting } from '../settings/search-results';
@@ -177,30 +179,59 @@ function PersonalSystemPromptSetting({ api, workspaceId }: { api: RallyApi; work
   const value = draft ?? saved.data ?? '';
   const changed = draft !== null && draft !== saved.data;
   return (
-    <>
-      <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Agent</h2></div>
-      <div className="settings-list-card">
-        <div className="personal-system-prompt">
-          <label>
-            <SettingCopy setting={settings.personalSystemPrompt} />
-            <textarea
-              aria-label="Personal system prompt"
-              disabled={saved.data === undefined || save.isPending}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="For example: Answer briefly. I work in Go and Postgres."
-              rows={5}
-              value={value}
-            />
-          </label>
-          <div className="personal-system-prompt-actions">
-            <Button disabled={!changed || save.isPending} onClick={() => save.mutate(value)}>
-              {save.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
-              Save
-            </Button>
-          </div>
-        </div>
+    <div className="personal-system-prompt">
+      <label>
+        <SettingCopy setting={settings.personalSystemPrompt} />
+        <textarea
+          aria-label="Personal system prompt"
+          disabled={saved.data === undefined || save.isPending}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="For example: Answer briefly. I work in Go and Postgres."
+          rows={5}
+          value={value}
+        />
+      </label>
+      <div className="personal-system-prompt-actions">
+        <Button disabled={!changed || save.isPending} onClick={() => save.mutate(value)}>
+          {save.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+          Save
+        </Button>
       </div>
       {saved.error && <InlineError>{saved.error.message}</InlineError>}
+      {save.error && <InlineError>{save.error.message}</InlineError>}
+    </div>
+  );
+}
+
+/** Settings → Account → Agent: whether this person's transcripts show the agent's work. */
+function AgentWorkSetting({ api, workspaceId }: { api: RallyApi; workspaceId: string }): React.JSX.Element {
+  const queryClient = useQueryClient();
+  const preferences = useMemberPreferences(api, workspaceId);
+  const queryKey = memberPreferencesQueryKey(workspaceId);
+  const save = useMutation({
+    mutationFn: (next: MemberPreferences) => api.updateMyPreferences(next),
+    // Optimistic: the transcript reads the same key, so it follows the switch
+    // at once, and a refusal puts both back. A read in flight is cancelled
+    // first so it cannot land on top of the switch.
+    onMutate: async (next) => {
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<MemberPreferences>(queryKey);
+      queryClient.setQueryData(queryKey, next);
+      return { previous };
+    },
+    onError: (_error, _next, context) => {
+      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+      else void queryClient.invalidateQueries({ queryKey });
+    },
+    onSuccess: (stored) => queryClient.setQueryData(queryKey, stored),
+  });
+  return (
+    <>
+      <SettingToggle setting={settings.showAgentWork}
+        checked={preferences.data.showAgentWork}
+        disabled={save.isPending}
+        onChange={(event) => save.mutate({ ...preferences.data, showAgentWork: event.currentTarget.checked })}
+        role="switch" />
       {save.error && <InlineError>{save.error.message}</InlineError>}
     </>
   );
@@ -1377,7 +1408,13 @@ export function WorkspaceSettingsScreen({
                   </label>
                 </div>
                 {updateUserTimezone.error && <InlineError>{updateUserTimezone.error.message}</InlineError>}
-                {api && <PersonalSystemPromptSetting api={api} key={workspace.id} workspaceId={workspace.id} />}
+                {api && <>
+                  <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Agent</h2></div>
+                  <div className="settings-list-card">
+                    <PersonalSystemPromptSetting api={api} key={workspace.id} workspaceId={workspace.id} />
+                    <AgentWorkSetting api={api} workspaceId={workspace.id} />
+                  </div>
+                </>}
                 </>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Session</h2></div>
                 <div className="settings-list-card">

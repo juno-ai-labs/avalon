@@ -40,6 +40,7 @@ describe('workspaceSyncPublicationsForMutation', () => {
       organization],
     ['PATCH', '/workstreams/workstream-1', ['workstream_directory'], organization],
     ['PATCH', '/telemetry/preference', ['viewer_preferences'], actor],
+    ['PUT', '/workspace/me/preferences', ['viewer_preferences'], actor],
   ])('maps %s %s to its owning surfaces and their audience', (method, path, topics, audience) => {
     expect(workspaceSyncPublicationsForMutation(method, path)).toEqual([{ topics, audience }]);
   });
