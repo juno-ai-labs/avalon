@@ -111,6 +111,23 @@ describe('organization search modal', () => {
     expect(search).not.toHaveBeenCalled();
   });
 
+  it('waits for three characters before searching content or listing places in All', async () => {
+    const search = vi.fn(async () => ({ results: [result] }));
+    setup(search, PLACES);
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'pr' } });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+    expect(search).not.toHaveBeenCalled();
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+    expect(screen.getByText('Type at least 3 characters to search')).toBeVisible();
+    // The Channels tab filters what is already on screen, so it does not wait.
+    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Pricing reviewChannel']);
+    fireEvent.click(screen.getByRole('tab', { name: 'All' }));
+    fireEvent.change(input, { target: { value: 'pri' } });
+    await waitFor(() => expect(search).toHaveBeenCalledWith({ query: 'pri', category: 'all', pageSize: 7 }, expect.any(AbortSignal)));
+  });
+
   it('puts matching places above the content results in All', async () => {
     const search = vi.fn(async () => ({ results: [result] }));
     const { onSelect, onSelectPlace } = setup(search, PLACES);

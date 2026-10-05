@@ -408,6 +408,12 @@ matching place above the content results, which arrive later and so never push
 a place down; it shows every match, since nobody has set how many it should.
 The Spaces tab is absent where Spaces are off.
 
+The modal sends no search, and All lists no places, until the trimmed query is
+three characters long (`SEARCH_MIN_CHARACTERS`, a number the team set). Shorter
+queries match nearly everything and would cost a Worker round trip each. The
+Channels and Spaces tabs filter from the first character, since they ask
+nobody.
+
 Admission is the `audience` clause (see Invariants); loaders only render and
 never read an owner. The route revalidates the workspace session before
 returning. The index returns candidate identifiers, the canonical text and the
@@ -714,7 +720,8 @@ budgets require team policy; no arbitrary new caps are introduced here.
 matches names from the lists the desktop already holds and opens the chosen
 place; neither calls `POST /search`. Breakouts are listed under Channels, each
 row wears its place's own coloured mark, and All lists matching places above
-the content results.
+the content results. Content search, and places in All, wait for a
+three-character query.
 
 **Why:** The modal found content but not places. The desktop holds every Space
 and, through the Space walk, every Channel the reader can open, so matching
