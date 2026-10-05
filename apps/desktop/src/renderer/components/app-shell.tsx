@@ -32,7 +32,7 @@ import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstrea
 import { activeRealtimeWorkstreamId } from '../lib/workspace-workstream-sockets';
 import { useWorkspaceSocket, type SidebarConnect, type WorkspaceSocketState } from '../lib/workspace-socket';
 import { channelDestination, useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
-import { heldChannelBreakouts } from '../lib/channel-viewer-state';
+import { heldChannelBreakouts, isWorkstreamChildrenQueryKey, type ChannelBreakoutLists } from '../lib/channel-viewer-state';
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import {
   evictCachedWorkstream,
@@ -409,6 +409,33 @@ export function spacesEnabledForSession(session: ClientSession | null): boolean 
  * them, the conversation directory says which are, and the row opens on the
  * first it lists rather than on Main. The directory adds no rows of its own.
  */
+/**
+ * The Channels search lists, each followed by its Breakouts: the ones the
+ * socket holds for this reader as a member (`held`), and the ones a grant
+ * reaches, which only the shared navigation directory lists. A Channel still
+ * being created is left to the caller to drop.
+ */
+export function searchChannelPlaces(
+  channels: readonly WorkstreamSummary[],
+  held: ChannelBreakoutLists,
+  directory: SharedNavigationDirectory | undefined,
+): SearchPlace[] {
+  const shared = new Map((directory?.workstreams ?? []).map((entry) => [entry.parentId, entry.conversations]));
+  return channels.flatMap((channel): SearchPlace[] => {
+    const breakouts = new Map<string, { title: string; appearance?: WorkstreamSummary['appearance'] }>();
+    for (const conversation of shared.get(channel.id) ?? []) {
+      if (conversation.substreamId !== '0' && !conversation.archived) breakouts.set(conversation.substreamId, conversation);
+    }
+    for (const breakout of held[channel.id] ?? []) breakouts.set(breakout.substreamId, breakout);
+    return [
+      { kind: 'channel', id: channel.id, name: channel.title, substreamId: channel.associativeSubstreamId, appearance: channel.appearance },
+      ...[...breakouts].map(([substreamId, breakout]): SearchPlace => ({
+        kind: 'breakout', id: substreamId, channelId: channel.id, channelName: channel.title,
+        name: breakout.title, appearance: breakout.appearance, channelAppearance: channel.appearance })),
+    ];
+  });
+}
+
 export function associativeWorkstreamsForSidebar(
   directory: SharedNavigationDirectory | undefined,
   workstreams: readonly WorkstreamSummary[] | undefined,
@@ -540,20 +567,22 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     [associativeNavigation.data, workstreams.data],
   );
   const visibleSpaces = spaces.data?.items ?? [];
-  // A Channel still being created has no conversation to open yet. Each
-  // Channel is followed by the Breakouts this device holds for it, read when
-  // the modal opens: the socket keeps those lists for every Channel.
+  // While search is open, a Breakout list the socket writes re-reads the
+  // places, so a Breakout created or renamed meanwhile shows at once.
+  const [breakoutListsVersion, setBreakoutListsVersion] = useState(0);
+  useEffect(() => {
+    if (!searchOpen) return;
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (event.type === 'updated' && isWorkstreamChildrenQueryKey(event.query.queryKey)) setBreakoutListsVersion((version) => version + 1);
+    });
+  }, [searchOpen, queryClient]);
   const searchChannels = useMemo(() => {
     if (!searchOpen) return [];
     const channels = sidebarWorkstreams.filter((channel) => !channel.pending);
-    const breakouts = heldChannelBreakouts(queryClient, channels.map((channel) => channel.id));
-    return channels.flatMap((channel): SearchPlace[] => [
-      { kind: 'channel', id: channel.id, name: channel.title, substreamId: channel.associativeSubstreamId, appearance: channel.appearance },
-      ...(breakouts[channel.id] ?? []).map((breakout): SearchPlace => ({
-        kind: 'breakout', id: breakout.substreamId, channelId: channel.id, channelName: channel.title,
-        name: breakout.title, appearance: breakout.appearance ?? channel.appearance })),
-    ]);
-  }, [searchOpen, sidebarWorkstreams, queryClient]);
+    return searchChannelPlaces(channels, heldChannelBreakouts(queryClient, channels.map((channel) => channel.id)),
+      associativeNavigation.data);
+    // `breakoutListsVersion` is how a Breakout list written to the cache reaches this read.
+  }, [searchOpen, sidebarWorkstreams, associativeNavigation.data, breakoutListsVersion, queryClient]);
   const searchSpaces = useMemo(() => (spaces.data?.items ?? []).map((space): SearchPlace => (
     { kind: 'space', id: space.id, name: space.name, iconKey: space.iconKey, colorKey: space.colorKey })), [spaces.data]);
   const visibleInactiveSpaces = inactiveSpaces.data?.items ?? [];
