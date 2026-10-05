@@ -1,6 +1,7 @@
 import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import type { AgentModelOverride } from './agent-models';
 import type { MentionIdentity } from './api';
+import { prepareDraftMentions } from './transcript';
 import type { MessageAttachment, WorkspaceMember, WorkstreamDetail } from './types';
 
 /**
@@ -25,7 +26,15 @@ export function optimisticOpeningTranscript(
     attachments: readonly MessageAttachment[];
   },
   author: Pick<WorkspaceMember, 'id' | 'name' | 'avatarUrl'>,
+  /**
+   * Who the opening's mentions can name. The room stores a person mention as
+   * `[@Name](person://<id>)` Markdown and the chip is drawn from that, so a
+   * seed holding the draft's plain `@Name` reads as text until the canonical
+   * turn replaces it.
+   */
+  members: readonly WorkspaceMember[],
 ): WorkstreamTranscriptSnapshot {
+  const prepared = prepareDraftMentions(turn.text, turn.mentions, members);
   const opening = {
     transcriptSequence: 1,
     turnId: turn.turnId,
@@ -47,20 +56,16 @@ export function optimisticOpeningTranscript(
       type: 'text' as const,
       blockId: `${turn.turnId}:text:0`,
       blockIndex: 0,
-      text: turn.text,
+      text: prepared.text,
       streaming: false,
       messageType: 'text' as const,
-      mentions: turn.mentions.flatMap((mention) => (
-        mention.startOffset === undefined || mention.endOffset === undefined
-          ? []
-          : [{
-              type: mention.type,
-              userId: mention.userId,
-              connectorType: mention.connectorType,
-              startOffset: mention.startOffset,
-              endOffset: mention.endOffset,
-            }]
-      )),
+      mentions: prepared.mentions.map((mention) => ({
+        type: mention.type,
+        userId: mention.userId,
+        connectorType: mention.connectorType,
+        startOffset: mention.startOffset,
+        endOffset: mention.endOffset,
+      })),
       attachments: [...turn.attachments],
     }],
     activityId: null,
