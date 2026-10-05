@@ -490,6 +490,12 @@ const BRANCH_PROVENANCE_TURNS = 5;
  * The turns shown, faded, above a substream's composer: the message it branches
  * from and the ones that led to it, oldest first.
  *
+ * Only written rows (a person's or Rally's text, or a Sidekick's result), and
+ * the window counts turns rather than rows. Work timing, tool calls and other
+ * activity rows are how an answer was reached, not what was said, and counting
+ * them let one busy answer push the conversation out of a five-row window. An
+ * answer split over several text rows is one turn.
+ *
  * A substream started from the sidebar branches from wherever the conversation
  * has reached rather than from a message somebody pointed at, and it shows
  * nothing — the same empty body the work-stream launcher has, because there is
@@ -502,7 +508,7 @@ export function branchProvenance(
   if (throughTurnId === null) return [];
   // The turn's last row, not its first: an answer is several rows sharing one
   // turn id, and its work row comes before its text, so cutting at the first
-  // match shows "Worked for" with the message that was branched from missing.
+  // match drops the message that was branched from.
   // `findLastIndex` would say it more directly, but the renderer's lib target
   // predates it.
   let cutoff = -1;
@@ -517,7 +523,19 @@ export function branchProvenance(
   // to show the wrong turns: the substream is still the one that was asked
   // for, and its provenance is simply not on the client to draw.
   if (cutoff < 0) return [];
-  return transcript.slice(Math.max(0, cutoff + 1 - BRANCH_PROVENANCE_TURNS), cutoff + 1);
+  const shown: Message[] = [];
+  const turns = new Set<string>();
+  for (let index = cutoff; index >= 0; index -= 1) {
+    const message = transcript[index]!;
+    if (message.messageType !== 'text' && message.messageType !== 'automation_activation') continue;
+    const turn = message.transcriptTurnId ?? message.id;
+    if (!turns.has(turn)) {
+      if (turns.size === BRANCH_PROVENANCE_TURNS) break;
+      turns.add(turn);
+    }
+    shown.push(message);
+  }
+  return shown.reverse();
 }
 
 export function manualElicitationResponse(

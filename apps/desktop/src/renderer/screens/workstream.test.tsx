@@ -972,15 +972,27 @@ describe('what a breakout shows of where it came from', () => {
       .toEqual(['Main turn 1', 'Main turn 2']);
   });
 
-  it('ends at the text of the branched answer, not at the work row that opens its turn', () => {
-    const answer: Message[] = [
-      { ...turn(1), authorType: 'human', text: 'Engineering of connectors' },
-      { ...turn(2), id: 'row-2-work', messageType: 'thought', text: '' },
-      { ...turn(2), text: 'Ready to help with connectors' },
+  it('shows only text, counting five turns of it past the activity rows between them', () => {
+    const activity = (sequence: number, messageType: Message['messageType']): Message => ({
+      ...turn(sequence), id: `row-${sequence}-${messageType}`, messageType, text: '',
+    });
+    const busy: Message[] = [
+      turn(1),
+      turn(2),
+      activity(3, 'thought'),
+      activity(3, 'tool_event'),
       turn(3),
+      // One answer split over two text rows is one turn.
+      { ...turn(3), id: 'row-3-more', text: 'Main turn 3, continued' },
+      activity(4, 'tool_event'),
+      turn(4),
+      turn(5),
+      activity(6, 'thought'),
+      turn(6),
+      turn(7),
     ];
-    expect(branchProvenance(answer, 'turn-2').map((message) => message.id))
-      .toEqual(['row-1', 'row-2-work', 'row-2']);
+    expect(branchProvenance(busy, 'turn-6').map((message) => message.text))
+      .toEqual(['Main turn 2', 'Main turn 3', 'Main turn 3, continued', 'Main turn 4', 'Main turn 5', 'Main turn 6']);
   });
 
   it('shows nothing for a breakout started from the sidebar, or from a turn off the loaded window', () => {
