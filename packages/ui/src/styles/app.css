@@ -7570,6 +7570,35 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   color: var(--av-sys-color-palette-ink-light);
 }
 
+/* The attention count: the sidebar's unread red with white digits. It grows
+   sideways past two digits rather than shrinking them. */
+.sidebar-top-actions > .attention-trigger.has-attention {
+  background: var(--av-sys-color-workstream-news);
+  box-shadow: var(--av-cmp-composer-shadow);
+  color: var(--av-sys-color-palette-ink-light);
+  min-width: 32px;
+  padding: 0 8px;
+  width: auto;
+}
+.sidebar-top-actions > .attention-trigger.has-attention:hover:not(:disabled),
+.sidebar-top-actions > .attention-trigger.has-attention:focus-visible {
+  background: var(--hover-layer), var(--av-sys-color-workstream-news);
+  color: var(--av-sys-color-palette-ink-light);
+}
+.attention-count { font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 650; line-height: 1; }
+.attention-menu { max-height: min(480px, calc(100vh - 80px)); max-width: min(360px, calc(100vw - 20px)); overflow-y: auto; width: 340px; }
+.attention-menu-item { gap: 10px; min-height: 44px; }
+.attention-menu-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.attention-menu-title,
+.attention-menu-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attention-menu-title { color: var(--av-sys-color-text-default); font-weight: 560; }
+.attention-menu-detail { color: var(--av-sys-color-text-muted); font-size: 12px; }
+.attention-menu-meta { align-items: center; display: flex; flex: 0 0 auto; gap: 8px; }
+.attention-menu-time { color: var(--av-sys-color-text-muted); font-size: 12px; }
+/* Unread is the sidebar Channel row's red here too, not the generic green. */
+.attention-menu .status-unread .status-dot { background: var(--av-sys-color-workstream-news); }
+.attention-menu-empty { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); padding: 10px; }
+
 .space-pill-strip { align-items: center; display: flex; flex: 0 0 auto; gap: 6px; min-width: 0; padding: 0 14px 10px; }
 .space-pill-strip-scroll {
   display: flex;

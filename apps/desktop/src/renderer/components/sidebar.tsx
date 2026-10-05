@@ -29,11 +29,12 @@ import {
   consumeDeepLinkWorkstreamNavigation,
   useDeepLinkWorkstreamNavigation,
 } from '../lib/deep-link-navigation';
-import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, recencyTimestamp, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
+import { formatDateTime, formatSidebarActivityTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, recencyTimestamp, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
 import { committedOrder, moveWithin, orderByStoredIds } from '../lib/personal-order';
 import { compareAlphabeticalName, compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
+import type { AttentionItem } from '../lib/attention-items';
 import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
 import { spaceFailureOf, spaceFailureSentence } from '../lib/space-failure-copy';
@@ -55,9 +56,12 @@ import { SpacePills } from './space-pills';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { WorkstreamGlyph } from './workstream-glyph';
+import { AttentionMenu } from './attention-menu';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
+  /** Conversations waiting for this reader, for the attention menu. */
+  attentionItems?: readonly AttentionItem[];
   workspace: Workspace;
   /**
    * The active Space directory, or absent for a host with no Space navigation.
@@ -227,25 +231,6 @@ const CHANNEL_SORTS: Record<SidebarChannelSort, {
     next: 'alphabetical',
   },
 };
-
-const sidebarWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
-const sidebarMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-
-function formatSidebarActivityTime(value: string, now = new Date()): string {
-  const date = new Date(value);
-  const timestamp = date.getTime();
-  if (!Number.isFinite(timestamp)) return 'Unknown time';
-
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
-  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
-  const startOfWeekWindow = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
-
-  if (timestamp >= startOfToday && timestamp < startOfTomorrow) return formatTime(value);
-  if (timestamp >= startOfYesterday && timestamp < startOfToday) return 'Yesterday';
-  if (timestamp >= startOfWeekWindow && timestamp < startOfYesterday) return sidebarWeekday.format(date);
-  return sidebarMonthDay.format(date);
-}
 
 /** How close the pointer comes to the navigation's edge before its pill shows. */
 
@@ -1066,6 +1051,7 @@ const sidebarMenuFailureCopy: Record<SidebarMenuFailure, { title: string; copy: 
 
 export function Sidebar({
   onOpenSearch,
+  attentionItems = [],
   workspace,
   spaces,
   spacesReadOnly = false,
@@ -2179,6 +2165,7 @@ export function Sidebar({
           {downloadedUpdate !== null && <IconButton className="sidebar-top-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
             <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
           </IconButton>}
+          <AttentionMenu items={attentionItems} />
           <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
             <IconSearch aria-hidden="true" size={16} stroke={1.9} />
           </IconButton>

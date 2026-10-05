@@ -17,7 +17,7 @@ token and which state wins.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/format.ts` | `MARKER_PRECEDENCE` and `workstreamMarkerStatus` own the ranking. Shared vocabulary, labels and `harnessMarkerStatus` live in `packages/ui/src/lib/format.ts` and are re-exported here. |
+| `apps/desktop/src/renderer/lib/format.ts` | `MARKER_PRECEDENCE` and `workstreamMarkerStatus` own the ranking. `readerMarkerStatus` reads the same list for the three personal states alone, for the [attention menu](attention-menu.md). Shared vocabulary, labels and `harnessMarkerStatus` live in `packages/ui/src/lib/format.ts` and are re-exported here. |
 | `packages/ui/src/components/primitives.tsx` | `StatusDot` — the one component that draws a marker, for every surface. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | The sidebar row's one dot: this ranking, with `completed` left out and a Breakout that needs the reader counted as unread. |
 | `apps/desktop/src/renderer/screens/project-space.tsx` | The project space's work-stream rows, which draw the ranked marker. |
