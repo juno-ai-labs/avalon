@@ -75,10 +75,9 @@ const SEARCH_VISIBLE_PAGE_SIZE = Math.ceil((360 - 16) / (52 + 2));
  */
 const SEARCH_RESULT_CACHE_MS = 30_000;
 /**
- * Characters a query needs before the modal searches content or mixes places
- * into All: 3, set by the team on 2026-10-05. Shorter queries match nearly
- * everything and each one is a Worker round trip nobody reads. The Channels and
- * Spaces tabs filter a list already on screen, so they answer from the first one.
+ * Characters a query needs before the modal searches anything, on every tab:
+ * 3, set by the team on 2026-10-05. Shorter queries match nearly everything,
+ * and on the content tabs each one is a Worker round trip nobody reads.
  */
 const SEARCH_MIN_CHARACTERS = 3;
 /** A page, stamped with the moment the Worker admitted it. */
@@ -101,10 +100,10 @@ interface SearchModalProps {
   onSelectPlace?: (place: SearchPlace) => void;
 }
 
-/** Places whose name holds the query, in the order given; every place for an empty query. */
+/** Places whose name holds the query, in the order given. */
 function matchPlaces(places: readonly SearchPlace[], query: string): SearchPlace[] {
   const needle = query.toLocaleLowerCase();
-  return needle ? places.filter((place) => place.name.toLocaleLowerCase().includes(needle)) : [...places];
+  return places.filter((place) => place.name.toLocaleLowerCase().includes(needle));
 }
 
 function HighlightedName({ name, query }: { name: string; query: string }): React.JSX.Element {
@@ -227,9 +226,9 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
   // A place tab lists its own kind; All puts every matching place above the
   // content results, which arrive later and so never push a place down. All
   // shows every match: how many is a product number nobody has set yet.
-  const places = !open ? []
+  const places = !open || !searchable ? []
     : placeTab ? matchPlaces(placeTab === 'channels' ? channels : spaces ?? [], normalized)
-    : activeTab === 'all' && searchable ? matchPlaces([...channels, ...spaces ?? []], normalized) : [];
+    : activeTab === 'all' ? matchPlaces([...channels, ...spaces ?? []], normalized) : [];
   const results = open && !placeTab && searchable && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
     ? [...new Map((response.data?.pages.flatMap((page) => page.results) ?? []).map((result) => [result.id, result])).values()] : [];
   useEffect(() => {
@@ -366,9 +365,9 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
           </div>}
         </div>
         {rowCount === 0 && !(canContinue && continuationFailed) && <div className="rally-search-state" role="status">
-          {placeTab ? (normalized ? 'No results' : placeTab === 'channels' ? 'No channels' : 'No spaces')
+          {placeTab ? (searchable ? 'No results' : 'What are you looking for?')
             : !normalized ? 'Search messages, links, artifacts, and files'
-            : !searchable ? `Type at least ${SEARCH_MIN_CHARACTERS} characters to search`
+            : !searchable ? 'What are you looking for?'
             : (response.isFetching || settledQuery !== normalized || canContinue) ? 'Searching…'
             : response.isError ? 'Search could not be completed. Please try again.' : 'No results'}
         </div>}

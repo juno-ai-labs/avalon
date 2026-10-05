@@ -398,7 +398,7 @@ not yet exposed through this member endpoint.
 The modal's Channels and Spaces tabs never reach this endpoint. They match the
 query as a case-insensitive substring of the names in the Channel and Space
 lists the window already holds (the sidebar's walk of every Space makes the
-Channel list complete), and an empty query lists every one. The Channels tab
+Channel list complete). The Channels tab
 lists each Channel followed by the Breakouts the device holds for it. Each row
 wears its place's own mark in its own colour: `WorkstreamMark` for a Channel and
 a Breakout (a Breakout with no look of its own wears its Channel's), `SpaceIcon`
@@ -408,11 +408,10 @@ matching place above the content results, which arrive later and so never push
 a place down; it shows every match, since nobody has set how many it should.
 The Spaces tab is absent where Spaces are off.
 
-The modal sends no search, and All lists no places, until the trimmed query is
-three characters long (`SEARCH_MIN_CHARACTERS`, a number the team set). Shorter
-queries match nearly everything and would cost a Worker round trip each. The
-Channels and Spaces tabs filter from the first character, since they ask
-nobody.
+No tab searches until the trimmed query is three characters long
+(`SEARCH_MIN_CHARACTERS`, a number the team set); until then the modal asks
+"What are you looking for?". Shorter queries match nearly everything, and on
+the content tabs each would cost a Worker round trip.
 
 Admission is the `audience` clause (see Invariants); loaders only render and
 never read an owner. The route revalidates the workspace session before
@@ -720,8 +719,7 @@ budgets require team policy; no arbitrary new caps are introduced here.
 matches names from the lists the desktop already holds and opens the chosen
 place; neither calls `POST /search`. Breakouts are listed under Channels, each
 row wears its place's own coloured mark, and All lists matching places above
-the content results. Content search, and places in All, wait for a
-three-character query.
+the content results. Every tab waits for a three-character query.
 
 **Why:** The modal found content but not places. The desktop holds every Space
 and, through the Space walk, every Channel the reader can open, so matching
