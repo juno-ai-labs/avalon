@@ -1162,6 +1162,37 @@ describe("a hosted Sidekick", () => {
     expect(run).toMatchObject({ status: "completed" });
   });
 
+  it("asks for a started run's provisioning again later, until the run reports in", async () => {
+    await activeAutomation();
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "resend-run-01" });
+    // The run alarm hands the run on; nothing consumes the Queue here, so no
+    // report comes back.
+    await runDurableObjectAlarm(workspaceStub());
+    const before = Date.now();
+    const pending = (await alarms()).filter((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND && alarm.alarm_key === started.runId);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.due_at).toBeGreaterThan(before);
+    expect(await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId })).toMatchObject({ state: "pending" });
+  });
+
+  it("pauses one Sidekick without touching another's pending run", async () => {
+    await activeAutomation();
+    const otherId = asAutomationId(AUTOMATION_ID.replace(/ad0$/u, "ad9"));
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "personal", owningWorkstreamId: null, automationId: otherId });
+    const other = { workspaceId: WORKSPACE_ID, automationId: otherId };
+    await workspaceStub().sidekickSubmitDefinition({ ...other, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
+    await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickApply({ ...other, actor: actor() }));
+    const started = await workspaceStub().sidekickRunNow({ ...other, actor: actor(), idempotencyKey: "isolated-run-01" });
+
+    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ kind: string }>(
+      `SELECT kind FROM _internal_durable_alarms WHERE kind = ? AND alarm_key = ?`,
+      AUTOMATION_RUN_ALARM_KIND, `${otherId}:${started.runId}`,
+    ).toArray())).toHaveLength(1);
+    expect(await workspaceStub().sidekickReadRunState({ ...other, runId: started.runId })).toMatchObject({ state: "pending", lifecycle: "active" });
+  });
+
   it("provisions the conversation on a replayed create, so a first call that died after the row is repaired", async () => {
     // The object's row commits first; a first call that failed between it
     // and the conversation's provisioning used to answer `created: false`

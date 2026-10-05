@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * Which SidekickDO the engineering MCP is allowed to open, against real objects.
+ * Which Sidekick the engineering MCP is allowed to open, against real objects.
  *
  * The fence is the interesting part. A Sidekick and a work stream share one
  * parent-id namespace in `workstream_authority_routes`, so an active route
@@ -22,7 +22,6 @@ import { automationDOName, workspaceDOName } from "../src/durable-objects/names"
 import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridge";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
-import { deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import {
@@ -98,9 +97,9 @@ async function createSidekick(): Promise<void> {
     owningWorkstreamId: null,
     automationId: SIDEKICK_ID,
   });
+  // Its directory row is written in the Organization object by the create
+  // itself; there is no copy to deliver.
   expect(created.created).toBe(true);
-  const delivered = await deliverParentEffects(TEST_ENV, sidekickStub(SIDEKICK_ID));
-  expect(delivered.map((envelope) => envelope.effect.kind)).toEqual(["directory_automation"]);
 }
 
 beforeEach(async () => {
@@ -133,14 +132,14 @@ describe("engineering inspection of a Sidekick's own object", () => {
     expect(target).toMatchObject({ found: true, value: { authorityGeneration: 1 } });
     if (!target.found) throw new Error("Expected the Sidekick to resolve");
 
-    // `automation` holds the object's own single identity row, so reading it
-    // back proves the named object is the Sidekick that was created and not a
-    // freshly migrated empty one.
+    // A Sidekick created now lives in its Organization object, so its legacy
+    // object holds only the legacy schema; the freeze table, which only that
+    // schema has, proves the statement reached a SidekickDO and nothing else.
     const executed = await inspection.runSidekickSql({
       workspaceId: WORKSPACE_ID,
       sidekickId: SIDEKICK_ID,
       authorityGeneration: target.value.authorityGeneration,
-      query: { sql: "SELECT automation_id, lifecycle FROM automation WHERE id = 1", bindings: [] },
+      query: { sql: "SELECT name FROM sqlite_schema WHERE name = 'sidekick_export_freeze'", bindings: [] },
     });
     expect(executed).toMatchObject({
       found: true,
@@ -149,7 +148,7 @@ describe("engineering inspection of a Sidekick's own object", () => {
         workstreamId: null,
         substreamId: null,
         sidekickId: SIDEKICK_ID,
-        result: { rows: [{ automation_id: SIDEKICK_ID, lifecycle: "draft" }] },
+        result: { rows: [{ name: "sidekick_export_freeze" }] },
       },
     });
   });
@@ -157,7 +156,8 @@ describe("engineering inspection of a Sidekick's own object", () => {
   it("reaches a Sidekick's run conversation through its own registry, and nothing it has not registered", async () => {
     await createSidekick();
     const runId = asSubstreamId("00000000-0000-7000-8000-00000000ef16");
-    await sidekickStub(SIDEKICK_ID).reserveChild({
+    // Registered where the Sidekick's parent lives: its Organization object.
+    await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID))).reserveChild({
       workspaceId: WORKSPACE_ID, parentId: SIDEKICK_ID, substreamId: runId, kind: "child",
       createdByUserId: AUTHOR_ID, authorityGeneration: 1,
     });
@@ -220,16 +220,16 @@ describe("engineering inspection of a Sidekick's own object", () => {
       query: { sql: "CREATE TABLE crossed_from_another_workspace (id INTEGER)", bindings: [] },
     })).toEqual({ found: false });
 
-    // The sentinel is the proof: the real Sidekick still holds its own identity
-    // row and nothing the refused statement would have written.
+    // The sentinel is the proof: nothing the refused statement would have
+    // written exists, and the real Sidekick is still its own workspace's.
     const sidekick = await sidekickStub(SIDEKICK_ID).runInspectionSql({
       sql: "SELECT name FROM sqlite_schema WHERE name = 'crossed_from_another_workspace'",
       bindings: [],
     });
     expect(sidekick.rows).toEqual([]);
-    expect((await sidekickStub(SIDEKICK_ID).runInspectionSql({
-      sql: "SELECT automation_id FROM automation WHERE id = 1",
-      bindings: [],
+    expect((await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID))).runInspectionSql({
+      sql: "SELECT automation_id FROM automation_directory WHERE automation_id = ?",
+      bindings: [SIDEKICK_ID],
     })).rows).toEqual([{ automation_id: SIDEKICK_ID }]);
   });
 

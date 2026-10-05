@@ -26,7 +26,8 @@ import type { Env } from "../src/env";
 import { AutomationService, createAutomation } from "../src/services/automation-service";
 import { searchAudienceGroup, searchAudienceGroupIds } from "../src/services/search-audience";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub } from "./helpers/hosted-parent";
+import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
+import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -299,17 +300,14 @@ describe("automation directory", () => {
     const audience = (userId: string) => workspaceStub().readSearchAudience({ workspaceId: WORKSPACE_ID, userId });
     // The member is not in the owning room, so only running the Sidekick lets them search it.
     expect(await audience(MEMBER_ID)).not.toContain(group);
-    // Taking it over is for the room's people, which the Organization reads
-    // from the room's own viewer rows; the member joins the room first.
-    await runInDurableObject(workspaceStub(), (_instance, state) => {
-      // The author's row, copied for the member, whatever columns it has.
-      const columns = state.storage.sql.exec<{ name: string }>(`PRAGMA table_info(channel_viewers)`).toArray().map((column) => column.name);
-      state.storage.sql.exec(
-        `INSERT INTO channel_viewers (${columns.join(", ")})
-         SELECT ${columns.map((column) => column === "user_id" ? "?" : column).join(", ")}
-           FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`,
-        MEMBER_ID, ROOM_ID, AUTHOR_ID,
-      );
+    // Taking it over is for whoever may manage the room; a grant on the room
+    // makes the member one, the way sharing a Channel does.
+    await withHostedParent(workspaceStub(), ROOM_ID, (parent) => {
+      const grants = (parent as unknown as { scopeGrants(address: { workspaceId: string; parentId: string }): ScopeGrantStorage })
+        .scopeGrants({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID });
+      expect(grants.mutate({ operationId: crypto.randomUUID(), actorUserId: AUTHOR_ID, userId: MEMBER_ID,
+        target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID }, active: true, expectedRevision: 0 },
+      "existing-member")).toMatchObject({ status: "committed" });
     });
     expect(await audience(MEMBER_ID)).not.toContain(group);
     const claim = await workspaceStub().sidekickClaimExecutionPrincipal({
