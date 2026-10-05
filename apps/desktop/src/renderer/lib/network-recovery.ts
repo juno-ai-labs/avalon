@@ -10,9 +10,8 @@ function observeRecovery(bridge: RallyDesktopBridge | undefined): void {
   unsubscribeBridge?.();
   observedBridge = bridge;
   unsubscribeBridge = bridge?.onNetworkRecoveryState?.((state) => {
-    // Stop old reads before they can transparently retry on the replacement
-    // connections. Body streams whose headers already arrived are terminated
-    // by Chromium's native reset itself; they cannot retry their HTTP request.
+    // Abandon old requests when IPC arrives, including any Chromium retry
+    // racing the native reset. No ordering before closeAllConnections is assumed.
     for (const [request, generation] of pendingRequests) {
       if (generation < state.generation || state.phase === 'resetting') {
         request.abort(new DOMException('Rally is recovering its network connections.', 'AbortError'));
@@ -33,25 +32,37 @@ export async function fetchWithNetworkRecovery(input: RequestInfo | URL, init: R
   const bridge = recoveryBridge();
   if (!bridge?.onNetworkRecoveryState) return fetch(input, init);
   const controller = new AbortController();
-  const owner = init.signal;
-  const cancelled = (): void => {
-    controller.abort(owner?.reason);
-    pendingRequests.delete(controller);
-  };
-  owner?.throwIfAborted();
-  owner?.addEventListener('abort', cancelled, { once: true });
-  pendingRequests.set(controller, bridge?.getNetworkRecoveryState?.().generation ?? 0);
+  init.signal?.throwIfAborted();
+  pendingRequests.set(controller, bridge.getNetworkRecoveryState?.().generation ?? 0);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    // The composed signal stays linked to the owner while a response body is
+    // consumed, even after its headers remove this request from the pending map.
+    const signal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
+    return await fetch(input, { ...init, signal });
   } finally {
     pendingRequests.delete(controller);
-    owner?.removeEventListener('abort', cancelled);
   }
 }
 
 /** Only the reset itself holds new requests. Awaiting a live frame does not. */
 export function waitForNetworkRecovery(signal?: AbortSignal): Promise<void> | undefined {
   const bridge = recoveryBridge();
+  signal?.throwIfAborted();
+  const ready = bridge?.waitForNetworkRecoveryState?.();
+  if (ready) return waitForInitialState(ready, signal).then(() => waitForReset(bridge, signal));
+  return waitForReset(bridge, signal);
+}
+
+function waitForInitialState(ready: Promise<void>, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const aborted = (): void => reject(signal?.reason);
+    signal?.addEventListener('abort', aborted, { once: true });
+    void ready.then(resolve, reject).finally(() => signal?.removeEventListener('abort', aborted));
+    if (signal?.aborted) aborted();
+  });
+}
+
+function waitForReset(bridge: RallyDesktopBridge | undefined, signal?: AbortSignal): Promise<void> | undefined {
   signal?.throwIfAborted();
   if (bridge?.getNetworkRecoveryState?.().phase !== 'resetting') return;
   return new Promise<void>((resolve, reject) => {

@@ -500,14 +500,17 @@ ticket timeout explicitly when it aborts ticket acquisition.
 Main owns one recovery state for all Rally windows. It increments the generation
 before resetting, publishes `resetting`, and records the escalation before
 discarding connections. Each renderer aborts pending HTTP attempts from the old
-generation so Chromium cannot retry abandoned reads into the replacement pool.
+generation to abandon retries racing the reset when IPC arrives; delivery is asynchronous
+and is not an acknowledgement barrier before the native reset.
 Preload retains this state before React subscribes and
-ignores stale IPC replies. New API requests wait during the reset; ticket
+ignores stale IPC replies. New windows wait for their initial state before
+starting requests. New API requests wait during the reset; ticket
 requests wait before starting their request-local deadline. Cancellation still
 settles a waiting owner. After the reset completes or fails, main publishes
 `awaiting_live` and normal reconnect loops resume with their existing backoff.
 Only a usable conversation snapshot (including its context chunks) or an applied
-Organization sidebar from a ticket acquired in the new generation marks recovery
+Organization sidebar or a validated sequenced import-feed frame from a ticket acquired
+in the new generation marks recovery
 complete and rearms escalation. A ticket or a transport open alone does not.
 Old requests and old sockets cannot rearm it, and an unresolved outage does not
 cause repeated connection resets.
@@ -716,17 +719,12 @@ move the workspace synchronization socket or dictation transport into Node.
 
 ## Testing
 
-The main and common `network-recovery.test.ts` files cover per-ticket streaks,
-single-flight escalation, stale generations, live-response rearming, reset
-failure and preload state ordering. `network-recovery-ipc.test.ts` exercises the
-closed sender/schema boundary. The renderer `network-recovery.test.ts` drives
-`RallyApi` through real ticket deadlines and the shared recovery coordinator,
-including the outer opening deadline, cross-client waiting/cancellation, offline
-and HTTP exclusions, and an interrupted mutation that must not replay. These
-tests do not prove Chromium's native connection reset; that requires real Electron.
+Unit and integration tests do not prove Chromium's native connection reset; that requires real Electron.
 
 | Suite | Command | Covers |
 | --- | --- | --- |
+| Main, common and IPC network recovery suites | `pnpm --filter @rally/desktop exec vitest run src/main/network-recovery.test.ts src/common/network-recovery.test.ts src/main/network-recovery-ipc.test.ts` | Streaks, reset coalescing, generations, live rearming, state ordering and trusted IPC validation. |
+| Renderer network recovery and import run suites | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/network-recovery.test.ts src/renderer/lib/session-import-run.test.ts` | Initial state barrier, ticket deadlines, delayed IPC, cancellation through streamed bodies, and import live confirmation. |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-broker.test.ts` | Destination confinement, ordered PAC fallback, shared payload limit, event relay, normal close cleanup, sends, and renderer-owner teardown. |
 | `apps/desktop/src/main/realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-ipc.test.ts src/common/realtime-socket-validation.test.ts` | Shared channel wiring, main-window authorization, request confinement, broker relay, and strict dependency-free event validation. |
 | `apps/desktop/src/common/workspace-sync-relay.test.ts`, `apps/desktop/src/main/workspace-sync-relay.test.ts`, `apps/desktop/src/main/workspace-sync-relay-ipc.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/common/workspace-sync-relay.test.ts src/main/workspace-sync-relay.test.ts src/main/workspace-sync-relay-ipc.test.ts` | The preload inbox folding news that arrives before a listener and keeping it for the listener that replaces one unsubscribed before it could take it; main refusing a malformed or open publication with the field named, attaching, forwarding only the attached Organization (the same UUID in another region is another one), ignoring a stale detach, releasing once, and ordering by revision; each IPC channel refusing every window but its own. |

@@ -75,6 +75,63 @@ describe('ticket timeout to shared network recovery integration', () => {
     expect(fetchRequest).toHaveBeenCalledTimes(1);
   });
 
+  it('waits for a new window’s initial state before starting a mutation', async () => {
+    const { api } = harness(async () => undefined);
+    const ready = Promise.withResolvers<void>();
+    window.rally!.waitForNetworkRecoveryState = () => ready.promise;
+    const fetchRequest = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchRequest);
+    const mutation = api.deleteDraftResource(channel);
+    await Promise.resolve();
+    expect(fetchRequest).not.toHaveBeenCalled();
+    ready.resolve();
+    await mutation;
+    expect(fetchRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps streaming response cancellation linked after headers arrive', async () => {
+    const { api } = harness(async () => undefined);
+    const owner = new AbortController();
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), { once: true });
+        },
+      });
+      return new Response(body, { headers: { 'content-type': 'audio/pcm;rate=24000;channels=1;bits=16;endian=little' } });
+    }));
+    const body = await api.streamMessageSpeech('Read this', owner.signal);
+    const reading = expect(body.getReader().read()).rejects.toMatchObject({ name: 'AbortError' });
+    owner.abort();
+    await reading;
+  });
+
+  it('abandons old requests even when reset IPC arrives after the native reset', async () => {
+    const inbox = new NetworkRecoveryInbox();
+    const broadcasts: Array<typeof inbox.state> = [];
+    const closeConnections = vi.fn(async () => undefined);
+    const recovery = new NetworkRecovery({ closeConnections, publish: (state) => broadcasts.push(state), record: vi.fn() });
+    window.rally = {
+      getNetworkRecoveryState: () => inbox.state,
+      onNetworkRecoveryState: (listener) => inbox.subscribe(listener),
+    } as NonNullable<typeof window.rally>;
+    let signal: AbortSignal | null | undefined;
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => signal?.addEventListener('abort', () => reject(signal?.reason)));
+    }));
+    const pending = expect(new RallyApi('https://api.rally.test', null).deleteDraftResource(channel))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    recovery.observe({ generation: 0, target, outcome: 'timeout' });
+    recovery.observe({ generation: 0, target, outcome: 'timeout' });
+    await Promise.resolve();
+    expect(closeConnections).toHaveBeenCalledTimes(1);
+    expect(signal?.aborted).toBe(false);
+    for (const state of broadcasts) inbox.receive(state);
+    await pending;
+    expect(signal?.aborted).toBe(true);
+  });
+
   it('does not reset for HTTP rejections, ordinary cancellation, or offline ticket timeouts', async () => {
     vi.useFakeTimers();
     const closeConnections = vi.fn(async () => undefined);

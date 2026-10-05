@@ -380,6 +380,8 @@ export type DesktopUpdateStatus =
   | { readonly kind: 'downloaded'; readonly version: string };
 
 export interface RallyDesktopBridge {
+  /** Desktop session recovery; absent from browser bridges. */
+  waitForNetworkRecoveryState?: () => Promise<void>;
   getNetworkRecoveryState?: () => NetworkRecoveryState;
   reportNetworkTicket?: (observation: NetworkTicketObservation) => Promise<void>;
   onNetworkRecoveryState?: (listener: (state: NetworkRecoveryState) => void) => () => void;
