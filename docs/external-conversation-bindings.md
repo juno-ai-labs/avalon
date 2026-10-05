@@ -88,7 +88,10 @@ it claims a D1 anchor, so a matched room leaves none behind, and passes
 `matched: true` to `linkExternalRoom`, which asks the match again inside its
 transaction and refuses a Space renamed, made private or archived in between
 (`space_not_found`). The oldest
-match wins when several share a name. A private room never matches: its Space's
+match wins when several share a name. A match whose creator is no longer an
+active member is not offered, because a thread from a sender with no Rally
+identity opens its Channel acting as that creator; the room gets its own Space
+instead. A private room never matches: its Space's
 audience is the room's members, and an existing Space's is not. A mention
 in a room that has no binding runs the same step first (`fall_through` mode), so
 an app installed before this change still links rooms on first use. The Space
@@ -330,7 +333,9 @@ underscores (`WorkspaceSpaceStorage.organizationSpaceNamed`, exposed as
 `WorkspaceDO.externalRoomSpaceMatch`), and links the room into it rather than
 creating a second Space. A matched link re-asks the match inside
 `linkExternalRoom`'s transaction, so a Space renamed, made private or archived
-in between is refused rather than bound.
+in between is refused rather than bound. A Space whose creator has left is
+never matched, since that creator is who an unlinked sender's Channel is placed
+as.
 
 **Why:** Inviting Rally to `#general` made a Space named "general" beside the
 Organization's "General", so the team's threads split across two Spaces with
