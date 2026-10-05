@@ -1,7 +1,8 @@
 # Durable Object migration tracking
 
 Rally runs three migrated Durable Object classes across two regional Workers,
-`SubstreamAgent`, `WorkspaceDO`, and `SidekickDO`, and each object applies its
+`SubstreamAgent`, `WorkspaceDO`, and `SidekickDO` (kept until every Sidekick is
+imported into `WorkspaceDO`), and each object applies its
 own SQLite migration history in its constructor. The legacy `WorkstreamDO` and
 `SpaceDO` were tracked here too until both classes were deleted; Channel and
 Space parents now live in `WorkspaceDO`
