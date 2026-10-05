@@ -298,6 +298,8 @@ invalid frame would be sent again.
 **Consequences:** A stale Space directory has no manual recovery in the strip.
 If one is needed later, it needs a socket state it can actually recover from.
 
+Shipped in [#1093](https://github.com/juno-ai-labs/avalon/pull/1093).
+
 ### 2026-10-04 — Stale-directory refresh stays a 28px pill
 
 **What changed:** When the Space directory is out of date, the strip now shows
