@@ -178,4 +178,8 @@ describe("personal system prompt", () => {
   it("leaves it out of a background agent working under the member's principal", () => {
     expect(personalSystemPromptFor({ ...workflowInput("human_message"), backgroundAgent: true }, read)).toBe("");
   });
+
+  it("leaves it out of a Sidekick run acting as the member", () => {
+    expect(personalSystemPromptFor({ ...workflowInput("human_message"), parentKind: "automation" }, read)).toBe("");
+  });
 });

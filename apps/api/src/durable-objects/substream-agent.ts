@@ -96,7 +96,7 @@ import {
   recordHarnessRunObservation,
 } from "../observability/harness-run-observability";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
-import { PersonalSystemPromptResultSchema } from "./personal-system-prompt";
+import { PersonalSystemPromptRecordSchema } from "./personal-system-prompt";
 import { agentProfileFor, type AgentProfile } from "../services/agent-profiles";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
@@ -5890,13 +5890,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * This conversation's copy of a member's personal system prompt, then a
-   * refresh of that copy from WorkspaceDO that the run does not wait for.
-   *
-   * The copy is what keeps WorkspaceDO off the inference path: the run renders
-   * whatever this object last saw, and an edit reaches the turn after the one
-   * that started the refresh. A refresh that fails leaves the old copy and is
-   * tried again by the next turn.
+   * This conversation's copy of a member's personal system prompt, plus a
+   * refresh the run does not wait for. See docs/personal-system-prompt.md.
    */
   private personalSystemPromptCopy(workspaceId: string, userId: string): string {
     const copy = this.state.storage.sql.exec<{ text: string }>(
@@ -5916,13 +5911,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private async refreshPersonalSystemPromptCopy(workspaceId: string, userId: string): Promise<void> {
     const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
       workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)));
-    const { personalSystemPrompt } = PersonalSystemPromptResultSchema.parse(
+    const source = PersonalSystemPromptRecordSchema.parse(
       await workspace.personalSystemPrompt({ workspaceId: asWorkspaceId(workspaceId), userId }));
+    // Two refreshes can overlap and resume in either order; the revision keeps
+    // a late, older answer from replacing a newer copy.
     this.state.storage.sql.exec(
-      `INSERT INTO personal_system_prompt_copies (user_id, text, copied_at) VALUES (?, ?, ?)
-       ON CONFLICT (user_id) DO UPDATE SET text = excluded.text, copied_at = excluded.copied_at`,
+      `INSERT INTO personal_system_prompt_copies (user_id, text, source_revision, copied_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET text = excluded.text, source_revision = excluded.source_revision,
+         copied_at = excluded.copied_at
+       WHERE excluded.source_revision > personal_system_prompt_copies.source_revision`,
       userId,
-      personalSystemPrompt,
+      source.personalSystemPrompt,
+      source.revision,
       Date.now(),
     );
   }
