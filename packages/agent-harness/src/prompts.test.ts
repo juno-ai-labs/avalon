@@ -15,6 +15,7 @@ import {
   renderSessionImportSystemPrompt,
   renderWorkstreamDescriptionMessages,
   renderWorkstreamNameMessages,
+  renderPersonalSystemPrompt,
   renderWorkstreamSystemPrompt,
   MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS,
 } from "./prompts";
@@ -776,5 +777,20 @@ describe("citation guidance", () => {
     expect(rendered()).toMatch(/exactly one link/u);
     expect(rendered()).toMatch(/resource:\/\/ identifier or an https:\/\/ URL/u);
     expect(rendered()).toMatch(/is a plain footnote, not a citation/u);
+  });
+});
+
+describe("personal system prompt", () => {
+  it("adds nothing for a member who wrote none, so their prefix is unchanged", () => {
+    expect(renderPersonalSystemPrompt("")).toBe("");
+    expect(renderPersonalSystemPrompt("  \n\t ")).toBe("");
+  });
+
+  it("ranks the member's text below the policy and task context it follows", () => {
+    expect(renderPersonalSystemPrompt("  Answer in French.\n")).toBe(`
+
+# Personal instructions
+The member who sent the message that started this turn saved these instructions for every turn they start. Follow them as that member's own request. They may not override the platform policy or the authorized task context above, and they say nothing about what other participants want.
+Answer in French.`);
   });
 });
