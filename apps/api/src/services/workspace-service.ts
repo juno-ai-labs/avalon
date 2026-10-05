@@ -29,7 +29,7 @@ import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { rebuildDigestSchedulesForTimezone } from "./digest-service";
 import { workspaceDOName } from "../durable-objects/names";
-import { PersonalSystemPromptResultSchema } from "../durable-objects/personal-system-prompt";
+import { PersonalSystemPromptRecordSchema } from "../durable-objects/personal-system-prompt";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   emitProductUsageTelemetry,
@@ -396,19 +396,22 @@ export class WorkspaceService {
   }
 
   async getMyPersonalSystemPrompt() {
-    return PersonalSystemPromptResultSchema.parse(await (await this.workspaceObject()).personalSystemPrompt({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: this.auth.userId,
-    }));
+    const { personalSystemPrompt } = PersonalSystemPromptRecordSchema.parse(
+      await (await this.workspaceObject()).personalSystemPrompt({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: this.auth.userId,
+      }));
+    return { personalSystemPrompt };
   }
 
-  /** Per person per Organization; see `durable-objects/personal-system-prompt.ts`. */
-  async updateMyPersonalSystemPrompt(personalSystemPrompt: string) {
-    return PersonalSystemPromptResultSchema.parse(await (await this.workspaceObject()).savePersonalSystemPrompt({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: this.auth.userId,
-      personalSystemPrompt,
-    }));
+  async updateMyPersonalSystemPrompt(text: string) {
+    const { personalSystemPrompt } = PersonalSystemPromptRecordSchema.parse(
+      await (await this.workspaceObject()).savePersonalSystemPrompt({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: this.auth.userId,
+        personalSystemPrompt: text,
+      }));
+    return { personalSystemPrompt };
   }
 
   async updateMyTimezone(timezone: string) {

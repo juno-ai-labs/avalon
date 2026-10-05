@@ -300,6 +300,7 @@ async function initializeWorkstream(
   openingMessage: string,
   modelOverride: string | null = null,
   participantUserIds: readonly string[] = [],
+  reason = "user_message",
 ): Promise<{
   status: number;
   body: Record<string, unknown>;
@@ -323,7 +324,7 @@ async function initializeWorkstream(
       attachmentIds: [],
       modelOverride,
       executionPrincipal: { type: "user", userId: USER_ID },
-      reason: "user_message",
+      reason,
     },
   });
 }
@@ -1915,7 +1916,7 @@ describe("a member's message travels the whole pipeline", () => {
         [{ choices: [{ delta: { content: "first answer" }, finish_reason: "stop" }] }],
         [{ choices: [{ delta: { content: "second answer" }, finish_reason: "stop" }] }],
       ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [] });
-      const opened = await initializeWorkstream(stub, "first message", PERSONAL_PROMPT_MODEL);
+      const opened = await initializeWorkstream(stub, "first message", PERSONAL_PROMPT_MODEL, [], "opening_message");
       await externallySettledRun(stub, opened.body.harnessRunId as string);
       await waitForLoopRelease(stub);
 
