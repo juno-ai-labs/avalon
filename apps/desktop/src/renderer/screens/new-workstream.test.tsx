@@ -383,11 +383,14 @@ describe('New channel home', () => {
     })));
     await waitFor(() => expect(queryClient.getQueryData(['ordered-transcript', 'new-workstream']))
       .toMatchObject({ ranges: [{ turns: [{ blocks: [{
+        // The room's stored form, which is what draws the chip: the seed holds
+        // it from the first paint rather than waiting for the canonical turn.
+        text: `ask [@Samantha Lee](person://${teammate.id})`,
         mentions: [{
           type: 'person',
           userId: teammate.id,
           startOffset: 4,
-          endOffset: 17,
+          endOffset: 66,
         }],
       }] }] }] }));
   });
