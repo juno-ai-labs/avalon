@@ -915,13 +915,19 @@ describe("space dashboard conversation page", () => {
     expect(rails.rails).toEqual([]);
     expect(rails.unavailable).toEqual([CHANNEL_A]);
 
-    // Foregrounding it is refused as a member's would be: it is not a Channel
-    // this guest may list, so it records no recency and closes the socket.
-    const closed = new Promise<number>((resolve) => {
-      guest.socket.addEventListener("close", (event) => resolve(event.code));
-    });
+    // Foregrounding it is treated as a member's would be: it is not a Channel
+    // this guest may list, so it records no recency, and the socket stays open.
+    const closes: number[] = [];
+    guest.socket.addEventListener("close", (event) => { closes.push(event.code); });
     guest.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: CHANNEL_A }));
-    await closed;
+    // Frames are handled in order, so an answer to a later frame proves the
+    // socket outlived the presence frame.
+    const barrierId = "00000000-0000-7000-8000-00000000d1fd";
+    guest.socket.send(JSON.stringify({ type: "list_workstreams", requestId: barrierId, limit: 50, includeSystem: false }));
+    await vi.waitFor(() => {
+      expect(closes).toEqual([]);
+      expect(guest.frames.some((frame) => (frame as { requestId?: string }).requestId === barrierId)).toBe(true);
+    }, { timeout: 5_000 });
     expect(guest.frames.some((frame) => (frame as { type?: string }).type === "workspace_workstream_recency")).toBe(false);
   });
 
