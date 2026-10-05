@@ -308,14 +308,8 @@ export class SpaceService {
   }
 
   /**
-   * Give a Space Rally created without an icon one chosen from its name.
-   *
-   * The Channel naming call and prompt, so a Space and a Channel about the
-   * same thing reach for the same mark. Written only while the Space is at
-   * the revision it was created at: any edit a person makes first (its name,
-   * its icon, its audience) moves the revision, and the generated icon stands
-   * down rather than undo it. Never rejects; the Space already exists with a
-   * neutral icon, which is what it keeps when this produces nothing.
+   * Give a Space created without an icon one chosen from its name. Never
+   * rejects; see `docs/spaces.md#the-icon-rally-chooses`.
    */
   private async chooseIcon(space: SpaceSummary): Promise<void> {
     const fields = { workspace_id: this.auth.workspaceId, space_id: space.id };

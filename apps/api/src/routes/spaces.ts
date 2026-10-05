@@ -15,6 +15,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 
 import type { HonoAppEnv } from "../env";
+import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { SpaceService } from "../services/space-service";
@@ -46,7 +47,7 @@ spaceRoutes.post("/", zValidator("json", CreateSpaceRequestSchema), async (c) =>
     await new SpaceService(c.env, getAuth(c)).create(
       c.req.valid("json"),
       undefined,
-      (work) => c.executionCtx.waitUntil(work),
+      requestDeferral(c),
     ),
   ), 201),
 );
