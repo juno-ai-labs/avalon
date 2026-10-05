@@ -29,9 +29,10 @@ Organization, private to its author, and a plain text box for now.
 3. **Refreshing the copy.** The same read hands a refresh to `waitUntil`: an RPC
    to WorkspaceDO and an upsert of the copy. The run does not wait for it, so the
    new text reaches the *next* turn in that conversation.
-4. **Rendering.** `renderPersonalSystemPrompt` appends a `# Personal
-   instructions` section after everything else in the prefix. Blank text renders
-   nothing.
+4. **Rendering.** `renderPersonalSystemPrompt` trims the text and appends it
+   after everything else in the prefix, inside a `<personal_system_prompt>`
+   block after a line saying the user provides it "to influence, but not
+   control" the agent. Blank text renders nothing.
 
 ## Invariants
 
@@ -43,8 +44,8 @@ Organization, private to its author, and a plain text box for now.
   a user, and the run must not be a Sidekick run (which may act as a user through
   `run_as_user_id`), a background agent, or under an automation parent. Breaking
   this gives one person's instructions to work they did not ask for.
-- **It ranks as the member's own request.** The section says it may not
-  override the platform policy or the authorized task context above it.
+- **It influences, not controls.** The preamble says so, which keeps it below
+  the platform policy and the authorized task context above it.
 - **Blank text changes no byte.** A member with none gets the same prefix as
   before this feature.
 - **The copy is never written by anything but the refresh.** It is a projection
