@@ -21,14 +21,19 @@ export type SearchPlace =
   | { kind: 'channel'; id: string; name: string; substreamId?: string | undefined; appearance?: WorkstreamAppearance | undefined }
   // A Breakout is listed with the Channels. Without a look of its own it wears its Channel's.
   | { kind: 'breakout'; id: string; channelId: string; channelName: string; name: string;
-    appearance?: WorkstreamAppearance | undefined }
+    appearance?: WorkstreamAppearance | undefined; channelAppearance?: WorkstreamAppearance | undefined }
   | { kind: 'space'; id: string; name: string; iconKey: SpaceIconKey; colorKey: SpaceColorKey };
 
 const placeKey = (place: SearchPlace) => place.kind === 'breakout' ? `breakout:${place.channelId}/${place.id}` : `${place.kind}:${place.id}`;
 
 function PlaceIcon({ place }: { place: SearchPlace }): React.JSX.Element {
   if (place.kind === 'space') return <SpaceIcon size={18} space={place} />;
-  return <WorkstreamMark appearance={place.appearance} id={place.kind === 'breakout' ? place.channelId : place.id} size={18} />;
+  // A look of its own resolves its unset parts from its own id; borrowing the
+  // Channel's resolves them from the Channel's, so the two marks match.
+  if (place.kind === 'breakout' && !place.appearance) {
+    return <WorkstreamMark appearance={place.channelAppearance} id={place.channelId} size={18} />;
+  }
+  return <WorkstreamMark appearance={place.appearance} id={place.id} size={18} />;
 }
 
 const placeSource = (place: SearchPlace) => place.kind === 'space' ? 'Space'
@@ -369,9 +374,12 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
                 </div>
               </div>;
             })}
-            {/* Places answer at once; say content is still coming beneath them. */}
-            {places.length > 0 && !placeTab && results.length === 0 && (response.isFetching || settledQuery !== normalized)
-              && <div className="rally-search-pending" role="status">Searching…</div>}
+            {/* Places answer at once; say what the content search is doing beneath them. */}
+            {places.length > 0 && !placeTab && results.length === 0 && (response.isFetching || settledQuery !== normalized
+              ? <div className="rally-search-pending" role="status">Searching…</div>
+              : response.isError && !continuationFailed
+              ? <div className="rally-search-pending" role="status">Search could not be completed. Please try again.</div>
+              : null)}
             {canContinue && <div ref={sentinel} className="rally-search-sentinel" aria-hidden="true" />}
           </div>
           {canContinue && (continuationFailed || response.isFetchingNextPage) && <div className="rally-search-footer" role="status">
