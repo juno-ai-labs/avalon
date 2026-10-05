@@ -34,7 +34,7 @@ type ViewerDecision = { authorized: boolean; archived: boolean; membershipVersio
  * second round trip is observable, not because a Channel should need it; it
  * admits everyone, so only the resolve's own decision can refuse a viewer.
  */
-function organization(hosted: "workstream" | null, decision: ViewerDecision) {
+function organization(hosted: "workstream" | "automation" | null, decision: ViewerDecision) {
   return {
     resolveHostedParent: vi.fn(async (input: { viewer?: unknown }) => ({
       kind: hosted,
@@ -45,14 +45,7 @@ function organization(hosted: "workstream" | null, decision: ViewerDecision) {
   };
 }
 
-function sidekick(decision: ViewerDecision) {
-  return {
-    authority: vi.fn(async () => ({ exists: true, authorityGeneration: 2, archived: false })),
-    authorizeViewer: vi.fn(async () => decision),
-  };
-}
-
-function environment(workspace: ReturnType<typeof organization>, automation?: ReturnType<typeof sidekick>) {
+function environment(workspace: ReturnType<typeof organization>) {
   const workspaceGets = vi.fn(() => workspace);
   const env = createTestEnv({
     APP_ENV: "test",
@@ -63,12 +56,10 @@ function environment(workspace: ReturnType<typeof organization>, automation?: Re
       idFromName: () => createTestDurableObjectId("workspace"),
       get: workspaceGets,
     }),
+    // Every parent is the Organization's; the legacy Sidekick object is never addressed.
     AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
       idFromName: () => createTestDurableObjectId("automation"),
-      get: () => {
-        if (!automation) throw new Error("a Channel must not address an AutomationDO");
-        return automation;
-      },
+      get: () => { throw new Error("no conversation addresses the legacy SidekickDO"); },
     }),
   });
   return { env, workspaceGets };
@@ -103,20 +94,18 @@ describe("ConversationService.authorizeViewer", () => {
     expect(workspace.authorizeViewer).not.toHaveBeenCalled();
   });
 
-  it("still asks a Sidekick parent's own object whether the viewer may read it", async () => {
-    const workspace = organization(null, { authorized: true, archived: false });
-    const automation = sidekick({ authorized: false, archived: false });
-    const { env } = environment(workspace, automation);
+  it("refuses a Sidekick viewer from the Organization's one answer, with the guest's grant rule", async () => {
+    const workspace = organization("automation", { authorized: false, archived: false });
+    const { env, workspaceGets } = environment(workspace);
 
     const refused = await new ConversationService(env, { ...auth, role: null }).authorizeViewer(sidekickId)
       .then(() => null, (error: unknown) => error);
 
     expect(refused).toMatchObject({ name: "ApiError", status: 404, code: "conversation_not_found" });
-    expect(workspace.resolveHostedParent).toHaveBeenCalledTimes(1);
-    expect(workspace.authorizeViewer).not.toHaveBeenCalled();
-    expect(automation.authorizeViewer).toHaveBeenCalledTimes(1);
-    expect(automation.authorizeViewer).toHaveBeenCalledWith({
-      workspaceId, parentId: sidekickId, userId, substreamId: "0", requireGrantAuthority: true,
+    expect(workspaceGets).toHaveBeenCalledTimes(1);
+    expect(workspace.resolveHostedParent).toHaveBeenCalledWith({
+      workspaceId, parentId: sidekickId, viewer: { userId, substreamId: "0", requireGrantAuthority: true },
     });
+    expect(workspace.authorizeViewer).not.toHaveBeenCalled();
   });
 });

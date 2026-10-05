@@ -343,6 +343,61 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/**
+ * The Organization object, which hosts every Sidekick: the shared stub, plus
+ * the Sidekick methods this file's subjects call.
+ *
+ * Creation is answered as already existing. The Worker still bootstraps and
+ * provisions the automation's own conversation on a replay, and these doubles
+ * record that rather than run it: creating an automation from a room is
+ * `test-workers/hosted-sidekick.test.ts`'s subject, and what this file proves
+ * about a submission is what reaches `sidekickSaveDefinition`.
+ */
+function hostingSidekicks(database: ToolSelectionDatabase): Env["WORKSPACE_DOS"] {
+  const sidekicks: Record<string, unknown> = {
+    sidekickCreate: vi.fn(async (request: Record<string, unknown>) => {
+      database.createdAutomations.push(request);
+      return { created: false };
+    }),
+    sidekickSaveDefinition: vi.fn(async (request: Record<string, unknown>) => {
+      database.submittedDefinitions.push(request);
+      return { definitionRevision: 1 };
+    }),
+    // The definitions an edit starts from, in one call. One shared stub answers
+    // for every automation id, so the fixture keyed by the requested id is what
+    // decides whether a read reached the automation the caller meant.
+    sidekickReadDetails: vi.fn(async (request: Record<string, unknown>) => {
+      const owned = typeof request.channelOwnedBy === "string"
+        ? [...database.automationOwners].filter(([, owner]) => owner === request.channelOwnedBy).map(([id]) => id)
+        : [];
+      const ids = [...new Set([...(request.automationIds as string[] | undefined ?? []), ...owned])];
+      return ids.map((automationId) => {
+        database.detailReads.push({ ...request, automationId });
+        const detail = database.automationDetails.get(automationId);
+        if (!detail) throw new Error(`no_automation_detail_fixture:${automationId}`);
+        return detail;
+      });
+    }),
+    // A run reads its definition from its Sidekick by revision when it
+    // starts; the plugin defaults it preloads come from there.
+    sidekickReadRunDefinition: vi.fn(async (request: Record<string, unknown>) => {
+      database.runDefinitionReads.push(request);
+      return runDefinition(database);
+    }),
+  };
+  return createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+    idFromName: (name: string) => database.workspaces.idFromName(name),
+    get: (id: DurableObjectId) => {
+      const base = database.workspaces.get(id) as unknown as Record<string, unknown>;
+      return new Proxy(base, {
+        get: (target, property) => (typeof property === "string" && property in sidekicks)
+          ? sidekicks[property]
+          : Reflect.get(target, property),
+      });
+    },
+  });
+}
+
 function env(database: ToolSelectionDatabase): Env {
   return createTestEnv({
     DB: database.binding,
@@ -358,40 +413,7 @@ function env(database: ToolSelectionDatabase): Env {
       }),
     }),
     SUBSTREAM_AGENTS: database.agents,
-    AUTOMATION_DOS: testSubstreamAgentsBinding(database.objectStore, {
-      extra: {
-        // Answered as already existing. The Worker still bootstraps and
-        // provisions the automation's own conversation on a replay, and the
-        // doubles above record that rather than run it: creating an
-        // automation from a room is `test-workers/automation-do.test.ts`'s
-        // subject, and what this file proves about a submission is what
-        // reaches `submitDefinition`.
-        create: vi.fn(async (request: Record<string, unknown>) => {
-          database.createdAutomations.push(request);
-          return { created: false };
-        }),
-        saveDefinition: vi.fn(async (request: Record<string, unknown>) => {
-          database.submittedDefinitions.push(request);
-          return { definitionRevision: 1 };
-        }),
-        // The definition an edit starts from. One shared stub answers for every
-        // automation id, so the fixture keyed by the requested id is what
-        // decides whether a read reached the automation the caller meant.
-        readDetail: vi.fn(async (request: Record<string, unknown>) => {
-          database.detailReads.push(request);
-          const detail = database.automationDetails.get(String(request.automationId));
-          if (!detail) throw new Error(`no_automation_detail_fixture:${String(request.automationId)}`);
-          return detail;
-        }),
-        // A run reads its definition from its automation by revision when it
-        // starts; the plugin defaults it preloads come from there.
-        readRunDefinition: vi.fn(async (request: Record<string, unknown>) => {
-          database.runDefinitionReads.push(request);
-          return runDefinition(database);
-        }),
-      },
-    }),
-    WORKSPACE_DOS: database.workspaces,
+    WORKSPACE_DOS: hostingSidekicks(database),
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-connector-client",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-connector-secret",
