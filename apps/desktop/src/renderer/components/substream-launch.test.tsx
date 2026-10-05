@@ -161,6 +161,7 @@ describe('breakout launch surface', () => {
           createdAt: '2026-09-09T20:05:00.000Z',
         }],
         createdAt: '2026-09-09T20:05:00.000Z',
+        mentions: [],
         startedAt: Date.parse('2026-09-09T20:05:00.000Z'),
         text: 'Check this against last quarter',
       },
@@ -168,6 +169,38 @@ describe('breakout launch surface', () => {
     // The name is split into base and suffix for the middle-ellipsis, so this
     // asks for the half that carries it.
     expect(await screen.findByText('pricing')).toBeInTheDocument();
+  });
+
+  it('draws a mention picked in the composer as a chip on the turn it is about to create', () => {
+    // The room stores a person mention as Markdown and the chip is drawn from
+    // that, so a turn built from the draft's plain `@Name` reads as text until
+    // the created substream's transcript replaces it.
+    const katherine: WorkspaceMember = {
+      id: '00000000-0000-7000-8000-000000000042',
+      name: 'Katherine Baird',
+      email: 'katherine@example.com',
+      timezone: 'America/Los_Angeles',
+    };
+    renderSurface({
+      members: [creator, katherine],
+      launching: {
+        attachments: [],
+        createdAt: '2026-09-09T20:05:00.000Z',
+        mentions: [{
+          type: 'person',
+          label: 'Katherine Baird',
+          userId: katherine.id,
+          connectorType: null,
+          startOffset: 0,
+          endOffset: 16,
+        }],
+        startedAt: Date.parse('2026-09-09T20:05:00.000Z'),
+        text: '@Katherine Baird what is failing?',
+      },
+    });
+    const chip = screen.getByText('Katherine Baird').closest('.mention-chip');
+    expect(chip).toHaveAttribute('data-person-id', katherine.id);
+    expect(screen.queryByText(/@Katherine Baird/)).not.toBeInTheDocument();
   });
 
   it('takes the branch point out of the surface once the substream is being created', () => {
@@ -180,6 +213,7 @@ describe('breakout launch surface', () => {
       launching: {
         attachments: [],
         createdAt: '2026-09-09T20:05:00.000Z',
+        mentions: [],
         startedAt: Date.parse('2026-09-09T20:05:00.000Z'),
         text: 'Compare it with last release',
       },
@@ -225,6 +259,7 @@ describe('breakout launch surface', () => {
       launching: {
         attachments: [],
         createdAt: '2026-09-09T20:05:00.000Z',
+        mentions: [],
         startedAt: Date.parse('2026-09-09T20:05:00.000Z'),
         text: 'Compare it with last release',
       },
@@ -240,6 +275,7 @@ describe('breakout launch surface', () => {
       launching: {
         attachments: [],
         createdAt: '2026-09-09T20:05:00.000Z',
+        mentions: [],
         startedAt: Date.parse('2026-09-09T20:05:00.000Z'),
         text: 'Compare it with last release',
       },

@@ -170,6 +170,31 @@ export function optimisticMentionRendering(
   selected: readonly MentionIdentity[],
   members: readonly WorkspaceMember[],
 ): { text: string; mentions: MessageMention[] } {
+  const prepared = prepareDraftMentions(text, selected, members);
+  return {
+    text: prepared.text,
+    mentions: prepared.mentions.map((mention) => ({
+      type: mention.type,
+      ...(mention.userId ? { personId: mention.userId } : {}),
+      ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
+      ...(mention.displayName ? { displayName: mention.displayName } : {}),
+      ...(mention.avatarUrl ? { avatarUrl: mention.avatarUrl } : {}),
+      startOffset: mention.startOffset,
+      endOffset: mention.endOffset,
+    })),
+  };
+}
+
+/**
+ * The room's rewrite of a draft and its popover selections, in the wire shape
+ * a transcript block stores. `optimisticMentionRendering` reads it into a
+ * `Message`; a launcher seeding a transcript cache keeps it as is.
+ */
+export function prepareDraftMentions(
+  text: string,
+  selected: readonly MentionIdentity[],
+  members: readonly WorkspaceMember[],
+): ReturnType<typeof prepareMentionMarkdown> {
   const offsetSelections = selected.flatMap((mention) =>
     mention.startOffset === undefined || mention.endOffset === undefined ? [] : [{
       type: mention.type,
@@ -184,19 +209,7 @@ export function optimisticMentionRendering(
     name: member.name,
     avatarUrl: member.avatarUrl ?? null,
   }]));
-  const prepared = prepareMentionMarkdown(text, offsetSelections, people);
-  return {
-    text: prepared.text,
-    mentions: prepared.mentions.map((mention) => ({
-      type: mention.type,
-      ...(mention.userId ? { personId: mention.userId } : {}),
-      ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
-      ...(mention.displayName ? { displayName: mention.displayName } : {}),
-      ...(mention.avatarUrl ? { avatarUrl: mention.avatarUrl } : {}),
-      startOffset: mention.startOffset,
-      endOffset: mention.endOffset,
-    })),
-  };
+  return prepareMentionMarkdown(text, offsetSelections, people);
 }
 
 export function createToolEventMessage({ toolEvent, ...message }: ToolEventMessageInput): Message {
