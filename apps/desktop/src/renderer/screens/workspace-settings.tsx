@@ -211,14 +211,17 @@ function AgentWorkSetting({ api, workspaceId }: { api: RallyApi; workspaceId: st
   const save = useMutation({
     mutationFn: (next: MemberPreferences) => api.updateMyPreferences(next),
     // Optimistic: the transcript reads the same key, so it follows the switch
-    // at once, and a refusal puts both back.
-    onMutate: (next) => {
+    // at once, and a refusal puts both back. A read in flight is cancelled
+    // first so it cannot land on top of the switch.
+    onMutate: async (next) => {
+      await queryClient.cancelQueries({ queryKey });
       const previous = queryClient.getQueryData<MemberPreferences>(queryKey);
       queryClient.setQueryData(queryKey, next);
       return { previous };
     },
     onError: (_error, _next, context) => {
       if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+      else void queryClient.invalidateQueries({ queryKey });
     },
     onSuccess: (stored) => queryClient.setQueryData(queryKey, stored),
   });

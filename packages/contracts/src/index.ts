@@ -1790,8 +1790,12 @@ export const UpdateUserTimezoneRequestSchema = z.object({ timezone: IanaTimezone
 /** A member's personal system prompt for one Organization; empty means none. */
 export const PersonalSystemPromptSchema = z.strictObject({ personalSystemPrompt: z.string() });
 export type PersonalSystemPrompt = z.infer<typeof PersonalSystemPromptSchema>;
-/** A member's display preferences for one Organization. Whole on read and on write. */
-export const MemberPreferencesSchema = z.strictObject({
+/**
+ * A member's display preferences for one Organization. Whole on read and on
+ * write. Not strict: a client must keep reading the preferences it knows when
+ * a newer server adds one, and unknown keys are stripped rather than refused.
+ */
+export const MemberPreferencesSchema = z.object({
   /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */
   showAgentWork: z.boolean(),
 });
