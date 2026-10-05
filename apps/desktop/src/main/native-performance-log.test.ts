@@ -18,6 +18,18 @@ const intent = {
 } as const;
 
 describe('native performance log', () => {
+  it('persists content-free recovery phases before transport state is discarded', () => {
+    const writePerformance = vi.fn();
+    const subject = new NativePerformanceLog(
+      () => ({ writePerformance }), () => '1.506.0',
+      () => new Date('2026-10-05T20:00:00.000Z'), () => undefined,
+    );
+    subject.writeNetworkRecovery({ kind: 'desktop_network_recovery', generation: 1, phase: 'reset_started', consecutiveTimeouts: 2 });
+    expect(JSON.parse(writePerformance.mock.calls[0]![0])).toEqual({
+      timestamp: '2026-10-05T20:00:00.000Z', appVersion: '1.506.0',
+      kind: 'desktop_network_recovery', generation: 1, phase: 'reset_started', consecutiveTimeouts: 2,
+    });
+  });
   it('writes the governed performance event as public structured Unified Log data', () => {
     const writePerformance = vi.fn();
     const unavailable = vi.fn();

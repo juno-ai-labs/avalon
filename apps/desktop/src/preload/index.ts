@@ -1,4 +1,5 @@
 import type { AccountOnboarding } from '@rally/contracts';
+import { NETWORK_RECOVERY_IPC, NetworkRecoveryInbox } from '../common/network-recovery';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ApplicationIconId, DesktopApplicationIconState } from '../common/application-icons';
 import type {
@@ -55,6 +56,10 @@ const powerStateListeners = new Set<(state: DesktopPowerState) => void>();
 const realtimeSocketListeners = new Set<(event: DesktopRealtimeSocketEvent) => void>();
 const embeddedBrowserListeners = new Set<(state: EmbeddedBrowserState) => void>();
 const workspaceSyncInbox = createWorkspaceSyncRelayInbox();
+const networkRecoveryInbox = new NetworkRecoveryInbox();
+ipcRenderer.on(NETWORK_RECOVERY_IPC.changed, (_event, raw: unknown) => networkRecoveryInbox.receive(raw));
+// Start before React: a newly opened window inherits an ongoing session reset.
+void ipcRenderer.invoke(NETWORK_RECOVERY_IPC.state).then((raw: unknown) => networkRecoveryInbox.receive(raw)).catch(() => undefined);
 
 ipcRenderer.on('embedded-browser:state', (_event, raw: unknown) => {
   if (!raw || typeof raw !== 'object' || !('tabs' in raw) || !Array.isArray(raw.tabs)) return;
@@ -138,6 +143,11 @@ ipcRenderer.on('deep-link-error:changed', (_event, rawNotice: unknown) => {
 });
 
 const bridge: RallyDesktopBridge = {
+  getNetworkRecoveryState: () => networkRecoveryInbox.state,
+  onNetworkRecoveryState: (listener) => networkRecoveryInbox.subscribe(listener),
+  reportNetworkTicket: async (observation) => {
+    networkRecoveryInbox.receive(await ipcRenderer.invoke(NETWORK_RECOVERY_IPC.observe, observation));
+  },
   getRuntimeConfig: () => ipcRenderer.invoke('runtime:get-config') as Promise<RuntimeConfig>,
   getApplicationForegroundState: () => ipcRenderer.invoke('application:foreground-get') as Promise<boolean>,
   onApplicationForegroundChanged: (listener) => {
