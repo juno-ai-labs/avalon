@@ -27,7 +27,7 @@
 
 import { env } from "cloudflare:workers";
 import { authorizedConnection, createAshbyConnector, AshbyCapabilities } from "@rally/connectors";
-import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -40,8 +40,7 @@ import {
   type AutomationDraft,
 } from "@rally/contracts";
 
-import type { AutomationDO } from "../src/durable-objects/automation-do";
-import { automationDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 import { createResourceObjectPort } from "../src/runtime/resource-port";
@@ -56,6 +55,7 @@ import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { runSidekickAlarms, writeSidekickRegistrations } from "./helpers/sidekick";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009a0");
 const CONNECTION_ID = "00000000-0000-7000-8000-0000000009a1";
@@ -100,11 +100,6 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-function automation(): DurableObjectStub<AutomationDO> {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
-    automationDOName("global", WORKSPACE_ID, AUTOMATION_ID),
-  ));
-}
 
 function conversation(parentId: string, substreamId?: string) {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
@@ -217,19 +212,11 @@ async function registerWorkstreamWatch(workstreamId: string): Promise<void> {
 }
 
 async function registerAutomation(): Promise<void> {
-  await workspace().applyExternalEventRegistrations({
-    sourceGeneration: await runInDurableObject(automation(), (_instance, state) => state.storage.sql.exec<{ registration_generation: number }>(
-        `UPDATE automation SET registration_generation = registration_generation + 1 WHERE id = 1 RETURNING registration_generation`,
-      ).one().registration_generation),
-    schemaVersion: 1,
-    workspaceId: WORKSPACE_ID,
-    destination: { kind: "automation", automationId: AUTOMATION_ID },
-    evaluators: [{
-      evaluatorId: "00000000-0000-7000-8000-0000000009b0",
-      source: { connectorType: "slack", connectionId: CONNECTION_ID, eventType: "slack.message.posted", resourceId: RESOURCE_ID },
-      when: { kind: "always" },
-    }],
-  });
+  await writeSidekickRegistrations(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, [{
+    evaluatorId: "00000000-0000-7000-8000-0000000009b0",
+    source: { connectorType: "slack", connectionId: CONNECTION_ID, eventType: "slack.message.posted", resourceId: RESOURCE_ID },
+    when: { kind: "always" },
+  }]);
 }
 
 /** Drafted, applied, and so bounded by the workspace's event sequence at that moment. */
@@ -242,14 +229,14 @@ async function activateAutomation(): Promise<void> {
     automationId: AUTOMATION_ID,
   });
   expect(created.created).toBe(true);
-  await automation().submitDefinition({
+  await workspace().sidekickSubmitDefinition({
     workspaceId: WORKSPACE_ID,
     automationId: AUTOMATION_ID,
     draft: DEFINITION,
     evaluatorRules: null,
     submittedByRunId: null,
   });
-  const detail = await runInDurableObject(automation(), (instance: AutomationDO) => instance.apply({
+  const detail = await runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.sidekickApply({
     workspaceId: WORKSPACE_ID,
     automationId: AUTOMATION_ID,
     actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },
@@ -310,9 +297,9 @@ async function match(eventId: string) {
 }
 
 async function automationRuns(): Promise<{ occurrence_key: string; state: string }[]> {
-  return runInDurableObject(automation(), (_instance, state) =>
+  return runInDurableObject(workspace(), (_instance, state) =>
     state.storage.sql.exec<{ occurrence_key: string; state: string }>(
-      `SELECT occurrence_key, state FROM runs ORDER BY created_at`,
+      `SELECT occurrence_key, state FROM sidekick_runs WHERE sidekick_id = ? ORDER BY created_at`, AUTOMATION_ID,
     ).toArray());
 }
 
@@ -326,9 +313,9 @@ async function resourceUpdateMessages(workstreamId: string): Promise<string[]> {
 
 /** Let the run the admission armed provision itself and end, so nothing outlives the test. */
 async function settleAdmittedRun(): Promise<void> {
-  await runDurableObjectAlarm(automation());
-  const runId = (await runInDurableObject(automation(), (_instance, state) =>
-    state.storage.sql.exec<{ run_id: string }>(`SELECT run_id FROM runs`).toArray()))[0]?.run_id;
+  await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
+  const runId = (await runInDurableObject(workspace(), (_instance, state) =>
+    state.storage.sql.exec<{ run_id: string }>(`SELECT run_id FROM sidekick_runs WHERE sidekick_id = ?`, AUTOMATION_ID).toArray()))[0]?.run_id;
   if (!runId) throw new Error("no run was admitted");
   await expect.poll(async () => runInDurableObject(conversation(AUTOMATION_ID, runId), (_instance, state) => {
     try {
@@ -352,7 +339,7 @@ beforeEach(async () => {
 describe("external event routing", () => {
   it.each(["applicationSubmit", "candidateStageChange"] as const)("routes a signed Ashby %s to a workspace automation exactly once", async (eventType) => {
     // Ashby's HTTP/installation boundary is covered in connector-installation-routes.
-    // Here the real adapter, WorkspaceDO matcher, Queue consumer and AutomationDO
+    // Here the real adapter, WorkspaceDO matcher, Queue consumer and hosted Sidekick
     // must produce a run. The existing model double lets that run finish locally.
     const ashbyConnectionId = crypto.randomUUID();
     await runInDurableObject(workspace(), (_instance: WorkspaceDO, state) => {
@@ -364,14 +351,14 @@ describe("external event routing", () => {
     });
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
       scope: "workspace", owningWorkstreamId: null, automationId: AUTOMATION_ID });
-    await automation().submitDefinition({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
+    await workspace().sidekickSubmitDefinition({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
       draft: { ...DEFINITION, name: "Ashby watcher", suggestedScope: "workspace",
         triggers: [{ type: "connector_activity", connectorType: "ashby", sourceBindingKey: "ashby_events",
           suggestedSourcePluginId: "plugin_ashby", eventTypes: [eventType], deterministicFilters: {} }] },
       evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [{ evaluatorKey: "ashby_event",
         source: { sourceBindingKey: "ashby_events", suggestedSourcePluginId: "plugin_ashby",
           event: { kind: "event_type", eventType } }, when: { kind: "always" } }] }), submittedByRunId: null });
-    const detail = await runInDurableObject(automation(), (instance: AutomationDO) => instance.apply({
+    const detail = await runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.sidekickApply({
       workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
       actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },
     }));
@@ -459,7 +446,7 @@ describe("external event routing", () => {
     expect(earlier.matched).toBe(true);
     expect(earlier.deliveries.map((delivery) => delivery.destination.kind))
       .toEqual(["workstream_resource_update", "workstream_resource_update"]);
-    expect(await automation().admitExternalEvent({
+    expect(await workspace().sidekickAdmitExternalEvent({
       workspaceId: WORKSPACE_ID,
       automationId: AUTOMATION_ID,
       registrationId: "00000000-0000-7000-8000-0000000009b0",
