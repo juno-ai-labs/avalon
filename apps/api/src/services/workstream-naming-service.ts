@@ -189,6 +189,30 @@ export async function chooseWorkstreamIcon(env: Env, input: {
 }
 
 /**
+ * Icon-only pass for a Space created without one, read from its name alone;
+ * see `docs/spaces.md#the-icon-rally-chooses`. Returns the icon, or `null` when
+ * the model offered none, and never rejects. The caller writes it, because a
+ * Space's appearance belongs to WorkspaceDO rather than to a work-stream
+ * object.
+ */
+export async function chooseSpaceIcon(env: Env, input: {
+  workspaceId: string;
+  spaceId: string;
+  name: string;
+  userId?: string | undefined;
+}): Promise<WorkstreamIconKey | null> {
+  const generated = await generateName(env, {
+    workspaceId: input.workspaceId,
+    spaceId: input.spaceId,
+    userId: input.userId,
+    objective: input.name,
+    openingMessage: "",
+    iconOnly: true,
+  });
+  return generated.icon;
+}
+
+/**
  * Run one naming pass and swallow whatever it throws.
  *
  * Every caller of this module is somewhere a name is the least important thing
@@ -358,7 +382,9 @@ const NOTHING_GENERATED: GeneratedName = { title: null, icon: null };
  */
 async function generateName(env: Env, input: {
   workspaceId: string;
-  workstreamId: string;
+  /** The conversation being named, or the Space whose icon is chosen. */
+  workstreamId?: string;
+  spaceId?: string;
   userId?: string | undefined;
   objective: string;
   openingMessage: string;
@@ -373,7 +399,7 @@ async function generateName(env: Env, input: {
       activity: "channel_naming",
       context: {
         workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
+        ...(input.workstreamId ? { workstreamId: input.workstreamId } : {}),
         ...(input.userId ? { userId: input.userId } : {}),
       },
       messages: renderWorkstreamNameMessages({
@@ -399,6 +425,7 @@ async function generateName(env: Env, input: {
     logStructuredEvent(env, "warn", "workstream_naming_failed", {
       workspace_id: input.workspaceId,
       workstream_id: input.workstreamId,
+      space_id: input.spaceId,
       stage: "model",
       error_name: error instanceof Error ? error.name : "UnknownError",
       error_message: error instanceof Error ? error.message : "Work-stream naming failed",

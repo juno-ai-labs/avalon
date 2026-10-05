@@ -366,6 +366,56 @@ describe("POST /spaces", () => {
   });
 });
 
+describe("a Space created without an icon", () => {
+  // Opened by the gate when a case wants a person's edit to land first.
+  let gate: Promise<void> = Promise.resolve();
+  useSelectedModel();
+  useOpenRouterDouble(async () => {
+    await gate;
+    return { say: JSON.stringify({ title: "Hiring pipeline", icon: "rocket" }) };
+  });
+
+  /** The route environment with the key and naming model the icon pass needs. */
+  function namingEnv(): Env {
+    return { ...routeEnv(), OPENROUTER_API_KEY: "workerd-test-openrouter-key", OPENROUTER_CLASSIFIER_MODEL: "double/naming" };
+  }
+
+  async function storedIcon(spaceId: string): Promise<string | undefined> {
+    return (await spaceDirectories(OWNER)).active.items.find((item) => item.id === spaceId)?.iconKey;
+  }
+
+  it("is given the icon Rally chooses from its name", async () => {
+    const deferred: Promise<void>[] = [];
+    const created = await new SpaceService(namingEnv(), OWNER_AUTH).create(
+      { name: "Hiring", colorKey: "blue", scope: "personal" },
+      undefined,
+      (work) => deferred.push(work),
+    );
+    expect(created.iconKey).toBe("circle-dot");
+
+    await Promise.all(deferred);
+    expect(await storedIcon(created.id)).toBe("rocket");
+  });
+
+  it("keeps the icon a person picks while Rally is still choosing", async () => {
+    let release = () => {};
+    gate = new Promise((resolve) => { release = resolve; });
+    const deferred: Promise<void>[] = [];
+    const service = new SpaceService(namingEnv(), OWNER_AUTH);
+    const created = await service.create(
+      { name: "Hiring", colorKey: "blue", scope: "personal" },
+      undefined,
+      (work) => deferred.push(work),
+    );
+    await service.updatePresentation(asSpaceId(created.id), { name: "Hiring", iconKey: "target", colorKey: "blue" });
+
+    release();
+    await Promise.all(deferred);
+    gate = Promise.resolve();
+    expect(await storedIcon(created.id)).toBe("target");
+  });
+});
+
 describe("conversation import routes", () => {
   // Starting an import starts its agent. A run that ends before the import
   // completes takes its unopened Channel back, so each test's agent waits on
