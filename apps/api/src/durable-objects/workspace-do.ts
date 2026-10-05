@@ -1000,7 +1000,7 @@ import {
   ExternalBindingSuspendResultSchema,
   ExternalRoomLinkRequestSchema,
   ExternalRoomSpaceMatchRequestSchema,
-  ExternalRoomSpaceMatchResultSchema,
+  type ExternalRoomSpaceMatchResult,
   type ExternalBindingResolution,
   type ExternalRoomLinkResult,
 } from "./workspace-external-binding-protocol";
@@ -13314,6 +13314,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * The Organization-wide Space a public room should join instead of making
+   * its own. A Space whose creator is no longer an active member is not
+   * offered: an unlinked sender's Channel is placed as that creator.
+   */
+  async externalRoomSpaceMatch(input: unknown): Promise<ExternalRoomSpaceMatchResult> {
+    await this.initialized;
+    const request = parseRpcInput(ExternalRoomSpaceMatchRequestSchema, input, "external_room_space_match");
+    this.assertWorkspace(request.workspaceId);
+    const match = this.spaceStorage().organizationSpaceNamed(request.name);
+    const usable = match?.createdByUserId != null
+      && await this.activeSpaceMember(request.workspaceId, match.createdByUserId);
+    return { spaceId: usable ? match.spaceId : null };
+  }
+
+  /**
    * Link a shared provider room: its Space and its room binding in one
    * transaction, or the Space an existing binding already names.
    *
@@ -13329,27 +13344,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * provision since Spaces stopped opening one, so the reservation is the
    * whole Space and the binding is written active beside it.
    */
-  /**
-   * The Organization-wide Space a public room should join instead of creating
-   * its own. Asked before the D1 anchor is claimed, so a room that matches
-   * leaves no anchor for a Space never made; `linkExternalRoom` then links the
-   * matched id as an existing Space.
-   *
-   * A thread from a sender with no Rally identity opens its Channel acting as
-   * the Space's creator, so a Space whose creator is no longer an active member
-   * is not offered: the room gets its own Space, made by the member linking it,
-   * as it did before matching existed.
-   */
-  async externalRoomSpaceMatch(input: unknown) {
-    await this.initialized;
-    const request = parseRpcInput(ExternalRoomSpaceMatchRequestSchema, input, "external_room_space_match");
-    this.assertWorkspace(request.workspaceId);
-    const match = this.spaceStorage().organizationSpaceNamed(request.name);
-    const usable = match?.createdByUserId != null
-      && await this.activeSpaceMember(request.workspaceId, match.createdByUserId);
-    return ExternalRoomSpaceMatchResultSchema.parse({ spaceId: usable ? match.spaceId : null });
-  }
-
   async linkExternalRoom(input: unknown): Promise<ExternalRoomLinkResult> {
     await this.initialized;
     const request = parseRpcInput(ExternalRoomLinkRequestSchema, input, "link_external_room");
@@ -13379,9 +13373,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const participants = [...new Set([request.userId, ...request.participantUserIds])];
     const linked = await this.withMembersLearned(() => this.state.storage.transactionSync(() => (
       bindings.linkRoom(request.installationId, request.path, request.at, () => {
-        // The match was a separate event: the Space may since have been
-        // renamed, archived or made private, so it is asked again here, where
-        // the binding commits.
+        // The match was a separate event; ask it again where the binding commits.
         if (request.matched && storage.organizationSpaceNamed(request.space.name)?.spaceId !== request.spaceId) return null;
         const reserved = storage.reserveForCreation(reservation, request.spaceId);
         if (!reserved.space) return null;

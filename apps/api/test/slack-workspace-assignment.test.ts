@@ -3258,9 +3258,31 @@ describe("Slack replies routed by external conversation bindings", () => {
 
     expect(matcher).not.toHaveBeenCalled();
     expect(links).toHaveLength(1);
-    expect(links[0]!.spaceId).not.toBe("00000000-0000-7000-8000-0000000000a1");
+    expect(links[0]!.spaceId).toBe("6594616a-fafc-5c5c-a4d9-3d7e512b42d5");
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams WHERE id = ?").get(String(links[0]!.spaceId)))
       .toEqual({ count: 1 });
+  });
+
+  it("never matches a Slack Connect room to an existing Space, even a public one of the same name", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:invited-connect-general", invitation("EvInvitedConnectGeneral", {
+      type: "member_joined_channel", user: "UBOT", inviter: "U456", channel: "CEXT", channel_type: "C",
+    }));
+    roomStub({ id: "CEXT", name: "general", is_private: false, is_ext_shared: true, is_im: false, is_mpim: false }, []);
+    const links = captureRoomLinks(instance);
+    const matcher = vi.spyOn(instance, "externalRoomSpaceMatch")
+      .mockResolvedValue({ spaceId: "00000000-0000-7000-8000-0000000000a1" } as never);
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined),
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:invited-connect-general");
+
+    expect(matcher).not.toHaveBeenCalled();
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ path: ["CEXT"], space: { name: "general", scope: "workspace" } });
+    expect(links[0]).not.toHaveProperty("matched");
   });
 
   it("suspends a room when the bot leaves or it is archived, moves it when renumbered, and ignores a person leaving", async () => {
