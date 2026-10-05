@@ -1253,19 +1253,22 @@ export class WorkspaceSpaceStorage {
    * the same change at a higher source version and overwrites this, which is
    * what keeps the Space's own object authoritative for what a Space is.
    */
-  applyPresentation(request: WorkspaceSpacePresentationRequest, now = Date.now()): SpaceSummary | false {
+  applyPresentation(request: WorkspaceSpacePresentationRequest, now = Date.now()): SpaceSummary | "stale" | false {
     return this.storage.transactionSync(() => {
       if (!this.canEdit(request.userId, request.spaceId)) return false;
       const updated = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE spaces
             SET title = ?, appearance_json = ?, revision = revision + 1, updated_at = ?
-          WHERE space_id = ? RETURNING space_id`,
+          WHERE space_id = ? AND (? IS NULL OR revision = ?) RETURNING space_id`,
         request.presentation.name.trim(),
         JSON.stringify({ icon: request.presentation.iconKey, color: request.presentation.colorKey }),
         now,
         request.spaceId,
+        request.ifRevision ?? null,
+        request.ifRevision ?? null,
       ).toArray()[0];
-      if (!updated) return false;
+      // `canEdit` found the row, so a miss here is the revision fence.
+      if (!updated) return request.ifRevision === undefined ? false : "stale";
       this.advanceWaterline(now);
       return this.space(request.spaceId, member(request.userId));
     });

@@ -66,7 +66,7 @@ import type {
   BindLoopTransition,
   BindProviderBoundary,
 } from "./bind-loop-projection";
-import { modelDefaultReasoningEffort } from "./model-inference-defaults";
+import { reasoningEffortFor } from "./model-inference-defaults";
 
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
@@ -850,8 +850,7 @@ export class OpenRouterClient {
                 trace: { ...builtTracePayload.trace, trace_id: traceId },
               }
             : undefined;
-          const reasoningEffort = input.reasoningEffort
-            ?? modelDefaultReasoningEffort(model);
+          const reasoningEffort = reasoningEffortFor(model, input.reasoningEffort);
           const reasoning = structuredReasoning(reasoningEffort);
           const requestPayload = serializeOpenRouterChatRequest({
             model,
@@ -1136,7 +1135,7 @@ export class OpenRouterClient {
         max_total_results: input.maxWebResults ?? 8
       });
     }
-    const reasoningEffort = input.reasoningEffort ?? modelDefaultReasoningEffort(model);
+    const reasoningEffort = reasoningEffortFor(model, input.reasoningEffort);
     try {
       const requestPayload = serializeOpenRouterChatRequest({
         model,

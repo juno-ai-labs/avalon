@@ -259,6 +259,16 @@ describe('upsertSpaceDirectory', () => {
       items: [space],
     });
   });
+
+  it('keeps a newer revision the socket delivered before the create response', () => {
+    const iconChosen = SpaceSummarySchema.parse({ ...space, iconKey: 'rocket', revision: space.revision + 1 });
+    expect(upsertSpaceDirectory({ waterline: 4, items: [iconChosen] }, space).items).toEqual([iconChosen]);
+  });
+
+  it('takes a response newer than the space it holds', () => {
+    const renamed = SpaceSummarySchema.parse({ ...space, name: 'Recruiting', revision: space.revision + 1 });
+    expect(upsertSpaceDirectory({ waterline: 4, items: [space] }, renamed).items).toEqual([renamed]);
+  });
 });
 
 describe('applyArchivedSpace', () => {
