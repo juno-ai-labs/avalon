@@ -101,16 +101,14 @@ its own Space instead. A private room never matches: its Space's audience is
 the room's members, and an existing Space's is not. Neither does a Slack
 Connect room (`is_ext_shared` or `is_pending_ext_shared`), which Slack reports
 as public but whose members include another organization. A matched room shared
-through Slack Connect after it linked is refused at spawn: a thread that would
-open a Channel in an Organization-wide Space other than the room's own first
-asks `conversations.info`, and an externally shared room gets a
-`room_shared_externally` notice instead. A room's own Space skips that call.
-Scope, not the id alone, marks a matched Space: Slack renumbers a private room
-it shares (`channel_id_changed`), after which the id no longer derives the
-room's own Space, but that Space is personal and a matched one never is. A
-public room's own Space whose id changed is still read as matched and refused
-once shared, with the notice; the binding does not record which it is, and
-that costs a migration nobody has needed yet.
+through Slack Connect after it linked is refused at spawn: the room binding
+records `space_matched` when it links, resolution returns it as `spaceMatched`,
+and a thread under a matched room first asks `conversations.info`; an
+externally shared room gets a `room_shared_externally` notice instead. A
+room's own Space skips that call. Only the record can say which a Space is:
+Slack renumbers a private room it shares (`channel_id_changed`), so the
+room-derived id stops matching, and a matched Space's scope can be narrowed
+after the link.
 An `unmatched` link that finds a match leaves the room's anchor unused, which
 costs nothing.
 
@@ -335,7 +333,9 @@ the object refuses the database as another workspace's.
 `external_conversation_bindings` (WorkspaceDO, migration 85): `installation_id`,
 `path_json`, `target_kind` (`space` | `conversation`), `space_id` or
 (`parent_kind`, `parent_id`, `substream_id`), `state` (`pending` | `active` |
-`suspended`), `suspended_reason`, `claim_key`, timestamps. CHECKs tie a target
+`suspended`), `suspended_reason`, `claim_key`, timestamps, and `space_matched`
+(migration 90: 1 when a room joined its Space by name, 0 for its own Space, a
+conversation, and every row from before matching existed). CHECKs tie a target
 kind to its columns, a suspended state to a reason, and a pending state to a
 claim key. A partial index on the conversation target serves suspending one
 Sidekick's bindings.
@@ -363,7 +363,9 @@ duplicated, and one renamed, made private or archived in between is refused
 rather than bound. A Space whose creator has left is
 never matched, since that creator is who an unlinked sender's Channel is placed
 as. Slack Connect rooms never match, and a matched room later shared through
-Slack Connect opens no new Channel there.
+Slack Connect opens no new Channel there; migration 90 adds `space_matched` to
+the binding so that check knows a matched room after a renumbering or a
+narrowed Space.
 
 **Why:** Inviting Rally to `#general` made a Space named "general" beside the
 Organization's "General", so the team's threads split across two Spaces with
@@ -382,8 +384,10 @@ Matching Slack Connect rooms: an outside organization could name its shared
 channel `general` and land in the Organization's General. SQLite
 `COLLATE NOCASE`: it folds ASCII only. Recording the inviter on the binding as
 the placement actor, so a matched Space's creator leaving later does not stop
-its threads: a schema change to the binding table, left until a room actually
-hits it.
+its threads: a second column the binding would need for one rare case, left
+until a room actually hits it. Telling a matched Space apart by the room-derived id
+or by the Space's scope: Slack renumbering a room breaks the first, and
+narrowing the Space breaks the second.
 
 **What a future change must respect:** a change that widens the match (other
 punctuation, accents) keeps the private-room and Slack Connect rules and asks

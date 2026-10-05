@@ -1006,6 +1006,7 @@ import {
 } from "./workspace-external-binding-protocol";
 import {
   EXTERNAL_CONVERSATION_BINDINGS_MIGRATION,
+  EXTERNAL_BINDING_SPACE_MATCHED_MIGRATION,
   ExternalConversationBindingStorage,
 } from "./workspace-external-binding-storage";
 import {
@@ -4144,6 +4145,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 89,
   description: "a member's display preferences",
   statements: WORKSPACE_MEMBER_PREFERENCES_MIGRATION,
+}, {
+  version: 90,
+  description: "record whether a room's Space is one it joined by name",
+  // Provenance the Slack Connect spawn check needs, which neither the room
+  // id nor the Space's scope keeps; see docs/external-conversation-bindings.md.
+  statements: EXTERNAL_BINDING_SPACE_MATCHED_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -13398,7 +13405,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           });
           if (seated === false || seated === "self_excluded") throw new Error("external_room_audience_refused");
         }
-        return spaceId;
+        return { spaceId, matched: match?.usable != null };
       })
     )));
     if (!linked) return { ok: false, code: "space_not_found" };
