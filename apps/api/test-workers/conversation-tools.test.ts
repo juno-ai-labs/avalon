@@ -27,8 +27,7 @@ import {
   type SubstreamId,
 } from "@rally/contracts";
 
-import type { AutomationDO } from "../src/durable-objects/automation-do";
-import { automationDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
 import { AuthorizationService } from "../src/services/authorization-service";
@@ -38,9 +37,10 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
+import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { withHostedParent } from "./helpers/hosted-parent";
+import { applySidekick, sidekickStub, sidekickWorkspace } from "./helpers/sidekick";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -85,8 +85,8 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-function automation(): DurableObjectStub<AutomationDO> {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(automationDOName("global", WORKSPACE_ID, AUTOMATION_ID)));
+function automation() {
+  return sidekickStub(TEST_ENV, WORKSPACE_ID);
 }
 
 function conversation(parentId: string, substreamId: SubstreamId | "0" = "0") {
@@ -195,10 +195,9 @@ async function seedSidekick(home: SubstreamId | "0"): Promise<void> {
   });
   const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
   await automation().submitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
-  await runInDurableObject(automation(), (instance: AutomationDO) => instance.apply({
+  await applySidekick(TEST_ENV, {
     ...addressed, actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true },
-  }));
-  await deliverParentEffects(TEST_ENV, automation());
+  });
 }
 
 const sidekickScope = () => ({ kind: "sidekick" as const, automationId: AUTOMATION_ID });
@@ -246,7 +245,7 @@ describe("a Sidekick's home conversation", () => {
     const breakout = await seedBreakout("Weekly call");
     await seedSidekick(breakout);
 
-    expect((await automation().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID,
+    expect((await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID,
       userId: COLLEAGUE_ID })).authorized).toBe(false);
     const authorization = new AuthorizationService(TEST_ENV);
     expect(await authorization.checkMany({ workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID, delegation: null },
@@ -273,9 +272,9 @@ describe("a Sidekick's home conversation", () => {
     });
     await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, breakout));
 
-    const row = await runInDurableObject(automation(), (_instance, state) =>
+    const row = await runInDurableObject(sidekickWorkspace(TEST_ENV, WORKSPACE_ID), (_instance, state) =>
       state.storage.sql.exec<{ lifecycle: string; paused_by: string | null; owning_room_archived_at: number | null }>(
-        `SELECT lifecycle, paused_by, owning_room_archived_at FROM automation WHERE id = 1`,
+        `SELECT lifecycle, paused_by, owning_room_archived_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
       ).one());
     expect(row).toMatchObject({ lifecycle: "paused", paused_by: "room_archive" });
     expect(row.owning_room_archived_at).not.toBeNull();
@@ -486,7 +485,7 @@ describe("a guest", () => {
     const breakout = await seedBreakout("Weekly call");
     await seedSidekick(breakout);
     await seedGuest([asSubstreamId("0"), breakout]);
-    const opens = async () => (await automation().authorizeViewer({ workspaceId: WORKSPACE_ID,
+    const opens = async () => (await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID,
       parentId: AUTOMATION_ID, userId: GUEST_ID, requireGrantAuthority: true })).authorized;
 
     await grant({ kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID });
