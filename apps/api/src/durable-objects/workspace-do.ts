@@ -747,7 +747,7 @@ import {
   PersonalSystemPromptWriteRequestSchema,
   WORKSPACE_PERSONAL_SYSTEM_PROMPT_MIGRATION,
   type PersonalSystemPromptReadRequest,
-  type PersonalSystemPromptResult,
+  type PersonalSystemPromptRecord,
   type PersonalSystemPromptWriteRequest,
 } from "./personal-system-prompt";
 import { ObservedChannelSchema } from "./workstream-access-protocol";
@@ -8519,36 +8519,33 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
-  /** This person's personal system prompt here, or empty text for none. */
-  async personalSystemPrompt(input: PersonalSystemPromptReadRequest): Promise<PersonalSystemPromptResult> {
+  /** This person's personal system prompt here; empty text and revision 0 for none. */
+  async personalSystemPrompt(input: PersonalSystemPromptReadRequest): Promise<PersonalSystemPromptRecord> {
     await this.initialized;
     const request = parseRpcInput(PersonalSystemPromptReadRequestSchema, input, "personal_system_prompt");
     this.assertWorkspace(request.workspaceId);
-    const row = this.state.storage.sql.exec<{ text: string }>(
-      `SELECT text FROM member_personal_system_prompts WHERE user_id = ?`,
+    const row = this.state.storage.sql.exec<{ text: string; revision: number }>(
+      `SELECT text, revision FROM member_personal_system_prompts WHERE user_id = ?`,
       request.userId,
     ).toArray()[0];
-    return { personalSystemPrompt: row?.text ?? "" };
+    return { personalSystemPrompt: row?.text ?? "", revision: row?.revision ?? 0 };
   }
 
-  /**
-   * Replace this person's personal system prompt and answer with what was
-   * stored. Each conversation renders from its own copy, which catches up once
-   * its next turn starts, so nothing is published from here.
-   */
-  async savePersonalSystemPrompt(input: PersonalSystemPromptWriteRequest): Promise<PersonalSystemPromptResult> {
+  /** Replace this person's personal system prompt and answer with what was stored. */
+  async savePersonalSystemPrompt(input: PersonalSystemPromptWriteRequest): Promise<PersonalSystemPromptRecord> {
     await this.initialized;
     const request = parseRpcInput(PersonalSystemPromptWriteRequestSchema, input, "save_personal_system_prompt");
     this.assertWorkspace(request.workspaceId);
-    const row = this.state.storage.sql.exec<{ text: string }>(
-      `INSERT INTO member_personal_system_prompts (user_id, text, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT (user_id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at
-       RETURNING text`,
+    const row = this.state.storage.sql.exec<{ text: string; revision: number }>(
+      `INSERT INTO member_personal_system_prompts (user_id, text, revision, updated_at) VALUES (?, ?, 1, ?)
+       ON CONFLICT (user_id) DO UPDATE SET text = excluded.text, revision = revision + 1,
+         updated_at = excluded.updated_at
+       RETURNING text, revision`,
       request.userId,
       request.personalSystemPrompt,
       Date.now(),
     ).one();
-    return { personalSystemPrompt: row.text };
+    return { personalSystemPrompt: row.text, revision: row.revision };
   }
 
   async spaceSummary(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {

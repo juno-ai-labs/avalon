@@ -2556,7 +2556,7 @@ export async function runWorkstreamHarness(
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
       contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>>;
-      /** This conversation's copy of a member's personal system prompt; empty for none. May lag an edit. */
+      /** This conversation's copy of a member's personal system prompt; empty for none. */
       personalSystemPrompt?(userId: string): string;
       readSidekickSkills(): SidekickSkillSnapshot | null;
       assignSidekickSkillNames(sources: SidekickSkillSnapshot["sources"]): Map<string, string>;
@@ -4735,15 +4735,15 @@ async function loadConnectorTriggerContext(
  * user acting (a digest, a wake-up an earlier run scheduled, a connector
  * trigger, an inbound email), and a Sidekick run (`run_as_user_id`) or a
  * background agent inherits a principal it was not given by a message. The
- * text comes from the conversation's own copy, never from WorkspaceDO, so it
- * costs inference no hop and may lag an edit by a turn. In the prefix it
- * breaks prompt caching across members in one room; that cost was accepted.
+ * text is the conversation's own copy; see docs/personal-system-prompt.md.
  */
 const PERSONAL_SYSTEM_PROMPT_REASONS = new Set([
   "opening_message",
   "human_message",
   "elicitation_answer",
   "manual_retry",
+  // The member's own message, resumed after they authorized a resource for it.
+  "resource_authorization",
   "slack_workspace_opening_message",
   "slack_workspace_message",
   "slack_workspace_elicitation_answer",
