@@ -133,6 +133,25 @@ allocates its id; the HTTP request does not expose this option. Demo setup uses
 operation-derived ids so retries and two Channels in one Space agree; see
 [demo workspaces](demo-workspaces.md#space-placement-and-replacing-older-demos).
 
+### The icon Rally chooses
+
+A request with no `iconKey` asks Rally to choose. The Space is reserved at once
+under `circle-dot`, the catalog's neutral mark, and `SpaceService.chooseIcon`
+runs after the response (`waitUntil` on the route): the Channel naming call
+(`chooseSpaceIcon` in `workstream-naming-service.ts`) reads the Space's name and
+answers a key from the same catalog. The pass writes it through
+`noteSpacePresentation` with `ifRevision` set to the revision creation returned,
+so the write lands only if nothing about the Space moved since. A rename, an
+icon a person picked, an audience change or an archive each advance the
+revision, and the generated icon stands down rather than undo any of them. The
+new icon reaches clients by the ordinary Space snapshot over the workspace
+socket.
+
+Only a newly reserved Space gets a pass; a replay of a stable creation id does
+not, and skips the icon in its "same Space?" comparison, because the first
+attempt's pass may already have written one. The desktop sidebar's **New
+space** sends no icon; a caller that sends one keeps it.
+
 ### The retired hidden conversation
 
 A Space created before 2026-09-26 also has a main conversation object, which
@@ -1731,7 +1750,7 @@ belongs in the route suite as well as wherever its authority is proved.
 
 | Suite | What it proves |
 | --- | --- |
-| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation, audience, rename, archive, and an equal-audience one-request Channel move whose returned summaries match the settled memberships and which stages no intent and takes no add/remove fallback. Also that a move whose Channel provenance is behind the source Space writes nothing in WorkspaceDO and the route still completes it through add/remove, that a Space whose parent reservation fails commits no Space row, and that `openGeneralSpace` answers `absent`, then writes General with its parent at version one, then reuses it. Also that a narrowing which leaves its caller out is refused before anything moves, and that creation, an audience change and a rename open no conversation object for the Space. An archived Space stays archived when renamed and can be restored. A Space whose only leftover Channel was archived through `PATCH /workstreams/:id` still archives through `POST /spaces/:id/archive`, and restoring it returns that membership. And the WorkspaceDO-driven membership calls: an add seats and attributes the Space's readers and settles its intent; a seat the Channel's conversation refuses reaches the route with the conversation's own code and leaves the membership and intent cancelled; a removal withdraws the readers only that Space supplied and settles; and a removal whose narrowing could not be announced stays unsettled until the alarm finishes it in place, with no `space_intent_resume` message sent. The resumes that depend on the plan the first attempt recorded: a removal that died before the Channel was asked withdraws the departing Space's readers on the alarm; an add that died after seating settles with that reader attributed, and when its Space moved on first is abandoned with that reader withdrawn; and a removal still in flight is left to its request by the alarm. Creation: a caller WorkspaceDO refuses writes no D1 anchor. |
+| `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation, audience, rename, archive, and an equal-audience one-request Channel move whose returned summaries match the settled memberships and which stages no intent and takes no add/remove fallback. Also that a move whose Channel provenance is behind the source Space writes nothing in WorkspaceDO and the route still completes it through add/remove, that a Space whose parent reservation fails commits no Space row, and that `openGeneralSpace` answers `absent`, then writes General with its parent at version one, then reuses it. Also that a narrowing which leaves its caller out is refused before anything moves, and that creation, an audience change and a rename open no conversation object for the Space. An archived Space stays archived when renamed and can be restored. A Space whose only leftover Channel was archived through `PATCH /workstreams/:id` still archives through `POST /spaces/:id/archive`, and restoring it returns that membership. And the WorkspaceDO-driven membership calls: an add seats and attributes the Space's readers and settles its intent; a seat the Channel's conversation refuses reaches the route with the conversation's own code and leaves the membership and intent cancelled; a removal withdraws the readers only that Space supplied and settles; and a removal whose narrowing could not be announced stays unsettled until the alarm finishes it in place, with no `space_intent_resume` message sent. The resumes that depend on the plan the first attempt recorded: a removal that died before the Channel was asked withdraws the departing Space's readers on the alarm; an add that died after seating settles with that reader attributed, and when its Space moved on first is abandoned with that reader withdrawn; and a removal still in flight is left to its request by the alarm. Creation: a caller WorkspaceDO refuses writes no D1 anchor. A Space created without an icon gets the one the naming double answers, and keeps the icon a person picks while that call is still in flight. |
 | `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, that a placement reaches an already-open socket rather than waiting for a reload, that an archive whose only leftover Channel is archived is accepted, and that an archive whose only Channel has no directory row is refused. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, the membership page refused with the same word while the Space's own participant still gets every row of it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — an audience that leaves its own caller out refused before anything is written, the single-Space read refusing a Space this viewer has no reach into rather than labelling it one, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, Channel badge totals respecting that parent boundary and requiring an explicit guest grant, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
@@ -2086,6 +2105,33 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-10-05 — Rally chooses a new Space's icon from its name
+
+**What changed:** `iconKey` is optional on `CreateSpaceRequest`. Without one,
+the Space is created under `circle-dot` and the Channel naming call picks an
+icon from its name in the background, written through `noteSpacePresentation`
+under a new `ifRevision` fence. The sidebar's **New space** stops sending
+`briefcase`.
+
+**Why:** The sidebar creates a Space from a name alone, so every Space it made
+carried the same briefcase until somebody changed it by hand. Channels already
+get an icon from the naming call; reusing that call, prompt and catalog keeps
+one policy for generated icons.
+
+**Considered and rejected:** Choosing the icon on the create path, which would
+put a model call in front of the response. A Space-specific prompt, which would
+drift from the Channel one. Fencing on "the stored icon is still the
+placeholder" instead of the revision: a Space has no provenance on its icon,
+and the revision already moves on every edit a person can make.
+
+**Consequences:** A person who edits the Space (any field the revision covers)
+inside the second or two the call takes keeps `circle-dot` unless they picked
+an icon. With no `OPENROUTER_API_KEY` or an unreachable model the Space keeps
+`circle-dot`. A new revision-advancing write that runs automatically right after
+creation would silently disable this pass.
+
+Pull request: [#1099](https://github.com/juno-ai-labs/avalon/pull/1099).
 
 ### 2026-09-30 — Archived leftover Channels do not block Space archive
 

@@ -106,7 +106,7 @@ import {
   omitUnspecifiedToolArguments,
   validateToolArguments,
 } from "./tool-arguments";
-import { modelDefaultReasoningEffort } from "./model-inference-defaults";
+import { modelDefaultReasoningEffort, reasoningEffortFor } from "./model-inference-defaults";
 import { repairRootSchemaForProviders } from "./tool-schema-safety";
 
 const PersistedProviderMessageSchema = z.custom<ProviderMessage>(
@@ -2272,8 +2272,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         currentModel = candidate.canonicalModelId;
         textStream.beginAttempt();
         try {
-          const reasoningEffort = requestedReasoningEffort
-            ?? modelDefaultReasoningEffort(candidate.canonicalModelId);
+          const reasoningEffort = reasoningEffortFor(candidate.canonicalModelId, requestedReasoningEffort);
           const trace = candidate.providerId === OPENROUTER_PROVIDER
             ? buildOpenRouterTracePayload(
                 args.input.traceContext ?? {

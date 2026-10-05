@@ -171,7 +171,7 @@ const safeDefaults = {
   TERMINAL_EMERGENCY_DISABLED: "false",
   OPENROUTER_PRIMARY_MODEL: "openai/gpt-6.1-sol",
   OPENROUTER_FALLBACK_MODELS: "google/gemini-3.8-flash",
-  OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
+  OPENROUTER_CLASSIFIER_MODEL: "openai/gpt-5.6-terra",
   OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
   RESEND_FROM_EMAIL: "Rally <invites@rallywith.ai>",
   RESEND_NOTIFICATION_FROM_EMAIL: "Rally <notifications@rallywith.ai>",

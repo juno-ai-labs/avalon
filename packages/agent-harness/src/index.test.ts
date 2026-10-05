@@ -896,7 +896,7 @@ describe("agent harness", () => {
     await client.structured({ ...structuredInput, model: "x-ai/grok-4.6" });
     await client.structured({
       ...structuredInput,
-      model: "x-ai/grok-4.6",
+      model: "openai/gpt-6.1-sol",
       reasoningEffort: "none",
     });
     await client.structured({ ...structuredInput, model: "google/gemini-3.8-flash" });
@@ -911,6 +911,40 @@ describe("agent harness", () => {
     expect(requestBodies[3]?.reasoning).toEqual({ effort: "low" });
     expect(requestBodies[4]?.reasoning).toEqual({ effort: "low" });
     expect(requestBodies[5]?.reasoning).toEqual({ effort: "high" });
+  });
+
+  it("serves a caller's reasoning none at the default on a model that refuses it", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestBodies.push(body);
+      return body.model === "openai/gpt-5.6-terra"
+        ? Response.json({ error: { message: "primary unavailable" } }, { status: 503 })
+        : Response.json({ model: "google/gemini-3.8-flash", choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }] });
+    }) as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "openai/gpt-5.6-terra",
+      fallbackModels: ["google/gemini-3.8-flash"],
+      fetch: fetcher,
+    });
+
+    await client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "reasoning_none_fallback",
+      jsonSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false },
+      parse: (value: unknown) => value as { ok: boolean },
+      reasoningEffort: "none",
+    });
+
+    // The primary may be retried before the route falls back; every attempt
+    // on it keeps the caller's `none`.
+    const attempts = requestBodies.map((body) => [body.model, body.reasoning]);
+    expect(new Set(attempts.map((attempt) => JSON.stringify(attempt)))).toEqual(new Set([
+      JSON.stringify(["openai/gpt-5.6-terra", { effort: "none" }]),
+      JSON.stringify(["google/gemini-3.8-flash", { effort: "low" }]),
+    ]));
+    expect(attempts.at(-1)).toEqual(["google/gemini-3.8-flash", { effort: "low" }]);
   });
 
   it("keeps the intended model in structured fallback trace metadata", async () => {
