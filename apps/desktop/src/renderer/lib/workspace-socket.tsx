@@ -67,6 +67,7 @@ import { realtimeSocketTelemetry } from './socket-telemetry';
 import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from './telemetry';
 import type { WorkstreamSummary } from './types';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
+import { memberPreferencesQueryKey } from './use-member-preferences';
 import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
 import {
   applyVersionedWorkstreamState,
@@ -290,7 +291,7 @@ function invalidateTopic(
     activity: [['work-opportunities']],
     work_opportunities: [['work-opportunities']],
     workstream_directory: [WORKSTREAMS_QUERY_KEY],
-    viewer_preferences: [['telemetry-preference']],
+    viewer_preferences: [['telemetry-preference'], ['member-preferences']],
     feature_flags: [['feature-flags']],
   };
   for (const queryKey of roots[topic]) void queryClient.invalidateQueries({ queryKey });
@@ -979,6 +980,9 @@ export function WorkspaceSocketProvider({
             if (!subscribed) {
               subscribed = true;
               sendPresence();
+            }
+            if (sync.data.viewerPreferences) {
+              queryClient.setQueryData(memberPreferencesQueryKey(workspaceId), sync.data.viewerPreferences);
             }
             if (sync.data.featureFlags) {
               queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, sync.data.featureFlags);
