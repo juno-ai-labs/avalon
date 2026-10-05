@@ -203,6 +203,54 @@ describe("substream context storage", () => {
     expect(JSON.stringify(capture)).not.toContain("private tool protocol payload");
   });
 
+  it("exports a Sidekick's result under its name but never Rally's own system rows", async () => {
+    const { transcript } = open();
+    const seedSystem = (
+      sequence: number,
+      messageType: "system" | "automation_activation",
+      text: string,
+      structuredContent: unknown,
+    ) => transcript.seedDevelopmentConversationTurn({
+      turnId: `turn-${sequence}`,
+      expectedTranscriptSequence: sequence,
+      actor: "system",
+      authorUserId: null,
+      authorSnapshot: null,
+      clientMessageId: `client-${sequence}`,
+      externalActorJson: null,
+      messageType,
+      text,
+      structuredContentJson: JSON.stringify(structuredContent),
+      producedByRunId: null,
+      createdAtUtc: new Date(NOW + sequence).toISOString(),
+    });
+    await seedText(transcript, 1, "question");
+    await seedSystem(2, "automation_activation", "Weekly pipeline: 4 new deals", {
+      type: "automation_activation",
+      schemaVersion: 1,
+      automationId: "00000000-0000-7000-8000-000000000010",
+      automationName: "Pipeline digest",
+      runId: "00000000-0000-7000-8000-000000000011",
+      deliveryId: "delivery-1",
+      occurredAt: NOW,
+    });
+    await seedSystem(3, "system", "Ada joined the conversation", null);
+    await seedText(transcript, 4, "answer", "assistant");
+
+    const capture = transcript.captureSubstreamContext({
+      operationId: "capture-sidekick",
+      source,
+      throughTurnId: "turn-4",
+    });
+
+    expect(capture.messages.map((message) => [message.actor, message.authorLabel, message.blocks[0]?.text]))
+      .toEqual([
+        ["human", "Ada", "question"],
+        ["sidekick", "Pipeline digest", "Weekly pipeline: 4 new deals"],
+        ["assistant", "Rally", "answer"],
+      ]);
+  });
+
   it("installs an immutable idle seed without creating transcript input", () => {
     const { transcript, storage } = open();
     const context = SubstreamInitialContextSchema.parse({
