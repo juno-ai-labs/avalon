@@ -719,10 +719,13 @@ rename and membership change, for lists the client already has. A server name
 filter on the WorkspaceDO directory, which adds a round trip for the same
 answer.
 
-**What a future change has to respect:** These tabs are only as complete as the
-desktop's Channel and Breakout lists; the sidebar's walk of every Space is what
-makes them complete, and without it they need a server source. All has no cap
-on places, and a cap is the team's number to set.
+**Consequences:** These tabs are only as complete as the desktop's Channel and
+Breakout lists: the sidebar's walk of every Space, the member Breakout lists and
+the shared navigation directory together make them complete, and without those
+they need a server source. All has no cap on places, and a cap is the team's
+number to set.
+
+Shipped in #1103.
 
 ### 2026-09-28 — Embedding batches check the index first; memory search drops its per-run keys
 
