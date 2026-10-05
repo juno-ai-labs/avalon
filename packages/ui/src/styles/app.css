@@ -7998,7 +7998,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 /* ── Breakouts in the Channel ──────────────────────────────────────────────
    Chips under the message a Breakout started from, and the tick bar down the
    Channel's leading edge. */
-.breakout-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; padding-left: 14px; }
+.breakout-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 /* Under Rally's newest reply, the breakout action as a quiet line instead of
    a hover action: the likeliest place to branch, said without a button's weight. */
 .message-start-breakout-link {
@@ -8017,7 +8017,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   margin-top: 4px;
   padding: 0 12px 0 10px;
 }
-.message-start-breakout-link > span { color: var(--av-sys-color-text-disabled); }
+.message-start-breakout-link > svg { color: var(--av-sys-color-text-muted); flex: none; }
 .message-start-breakout-link:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .breakout-chip {
   align-items: center;

@@ -1929,7 +1929,7 @@ describe('MessageBlock action tooltips', () => {
     const row = container.querySelector('.agent-message-actions');
     const controls = [...row!.querySelectorAll('button')];
     expect(controls.map((control) => control.textContent?.trim()))
-      .toEqual(['Copy', 'Speak', 'Image', 'PDF', '↳ New breakout']);
+      .toEqual(['Copy', 'Speak', 'Image', 'PDF', 'New breakout']);
 
     for (const control of controls) {
       const sentence = control.getAttribute('aria-label');
@@ -2741,14 +2741,14 @@ describe('MessageBlock breakout cutoff', () => {
     // The visible words are inside the accessible name, so voice control can
     // reach the control by what it says.
     expect(control).toHaveAccessibleName(expect.stringContaining('New breakout'));
-    expect(control.textContent?.trim()).toBe('↳ New breakout');
+    expect(control.textContent?.trim()).toBe('New breakout');
     const row = container.querySelector('.agent-message-actions');
     expect(row).toContainElement(control);
     expect(container.querySelector('header')).not.toContainElement(control);
     // Last, after the exports: the row reads copy, keep, then branch. Speak
     // needs a playback provider this render does not mount.
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['Copy', 'Image', 'PDF', '↳ New breakout']);
+      .toEqual(['Copy', 'Image', 'PDF', 'New breakout']);
 
     fireEvent.click(control);
 
@@ -2818,7 +2818,7 @@ describe('MessageBlock breakout cutoff', () => {
     const row = container.querySelector('.agent-message-actions');
     expect(row).not.toBeNull();
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['↳ New breakout']);
+      .toEqual(['New breakout']);
 
     fireEvent.click(screen.getByRole('button', { name: 'New breakout from this message' }));
 

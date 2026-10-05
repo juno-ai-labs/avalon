@@ -7,6 +7,7 @@ import {
   IconImageGeneration,
   IconAlertTriangle,
   IconCircleCheck,
+  IconCornerDownRight,
   IconKeyframes,
   IconMailAi,
   IconPlug,
@@ -1621,7 +1622,7 @@ function StartSubstreamButton({ onStart }: { onStart: () => void }): React.JSX.E
       // stays out of both the name and the announcement.
       description="New breakout from this message"
       onClick={onStart}
-    ><span aria-hidden="true">↳</span> New breakout</MessageAction>
+    ><IconCornerDownRight aria-hidden="true" size={12} stroke={1.9} /> New breakout</MessageAction>
   );
 }
 
@@ -2860,7 +2861,7 @@ export function MessageBlock({
           />
           {latestReply && startSubstream && (
             <button className="message-start-breakout-link" onClick={startSubstream} type="button">
-              <span aria-hidden="true">↳</span> Start a breakout from this message
+              <IconCornerDownRight aria-hidden="true" size={13} stroke={1.9} /> Start a breakout from this message
             </button>
           )}
 
