@@ -440,8 +440,9 @@ for (const method of MOVED_METHODS) {
     value: async function moved() {
       parentMoved();
     },
-    writable: false,
-    configurable: false,
+    // The retirement gate below wraps every prototype method, these included.
+    writable: true,
+    configurable: true,
   });
 }
 
