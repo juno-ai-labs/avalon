@@ -134,6 +134,13 @@ describe('organization search modal', () => {
     await waitFor(() => expect(search).toHaveBeenCalledWith({ query: 'pri', category: 'all', pageSize: 7 }, expect.any(AbortSignal)));
   });
 
+  it('highlights the matched letters of a name whose lowercase is longer', () => {
+    setup(async () => ({ results: [] }), { channels: [{ kind: 'channel', id: '00000000-0000-7000-8000-0000000000c3', name: 'İİ Pricing' }] });
+    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'pric' } });
+    expect(screen.getByRole('option').querySelector('strong')).toHaveTextContent(/^Pric$/);
+  });
+
   it('puts matching places above the content results in All', async () => {
     const search = vi.fn(async () => ({ results: [result] }));
     const { onSelect, onSelectPlace } = setup(search, PLACES);
