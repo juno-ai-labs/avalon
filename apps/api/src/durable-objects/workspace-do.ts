@@ -11959,6 +11959,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     this.publishChannelRows(this.collectRailChanges(rows));
+    // A Channel archive pauses the Sidekicks it owns during the pass; their
+    // list goes out with nothing awaited after the Channel's row.
+    if (this.sidekickDirectoryMoved) {
+      this.sidekickDirectoryMoved = false;
+      this.publishSidebarList("automations");
+    }
     if (topicsWorkspaceId !== null) {
       try {
         await this.publishSync([...topics], topicsWorkspaceId,
@@ -12340,10 +12346,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         });
       }
     }
-    if (this.sidekickDirectoryMoved) {
-      this.sidekickDirectoryMoved = false;
-      this.publishSidebarList("automations");
-    }
+    // The automations list is not published here: the pass that ran this
+    // sends it right after the archived Channel's row, in the same turn, so
+    // a client sees the archive and its pauses together.
     await this.armNextAlarm();
   }
 
