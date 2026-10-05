@@ -1971,7 +1971,8 @@ export class SlackAgentService {
       // A public room joins the Organization-wide Space its name matches. A
       // private room never does, and neither does a Slack Connect room: their
       // audience is not the Organization's.
-      const matched = room.visibility === "public" && !room.externallyShared
+      const matchable = room.visibility === "public" && !room.externallyShared;
+      const matched = matchable
         ? ExternalRoomSpaceMatchResultSchema.parse(await workspace.externalRoomSpaceMatch({
           workspaceId: connection.workspace_id,
           name: room.displayName,
@@ -2004,7 +2005,7 @@ export class SlackAgentService {
         spaceId,
         space: { name: room.displayName, scope: room.visibility === "public" ? "workspace" : "personal" },
         participantUserIds: room.visibility === "private" ? audience.userIds : [],
-        ...(matched ? { matched: true } : {}),
+        ...(matchable ? { spaceMatch: matched ? "matched" as const : "unmatched" as const } : {}),
         at: nowIso(),
       }));
     } catch (error) {
