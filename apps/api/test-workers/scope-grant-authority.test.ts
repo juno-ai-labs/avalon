@@ -485,6 +485,11 @@ it("requires a parent grant for guest recommendation management and observes its
   await seedActorGrant(main);
   const input = { workspaceId, parentId, userId: actorId };
   const recommendation = { ...input, sidekickId: crypto.randomUUID(), attached: true };
+  await exec(`INSERT INTO automation_directory
+      (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
+       owning_workstream_id, title, description, next_run_at, projected_at)
+    VALUES (?, ?, ?, 1, 'test', 'active', 'workspace', NULL, 'Shared', '', NULL, 0)`,
+  recommendation.sidekickId, workspaceId, actorId);
   // Main collaboration is insufficient even when it remains after revocation.
   await expect((async () => room().setSidekickRecommendation(recommendation))()).rejects.toThrow("sidekick_attachment_participant_required");
   await seedActorGrant(parent);

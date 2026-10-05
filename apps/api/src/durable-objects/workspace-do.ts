@@ -5942,7 +5942,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // the message itself, which may quote a stored row, stays in the log.
       let code = diagnosticErrorCode(error, "sidekick_import_failed");
       if (code === "sidekick_import_failed" && error instanceof Error && /^[A-Za-z]{1,60}$/u.test(error.name)) {
-        code = `sidekick_import_failed:${error.name}`;
+        code = `sidekick_import_failed_${error.name.replace(/(?<=[a-z0-9])(?=[A-Z])/gu, "_").toLowerCase()}`;
       }
       const attempts = this.state.storage.sql.exec<{ attempts: number }>(
         "SELECT attempts FROM sidekick_imports WHERE sidekick_id = ?", automationId,
@@ -5963,7 +5963,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         error,
       });
       await this.armNextAlarm();
-      throw new ApiError(503, code, "This Sidekick is being moved; try again shortly");
+      // The code is the message too: a Durable Object RPC keeps only the
+      // message, and a caller across it (a route, the retirement walk) reads
+      // its code from there.
+      throw new ApiError(503, code, code);
     }
     if (reregister) await this.afterSidekickRegistrations(automationId, reregister.revision, reregister.evaluators);
     this.publishSidebarList("automations");
@@ -6377,9 +6380,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async setSidekickRecommendation(input: Parameters<HostedParent["setSidekickRecommendation"]>[0]) {
-    const parent = await this.hostedParent(input.parentId, input.workspaceId);
-    if (input.attached) this.assertRecommendableSidekick(input.sidekickId);
-    return parent.setSidekickRecommendation(input);
+    // The Sidekick is checked after the caller's access, so a refusal does
+    // not say whether an id names a Sidekick.
+    return (await this.hostedParent(input.parentId, input.workspaceId))
+      .setSidekickRecommendation(input, (sidekickId) => this.assertRecommendableSidekick(sidekickId));
   }
 
   // Space access provenance.
