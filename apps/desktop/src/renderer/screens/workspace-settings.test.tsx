@@ -45,6 +45,8 @@ const api = vi.hoisted(() => ({
   getDigestSchedule: vi.fn(),
   updateDigestSchedule: vi.fn(),
   clientFeatureFlags: vi.fn(),
+  getMyPersonalSystemPrompt: vi.fn(),
+  updateMyPersonalSystemPrompt: vi.fn(),
 }));
 const copyText = vi.hoisted(() => vi.fn());
 const openExternal = vi.hoisted(() => vi.fn());
@@ -280,6 +282,7 @@ describe('Organization settings', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
+    api.getMyPersonalSystemPrompt.mockResolvedValue('');
     // Every existing test in this file was written before digestsEnabled
     // existed and expects the section to be there; a test that cares about it
     // being hidden overrides this with its own resolved value.
@@ -458,6 +461,26 @@ describe('Organization settings', () => {
     } finally {
       window.location.hash = '';
     }
+  });
+
+  it('saves an edited personal system prompt and offers Save only while it differs', async () => {
+    api.getMyPersonalSystemPrompt.mockResolvedValue('Answer briefly.');
+    api.updateMyPersonalSystemPrompt.mockImplementation(async (text: string) => text);
+    renderSettings();
+    openSettingsSection('Account');
+
+    const prompt = await screen.findByRole('textbox', { name: 'Personal system prompt' });
+    await waitFor(() => expect(prompt).toHaveValue('Answer briefly.'));
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(prompt, { target: { value: 'Answer in French.' } });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+
+    await waitFor(() => expect(api.updateMyPersonalSystemPrompt).toHaveBeenCalledWith('Answer in French.'));
+    await waitFor(() => expect(save).toBeDisabled());
+    expect(prompt).toHaveValue('Answer in French.');
   });
 
   it('opens on the member list the application already holds', async () => {

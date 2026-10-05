@@ -96,6 +96,7 @@ import {
   recordHarnessRunObservation,
 } from "../observability/harness-run-observability";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
+import { PersonalSystemPromptResultSchema } from "./personal-system-prompt";
 import { agentProfileFor, type AgentProfile } from "../services/agent-profiles";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
@@ -5136,6 +5137,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     };
     return {
       contextWindowTokensByModel: () => this.contextWindowTokensByModel(),
+      personalSystemPrompt: (userId) => this.personalSystemPromptCopy(input.workspaceId, userId),
       assignSidekickSkillNames: (sources) => {
         fence();
         return this.state.storage.transactionSync(() => {
@@ -5885,6 +5887,44 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         occurredAt: Date.parse(live.createdAtUtc), transcriptSequence: live.transcriptSequence,
         url: null, mimeType: null, archived: conversation.archived } } : {}) });
     return links;
+  }
+
+  /**
+   * This conversation's copy of a member's personal system prompt, then a
+   * refresh of that copy from WorkspaceDO that the run does not wait for.
+   *
+   * The copy is what keeps WorkspaceDO off the inference path: the run renders
+   * whatever this object last saw, and an edit reaches the turn after the one
+   * that started the refresh. A refresh that fails leaves the old copy and is
+   * tried again by the next turn.
+   */
+  private personalSystemPromptCopy(workspaceId: string, userId: string): string {
+    const copy = this.state.storage.sql.exec<{ text: string }>(
+      `SELECT text FROM personal_system_prompt_copies WHERE user_id = ?`,
+      userId,
+    ).toArray()[0];
+    this.state.waitUntil(this.refreshPersonalSystemPromptCopy(workspaceId, userId).catch((error: unknown) => {
+      logWarn(this.env, "personal_system_prompt_refresh_failed", {
+        workspace_id: workspaceId,
+        substream_id: this.externalSubstreamId(),
+        reason: diagnosticErrorCode(error, "personal_system_prompt_refresh_failed"),
+      });
+    }));
+    return copy?.text ?? "";
+  }
+
+  private async refreshPersonalSystemPromptCopy(workspaceId: string, userId: string): Promise<void> {
+    const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+      workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)));
+    const { personalSystemPrompt } = PersonalSystemPromptResultSchema.parse(
+      await workspace.personalSystemPrompt({ workspaceId: asWorkspaceId(workspaceId), userId }));
+    this.state.storage.sql.exec(
+      `INSERT INTO personal_system_prompt_copies (user_id, text, copied_at) VALUES (?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET text = excluded.text, copied_at = excluded.copied_at`,
+      userId,
+      personalSystemPrompt,
+      Date.now(),
+    );
   }
 
   /**

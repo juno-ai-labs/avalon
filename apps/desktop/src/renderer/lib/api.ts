@@ -1,7 +1,7 @@
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
 import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
-import { SessionImportRunSchema, type SessionImportPreview } from "@rally/contracts";
+import { PersonalSystemPromptSchema, SessionImportRunSchema, type SessionImportPreview } from "@rally/contracts";
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
@@ -855,6 +855,21 @@ export class RallyApi {
       timezone: raw.timezone,
       currentUser,
     };
+  }
+
+  /** Text the agent reads in its system prompt on every turn this person starts. */
+  async getMyPersonalSystemPrompt(signal?: AbortSignal): Promise<string> {
+    const result = await this.request('/workspace/me/system-prompt', { schema: PersonalSystemPromptSchema, signal });
+    return result.personalSystemPrompt;
+  }
+
+  async updateMyPersonalSystemPrompt(personalSystemPrompt: string): Promise<string> {
+    const result = await this.request('/workspace/me/system-prompt', {
+      method: 'PUT',
+      body: { personalSystemPrompt },
+      schema: PersonalSystemPromptSchema,
+    });
+    return result.personalSystemPrompt;
   }
 
   async updateMyTimezone(timezone: string): Promise<WorkspaceMember> {

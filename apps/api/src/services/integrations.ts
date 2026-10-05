@@ -39,6 +39,7 @@ import {
   memberSafeHarnessFailureMessage,
   renderScheduledDigestBriefMessage,
   renderScheduledWakeupMessage,
+  renderPersonalSystemPrompt,
   renderWorkstreamSystemPrompt,
   renderCompactionCheckpointContent,
   rememberAutomationPeopleSearchResult,
@@ -2555,6 +2556,8 @@ export async function runWorkstreamHarness(
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
       contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>>;
+      /** This conversation's copy of a member's personal system prompt; empty for none. May lag an edit. */
+      personalSystemPrompt?(userId: string): string;
       readSidekickSkills(): SidekickSkillSnapshot | null;
       assignSidekickSkillNames(sources: SidekickSkillSnapshot["sources"]): Map<string, string>;
       attachedSidekickIds(): string[];
@@ -2795,7 +2798,8 @@ export async function runWorkstreamHarness(
       memoryContextMs: 0,
       memoryRecallRequired: false,
     })
-    : loadRunPromptContext(env, input, attemptLease, workstream, runDefinitionPreparation));
+    : loadRunPromptContext(env, input, attemptLease, workstream, runDefinitionPreparation,
+      personalSystemPromptFor(input, runtime?.persistentLoop?.personalSystemPrompt)));
   const toolsPreparation = new Preparation(() => profile
     ? Promise.resolve(profileHarnessTools(profile.plugins(input,
       localWorkstreamAuthority(env, input.workspaceId, input.parentId, "desktopAction"))))
@@ -4722,6 +4726,26 @@ async function loadConnectorTriggerContext(
 }
 
 /**
+ * The rendered personal system prompt of the member whose own turn this is, or
+ * the empty string.
+ *
+ * Only a run a person started for themselves carries it: a Sidekick run may act
+ * as a user (`run_as_user_id`) and a background agent inherits its parent's
+ * principal, but neither is a turn that person activated. The text comes from
+ * the conversation's own copy, never from WorkspaceDO, so it costs inference no
+ * hop and may lag an edit by a turn. In the prefix it breaks prompt caching
+ * across members in one room; that cost was accepted for this feature.
+ */
+function personalSystemPromptFor(
+  input: WorkstreamWorkflowInput,
+  read: ((userId: string) => string) | undefined,
+): string {
+  if (!read || input.executionPrincipal.type !== "user" || input.automationRun
+    || input.backgroundAgent || input.parentKind === "automation") return "";
+  return renderPersonalSystemPrompt(read(input.executionPrincipal.userId));
+}
+
+/**
  * The destinations Avalon itself copies this automation's result to.
  *
  * The run has to be told, or it does the delivery a second time: an automation
@@ -4751,6 +4775,7 @@ async function loadRunPromptContext(
   workstream: { title: string; objective: string },
   runDefinitionPreparation = new Preparation(() => input.automationRun
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null)),
+  personalSystemPrompt = "",
 ): Promise<{
   systemPrompt: string;
   additionalMessages: ModelMessage[];
@@ -4989,7 +5014,9 @@ async function loadRunPromptContext(
       ...(automationContext ? { sidekick: automationContext } : {}),
     }) + (input.backgroundAgent || input.parentKind === "automation"
       ? "\nFor requests from another agent, send results and questions back to that agent. Ask that agent for missing information instead of asking participants. Your final response stays here; it is not forwarded."
-      : "") + "\nContinue existing agents through messages. Before creating a Sidekick, look for a suitable one owned by this workstream. If none fits, create one here by default. Send setup instructions to its authoring agent; that agent drafts the configuration.",
+      : "") + "\nContinue existing agents through messages. Before creating a Sidekick, look for a suitable one owned by this workstream. If none fits, create one here by default. Send setup instructions to its authoring agent; that agent drafts the configuration."
+      // Last, so a member with none leaves every byte before it unchanged.
+      + personalSystemPrompt,
     additionalMessages,
     memoryContextHash: frozenMemory?.memoryContextHash ?? null,
     memoryContextMs: memoryContextPreparation?.elapsedMs ?? 0,
