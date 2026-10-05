@@ -866,6 +866,8 @@ requests, so mutations must not be blindly replayed. Healthy Node feeds stay
 open. Future recovery must preserve the cross-window generation fence and use
 live authority, rather than a ticket or handshake, as its success boundary.
 
+PR: [#1105](https://github.com/juno-ai-labs/avalon/pull/1105).
+
 ### 2026-10-03 — A frozen browser tab redials its workspace socket
 
 **What changed:** The browser bridge reports Page Lifecycle `freeze` and
