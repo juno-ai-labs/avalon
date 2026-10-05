@@ -1703,6 +1703,25 @@ export class SlackAgentService {
       );
       return;
     }
+    // A room that joined an existing Space by name, rather than getting its
+    // own, may since have been shared through Slack Connect: an outside
+    // organization's thread must not open work in this Organization's Space.
+    // Asked only for a matched room, so a room's own Space pays nothing.
+    if (route?.kind === "spawn"
+      && route.spaceId !== await stableUuid(`external-room-space:${installationId}:${channelId}`)
+      && slackExternalRoom((await slackApi(token, "conversations.info", { channel: channelId }, AbortSignal.timeout(5_000))).channel)
+        .externallyShared) {
+      logWarn(this.env, "external_binding_placement_refused", {
+        workspace_id: connection.workspace_id,
+        connection_id: connection.id,
+        space_id: route.spaceId,
+        code: "room_shared_externally",
+      });
+      await this.postRoutingFailure(
+        token, channelId, channelResolution.threadable === false ? undefined : rootTs, "room_shared_externally", claimKey,
+      );
+      return;
+    }
     await this.startFromPrompt(
       teamId,
       slackUserId,
@@ -4196,6 +4215,8 @@ function slackRoutingFailureText(reason: string): string {
       return "This conversation's Rally Space is archived, so Rally did not start work here. A Rally admin can restore the Space in Rally.";
     case "room_narrower_than_space":
       return "This conversation is private now, but its Rally Space is open to the whole organization, so Rally did not start work here. Make the conversation public again, or ask a Rally admin to make the Space private if nothing else uses it.";
+    case "room_shared_externally":
+      return "This conversation is now shared with another organization, and its Rally Space holds this organization's own work, so Rally did not start work here.";
     case "no_rally_member_in_private_room":
       return "Rally didn't start work here because nobody in this private conversation has a Rally account it can recognize yet. Connect your Rally account in App Home, then mention Rally again.";
     case "space_access_denied":
