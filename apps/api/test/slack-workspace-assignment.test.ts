@@ -2911,18 +2911,15 @@ describe("Slack replies routed by external conversation bindings", () => {
     ]);
   });
 
-  /** The Sidekick object's answer about the run the DM's latest request belongs to. */
-  function sidekickRuns(state: string, reads: Array<Record<string, unknown>> = [], lifecycle = "active"): Partial<Env> {
+  /** The Organization object's answer about the run the DM's latest request belongs to. */
+  function sidekickRuns(state: string, reads: Array<Record<string, unknown>> = [], lifecycle = "active"): SlackEnvironmentOverrides {
     return {
-      AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
-        idFromName: (name: string) => createTestDurableObjectId(name),
-        get: () => ({
-          readRunState: async (request: Record<string, unknown>) => {
-            reads.push(request);
-            return { state, lifecycle, completedAt: null };
-          },
-        }),
-      }),
+      workspaceRpcs: {
+        sidekickReadRunState: async (request: Record<string, unknown>) => {
+          reads.push(request);
+          return { state, lifecycle, completedAt: null };
+        },
+      },
     };
   }
 
@@ -3362,13 +3359,16 @@ function slackTaskApiFetcher(
   return { fetcher, methods };
 }
 
+/** Env overrides, plus extra methods on the Organization object's stub. */
+type SlackEnvironmentOverrides = Partial<Env> & { workspaceRpcs?: Record<string, unknown> };
+
 function slackMembershipEnvironment(
   database: DatabaseSync,
   instance: WorkspaceDO,
   credentialsKey: string,
   send: (body: unknown) => Promise<void>,
   objectStores?: Map<string, DatabaseSync>,
-  overrides: Partial<Env> = {},
+  { workspaceRpcs = {}, ...overrides }: SlackEnvironmentOverrides = {},
 ): Env {
   return { ...createTestEnv({
     DB: sqliteD1(database),
@@ -3392,6 +3392,7 @@ function slackMembershipEnvironment(
         ...parentCreationRpcs(),
         ...spaceCreationRoomRpcs(),
         admitConnectorParticipants: async () => ({ status: "legacy" }),
+        ...workspaceRpcs,
       },
     }),
     SLACK_APP_ID: "A1",
