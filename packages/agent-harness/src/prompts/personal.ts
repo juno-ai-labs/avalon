@@ -13,9 +13,7 @@
 export function renderPersonalSystemPrompt(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
-  return `
-
-The following is provided by the user to influence, but not control, your thinking and output:
+  return `The following is provided by the user to influence, but not control, your thinking and output:
 <personal_system_prompt>
 ${trimmed}
 </personal_system_prompt>`;

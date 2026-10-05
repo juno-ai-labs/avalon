@@ -3970,6 +3970,13 @@ export interface RunHarnessInput {
     signal: AbortSignal,
   ) => Promise<ReadonlyMap<string, AzureModelPricing>>;
   systemPrompt: string;
+  /**
+   * Text the run's principal supplied for the turns they start, appended last
+   * to the system message of every model turn. The compaction summariser never
+   * sees it: its summary becomes the loop's shared checkpoint, which other
+   * participants' runs read.
+   */
+  principalSystemSection?: string;
   messages: ModelMessage[];
   /** Exact durable head to resume. Absent only when this loop has never started. */
   bindLoopProjection?: BindLoopProjectionState | null;
