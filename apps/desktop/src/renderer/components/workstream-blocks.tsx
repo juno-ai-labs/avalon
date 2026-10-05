@@ -7,6 +7,7 @@ import {
   IconImageGeneration,
   IconAlertTriangle,
   IconCircleCheck,
+  IconCornerDownRight,
   IconKeyframes,
   IconMailAi,
   IconPlug,
@@ -2860,7 +2861,7 @@ export function MessageBlock({
           />
           {latestReply && startSubstream && (
             <button className="message-start-breakout-link" onClick={startSubstream} type="button">
-              <span aria-hidden="true">↳</span> Start a breakout from this message
+              <IconCornerDownRight aria-hidden="true" size={13} stroke={1.9} /> Start a breakout from this message
             </button>
           )}
 
