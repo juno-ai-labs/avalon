@@ -87,8 +87,10 @@ export function upsertSpaceDirectory(
     // A REST response does not advance the socket receiver's ledger. The next
     // authoritative socket snapshot still has to be accepted at this version.
     waterline: current?.waterline ?? 0,
+    // The socket can deliver a later revision before this response lands, for
+    // example the icon Rally chooses for a new Space; keep the newer one.
     items: current?.items.some((item) => item.id === space.id)
-      ? current.items.map((item) => item.id === space.id ? space : item)
+      ? current.items.map((item) => item.id === space.id && item.revision < space.revision ? space : item)
       : [...(current?.items ?? []), space],
   };
 }

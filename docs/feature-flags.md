@@ -1106,6 +1106,26 @@ hiding the Notifications section.
 
 ## Changelog
 
+### 2026-10-05 — Naming defaults to GPT-5.6 Terra
+
+**What changed:** `OPENROUTER_CLASSIFIER_MODEL`, the default route for
+`agent-model-workstream-naming`, is now `openai/gpt-5.6-terra` in the Worker
+variables, the sandbox defaults and Ace's catalog.
+
+**Why:** `google/gemini-2.5-flash-lite` answers every naming request with a
+400: Google AI Studio refuses the 253-value icon enum as "too much branching
+for serving". Production names only because its flag already serves Terra, so
+any unreachable or absent flag, and every local sandbox, got no names and no
+icons. Terra accepts the schema.
+
+**Consequences:** The Gemini fallbacks serve naming only with the plain-string
+icon and `reasoningRequired` from the same pull request; see
+[`workstream-naming.md`](workstream-naming.md#changelog). A
+`.env.local` that sets the key, as one copied from the old `.env.example` does,
+outranks the new default until it is edited.
+
+Pull request: [#1099](https://github.com/juno-ai-labs/avalon/pull/1099).
+
 ### 2026-10-02 — Reasoning is part of the atomic model route
 
 Operators can set optional `reasoningEffort` in the same variation as the model
