@@ -352,6 +352,26 @@ describe("a room named for an existing Space", () => {
     expect(own).toEqual({ ok: true, outcome: "linked", spaceId: "00000000-0000-7000-8000-000000000e36" });
   });
 
+  it("refuses the link when the matched Space's creator leaves while the link is in flight", async () => {
+    const general = await generalId();
+    const result = await runInDurableObject(workspace(), async (instance) => {
+      const target = instance as unknown as { spaceParentReservation: (spaceId: string) => Promise<unknown> };
+      const original = target.spaceParentReservation.bind(instance);
+      // The creator check has passed by now; the creator leaves before the commit.
+      vi.spyOn(target, "spaceParentReservation").mockImplementation(async (spaceId: string) => {
+        const state = (instance as unknown as { state: DurableObjectState }).state;
+        state.storage.sql.exec("UPDATE workspace_member_status SET relationship_json = NULL WHERE user_id = ?", USER_ID);
+        return original(spaceId);
+      });
+      return instance.linkExternalRoom({
+        workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["C1"], userId: USER_ID, spaceId: general,
+        space: { name: "general", scope: "workspace" }, participantUserIds: [], spaceMatch: "matched", at: at(),
+      });
+    });
+    expect(result).toEqual({ ok: false, code: "space_not_found" });
+    expect(await bindingRows()).toEqual([]);
+  });
+
   it("refuses a match request for a private room or one that seats participants", async () => {
     await expect(linkRoom("G1", "00000000-0000-7000-8000-000000000e37", { spaceMatch: "unmatched", scope: "personal" }))
       .rejects.toThrow();

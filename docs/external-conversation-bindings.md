@@ -92,12 +92,12 @@ none, and passes `spaceMatch`: `matched` with the matched id, or `unmatched`
 with the room's own, anchored id. The link looks again: a Space that matches
 now is joined either way, a `matched` id that no longer matches is refused
 (`space_not_found`) because it has no anchor to be created under, and the
-transaction refuses if the match changed during the link's own awaits. The
-schema accepts `spaceMatch` only for an Organization-wide room that seats
-nobody. A match whose creator
-is no longer an active member is not offered, because a thread from a sender
-with no Rally identity opens its Channel acting as that creator; the room gets
-its own Space instead. A private room never matches: its Space's audience is
+transaction refuses if the match, or whether its creator is still an active
+member, changed during the link's own awaits. The schema accepts
+`spaceMatch` only for an Organization-wide room that seats nobody. A match
+whose creator is no longer an active member is not offered, because a thread
+from a sender with no Rally identity opens its Channel acting as that creator;
+the room gets its own Space instead. A private room never matches: its Space's audience is
 the room's members, and an existing Space's is not. Neither does a Slack
 Connect room (`is_ext_shared` or `is_pending_ext_shared`), which Slack reports
 as public but whose members include another organization. A matched room shared
