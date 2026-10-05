@@ -146,6 +146,7 @@ export const SLACK_WORKSPACE_OBJECT_METHODS = [
   "suspendExternalConversationBindings",
   "reactivateExternalConversationBindings",
   "moveExternalConversationBindings",
+  "externalRoomSpaceMatch",
   "linkExternalRoom",
   "admitSpaceCreation",
 ] as const satisfies readonly (keyof WorkspaceDO)[];

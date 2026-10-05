@@ -126,6 +126,7 @@ import {
   ExternalBindingResolutionSchema,
   ExternalBindingSuspendResultSchema,
   ExternalRoomLinkResultSchema,
+  ExternalRoomSpaceMatchResultSchema,
   type ExternalBindingClaim,
   type ExternalBindingConversationTarget,
   type ExternalBindingResolution,
@@ -1959,10 +1960,6 @@ export class SlackAgentService {
         ? { outcome: "unresolved", channel }
         : { outcome: "blocked", reason: "no_rally_member_in_private_room" };
     }
-    // Named by the room, so two invitations racing (or an invitation retried
-    // after its link committed) claim one anchor, and the loser's link reads
-    // back `existing` instead of leaving an anchor for a Space never made.
-    const spaceId = await stableUuid(`external-room-space:${installationId}:${channelId}`);
     let linked: ExternalRoomLinkResult;
     try {
       // The creation coordinator's gate: no Space is written while the
@@ -1971,18 +1968,34 @@ export class SlackAgentService {
       if (control.phase !== "durable_object_open") {
         throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");
       }
-      // Asked before the D1 anchor, as `SpaceService.create` asks, so a
-      // refused actor leaves no anchor behind.
-      const admitted = await workspace.admitSpaceCreation({
-        workspaceId: asWorkspaceId(connection.workspace_id),
-        userId: asUserId(actorUserId),
-      });
-      if (!admitted.ok) {
-        return room.visibility === "public"
-          ? { outcome: "unresolved", channel }
-          : { outcome: "blocked", reason: admitted.code };
+      // A public room joins the Organization-wide Space it is already named
+      // for, ignoring case, so `#general` lands in "General". A private room
+      // never does: its audience is the room's, not the Organization's.
+      const matched = room.visibility === "public"
+        ? ExternalRoomSpaceMatchResultSchema.parse(await workspace.externalRoomSpaceMatch({
+          workspaceId: connection.workspace_id,
+          name: room.displayName,
+        })).spaceId
+        : null;
+      // Otherwise named by the room, so two invitations racing (or an
+      // invitation retried after its link committed) claim one anchor, and the
+      // loser's link reads back `existing` instead of leaving an anchor for a
+      // Space never made.
+      const spaceId = matched ?? await stableUuid(`external-room-space:${installationId}:${channelId}`);
+      if (!matched) {
+        // Asked before the D1 anchor, as `SpaceService.create` asks, so a
+        // refused actor leaves no anchor behind.
+        const admitted = await workspace.admitSpaceCreation({
+          workspaceId: asWorkspaceId(connection.workspace_id),
+          userId: asUserId(actorUserId),
+        });
+        if (!admitted.ok) {
+          return room.visibility === "public"
+            ? { outcome: "unresolved", channel }
+            : { outcome: "blocked", reason: admitted.code };
+        }
+        await claimParentAnchor(this.env, connection.workspace_id, spaceId, "space");
       }
-      await claimParentAnchor(this.env, connection.workspace_id, spaceId, "space");
       linked = ExternalRoomLinkResultSchema.parse(await workspace.linkExternalRoom({
         workspaceId: connection.workspace_id,
         installationId,
