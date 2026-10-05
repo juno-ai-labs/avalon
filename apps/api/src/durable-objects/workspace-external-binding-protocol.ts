@@ -251,10 +251,24 @@ export const ExternalRoomLinkRequestSchema = deferredZodSchema(() => BindingKeyS
   }),
   /** Seated beside the actor in a private room's Space. */
   participantUserIds: z.array(IdSchema),
-  /** `spaceId` is the Space `externalRoomSpaceMatch` answered; bind only if it still matches. */
-  matched: z.boolean().optional(),
+  /**
+   * Present when the room may join an existing Space its name matches, which
+   * the link decides. `matched`: `spaceId` is the Space `externalRoomSpaceMatch`
+   * answered, with no anchor of its own. `unmatched`: `spaceId` is the room's
+   * own, anchor claimed, used only if nothing matches.
+   */
+  spaceMatch: z.enum(["matched", "unmatched"]).optional(),
   at: TimestampSchema,
-}).strict());
+}).strict().superRefine((request, context) => {
+  // Only an Organization-wide room may join an existing Space: a private
+  // room's audience is its own.
+  if (request.spaceMatch && request.space.scope !== "workspace") {
+    context.addIssue({ code: "custom", path: ["space", "scope"], message: "space_match_requires_workspace_scope" });
+  }
+  if (request.spaceMatch && request.participantUserIds.length > 0) {
+    context.addIssue({ code: "custom", path: ["participantUserIds"], message: "space_match_requires_no_participants" });
+  }
+}));
 export type ExternalRoomLinkRequest = z.infer<typeof ExternalRoomLinkRequestSchema>;
 
 export const ExternalRoomLinkResultSchema = z.discriminatedUnion("ok", [
