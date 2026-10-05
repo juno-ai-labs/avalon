@@ -11482,6 +11482,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return relationship;
   }
 
+  /** `activeSpaceMember` from the table alone, for a synchronous commit; unknown reads as no. */
+  private knownActiveMember(userId: string): boolean {
+    const known = this.knownRelationship(userId);
+    return known?.status === "active" && known.accessClass === "member";
+  }
+
   /** The table's answer, with no D1 read; `undefined` for somebody it has never heard of. */
   private knownRelationship(userId: string): WorkspaceRelationship | null | undefined {
     const row = this.state.storage.sql.exec<{ relationship_json: string | null }>(
@@ -13390,8 +13396,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const participants = [...new Set([request.userId, ...request.participantUserIds])];
     const linked = await this.withMembersLearned(() => this.state.storage.transactionSync(() => (
       bindings.linkRoom(request.installationId, request.path, request.at, () => {
-        // The awaits above let a Space edit in; the match must still be the one decided.
-        if (match && (storage.organizationSpaceNamed(request.space.name)?.spaceId ?? null) !== match.found) return null;
+        // The awaits above let a Space edit or a departure in; the match, and
+        // whether its creator may still be offered, must be the ones decided.
+        if (match) {
+          const current = storage.organizationSpaceNamed(request.space.name);
+          const usable = current?.createdByUserId != null && this.knownActiveMember(current.createdByUserId)
+            ? current.spaceId
+            : null;
+          if ((current?.spaceId ?? null) !== match.found || usable !== match.usable) return null;
+        }
         const reserved = storage.reserveForCreation(reservation, spaceId);
         if (!reserved.space) return null;
         if (reserved.created) parent.reserve(request.userId, reserved.space);
