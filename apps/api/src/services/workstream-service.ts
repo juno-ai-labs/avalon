@@ -7,7 +7,7 @@ import { publishWorkspaceSync } from "./workspace-realtime-service";
 import type { SidekickAttachment, SidekickRecommendationOptions } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
-import { HarnessFailureCodeSchema, asAutomationId, asUserId, asHarnessRunId, asWorkspaceId, asWorkstreamId, asSubstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
+import { HarnessFailureCodeSchema, asUserId, asHarnessRunId, asWorkspaceId, asWorkstreamId, asSubstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
 import type {
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
@@ -23,7 +23,7 @@ import type {
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { conversationObjectName } from "../durable-objects/substream-agent";
-import { automationDOName, substreamLoopId, workspaceDOName } from "../durable-objects/names";
+import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
 import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError } from "../lib/api-error";
 import { publishAccessRevocation } from "./access-revocation";
@@ -65,6 +65,7 @@ import {
   type AnswerExternalElicitationInput,
   type ExternalMessageAdmissionResult,
 } from "../durable-objects/workstream-external-message-protocol";
+import { sidekickClient } from "./sidekick-client";
 
 /**
  * `descriptionSource` is the caller's assertion, never inferred from whether
@@ -688,8 +689,7 @@ export class WorkstreamService {
     const [identity,participants] = await Promise.all([port.identity(),port.participants()]);
     if (!identity) throw new ApiError(404,"workstream_not_found","Conversation not found");
     const items = await Promise.all([...new Set(ids)].map(async (automationId) => {
-      const sidekick = await durableObjectStubForWorkspace(this.env,this.env.AUTOMATION_DOS,this.auth.workspaceId,
-        automationDOName(this.env.AVALON_REGION,this.auth.workspaceId,asAutomationId(automationId)));
+      const sidekick = await sidekickClient(this.env, this.auth.workspaceId);
       return sidekick.readSkillSummary({ workspaceId:this.auth.workspaceId,automationId,
         principalUserId:this.auth.userId,conversationParentId:id,
         audienceScope:identity.scope === "workspace" ? "workspace" : "personal",
@@ -756,8 +756,7 @@ export class WorkstreamService {
       const candidates = await this.conversationSidekickSummaries(id, substreamId,
         [...await this.conversationSidekickIds(id, substreamId, [...explicit])]);
       const eligible = await Promise.all(candidates.map(async (item) => {
-        const source = await durableObjectStubForWorkspace(this.env, this.env.AUTOMATION_DOS, this.auth.workspaceId,
-          automationDOName(this.env.AVALON_REGION, this.auth.workspaceId, asAutomationId(item.id)));
+        const source = await sidekickClient(this.env, this.auth.workspaceId);
         const facts = await source.readAuthorizationFacts({ workspaceId: this.auth.workspaceId, parentId: item.id,
           userId: this.auth.userId, substreamIds: [] });
         return facts.exists && facts.scope === "workspace" ? item : null;
@@ -809,8 +808,7 @@ export class WorkstreamService {
           throw new ApiError(403, "sidekick_attachment_forbidden", "Choose a Sidekick already available in this conversation");
         }
       }
-      const source = await durableObjectStubForWorkspace(this.env, this.env.AUTOMATION_DOS, this.auth.workspaceId,
-        automationDOName(this.env.AVALON_REGION, this.auth.workspaceId, asAutomationId(sidekickId)));
+      const source = await sidekickClient(this.env, this.auth.workspaceId);
       // Recommendation needs workspace-source eligibility, not permission to
       // read its separate authoring conversation or run history.
       const sidekick = await source.readAuthorizationFacts({ workspaceId: this.auth.workspaceId, parentId: sidekickId, userId: this.auth.userId, substreamIds: [] });

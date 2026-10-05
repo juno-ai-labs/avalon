@@ -15,9 +15,8 @@ import {
   type WorkstreamAutomationSummary,
 } from "@rally/contracts";
 
-import type { AutomationDO } from "../durable-objects/automation-do";
 import type { AutomationActor } from "../durable-objects/automation-do-protocol";
-import { automationDOName, workspaceDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -26,6 +25,7 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "./workstream-runtime-database";
+import { sidekickClient, type SidekickClient } from "./sidekick-client";
 
 /**
  * Bring an automation into existence with its conversation open.
@@ -48,12 +48,7 @@ export async function createAutomation(env: Env, input: {
   const workspaceId = asWorkspaceId(input.workspaceId);
   const automationId = asAutomationId(input.automationId ?? uuidV7());
   const authority = await readWorkstreamAuthorityControl(env);
-  const automation = await durableObjectStubForWorkspace(
-    env,
-    env.AUTOMATION_DOS,
-    workspaceId,
-    automationDOName(env.AVALON_REGION, workspaceId, automationId),
-  );
+  const automation = await sidekickClient(env, workspaceId);
   const { created } = await automation.create({
     workspaceId,
     automationId,
@@ -240,45 +235,19 @@ export class AutomationService {
   }
 
   /**
-   * Who is asking, with the one fact the automation object cannot see for
-   * itself: whether they can manage the workstream that owns it. The directory
-   * locates the owner; its canonical management decision supplies authority.
-   * Failure withholds standing rather than falling back to a stale Main roster.
+   * Who is asking. Whether they can manage a Sidekick homed in a Channel or
+   * Breakout is decided where the Sidekick lives, from the Organization's own
+   * tables, so nothing is resolved here first.
    */
   async actorRequest(automationId: string): Promise<{
     workspaceId: ReturnType<typeof asWorkspaceId>;
     automationId: string;
     actor: AutomationActor;
   }> {
-    let participantOfOwningWorkstream = false;
-    try {
-      const workspace = await this.workspace();
-      const owned = await workspace.automationOwner({
-        workspaceId: this.auth.workspaceId,
-        automationId,
-      });
-      if (owned.owningWorkstreamId) {
-        // Archived included: the room's people still manage its automation
-        // after the archive, and the object itself answers what the archive
-        // forbids (`sidekick_room_archived` on resume) rather than a blanket
-        // refusal that hides it.
-        participantOfOwningWorkstream = (await workspace.readManagementAccess({
-          workspaceId: this.auth.workspaceId,
-          parentId: owned.owningWorkstreamId,
-          userId: this.auth.userId,
-        })).allowed;
-      }
-    } catch {
-      participantOfOwningWorkstream = false;
-    }
     return {
       workspaceId: this.auth.workspaceId,
       automationId,
-      actor: {
-        userId: this.auth.userId,
-        actorRole: this.auth.role,
-        participantOfOwningWorkstream,
-      },
+      actor: { userId: this.auth.userId, actorRole: this.auth.role, participantOfOwningWorkstream: false },
     };
   }
 
@@ -291,12 +260,8 @@ export class AutomationService {
     );
   }
 
-  private automation(automationId: string): Promise<DurableObjectStub<AutomationDO>> {
-    return durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_DOS,
-      this.auth.workspaceId,
-      automationDOName(this.env.AVALON_REGION, this.auth.workspaceId, asAutomationId(automationId)),
-    );
+  private automation(automationId: string): Promise<SidekickClient> {
+    void automationId;
+    return sidekickClient(this.env, this.auth.workspaceId);
   }
 }

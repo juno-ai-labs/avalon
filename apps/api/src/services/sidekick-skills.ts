@@ -1,9 +1,10 @@
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, type SidekickSkillSource, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { codeSkillRef, type HarnessSkill } from "@rally/agent-harness";
 import type { Env } from "../env";
-import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createIdentityObjectPort } from "../runtime/identity-port";
+import { sidekickClient } from "./sidekick-client";
 
 // Durable identity is independent of the readable catalog name.
 export const sidekickSkillRef = (id: string): string => codeSkillRef(`sidekick-${id}`);
@@ -84,7 +85,7 @@ export async function resolveSidekickSkills(env: Env, input: WorkstreamWorkflowI
   if (!identity || identity.archived_at !== null) return [];
   const sources = await Promise.all(ids.map(async (id) => {
     const automationId = asAutomationId(id);
-    const sidekick = await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, workspaceId, automationDOName(env.AVALON_REGION, workspaceId, automationId));
+    const sidekick = await sidekickClient(env, workspaceId);
     return sidekick.readSkillSource({ workspaceId, automationId,
       principalUserId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
       conversationParentId: input.parentId,

@@ -1,137 +1,24 @@
-import { type SidekickAttachment, SidekickAttachmentSchema } from "@rally/contracts";
-import type { Region } from "@rally/contracts/regions";
-import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from '../services/authorization-policy';
+import { asAutomationId, asWorkspaceId, IdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { z } from "zod";
-import {
-  AutomationDetailSchema,
-  SidekickSkillSourceSchema,
-  type SidekickSkillSource,
-  AutomationDraftSchema,
-  AutomationExecutionPrincipalClaimSchema,
-  AutomationRunDefinitionV1Schema,
-  AutomationRunSchema,
-  AutomationSetEvaluatorRulesInputV1Schema,
-  DemoSeedSchema,
-  PROJECT_COLOR_RING,
-  WORKSTREAM_ICON_KEYS,
-  WorkstreamAppearanceSchema,
-  WorkstreamAppearancePatchSchema,
-  automationAcceptanceSelections,
-  sidekickLoadable,
-  sidekickReceivesEmail,
-  automationDraftAcceptanceBlocker,
-  asAutomationId,
-  asHarnessRunId,
-  asSubstreamId,
-  asUserId,
-  asWorkspaceId,
-  SubstreamIdSchema,
-  isExternalEventTrigger,
-  semanticConditionsForEventType,
-  type AutomationDetail,
-  type AutomationDraft,
-  type AutomationExecutionPrincipalClaim,
-  type AutomationRun,
-  type AutomationRunDefinitionV1,
-  type AutomationRunTriggerV1,
-  type AutomationScope,
-  type DemoSeed,
-  externalEventOccurrenceKey,
-  withoutUnusableAutomationResourceIds,
-} from "@rally/contracts";
-import type {
-  ConversationEffectEnvelope,
-  ParentEffect,
-} from "@rally/contracts/conversation-effects";
-import {
-  ConversationParentAuthorityRequestSchema,
-  ConversationParentAuthorityResultSchema,
-  ConversationParentAuthorizeViewerRequestSchema,
-  ConversationParentAuthorizeViewerResultSchema,
-  ConversationParentReserveChildRequestSchema,
-  ConversationParentReserveChildResultSchema,
-  type ConversationParentAuthorityRequest,
-  type ConversationParentAuthorityResult,
-  type ConversationParentAuthorizeViewerRequest,
-  type ConversationParentAuthorizeViewerResult,
-  type ConversationParentReserveChildRequest,
-  type ConversationParentReserveChildResult,
-} from "@rally/contracts/conversation-parent";
 
 import type { Env } from "../env";
+import { assertDurableObjectJurisdiction, durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { withDurableObjectSelf } from "../lib/durable-object-self";
+import { parseRpcInput } from "../lib/rpc-input";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
+import { type SidekickExport } from "./automation-do-protocol";
+import { CONVERSATION_PARENT_SCHEMA_STATEMENTS } from "./conversation-parent-object";
+import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
+import { automationDOName, workspaceDOName } from "./names";
 import {
   OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
   applyRetirementGate,
   retiredObjectResponse,
 } from "./object-retirement";
-import { parseRpcInput } from "../lib/rpc-input";
-import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../lib/connector-activity-triggers";
-import { ApiError } from "../lib/api-error";
-import { externalEventOpening } from "../lib/external-event-opening";
-import { connectorRegistryForEnv } from "../lib/connector-registry";
-import { sha256 } from "../lib/crypto";
-import { assertDurableObjectJurisdiction, durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { withDurableObjectSelf } from "../lib/durable-object-self";
-import { nextRRuleOccurrence } from "../lib/recurrence";
-import { uuidV7 } from "../lib/uuid-v7";
-import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
-import { createMessageObjectPort } from "../runtime/message-port";
-import { automationModelOverride, scheduledWorkstreamModel } from "../services/agent-model-flags";
-import { validateDraftEvaluatorRules } from "../services/external-event-evaluator";
-import { activateWorkstreamLoop } from "../services/integrations";
-import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import { materializeAutomationMemoryTables } from "../services/memory-table-service";
-import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
-import { attachWorkstreamRuntimeResource } from "../services/workstream-object-client";
-import {
-  bootstrapConversationChildRuntime,
-  provisionWorkstreamObject,
-} from "../services/workstream-runtime-database";
-import {
-  SidekickSkillReadRequestSchema,
-  type SidekickSkillReadRequest,
-  AUTOMATION_RUN_ALARM_KIND,
-  AUTOMATION_SCHEDULE_ALARM_KIND,
-  AutomationActorSchema,
-  AutomationActorRequestSchema,
-  AutomationCreateRequestSchema,
-  AutomationExternalEventAdmissionSchema,
-  AutomationInboundEmailAdmissionSchema,
-  AutomationOwningRoomArchivedRequestSchema,
-  AutomationRunDefinitionRequestSchema,
-  AutomationRunNowRequestSchema,
-  AutomationRunRequestSchema,
-  AutomationRunSeededRequestSchema,
-  SidekickRunContinuationSchema,
-  AutomationSetAppearanceRequestSchema,
-  AutomationSubmitDefinitionRequestSchema,
-  type AutomationActor,
-  type AutomationActorRequest,
-  type AutomationCreateRequest,
-  type AutomationExternalEventAdmission,
-  type AutomationExternalEventPlan,
-  type AutomationInboundEmailAdmission,
-  type AutomationOwningRoomArchivedRequest,
-  type AutomationRunDefinitionRequest,
-  type AutomationRunNowRequest,
-  type AutomationRunRequest,
-  type AutomationRunSeededRequest,
-  type SidekickRunContinuation,
-  type AutomationSetAppearanceRequest,
-  type AutomationSubmitDefinitionRequest,
-} from "./automation-do-protocol";
-import {
-  CONVERSATION_PARENT_SCHEMA_STATEMENTS,
-  ConversationParentDurableObject,
-  type ConversationParentIdentity,
-  type DirectoryCommonEffect,
-} from "./conversation-parent-object";
-import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
-import { automationDOName, substreamLoopId, workspaceDOName } from "./names";
-import { sidekickAudienceAllows } from "./sidekick-audience";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
+  ScheduledDurableObject,
   type ScheduledAlarm,
   type ScheduledAlarmOutcome,
 } from "./scheduled-alarms";
@@ -141,138 +28,32 @@ import {
 } from "./sqlite-migrations";
 
 /**
- * `SidekickDO` owns a Sidekick and its authoring and run conversations.
+ * A Sidekick's legacy object, reduced to what moving it needs.
  *
- * Substream `0` is the automation's conversation for its whole life: drafting,
- * Create, and every later edit happen there, with the `rally:sidekicks`
- * plugin preloaded. Each run is a child substream under the automation; it
- * reads its definition from here by revision and reports state through the
- * same child-effect path every substream uses. Nothing a child says leaves
- * this object: an automation's children produce no workspace activity and no
- * notifications, and the only thing the workspace hears is this object's own
- * sidebar row.
- *
- * There are no authority-generation fences on an automation. Pausing or
- * deleting marks the run rows, and a run that outlived its consent finds out
- * when it next asks `readRunState` before a provider write.
+ * Every Sidekick's parent now lives in its Organization's `WorkspaceDO`
+ * (`HostedSidekick`). What is left here is the migration ledger, so an object
+ * that has not woken since an earlier release reaches the schema the export
+ * reads; `exportForImport`, which freezes the object and hands over every
+ * row; and an alarm that asks the Organization to import it, so a schedule
+ * still armed here starts the move rather than firing. Every other method
+ * answers `sidekick_parent_moved`, which a Queue consumer retries against the
+ * new route. The class is deleted once every Organization has imported; see
+ * docs/PRDs/2026-10-03_sidekick-parent-into-workspace-do/.
  */
 
 const MIGRATION_COMPONENT = "automation_do";
 
-/**
- * What a child conversation's state says about the run inside it.
- *
- * `null` marks a state that describes the conversation rather than the run,
- * where the honest answer is to leave the run's own state alone.
- */
-const RUN_STATE_FROM_CONVERSATION_STATE: Record<string, RunState | null> = {
-  completed: "completed",
-  failed: "failed",
-  error: "failed",
-  budget_exhausted: "failed",
-  needs_input: "needs_input",
-  stopped: "stopped",
-  cancelled: "stopped",
-  running: "running",
-  scheduled: "running",
-  preparing_context: "running",
-  waiting_capacity: "running",
-  interrupting: "running",
-  idle: "running",
-  archived: null,
-  deleting: null,
-  restoring: null,
-};
-const TERMINAL_RUN_STATES = new Set<RunState>(["completed", "failed", "stopped"]);
+/** The methods this object answered before the move; each now says where the Sidekick went. */
+const MOVED_METHODS = [
+  "create", "saveDefinition", "submitDefinition", "apply", "reconcileLoadable", "setAppearance", "pause", "resume",
+  "remove", "setOwningRoomArchived", "runNow", "runSeeded", "externalEventAdmissionPlan", "admitExternalEvent",
+  "admitInboundEmail", "readSkillSummary", "readSkillSource", "readRunDefinition", "readRunState", "continueRun",
+  "readDetail", "listRuns", "claimExecutionPrincipal", "authorizeViewer", "authorizationDiscoveryChildren",
+  "readAuthorizationFacts", "authority", "reserveAgentChild", "reserveChild", "receiveChildEffects", "listChildren",
+  "childTerminalDeadlines",
+] as const;
 
-type RunState = "pending" | "running" | "needs_input" | "completed" | "failed" | "stopped";
-type Lifecycle = "draft" | "active" | "paused" | "deleted";
-
-interface AutomationRow extends Record<string, SqlStorageValue> {
-  registration_generation: number;
-  /** Moved by every Sidekick-side stop of open runs; see `continueRun`. */
-  stop_generation: number;
-  automation_id: string;
-  workspace_id: string;
-  region: Region;
-  author_user_id: string;
-  run_as_user_id: string;
-  lifecycle: Lifecycle;
-  paused_by: "person" | "room_archive" | null;
-  scope: AutomationScope;
-  owning_workstream_id: string | null;
-  /** The home under `owning_workstream_id`: `"0"` for its Main conversation, else a Breakout id. */
-  owning_substream_id: string;
-  owning_room_archived_at: number | null;
-  title: string;
-  description: string;
-  current_definition_revision: number;
-  accepted_definition_revision: number | null;
-  connector_bindings_json: string;
-  default_plugin_ids_json: string;
-  activity_source_plugin_ids_json: string;
-  evaluator_projection_json: string;
-  model_override: string | null;
-  email_address: string | null;
-  effective_after_event_sequence: number | null;
-  /**
-   * The revision whose post-transaction effects (schedule alarms, workspace
-   * registrations, declared memory tables) are known to have landed. Set
-   * last, so a failure between the accepted-revision write and here leaves
-   * it behind and the next apply re-runs the tail instead of answering that
-   * nothing needs doing.
-   */
-  applied_effects_revision: number | null;
-  loadable: number;
-  /** The chosen icon and colour as `WorkstreamAppearance` JSON; null until picked. */
-  appearance_json: string | null;
-  /** The icon and colour the setup chat last submitted; null until it first does. */
-  chat_appearance_json: string | null;
-  authority_generation: number;
-  created_at: number;
-  updated_at: number;
-}
-
-interface RevisionRow extends Record<string, SqlStorageValue> {
-  definition_revision: number;
-  definition_json: string;
-  evaluator_rules_json: string | null;
-  ready: number;
-  created_at: number;
-}
-
-interface ScheduleRow extends Record<string, SqlStorageValue> {
-  schedule_id: string;
-  schedule_kind: "calendar" | "interval";
-  definition_json: string;
-  next_due_at: number | null;
-}
-
-interface RunRow extends Record<string, SqlStorageValue> {
-  run_id: string;
-  occurrence_key: string;
-  trigger_json: string;
-  definition_revision: number;
-  harness_run_id: string;
-  state: RunState;
-  summary: string | null;
-  opening_json: string | null;
-  /** A demo seed's script for this run's model bytes; null for every other run. */
-  seed_json: string | null;
-  /** Who the run runs as, recorded when it is provisioned; null while pending. */
-  run_as_user_id: string | null;
-  created_at: number;
-  started_at: number | null;
-  completed_at: number | null;
-  updated_at: number;
-}
-
-interface ScheduleDefinition {
-  acceptedAt: number;
-  intervalSeconds?: number;
-  rrule?: string;
-  timezone?: string;
-}
+const ExportRequestSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, automationId: IdSchema });
 
 export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -461,34 +242,30 @@ export const AUTOMATION_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `ALTER TABLE runs ADD COLUMN run_as_user_id TEXT`,
     `UPDATE runs SET run_as_user_id = (SELECT run_as_user_id FROM automation WHERE id = 1)`,
   ],
+}, {
+  version: 14,
+  description: "the freeze an export to the Organization object leaves behind",
+  statements: [
+    // One row, written by the first export. From then on this object answers
+    // nothing but the same export again: its rows are the Organization's.
+    `CREATE TABLE sidekick_export_freeze (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      frozen_at INTEGER NOT NULL CHECK (frozen_at >= 0)
+    ) STRICT`,
+    // The alarm entries as the first export found them. The live list is
+    // emptied by that export, so nothing fires here again, and a retried
+    // import reads these instead.
+    `CREATE TABLE sidekick_export_alarms (
+      kind TEXT NOT NULL,
+      key TEXT NOT NULL,
+      due_at INTEGER NOT NULL,
+      PRIMARY KEY (kind, key)
+    ) STRICT`,
+  ],
 }];
 
-function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
-  return cursor.toArray()[0] ?? null;
-}
-
-function iso(timestamp: number | null): string | null {
-  return timestamp === null ? null : new Date(timestamp).toISOString();
-}
-
-function forbidden(): ApiError {
-  return new ApiError(403, "sidekick_forbidden", "You cannot manage this Sidekick");
-}
-
-function scheduleDueAfter(kind: "calendar" | "interval", definitionJson: string, after: number): number | null {
-  const definition = JSON.parse(definitionJson) as ScheduleDefinition;
-  if (kind === "interval") return after + definition.intervalSeconds! * 1_000;
-  return nextRRuleOccurrence(
-    definition.rrule!,
-    definition.timezone!,
-    new Date(definition.acceptedAt),
-    new Date(after),
-  )?.getTime() ?? null;
-}
-
-export class SidekickDO extends ConversationParentDurableObject {
+export class SidekickDO extends ScheduledDurableObject {
   private readonly state: DurableObjectState;
-  private objectName: string | null = null;
   private readonly initialized: Promise<void>;
 
   constructor(state: DurableObjectState, env: Env) {
@@ -507,1210 +284,128 @@ export class SidekickDO extends ConversationParentDurableObject {
         migrations: AUTOMATION_DO_SCHEMA_MIGRATIONS,
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
-        afterMigrations: (_sql, versions) => {
-          if ((versions.includes(3) || versions.includes(10)) && this.row()) this.enqueueDirectory(Date.now());
-        },
       }));
       await this.armNextAlarm();
     });
   }
 
   protected override migrationPlan(): DurableObjectMigrationPlan {
-    return {
-      component: MIGRATION_COMPONENT,
-      className: "SidekickDO",
-      migrations: AUTOMATION_DO_SCHEMA_MIGRATIONS,
-    };
+    return { component: MIGRATION_COMPONENT, className: "SidekickDO", migrations: AUTOMATION_DO_SCHEMA_MIGRATIONS };
   }
 
   protected override migrationsReady(): Promise<void> {
     return this.initialized;
   }
 
+  private identity(): { workspace_id: string; automation_id: string } | null {
+    return this.state.storage.sql.exec<{ workspace_id: string; automation_id: string }>(
+      `SELECT workspace_id, automation_id FROM automation WHERE id = 1`,
+    ).toArray()[0] ?? null;
+  }
+
   private selfObjectName(): string | null {
-    if (this.objectName !== null) return this.objectName;
     let row: { workspace_id: string; automation_id: string } | null;
     try {
-      row = first(this.state.storage.sql.exec<{ workspace_id: string; automation_id: string }>(
-        `SELECT workspace_id, automation_id FROM automation WHERE id = 1`,
-      ));
+      row = this.identity();
     } catch {
       return null;
     }
-    if (!row) return null;
-    this.objectName = automationDOName(
-      this.env.AVALON_REGION,
-      asWorkspaceId(row.workspace_id),
-      asAutomationId(row.automation_id),
-    );
-    return this.objectName;
+    return row ? automationDOName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id), asAutomationId(row.automation_id)) : null;
+  }
+
+  private frozen(): boolean {
+    return this.state.storage.sql.exec(`SELECT 1 FROM sidekick_export_freeze WHERE id = 1`).toArray().length > 0;
   }
 
   override async fetch(request: Request): Promise<Response> {
     await this.initialized;
     const path = new URL(request.url).pathname;
     if (request.method === "GET" && path === "/health") {
-      return Response.json({ ok: true, role: "automation", databaseBytes: this.state.storage.sql.databaseSize });
+      return Response.json({ ok: true, role: "automation", frozen: this.frozen(), databaseBytes: this.state.storage.sql.databaseSize });
     }
     return Response.json({ error: "not_found" }, { status: 404 });
   }
 
-  // ---------------------------------------------------------------------------
-  // The automation itself.
-  // ---------------------------------------------------------------------------
-
-  /** Bring the automation into existence, in draft, with its conversation reserved. */
-  async create(input: AutomationCreateRequest): Promise<{ created: boolean }> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationCreateRequestSchema, input, "create");
-    const existing = this.row();
-    if (existing) {
-      this.assertAutomation(request.workspaceId, request.automationId);
-      return { created: false };
-    }
-    const now = Date.now();
-    this.state.storage.transactionSync(() => {
-      this.state.storage.sql.exec(
-        `INSERT INTO automation
-           (id, automation_id, workspace_id, region, author_user_id, run_as_user_id, lifecycle,
-            paused_by, scope, owning_workstream_id, owning_substream_id, owning_room_archived_at, title,
-            description, current_definition_revision, accepted_definition_revision, connector_bindings_json,
-            default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
-            model_override, email_address, effective_after_event_sequence, authority_generation,
-            created_at, updated_at)
-         VALUES (1, ?, ?, ?, ?, ?, 'draft', NULL, ?, ?, ?, NULL, '', '', 0, NULL, '{}', '[]', '{}', '[]',
-                 NULL, NULL, NULL, ?, ?, ?)`,
-        request.automationId,
-        request.workspaceId,
-        this.env.AVALON_REGION,
-        request.authorUserId,
-        request.authorUserId,
-        request.scope,
-        request.owningWorkstreamId,
-        request.owningSubstreamId,
-        request.authorityGeneration,
-        now,
-        now,
-      );
-      this.registerChild("0", "main", request.authorUserId, now);
-      this.enqueueDirectory(now);
-    });
-    await this.armNextAlarm();
-    return { created: true };
-  }
-
   /**
-   * Record what the conversation drafted: a new immutable revision.
+   * Hand every row to the Organization object, and freeze.
    *
-   * The title and description follow the latest draft so the sidebar row names
-   * it. Scope follows the draft only while the automation is still a draft and
-   * only between the two scopes a sidebar automation may take; a room's
-   * automation is the room's from the start and stays so.
+   * The freeze is written in the same transaction as the read, so the rows
+   * returned are the rows this object will hold for good: nothing else in this
+   * class writes. Asked again, it returns the same rows, so a retried import
+   * reads what the first attempt read. The native alarm is cleared: a
+   * schedule armed here is the Organization's to fire now.
    */
-  async saveDefinition(input: AutomationSubmitDefinitionRequest & { actor: AutomationActor }): Promise<{ definitionRevision: number; ready: boolean }> {
+  async exportForImport(input: unknown): Promise<SidekickExport> {
     await this.initialized;
-    const { actor: rawActor, ...definitionInput } = input;
-    const request = parseRpcInput(AutomationSubmitDefinitionRequestSchema, definitionInput, "save_definition");
-    const actor = parseRpcInput(AutomationActorSchema, rawActor, "save_definition_actor");
-    this.assertManager(this.assertAutomation(request.workspaceId, request.automationId), actor);
-    const submitted = await this.submitDefinition(request);
-    if (submitted.ready) await this.apply({ workspaceId: request.workspaceId, automationId: request.automationId, actor });
-    return submitted;
-  }
-
-  async submitDefinition(input: AutomationSubmitDefinitionRequest): Promise<{
-    definitionRevision: number;
-    ready: boolean;
-  }> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationSubmitDefinitionRequestSchema, input, "submit_definition");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-    const definitionJson = JSON.stringify(request.draft);
-    const definitionHash = await sha256(definitionJson);
-    const now = Date.now();
-    const revision = this.state.storage.transactionSync(() => {
-      const latest = this.assertAutomation(request.workspaceId, request.automationId);
-      if (latest.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-      // A colour outside the ring, or an icon the catalog no longer offers, is
-      // one nobody can pick any more, so it may only be the one this Sidekick
-      // already wears, kept through an edit.
-      const worn = latest.appearance_json
-        ? WorkstreamAppearanceSchema.parse(JSON.parse(latest.appearance_json))
-        : null;
-      if (request.appearance && !(PROJECT_COLOR_RING as readonly string[]).includes(request.appearance.color)
-        && worn?.color !== request.appearance.color) {
-        throw new ApiError(400, "sidekick_color_not_offered",
-          `color ${request.appearance.color} is kept only when it is the Sidekick's current color; choose one of ${PROJECT_COLOR_RING.join(", ")}`);
+    const request = parseRpcInput(ExportRequestSchema, input, "export_for_import");
+    const sql = this.state.storage.sql;
+    const exported = this.state.storage.transactionSync((): SidekickExport => {
+      if (!this.frozen()) {
+        sql.exec(`INSERT INTO sidekick_export_freeze (id, frozen_at) VALUES (1, ?)`, Date.now());
+        for (const alarm of this.scheduledAlarms.list()) {
+          sql.exec(`INSERT INTO sidekick_export_alarms (kind, key, due_at) VALUES (?, ?, ?)`, alarm.kind, alarm.key, alarm.dueAt);
+          this.scheduledAlarms.cancel(alarm.kind, alarm.key);
+        }
       }
-      if (request.appearance && !(WORKSTREAM_ICON_KEYS as readonly string[]).includes(request.appearance.icon)
-        && worn?.icon !== request.appearance.icon) {
-        throw new ApiError(400, "sidekick_icon_not_offered",
-          `icon ${request.appearance.icon} is kept only when it is the Sidekick's current icon; choose one from the icon catalog`);
+      const automation = sql.exec(`SELECT * FROM automation WHERE id = 1`).toArray()[0];
+      if (!automation) return { status: "missing" };
+      if (automation.workspace_id !== request.workspaceId || automation.automation_id !== request.automationId) {
+        throw new Error("sidekick_export_identity_mismatch");
       }
-      const definitionRevision = latest.current_definition_revision + 1;
-      this.state.storage.sql.exec(
-        `INSERT INTO definition_revisions
-           (definition_revision, definition_json, definition_hash, evaluator_rules_json, ready,
-            submitted_by_run_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        definitionRevision,
-        definitionJson,
-        definitionHash,
-        request.evaluatorRules ? JSON.stringify(request.evaluatorRules) : null,
-        request.draft.ready ? 1 : 0,
-        request.submittedByRunId,
-        now,
-      );
-      const scope = latest.lifecycle === "draft" && latest.scope !== "workstream" && request.draft.suggestedScope !== "workstream"
-        ? request.draft.suggestedScope
-        : latest.scope;
-      // A submitted appearance is a new choice only when it differs from the
-      // last one the chat knew of: its own previous submission, or what the
-      // Sidekick wore when it first submitted. A repeat of that is the chat
-      // copying its own earlier call, and writing it would undo whatever a
-      // person picked since. Nothing stored means nobody has chosen.
-      const submittedAppearance = request.appearance ? JSON.stringify(request.appearance) : null;
-      const knownAppearance = latest.chat_appearance_json ?? latest.appearance_json;
-      const appearance = submittedAppearance !== null
-        && (latest.appearance_json === null || submittedAppearance !== knownAppearance)
-        ? submittedAppearance
-        : latest.appearance_json;
-      this.state.storage.sql.exec(
-        `UPDATE automation
-            SET current_definition_revision = ?, title = ?, description = ?, scope = ?,
-                appearance_json = ?, chat_appearance_json = COALESCE(?, chat_appearance_json), updated_at = ?
-          WHERE id = 1`,
-        definitionRevision,
-        request.draft.name,
-        request.draft.description,
-        scope,
-        appearance,
-        submittedAppearance,
-        now,
-      );
-      this.enqueueDirectory(now);
-      return definitionRevision;
+      return {
+        status: "ok",
+        automation: automation as never,
+        revisions: sql.exec(`SELECT * FROM definition_revisions ORDER BY definition_revision`).toArray() as never,
+        schedules: sql.exec(`SELECT * FROM schedules ORDER BY schedule_id`).toArray() as never,
+        runs: sql.exec(`SELECT * FROM runs ORDER BY created_at, run_id`).toArray() as never,
+        emailReceipts: sql.exec(`SELECT * FROM inbound_email_receipts ORDER BY resend_email_id`).toArray() as never,
+        children: sql.exec(`SELECT * FROM conversation_children ORDER BY substream_id`).toArray() as never,
+        childProjections: sql.exec(`SELECT * FROM substream_directory ORDER BY substream_id`).toArray() as never,
+        alarms: sql.exec<{ kind: string; key: string; due_at: number }>(
+          `SELECT kind, key, due_at FROM sidekick_export_alarms ORDER BY kind, key`,
+        ).toArray().map((alarm) => ({ kind: alarm.kind, key: alarm.key, dueAt: alarm.due_at })),
+        outboxKinds: sql.exec<{ effect_kind: string }>(`SELECT DISTINCT effect_kind FROM durable_outbox ORDER BY effect_kind`)
+          .toArray().map((row) => row.effect_kind),
+      };
     });
-    await this.armNextAlarm();
-    return { definitionRevision: revision, ready: request.draft.ready };
+    await this.state.storage.deleteAlarm();
+    return exported;
   }
 
   /**
-   * Make the current ready revision the one that runs.
-   *
-   * Everything read from outside (connections, the person's timezone, the
-   * email route) happens first; then one transaction replaces the schedules
-   * and moves the lifecycle; then the tail: schedule alarms, the workspace's
-   * registrations, and the declared memory tables, each idempotent. The tail
-   * is recorded as done in `applied_effects_revision` only at its end, so a
-   * failure anywhere in it is repaired by applying again: the replay guard
-   * reads that marker, not the accepted revision, which the transaction wrote
-   * before the tail ran.
-   *
-   * A paused automation is not applied to. Room-archive paused it so the
-   * archive holds, and `resume` is what lifts a pause; applying here used to
-   * set `lifecycle = 'active'` regardless and so resumed an automation whose
-   * room was archived, with its schedules and connector writes, while the one
-   * place its result could go stayed refused.
+   * Something here is due: a schedule, a run start, an unsent directory row.
+   * None of it is this object's to do any more, so the Organization is asked
+   * to import it, which freezes this object and re-arms the entries there.
    */
-  async apply(input: AutomationActorRequest): Promise<AutomationDetail> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationActorRequestSchema, input, "apply");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-    this.assertManager(row, request.actor);
-    if (row.owning_room_archived_at !== null) {
-      throw new ApiError(409, "sidekick_room_archived", "The work stream that owns this Sidekick is archived");
-    }
-    const revision = this.revision(row.current_definition_revision);
-    if (!revision || revision.ready !== 1) {
-      throw new ApiError(422, "sidekick_definition_not_ready", "The Sidekick's definition is not ready to apply");
-    }
-    if (
-      row.lifecycle === "active"
-      && row.accepted_definition_revision === revision.definition_revision
-      && row.applied_effects_revision === revision.definition_revision
-    ) {
-      return this.detail();
-    }
-    const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
-    const prepared = definition.triggers.length === 0
-      ? { selections: { defaultPluginIds: [], activitySourcePluginIds: {} }, connectorBindings: {}, evaluators: [], schedules: [] }
-      : await this.prepareApplication(row, revision, definition, request.actor.userId);
-    const emailRoute = sidekickReceivesEmail(definition) ? await new WorkstreamEmailRoutingService(this.env).reserveAutomation({
-      region: row.region,
-      workspaceId: row.workspace_id,
-      automationSubscriptionId: row.automation_id,
-    }) : { emailAddress: row.email_address };
-    const now = Date.now();
-    const previousSchedules = this.schedules().map((schedule) => schedule.schedule_id);
-    this.state.storage.transactionSync(() => {
-      const current = this.row();
-      if (!current || current.current_definition_revision !== revision.definition_revision
-        || current.lifecycle !== row.lifecycle || current.run_as_user_id !== row.run_as_user_id
-        || current.scope !== row.scope || current.owning_room_archived_at !== row.owning_room_archived_at) {
-        throw new ApiError(409, "sidekick_revision_changed", "The Sidekick changed while saving; retry the latest revision");
-      }
-      this.state.storage.sql.exec(`DELETE FROM schedules`);
-      for (const schedule of prepared.schedules) {
-        this.state.storage.sql.exec(
-          `INSERT INTO schedules
-             (schedule_id, definition_revision, schedule_kind, definition_json, next_due_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          schedule.id,
-          revision.definition_revision,
-          schedule.kind,
-          JSON.stringify(schedule.definition),
-          schedule.nextDueAt,
-          now,
-        );
-      }
-      this.state.storage.sql.exec(
-        `UPDATE automation
-            SET lifecycle = CASE WHEN lifecycle = 'paused' THEN 'paused' ELSE 'active' END, effective_after_event_sequence = NULL, accepted_definition_revision = ?,
-                connector_bindings_json = ?, default_plugin_ids_json = ?,
-                activity_source_plugin_ids_json = ?, evaluator_projection_json = ?,
-                email_address = ?, loadable = ?, updated_at = ?
-          WHERE id = 1`,
-        revision.definition_revision,
-        JSON.stringify(prepared.connectorBindings),
-        JSON.stringify(prepared.selections.defaultPluginIds),
-        JSON.stringify(prepared.selections.activitySourcePluginIds),
-        JSON.stringify(prepared.evaluators),
-        emailRoute.emailAddress,
-        sidekickLoadable(definition) ? 1 : 0,
-        now,
-      );
-      this.enqueueDirectory(now);
-      this.scheduledAlarms.schedule({ kind: "sidekick_publication", key: String(revision.definition_revision), dueAt: now });
-    });
-    await this.armNextAlarm();
-    await this.applyEffects(this.row()!, revision.definition_revision, definition, previousSchedules, prepared);
-    if (this.row()?.applied_effects_revision === revision.definition_revision) {
-      await this.cancelScheduledAlarm("sidekick_publication", String(revision.definition_revision));
-    }
-    return this.detail();
+  private async requestImport(): Promise<void> {
+    if (this.frozen()) return;
+    const identity = this.identity();
+    if (!identity) return;
+    const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspace_id,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspace_id)));
+    await workspace.requestSidekickImport({ workspaceId: identity.workspace_id, automationId: identity.automation_id });
   }
-
-  /**
-   * The tail of an apply, run again by the next apply until it has all landed.
-   *
-   * `previousSchedules` are whatever schedule ids existed before this call:
-   * on a replay the table already holds the new revision's, so cancelling
-   * them and arming them again is one idempotent pass.
-   */
-  private async applyEffects(
-    row: AutomationRow,
-    definitionRevision: number,
-    definition: AutomationDraft,
-    previousSchedules: readonly string[],
-    prepared: Pick<Awaited<ReturnType<typeof this.prepareApplication>>, "schedules" | "evaluators">,
-  ): Promise<void> {
-    await Promise.all(previousSchedules.map((scheduleId) => (
-      this.cancelScheduledAlarm(AUTOMATION_SCHEDULE_ALARM_KIND, scheduleId)
-    )));
-    for (const schedule of row.lifecycle === "paused" ? [] : prepared.schedules) {
-      await this.scheduleAlarm({ kind: AUTOMATION_SCHEDULE_ALARM_KIND, key: schedule.id, dueAt: schedule.nextDueAt });
-    }
-    if (row.accepted_definition_revision !== definitionRevision) return;
-    await this.replaceRegistrations(row.lifecycle === "paused" ? [] : prepared.evaluators, row);
-    if (definition.triggers.length > 0) await materializeAutomationMemoryTables(this.env, {
-      workspaceId: row.workspace_id,
-      automationId: row.automation_id,
-      definitionRevision,
-      runAsUserId: row.run_as_user_id,
-      tables: definition.memoryTables,
-    });
-    const current = this.row();
-    if (current?.accepted_definition_revision === definitionRevision && current.lifecycle === row.lifecycle && current.registration_generation === row.registration_generation) {
-      this.state.storage.sql.exec(
-        `UPDATE automation SET applied_effects_revision = ?, updated_at = ? WHERE id = 1`,
-        definitionRevision, Date.now(),
-      );
-    } else if (current && current.lifecycle !== "deleted" && current.accepted_definition_revision !== null) {
-      // An older asynchronous tail must not claim a newer publication's effects.
-      // Reconcile the current accepted setup even if its earlier tail finished first.
-      this.state.storage.transactionSync(() => {
-        this.state.storage.sql.exec(`UPDATE automation SET applied_effects_revision = NULL WHERE id = 1`);
-        this.scheduledAlarms.schedule({ kind: "sidekick_publication", key: String(current.accepted_definition_revision), dueAt: Date.now() });
-      });
-    }
-    await this.armNextAlarm();
-  }
-
-  /** Explicit object-owned reconciliation when the loading policy changes. */
-  async reconcileLoadable(input: AutomationActorRequest): Promise<{ loadable: boolean }> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationActorRequestSchema, input, "reconcile_loadable");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    this.assertManager(row, request.actor);
-    const revision = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
-    const definition = revision ? AutomationDraftSchema.parse(JSON.parse(revision.definition_json)) : null;
-    // Legacy email is effective trigger configuration even when absent in JSON.
-    const loadable = definition !== null && sidekickLoadable(definition);
-    this.state.storage.transactionSync(() => {
-      this.state.storage.sql.exec(`UPDATE automation SET loadable = ? WHERE id = 1`, loadable ? 1 : 0);
-      this.enqueueDirectory(Date.now());
-    });
-    await this.armNextAlarm();
-    return { loadable };
-  }
-
-  /**
-   * Choose the Sidekick's icon or colour.
-   *
-   * A parent-owned mutation, so it arrives over REST rather than on the
-   * authoring conversation's socket: this object owns the Sidekick's identity
-   * the way it owns its name and lifecycle, and the conversation underneath is
-   * a child that happens to be open. Everyone else finds out the way they find
-   * out about a rename — through the directory row this enqueues, which
-   * WorkspaceDO pushes to every connected client.
-   *
-   * The patch merges over what is stored, so a colour choice cannot undo
-   * somebody's icon; the caller gets the merged value back, which is the whole
-   * detail rather than a receipt, so the person who picked never has to wait
-   * for the projection to come back round.
-   */
-  async setAppearance(input: AutomationSetAppearanceRequest): Promise<AutomationDetail> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationSetAppearanceRequestSchema, input, "set_appearance");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    this.assertManager(row, request.actor);
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-    const patch = WorkstreamAppearancePatchSchema.parse(request.appearance);
-    const current = row.appearance_json
-      ? WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json))
-      : { icon: null, color: null };
-    const appearance = WorkstreamAppearanceSchema.parse({ ...current, ...patch });
-    const now = Date.now();
-    this.state.storage.transactionSync(() => {
-      this.state.storage.sql.exec(
-        `UPDATE automation SET appearance_json = ?, updated_at = ? WHERE id = 1`,
-        JSON.stringify(appearance),
-        now,
-      );
-      this.enqueueDirectory(now);
-    });
-    await this.armNextAlarm();
-    return this.detail();
-  }
-
-  async pause(input: AutomationActorRequest): Promise<void> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationActorRequestSchema, input, "pause");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    this.assertManager(row, request.actor);
-    if (row.lifecycle === "paused") return;
-    if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can be paused");
-    await this.pauseBy(row, "person");
-  }
-
-  async resume(input: AutomationActorRequest): Promise<void> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationActorRequestSchema, input, "resume");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    this.assertManager(row, request.actor);
-    if (row.lifecycle === "active") return;
-    if (row.lifecycle !== "paused") throw new ApiError(409, "sidekick_not_paused", "Only a paused Sidekick can be resumed");
-    if (row.owning_room_archived_at !== null) {
-      throw new ApiError(409, "sidekick_room_archived", "The work stream that owns this Sidekick is archived");
-    }
-    await this.resumeFromPause(row);
-  }
-
-  async remove(input: AutomationActorRequest): Promise<void> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationActorRequestSchema, input, "remove");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    this.assertManager(row, request.actor);
-    const now = Date.now();
-    if (row.lifecycle === "deleted") {
-      // Already gone here; say so to the workspace again. The directory row
-      // is the one thing a lost queue message can leave behind, and a repeat
-      // delete is the natural way to ask for it to be cleared.
-      this.state.storage.transactionSync(() => this.enqueueDirectory(now));
-      await this.armNextAlarm();
-      return;
-    }
-    const schedules = this.schedules().map((schedule) => schedule.schedule_id);
-    this.state.storage.transactionSync(() => {
-      this.stopOpenRuns(now);
-      this.state.storage.sql.exec(
-        `UPDATE automation SET lifecycle = 'deleted', updated_at = ? WHERE id = 1`,
-        now,
-      );
-      this.enqueueDirectory(now);
-    });
-    await Promise.all(schedules.map((scheduleId) => (
-      this.cancelScheduledAlarm(AUTOMATION_SCHEDULE_ALARM_KIND, scheduleId)
-    )));
-    await this.cancelScheduledAlarmKind(AUTOMATION_RUN_ALARM_KIND);
-    if (row.lifecycle === "active") await this.replaceRegistrations([]);
-    await this.armNextAlarm();
-  }
-
-  /**
-   * Archiving a room pauses the automations it owns; unarchiving resumes the
-   * ones the archive paused and no other. `paused_by` is why: an automation a
-   * person paused before the archive must not come back because somebody
-   * unarchived the room.
-   */
-  async setOwningRoomArchived(input: AutomationOwningRoomArchivedRequest): Promise<{
-    changed: boolean;
-    outcomeCode: string;
-  }> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationOwningRoomArchivedRequestSchema, input, "set_owning_room_archived");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.owning_workstream_id !== request.workstreamId) {
-      return { changed: false, outcomeCode: "sidekick_not_owned_by_workstream" };
-    }
-    const now = Date.now();
-    if (request.archived) {
-      if (row.owning_room_archived_at !== null) return { changed: false, outcomeCode: "sidekick_room_already_archived" };
-      this.state.storage.sql.exec(
-        `UPDATE automation SET owning_room_archived_at = ?, updated_at = ? WHERE id = 1`,
-        now,
-        now,
-      );
-      if (row.lifecycle === "active") {
-        await this.pauseBy(this.row()!, "room_archive");
-        return { changed: true, outcomeCode: "sidekick_paused" };
-      }
-      return { changed: true, outcomeCode: "sidekick_room_archived" };
-    }
-    if (row.owning_room_archived_at === null) return { changed: false, outcomeCode: "sidekick_room_not_archived" };
-    this.state.storage.sql.exec(
-      `UPDATE automation SET owning_room_archived_at = NULL, updated_at = ? WHERE id = 1`,
-      now,
-    );
-    if (row.lifecycle === "paused" && row.paused_by === "room_archive") {
-      await this.resumeFromPause(this.row()!);
-      return { changed: true, outcomeCode: "sidekick_resumed" };
-    }
-    return { changed: true, outcomeCode: "sidekick_room_unarchived" };
-  }
-
-  async runNow(input: AutomationRunNowRequest): Promise<{ runId: string; reused: boolean }> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationRunNowRequestSchema, input, "run_now");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    this.assertManager(row, request.actor);
-    if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
-    const accepted = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
-    const definition = accepted ? AutomationDraftSchema.parse(JSON.parse(accepted.definition_json)) : null;
-    if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
-      throw new ApiError(409, "sidekick_not_runnable", "Use this Sidekick in a conversation");
-    }
-    const admitted = await this.admitOccurrence(
-      `manual:${request.idempotencyKey}`,
-      { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
-      null,
-    );
-    return { runId: admitted.runId, reused: admitted.reused };
-  }
-
-  /**
-   * Run once from a script instead of from a model.
-   *
-   * A demo workspace is seeded with a Sidekick that has already produced one
-   * briefing, and that briefing is produced by an ordinary run: the same
-   * admission, provisioning, Bind loop, tool surface and settlement as a run
-   * somebody starts by hand. The only thing the seed replaces is where the
-   * model's bytes come from, and it replaces it exactly where a seeded message
-   * does — the run's execution context, read by the harness.
-   *
-   * Separate from `runNow` rather than an optional field on it, because
-   * `runNow` is what `POST /sidekicks/:id/run` reaches: a seed on that request
-   * shape would be one deserialization away from letting a member script their
-   * own Sidekick's output and keep the result as history. Nothing routes a
-   * client body here. The trigger recorded is `manual` and names the author,
-   * which is what actually happened; inventing a schedule occurrence the
-   * schedule never fired would be the fabricated history this feature refuses
-   * everywhere else. `docs/demo-workspaces.md` owns the seeding rules.
-   */
-  async runSeeded(input: AutomationRunSeededRequest): Promise<{ runId: string; reused: boolean }> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationRunSeededRequestSchema, input, "run_seeded");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    this.assertManager(row, request.actor);
-    if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
-    if (request.seed.assistant === null) {
-      throw new ApiError(422, "demo_seed_run_without_script", "A seeded run needs a turn to answer with");
-    }
-    const admitted = await this.admitOccurrence(
-      `seed:${request.seed.packVersion}:${request.seed.actionId}`,
-      { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
-      null,
-      request.seed,
-    );
-    return { runId: admitted.runId, reused: admitted.reused };
-  }
-
-  /**
-   * What this delivery has to do before it may admit its event.
-   *
-   * Every check `admitExternalEvent` applies lives here and is read by both, so
-   * a caller cannot learn one answer from the plan and have admission apply
-   * another. Ordering is deliberate: lifecycle, trigger membership and the
-   * activation boundary are free and settle most deliveries, and only what
-   * survives all three is worth a model call.
-   */
-  private externalEventPlan(request: AutomationExternalEventAdmission): AutomationExternalEventPlan {
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.lifecycle !== "active") return { kind: "refuse", outcomeCode: `sidekick_${row.lifecycle}` };
-    const revision = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
-    const definition = revision ? AutomationDraftSchema.parse(JSON.parse(revision.definition_json)) : null;
-    if (definition?.definitionVersion === 2) {
-      const sources = z.array(z.object({ evaluatorId: z.string(), source: z.object({ eventType: z.string() }) })).parse(JSON.parse(row.evaluator_projection_json));
-      if (!definition.triggers.some(isExternalEventTrigger) || !sources.some((entry) => entry.evaluatorId === request.registrationId && entry.source.eventType === request.event.eventType)) {
-        return { kind: "refuse", outcomeCode: "sidekick_trigger_removed" };
-      }
-    }
-    if (row.effective_after_event_sequence === null
-      || request.event.eventSequence <= row.effective_after_event_sequence) {
-      return { kind: "refuse", outcomeCode: "sidekick_event_before_activation_boundary" };
-    }
-    const semantic = semanticConditionsForEventType(definition, request.event.eventType);
-    if (semantic.conditions.length > 0) {
-      return { kind: "judge", conditions: semantic.conditions, connectorType: semantic.connectorType };
-    }
-    // A Sidekick that gates events and whose join found none of them is refused,
-    // not admitted. The join is by declared event type, so it comes up empty when
-    // a semantic trigger's `deterministicPrefilter.eventType` has drifted from the
-    // event type its evaluator rule registered — and admitting there would run the
-    // Sidekick ungated, which is the defect this mechanism exists to fix. Refusing
-    // is visible in a way admitting is not: the outcome code says the condition
-    // could not be located rather than that it passed.
-    return semantic.gated
-      ? { kind: "refuse", outcomeCode: "sidekick_semantic_condition_unresolved" }
-      : { kind: "admit" };
-  }
-
-  /**
-   * The plan for one matched external event, without admitting it.
-   *
-   * Read-only and idempotent: a caller reads it, judges any conditions it names,
-   * and comes back to `admitExternalEvent` with the verdict.
-   */
-  async externalEventAdmissionPlan(input: AutomationExternalEventAdmission): Promise<AutomationExternalEventPlan> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationExternalEventAdmissionSchema, input, "external_event_admission_plan");
-    return this.externalEventPlan(request);
-  }
-
-  /** Admit one matched external event, once. */
-  async admitExternalEvent(input: AutomationExternalEventAdmission): Promise<{
-    admitted: boolean;
-    outcomeCode: string;
-  }> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationExternalEventAdmissionSchema, input, "admit_external_event");
-    const plan = this.externalEventPlan(request);
-    if (plan.kind === "refuse") return { admitted: false, outcomeCode: plan.outcomeCode };
-    if (plan.kind === "judge") {
-      // The condition the member wrote is the gate. A delivery that did not
-      // bring a verdict is refused rather than admitted, because admitting is
-      // how this trigger type spent its first year: the sentence was stored,
-      // displayed, and never applied.
-      const verdict = request.conditionVerdict;
-      if (!verdict) return { admitted: false, outcomeCode: "sidekick_semantic_condition_unjudged" };
-      // Both halves of the verdict have to agree, because the schema lets them
-      // disagree: `{ admit: true, code: "classifier_unavailable" }` parses, and
-      // trusting `admit` alone would start a run on a verdict that says the
-      // classifier never answered. The one caller today derives both from one
-      // decision, so this changes nothing at runtime — it moves the invariant to
-      // the object that the doc comments say decides, where a second caller
-      // written later inherits it instead of having to remember it.
-      if (!verdict.admit || verdict.code !== "condition_met") {
-        return { admitted: false, outcomeCode: `sidekick_semantic_${verdict.code}` };
-      }
-    }
-    const admitted = await this.admitOccurrence(externalEventOccurrenceKey(request.event), {
-      kind: "external_event",
-      workspaceEventId: request.event.id,
-      eventType: request.event.eventType,
-      occurredAt: request.event.occurredAt,
-      payloadHash: request.payloadHash,
-    }, externalEventOpening(request.event));
-    return {
-      admitted: true,
-      outcomeCode: admitted.reused ? "sidekick_occurrence_replayed" : "sidekick_occurrence_admitted",
-    };
-  }
-
-  /**
-   * Admit one inbound email, once: the receipt is keyed by the provider's
-   * message id, so a webhook retry answers from it. Lifecycle, address and
-   * sender are decided here and nowhere else.
-   */
-  async admitInboundEmail(input: AutomationInboundEmailAdmission): Promise<{
-    admitted: boolean;
-    duplicate: boolean;
-    outcomeCode: string;
-    runId: string | null;
-  }> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationInboundEmailAdmissionSchema, input, "admit_inbound_email");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    const existing = first(this.state.storage.sql.exec<{ run_id: string | null; outcome_code: string }>(
-      `SELECT run_id, outcome_code FROM inbound_email_receipts WHERE resend_email_id = ?`,
-      request.resendEmailId,
-    ));
-    if (existing) {
-      return { admitted: existing.run_id !== null, duplicate: true, outcomeCode: existing.outcome_code, runId: existing.run_id };
-    }
-    const accepted = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
-    const emailEnabled = accepted !== null && sidekickReceivesEmail(AutomationDraftSchema.parse(JSON.parse(accepted.definition_json)));
-    const refusal = row.lifecycle !== "active"
-      ? "sidekick_not_active"
-      : !emailEnabled || row.email_address === null || row.email_address.toLowerCase() !== request.emailAddress.toLowerCase()
-        ? "sidekick_email_route_mismatch"
-        : request.senderUserId === null
-          || (row.scope === "personal"
-            && request.senderUserId !== row.author_user_id
-            && request.senderUserId !== row.run_as_user_id)
-          ? "email_sender_not_authorized"
-          : null;
-    const now = Date.now();
-    if (refusal) {
-      this.state.storage.sql.exec(
-        `INSERT OR IGNORE INTO inbound_email_receipts
-           (resend_email_id, run_id, outcome_code, payload_ref, resource_id, received_at)
-         VALUES (?, NULL, ?, ?, ?, ?)`,
-        request.resendEmailId,
-        refusal,
-        request.payloadRef,
-        request.resourceId,
-        request.receivedAt,
-      );
-      return { admitted: false, duplicate: false, outcomeCode: refusal, runId: null };
-    }
-    const admitted = await this.admitOccurrence(
-      `inbound_email:${request.resendEmailId}`,
-      { kind: "inbound_email", receiptId: uuidV7(now), occurredAt: request.receivedAt },
-      {
-        textContent: request.textContent,
-        structuredContent: request.structuredContent,
-        resourceId: request.resourceId,
-      },
-    );
-    this.state.storage.sql.exec(
-      `INSERT OR IGNORE INTO inbound_email_receipts
-         (resend_email_id, run_id, outcome_code, payload_ref, resource_id, received_at)
-       VALUES (?, ?, 'admitted', ?, ?, ?)`,
-      request.resendEmailId,
-      admitted.runId,
-      request.payloadRef,
-      request.resourceId,
-      request.receivedAt,
-    );
-    return { admitted: true, duplicate: admitted.reused, outcomeCode: "admitted", runId: admitted.runId };
-  }
-
-  /** Instruction-use audience is independent of authoring/history admission. */
-  private skillAudienceAllows(row: AutomationRow, request: SidekickSkillReadRequest): boolean {
-    return sidekickAudienceAllows({
-      scope: row.scope,
-      authorUserId: row.author_user_id,
-      runAsUserId: row.run_as_user_id,
-      owningWorkstreamId: row.owning_workstream_id,
-    }, request);
-  }
-
-  /** Minimal rail metadata for an already admitted receiving conversation. */
-  async readSkillSummary(input: SidekickSkillReadRequest): Promise<SidekickAttachment | null> {
-    await this.initialized;
-    const request = SidekickSkillReadRequestSchema.parse(input);
-    const row = this.row();
-    if (!row) return null;
-    this.assertAutomation(request.workspaceId,request.automationId);
-    if (row.lifecycle === "deleted" || !this.skillAudienceAllows(row,request)) return null;
-    return SidekickAttachmentSchema.parse({ id:row.automation_id,name:row.title,description:row.description,
-      available:row.lifecycle === "active" && row.loadable === 1
-        && row.accepted_definition_revision !== null && row.owning_room_archived_at === null,
-    });
-  }
-
-  /** What a run reads at start: its definition by revision, and how it was triggered. */
-  async readSkillSource(input: SidekickSkillReadRequest): Promise<SidekickSkillSource | null> {
-    await this.initialized;
-    const request = parseRpcInput(SidekickSkillReadRequestSchema, input, "read_skill_source");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.lifecycle === "deleted" || row.accepted_definition_revision === null || row.owning_room_archived_at !== null) return null;
-    if (!request.existingExecution && (row.lifecycle !== "active" || row.loadable !== 1)) return null;
-    if (!this.skillAudienceAllows(row,request)) return null;
-    const revision = this.revision(row.accepted_definition_revision);
-    if (!revision) throw new Error("sidekick_accepted_revision_missing");
-    const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
-    return SidekickSkillSourceSchema.parse({
-      id: row.automation_id, revision: revision.definition_revision, loadable: row.loadable === 1,
-      name: definition.name, description: definition.description,
-      whenToUse: definition.whenToUse || definition.description, instructions: definition.instructions,
-    });
-  }
-
-  async readRunDefinition(input: AutomationRunDefinitionRequest): Promise<AutomationRunDefinitionV1> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationRunDefinitionRequestSchema, input, "read_run_definition");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    const run = this.run(request.runId);
-    if (!run) throw new ApiError(404, "sidekick_run_not_found", "This run does not exist");
-    // A continued run names the revision it continued under; a scheduled start
-    // names the one it was admitted under, which is the run row's own.
-    const definitionRevision = request.definitionRevision ?? run.definition_revision;
-    const revision = this.revision(definitionRevision);
-    if (!revision) throw new ApiError(404, "sidekick_definition_not_found", "The run's definition revision is missing");
-    const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
-    return AutomationRunDefinitionV1Schema.parse({
-      schemaVersion: 1,
-      automationId: row.automation_id,
-      runId: run.run_id,
-      definitionRevision,
-      definition: {
-        name: definition.name,
-        description: definition.description,
-        overview: definition.overview,
-        instructions: definition.instructions,
-        requiredCapabilities: definition.requiredCapabilities,
-        expectedOutputs: definition.expectedOutputs,
-        defaultBehavior: definition.defaultBehavior,
-        recommendedPlugins: definition.recommendedPlugins,
-        memoryTables: definition.memoryTables,
-      },
-      defaultPluginIds: JSON.parse(row.default_plugin_ids_json),
-      activitySourcePluginIds: JSON.parse(row.activity_source_plugin_ids_json),
-      connectorBindings: JSON.parse(row.connector_bindings_json),
-      scope: row.scope,
-      owningWorkstreamId: row.owning_workstream_id,
-      owningSubstreamId: row.owning_substream_id,
-      runAsUserId: row.run_as_user_id,
-      modelOverride: row.model_override,
-      trigger: JSON.parse(run.trigger_json),
-      opening: run.opening_json ? JSON.parse(run.opening_json) : null,
-      state: run.state,
-    });
-  }
-
-  /**
-   * Whether a run may still act: its own state, and the automation's.
-   *
-   * `stopGeneration` is how many times this Sidekick has stopped its open
-   * runs, so a continued run can tell a stop it was approved after from one
-   * that landed since. See `continueRun`. `completedAt` is when the row last
-   * finished, for display.
-   */
-  async readRunState(input: AutomationRunRequest): Promise<{
-    state: RunState;
-    lifecycle: Lifecycle;
-    completedAt: number | null;
-    stopGeneration: number;
-  } | null> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_state");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    const run = this.run(request.runId);
-    return run
-      ? { state: run.state, lifecycle: row.lifecycle, completedAt: run.completed_at, stopGeneration: row.stop_generation }
-      : null;
-  }
-
-  /**
-   * Whether input that reached a run child may continue the run, and with
-   * what: the `automationRun` block and run-as principal the scheduled start
-   * builds, against the Sidekick's **currently accepted** revision. A
-   * continued run acts on today's consent, not on the consent it started
-   * with.
-   *
-   * A read with no side effects. The run row moves back to `running` through
-   * the child's own `directory_common` projection (`onChildCommonProjection`),
-   * so a caller that fails between this answer and its activation leaves
-   * nothing here to undo. Who sent the input is not asked: anyone who can
-   * reach a run may continue it.
-   */
-  async continueRun(input: AutomationRunRequest): Promise<SidekickRunContinuation> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationRunRequestSchema, input, "continue_run");
-    const row = this.row();
-    // A Sidekick object that never held a row has no run to continue.
-    if (!row) return { outcome: "refused", code: "run_not_found" };
-    this.assertAutomation(request.workspaceId, request.automationId);
-    if (row.lifecycle === "deleted") return { outcome: "refused", code: "sidekick_deleted" };
-    // A room archive pauses the Sidekick with `paused_by = 'room_archive'`,
-    // so it refuses here under the same code as a person's pause.
-    if (row.lifecycle === "paused") return { outcome: "refused", code: "sidekick_paused" };
-    const run = this.run(request.runId);
-    if (!run || row.lifecycle !== "active" || row.accepted_definition_revision === null) {
-      return { outcome: "refused", code: "run_not_found" };
-    }
-    // The transcript the continuation would read is the run-as user's it was
-    // provisioned for. A claim since then moves who the Sidekick runs as, and
-    // continuing would put that history in front of the new principal's
-    // connectors, so it refuses instead.
-    if (run.run_as_user_id !== null && run.run_as_user_id !== row.run_as_user_id) {
-      return { outcome: "refused", code: "run_principal_changed" };
-    }
-    return SidekickRunContinuationSchema.parse({
-      outcome: "continue",
-      automationRun: {
-        schemaVersion: 1,
-        automationId: asAutomationId(row.automation_id),
-        runId: run.run_id,
-        definitionRevision: row.accepted_definition_revision,
-        trigger: JSON.parse(run.trigger_json),
-      },
-      executionPrincipal: { type: "user", userId: asUserId(row.run_as_user_id) },
-      stopGeneration: row.stop_generation,
-    });
-  }
-
-  async readDetail(input: AutomationActorRequest): Promise<AutomationDetail> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationActorRequestSchema, input, "read_detail");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    this.assertViewer(row, request.actor);
-    return this.detail();
-  }
-
-  async listRuns(input: AutomationActorRequest): Promise<{ items: AutomationRun[] }> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationActorRequestSchema, input, "list_runs");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    this.assertViewer(row, request.actor);
-    return { items: this.runSummaries(50) };
-  }
-
-  /**
-   * Take over who this automation runs as, and rebind what the last principal
-   * took with them. The claimant is always the caller: a field naming
-   * somebody else would let one person lend a colleague's credentials to a
-   * standing automation.
-   */
-  async claimExecutionPrincipal(input: AutomationActorRequest): Promise<AutomationExecutionPrincipalClaim> {
-    await this.initialized;
-    const request = parseRpcInput(AutomationActorRequestSchema, input, "claim_execution_principal");
-    const row = this.assertAutomation(request.workspaceId, request.automationId);
-    this.assertManager(row, request.actor);
-    const bindings = JSON.parse(row.connector_bindings_json) as Record<string, string>;
-    const connections = await this.workspaceDatabase().prepare(
-      `SELECT id, scope, owner_user_id, model_plugin_id, status
-         FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'`,
-    ).bind(row.workspace_id).all<{
-      id: string;
-      scope: string;
-      owner_user_id: string | null;
-      model_plugin_id: string;
-      status: string;
-    }>();
-    const rows = connections.results ?? [];
-    const byId = new Map(rows.map((connection) => [connection.id, connection]));
-    const claimantByPlugin = new Map(rows
-      .filter((connection) => connection.scope === "workspace" || connection.owner_user_id === request.actor.userId)
-      .map((connection) => [connection.model_plugin_id, connection]));
-    const rebound: string[] = [];
-    const unbound: string[] = [];
-    const next = { ...bindings };
-    for (const [pluginId, connectionId] of Object.entries(bindings)) {
-      const bound = byId.get(connectionId);
-      if (bound && (bound.scope === "workspace" || bound.owner_user_id === request.actor.userId)) continue;
-      const replacement = claimantByPlugin.get(pluginId);
-      if (!replacement) {
-        unbound.push(pluginId);
-        continue;
-      }
-      next[pluginId] = replacement.id;
-      rebound.push(pluginId);
-    }
-    const changed = row.run_as_user_id !== request.actor.userId || rebound.length > 0;
-    if (changed) {
-      const now = Date.now();
-      // Search reads who a Sidekick runs as from the directory row, so a
-      // handoff republishes it in the same write.
-      this.state.storage.transactionSync(() => {
-        this.state.storage.sql.exec(
-          `UPDATE automation SET run_as_user_id = ?, connector_bindings_json = ?, updated_at = ? WHERE id = 1`,
-          request.actor.userId,
-          JSON.stringify(next),
-          now,
-        );
-        if (row.run_as_user_id !== request.actor.userId) this.enqueueDirectory(now);
-      });
-      await this.armNextAlarm();
-    }
-    return AutomationExecutionPrincipalClaimSchema.parse({
-      principalUserId: request.actor.userId,
-      reboundPluginIds: rebound,
-      unboundProviders: unbound,
-      changed,
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // The conversation-parent contract. `receiveChildEffects` and `listChildren`
-  // are inherited.
-  // ---------------------------------------------------------------------------
-
-  async authorizeViewer(
-    input: ConversationParentAuthorizeViewerRequest,
-  ): Promise<ConversationParentAuthorizeViewerResult> {
-    await this.initialized;
-    const request = parseRpcInput(ConversationParentAuthorizeViewerRequestSchema, input, "authorize_viewer");
-    const row = this.row();
-    if (!row || row.lifecycle === "deleted") {
-      return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: true });
-    }
-    this.assertAutomation(request.workspaceId, request.parentId);
-    if (request.requireGrantAuthority) {
-      if (row.scope !== "workstream" || !row.owning_workstream_id) {
-        return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: false });
-      }
-      const owner = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, row.workspace_id,
-        workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id)));
-      // A Breakout home is reached through the Breakout's own grants, as a
-      // guest opening that Breakout is: a Channel grant does not reach it.
-      if (row.owning_substream_id !== "0") {
-        const home = await owner.authorizeViewer({ workspaceId: asWorkspaceId(row.workspace_id),
-          parentId: row.owning_workstream_id, substreamId: asSubstreamId(row.owning_substream_id),
-          userId: request.userId, requireGrantAuthority: true });
-        return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: home.authorized,
-          archived: row.owning_room_archived_at !== null || home.archived });
-      }
-      const access = await owner.readManagementAccess({ workspaceId: row.workspace_id,
-        parentId: row.owning_workstream_id, userId: request.userId });
-      return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: access.allowed,
-        archived: row.owning_room_archived_at !== null || (access.allowed && !access.writable) });
-    }
-    let authorized = row.scope === "workspace"
-      || row.author_user_id === request.userId
-      || row.run_as_user_id === request.userId;
-    if (!authorized && row.scope === "workstream" && row.owning_workstream_id) {
-      const workspace = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.WORKSPACE_DOS,
-        row.workspace_id,
-        workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id)),
-      );
-      // A Breakout home narrows the room to the Breakout's own members, through
-      // the same admission the Breakout's conversation uses.
-      authorized = row.owning_substream_id === "0"
-        ? (await workspace.workstreamParticipant({
-          workspaceId: row.workspace_id,
-          workstreamId: row.owning_workstream_id,
-          userId: request.userId,
-        })).participant
-        : (await workspace.authorizeViewer({
-          workspaceId: asWorkspaceId(row.workspace_id),
-          parentId: row.owning_workstream_id,
-          substreamId: asSubstreamId(row.owning_substream_id),
-          userId: request.userId,
-        })).authorized;
-    }
-    return ConversationParentAuthorizeViewerResultSchema.parse({
-      authorized,
-      archived: row.owning_room_archived_at !== null,
-    });
-  }
-
-  async authorizationDiscoveryChildren(input: ConversationParentAuthorityRequest) {
-    await this.initialized;
-    const request = parseRpcInput(ConversationParentAuthorityRequestSchema, input, "authorization_discovery_children");
-    const row = this.row();
-    if (!row || row.lifecycle === 'deleted') return { substreamIds: [] as string[] };
-    this.assertAutomation(request.workspaceId, request.parentId);
-    // Automation registries have no failed/ready preparation state. A registered, unprovisioned
-    // child is unresolved authority, not evidence that its content can be discarded.
-    return { substreamIds: this.childRegistry().map((child) => child.substreamId) };
-  }
-
-  /** No participant admission and no projection-dependent permission decision. */
-  async readAuthorizationFacts(input: ConversationAuthorizationRequest) {
-    await this.initialized;
-    const request = parseRpcInput(ConversationAuthorizationRequestSchema, input, "read_authorization_facts");
-    const row = this.row();
-    if (!row || row.lifecycle === 'deleted') return { exists: false as const, validatedAt: Date.now() };
-    this.assertAutomation(request.workspaceId, request.parentId);
-    return { exists: true as const, scope: row.scope, owningWorkstreamId: row.owning_workstream_id,
-      owningSubstreamId: row.owning_substream_id,
-      author: row.author_user_id === request.userId, executor: row.run_as_user_id === request.userId,
-      children: this.childRegistry().map((child) => child.substreamId),
-      revision: JSON.stringify([row.authority_generation, row.updated_at]), validatedAt: Date.now() };
-  }
-
-  async authority(input: ConversationParentAuthorityRequest): Promise<ConversationParentAuthorityResult> {
-    await this.initialized;
-    const request = parseRpcInput(ConversationParentAuthorityRequestSchema, input, "authority");
-    const row = this.row();
-    if (!row) {
-      return ConversationParentAuthorityResultSchema.parse({ exists: false, authorityGeneration: 0, archived: false });
-    }
-    this.assertAutomation(request.workspaceId, request.parentId);
-    return ConversationParentAuthorityResultSchema.parse({
-      exists: true,
-      authorityGeneration: row.authority_generation,
-      archived: row.lifecycle === "deleted" || row.owning_room_archived_at !== null,
-    });
-  }
-
-  /** Reserve against current parent authority without a caller-side preflight RPC. */
-  async reserveAgentChild(input: Omit<ConversationParentReserveChildRequest, "authorityGeneration" | "directory" | "kind">): Promise<ConversationParentReserveChildResult> {
-    const authority = await this.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
-    if (!authority.exists || authority.archived) throw new Error("workstream_archived");
-    return this.reserveChild({ ...input, kind: "child", authorityGeneration: authority.authorityGeneration });
-  }
-
-  async reserveChild(input: ConversationParentReserveChildRequest): Promise<ConversationParentReserveChildResult> {
-    await this.initialized;
-    const request = parseRpcInput(ConversationParentReserveChildRequestSchema, input, "reserve_child");
-    const row = this.assertAutomation(request.workspaceId, request.parentId);
-    if (request.kind === "child" && (row.lifecycle === "deleted" || row.owning_room_archived_at !== null)) throw new Error("workstream_archived");
-    this.registerChild(request.substreamId, request.kind, request.createdByUserId, Date.now());
-    return ConversationParentReserveChildResultSchema.parse({
-      reserved: true,
-      authorityGeneration: row.authority_generation,
-    });
-  }
-
-  protected override parentIdentity(): ConversationParentIdentity | null {
-    const row = this.row();
-    return row ? {
-      region: row.region,
-      workspaceId: asWorkspaceId(row.workspace_id),
-      parentKind: "automation",
-      parentId: row.automation_id,
-      authorityGeneration: row.authority_generation,
-    } : null;
-  }
-
-  protected override admitChildEnvelope(envelope: ConversationEffectEnvelope): void {
-    if (envelope.parentKind !== "automation") throw new Error("sidekick_effect_parent_kind_mismatch");
-    const row = this.row();
-    if (!row) throw new Error("sidekick_missing");
-    if (row.workspace_id !== envelope.workspaceId || row.automation_id !== envelope.parentId) {
-      throw new Error("sidekick_effect_identity_mismatch");
-    }
-  }
-
-  /**
-   * Nothing a child says leaves this object. An automation's conversation and
-   * its runs are not workspace rooms: they produce no sidebar rows, no
-   * activity, and no notifications. What the workspace hears is the
-   * automation's own row, enqueued by this object when the automation changes.
-   */
-  protected override forwardsChildEffect(): boolean {
-    return false;
-  }
-
-  protected override parentLogFields(): Record<string, unknown> {
-    const row = this.row();
-    return {
-      workspace_id: row?.workspace_id ?? null,
-      automation_id: row?.automation_id ?? null,
-      parent_kind: "automation",
-    };
-  }
-
-  /**
-   * A run's conversation moved; the run row follows it.
-   *
-   * Driven by the *accepted* projection only: the parent calls this hook when
-   * the child's envelope carried a newer `sourceVersion` than the one it
-   * holds, and never for a stale one. That is what lets a finished run reopen
-   * safely. Input that continues a run (`continueRun`) moves its child back to
-   * a live state, and the child's next projection is the only thing that
-   * reopens the row; a `completed` projection from an earlier activation that
-   * arrives after it carries an older version, is not accepted, and cannot
-   * close the continued run.
-   *
-   * A live state is the only thing that moves a finished row, and it reopens
-   * one only while the Sidekick is active: a
-   * paused or deleted Sidekick keeps its runs finished whatever a child that
-   * was already continuing reports, and the run authority check refuses that
-   * child's writes on the lifecycle alone. `idle` does not reopen either; it
-   * is what an unarchive or a runtime bootstrap reports, not a sign the run
-   * is working again.
-   *
-   * A run completes once per activation, so `completed_at` is its latest
-   * finish, not its first.
-   */
-  protected override onChildCommonProjection(
-    substreamId: string,
-    effect: DirectoryCommonEffect,
-    now: number,
-  ): void {
-    if (substreamId === "0") return;
-    const next = RUN_STATE_FROM_CONVERSATION_STATE[effect.state] ?? null;
-    if (next === null) return;
-    const run = this.run(substreamId);
-    if (!run) return;
-    const summary = effect.preview || null;
-    const finished = TERMINAL_RUN_STATES.has(run.state);
-    const live = !TERMINAL_RUN_STATES.has(next);
-    const reopens = finished && live && effect.state !== "idle" && this.row()?.lifecycle === "active";
-    // One finished state never replaces another: a run a pause stopped stays
-    // stopped when its child's last activation later reports `completed`.
-    if (run.state === next || (finished && !reopens)) {
-      if (!finished) {
-        this.state.storage.sql.exec(
-          `UPDATE runs SET summary = ?, updated_at = ? WHERE run_id = ?`,
-          summary,
-          now,
-          substreamId,
-        );
-      }
-      return;
-    }
-    this.state.storage.sql.exec(
-      `UPDATE runs
-          SET state = ?, summary = ?, completed_at = CASE WHEN ? THEN ? ELSE completed_at END,
-              updated_at = ?
-        WHERE run_id = ?`,
-      next,
-      summary,
-      live ? 0 : 1,
-      now,
-      now,
-      substreamId,
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Alarms: schedules fire, runs are provisioned, the outbox drains.
-  // ---------------------------------------------------------------------------
 
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<ScheduledAlarmOutcome> {
-    if (alarm.kind === "sidekick_publication") {
-      const row = this.row();
-      if (!row || row.lifecycle === "deleted" || row.accepted_definition_revision !== Number(alarm.key)
-        || row.applied_effects_revision === row.accepted_definition_revision) return { progressed: true };
-      const revision = this.revision(row.accepted_definition_revision);
-      if (!revision) throw new Error("sidekick_accepted_revision_missing");
-      const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
-      const schedules = this.state.storage.sql.exec<ScheduleRow & { definition_json: string }>(`SELECT * FROM schedules`).toArray();
-      await this.applyEffects(row, revision.definition_revision, definition, [], {
-        schedules: schedules.filter((entry) => entry.next_due_at !== null).map((entry) => ({ id: entry.schedule_id, kind: entry.schedule_kind, definition: JSON.parse(entry.definition_json), nextDueAt: entry.next_due_at! })),
-        evaluators: JSON.parse(row.evaluator_projection_json),
-      });
-      return { progressed: true };
-    }
-    if (alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND) {
-      await this.executeSchedule(alarm.key);
-      return { progressed: true };
-    }
-    if (alarm.kind === AUTOMATION_RUN_ALARM_KIND) {
-      await this.provisionRun(alarm.key);
-      return { progressed: true };
-    }
-    throw new Error(`sidekick_unknown_alarm_kind:${alarm.kind}`);
+    void alarm;
+    await this.requestImport();
+    return { progressed: true };
   }
 
-  protected override runDueAlarmWork(): Promise<void> {
-    return this.drainParentOutbox();
+  protected override async runDueAlarmWork(): Promise<void> {
+    if (this.nextOutboxDueAt() !== null) await this.requestImport();
   }
 
   protected override nextDerivedAlarmCandidates(): readonly number[] {
-    const due = this.nextParentOutboxDueAt();
+    const due = this.nextOutboxDueAt();
     return due === null ? [] : [due];
+  }
+
+  private nextOutboxDueAt(): number | null {
+    if (this.frozen()) return null;
+    return this.state.storage.sql.exec<{ due_at: number | null }>(
+      `SELECT MIN(not_before) AS due_at FROM durable_outbox WHERE state IN ('pending', 'inflight')`,
+    ).toArray()[0]?.due_at ?? null;
   }
 
   protected override scheduledAlarmDeferral(): Promise<number | null> {
@@ -1720,730 +415,41 @@ export class SidekickDO extends ConversationParentDurableObject {
   protected override onScheduledAlarmFailure(alarm: ScheduledAlarm, error: unknown, attempt: number): void {
     reportScheduledAlarmAttempt(this.env, (promise) => this.state.waitUntil(promise), {
       event: "sidekick_scheduled_alarm_failed",
-      summary: "An automation's alarm entry keeps throwing; `code` is the handler's error, and `alarm_kind` and `alarm_key` name the entry.",
+      summary: "A legacy Sidekick object could not ask its Organization to import it; `code` is why.",
       attempt,
-      fields: { ...this.parentLogFields(), alarm_kind: alarm.kind, alarm_key: alarm.key },
+      fields: { automation_id: this.identity()?.automation_id ?? null, alarm_kind: alarm.kind, alarm_key: alarm.key },
       error,
     });
   }
 
   protected override onScheduledAlarmStalled(alarm: ScheduledAlarm, attempt: number): void {
-    reportScheduledAlarmAttempt(this.env, (promise) => this.state.waitUntil(promise), {
-      event: "sidekick_scheduled_alarm_stalled",
-      summary: "An automation's alarm entry keeps coming back due at the same instant after running.",
-      attempt,
-      fields: {
-        ...this.parentLogFields(),
-        alarm_kind: alarm.kind,
-        alarm_key: alarm.key,
-        due_at: new Date(alarm.dueAt).toISOString(),
-      },
+    logWarn(this.env, "sidekick_scheduled_alarm_stalled", {
+      automation_id: this.identity()?.automation_id ?? null, alarm_kind: alarm.kind, alarm_key: alarm.key, attempt,
+      code: diagnosticErrorCode(null, "sidekick_scheduled_alarm_stalled"),
     });
-  }
-
-  private async executeSchedule(scheduleId: string): Promise<void> {
-    const row = this.row();
-    const schedule = first(this.state.storage.sql.exec<ScheduleRow>(
-      `SELECT schedule_id, schedule_kind, definition_json, next_due_at FROM schedules WHERE schedule_id = ?`,
-      scheduleId,
-    ));
-    if (!row || !schedule || schedule.next_due_at === null || row.lifecycle !== "active") return;
-    const now = Date.now();
-    const dueAt = schedule.next_due_at;
-    await this.admitOccurrence(`schedule:${scheduleId}:${dueAt}`, {
-      kind: "schedule",
-      scheduleId,
-      scheduleKind: schedule.schedule_kind,
-      plannedFor: dueAt,
-    }, null);
-    const nextDueAt = scheduleDueAfter(schedule.schedule_kind, schedule.definition_json, now);
-    this.state.storage.transactionSync(() => {
-      this.state.storage.sql.exec(
-        `UPDATE schedules SET next_due_at = ?, updated_at = ? WHERE schedule_id = ?`,
-        nextDueAt,
-        now,
-        scheduleId,
-      );
-      this.enqueueDirectory(now);
-    });
-    if (nextDueAt !== null) {
-      await this.scheduleAlarm({ kind: AUTOMATION_SCHEDULE_ALARM_KIND, key: scheduleId, dueAt: nextDueAt });
-    }
-  }
-
-  /**
-   * Record one occurrence and arm the alarm that provisions its run.
-   *
-   * Idempotent on the occurrence key: a retried admission of the same event,
-   * schedule instant, email, or manual key answers with the run it already
-   * made. The run id is also the child substream id.
-   */
-  private async admitOccurrence(
-    occurrenceKey: string,
-    trigger: AutomationRunTriggerV1,
-    opening: { textContent: string; structuredContent: Record<string, unknown>; resourceId: string | null } | null,
-    seed: DemoSeed | null = null,
-  ): Promise<{ runId: string; reused: boolean }> {
-    const row = this.row();
-    if (!row || row.accepted_definition_revision === null) {
-      throw new ApiError(409, "sidekick_not_active", "The Sidekick has no accepted definition");
-    }
-    const now = Date.now();
-    const runId = uuidV7(now);
-    const inserted = this.state.storage.sql.exec<{ run_id: string }>(
-      `INSERT OR IGNORE INTO runs
-         (run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state,
-          summary, opening_json, seed_json, created_at, started_at, completed_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, NULL, NULL, ?)
-       RETURNING run_id`,
-      runId,
-      occurrenceKey,
-      JSON.stringify(trigger),
-      row.accepted_definition_revision,
-      uuidV7(now + 1),
-      opening ? JSON.stringify(opening) : null,
-      seed ? JSON.stringify(seed) : null,
-      now,
-      now,
-    ).toArray()[0];
-    if (!inserted) {
-      const existing = first(this.state.storage.sql.exec<{ run_id: string; state: string }>(
-        `SELECT run_id, state FROM runs WHERE occurrence_key = ?`,
-        occurrenceKey,
-      ));
-      if (!existing) throw new Error("sidekick_occurrence_missing");
-      // The row commits on its own and the alarm is armed after it, so a
-      // retry of an admission that died between the two finds the row and
-      // must arm the alarm it never got; the alarm is keyed by run id and
-      // `provisionRun` ignores a run that is no longer pending, so arming a
-      // second time for a run that was provisioned costs nothing.
-      if (existing.state === "pending") {
-        await this.scheduleAlarm({ kind: AUTOMATION_RUN_ALARM_KIND, key: existing.run_id, dueAt: now });
-      }
-      return { runId: existing.run_id, reused: true };
-    }
-    await this.scheduleAlarm({ kind: AUTOMATION_RUN_ALARM_KIND, key: runId, dueAt: now });
-    return { runId, reused: false };
-  }
-
-  /**
-   * Open the run's conversation and start its loop.
-   *
-   * Every step is idempotent, so a retry after a failure part-way resumes
-   * rather than provisioning twice: the child bootstrap and provision are
-   * replays on an opened object, the run admission answers `exists`, and the
-   * loop activation keys its receipt on the run.
-   */
-  private async provisionRun(runId: string): Promise<void> {
-    const row = this.row();
-    const run = this.run(runId);
-    if (!row || !run || run.state !== "pending") return;
-    if (row.lifecycle !== "active") {
-      this.state.storage.sql.exec(
-        `UPDATE runs SET state = 'stopped', completed_at = ?, updated_at = ? WHERE run_id = ?`,
-        Date.now(),
-        Date.now(),
-        runId,
-      );
-      return;
-    }
-    const definition = await this.readRunDefinition({
-      workspaceId: asWorkspaceId(row.workspace_id),
-      automationId: row.automation_id,
-      runId,
-    });
-    const now = Date.now();
-    // Whose transcript this run will hold, recorded before anything is seated
-    // or run as them and kept across a retried provision, so a continuation
-    // can refuse to hand this history to somebody else (`continueRun`).
-    const runAs = this.state.storage.sql.exec<{ run_as_user_id: string }>(
-      `UPDATE runs SET run_as_user_id = COALESCE(run_as_user_id, ?) WHERE run_id = ? RETURNING run_as_user_id`,
-      row.run_as_user_id,
-      runId,
-    ).one().run_as_user_id;
-    this.registerChild(runId, "child", null, now);
-    await bootstrapConversationChildRuntime(this.env, row.workspace_id, "automation", row.automation_id, runId);
-    await provisionWorkstreamObject(this.env, {
-      workspaceId: row.workspace_id,
-      workstreamId: row.automation_id,
-      substreamId: runId,
-      title: definition.definition.name,
-      objective: definition.definition.instructions,
-      // A run is nested implementation detail, not a room: it admits only the
-      // person it runs as.
-      scope: "personal",
-      createdByUserId: runAs,
-      participantUserIds: [runAs],
-      harnessStatus: "scheduled",
-      emailAddress: null,
-      emailRouteStatus: null,
-      systemKind: null,
-      modelOverride: row.model_override,
-      now,
-    });
-    let triggerMessageId: string | null = null;
-    if (definition.opening) {
-      // Only an email is also a resource the run can open; an event is prose.
-      if (definition.opening.resourceId) {
-        await attachWorkstreamRuntimeResource(this.env, {
-          workspaceId: row.workspace_id,
-          workstreamId: row.automation_id,
-          substreamId: runId,
-          resourceId: definition.opening.resourceId,
-          attachedByUserId: null,
-          relationshipType: "inbound_email",
-        });
-      }
-      const appended = await createMessageObjectPort(this.env, row.workspace_id, row.automation_id, undefined, runId)
-        .appendMessage({
-          messageId: uuidV7(Date.now()),
-          clientMessageId: `automation-opening:${runId}`,
-          authorType: "system",
-          authorUserId: null,
-          externalActorJson: null,
-          messageType: "system",
-          text: definition.opening.textContent,
-          structuredContentJson: JSON.stringify(definition.opening.structuredContent),
-          producedByRunId: null,
-          now: Date.now(),
-        });
-      triggerMessageId = appended.messageId;
-    }
-    const pinned = automationModelOverride(this.env, row.model_override, {
-      workspaceId: row.workspace_id,
-      automationId: row.automation_id,
-    });
-    const model = pinned ?? await scheduledWorkstreamModel(this.env, {
-      workspaceId: row.workspace_id,
-      workstreamId: row.automation_id,
-    });
-    const runs = createHarnessRunObjectPort(this.env, row.workspace_id, row.automation_id, undefined, runId);
-    const executionPrincipal = { type: "user" as const, userId: asUserId(runAs) };
-    if (!await runs.run({ runId: run.harness_run_id })) {
-      await runs.admitRun({
-        runId: run.harness_run_id,
-        origin: "automation_run",
-        executionPrincipalJson: JSON.stringify(executionPrincipal),
-        status: "admitted",
-        startedAt: null,
-        model,
-        triggerPartId: null,
-        parentRunId: null,
-        expectedLatestRunId: null,
-        now: Date.now(),
-      });
-    }
-    await activateWorkstreamLoop(this.env, {
-      region: row.region,
-      workspaceId: asWorkspaceId(row.workspace_id),
-      parentKind: "automation",
-      parentId: row.automation_id,
-      substreamId: asSubstreamId(runId),
-      loopId: substreamLoopId(row.automation_id, asSubstreamId(runId)),
-      harnessRunId: asHarnessRunId(run.harness_run_id),
-      triggerMessageId,
-      activityId: null,
-      automationRun: {
-        schemaVersion: 1,
-        automationId: asAutomationId(row.automation_id),
-        runId,
-        definitionRevision: run.definition_revision,
-        trigger: definition.trigger,
-      },
-      executionPrincipal,
-      // A seeded run answers its own provider requests from here; every other
-      // run carries nothing and reaches the real provider. See `runSeeded`.
-      ...(run.seed_json ? { seed: DemoSeedSchema.parse(JSON.parse(run.seed_json)) } : {}),
-      reason: definition.trigger.kind,
-    });
-    this.state.storage.sql.exec(
-      `UPDATE runs SET state = 'running', started_at = ?, updated_at = ? WHERE run_id = ? AND state = 'pending'`,
-      Date.now(),
-      Date.now(),
-      runId,
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Lifecycle helpers.
-  // ---------------------------------------------------------------------------
-
-  private async pauseBy(row: AutomationRow, by: "person" | "room_archive"): Promise<void> {
-    const now = Date.now();
-    const schedules = this.schedules().map((schedule) => schedule.schedule_id);
-    this.state.storage.transactionSync(() => {
-      this.stopOpenRuns(now);
-      this.state.storage.sql.exec(
-        `UPDATE automation SET lifecycle = 'paused', paused_by = ?, updated_at = ? WHERE id = 1`,
-        by,
-        now,
-      );
-      this.enqueueDirectory(now);
-    });
-    await Promise.all(schedules.map((scheduleId) => (
-      this.cancelScheduledAlarm(AUTOMATION_SCHEDULE_ALARM_KIND, scheduleId)
-    )));
-    await this.cancelScheduledAlarmKind(AUTOMATION_RUN_ALARM_KIND);
-    await this.replaceRegistrations([]);
-    await this.armNextAlarm();
-    void row;
-  }
-
-  private async resumeFromPause(row: AutomationRow): Promise<void> {
-    const now = Date.now();
-    const schedules = this.schedules();
-    this.state.storage.transactionSync(() => {
-      for (const schedule of schedules) {
-        this.state.storage.sql.exec(
-          `UPDATE schedules SET next_due_at = ?, updated_at = ? WHERE schedule_id = ?`,
-          scheduleDueAfter(schedule.schedule_kind, schedule.definition_json, now),
-          now,
-          schedule.schedule_id,
-        );
-      }
-      this.state.storage.sql.exec(
-        `UPDATE automation SET lifecycle = 'active', paused_by = NULL, updated_at = ? WHERE id = 1`,
-        now,
-      );
-      this.enqueueDirectory(now);
-    });
-    for (const schedule of this.schedules()) {
-      if (schedule.next_due_at !== null) {
-        await this.scheduleAlarm({
-          kind: AUTOMATION_SCHEDULE_ALARM_KIND,
-          key: schedule.schedule_id,
-          dueAt: schedule.next_due_at,
-        });
-      }
-    }
-    await this.replaceRegistrations(JSON.parse(row.evaluator_projection_json) as unknown[]);
-    await this.armNextAlarm();
-  }
-
-  private stopOpenRuns(now: number): void {
-    this.state.storage.sql.exec(
-      `UPDATE runs SET state = 'stopped', completed_at = ?, updated_at = ?
-        WHERE state IN ('pending', 'running', 'needs_input')`,
-      now,
-      now,
-    );
-    // In the same transaction as the stop, so no continuation can be approved
-    // between the two and read the old count with the new stop.
-    this.state.storage.sql.exec(`UPDATE automation SET stop_generation = stop_generation + 1 WHERE id = 1`);
-  }
-
-  /** The workspace's registrations for this automation, replaced whole. */
-  private async replaceRegistrations(evaluators: unknown[], row = this.row()): Promise<void> {
-    if (!row) throw new Error("sidekick_missing");
-    const workspace = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      row.workspace_id,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(row.workspace_id)),
-    );
-    const registration = await workspace.applyExternalEventRegistrations({
-      schemaVersion: 1,
-      workspaceId: row.workspace_id,
-      destination: { kind: "automation", automationId: row.automation_id },
-      sourceGeneration: row.registration_generation,
-      evaluators,
-    });
-    this.state.storage.sql.exec(
-      `UPDATE automation SET effective_after_event_sequence = ?, updated_at = ? WHERE id = 1 AND registration_generation = ?`,
-      registration.effectiveAfterEventSequence,
-      Date.now(),
-      row.registration_generation,
-    );
-  }
-
-  /**
-   * Everything applying a revision needs from outside this object: which
-   * connection each selected plugin binds to, the evaluator registrations the
-   * workspace will match on, and the schedules with their first due instants.
-   */
-  private async prepareApplication(
-    row: AutomationRow,
-    revision: RevisionRow,
-    definition: AutomationDraft,
-    actorUserId: string,
-  ): Promise<{
-    selections: ReturnType<typeof automationAcceptanceSelections>;
-    connectorBindings: Record<string, string>;
-    evaluators: unknown[];
-    schedules: Array<{ id: string; kind: "calendar" | "interval"; definition: ScheduleDefinition; nextDueAt: number }>;
-  }> {
-    const selections = automationAcceptanceSelections(definition);
-    const selectedPluginIds = [...new Set([
-      ...selections.defaultPluginIds,
-      ...Object.values(selections.activitySourcePluginIds),
-    ])];
-    const connections = selectedPluginIds.length === 0
-      ? { results: [] }
-      : await this.workspaceDatabase().prepare(
-        `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, status, config_json
-           FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'`,
-      ).bind(row.workspace_id).all<{
-        id: string;
-        connector_type: string;
-        scope: string;
-        owner_user_id: string | null;
-        model_plugin_id: string;
-        status: string;
-        config_json: string | null;
-      }>();
-    const connectionsByPlugin = new Map(
-      (connections.results ?? []).map((connection) => [connection.model_plugin_id, connection]),
-    );
-    const connectorBindings: Record<string, string> = {};
-    for (const pluginId of selectedPluginIds) {
-      const connection = connectionsByPlugin.get(pluginId);
-      if (!connection) throw new ApiError(422, "sidekick_plugin_unavailable", `No connection is available for ${pluginId}`);
-      if (row.scope === "workspace" && connection.scope !== "workspace") {
-        throw new ApiError(422, "sidekick_workspace_connection_required", "A workspace Sidekick may bind only workspace connections");
-      }
-      // You may bind a workspace connection or your own personal one, never
-      // somebody else's: a room's automation outlives whoever wrote it, and
-      // binding a colleague's credentials to it would lend them to a standing
-      // automation they never agreed to.
-      if (row.scope !== "workspace" && connection.scope === "personal"
-        && connection.owner_user_id !== actorUserId && connection.owner_user_id !== row.run_as_user_id) {
-        throw new ApiError(422, "sidekick_personal_connection_access_denied", "That connection belongs to somebody else");
-      }
-      connectorBindings[pluginId] = connection.id;
-    }
-
-    const registry = connectorRegistryForEnv(this.env);
-    // The same normalization the drafting tool applies, so a revision written
-    // before it existed, or by a path that skipped it, is read the same way:
-    // a placeholder id, or an id on a trigger that cannot name a resource,
-    // is dropped rather than looked up and refused.
-    const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(withoutUnusableAutomationResourceIds(
-      revision.evaluator_rules_json ? JSON.parse(revision.evaluator_rules_json) : { schemaVersion: 1, evaluators: [] },
-      (pluginId) => {
-        const connection = connectionsByPlugin.get(pluginId);
-        return connection
-          ? connectorActivityTriggerDescriptors(
-            registry.get(connection.connector_type),
-            connection.config_json,
-            storedConnectionScope(connection.scope),
-          )
-          : undefined;
-      },
-    ));
-    const blocker = automationDraftAcceptanceBlocker(definition, rules);
-    if (blocker) throw new ApiError(422, blocker, "The automation's definition cannot be applied");
-    const selectedByBinding = new Map(Object.entries(selections.activitySourcePluginIds));
-    const inspectedPlugins = new Map<string, {
-      pluginId: string;
-      activityTriggers: ReturnType<typeof registry.get>["manifest"]["activityTriggers"];
-      eventFamilies: Record<string, string[]>;
-    }>();
-    for (const evaluator of rules.evaluators) {
-      const connection = connectionsByPlugin.get(evaluator.source.suggestedSourcePluginId);
-      if (!connection) throw new ApiError(422, "sidekick_plugin_unavailable", "An evaluator names a plugin with no connection");
-      if (connection.connector_type === "canva" && !evaluator.source.resourceId) {
-        throw new ApiError(422, "canva_trigger_requires_design", "Choose a Canva design for this trigger.");
-      }
-      const descriptors = connectorActivityTriggerDescriptors(
-        registry.get(connection.connector_type),
-        connection.config_json,
-        storedConnectionScope(connection.scope),
-      );
-      const eventFamilies: Record<string, string[]> = {};
-      for (const descriptor of descriptors) {
-        for (const family of descriptor.eventFamilies) {
-          eventFamilies[family] = [...(eventFamilies[family] ?? []), descriptor.eventType];
-        }
-      }
-      inspectedPlugins.set(evaluator.source.suggestedSourcePluginId, {
-        pluginId: evaluator.source.suggestedSourcePluginId,
-        activityTriggers: descriptors,
-        eventFamilies,
-      });
-    }
-    const referencedPersonIds = new Set<string>();
-    for (const evaluator of rules.evaluators) {
-      if (evaluator.when.kind !== "all") continue;
-      for (const leaf of evaluator.when.allOf) {
-        if (leaf.kind !== "person_id" && leaf.kind !== "person_id_array") continue;
-        for (const value of Array.isArray(leaf.value) ? leaf.value : [leaf.value]) referencedPersonIds.add(value);
-      }
-    }
-    const resolvedPersonIds = new Set<string>();
-    if (referencedPersonIds.size > 0) {
-      const ids = [...referencedPersonIds];
-      const members = await this.env.DB.prepare(
-        `SELECT user_id FROM workspace_members
-          WHERE workspace_id = ? AND status = 'active'
-            AND user_id IN (${ids.map(() => "?").join(",")})`,
-      ).bind(row.workspace_id, ...ids).all<{ user_id: string }>();
-      for (const member of members.results ?? []) resolvedPersonIds.add(member.user_id);
-      if (resolvedPersonIds.size !== referencedPersonIds.size) {
-        throw new ApiError(422, "sidekick_person_not_found", "An evaluator names a person who is not in the workspace");
-      }
-    }
-    const referencedResources = new Map<string, { pluginId: string; sourceBindingKey: string; resourceType: string }>();
-    for (const evaluator of rules.evaluators) {
-      if (!evaluator.source.resourceId) continue;
-      const selectedPluginId = selectedByBinding.get(evaluator.source.sourceBindingKey);
-      const selectedConnection = selectedPluginId ? connectionsByPlugin.get(selectedPluginId) : undefined;
-      const resource = await this.workspaceDatabase().prepare(
-        `SELECT id, connection_id, resource_type FROM resources WHERE workspace_id = ? AND id = ?`,
-      ).bind(row.workspace_id, evaluator.source.resourceId).first<{
-        id: string;
-        connection_id: string | null;
-        resource_type: string;
-      }>();
-      if (!resource || resource.connection_id !== selectedConnection?.id || !selectedPluginId) {
-        throw new ApiError(422, "sidekick_resource_not_found", "An evaluator names a resource this Sidekick cannot watch");
-      }
-      referencedResources.set(resource.id, {
-        pluginId: evaluator.source.suggestedSourcePluginId,
-        sourceBindingKey: evaluator.source.sourceBindingKey,
-        resourceType: resource.resource_type,
-      });
-    }
-    const externalTriggers = definition.triggers.filter(isExternalEventTrigger);
-    const validated = externalTriggers.length === 0
-      ? []
-      : validateDraftEvaluatorRules(rules, {
-          inspectedPlugins,
-          personIds: resolvedPersonIds,
-          resources: referencedResources,
-        });
-    const evaluators = validated.flatMap(({ evaluator, expandedEventTypes }) => {
-      const pluginId = selectedByBinding.get(evaluator.source.sourceBindingKey)!;
-      const connection = connectionsByPlugin.get(pluginId)!;
-      return expandedEventTypes.map((eventType) => ({
-        evaluatorId: uuidV7(),
-        source: {
-          connectorType: connection.connector_type,
-          connectionId: connection.id,
-          eventType,
-          ...(evaluator.source.resourceId ? { resourceId: evaluator.source.resourceId } : {}),
-        },
-        when: evaluator.when,
-      }));
-    });
-
-    const now = Date.now();
-    const needsDefaultTimezone = definition.triggers.some(
-      (trigger) => trigger.type === "calendar" && trigger.timezone === null,
-    );
-    const timezone = needsDefaultTimezone ? await this.defaultTimezone(row) : "UTC";
-    const schedules: Array<{ id: string; kind: "calendar" | "interval"; definition: ScheduleDefinition; nextDueAt: number }> = [];
-    for (const trigger of definition.triggers) {
-      if (trigger.type === "interval") {
-        schedules.push({
-          id: uuidV7(),
-          kind: "interval",
-          definition: { intervalSeconds: trigger.intervalSeconds, acceptedAt: now },
-          nextDueAt: now + trigger.intervalSeconds * 1_000,
-        });
-        continue;
-      }
-      if (trigger.type !== "calendar") continue;
-      const effectiveTimezone = trigger.timezone ?? timezone;
-      const next = nextRRuleOccurrence(trigger.rrule, effectiveTimezone, new Date(now), new Date(now));
-      if (!next) throw new ApiError(422, "sidekick_recurrence_has_no_future", "The schedule never occurs again");
-      schedules.push({
-        id: uuidV7(),
-        kind: "calendar",
-        definition: { rrule: trigger.rrule, timezone: effectiveTimezone, acceptedAt: now },
-        nextDueAt: next.getTime(),
-      });
-    }
-    return { selections, connectorBindings, evaluators, schedules };
-  }
-
-  private async defaultTimezone(row: AutomationRow): Promise<string> {
-    const stored = row.scope === "personal"
-      ? await this.env.DB.prepare(`SELECT timezone FROM users WHERE id = ?`).bind(row.run_as_user_id)
-        .first<{ timezone: string | null }>()
-      : await this.env.DB.prepare(`SELECT timezone FROM workspaces WHERE id = ?`).bind(row.workspace_id)
-        .first<{ timezone: string | null }>();
-    const timezone = stored?.timezone ?? "UTC";
-    try {
-      new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format();
-    } catch {
-      throw new ApiError(422, "sidekick_timezone_invalid", "The schedule's timezone is not valid");
-    }
-    return timezone;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Reads.
-  // ---------------------------------------------------------------------------
-
-  private row(): AutomationRow | null {
-    return first(this.state.storage.sql.exec<AutomationRow>(`SELECT * FROM automation WHERE id = 1`));
-  }
-
-  private assertAutomation(workspaceId: string, automationId: string): AutomationRow {
-    const row = this.row();
-    if (!row) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
-    if (row.workspace_id !== workspaceId || row.automation_id !== automationId) {
-      throw new Error("sidekick_identity_mismatch");
-    }
-    return row;
-  }
-
-  private revision(definitionRevision: number): RevisionRow | null {
-    if (definitionRevision <= 0) return null;
-    return first(this.state.storage.sql.exec<RevisionRow>(
-      `SELECT definition_revision, definition_json, evaluator_rules_json, ready, created_at
-         FROM definition_revisions WHERE definition_revision = ?`,
-      definitionRevision,
-    ));
-  }
-
-  private schedules(): ScheduleRow[] {
-    return this.state.storage.sql.exec<ScheduleRow>(
-      `SELECT schedule_id, schedule_kind, definition_json, next_due_at FROM schedules ORDER BY schedule_id`,
-    ).toArray();
-  }
-
-  private run(runId: string): RunRow | null {
-    return first(this.state.storage.sql.exec<RunRow>(`SELECT * FROM runs WHERE run_id = ?`, runId));
-  }
-
-  private workspaceDatabase(): D1Database {
-    const row = this.row();
-    if (!row) throw new Error("sidekick_missing");
-    return withWorkspaceRuntimeDatabase(this.env, asWorkspaceId(row.workspace_id)).DB;
-  }
-
-  /**
-   * Who may change an automation. The author always may; a workspace
-   * automation additionally answers to the workspace's owners and admins; a
-   * room's automation belongs to the room, and authorship is not a share in
-   * it, so participation is the only standing.
-   */
-  private assertManager(row: AutomationRow, actor: AutomationActor): void {
-    if (row.scope === "workstream") {
-      // The room's participants manage it, and so does the person who asked
-      // for it: the directory row that names the room's participants lands
-      // through the effect queue, and a card that says "accept" must not be
-      // refused while that row is still in flight.
-      if (actor.participantOfOwningWorkstream || row.author_user_id === actor.userId) return;
-      throw forbidden();
-    }
-    if (row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return;
-    if (row.scope === "workspace" && (actor.actorRole === "owner" || actor.actorRole === "admin")) return;
-    throw forbidden();
-  }
-
-  private assertViewer(row: AutomationRow, actor: AutomationActor): void {
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-    // A null role is the existing guest workspace relationship, not workspace-wide visibility.
-    if ((row.scope === "workspace" && actor.actorRole != null)
-      || row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return;
-    if (row.scope === "workstream" && actor.participantOfOwningWorkstream) return;
-    throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
-  }
-
-  private nextRunAt(row: AutomationRow): number | null {
-    if (row.lifecycle !== "active") return null;
-    return first(this.state.storage.sql.exec<{ next_due_at: number | null }>(
-      `SELECT MIN(next_due_at) AS next_due_at FROM schedules`,
-    ))?.next_due_at ?? null;
-  }
-
-  private detail(): AutomationDetail {
-    const row = this.row();
-    if (!row) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
-    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-    const current = this.revision(row.current_definition_revision);
-    const lastRunAt = first(this.state.storage.sql.exec<{ created_at: number }>(
-      `SELECT created_at FROM runs ORDER BY created_at DESC LIMIT 1`,
-    ))?.created_at ?? null;
-    return AutomationDetailSchema.parse({
-      id: row.automation_id,
-      ...(row.appearance_json
-        ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) }
-        : {}),
-      name: row.title || "New Sidekick",
-      loadable: row.loadable === 1,
-      description: row.description,
-      emailAddress: row.accepted_definition_revision !== null && sidekickReceivesEmail(AutomationDraftSchema.parse(JSON.parse(this.revision(row.accepted_definition_revision)!.definition_json))) ? row.email_address : null,
-      scope: row.scope,
-      owningWorkstreamId: row.owning_workstream_id,
-      status: row.lifecycle,
-      nextRunAt: iso(this.nextRunAt(row)),
-      lastRunAt: iso(lastRunAt),
-      updatedAt: iso(row.updated_at),
-      lifecycle: row.lifecycle,
-      authorUserId: row.author_user_id,
-      runAsUserId: row.run_as_user_id,
-      currentDefinition: current ? JSON.parse(current.definition_json) : null,
-      currentDefinitionRevision: row.current_definition_revision,
-      acceptedDefinitionRevision: row.accepted_definition_revision,
-      runnable: (() => {
-        const accepted = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
-        if (!accepted) return false;
-        const definition = AutomationDraftSchema.parse(JSON.parse(accepted.definition_json));
-        return definition.triggers.length > 0 || sidekickReceivesEmail(definition);
-      })(),
-      connectorBindings: JSON.parse(row.connector_bindings_json),
-      recentRuns: this.runSummaries(20),
-    });
-  }
-
-  private runSummaries(limit: number): AutomationRun[] {
-    const row = this.row();
-    if (!row) return [];
-    return this.state.storage.sql.exec<RunRow>(
-      `SELECT * FROM runs ORDER BY created_at DESC, run_id LIMIT ?`,
-      limit,
-    ).toArray().map((run) => {
-      const trigger = JSON.parse(run.trigger_json) as AutomationRunTriggerV1;
-      return AutomationRunSchema.parse({
-        id: run.run_id,
-        automationId: row.automation_id,
-        triggerType: trigger.kind,
-        plannedFor: trigger.kind === "schedule" ? iso(trigger.plannedFor) : null,
-        startedAt: iso(run.started_at),
-        completedAt: iso(run.completed_at),
-        status: run.state,
-        resultSummary: run.summary,
-        createdAt: iso(run.created_at),
-      });
-    });
-  }
-
-  /** The automation's own sidebar row, into the shared outbox. */
-  private enqueueDirectory(now: number): void {
-    this.state.storage.sql.exec(`UPDATE automation SET registration_generation = registration_generation + 1 WHERE id = 1`);
-    const row = this.row();
-    if (!row) throw new Error("sidekick_missing");
-    const effect: ParentEffect = {
-      kind: "directory_automation",
-      loadable: row.loadable === 1,
-      ...(row.appearance_json
-        ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) }
-        : {}),
-      automationId: row.automation_id,
-      authorUserId: row.author_user_id,
-      runAsUserId: row.run_as_user_id,
-      lifecycle: row.lifecycle,
-      scope: row.scope,
-      owningWorkstreamId: row.owning_workstream_id,
-      owningSubstreamId: SubstreamIdSchema.parse(row.owning_substream_id),
-      title: row.title,
-      description: row.description,
-      nextRunAt: iso(this.nextRunAt(row)),
-    };
-    this.enqueueProjection("automation", effect, now);
   }
 }
 
+/** The error every moved method answers: retryable, because the new route serves it. */
+function parentMoved(): never {
+  throw new Error("sidekick_parent_moved");
+}
+
+for (const method of MOVED_METHODS) {
+  Object.defineProperty(SidekickDO.prototype, method, {
+    value: async function moved() {
+      parentMoved();
+    },
+    writable: false,
+    configurable: false,
+  });
+}
+
 applyRetirementGate(SidekickDO, {
-  // The shared classification is inherited from ConversationParentDurableObject;
-  // this call is what wraps the doors *this* class overrides for itself.
   drop: {
     fetch: () => retiredObjectResponse(),
-    // No socket callbacks: a Sidekick's transcript is served by its
-    // substream agent, not by this object.
+    // No socket callbacks: a Sidekick's transcript is served by its substream
+    // agent, not by this object.
     alarm: () => Promise.resolve(),
   },
 });
