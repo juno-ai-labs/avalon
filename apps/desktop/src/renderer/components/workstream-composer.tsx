@@ -433,7 +433,7 @@ export function WorkstreamComposer({
               <span aria-hidden="true" className="mention-icon">
                 {candidate.member
                   ? <Avatar member={candidate.member} size="small" />
-                  : <span className="avatar avatar-small"><span className="avatar-fallback">R</span></span>}
+                  : <span className="avatar avatar-small avatar-rally"><span className="avatar-fallback">R</span></span>}
               </span>
               <span className="mention-popover-copy">
                 <strong>{candidate.label}</strong>

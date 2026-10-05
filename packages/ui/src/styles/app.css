@@ -664,6 +664,10 @@ pre {
 .avatar-fallback { color: var(--av-ref-color-neutral-14); font-size: 9px; font-weight: 650; text-box: trim-both cap alphabetic; }
 .avatar-medium .avatar-fallback { font-size: 10px; }
 .avatar-large .avatar-fallback { font-size: 11px; }
+/* Rally's own mark: brand yellow on a fixed near-black disc, so the yellow
+   keeps its contrast in both appearances. */
+.avatar-rally { background: var(--av-sys-color-brand-on); }
+.avatar-rally .avatar-fallback { color: var(--av-sys-color-brand-base); }
 
 .avatar-stack {
   align-items: center;
