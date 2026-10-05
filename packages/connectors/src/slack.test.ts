@@ -814,6 +814,7 @@ describe("Slack connector", () => {
         threadable: true,
         archived: false,
         displayName: "Group DM: alice, bob, carol",
+        externallyShared: false,
       });
     expect(slackExternalRoom({ id: "C1", name: "launch", is_private: false })).toMatchObject({
       kind: "shared", visibility: "public", displayName: "launch",
@@ -823,6 +824,11 @@ describe("Slack connector", () => {
     expect(slackExternalRoom({ id: "D1", is_im: true })).toMatchObject({ kind: "direct" });
     expect(slackExternalRoom({ id: "G3", is_mpim: true, is_non_threadable: true, is_archived: true }))
       .toMatchObject({ threadable: false, archived: true, displayName: "Group DM" });
+    // A Slack Connect room, shared or still pending, stays public but is marked.
+    expect(slackExternalRoom({ id: "C2", name: "general", is_private: false, is_ext_shared: true }))
+      .toMatchObject({ visibility: "public", externallyShared: true });
+    expect(slackExternalRoom({ id: "C3", name: "general", is_private: false, is_pending_ext_shared: true }))
+      .toMatchObject({ externallyShared: true });
   });
 
   it("distinguishes a missing app scope from an unjoinable channel", async () => {

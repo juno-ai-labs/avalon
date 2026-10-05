@@ -1808,7 +1808,7 @@ export class SlackAgentService {
         outcome: linked.outcome,
         ...(linked.outcome === "blocked" || linked.outcome === "ignored" ? { reason: linked.reason } : {}),
       });
-      if (linked.outcome === "linked" && linked.created) {
+      if (linked.outcome === "linked" && linked.newlyLinked) {
         // One line, once per room: what inviting Rally did, and how to use it.
         await slackApi(token, "chat.postMessage", {
           channel: channelId,
@@ -1885,7 +1885,7 @@ export class SlackAgentService {
      */
     unverifiable: "throw" | "fall_through" = "throw",
   ): Promise<
-    | { outcome: "linked"; spaceId: string; created?: boolean }
+    | { outcome: "linked"; spaceId: string; newlyLinked?: boolean }
     | { outcome: "ignored"; reason: string; channel?: SlackChannelResolution }
     | { outcome: "unresolved"; channel?: SlackChannelResolution }
     | { outcome: "blocked"; reason: string }
@@ -1968,10 +1968,10 @@ export class SlackAgentService {
       if (control.phase !== "durable_object_open") {
         throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");
       }
-      // A public room joins the Organization-wide Space it is already named
-      // for, ignoring case, so `#general` lands in "General". A private room
-      // never does: its audience is the room's, not the Organization's.
-      const matched = room.visibility === "public"
+      // A public room joins the Organization-wide Space its name matches. A
+      // private room never does, and neither does a Slack Connect room: their
+      // audience is not the Organization's.
+      const matched = room.visibility === "public" && !room.externallyShared
         ? ExternalRoomSpaceMatchResultSchema.parse(await workspace.externalRoomSpaceMatch({
           workspaceId: connection.workspace_id,
           name: room.displayName,
@@ -2024,7 +2024,7 @@ export class SlackAgentService {
         ? { outcome: "unresolved", channel }
         : { outcome: "blocked", reason: codeShaped(linked.code) };
     }
-    return { outcome: "linked", spaceId: linked.spaceId, created: linked.outcome === "linked" };
+    return { outcome: "linked", spaceId: linked.spaceId, newlyLinked: linked.outcome === "linked" };
   }
 
   /** The active Rally member a Slack user is, when Rally knows; never a guest. */
@@ -4194,7 +4194,7 @@ function slackRoutingFailureText(reason: string): string {
     case "space_archived":
       return "This conversation's Rally Space is archived, so Rally did not start work here. A Rally admin can restore the Space in Rally.";
     case "room_narrower_than_space":
-      return "This conversation is private now, but its Rally Space is open to the whole organization, so Rally did not start work here. A Rally admin can make the Space private in Rally.";
+      return "This conversation is private now, but its Rally Space is open to the whole organization, so Rally did not start work here. Make the conversation public again, or ask a Rally admin to make the Space private if nothing else uses it.";
     case "no_rally_member_in_private_room":
       return "Rally didn't start work here because nobody in this private conversation has a Rally account it can recognize yet. Connect your Rally account in App Home, then mention Rally again.";
     case "space_access_denied":
