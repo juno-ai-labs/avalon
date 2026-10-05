@@ -60,6 +60,7 @@ import {
 } from "./helpers/demo-workspace-fixture";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
+import { useSidekickRunProvisionConsumer } from "./helpers/sidekick";
 
 // The boundary nothing seeded may reach. A request that arrives here is an
 // escape from the seam, refused so the run fails rather than pretending.
@@ -67,6 +68,7 @@ const provider = useOpenRouterDouble(() => ({
   httpError: { status: 503, body: { error: { message: "a seeded run reached the provider" } } },
 }));
 useSelectedModel();
+useSidekickRunProvisionConsumer();
 
 beforeEach(async () => {
   await reset();

@@ -269,3 +269,153 @@ export const SidekickSkillReadRequestSchema = z.strictObject({
   existingExecution: z.boolean().optional(),
 });
 export type SidekickSkillReadRequest = z.infer<typeof SidekickSkillReadRequestSchema>;
+
+/**
+ * Several Sidekicks' skill reads in one call: by id, by the Channel that
+ * recommends or owns them, every active loadable one in the Organization
+ * (`allLoadable`, what a run offers as skills), or any mix. `onlyScope` keeps
+ * only Sidekicks of that scope, for a caller that may offer only Organization
+ * ones.
+ */
+export const SidekickBatchSkillReadRequestSchema = SidekickSkillReadRequestSchema.omit({ automationId: true }).extend({
+  automationIds: z.array(IdSchema).optional(),
+  channelId: IdSchema.optional(),
+  allLoadable: z.boolean().optional(),
+  onlyScope: z.enum(["personal", "workspace", "workstream"]).optional(),
+}).strict();
+export type SidekickBatchSkillReadRequest = z.infer<typeof SidekickBatchSkillReadRequestSchema>;
+
+/** Several Sidekicks' details in one call: by id, every one a Channel owns, or both. */
+export const SidekickBatchDetailRequestSchema = AutomationActorRequestSchema.omit({ automationId: true }).extend({
+  automationIds: z.array(IdSchema).optional(),
+  channelOwnedBy: IdSchema.optional(),
+}).strict();
+export type SidekickBatchDetailRequest = z.infer<typeof SidekickBatchDetailRequestSchema>;
+
+/**
+ * The activity-Queue message that starts a hosted Sidekick's run. Its consumer
+ * reads what to provision from `WorkspaceDO`, opens the run's conversation,
+ * starts its loop, and reports back; see `HostedSidekick.startRun`.
+ */
+export const SidekickRunProvisionQueueMessageSchema = z.strictObject({
+  kind: z.literal("sidekick_run_provision"),
+  region: z.string().min(1),
+  workspaceId: WorkspaceIdSchema,
+  automationId: IdSchema,
+  runId: IdSchema,
+});
+export type SidekickRunProvisionQueueMessage = z.infer<typeof SidekickRunProvisionQueueMessageSchema>;
+
+/**
+ * What a legacy `SidekickDO` hands `WorkspaceDO` when it is imported: every
+ * row, as its released schema stored it, and its pending alarm entries. The
+ * object wrote these under an older deployment and they cross an RPC hop, so
+ * the importer parses them here before anything is written. Strict, so a
+ * column the import does not know about fails the import by name rather than
+ * being dropped.
+ */
+const nullableInt = z.number().int().nullable();
+export const SidekickExportedAutomationSchema = z.strictObject({
+  id: z.literal(1),
+  automation_id: IdSchema,
+  workspace_id: WorkspaceIdSchema,
+  region: z.string().min(1),
+  author_user_id: UserIdSchema,
+  run_as_user_id: UserIdSchema,
+  lifecycle: z.enum(["draft", "active", "paused", "deleted"]),
+  paused_by: z.enum(["person", "room_archive"]).nullable(),
+  scope: AutomationScopeSchema,
+  owning_workstream_id: IdSchema.nullable(),
+  owning_substream_id: z.string().min(1),
+  owning_room_archived_at: nullableInt,
+  title: z.string(),
+  description: z.string(),
+  current_definition_revision: z.number().int().nonnegative(),
+  accepted_definition_revision: nullableInt,
+  connector_bindings_json: z.string(),
+  default_plugin_ids_json: z.string(),
+  activity_source_plugin_ids_json: z.string(),
+  evaluator_projection_json: z.string(),
+  model_override: z.string().nullable(),
+  email_address: z.string().nullable(),
+  effective_after_event_sequence: nullableInt,
+  authority_generation: z.number().int().positive(),
+  created_at: z.number().int(),
+  updated_at: z.number().int(),
+  applied_effects_revision: nullableInt,
+  loadable: z.number().int(),
+  registration_generation: z.number().int(),
+  appearance_json: z.string().nullable(),
+  chat_appearance_json: z.string().nullable(),
+  stop_generation: z.number().int().nonnegative(),
+});
+export const SidekickExportSchema = z.discriminatedUnion("status", [
+  /** An object that never held a row: nothing to import. */
+  z.strictObject({ status: z.literal("missing") }),
+  z.strictObject({
+    status: z.literal("ok"),
+    automation: SidekickExportedAutomationSchema,
+    revisions: z.array(z.strictObject({
+      definition_revision: z.number().int().positive(),
+      definition_json: z.string(),
+      definition_hash: z.string(),
+      evaluator_rules_json: z.string().nullable(),
+      ready: z.number().int(),
+      submitted_by_run_id: z.string().nullable(),
+      created_at: z.number().int(),
+    })),
+    schedules: z.array(z.strictObject({
+      schedule_id: z.string().min(1),
+      definition_revision: z.number().int(),
+      schedule_kind: z.enum(["calendar", "interval"]),
+      definition_json: z.string(),
+      next_due_at: nullableInt,
+      updated_at: z.number().int(),
+    })),
+    runs: z.array(z.strictObject({
+      run_id: IdSchema,
+      occurrence_key: z.string().min(1),
+      trigger_json: z.string(),
+      definition_revision: z.number().int().positive(),
+      harness_run_id: z.string().min(1),
+      state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
+      summary: z.string().nullable(),
+      opening_json: z.string().nullable(),
+      created_at: z.number().int(),
+      started_at: nullableInt,
+      completed_at: nullableInt,
+      updated_at: z.number().int(),
+      seed_json: z.string().nullable(),
+      run_as_user_id: z.string().nullable(),
+    })),
+    emailReceipts: z.array(z.strictObject({
+      resend_email_id: z.string().min(1),
+      run_id: z.string().nullable(),
+      outcome_code: z.string().min(1),
+      payload_ref: z.string(),
+      resource_id: z.string(),
+      received_at: z.number().int(),
+    })),
+    children: z.array(z.strictObject({
+      substream_id: z.string().min(1),
+      kind: z.enum(["main", "child"]),
+      created_by_user_id: z.string().nullable(),
+      created_at: z.number().int(),
+    })),
+    childProjections: z.array(z.strictObject({
+      substream_id: z.string().min(1),
+      source_version: z.number().int().positive(),
+      payload_hash: z.string().min(1),
+      effect_json: z.string(),
+      updated_at: z.number().int(),
+    })),
+    alarms: z.array(z.strictObject({
+      kind: z.string().min(1),
+      key: z.string().min(1),
+      dueAt: z.number().int(),
+    })),
+    /** The kinds of whatever was still in the outbox; only `directory_automation` may be. */
+    outboxKinds: z.array(z.string().min(1)),
+  }),
+]);
+export type SidekickExport = z.infer<typeof SidekickExportSchema>;

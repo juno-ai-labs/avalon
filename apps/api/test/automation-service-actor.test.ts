@@ -11,7 +11,6 @@ import {
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ac01");
 const USER_ID = asUserId("00000000-0000-7000-8000-00000000ac02");
-const ROOM_ID = "00000000-0000-7000-8000-00000000ac03";
 const AUTOMATION_ID = "00000000-0000-7000-8000-00000000ac04";
 
 const auth: AuthContext = {
@@ -24,35 +23,28 @@ const auth: AuthContext = {
 };
 
 /**
- * The Worker resolves who the caller is to the automation from the workspace
- * directory for routing and the canonical owner for management authority, and
- * the room being archived does not end that: the object is the one that says
- * what the archive forbids, and it can only say so if the caller reaches it.
+ * The Worker passes who is asking and nothing it concluded about them. Whether
+ * they may manage a room's Sidekick, the room archived or not, is decided
+ * where the Sidekick lives, from the Organization's own rows, so the service
+ * makes one call and reads nothing first.
  */
 describe("resolving the actor for a room's automation", () => {
-  it("preserves canonical management standing for an archived owning room", async () => {
-    const participantReads: Array<Record<string, unknown>> = [];
-    const resumes: Array<{ actor: { participantOfOwningWorkstream: boolean } }> = [];
+  it("asks the Organization object once, with the caller and no participation of its own", async () => {
+    const reads: string[] = [];
+    const resumes: Array<{ automationId: string; actor: { userId: string; participantOfOwningWorkstream: boolean } }> = [];
     const env = createTestEnv({
       AVALON_REGION: "global",
       APP_ENV: "test",
       WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
         idFromName: (name: string) => createTestDurableObjectId(name),
-        // The directory that locates the owner and the owning room's parent
-        // are both the Organization object.
-        get: () => ({
-          automationOwner: async () => ({ owningWorkstreamId: ROOM_ID }),
-          readManagementAccess: async (request: Record<string, unknown>) => {
-            participantReads.push(request);
-            return { allowed: true, writable: false, grantIds: [], workspaceMemberAccess: false };
-          },
-        }),
-      }),
-      AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
-        idFromName: (name: string) => createTestDurableObjectId(name),
-        get: () => ({
-          resume: async (request: { actor: { participantOfOwningWorkstream: boolean } }) => {
+        get: () => new Proxy({
+          sidekickResume: async (request: { automationId: string; actor: { userId: string; participantOfOwningWorkstream: boolean } }) => {
             resumes.push(request);
+          },
+        }, {
+          get: (target, property) => {
+            if (typeof property === "string" && property !== "then" && !(property in target)) reads.push(property);
+            return Reflect.get(target, property);
           },
         }),
       }),
@@ -60,14 +52,10 @@ describe("resolving the actor for a room's automation", () => {
 
     await new AutomationService(env, auth).resume(AUTOMATION_ID);
 
-    expect(participantReads).toEqual([{
-      workspaceId: WORKSPACE_ID,
-      parentId: ROOM_ID,
-      userId: USER_ID,
-    }]);
+    expect(reads).toEqual([]);
     expect(resumes).toEqual([expect.objectContaining({
       automationId: AUTOMATION_ID,
-      actor: expect.objectContaining({ userId: USER_ID, participantOfOwningWorkstream: true }),
+      actor: expect.objectContaining({ userId: USER_ID, participantOfOwningWorkstream: false }),
     })]);
   });
 });

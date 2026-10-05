@@ -147,7 +147,7 @@ disk to try again with.
 - Automation drafts under construction: the definition revisions, the
   conversation, and the plugin or activity-source choices. Only the input
   component is cached; the conversation is the automation's own substream `0`
-  and the revisions live on its `AutomationDO`
+  and the revisions live on its hosted Sidekick
   ([`automation-lifecycle.md`](automation-lifecycle.md)). The plugin and
   activity-source choices are cached nowhere, because they are re-derived from
   the connections in force when a revision is applied.

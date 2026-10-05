@@ -2,6 +2,7 @@ import { configuredRegions, regionConfiguration } from "@rally/contracts/regions
 import {
   EngineeringArtifactListLookupSchema,
   EngineeringArtifactTargetLookupSchema,
+  EngineeringSidekickImportLookupSchema,
   EngineeringSidekickListLookupSchema,
   EngineeringSidekickTargetLookupSchema,
   EngineeringSpaceListLookupSchema,
@@ -318,6 +319,36 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
         authorityGeneration: resolved.value.authorityGeneration,
         query: { sql, bindings },
       }), `Sidekick ${sidekickId}`);
+    },
+  ));
+
+  server.registerTool("retry_sidekick_import", {
+    description: "Move a Sidekick from its legacy SidekickDO into its Organization's WorkspaceDO again, after repairing what made the last import fail. Returns `imported`, or `pending` with the code the new attempt failed on. Changes production state and cannot be undone: the export it asks for freezes the legacy object.",
+    inputSchema: {
+      workspaceId: WorkspaceIdSchema,
+      sidekickId: AutomationIdSchema,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, ({ workspaceId, sidekickId }) => tool(
+    principal,
+    "retry_sidekick_import",
+    { workspace_id: workspaceId, sidekick_id: sidekickId },
+    async () => {
+      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveSidekick({ workspaceId, sidekickId })));
+      const resolved = oneRegionalTarget(
+        env,
+        results.map((result) => EngineeringSidekickTargetLookupSchema.parse(result)),
+        `Sidekick ${sidekickId}`,
+      );
+      const outcome = EngineeringSidekickImportLookupSchema.parse(await resolved.binding.retrySidekickImport({
+        workspaceId,
+        sidekickId,
+        authorityGeneration: resolved.value.authorityGeneration,
+      }));
+      if (!outcome.found) {
+        throw new InspectionRefusal("target_authority_changed", `Sidekick ${sidekickId} authority changed before the retry; refused`);
+      }
+      return outcome.value;
     },
   ));
 

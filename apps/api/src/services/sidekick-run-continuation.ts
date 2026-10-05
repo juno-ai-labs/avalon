@@ -1,5 +1,4 @@
 import {
-  asAutomationId,
   asWorkspaceId,
   ExternalActorSchema,
   type WorkstreamWorkflowInput,
@@ -12,9 +11,8 @@ import {
   type SidekickRunContinuation,
   type SidekickRunContinuationRefusalCode,
 } from "../durable-objects/automation-do-protocol";
-import { automationDOName } from "../durable-objects/names";
 import type { Env } from "../env";
-import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { hostedParentStub } from "./conversation-parent-client";
 
 /**
  * Input to a Sidekick run child continues that run.
@@ -33,13 +31,8 @@ export async function continueSidekickRun(
   input: { region: Region; workspaceId: string; automationId: string; runId: string },
 ): Promise<SidekickRunContinuation> {
   const workspaceId = asWorkspaceId(input.workspaceId);
-  const sidekick = await durableObjectStubForWorkspace(
-    env,
-    env.AUTOMATION_DOS,
-    workspaceId,
-    automationDOName(input.region, workspaceId, asAutomationId(input.automationId)),
-  );
-  return SidekickRunContinuationSchema.parse(await sidekick.continueRun({
+  const workspace = await hostedParentStub(env, workspaceId);
+  return SidekickRunContinuationSchema.parse(await workspace.sidekickContinueRun({
     workspaceId,
     automationId: input.automationId,
     runId: input.runId,

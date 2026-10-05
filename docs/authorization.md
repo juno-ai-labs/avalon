@@ -298,8 +298,7 @@ the Channel's `parent_children` rows are in the same database, so
 `enqueueAuthorizationDiscovery` registers them (the same reconcile
 `registerAuthorizationChildren` runs) in the caller's transaction and queues
 only the per-conversation jobs. The Queue still carries conversation jobs,
-which read a `SubstreamAgent`; Sidekick parents, whose children are in
-`AutomationDO`; and a Channel whose legacy import is still pending, since
+which read a `SubstreamAgent`; and a Channel whose legacy import is still pending, since
 serving it needs the async import. The Worker's parent branch in
 `projectAuthorization` stays for those and for jobs queued before this change.
 

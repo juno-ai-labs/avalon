@@ -6,7 +6,7 @@
  * A run child is a `SubstreamAgent` under the Sidekick, with the run id as its
  * substream. The Sidekick's alarm starts its first activation with the run's
  * context; every later one starts from input somebody sent to the child, and
- * the child asks `SidekickDO.continueRun` whether that input may continue the
+ * the child asks the Organization's `sidekickContinueRun` whether that input may continue the
  * run and with what. Everything here runs on real workerd: the Sidekick, the
  * run child and its persistent loop, the real consumer for the child's
  * effects, and the regional D1 the run authority reads members from. The
@@ -21,7 +21,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -38,8 +38,8 @@ import {
   type ConversationEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
 
-import type { AutomationDO } from "../src/durable-objects/automation-do";
-import { automationDOName, conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { __integrationTesting } from "../src/services/integrations";
@@ -50,6 +50,7 @@ import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { runSidekickAlarms, sidekickWorkspace } from "./helpers/sidekick";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000c7a0");
@@ -108,10 +109,8 @@ function actor(userId = AUTHOR_ID) {
   return { userId, actorRole: "member" as const, participantOfOwningWorkstream: false };
 }
 
-function sidekickStub(): DurableObjectStub<AutomationDO> {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
-    automationDOName("global", WORKSPACE_ID, AUTOMATION_ID),
-  ));
+function workspaceStub() {
+  return sidekickWorkspace(TEST_ENV, WORKSPACE_ID);
 }
 
 function childStub(runId: string) {
@@ -154,7 +153,7 @@ async function seedRegionalDatabase(): Promise<void> {
 }
 
 async function submit(draft: AutomationDraft = DEFINITION): Promise<number> {
-  const submitted = await sidekickStub().submitDefinition({
+  const submitted = await workspaceStub().sidekickSubmitDefinition({
     ...addressed(), draft, evaluatorRules: null, submittedByRunId: null,
   });
   return submitted.definitionRevision;
@@ -162,8 +161,8 @@ async function submit(draft: AutomationDraft = DEFINITION): Promise<number> {
 
 /** Applied inside the object: a rejection over a stub is also reported as unhandled. */
 async function apply(): Promise<void> {
-  const detail = await runInDurableObject(sidekickStub(), (instance: AutomationDO) =>
-    instance.apply({ ...addressed(), actor: actor() }));
+  const detail = await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) =>
+    instance.sidekickApply({ ...addressed(), actor: actor() }));
   expect(detail.lifecycle).toBe("active");
 }
 
@@ -202,8 +201,8 @@ async function receipts(runId: string): Promise<ReceiptRow[]> {
 
 /** Let the Sidekick's alarm start the run, and its first activation end. */
 async function startedRun(): Promise<{ runId: string; status: string }> {
-  const started = await sidekickStub().runNow({ ...addressed(), actor: actor(), idempotencyKey: `continuation-run-${String(automationOrdinal).padStart(4, "0")}` });
-  await runDurableObjectAlarm(sidekickStub());
+  const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: `continuation-run-${String(automationOrdinal).padStart(4, "0")}` });
+  await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
   let status = "";
   await expect.poll(async () => {
     const first = (await receipts(started.runId))[0];
@@ -223,7 +222,7 @@ async function completedRun(): Promise<string> {
 }
 
 async function runState(runId: string): Promise<string | undefined> {
-  return (await sidekickStub().readRunState({ ...addressed(), runId }))?.state;
+  return (await workspaceStub().sidekickReadRunState({ ...addressed(), runId }))?.state;
 }
 
 async function product(stub: DurableObjectStub, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -375,7 +374,7 @@ describe("Sidekick run continuation", () => {
     await activeSidekick();
     const runId = await completedRun();
     const callsBefore = provider.calls.length;
-    await sidekickStub().pause({ ...addressed(), actor: actor() });
+    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
 
     const first = await sendToRun(runId, "First reply while paused.", "paused-1");
     const second = await sendToRun(runId, "Second reply while paused.", "paused-2");
@@ -392,7 +391,7 @@ describe("Sidekick run continuation", () => {
 
     // The refused input did not hold the queue: the next input after a resume
     // continues the run, and the model reads what was said while paused.
-    await sidekickStub().resume({ ...addressed(), actor: actor() });
+    await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
     const third = await sendToRun(runId, "Third reply after resume.", "paused-3");
     const execution = await settledExecutionFor(runId, third);
     expect(execution.status).toBe("completed");
@@ -403,19 +402,19 @@ describe("Sidekick run continuation", () => {
 
   it.each([
     ["sidekick_deleted", async () => {
-      await sidekickStub().remove({ ...addressed(), actor: actor() });
+      await workspaceStub().sidekickRemove({ ...addressed(), actor: actor() });
     }],
     ["run_not_found", async (runId: string) => {
-      await runInDurableObject(sidekickStub(), (_instance, state) => {
-        state.storage.sql.exec(`DELETE FROM runs WHERE run_id = ?`, runId);
+      await runInDurableObject(workspaceStub(), (_instance, state) => {
+        state.storage.sql.exec(`DELETE FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, AUTOMATION_ID, runId);
       });
     }],
     // Another member takes over who the Sidekick runs as, the way
     // `claimExecutionPrincipal` leaves it: the run's transcript is still the
     // first principal's, so it is not handed to the second.
     ["run_principal_changed", async () => {
-      await runInDurableObject(sidekickStub(), (_instance, state) => {
-        state.storage.sql.exec(`UPDATE automation SET run_as_user_id = ? WHERE id = 1`, CLAIMANT_ID);
+      await runInDurableObject(workspaceStub(), (_instance, state) => {
+        state.storage.sql.exec(`UPDATE automation_directory SET run_as_user_id = ? WHERE automation_id = ?`, CLAIMANT_ID, AUTOMATION_ID);
       });
     }],
   ] as const)("refuses input with %s and leaves nothing queued", async (code, arrange) => {
@@ -495,7 +494,7 @@ describe("Sidekick run continuation", () => {
       .reduce((newest, envelope) => envelope.sourceVersion > newest.sourceVersion ? envelope : newest);
     expect(await runState(runId)).toBe("completed");
     const v = completion.sourceVersion;
-    const completedAt = async () => (await sidekickStub().readRunState({ ...addressed(), runId }))?.completedAt ?? null;
+    const completedAt = async () => (await workspaceStub().sidekickReadRunState({ ...addressed(), runId }))?.completedAt ?? null;
     const firstCompletedAt = await completedAt();
 
     const deliver = async (envelope: ConversationEffectEnvelope) =>
@@ -531,7 +530,7 @@ describe("Sidekick run continuation", () => {
     expect(await runState(runId)).toBe("failed");
 
     // A paused Sidekick keeps its runs finished whatever a child reports.
-    await sidekickStub().pause({ ...addressed(), actor: actor() });
+    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
     await deliver(projection(completion, "running", v + 6, "reopen-paused"));
     expect(await runState(runId)).toBe("failed");
   });
@@ -585,18 +584,18 @@ describe("Sidekick run continuation", () => {
     // its own, since it does not advance `Date.now()` without I/O; pinning
     // the clock makes it certain. The object shares this isolate's `Date`.
     const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
-    let approved: Awaited<ReturnType<AutomationDO["continueRun"]>>;
+    let approved: Awaited<ReturnType<WorkspaceDO["sidekickContinueRun"]>>;
     try {
-      approved = await runInDurableObject(sidekickStub(), async (instance: AutomationDO) => {
-        const decided = await instance.continueRun({ ...addressed(), runId });
-        await instance.pause({ ...addressed(), actor: actor() });
+      approved = await runInDurableObject(workspaceStub(), async (instance: WorkspaceDO) => {
+        const decided = await instance.sidekickContinueRun({ ...addressed(), runId });
+        await instance.sidekickPause({ ...addressed(), actor: actor() });
         return decided;
       });
     } finally {
       clock.mockRestore();
     }
     if (approved.outcome !== "continue") throw new Error(`expected a continuation, got ${approved.code}`);
-    await sidekickStub().resume({ ...addressed(), actor: actor() });
+    await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
     expect(await runState(runId)).toBe("stopped");
 
     const continued = (decided: typeof approved) => {
@@ -622,7 +621,7 @@ describe("Sidekick run continuation", () => {
 
     // A continuation approved after that stop acts through it: the fence
     // refuses only a stop the approval did not already see.
-    const later = await sidekickStub().continueRun({ ...addressed(), runId });
+    const later = await workspaceStub().sidekickContinueRun({ ...addressed(), runId });
     if (later.outcome !== "continue") throw new Error(`expected a continuation, got ${later.code}`);
     await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, continued(later)))
       .resolves.toMatchObject({ automationRunId: runId });

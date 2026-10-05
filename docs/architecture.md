@@ -43,7 +43,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/index.ts`, `apps/api/src/worker-events.ts` | The regional API's statically imported HTTP/event graph and platform exports. Heavy stateless providers run in the typed document, Terminal, and Global telemetry-delivery service Workers owned by [`api-worker-deployment.md`](api-worker-deployment.md). |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
-| `apps/api/src/durable-objects` | `WorkspaceDO`, which also hosts the model-free Channel and Space conversation parents as `parent_*` rows (`hosted-parent.ts`, one `HostedParentRole` per kind; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md)), `AutomationDO` over the `ConversationParentDurableObject` base, `SubstreamAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, the retirement gate (`object-retirement.ts`) that wraps every method of the workspace-owned classes, and their SQL-only migration/storage layers. |
+| `apps/api/src/durable-objects` | `WorkspaceDO`, which also hosts the model-free Channel and Space conversation parents as `parent_*` rows (`hosted-parent.ts`, one `HostedParentRole` per kind; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md)), `HostedSidekick`, the Sidekick parent hosted the same way (`hosted-sidekick.ts`), the legacy `SidekickDO` kept only to export its rows, `SubstreamAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, the retirement gate (`object-retirement.ts`) that wraps every method of the workspace-owned classes, and their SQL-only migration/storage layers. |
 | `apps/api/src/workflows`, `apps/api/src/queues` | Generic/non-workstream orchestration, legacy work-stream drain, and idempotent regional consumers. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
@@ -123,12 +123,12 @@ migration controls, and bounded operational audit/telemetry. WorkspaceDO owns
 workspace connector/product state, Terminal policy, digests and shared
 schedules, the content-free automation directory and the external-event
 registrations, resources/notes/memory/R2 references, external delivery,
-activity, discovery, and cross-work-stream query state. Each automation's own
-product state lives in its own `AutomationDO`, which is also the parent of the
+activity, discovery, and cross-work-stream query state, and each automation's
+own product state, as a hosted Sidekick that is also the parent of the
 automation's conversation and its runs. `SubstreamAgent` SQLite owns substream
 product state and the full conversation agent loop. Channel and Space parents
 keep their aggregate metadata and outbox as `parent_*` rows in `WorkspaceDO`,
-and `AutomationDO` keeps its own. Large activity
+and a Sidekick its own as `sidekick_*` rows. Large activity
 payloads, uploads, and snapshots live in R2.
 
 ### Region boundary
@@ -372,7 +372,7 @@ tool receipt-plan/completion, checkpoint, and terminal commits are fenced by
 attempt and lease ownership. The run freezes its principal, eligible
 connections/capabilities, trigger policy, routing/prompt versions, tool-surface
 hash, and limits. The host revalidates principal and work-stream state, an
-automation run's live state in its parent (`AutomationDO.readRunState`),
+automation run's live state in its parent (`WorkspaceDO.sidekickReadRunState`),
 trigger evidence, connection
 ownership/grants, and whether a person has disabled the connection, at admission,
 before credential decryption and tools, and between model turns. A run whose
@@ -442,11 +442,11 @@ its window fills.
 
 ### Automations and scheduling
 
-An automation is one `AutomationDO` Durable Object and one conversation. The
-object is a conversation parent beside the Channel and Space parents hosted in
-`WorkspaceDO`: its substream `0` is the
+An automation is a hosted Sidekick and one conversation. It is a conversation
+parent hosted in `WorkspaceDO` beside the Channel and Space parents: its
+substream `0` is the
 chat where the automation is drafted, created, and edited, and every run is a
-child substream under it. The object holds the definition revisions, the
+child substream under it. Its rows hold the definition revisions, the
 lifecycle, the schedules, the runs, and the inbound-email receipts; a run reads
 its definition from the parent by revision and reports its state through the
 same effect pipeline every conversation uses.
@@ -467,8 +467,7 @@ armed for the earliest of them, and every target due at that instant drains in
 one wake, each behind its own exponential-backoff gate, so a broken connector
 poll cannot stop a digest. Workspaces never contend: each has its own object
 and its own alarm. [`durable-object-alarms.md`](durable-object-alarms.md)
-covers the mechanism, which WorkspaceDO, SubstreamAgent, and AutomationDO
-share.
+covers the mechanism, which WorkspaceDO and SubstreamAgent share.
 
 A person's scheduled digest is one `schedules` row per delivery time, because a
 single RRULE multiplies `BYHOUR` by `BYMINUTE` and so cannot carry an arbitrary
@@ -532,12 +531,11 @@ precede any LLM classification.
   audit/telemetry. `WorkspaceDO` owns workspace-scoped connector, Terminal
   policy, digest/schedule, the content-free automation directory and the
   external-event registrations, resource/note/memory/R2-reference,
-  activity/discovery, directory, and external-delivery state. Each
-  `AutomationDO` owns one automation's product state and is the parent of its
-  conversation and its runs. After a work-stream generation opens, each
+  activity/discovery, directory, and external-delivery state, and each hosted
+  Sidekick's product state, the parent of its conversation and its runs. After a work-stream generation opens, each
   `SubstreamAgent` owns its substream product state, the model-free Channel and
   Space parents own aggregate metadata/outbox as `parent_*` rows in
-  `WorkspaceDO`, `AutomationDO` owns its own, and legacy D1
+  `WorkspaceDO`, a Sidekick its own as `sidekick_*` rows, and legacy D1
   product and pin tables do not exist. R2 holds large payloads; the authority that names each
   workspace reference stays in the owning WorkspaceDO database.
 

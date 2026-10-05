@@ -136,7 +136,7 @@ ad-hoc work stream does not become workspace-readable merely because its email
 resource has no automation subscription.
 
 Mail sent to an active **automation** address starts a run: one child
-conversation under the automation's `AutomationDO`, named by the run id, whose
+conversation under the automation's hosted Sidekick, named by the run id, whose
 only participant is the automation's run-as principal, whatever the
 automation's own scope. A run is a nested execution record rather than a room,
 and [`automation-lifecycle.md`](automation-lifecycle.md) owns that rule. The
@@ -148,8 +148,8 @@ Resend email ID as the idempotency key, so it resolves to the same run.
 **The automation decides once, after the message is stored.** The regional
 ingress fetches the message, resolves the sender to an active member, writes
 the payload to R2 and the resource, and then calls
-`AutomationDO.admitInboundEmail` exactly once. The object answers a retry from
-`inbound_email_receipts` by Resend email id before deciding anything; a new
+`WorkspaceDO.sidekickAdmitInboundEmail` exactly once. The Sidekick answers a retry from
+`sidekick_email_receipts` by Resend email id before deciding anything; a new
 message is refused with `sidekick_not_active`,
 `sidekick_email_route_mismatch`, or `email_sender_not_authorized`, and the
 refusal is the receipt, so a retry never re-evaluates it. There is no pre-fetch
@@ -159,8 +159,8 @@ can see rather than a secret.
 
 The work-stream email receipt stays a WorkspaceDO row and uses a reclaimable
 processing lease, so an interrupted delivery can continue after the lease
-expires. The automation receipt is an **`AutomationDO`** row keyed on the
-Resend email ID, and the run it admits is that object's own. The Global address
+expires. The automation receipt is a **`sidekick_email_receipts`** row keyed on the
+Sidekick and the Resend email ID, and the run it admits is that Sidekick's own. The Global address
 ledger remains only the opaque address-to-region/workspace/owner route needed
 before the regional object can be selected; its column is still named
 `automation_subscription_id` and holds the automation id.
@@ -382,7 +382,7 @@ registry, and what happens to mail addressed to one. It does not own:
 | Which connectors can carry a digest to a person | [`connectors.md`](connectors.md#delivering-a-digest-to-a-person) |
 | The configured deployment bridge this registry is reached through | [`regionalization.md`](regionalization.md) |
 | Untrusted-input handling and the spoofing threat model | [`security.md`](security.md) |
-| The `AutomationDO` tables the address and the receipts live in | [`automation-lifecycle.md`](automation-lifecycle.md), [`data-model.md`](data-model.md) |
+| The Sidekick tables the address and the receipts live in | [`automation-lifecycle.md`](automation-lifecycle.md), [`data-model.md`](data-model.md) |
 | The resource aliases this generator also mints | [`agent-attachments.md`](agent-attachments.md) |
 | The Resend receiving domain and its secrets | [`runbook.md`](runbook.md) |
 

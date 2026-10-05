@@ -36,7 +36,6 @@ import {
 
 import type { AuthContext, Env } from "../src/env";
 import {
-  automationDOName,
   conversationObjectName,
   workspaceDOName,
 } from "../src/durable-objects/names";
@@ -89,12 +88,6 @@ afterEach(() => {
 
 function workspaceStub() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
-}
-
-function automationStub() {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
-    automationDOName("global", WORKSPACE_ID, AUTOMATION_ID),
-  ));
 }
 
 function childStub(parentId: string, substreamId = asSubstreamId("0")): DurableObjectStub<SubstreamAgent> {
@@ -580,9 +573,10 @@ describe("the Organization's parent outbox", () => {
 
 describe("an automation's child", () => {
   it("has its activity receipted by the automation and forwarded nowhere", async () => {
-    const automation = automationStub();
+    // The Sidekick's parent is hosted by the Organization object.
+    const automation = workspaceStub();
     await parkEffectQueue(automation);
-    await automation.create({
+    await automation.sidekickCreate({
       workspaceId: WORKSPACE_ID,
       automationId: AUTOMATION_ID,
       authorUserId: USER_ID,
@@ -613,12 +607,12 @@ describe("an automation's child", () => {
 
     await runInDurableObject(automation, (_instance, state) => {
       expect(state.storage.sql.exec<{ substream_id: string; payload_hash: string }>(
-        `SELECT substream_id, payload_hash FROM child_effect_receipts WHERE message_id = ?`,
-        envelope.messageId,
+        `SELECT substream_id, payload_hash FROM sidekick_child_receipts WHERE sidekick_id = ? AND message_id = ?`,
+        AUTOMATION_ID, envelope.messageId,
       ).toArray()).toEqual([{ substream_id: AUTOMATION_RUN_ID, payload_hash: envelope.payloadHash }]);
       // Parked above, so a forwarded row would still be here to be counted.
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM durable_outbox WHERE effect_kind <> 'directory_automation'`,
+        `SELECT COUNT(*) AS count FROM parent_outbox WHERE parent_id = ?`, AUTOMATION_ID,
       ).one().count).toBe(0);
     });
   });
