@@ -225,8 +225,13 @@ None yet.
    in new tables that each lead with `sidekick_id`, under the same invariant:
    every statement names it. `WorkspaceDO`'s facade already dispatches every
    parent method by reading the kind from `parent_metadata`; this adds one
-   role. This is the platform answer: one parent primitive with roles, rather
-   than one per product noun. Rejected: a separate `SidekickHost` beside
+   role. The role carries one hook the other two lack: when a run's child
+   reports its common projection, the Sidekick role maps the run conversation's
+   state onto `sidekick_runs.state`, `summary` and `completed_at` in the same
+   transaction that accepts the effect, as `SidekickDO.onChildCommonProjection`
+   does today. Without it, run history stops following the run. This is the
+   platform answer: one parent primitive with roles, rather than one per
+   product noun. Rejected: a separate `SidekickHost` beside
    `HostedParent`, which would keep two implementations of the contract, the
    problem this PRD exists to remove.
 
@@ -234,9 +239,10 @@ None yet.
    replaced by `sidekicks`, which holds what `SidekickDO`'s single `automation`
    row holds plus the directory's own columns (`next_run_at`). The rail, the
    sidebar, the search keys, the retirement graph and the engineering MCP read
-   it directly. The `directory_automation` effect, `applyAutomationDirectory`,
-   its `source_version` and `payload_hash` fence, and
-   `registration_generation` are deleted. Rejected: keeping
+   it directly. The `directory_automation` effect, its `source_version` and
+   `payload_hash` fence, and `registration_generation` are deleted;
+   `applyAutomationDirectory` only seeds import rows until the class is
+   deleted (decision 9), then goes too. Rejected: keeping
    `automation_directory` as an in-transaction projection of the new row. It
    removes the Queue legs but keeps two copies of each field, which is how the
    audience predicate drifted.
@@ -245,12 +251,23 @@ None yet.
    accepted revision, replaces `sidekick_schedules`, arms their alarm entries
    and writes `workspace_external_event_registrations` in one
    `parentWrite` transaction. A registration that fails validation fails the
-   publish with its field named. `applied_effects_revision`, the
-   `sidekick_publication` alarm kind that replays the tail, and the
+   publish with its field named. `applied_effects_revision` and the
    `external_registration_generations` rows for Sidekick destinations are
-   deleted. Rejected: keeping the tail as a `parent_outbox` row so publish
-   succeeds even when a registration is refused. That is the current failure
-   mode moved inside one object.
+   deleted. Rejected: keeping the registrations in a retried tail so publish
+   succeeds even when one is refused. That is the current failure mode moved
+   inside one object.
+
+   One step cannot join the transaction: materializing the memory tables a
+   triggered definition declares (`materializeAutomationMemoryTables`), which
+   calls the memory scope over RPC. The publish transaction arms a stored alarm
+   entry, `sidekick_memory_tables` keyed `<sidekickId>:<revision>`, and the
+   entry materializes the tables and clears itself, retrying on the entry's own
+   backoff until it succeeds. The step is idempotent, as it is today, since the
+   `sidekick_publication` tail it replaces already replays it. An entry for a
+   revision that is no longer the accepted one clears without acting, so an
+   older publish never overwrites a newer one. This narrows
+   `sidekick_publication` to the one step that needs a retry, rather than
+   deleting it.
 
 4. **Authorization is one function over local tables.** `authorizeViewer`,
    `assertManager` and the library's audience check read the Organization's
@@ -301,7 +318,7 @@ None yet.
    Organization on 2026-09-28, gains at most one wake per due Sidekick entry.
 
 8. **The storage cost is affordable, by arithmetic.** The pull-request
-   Sidekick adds about 26 runs a day at about 7.8 KB, about 75 MB a year; the
+   Sidekick adds about 26 runs a day at about 7.8 KB, about 74 MB a year; the
    10-minute schedule adds about 145 small runs a day, under 20 MB a year at a
    generous 300 bytes a row. All 17 of that Organization's Sidekicks together
    are well under 1 GB a year, against a 10 GB object that holds about 3.3 GB of
@@ -313,23 +330,30 @@ None yet.
    and this change adds a line to it there.
 
 9. **Import on touch, then by alarm, with the Sidekick frozen.** This repeats
-   the Channel move's mechanism exactly
-   ([How the parents moved](../../hosted-conversation-parents.md#how-the-parents-moved)).
-   A `WorkspaceDO` migration seeds `sidekick_imports` with one `pending` row
-   per `automation_directory` row. The legacy object gains one method, an
-   export that freezes the object on its first page, clears its native alarm
-   and returns its rows and its alarm entries a page at a time. `WorkspaceDO`
-   inserts each page, and the last page's transaction re-arms the alarm entries
-   at their exported due instants and marks the import done. A request for a
-   Sidekick imports it first; the alarm imports the rest. A frozen legacy
-   object answers every other method with `sidekick_parent_moved`, which a
-   Queue consumer treats as retryable so that a message routed by an older
-   Worker during deploy is delivered again to the new route. Because run
-   occurrence keys are imported with their uniqueness, an occurrence that was
-   due during the freeze fires once, on import. Rejected: one RPC for the whole
-   export, as Channels did. A year of the pull-request Sidekick's runs would be
-   about 68 MB, over the platform's 32 MiB RPC message limit; paging costs one
-   cursor.
+   the Channel move's mechanism exactly ([How the parents
+   moved](../../hosted-conversation-parents.md#how-the-parents-moved)). A
+   `WorkspaceDO` migration seeds `sidekick_imports` with one `pending` row per
+   `automation_directory` row. The directory is not complete on its own:
+   `create` commits the `SidekickDO` before its directory row arrives over the
+   Queue, and during the deploy an older Worker can still create one. So until
+   step 3, `applyAutomationDirectory` stays as a receiver whose only job is to
+   add a `pending` import row for a Sidekick id it has not seen and otherwise
+   acknowledge, and the gate in step 3 compares `sidekick_imports` against the
+   migration tracker's hourly sweep of the `SidekickDO` namespace, which lists
+   every object whether or not it has a directory row. The legacy object gains
+   one method, an export that freezes the object on its first page, clears its
+   native alarm and returns its rows and its alarm entries a page at a time.
+   `WorkspaceDO` inserts each page, and the last page's transaction re-arms the
+   alarm entries at their exported due instants and marks the import done. A
+   request for a Sidekick imports it first; the alarm imports the rest. A
+   frozen legacy object answers every other method with
+   `sidekick_parent_moved`, which a Queue consumer treats as retryable so that
+   a message routed by an older Worker during deploy is delivered again to the
+   new route. Because run occurrence keys are imported with their uniqueness,
+   an occurrence that was due during the freeze fires once, on import.
+   Rejected: one RPC for the whole export, as Channels did. A year of the
+   pull-request Sidekick's runs would be about 74 MB, over the platform's 32
+   MiB RPC message limit; paging costs one cursor.
 
 10. **Children do not change.** A run `SubstreamAgent` keeps
     `{ kind: "automation", id }` as its parent identity. Only routing changes:
@@ -364,7 +388,7 @@ with `sidekick_id`; the authoritative record will be the migration and
 | `sidekick_runs` | `runs` | `UNIQUE (sidekick_id, occurrence_key)`, `UNIQUE (harness_run_id)`. History index on `(sidekick_id, created_at DESC, run_id)`. |
 | `sidekick_email_receipts` | `inbound_email_receipts` | Keyed by Resend id. |
 | `sidekick_imports` | none | The import ledger. Dropped by a later migration once every Organization has imported. |
-| `parent_*` rows with `parent_id = sidekick_id` | `conversation_children`, `substream_directory`, `substream_user_directory`, `projection_keys`, `workstream_state_clock`, `workstream_state_changes`, `durable_outbox` | The existing hosted-parent tables. `child_effect_receipts` is not imported. |
+| `parent_*` rows with `parent_id = sidekick_id` | `conversation_children`, `substream_directory`, `substream_user_directory`, `projection_keys`, `workstream_state_clock`, `workstream_state_changes`, `durable_outbox` | The existing hosted-parent tables. `child_effect_receipts` is not imported. Outbox rows of kind `directory_automation` are dropped, since `sidekicks` supersedes them and `parent_outbox` refuses them (`parent_outbox_directory_row`); every other kind is imported. |
 | `parent_metadata` row with kind `automation` | none | How the facade finds the role. |
 
 `sidekick_conversation_attachments`, `parent_sidekicks`,
@@ -420,18 +444,21 @@ side, which is the thing being removed. Like the Channel move, it ships only at
 1. **Hosted Sidekick parent and import.** One change adds the
    `HOSTED_SIDEKICK_ROLE`, the new tables and the import ledger; routes every
    Sidekick caller to `WorkspaceDO`; reduces `SidekickDO` to its migration
-   ledger and the export; and deletes the directory projection, the publication
-   tail, `ConversationParentDurableObject` and the `automation` branch of
-   `conversationParentStub`. Sidekicks import on first touch and by alarm from
-   this deploy on.
+   ledger and the export; reduces `applyAutomationDirectory` to seeding import
+   rows; and deletes the rail's reads of `automation_directory`, the
+   registration tail, `ConversationParentDurableObject` and the `automation`
+   branch of `conversationParentStub`. Sidekicks import on first touch and by
+   alarm from this deploy on.
 2. **Gate.** An operator checks every Organization with `run_workspace_sql`:
    schema at or past the import migration, and no `pending` row in
    `sidekick_imports` other than in retired Organizations. This is the same
-   runbook check the `v12` deletion used. A `pending` row with a code is
-   repaired and retried before going on.
+   runbook check the `v12` deletion used, plus one: every `SidekickDO` the
+   migration tracker's sweep lists has an import row marked done. A
+   `pending` row with a code is repaired and retried before going on.
 3. **Delete the class.** The next wrangler tag deletes `SidekickDO`, a later
-   `WorkspaceDO` migration drops `sidekick_imports`, and the same change
-   removes `run_sidekick_sql`, the Sidekick class from the migration tracker's
+   `WorkspaceDO` migration drops `sidekick_imports` and `automation_directory`,
+   and the same change removes `applyAutomationDirectory`,
+   `run_sidekick_sql`, the Sidekick class from the migration tracker's
    `REPORTING_CLASSES` and dispatcher, the Sidekick node kind and gate in
    retirement, and the `AUTOMATION_DOS` binding. **This step cannot be
    undone**: it destroys every legacy object and its storage, and a build from
@@ -445,9 +472,20 @@ an operator and imported again. After step 3 there is nothing to turn off.
 
 - A real-workerd test in `apps/api/test-workers/` imports a frozen
   `SidekickDO` holding a definition, two revisions, a schedule due during the
-  freeze, a pending run and an outbox row, and shows the schedule fires once,
-  the run provisions once, and the outbox drains once. Broken by skipping the
-  re-arm, it fails.
+  freeze, a pending run, an activity outbox row and a `directory_automation`
+  outbox row, and shows the schedule fires once, the run provisions once, the
+  activity row drains once, and the directory row is dropped. Broken by
+  skipping the re-arm, it fails.
+- A `SidekickDO` that exists with no directory row (created by the old path,
+  its directory message not yet delivered) is imported once its message or its
+  first request arrives, and the gate query reports it until then.
+- A run whose conversation completes shows `completed` with its summary in the
+  Sidekick's run history, from the same transaction that accepted the child's
+  effect.
+- Publishing a triggered definition that declares memory tables creates them;
+  when the memory scope refuses once, the `sidekick_memory_tables` entry
+  retries and creates them, and a newer publish's entry is not overwritten by
+  the older one.
 - Publishing a Sidekick whose registration is refused leaves the previous
   revision active, no schedules armed and no registrations written, and the
   error names the rejected field.
