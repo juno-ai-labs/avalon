@@ -574,10 +574,19 @@ first. Counting rows also let tool and thinking rows crowd out the conversation.
 On the server, tool blocks were already excluded, but so were Sidekick results,
 which are written for the room and are often what a Breakout is about.
 
-**What a future change has to respect:** only text reaches a Breakout. Tool
-protocol, thinking and Rally's own system rows stay out of both the capture and
-the drawn window. A `system` turn is admitted only by its
-`automation_activation` message type, never by its actor.
+**Considered and rejected:** Admitting every `system` turn and letting the
+summary sort it out. Most system rows are Rally's bookkeeping (joins, agent
+exchanges), and the summary model would spend its handoff on them. Keeping the
+work rows in the drawn window, collapsed, was also rejected: they say how an
+answer was reached, and the window is there to say what is being branched from.
+
+**Consequences:** Only text reaches a Breakout. Tool protocol, thinking and
+Rally's own system rows stay out of both the capture and the drawn window. A
+`system` turn is admitted only by its `automation_activation` message type,
+never by its actor, and a reader of `SubstreamContextMessage` must handle the
+`sidekick` actor.
+
+Shipped in #1095.
 
 ### 2026-09-24 — A Breakout's roster is its own
 
