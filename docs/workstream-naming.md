@@ -316,6 +316,13 @@ normalizes to nothing. The colour stays the id-derived one. The pass publishes n
 room event, because `workstream_renamed` carries a title and one sent after a
 person's rename would undo it; the directory projection carries the icon.
 
+### A Space's icon
+
+`chooseSpaceIcon` runs the same icon-only call for a Space created without an
+icon, with the Space's name as the objective, and returns the key rather than
+writing it: a Space's appearance belongs to WorkspaceDO, and
+[`spaces.md`](spaces.md#the-icon-rally-chooses) owns when that write may land.
+
 ## Invariants
 
 - **`title_status = 'naming'` is a promise that something will settle it.** Any
