@@ -105,14 +105,15 @@ describe("background callers meeting a retired object", () => {
   });
 
   it("acknowledges a revocation hop whose enumeration the retired object refuses", async () => {
-    // The automation hop asks `listChildren`, which stays a refused product
-    // read. Retirement closed every socket beneath the object when it wrote
-    // the tombstone, so the hop has nothing left to find.
+    // The automation hop asks the Organization object, which hosts the
+    // Sidekick, for `listChildren`, which stays a refused product read.
+    // Retirement closed every socket beneath the object when it wrote the
+    // tombstone, so the hop has nothing left to find.
     const outcomes = { acked: [] as string[], retried: [] as string[] };
     const env = createTestEnv({
       DB: sqliteD1(seeded()),
       AVALON_REGION: "global",
-      AUTOMATION_DOS: refusing({
+      WORKSPACE_DOS: refusing({
         listChildren: () => { throw new RetirementRefusedError("listChildren"); },
       }),
       ACCESS_REVOCATION_QUEUE: { send: async () => undefined, sendBatch: async () => undefined },

@@ -15,9 +15,8 @@ import {
   type WorkstreamAutomationSummary,
 } from "@rally/contracts";
 
-import type { AutomationDO } from "../durable-objects/automation-do";
 import type { AutomationActor } from "../durable-objects/automation-do-protocol";
-import { automationDOName, workspaceDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -48,13 +47,9 @@ export async function createAutomation(env: Env, input: {
   const workspaceId = asWorkspaceId(input.workspaceId);
   const automationId = asAutomationId(input.automationId ?? uuidV7());
   const authority = await readWorkstreamAuthorityControl(env);
-  const automation = await durableObjectStubForWorkspace(
-    env,
-    env.AUTOMATION_DOS,
-    workspaceId,
-    automationDOName(env.AVALON_REGION, workspaceId, automationId),
-  );
-  const { created } = await automation.create({
+  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+    workspaceDOName(env.AVALON_REGION, workspaceId));
+  const { created } = await workspace.sidekickCreate({
     workspaceId,
     automationId,
     authorUserId: asUserId(input.authorUserId),
@@ -116,6 +111,8 @@ export class AutomationService {
   async listSidekicks(): Promise<{ items: AutomationSummary[] }> {
     return (await this.workspace()).listSidekickDirectoryForAuthorizedMember({
       workspaceId: this.auth.workspaceId, userId: this.auth.userId,
+      // What this request's authentication read, so the object does not read it again.
+      ...(this.auth.accessClass ? { accessClass: this.auth.accessClass, role: this.auth.role } : {}),
     });
   }
 
@@ -138,13 +135,13 @@ export class AutomationService {
   }
 
   async detail(automationId: string): Promise<AutomationDetail> {
-    const automation = await this.automation(automationId);
-    return automation.readDetail(await this.actorRequest(automationId));
+    const workspace = await this.workspace();
+    return workspace.sidekickReadDetail(await this.actorRequest(automationId));
   }
 
   async apply(automationId: string): Promise<AutomationDetail> {
-    const automation = await this.automation(automationId);
-    return automation.apply(await this.actorRequest(automationId));
+    const workspace = await this.workspace();
+    return workspace.sidekickApply(await this.actorRequest(automationId));
   }
 
   /**
@@ -161,9 +158,9 @@ export class AutomationService {
     evaluatorRules: AutomationSetEvaluatorRulesInputV1 | null;
     submittedByRunId: string | null;
   }): Promise<{ definitionRevision: number; ready: boolean }> {
-    const automation = await this.automation(automationId);
+    const workspace = await this.workspace();
     const { actor } = await this.actorRequest(automationId);
-    return automation.saveDefinition({
+    return workspace.sidekickSaveDefinition({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       automationId: asAutomationId(automationId),
       draft: input.draft,
@@ -180,9 +177,9 @@ export class AutomationService {
    * `SidekickDO.runSeeded`.
    */
   async runSeeded(automationId: string, seed: DemoSeed): Promise<{ runId: string; reused: boolean }> {
-    const automation = await this.automation(automationId);
+    const workspace = await this.workspace();
     const { actor } = await this.actorRequest(automationId);
-    return automation.runSeeded({
+    return workspace.sidekickRunSeeded({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       automationId: asAutomationId(automationId),
       actor,
@@ -201,18 +198,18 @@ export class AutomationService {
     automationId: string,
     appearance: WorkstreamAppearancePatch,
   ): Promise<AutomationDetail> {
-    const automation = await this.automation(automationId);
-    return automation.setAppearance({ ...await this.actorRequest(automationId), appearance });
+    const workspace = await this.workspace();
+    return workspace.sidekickSetAppearance({ ...await this.actorRequest(automationId), appearance });
   }
 
   async pause(automationId: string): Promise<void> {
-    const automation = await this.automation(automationId);
-    await automation.pause(await this.actorRequest(automationId));
+    const workspace = await this.workspace();
+    await workspace.sidekickPause(await this.actorRequest(automationId));
   }
 
   async resume(automationId: string): Promise<void> {
-    const automation = await this.automation(automationId);
-    await automation.resume(await this.actorRequest(automationId));
+    const workspace = await this.workspace();
+    await workspace.sidekickResume(await this.actorRequest(automationId));
   }
 
   async delete(automationId: string): Promise<void> {
@@ -220,65 +217,39 @@ export class AutomationService {
   }
 
   async archive(automationId: string): Promise<void> {
-    const automation = await this.automation(automationId);
-    await automation.remove(await this.actorRequest(automationId));
+    const workspace = await this.workspace();
+    await workspace.sidekickRemove(await this.actorRequest(automationId));
   }
 
   async runNow(automationId: string, idempotencyKey: string): Promise<{ runId: string; reused: boolean }> {
-    const automation = await this.automation(automationId);
-    return automation.runNow({ ...await this.actorRequest(automationId), idempotencyKey });
+    const workspace = await this.workspace();
+    return workspace.sidekickRunNow({ ...await this.actorRequest(automationId), idempotencyKey });
   }
 
   async runs(automationId: string): Promise<{ items: AutomationRun[] }> {
-    const automation = await this.automation(automationId);
-    return automation.listRuns(await this.actorRequest(automationId));
+    const workspace = await this.workspace();
+    return workspace.sidekickListRuns(await this.actorRequest(automationId));
   }
 
   async claimExecutionPrincipal(automationId: string): Promise<AutomationExecutionPrincipalClaim> {
-    const automation = await this.automation(automationId);
-    return automation.claimExecutionPrincipal(await this.actorRequest(automationId));
+    const workspace = await this.workspace();
+    return workspace.sidekickClaimExecutionPrincipal(await this.actorRequest(automationId));
   }
 
   /**
-   * Who is asking, with the one fact the automation object cannot see for
-   * itself: whether they can manage the workstream that owns it. The directory
-   * locates the owner; its canonical management decision supplies authority.
-   * Failure withholds standing rather than falling back to a stale Main roster.
+   * Who is asking. Whether they can manage a Sidekick homed in a Channel or
+   * Breakout is decided where the Sidekick lives, from the Organization's own
+   * tables, so nothing is resolved here first.
    */
   async actorRequest(automationId: string): Promise<{
     workspaceId: ReturnType<typeof asWorkspaceId>;
     automationId: string;
     actor: AutomationActor;
   }> {
-    let participantOfOwningWorkstream = false;
-    try {
-      const workspace = await this.workspace();
-      const owned = await workspace.automationOwner({
-        workspaceId: this.auth.workspaceId,
-        automationId,
-      });
-      if (owned.owningWorkstreamId) {
-        // Archived included: the room's people still manage its automation
-        // after the archive, and the object itself answers what the archive
-        // forbids (`sidekick_room_archived` on resume) rather than a blanket
-        // refusal that hides it.
-        participantOfOwningWorkstream = (await workspace.readManagementAccess({
-          workspaceId: this.auth.workspaceId,
-          parentId: owned.owningWorkstreamId,
-          userId: this.auth.userId,
-        })).allowed;
-      }
-    } catch {
-      participantOfOwningWorkstream = false;
-    }
     return {
       workspaceId: this.auth.workspaceId,
       automationId,
-      actor: {
-        userId: this.auth.userId,
-        actorRole: this.auth.role,
-        participantOfOwningWorkstream,
-      },
+      actor: { userId: this.auth.userId, actorRole: this.auth.role, participantOfOwningWorkstream: false },
     };
   }
 
@@ -288,15 +259,6 @@ export class AutomationService {
       this.env.WORKSPACE_DOS,
       this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
-    );
-  }
-
-  private automation(automationId: string): Promise<DurableObjectStub<AutomationDO>> {
-    return durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_DOS,
-      this.auth.workspaceId,
-      automationDOName(this.env.AVALON_REGION, this.auth.workspaceId, asAutomationId(automationId)),
     );
   }
 }

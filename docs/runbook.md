@@ -1068,8 +1068,11 @@ cannot establish production namespace preservation.
 
 ### Debugging an automation
 
-An automation is one `AutomationDO` per automation, named
-`<region>:<workspace>:automation:<automationId>`, and its conversations are
+An automation's rows are its Organization's: `automation_directory` and the
+`sidekick_*` tables in `WorkspaceDO`, filtered by `sidekick_id` (one not yet
+imported still has them in its legacy `SidekickDO`, named
+`<region>:<workspace>:automation:<automationId>`; `sidekick_imports` says which).
+Its conversations are
 `SubstreamAgent`s named `<region>:<workspace>:<automationId>` (the chat) and
 `<region>:<workspace>:<automationId>:<runId>` (each run).
 [`automation-lifecycle.md`](automation-lifecycle.md) owns the object; this is
@@ -1441,7 +1444,7 @@ For a missing or stale product fact, inspect the source child's `durable_outbox`
 and the parent's outbox and receipts first: `parent_outbox` and
 `parent_child_receipts` in `WorkspaceDO` for a Channel or Space (see
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md)), or
-`durable_outbox` and `child_effect_receipts` in `AutomationDO` for a Sidekick.
+`sidekick_child_receipts` in `WorkspaceDO` for a Sidekick.
 For a missing sidebar badge/resource route/suggestion feedback row, inspect
 `WorkspaceDO.workspace_workstream_effect_receipts` and the corresponding
 `channels` or `channel_viewers` row's authority generation, waterline, and

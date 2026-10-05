@@ -32,7 +32,6 @@ import {
   LEGACY_WORKSTREAM_LINK_ORIGINS,
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
-  asAutomationId,
   asSpaceId,
   asUserId,
   asWorkspaceId,
@@ -60,7 +59,7 @@ import {
 } from "./slack-workstream-card";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
-import { automationDOName, workspaceDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logError, logInfo, logWarn, type LogEnv } from "../observability/logger";
@@ -137,6 +136,7 @@ import { claimParentAnchor } from "./workstream-runtime-database";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { SLACK_THREAD_CLAIM_LEASE_MS } from "../durable-objects/workspace-slack-storage";
 import type { AdmitExternalMessageInput } from "../durable-objects/workstream-external-message-protocol";
+import { hostedParentStub } from "./conversation-parent-client";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -2198,12 +2198,7 @@ export class SlackAgentService {
 
   /** A Sidekick run's state and its Sidekick's lifecycle, from the Sidekick object. */
   private async sidekickRunState(connection: SlackConnectionRow, sidekickId: string, runId: string) {
-    return (await durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_DOS,
-      asWorkspaceId(connection.workspace_id),
-      automationDOName(this.env.AVALON_REGION, asWorkspaceId(connection.workspace_id), asAutomationId(sidekickId)),
-    )).readRunState({
+    return (await hostedParentStub(this.env, connection.workspace_id)).sidekickReadRunState({
       workspaceId: asWorkspaceId(connection.workspace_id),
       automationId: sidekickId,
       runId,

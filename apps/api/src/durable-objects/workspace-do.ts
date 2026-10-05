@@ -29,6 +29,9 @@ import {
   WorkspaceSocketClientEventTypeSchema,
   isUnknownSocketEvent,
   safeParseSocketEvent,
+  type AutomationDetail,
+  type SidekickAttachment,
+  type SidekickSkillSource,
 } from "@rally/contracts";
 import {
   InstallationCreateSchema,
@@ -1058,6 +1061,26 @@ import {
   parseConversationId,
   scopeConversations,
 } from "./workspace-sidekick-conversation-storage";
+import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
+import {
+  HostedSidekick,
+  SIDEKICK_MEMORY_TABLES_ALARM_KIND,
+  hostedSidekickAlarmTarget,
+  sidekickAlarmKey,
+  sidekickReaderAllows,
+  type HostedSidekickHost,
+} from "./hosted-sidekick";
+import {
+  AUTOMATION_RUN_ALARM_KIND,
+  AUTOMATION_SCHEDULE_ALARM_KIND,
+  SidekickBatchDetailRequestSchema,
+  SidekickBatchSkillReadRequestSchema,
+  SidekickExportSchema,
+  type SidekickBatchDetailRequest,
+  type SidekickBatchSkillReadRequest,
+  SidekickRunProvisionQueueMessageSchema,
+  type SidekickExport,
+} from "./automation-do-protocol";
 import {
   ConversationToolAttachRequestSchema,
   ConversationToolResolveRequestSchema,
@@ -1086,6 +1109,9 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   // against storage nobody meant to reach generically.
   "automation_directory",
   "sidekick_conversation_attachments",
+  // A hosted Sidekick's own rows: `HostedSidekick` is their only writer.
+  "sidekick_revisions", "sidekick_schedules", "sidekick_runs", "sidekick_email_receipts",
+  "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_imports",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
@@ -4151,6 +4177,13 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // Provenance the Slack Connect spawn check needs, which neither the room
   // id nor the Space's scope keeps; see docs/external-conversation-bindings.md.
   statements: EXTERNAL_BINDING_SPACE_MATCHED_MIGRATION,
+}, {
+  version: 91,
+  description: "Sidekick parents move into the Organization object",
+  // The directory row becomes the definition row, beside the revisions,
+  // schedules, runs and children the Sidekick's own object held, and a ledger
+  // of the Sidekicks still to import. See hosted-sidekick-schema.ts.
+  statements: HOSTED_SIDEKICK_SCHEMA_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5620,11 +5653,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     parentId: string;
     viewer?: Omit<Parameters<HostedParent["authorizeViewer"]>[0], "workspaceId" | "parentId">;
   }): Promise<{
-    kind: "workstream" | "space" | null;
+    kind: "workstream" | "space" | "automation" | null;
     authority: Awaited<ReturnType<HostedParent["authority"]>>;
     viewer?: Awaited<ReturnType<HostedParent["authorizeViewer"]>>;
   }> {
     const request = z.object({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }).parse(input);
+    const sidekick = await this.sidekickParent(request.parentId, request.workspaceId);
+    if (sidekick) {
+      const authority = sidekick.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
+      if (!input.viewer || !authority.exists) return { kind: authority.exists ? "automation" : null, authority };
+      const viewer = await sidekick.authorizeViewer({ ...input.viewer, workspaceId: request.workspaceId, parentId: request.parentId });
+      return { kind: "automation", authority, viewer };
+    }
     const parent = await this.hostedParent(request.parentId, request.workspaceId);
     const authority = await parent.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
     const kind = authority.exists ? parent.role.kind : null;
@@ -5636,14 +5676,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async authority(input: Parameters<HostedParent["authority"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.authority(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).authority(input);
   }
 
   async authorizeViewer(input: Parameters<HostedParent["authorizeViewer"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.authorizeViewer(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).authorizeViewer(input);
   }
 
   async reserveChild(input: Parameters<HostedParent["reserveChild"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.reserveChild(input);
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveChild(input));
   }
 
@@ -5664,6 +5710,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async reserveAgentChild(input: Parameters<HostedParent["reserveAgentChild"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.reserveAgentChild(input);
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveAgentChild(input));
   }
 
@@ -5677,15 +5725,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async listChildren(input: Parameters<HostedParent["listChildren"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.listChildren(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).listChildren(input);
   }
 
   async childTerminalDeadlines(input: Parameters<HostedParent["childTerminalDeadlines"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.childTerminalDeadlines(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).childTerminalDeadlines(input);
   }
 
   /** The children a hosted parent knows, for the retirement walk. */
   async childrenForRetirement(input: { workspaceId: string; parentId: string }) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.childrenForRetirement();
     const parent = await this.hostedParent(input.parentId, input.workspaceId);
     if (!parent.metadataRow()) return { status: "missing" as const };
     return { status: "ok" as const, children: parent.childrenForRetirement() };
@@ -5702,6 +5756,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // parent is served and, on a new object, the object's own identity.
     const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
     const envelope = request.envelopes[0]!;
+    if (envelope.parentKind === "automation") {
+      const sidekick = await this.sidekickParent(envelope.parentId, envelope.workspaceId);
+      if (!sidekick) throw new Error("sidekick_missing");
+      return { accepted: sidekick.receiveChildEffects(request) };
+    }
     if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") {
       throw new Error("conversation_effect_parent_kind_unhosted");
     }
@@ -5726,11 +5785,649 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async listAuthorizationChildren(input: Parameters<HostedParent["listAuthorizationChildren"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) {
+      return sidekick.authorizationDiscoveryChildren({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.parentId });
+    }
     return (await this.hostedParent(input.parentId, input.workspaceId)).listAuthorizationChildren(input);
   }
 
   async readAuthorizationFacts(input: Parameters<HostedParent["readAuthorizationFacts"]>[0]) {
     return (await this.hostedParent(input.parentId, input.workspaceId)).readAuthorizationFacts(input);
+  }
+
+  /** A Sidekick's authorization facts, which are shaped unlike a Channel's. */
+  async sidekickReadAuthorizationFacts(input: Parameters<HostedSidekick["readAuthorizationFacts"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (!sidekick) return { exists: false as const, validatedAt: Date.now() };
+    return sidekick.readAuthorizationFacts(input);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hosted Sidekicks. `HostedSidekick` is the Sidekick's parent; these lend it
+  // this object's storage and the Organization facts it reads, and import a
+  // Sidekick that still lives in its legacy object before serving it. See
+  // docs/hosted-conversation-parents.md and docs/automation-lifecycle.md.
+  // ---------------------------------------------------------------------------
+
+  /** Imports in flight, by Sidekick id: a request and the alarm reaching one Sidekick share its import. */
+  private readonly sidekickImports = new Map<string, Promise<void>>();
+  private sidekickSchemaKnown = false;
+  /** Set by a hosted Sidekick write that moved a directory row; the sidebar list is published after it. */
+  private sidekickDirectoryMoved = false;
+
+  /** Whether migration 91 has run; an Organization held below it has no Sidekick tables. */
+  private sidekickSchemaPresent(): boolean {
+    if (this.sidekickSchemaKnown) return true;
+    this.sidekickSchemaKnown = this.state.storage.sql.exec(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'sidekick_imports'",
+    ).toArray().length > 0;
+    return this.sidekickSchemaKnown;
+  }
+
+  /**
+   * Whether an id names a Sidekick: its directory row, or its ledger row
+   * before the directory heard of it. Asked before the Channel fallback,
+   * which would otherwise turn an unimported Sidekick into a Channel parent.
+   */
+  private isSidekickParent(parentId: string): boolean {
+    if (!this.sidekickSchemaPresent()) return false;
+    return this.state.storage.sql.exec(
+      `SELECT 1 FROM automation_directory WHERE automation_id = ?
+        UNION ALL SELECT 1 FROM sidekick_imports WHERE sidekick_id = ? LIMIT 1`,
+      parentId, parentId,
+    ).toArray().length > 0;
+  }
+
+  private hostedSidekickHost(): HostedSidekickHost {
+    return {
+      env: this.env,
+      storage: this.state.storage,
+      alarms: this.scheduledAlarms,
+      writeRegistrations: (automationId, evaluators) => this.writeSidekickRegistrations(automationId, evaluators),
+      afterRegistrations: (automationId, revision, evaluators) => this.afterSidekickRegistrations(automationId, revision, evaluators),
+      noteDirectoryChanged: (automationId, deleted, now) => {
+        this.state.storage.sql.exec(
+          `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`,
+        );
+        // A deleted Sidekick's runs take no more input, so the threads its
+        // sends opened stop routing to them; the rows stay, suspended.
+        if (deleted) this.externalBindings().suspendDeletedSidekick(automationId, new Date(now).toISOString());
+        this.sidekickDirectoryMoved = true;
+      },
+      workspaceDatabase: (workspaceId) => this.localWorkspaceEnv(workspaceId).DB,
+      workstreamParticipant: (input) => this.workstreamParticipant(input),
+      channelViewer: (input) => this.authorizeViewer({
+        workspaceId: asWorkspaceId(input.workspaceId),
+        parentId: input.parentId,
+        substreamId: asSubstreamId(input.substreamId),
+        userId: asUserId(input.userId),
+        ...(input.requireGrantAuthority ? { requireGrantAuthority: true } : {}),
+      }),
+      readManagementAccess: async (input) => {
+        const access = await this.readManagementAccess(input);
+        return { allowed: access.allowed, writable: access.allowed ? access.writable : false };
+      },
+      readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
+      sendRunProvision: async (message) => {
+        await this.env.ACTIVITY_QUEUE.send(SidekickRunProvisionQueueMessageSchema.parse({
+          kind: "sidekick_run_provision", region: this.env.AVALON_REGION, ...message,
+        }));
+      },
+    };
+  }
+
+  /**
+   * The hosted parent for a Sidekick id, imported first when it still lives
+   * in its legacy object; `null` for an id that names no Sidekick.
+   */
+  private async sidekickParent(parentId: string, workspaceId?: string): Promise<HostedSidekick | null> {
+    await this.initialized;
+    if (!this.isSidekickParent(parentId)) return null;
+    if (workspaceId !== undefined) await this.ensureParentWorkspace(workspaceId);
+    await this.ensureSidekickImported(parentId);
+    return new HostedSidekick(this.hostedSidekickHost(), parentId);
+  }
+
+  /** A Sidekick for a method that may also create it: no import is owed for an id nothing has heard of. */
+  private async hostedSidekick(automationId: string, workspaceId: string): Promise<HostedSidekick> {
+    await this.initialized;
+    await this.ensureParentWorkspace(workspaceId);
+    if (!this.sidekickSchemaPresent()) throw new Error("sidekick_schema_missing");
+    await this.ensureSidekickImported(automationId);
+    return new HostedSidekick(this.hostedSidekickHost(), automationId);
+  }
+
+  /** Run a hosted Sidekick call, then publish the sidebar list and arm what it scheduled. */
+  private async sidekickCall<T>(automationId: string, workspaceId: string, run: (sidekick: HostedSidekick) => Promise<T> | T): Promise<T> {
+    const sidekick = await this.hostedSidekick(automationId, workspaceId);
+    try {
+      return await run(sidekick);
+    } finally {
+      if (this.sidekickDirectoryMoved) {
+        this.sidekickDirectoryMoved = false;
+        this.publishSidebarList("automations");
+      }
+      await this.armNextAlarm();
+    }
+  }
+
+  /**
+   * Run a hosted Sidekick read. A read writes nothing, so it skips what a
+   * write owes afterward: no sidebar publish and no alarm re-arm. A run asks
+   * for its state before every provider write, so this is a hot path.
+   */
+  private async sidekickRead<T>(automationId: string, workspaceId: string, run: (sidekick: HostedSidekick) => T): Promise<T> {
+    return run(await this.hostedSidekick(automationId, workspaceId));
+  }
+
+  /**
+   * The Sidekicks a batch read covers: the ids asked for, plus every one a
+   * Channel recommends or owns when `channelId` is given, plus every active
+   * loadable one when `allLoadable` is set. Every list lives here, so a
+   * caller asks once rather than fetching the ids first. Order is the
+   * caller's, then the Channel's, then the Organization's, with no repeats;
+   * an id that names no Sidekick is skipped.
+   */
+  private selectedSidekicks(selection: {
+    automationIds?: readonly string[] | undefined;
+    channelId?: string | undefined;
+    allLoadable?: boolean | undefined;
+    workspaceId: string;
+  }): string[] {
+    const ids = [...(selection.automationIds ?? [])];
+    if (selection.channelId !== undefined) {
+      ids.push(...this.recommendedSidekickIdsFor(selection.channelId), ...this.automationIdsOwnedBy(selection.channelId));
+    }
+    if (selection.allLoadable) ids.push(...this.loadableSidekickIds(selection.workspaceId));
+    return [...new Set(ids)].filter((id) => this.isSidekickParent(id));
+  }
+
+  private async ensureSidekickImported(automationId: string): Promise<void> {
+    const ledger = this.state.storage.sql.exec<{ state: string; not_before: number; last_error_code: string | null }>(
+      `SELECT state, not_before, last_error_code FROM sidekick_imports WHERE sidekick_id = ?`, automationId,
+    ).toArray()[0];
+    if (!ledger || ledger.state !== "pending") return;
+    let running = this.sidekickImports.get(automationId);
+    // A failed import waits out its backoff: a request in the meantime fails
+    // with the last attempt's code rather than asking the frozen legacy object
+    // again. The alarm takes it when it is due, and an operator's retry clears
+    // the wait.
+    if (!running && ledger.not_before > Date.now()) {
+      const code = ledger.last_error_code ?? "sidekick_import_pending";
+      throw new ApiError(503, code, code);
+    }
+    if (!running) {
+      running = this.importSidekick(automationId).finally(() => this.sidekickImports.delete(automationId));
+      this.sidekickImports.set(automationId, running);
+    }
+    await running;
+  }
+
+  /**
+   * Move one Sidekick out of its legacy object: one export, re-parsed here, and
+   * one transaction that writes every row, re-arms its entries at their
+   * exported due instants and marks the ledger. The export froze the legacy
+   * object, and returns the same rows if asked again, so a retried import
+   * reads the same data. A failure leaves the ledger row `pending` with its
+   * code and a backoff, and fails the request that needed the Sidekick.
+   */
+  private async importSidekick(automationId: string): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) throw new Error("workspace_identity_unknown");
+    let reregister: { evaluators: unknown[]; revision: number } | null;
+    let moved: boolean;
+    try {
+      const legacy = await durableObjectStubForWorkspace(this.env, this.env.AUTOMATION_DOS, workspaceId,
+        automationDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asAutomationId(automationId)));
+      const parsed = SidekickExportSchema.safeParse(await legacy.exportForImport({ workspaceId, automationId }));
+      if (!parsed.success) throw new ApiError(502, zodDiagnosticCode(parsed.error, "sidekick_export") ?? "sidekick_export_invalid",
+        "This Sidekick could not be moved");
+      const exported = parsed.data;
+      const now = Date.now();
+      reregister = this.state.storage.transactionSync(() => this.writeSidekickImport(automationId, workspaceId, exported, now));
+      moved = exported.status !== "missing";
+    } catch (error) {
+      // A failure that carries no code of its own is named by its class: the
+      // ledger row and the operator notice need more than the fallback, and
+      // the message itself, which may quote a stored row, stays in the log.
+      let code = diagnosticErrorCode(error, "sidekick_import_failed");
+      if (code === "sidekick_import_failed" && error instanceof Error && /^[A-Za-z]{1,60}$/u.test(error.name)) {
+        code = `sidekick_import_failed_${error.name.replace(/(?<=[a-z0-9])(?=[A-Z])/gu, "_").toLowerCase()}`;
+      }
+      const attempts = this.state.storage.sql.exec<{ attempts: number }>(
+        "SELECT attempts FROM sidekick_imports WHERE sidekick_id = ?", automationId,
+      ).toArray()[0]?.attempts ?? 0;
+      this.state.storage.sql.exec(
+        `UPDATE sidekick_imports SET attempts = ?, not_before = ?, last_error_code = ?
+          WHERE sidekick_id = ? AND state = 'pending'`,
+        attempts + 1, Date.now() + scheduledAlarmRetryDelay(attempts + 1), code.slice(0, 200), automationId,
+      );
+      // A failed import holds the Sidekick's runs until an operator repairs
+      // it, so it is reported the way a held alarm entry is: once, at the
+      // third attempt without progress.
+      reportScheduledAlarmAttempt(this.env, (promise) => this.state.waitUntil(promise), {
+        event: "sidekick_import_failed",
+        summary: "A Sidekick could not be moved into its Organization object; its runs do not fire until it is repaired and `retry_sidekick_import` succeeds.",
+        attempt: attempts + 1,
+        fields: { workspace_id: workspaceId, automation_id: automationId, code },
+        error,
+      });
+      await this.armNextAlarm();
+      // The code is the message too: a Durable Object RPC keeps only the
+      // message, and a caller across it (a route, the retirement walk) reads
+      // its code from there.
+      throw new ApiError(503, code, code);
+    }
+    if (reregister) await this.afterSidekickRegistrations(automationId, reregister.revision, reregister.evaluators);
+    // A legacy object that held nothing leaves the listing as it was, so
+    // there is nothing to push; a push here would race a directory write.
+    if (!moved) return;
+    // An archive of its home that ran while this import was failing could not
+    // tell the Sidekick, and nothing tells it again: the room's state now is
+    // applied here instead, to this Sidekick alone.
+    const home = this.state.storage.sql.exec<{ owning_workstream_id: string | null }>(
+      `SELECT owning_workstream_id FROM automation_directory WHERE automation_id = ?`, automationId,
+    ).toArray()[0]?.owning_workstream_id ?? null;
+    if (home !== null) await this.notifyOwningRoomArchival(workspaceId, [home], [], automationId);
+    this.publishSidebarList("automations");
+    await this.armNextAlarm();
+  }
+
+  /**
+   * The import's one transaction. Returns the registrations it rewrote, when
+   * the legacy object's last publish had not landed them, so the caller can
+   * run the post-commit step.
+   */
+  private writeSidekickImport(
+    automationId: string,
+    workspaceId: string,
+    exported: SidekickExport,
+    now: number,
+  ): { evaluators: unknown[]; revision: number } | null {
+    const sql = this.state.storage.sql;
+    const markImported = () => sql.exec(
+      `UPDATE sidekick_imports SET state = 'imported', imported_at = ?, last_error_code = NULL WHERE sidekick_id = ?`,
+      now, automationId,
+    );
+    if (exported.status === "missing") {
+      // A directory row whose object never held one: nothing more to move. The
+      // row is left as it was listed before the move; a read of the Sidekick
+      // answers not found, as it did then.
+      markImported();
+      logWarn(this.env, "sidekick_import_object_missing", { workspace_id: workspaceId, automation_id: automationId });
+      return null;
+    }
+    const automation = exported.automation;
+    if (automation.workspace_id !== workspaceId || automation.automation_id !== automationId) {
+      throw new Error("sidekick_import_identity_mismatch");
+    }
+    const unexpected = exported.outboxKinds.find((kind) => kind !== "directory_automation");
+    if (unexpected) throw new Error(`sidekick_import_outbox_kind_unexpected:${unexpected}`);
+    const next = sql.exec<{ next_run_at: number | null }>(
+      `SELECT MIN(value) AS next_run_at FROM json_each(?)`,
+      JSON.stringify(automation.lifecycle === "active"
+        ? exported.schedules.map((schedule) => schedule.next_due_at).filter((due) => due !== null) : []),
+    ).one().next_run_at;
+    sql.exec(
+      `INSERT INTO automation_directory
+         (automation_id, workspace_id, region, author_user_id, run_as_user_id, source_version, payload_hash,
+          lifecycle, paused_by, scope, owning_workstream_id, owning_substream_id, owning_room_archived_at,
+          title, description, next_run_at, projected_at, loadable, appearance_json,
+          current_definition_revision, accepted_definition_revision, connector_bindings_json,
+          default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
+          model_override, email_address, effective_after_event_sequence, authority_generation,
+          stop_generation, chat_appearance_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, 'hosted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(automation_id) DO UPDATE SET
+         region = excluded.region, author_user_id = excluded.author_user_id, run_as_user_id = excluded.run_as_user_id,
+         source_version = automation_directory.source_version + 1, payload_hash = excluded.payload_hash,
+         lifecycle = excluded.lifecycle, paused_by = excluded.paused_by, scope = excluded.scope,
+         owning_workstream_id = excluded.owning_workstream_id, owning_substream_id = excluded.owning_substream_id,
+         owning_room_archived_at = excluded.owning_room_archived_at, title = excluded.title,
+         description = excluded.description, next_run_at = excluded.next_run_at, projected_at = excluded.projected_at,
+         loadable = excluded.loadable, appearance_json = excluded.appearance_json,
+         current_definition_revision = excluded.current_definition_revision,
+         accepted_definition_revision = excluded.accepted_definition_revision,
+         connector_bindings_json = excluded.connector_bindings_json,
+         default_plugin_ids_json = excluded.default_plugin_ids_json,
+         activity_source_plugin_ids_json = excluded.activity_source_plugin_ids_json,
+         evaluator_projection_json = excluded.evaluator_projection_json, model_override = excluded.model_override,
+         email_address = excluded.email_address, effective_after_event_sequence = excluded.effective_after_event_sequence,
+         authority_generation = excluded.authority_generation, stop_generation = excluded.stop_generation,
+         chat_appearance_json = excluded.chat_appearance_json, created_at = excluded.created_at,
+         updated_at = excluded.updated_at`,
+      automationId, workspaceId, automation.region, automation.author_user_id, automation.run_as_user_id,
+      automation.lifecycle, automation.paused_by, automation.scope, automation.owning_workstream_id,
+      automation.owning_substream_id, automation.owning_room_archived_at, automation.title, automation.description,
+      next, now, automation.loadable, automation.appearance_json,
+      automation.current_definition_revision, automation.accepted_definition_revision,
+      automation.connector_bindings_json, automation.default_plugin_ids_json,
+      automation.activity_source_plugin_ids_json, automation.evaluator_projection_json, automation.model_override,
+      automation.email_address, automation.effective_after_event_sequence, automation.authority_generation,
+      automation.stop_generation, automation.chat_appearance_json, automation.created_at, automation.updated_at,
+    );
+    for (const revision of exported.revisions) {
+      sql.exec(
+        `INSERT INTO sidekick_revisions (sidekick_id, definition_revision, definition_json, definition_hash,
+           evaluator_rules_json, ready, submitted_by_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        automationId, revision.definition_revision, revision.definition_json, revision.definition_hash,
+        revision.evaluator_rules_json, revision.ready, revision.submitted_by_run_id, revision.created_at,
+      );
+    }
+    for (const schedule of exported.schedules) {
+      sql.exec(
+        `INSERT INTO sidekick_schedules (sidekick_id, schedule_id, definition_revision, schedule_kind,
+           definition_json, next_due_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        automationId, schedule.schedule_id, schedule.definition_revision, schedule.schedule_kind,
+        schedule.definition_json, schedule.next_due_at, schedule.updated_at,
+      );
+    }
+    for (const run of exported.runs) {
+      sql.exec(
+        `INSERT INTO sidekick_runs (sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
+           harness_run_id, state, summary, opening_json, seed_json, run_as_user_id, created_at, started_at,
+           completed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        automationId, run.run_id, run.occurrence_key, run.trigger_json, run.definition_revision, run.harness_run_id,
+        run.state, run.summary, run.opening_json, run.seed_json, run.run_as_user_id, run.created_at, run.started_at,
+        run.completed_at, run.updated_at,
+      );
+    }
+    for (const receipt of exported.emailReceipts) {
+      sql.exec(
+        `INSERT INTO sidekick_email_receipts (sidekick_id, resend_email_id, run_id, outcome_code, payload_ref,
+           resource_id, received_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        automationId, receipt.resend_email_id, receipt.run_id, receipt.outcome_code, receipt.payload_ref,
+        receipt.resource_id, receipt.received_at,
+      );
+    }
+    for (const child of exported.children) {
+      sql.exec(
+        `INSERT INTO sidekick_children (sidekick_id, substream_id, kind, created_by_user_id, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        automationId, child.substream_id, child.kind, child.created_by_user_id, child.created_at,
+      );
+    }
+    for (const projection of exported.childProjections) {
+      sql.exec(
+        `INSERT INTO sidekick_child_projections (sidekick_id, substream_id, source_version, payload_hash, effect_json,
+           updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        automationId, projection.substream_id, projection.source_version, projection.payload_hash,
+        projection.effect_json, projection.updated_at,
+      );
+    }
+    // A pending run is started whether or not its legacy entry survived:
+    // one that lost it would otherwise stay pending for good.
+    for (const run of exported.runs) {
+      if (run.state === "pending" && this.scheduledAlarms.get(AUTOMATION_RUN_ALARM_KIND, sidekickAlarmKey(automationId, run.run_id)) === null) {
+        this.scheduledAlarms.schedule({ kind: AUTOMATION_RUN_ALARM_KIND, key: sidekickAlarmKey(automationId, run.run_id), dueAt: now }, now);
+      }
+    }
+    for (const alarm of exported.alarms) {
+      if (alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND || alarm.kind === AUTOMATION_RUN_ALARM_KIND) {
+        this.scheduledAlarms.schedule({ kind: alarm.kind, key: sidekickAlarmKey(automationId, alarm.key), dueAt: alarm.dueAt }, now);
+      }
+      // A publication tail the legacy object still owed becomes the one part of
+      // it that cannot join a transaction: the declared memory tables.
+      if (alarm.kind === "sidekick_publication" && automation.accepted_definition_revision !== null) {
+        this.scheduledAlarms.schedule({
+          kind: SIDEKICK_MEMORY_TABLES_ALARM_KIND,
+          key: sidekickAlarmKey(automationId, String(automation.accepted_definition_revision)),
+          dueAt: now,
+        }, now);
+      }
+    }
+    markImported();
+    // The legacy object's last publish had not landed its registrations: the
+    // seam this move closes. Written now, in the import's own transaction.
+    if (automation.lifecycle === "active" && automation.accepted_definition_revision !== null
+      && automation.applied_effects_revision !== automation.accepted_definition_revision) {
+      const evaluators = JSON.parse(automation.evaluator_projection_json) as unknown[];
+      const cutoff = this.writeSidekickRegistrations(automationId, evaluators);
+      sql.exec(`UPDATE automation_directory SET effective_after_event_sequence = ? WHERE automation_id = ?`, cutoff, automationId);
+      return { evaluators, revision: automation.accepted_definition_revision };
+    }
+    return null;
+  }
+
+  /** When the ledger next has a Sidekick to import; `null` when none is pending. */
+  private nextSidekickImportDueAt(): number | null {
+    if (!this.sidekickSchemaPresent()) return null;
+    return this.state.storage.sql.exec<{ due: number | null }>(
+      `SELECT MIN(not_before) AS due FROM sidekick_imports WHERE state = 'pending'`,
+    ).one().due;
+  }
+
+  /** The alarm's half of the import: every pending Sidekick that is due, each on its own. */
+  private async importDueSidekicks(now: number): Promise<void> {
+    const due = this.state.storage.sql.exec<{ sidekick_id: string }>(
+      `SELECT sidekick_id FROM sidekick_imports WHERE state = 'pending' AND not_before <= ? ORDER BY not_before, sidekick_id`,
+      now,
+    ).toArray();
+    let failure: unknown = null;
+    for (const { sidekick_id: sidekickId } of due) {
+      try {
+        await this.ensureSidekickImported(sidekickId);
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    if (failure) throw failure;
+  }
+
+  /**
+   * Import one Sidekick now. A legacy object's alarm asks this when something
+   * of its came due, and an operator's retry after repairing a failed import
+   * comes here too. A Sidekick the ledger has not heard of (its directory
+   * message was never delivered) is recorded first, so it is not left behind.
+   */
+  async requestSidekickImport(input: unknown): Promise<{ state: "imported" | "pending"; lastErrorCode: string | null }> {
+    await this.initialized;
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, automationId: IdSchema }).parse(input);
+    await this.ensureParentWorkspace(request.workspaceId);
+    if (!this.sidekickSchemaPresent()) throw new ApiError(404, "sidekick_import_not_found", "No import is recorded");
+    this.state.storage.sql.exec(
+      `INSERT INTO sidekick_imports (sidekick_id, state) VALUES (?, 'pending')
+       ON CONFLICT(sidekick_id) DO UPDATE SET not_before = 0 WHERE state = 'pending'`,
+      request.automationId,
+    );
+    await this.ensureSidekickImported(request.automationId).catch(() => undefined);
+    const row = this.state.storage.sql.exec<{ state: "imported" | "pending"; last_error_code: string | null }>(
+      `SELECT state, last_error_code FROM sidekick_imports WHERE sidekick_id = ?`, request.automationId,
+    ).one();
+    return { state: row.state, lastErrorCode: row.last_error_code };
+  }
+
+  /** The engineering MCP's retry of a repaired import: the same as a request. */
+  async retrySidekickImport(input: unknown): Promise<{ state: "imported" | "pending"; lastErrorCode: string | null }> {
+    return this.requestSidekickImport(input);
+  }
+
+  /**
+   * Replace a hosted Sidekick's connector registrations inside the caller's
+   * transaction, and return the event sequence they take effect after. No
+   * generation fence: the Sidekick's own transaction orders its writes, and
+   * the legacy fence row is removed so the legacy RPC path cannot reuse it.
+   */
+  private writeSidekickRegistrations(automationId: string, evaluators: readonly unknown[]): number {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) throw new Error("workspace_identity_unknown");
+    // A source generation, though none is fenced on: with one, each row keeps
+    // its evaluator's id, which is what an admitted event names.
+    const request = ExternalEventRegistrationProjectionV1Schema.parse({
+      schemaVersion: 1, workspaceId, destination: { kind: "automation", automationId }, sourceGeneration: 1, evaluators,
+    });
+    const destinationKey = `automation:${automationId}`;
+    this.state.storage.sql.exec(`DELETE FROM external_registration_generations WHERE destination_key = ?`, destinationKey);
+    return this.replaceExternalEventRegistrationRows(request, destinationKey, Date.now()).effectiveAfterEventSequence;
+  }
+
+  /** After a hosted Sidekick's registrations committed: the schedule kinds, and its Slack sources' joins keyed on its revision. */
+  private async afterSidekickRegistrations(automationId: string, revision: number | null, evaluators: readonly unknown[]): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    await this.refreshScheduleKinds(workspaceId, ["schedule"]);
+    if (revision !== null && evaluators.length > 0) {
+      const parsed = ExternalEventRegistrationProjectionV1Schema.parse({
+        schemaVersion: 1, workspaceId, destination: { kind: "automation", automationId }, evaluators,
+      });
+      await this.joinSlackSourceConversations(workspaceId, automationId, revision, parsed.evaluators);
+    }
+  }
+
+  // The Sidekick methods. Each is the method of the same name `SidekickDO`
+  // answered, with the same request.
+
+  async sidekickCreate(input: Parameters<HostedSidekick["create"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.create(input));
+  }
+
+  async sidekickSaveDefinition(input: Parameters<HostedSidekick["saveDefinition"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.saveDefinition(input));
+  }
+
+  async sidekickSubmitDefinition(input: Parameters<HostedSidekick["submitDefinition"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.submitDefinition(input));
+  }
+
+  async sidekickApply(input: Parameters<HostedSidekick["apply"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.apply(input));
+  }
+
+  async sidekickReconcileLoadable(input: Parameters<HostedSidekick["reconcileLoadable"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.reconcileLoadable(input));
+  }
+
+  async sidekickReadDetail(input: Parameters<HostedSidekick["readDetail"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readDetail(input));
+  }
+
+  async sidekickSetAppearance(input: Parameters<HostedSidekick["setAppearance"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setAppearance(input));
+  }
+
+  async sidekickPause(input: Parameters<HostedSidekick["pause"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.pause(input));
+  }
+
+  async sidekickResume(input: Parameters<HostedSidekick["resume"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.resume(input));
+  }
+
+  async sidekickRemove(input: Parameters<HostedSidekick["remove"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.remove(input));
+  }
+
+  async sidekickRunNow(input: Parameters<HostedSidekick["runNow"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runNow(input));
+  }
+
+  async sidekickRunSeeded(input: Parameters<HostedSidekick["runSeeded"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runSeeded(input));
+  }
+
+  async sidekickListRuns(input: Parameters<HostedSidekick["listRuns"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.listRuns(input));
+  }
+
+  async sidekickClaimExecutionPrincipal(input: Parameters<HostedSidekick["claimExecutionPrincipal"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.claimExecutionPrincipal(input));
+  }
+
+  async sidekickAdmitExternalEvent(input: Parameters<HostedSidekick["admitExternalEvent"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitExternalEvent(input));
+  }
+
+  async sidekickAdmitInboundEmail(input: Parameters<HostedSidekick["admitInboundEmail"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitInboundEmail(input));
+  }
+
+  async sidekickReadSkillSource(input: Parameters<HostedSidekick["readSkillSource"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readSkillSource(input));
+  }
+
+  async sidekickReadSkillSummary(input: Parameters<HostedSidekick["readSkillSummary"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readSkillSummary(input));
+  }
+
+  async sidekickReadRunDefinition(input: Parameters<HostedSidekick["readRunDefinition"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readRunDefinition(input));
+  }
+
+  async sidekickReadRunState(input: Parameters<HostedSidekick["readRunState"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readRunState(input));
+  }
+
+  async sidekickContinueRun(input: Parameters<HostedSidekick["continueRun"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.continueRun(input));
+  }
+
+  /** For the provisioning consumer: what to start, or `null` once the run is no longer pending. */
+  async sidekickRunProvisioning(input: Parameters<HostedSidekick["runProvisioning"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.runProvisioning(input));
+  }
+
+  /** For the provisioning consumer: the run's loop started. */
+  async sidekickRunProvisioned(input: Parameters<HostedSidekick["runProvisioned"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runProvisioned(input));
+  }
+
+  // Batch reads. Every Sidekick in an Organization is here, so a caller that
+  // needs several asks once: one call, answered from local rows, instead of
+  // one call per Sidekick queued behind each other on this object.
+
+  /** Rail metadata for each selected Sidekick the audience may see, optionally only Organization ones. */
+  async sidekickReadSkillSummaries(input: SidekickBatchSkillReadRequest): Promise<SidekickAttachment[]> {
+    await this.initialized;
+    const { automationIds, channelId, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
+    const summaries: SidekickAttachment[] = [];
+    for (const automationId of this.selectedSidekicks({ automationIds, channelId, allLoadable, workspaceId: request.workspaceId })) {
+      const sidekick = await this.hostedSidekick(automationId, request.workspaceId);
+      if (onlyScope !== undefined && sidekick.row()?.scope !== onlyScope) continue;
+      const summary = sidekick.readSkillSummary({ ...request, automationId });
+      if (summary) summaries.push(summary);
+    }
+    return summaries;
+  }
+
+  /** What each selected Sidekick lends a run as a skill; one entry per Sidekick that lends one. */
+  async sidekickReadSkillSources(input: SidekickBatchSkillReadRequest): Promise<SidekickSkillSource[]> {
+    await this.initialized;
+    const { automationIds, channelId, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
+    const sources: SidekickSkillSource[] = [];
+    for (const automationId of this.selectedSidekicks({ automationIds, channelId, allLoadable, workspaceId: request.workspaceId })) {
+      const sidekick = await this.hostedSidekick(automationId, request.workspaceId);
+      if (onlyScope !== undefined && sidekick.row()?.scope !== onlyScope) continue;
+      const source = sidekick.readSkillSource({ ...request, automationId });
+      if (source) sources.push(source);
+    }
+    return sources;
+  }
+
+  /** The detail of each selected Sidekick, for an actor who may read every one of them. */
+  async sidekickReadDetails(input: SidekickBatchDetailRequest): Promise<AutomationDetail[]> {
+    await this.initialized;
+    const { automationIds, channelOwnedBy, ...request } = SidekickBatchDetailRequestSchema.parse(input);
+    const ids = [...new Set([...(automationIds ?? []), ...(channelOwnedBy === undefined ? [] : this.automationIdsOwnedBy(channelOwnedBy))])];
+    const details: AutomationDetail[] = [];
+    for (const automationId of ids) {
+      const sidekick = await this.hostedSidekick(automationId, request.workspaceId);
+      details.push(await sidekick.readDetail({ ...request, automationId }));
+    }
+    return details;
+  }
+
+  /**
+   * A Sidekick a Channel or Space may recommend: one that exists and belongs
+   * to the Organization. Read from the directory row, which carries its scope
+   * before an import too, so the check costs no call of its own.
+   */
+  private assertRecommendableSidekick(sidekickId: string): void {
+    const row = this.state.storage.sql.exec<{ scope: string; lifecycle: string }>(
+      `SELECT scope, lifecycle FROM automation_directory WHERE automation_id = ?`, sidekickId,
+    ).toArray()[0];
+    if (!row || row.lifecycle === "deleted") throw new Error("sidekick_not_found");
+    if (row.scope !== "workspace") throw new Error("sidekick_attachment_scope_invalid");
   }
 
   // Sidekick recommendations.
@@ -5744,7 +6441,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async setSidekickRecommendation(input: Parameters<HostedParent["setSidekickRecommendation"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).setSidekickRecommendation(input);
+    // The Sidekick is checked after the caller's access, so a refusal does
+    // not say whether an id names a Sidekick.
+    return (await this.hostedParent(input.parentId, input.workspaceId))
+      .setSidekickRecommendation(input, (sidekickId) => this.assertRecommendableSidekick(sidekickId));
   }
 
   // Space access provenance.
@@ -6686,6 +7386,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         return oldest === null ? null : Number(oldest) + CONNECTOR_EVENT_BODY_RETENTION_MS;
       },
       space_intent_resume: () => this.spaceStorage().nextIntentResumeDueAt(),
+      sidekick_import: () => this.nextSidekickImportDueAt(),
     } satisfies Record<string, () => number | null>;
   }
 
@@ -6817,6 +7518,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (due("directory_followup")) {
         await isolated("directory_followup", () => this.runDirectoryFollowUps(this.dueDirectoryFollowUps(now)));
       }
+      // Sidekicks still in their legacy objects, moved one at a time; a request
+      // that needs one imports it first, so this is the rest.
+      if (due("sidekick_import")) await isolated("sidekick_import", () => this.importDueSidekicks(now));
       // The old search-authorization store is no longer pushed: search filters on
       // row audience (phase 3 of docs/PRDs/2026-09-26_search-audience-filtering).
       // Its triggers still record targets, one row each, which a rollback flushes.
@@ -6919,6 +7623,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       async () => {
         const workspaceId = this.workspaceId();
         if (!workspaceId) return;
+        const sidekickTarget = hostedSidekickAlarmTarget(alarm);
+        if (sidekickTarget) {
+          const sidekick = await this.sidekickParent(sidekickTarget.sidekickId);
+          // A Sidekick deleted from the directory has nothing left to run.
+          if (!sidekick) return;
+          try {
+            return await sidekick.runAlarm(alarm, sidekickTarget.key);
+          } finally {
+            if (this.sidekickDirectoryMoved) {
+              this.sidekickDirectoryMoved = false;
+              this.publishSidebarList("automations");
+            }
+          }
+        }
         if (await this.runHostedParentAlarm(alarm)) return;
         if (alarm.kind === PRODUCT_ALARM_KIND) {
           await this.runProductAlarm(workspaceId);
@@ -7419,6 +8137,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { automationIds: this.automationIdsOwnedBy(request.workstreamId) };
   }
 
+  /** The Sidekicks a Channel recommends, read from its hosted parent's rows. */
+  private recommendedSidekickIdsFor(channelId: string): string[] {
+    return this.state.storage.sql.exec<{ sidekick_id: string }>(
+      `SELECT sidekick_id FROM parent_sidekicks WHERE parent_id = ? ORDER BY attached_at, sidekick_id`, channelId,
+    ).toArray().map((row) => row.sidekick_id);
+  }
+
   /** The live Sidekicks a Channel owns, each an `automation` revocation hop. */
   private automationIdsOwnedBy(workstreamId: string): string[] {
     return this.state.storage.sql.exec<{ automation_id: string }>(
@@ -7580,6 +8305,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const effect = envelope.effect;
     if (effect.kind !== "directory_automation") throw new Error("sidekick_directory_effect_kind_invalid");
     const result = this.state.storage.transactionSync(() => {
+      if (this.sidekickSchemaPresent()) {
+        // Until the legacy class is deleted, a Sidekick's own object can still
+        // publish here: one the ledger had not heard of (created just before
+        // the move, or whose earlier message was lost) is recorded as pending
+        // so it is imported rather than left behind. A row a hosted write owns
+        // (its `region` is set) is the Sidekick's own, and a late legacy copy
+        // must not overwrite it.
+        const hosted = this.state.storage.sql.exec(
+          `SELECT 1 FROM automation_directory WHERE automation_id = ? AND region IS NOT NULL`, effect.automationId,
+        ).toArray().length > 0;
+        if (hosted) return { applied: false };
+        const ledger = this.state.storage.sql.exec<{ state: string }>(
+          `SELECT state FROM sidekick_imports WHERE sidekick_id = ?`, effect.automationId,
+        ).toArray()[0];
+        if (!ledger) {
+          this.state.storage.sql.exec(`INSERT INTO sidekick_imports (sidekick_id, state) VALUES (?, 'pending')`, effect.automationId);
+        }
+      }
       const existing = this.state.storage.sql.exec<{ source_version: number; payload_hash: string }>(
         `SELECT source_version, payload_hash FROM automation_directory WHERE automation_id = ?`,
         effect.automationId,
@@ -7837,9 +8580,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
+    return this.loadableSidekickIds(request.workspaceId);
+  }
+
+  private loadableSidekickIds(workspaceId: string): string[] {
     return this.state.storage.sql.exec<{ automation_id: string }>(
       `SELECT automation_id FROM automation_directory WHERE workspace_id = ? AND lifecycle = 'active' AND loadable = 1 ORDER BY automation_id`,
-      request.workspaceId,
+      workspaceId,
     ).toArray().map((row) => row.automation_id);
   }
 
@@ -7859,22 +8606,47 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * and `AutomationService.listSidekicks` for an authenticated request. Scope
    * filtering remains local.
    */
-  async listSidekickDirectoryForAuthorizedMember(input: { workspaceId: string; userId: string }): Promise<{ items: AutomationSummary[] }> {
+  async listSidekickDirectoryForAuthorizedMember(input: {
+    workspaceId: string;
+    userId: string;
+    /** What the caller's authentication already read; the object reads it only when absent. */
+    accessClass?: "member" | "guest";
+    role?: "owner" | "admin" | "member" | null;
+  }): Promise<{ items: AutomationSummary[] }> {
     await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema, userId: UserIdSchema,
+      accessClass: z.enum(["member", "guest"]).optional(),
+      role: z.enum(["owner", "admin", "member"]).nullable().optional(),
+    }).parse(input);
     this.assertWorkspace(request.workspaceId);
-    const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & { author_user_id: string }>(
+    const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & {
+      author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string;
+    }>(
       `SELECT * FROM automation_directory WHERE workspace_id = ? AND lifecycle <> 'deleted'
        ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId,
     ).toArray();
+    // The management read rule (`sidekickReaderAllows`), the same one the
+    // detail screen applies: a guest is not listed Organization-scope
+    // Sidekicks, a Breakout-homed one is listed to that Breakout's members,
+    // and a personal one to the person it runs as.
+    // The role decides Organization-scope rows only, so it is read at most
+    // once and only when such a row is not already the person's own.
+    let actorRole: "owner" | "admin" | "member" | null | undefined = request.accessClass === undefined
+      ? undefined
+      : request.accessClass === "guest" ? null : request.role ?? null;
+    const host = this.hostedSidekickHost();
     const items: AutomationSummary[] = [];
     for (const row of candidates) {
-      const accessible = row.scope === "workspace"
-        || (row.scope === "personal" && row.author_user_id === request.userId)
-        || (row.owning_workstream_id !== null && (await this.workstreamParticipant({
-          workspaceId: request.workspaceId, workstreamId: row.owning_workstream_id, userId: request.userId,
-        })).participant);
-      if (accessible) items.push(automationSummary(row, this.invalidAppearanceReporter(request.workspaceId)));
+      const own = row.author_user_id === request.userId || row.run_as_user_id === request.userId;
+      if (actorRole === undefined && row.scope === "workspace" && !own) {
+        const relationship = await this.readRelationship(request.workspaceId, request.userId);
+        actorRole = relationship?.accessClass === "guest" ? null : relationship?.role ?? null;
+      }
+      const actor = { userId: request.userId, actorRole: actorRole ?? null };
+      if (await sidekickReaderAllows({ ...row, run_as_user_id: row.run_as_user_id ?? null }, actor, host)) {
+        items.push(automationSummary(row, this.invalidAppearanceReporter(request.workspaceId)));
+      }
     }
     return { items };
   }
@@ -7977,6 +8749,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       "external_event_registration_projection",
     );
     this.assertWorkspace(request.workspaceId);
+    // A Sidekick that has been imported writes its own registrations, in its
+    // own transaction; a late call from its legacy object must not replace them.
+    if (request.destination.kind === "automation" && this.sidekickSchemaPresent()
+      && this.state.storage.sql.exec(`SELECT 1 FROM sidekick_imports WHERE sidekick_id = ? AND state = 'imported'`,
+        request.destination.automationId).toArray().length > 0) {
+      throw new ApiError(409, "sidekick_parent_moved", "This Sidekick has moved; its own object no longer registers triggers");
+    }
     const result = this.state.storage.transactionSync(() => {
       const destinationKind = request.destination.kind;
       const destinationKey = destinationKind === "automation"
@@ -7988,84 +8767,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (previous && (request.sourceGeneration === undefined || request.sourceGeneration <= previous.source_generation)) {
         return { effectiveAfterEventSequence: previous.effective_after_event_sequence, applied: false };
       }
-      const now = Date.now();
-      const cutoff = this.latestConnectorEventSequence();
+      const replaced = this.replaceExternalEventRegistrationRows(request, destinationKey, Date.now());
       if (request.sourceGeneration !== undefined) this.state.storage.sql.exec(
         `INSERT INTO external_registration_generations VALUES (?, ?, ?)
          ON CONFLICT(destination_key) DO UPDATE SET source_generation = excluded.source_generation, effective_after_event_sequence = excluded.effective_after_event_sequence`,
-        destinationKey, request.sourceGeneration, cutoff,
+        destinationKey, request.sourceGeneration, replaced.effectiveAfterEventSequence,
       );
-      this.state.storage.sql.exec(
-        `UPDATE workspace_external_event_registrations
-            SET state = 'removed', updated_at = ?
-          WHERE destination_kind = ? AND destination_key = ?
-            AND state = 'active'`,
-        now,
-        destinationKind,
-        destinationKey,
-      );
-      this.state.storage.sql.exec(
-        `UPDATE schedules SET enabled = 0, updated_at = ? WHERE id IN (
-          SELECT registration_id FROM workspace_external_event_registrations
-          WHERE destination_key = ? AND connector_type = 'canva')`,
-        new Date(now).toISOString(), destinationKey,
-      );
-      for (const evaluator of request.evaluators) {
-        this.state.storage.sql.exec(
-          `INSERT INTO workspace_external_event_registrations
-             (registration_id, destination_key, workspace_id, effective_after_event_sequence,
-              connection_id, connector_type, event_type, resource_id, evaluator_json,
-              destination_kind, automation_id, workstream_id, substream_id,
-              destination_resource_id, state, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
-           ON CONFLICT(registration_id) DO UPDATE SET state = 'active', effective_after_event_sequence = excluded.effective_after_event_sequence,
-             connection_id = excluded.connection_id, connector_type = excluded.connector_type,
-             event_type = excluded.event_type, resource_id = excluded.resource_id, evaluator_json = excluded.evaluator_json,
-             updated_at = excluded.updated_at`,
-          request.sourceGeneration === undefined && evaluator.source.connectorType !== "canva" ? uuidV7() : evaluator.evaluatorId,
-          destinationKey,
-          request.workspaceId,
-          cutoff,
-          evaluator.source.connectionId,
-          evaluator.source.connectorType,
-          evaluator.source.eventType,
-          evaluator.source.resourceId ?? null,
-          JSON.stringify(evaluator),
-          destinationKind,
-          destinationKind === "automation" ? request.destination.automationId : null,
-          destinationKind === "workstream_resource_update" ? request.destination.workstreamId : null,
-          destinationKind === "workstream_resource_update" ? request.destination.substreamId : null,
-          destinationKind === "workstream_resource_update" ? request.destination.resourceId : null,
-          now,
-          now,
-        );
-      }
-      for (const evaluator of request.evaluators) {
-        if (evaluator.source.connectorType !== "canva" || destinationKind !== "automation") continue;
-        if (!evaluator.source.resourceId) throw new Error("canva_trigger_requires_design");
-        const resource = this.state.storage.sql.exec<{ id: string }>(
-          "SELECT id FROM resources WHERE id = ? AND connection_id = ? AND provider = 'canva' AND resource_type = 'canva_design'",
-          evaluator.source.resourceId, evaluator.source.connectionId,
-        ).toArray()[0];
-        if (!resource) throw new Error("canva_trigger_design_unavailable");
-        const at = new Date(now).toISOString();
-        this.state.storage.sql.exec(
-          `INSERT INTO schedules (id, workspace_id, connector_connection_id, schedule_type,
-             interval_seconds, timezone, next_run_at, enabled, version, created_at, updated_at)
-           VALUES (?, ?, ?, 'interval', ?, 'UTC', ?, 1, 1, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET enabled = 1, connector_connection_id = excluded.connector_connection_id, next_run_at = excluded.next_run_at, updated_at = excluded.updated_at`,
-          evaluator.evaluatorId, request.workspaceId, evaluator.source.connectionId,
-          CANVA_POLL_SECONDS, new Date(now + CANVA_POLL_SECONDS * 1_000).toISOString(), at, at,
-        );
-      }
-      // Rows removed long ago are noise in every candidate scan; keep the
-      // table to what still matches.
-      this.state.storage.sql.exec(
-        `DELETE FROM workspace_external_event_registrations
-          WHERE state = 'removed' AND updated_at < ?`,
-        now - 24 * 60 * 60_000,
-      );
-      return { effectiveAfterEventSequence: cutoff, applied: true };
+      return replaced;
     });
     await this.refreshScheduleKinds(request.workspaceId, ["schedule"]);
     // A stale projection changed nothing, so it has nothing to join.
@@ -8078,6 +8786,93 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       );
     }
     return { effectiveAfterEventSequence: result.effectiveAfterEventSequence };
+  }
+
+  /**
+   * Replace one destination's registration rows, inside the caller's
+   * transaction, and return the event sequence they take effect after: an
+   * event admitted before the call is never matched by a rule that did not
+   * exist when it arrived. The legacy RPC and a hosted Sidekick's own
+   * transaction both write through here.
+   */
+  private replaceExternalEventRegistrationRows(
+    request: z.infer<typeof ExternalEventRegistrationProjectionV1Schema>,
+    destinationKey: string,
+    now: number,
+  ): { effectiveAfterEventSequence: number; applied: true } {
+    const destinationKind = request.destination.kind;
+    const cutoff = this.latestConnectorEventSequence();
+    this.state.storage.sql.exec(
+      `UPDATE workspace_external_event_registrations
+          SET state = 'removed', updated_at = ?
+        WHERE destination_kind = ? AND destination_key = ?
+          AND state = 'active'`,
+      now,
+      destinationKind,
+      destinationKey,
+    );
+    this.state.storage.sql.exec(
+      `UPDATE schedules SET enabled = 0, updated_at = ? WHERE id IN (
+        SELECT registration_id FROM workspace_external_event_registrations
+        WHERE destination_key = ? AND connector_type = 'canva')`,
+      new Date(now).toISOString(), destinationKey,
+    );
+    for (const evaluator of request.evaluators) {
+      this.state.storage.sql.exec(
+        `INSERT INTO workspace_external_event_registrations
+           (registration_id, destination_key, workspace_id, effective_after_event_sequence,
+            connection_id, connector_type, event_type, resource_id, evaluator_json,
+            destination_kind, automation_id, workstream_id, substream_id,
+            destination_resource_id, state, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+         ON CONFLICT(registration_id) DO UPDATE SET state = 'active', effective_after_event_sequence = excluded.effective_after_event_sequence,
+           connection_id = excluded.connection_id, connector_type = excluded.connector_type,
+           event_type = excluded.event_type, resource_id = excluded.resource_id, evaluator_json = excluded.evaluator_json,
+           updated_at = excluded.updated_at`,
+        request.sourceGeneration === undefined && evaluator.source.connectorType !== "canva" ? uuidV7() : evaluator.evaluatorId,
+        destinationKey,
+        request.workspaceId,
+        cutoff,
+        evaluator.source.connectionId,
+        evaluator.source.connectorType,
+        evaluator.source.eventType,
+        evaluator.source.resourceId ?? null,
+        JSON.stringify(evaluator),
+        destinationKind,
+        destinationKind === "automation" ? request.destination.automationId : null,
+        destinationKind === "workstream_resource_update" ? request.destination.workstreamId : null,
+        destinationKind === "workstream_resource_update" ? request.destination.substreamId : null,
+        destinationKind === "workstream_resource_update" ? request.destination.resourceId : null,
+        now,
+        now,
+      );
+    }
+    for (const evaluator of request.evaluators) {
+      if (evaluator.source.connectorType !== "canva" || destinationKind !== "automation") continue;
+      if (!evaluator.source.resourceId) throw new Error("canva_trigger_requires_design");
+      const resource = this.state.storage.sql.exec<{ id: string }>(
+        "SELECT id FROM resources WHERE id = ? AND connection_id = ? AND provider = 'canva' AND resource_type = 'canva_design'",
+        evaluator.source.resourceId, evaluator.source.connectionId,
+      ).toArray()[0];
+      if (!resource) throw new Error("canva_trigger_design_unavailable");
+      const at = new Date(now).toISOString();
+      this.state.storage.sql.exec(
+        `INSERT INTO schedules (id, workspace_id, connector_connection_id, schedule_type,
+           interval_seconds, timezone, next_run_at, enabled, version, created_at, updated_at)
+         VALUES (?, ?, ?, 'interval', ?, 'UTC', ?, 1, 1, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET enabled = 1, connector_connection_id = excluded.connector_connection_id, next_run_at = excluded.next_run_at, updated_at = excluded.updated_at`,
+        evaluator.evaluatorId, request.workspaceId, evaluator.source.connectionId,
+        CANVA_POLL_SECONDS, new Date(now + CANVA_POLL_SECONDS * 1_000).toISOString(), at, at,
+      );
+    }
+    // Rows removed long ago are noise in every candidate scan; keep the
+    // table to what still matches.
+    this.state.storage.sql.exec(
+      `DELETE FROM workspace_external_event_registrations
+        WHERE state = 'removed' AND updated_at < ?`,
+      now - 24 * 60 * 60_000,
+    );
+    return { effectiveAfterEventSequence: cutoff, applied: true };
   }
 
   /**
@@ -9532,6 +10327,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    if (request.kind === "sidekick") this.assertRecommendableSidekick(request.targetId);
     const storage = this.spaceStorage();
     // A Sidekick default is also the Space's recommendation, which a Channel
     // created in the Space reads from its hosted parent. Written right after
@@ -11323,6 +12119,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     this.publishChannelRows(this.collectRailChanges(rows));
+    // A Channel archive pauses the Sidekicks it owns during the pass; their
+    // list goes out with nothing awaited after the Channel's row.
+    if (this.sidekickDirectoryMoved) {
+      this.sidekickDirectoryMoved = false;
+      this.publishSidebarList("automations");
+    }
     if (topicsWorkspaceId !== null) {
       try {
         await this.publishSync([...topics], topicsWorkspaceId,
@@ -11655,6 +12457,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     workspaceId: string,
     workstreamIds: readonly string[],
     breakoutKeys: readonly string[] = [],
+    onlyAutomationId: string | null = null,
   ): Promise<void> {
     const owned = this.state.storage.sql.exec<{
       automation_id: string;
@@ -11672,6 +12475,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           AND breakout.workstream_id = automation.owning_workstream_id
           AND breakout.substream_id = automation.owning_substream_id
         WHERE automation.lifecycle <> 'deleted'
+          AND (?3 IS NULL OR automation.automation_id = ?3)
           AND (automation.owning_workstream_id IN (SELECT value FROM json_each(?1))
             OR (automation.owning_substream_id <> '0'
               AND automation.owning_workstream_id || '/' || automation.owning_substream_id
@@ -11679,31 +12483,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         ORDER BY automation.automation_id`,
       JSON.stringify(workstreamIds),
       JSON.stringify(breakoutKeys),
+      onlyAutomationId,
     ).toArray();
     if (owned.length === 0) return;
-    const settled = await Promise.allSettled(owned.map(async (row) => {
-      const automation = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.AUTOMATION_DOS,
-        workspaceId,
-        automationDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asAutomationId(row.automation_id)),
-      );
-      await automation.setOwningRoomArchived({
-        workspaceId: asWorkspaceId(workspaceId),
-        automationId: row.automation_id,
-        workstreamId: row.workstream_id,
-        archived: row.archived_at !== null || row.breakout_archived_at !== null,
-      });
-    }));
-    for (const [index, outcome] of settled.entries()) {
-      if (outcome.status !== "rejected") continue;
-      logWarn(this.env, "sidekick_owning_room_archival_failed", {
-        workspace_id: workspaceId,
-        automation_id: owned[index]?.automation_id ?? null,
-        workstream_id: owned[index]?.workstream_id ?? null,
-        code: diagnosticErrorCode(outcome.reason, "sidekick_owning_room_archival_failed"),
-      });
+    // Each Sidekick is this object's own row now: its pause or resume, its
+    // registrations and its alarm entries commit in one local transaction per
+    // Sidekick, right after the archive that caused them.
+    for (const row of owned) {
+      try {
+        const sidekick = await this.sidekickParent(row.automation_id, workspaceId);
+        if (!sidekick) continue;
+        const now = Date.now();
+        const outcome = this.state.storage.transactionSync(() => sidekick.setOwningRoomArchived({
+          workspaceId: asWorkspaceId(workspaceId),
+          automationId: row.automation_id,
+          workstreamId: row.workstream_id,
+          archived: row.archived_at !== null || row.breakout_archived_at !== null,
+        }, now));
+        if (outcome.outcomeCode === "sidekick_paused") await this.afterSidekickRegistrations(row.automation_id, null, []);
+        if (outcome.outcomeCode === "sidekick_resumed") {
+          const resumed = sidekick.row();
+          await this.afterSidekickRegistrations(row.automation_id, resumed?.accepted_definition_revision ?? null,
+            resumed ? JSON.parse(resumed.evaluator_projection_json) as unknown[] : []);
+        }
+      } catch (error) {
+        logWarn(this.env, "sidekick_owning_room_archival_failed", {
+          workspace_id: workspaceId,
+          automation_id: row.automation_id,
+          workstream_id: row.workstream_id,
+          code: diagnosticErrorCode(error, "sidekick_owning_room_archival_failed"),
+        });
+      }
     }
+    // The automations list is not published here: the pass that ran this
+    // sends it right after the archived Channel's row, in the same turn, so
+    // a client sees the archive and its pauses together.
+    await this.armNextAlarm();
   }
 
   private async reconcileWorkstreamResourceRegistrations(input: {

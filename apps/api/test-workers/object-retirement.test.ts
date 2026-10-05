@@ -35,7 +35,6 @@ import { describe, expect, it } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
-import { ConversationParentDurableObject } from "../src/durable-objects/conversation-parent-object";
 import { SidekickDO } from "../src/durable-objects/sidekick-do";
 import {
   RETIREMENT_REFUSAL_CODE,
@@ -144,7 +143,8 @@ describe("object retirement", () => {
       automationDOName(TEST_ENV.AVALON_REGION, WORKSPACE_ID, automationId),
     )) as DurableObjectStub<SidekickDO>;
     await sidekick.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
-    const sidekickRefusal = await refusalOf(() => sidekick.listChildren({ workspaceId: WORKSPACE_ID, parentId: automationId }));
+    // The legacy object answers only its export now, and a retired one refuses that too.
+    const sidekickRefusal = await refusalOf(() => sidekick.exportForImport({ workspaceId: WORKSPACE_ID, automationId }));
     expect((sidekickRefusal as { code?: string } | undefined)?.code).toBe(RETIREMENT_REFUSAL_CODE);
   });
 
@@ -524,7 +524,6 @@ describe("object retirement", () => {
   it("fences every callable method on every gated class, and classifies the ones retirement itself needs", () => {
     const gated = [
       { name: "WorkspaceDO", target: WorkspaceDO },
-      { name: "ConversationParentDurableObject", target: ConversationParentDurableObject },
       { name: "SidekickDO", target: SidekickDO },
       { name: "SubstreamAgent", target: SubstreamAgent },
     ] as const;
@@ -554,7 +553,8 @@ describe("object retirement", () => {
     // decision a future edit could undo without any test above noticing.
     // `WorkspaceDO` is on this list because it hosts every Channel and Space
     // parent; its conversation-parent contract methods are the same doors.
-    for (const target of [ConversationParentDurableObject, SidekickDO, WorkspaceDO]) {
+    // A legacy SidekickDO is no longer walked: its parent is hosted here too.
+    for (const target of [WorkspaceDO]) {
       // The walk's own read, on a parent that may already hold a tombstone.
       expect(retirementDisposition(target, "childrenForRetirement")).toBe("permit");
       // A product enumeration stays refused; the revocation consumer acks it.

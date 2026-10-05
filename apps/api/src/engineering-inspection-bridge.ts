@@ -5,6 +5,7 @@ import {
   ArtifactSqlInspectionInputSchema,
   EngineeringArtifactListLookupSchema,
   EngineeringArtifactTargetLookupSchema,
+  EngineeringSidekickImportLookupSchema,
   EngineeringSidekickListLookupSchema,
   EngineeringSidekickTargetLookupSchema,
   EngineeringSqlLookupSchema,
@@ -14,6 +15,7 @@ import {
   EngineeringWorkstreamListLookupSchema,
   ListEngineeringWorkspacesInputSchema,
   ListEngineeringWorkspacesResultSchema,
+  SidekickImportRetryInputSchema,
   SidekickInspectionInputSchema,
   SidekickSqlInspectionInputSchema,
   EngineeringSpaceListLookupSchema,
@@ -25,6 +27,7 @@ import {
   type EngineeringInspectionRpcBinding,
   type EngineeringArtifactListLookup,
   type EngineeringArtifactTargetLookup,
+  type EngineeringSidekickImportLookup,
   type EngineeringSidekickListLookup,
   type EngineeringSidekickTargetLookup,
   type EngineeringSpaceListLookup,
@@ -139,10 +142,10 @@ async function resolveInspectionSubstreamRoute(
   }
   const known = await inspectionSubstreamIds(env, route);
   if (known.includes(input.substreamId)) return route;
-  // A Sidekick's run conversations are registered in its own object, not the
-  // Organization's. Its directory row is checked first, for the reason
-  // `resolveInspectionSidekickRoute` gives: naming a SidekickDO for a work
-  // stream's id would create one that never existed.
+  // A run conversation of a Sidekick still in its legacy object is registered
+  // there, not in the Organization. Its directory row is checked first, for
+  // the reason `resolveInspectionSidekickRoute` gives: naming a SidekickDO for
+  // a work stream's id would create one that never existed.
   if (!await resolveInspectionSidekickRoute(env, { workspaceId: input.workspaceId, sidekickId: input.workstreamId })) return null;
   const sidekick = await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, input.workspaceId,
     automationDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), asAutomationId(input.workstreamId)));
@@ -153,13 +156,18 @@ async function resolveInspectionSubstreamRoute(
   return registered.rows.length > 0 ? route : null;
 }
 
-/** Every conversation a Channel's parent, hosted by the Organization object, has heard from. */
+/**
+ * Every conversation a parent hosted by the Organization object has heard
+ * from: a Channel's in the shared parent tables, a moved Sidekick's in its own.
+ */
 async function inspectionSubstreamIds(env: Env, route: InspectionWorkstreamRoute): Promise<string[]> {
   const workspace = await workspaceStub(env, route.workspace_id);
   const hosted = await workspace.runInspectionSql({
     sql: `SELECT substream_id FROM parent_child_projections WHERE parent_id = ?
-          UNION SELECT substream_id FROM parent_children WHERE parent_id = ?`,
-    bindings: [route.workstream_id, route.workstream_id],
+          UNION SELECT substream_id FROM parent_children WHERE parent_id = ?
+          UNION SELECT substream_id FROM sidekick_child_projections WHERE sidekick_id = ?
+          UNION SELECT substream_id FROM sidekick_children WHERE sidekick_id = ?`,
+    bindings: [route.workstream_id, route.workstream_id, route.workstream_id, route.workstream_id],
   });
   return hosted.rows.map((row) => String(row.substream_id));
 }
@@ -586,6 +594,35 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         substreamId: null,
         sidekickId: request.sidekickId,
         result: await sidekick.runInspectionSql(request.query),
+      },
+    });
+  }
+
+  /**
+   * Import a Sidekick into its Organization object again, after an operator
+   * has repaired whatever made its last attempt fail. The answer is the
+   * ledger's: `imported`, or `pending` with the new attempt's code.
+   */
+  async retrySidekickImport(input: unknown): Promise<EngineeringSidekickImportLookup> {
+    const request = parseRpcInput(SidekickImportRetryInputSchema, input, "retrySidekickImport");
+    if (!await resolveInspectionSidekickRoute(
+      this.env,
+      request,
+      request.authorityGeneration,
+    )) return { found: false };
+    const workspace = await workspaceStub(this.env, request.workspaceId);
+    const outcome = await workspace.retrySidekickImport({
+      workspaceId: request.workspaceId,
+      automationId: request.sidekickId,
+    });
+    return EngineeringSidekickImportLookupSchema.parse({
+      found: true,
+      value: {
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        sidekickId: request.sidekickId,
+        state: outcome.state,
+        lastErrorCode: outcome.lastErrorCode,
       },
     });
   }

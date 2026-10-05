@@ -28,7 +28,6 @@ import { __integrationTesting, runWorkstreamHarness } from "../src/services/inte
 import { encryptString } from "../src/lib/crypto";
 import { readWorkspaceRelationship } from "../src/services/workspace-relationship-service";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
-import { AutomationService } from "../src/services/automation-service";
 import { consumeAccessRevocationQueue } from "../src/queues/access-revocation-consumer";
 import {
   evictDurableObject,
@@ -41,7 +40,7 @@ import {
 } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { consumeEffectBodies, deliverChildEffects, deliverParentEffectsInOrder, deliverEffectsToWorkspaceInOrder } from "./helpers/conversation-effects";
+import { consumeEffectBodies, deliverChildEffects, deliverEffectsToWorkspaceInOrder } from "./helpers/conversation-effects";
 
 import {
   AutomationDraftSchema,
@@ -71,7 +70,6 @@ import {
 import { createCloudflareTestBinding } from "../test/helpers/cloudflare-test";
 import {
   artifactHostDOName,
-  automationDOName,
   conversationObjectName,
   substreamLoopId,
   workspaceDOName,
@@ -3143,10 +3141,11 @@ describe("a member's message travels the whole pipeline", () => {
       expect(resourceDecisions[2]).toMatchObject({ status:"allowed" });
       const makeSidekick = async (scope: "workspace" | "workstream" | "personal",owningWorkstreamId: string | null = null) => {
         const automationId = asAutomationId(crypto.randomUUID());
-        const sidekick = env.AUTOMATION_DOS.getByName(automationDOName("global",WORKSPACE_ID,automationId));
-        await sidekick.create({ workspaceId:WORKSPACE_ID,automationId,authorUserId:OTHER_USER_ID,
+        // Every Sidekick's parent is hosted by the Organization object.
+        const sidekick = workspace;
+        await sidekick.sidekickCreate({ workspaceId:WORKSPACE_ID,automationId,authorUserId:OTHER_USER_ID,
           scope,owningWorkstreamId,authorityGeneration:1 });
-        await sidekick.saveDefinition({ workspaceId:WORKSPACE_ID,automationId,
+        await sidekick.sidekickSaveDefinition({ workspaceId:WORKSPACE_ID,automationId,
           actor:{ userId:OTHER_USER_ID,actorRole:"member",participantOfOwningWorkstream:true },
           submittedByRunId:null,evaluatorRules:null,
           draft:AutomationDraftSchema.parse({ definitionVersion:2,name:`${scope} helper`,description:"Shared instructions",
@@ -3154,7 +3153,6 @@ describe("a member's message travels the whole pipeline", () => {
             expectedOutputs:[],defaultBehavior:{},recommendedPlugins:[],memoryTables:[],suggestedScope:scope,
             followUpQuestion:null,elicitation:null,ready:true }),
         });
-        await deliverParentEffectsInOrder(TEST_ENV,sidekick);
         return { automationId,sidekick };
       };
       const ownedSidekick = await makeSidekick("workstream",WORKSTREAM_ID);
@@ -3222,7 +3220,7 @@ describe("a member's message travels the whole pipeline", () => {
       expect(sources.every((source) => source.instructions === "Use short sentences.")).toBe(true);
       const freshSources = await resolveSidekickSkills(TEST_ENV,guestExecution,true);
       expect(freshSources.map((source) => source.id).sort()).toEqual([ownedSidekick.automationId,recommendedSidekick.automationId].sort());
-      await recommendedSidekick.sidekick.pause({ workspaceId:WORKSPACE_ID,automationId:recommendedSidekick.automationId,
+      await recommendedSidekick.sidekick.sidekickPause({ workspaceId:WORKSPACE_ID,automationId:recommendedSidekick.automationId,
         actor:{ userId:OTHER_USER_ID,actorRole:"member",participantOfOwningWorkstream:false } });
       const pausedRecommendations = await app.request(`${path}/recommended-sidekicks`,{ headers },apiEnv);
       expect(await pausedRecommendations.json()).toMatchObject({ items:expect.arrayContaining([{ id:recommendedSidekick.automationId,
@@ -3315,8 +3313,9 @@ describe("a member's message travels the whole pipeline", () => {
           actorUserId: OTHER_USER_ID, userId: USER_ID, target: parentTarget, active: true, expectedRevision: 0 }, "existing-member"))
           .toMatchObject({ status: "committed" });
       });
-      const ownedManagement = new AutomationService(TEST_ENV, { ...AUTH,role:null });
-      expect((await ownedManagement.actorRequest(ownedSidekick.automationId)).actor.participantOfOwningWorkstream).toBe(true);
+      // Whether the grant makes them one of the home's people is the
+      // Organization object's to decide, from its own rows; the request below
+      // is how that shows.
       const changedAppearance = await changeSidekickAppearance("blue");
       expect(changedAppearance.status, await changedAppearance.clone().text()).toBe(200);
       expect(await changedAppearance.json()).toMatchObject({ appearance: { color: "blue" } });
@@ -3391,13 +3390,12 @@ describe("a member's message travels the whole pipeline", () => {
           .toMatchObject({ status: "committed" });
       });
       expect((await recommendationMutation(recommendedSidekick.automationId, "DELETE")).status).toBe(403);
-      expect((await ownedManagement.actorRequest(ownedSidekick.automationId)).actor.participantOfOwningWorkstream).toBe(false);
       expect((await changeSidekickAppearance("red")).status).toBe(403);
       expect((await readAuthoringResource()).status).not.toBe(200);
       expect((await app.request(`/sidekicks/${ownedSidekick.automationId}`, { headers }, apiEnv)).status).toBe(404);
       expect((await app.request(`/conversations/${ownedSidekick.automationId}`, { headers }, apiEnv)).status).toBe(404);
       await runInDurableObject(ownedSidekick.sidekick,(_instance,state) => {
-        expect(JSON.parse(state.storage.sql.exec<{ appearance_json:string }>("SELECT appearance_json FROM automation WHERE id=1").one().appearance_json).color).toBe("blue");
+        expect(JSON.parse(state.storage.sql.exec<{ appearance_json:string }>("SELECT appearance_json FROM automation_directory WHERE automation_id=?",ownedSidekick.automationId).one().appearance_json).color).toBe("blue");
       });
       expect((await readOptions()).canManage).toBe(false);
       // Directory rows are applied inside the Organization object right after

@@ -9,7 +9,7 @@ import { AgentCommunicationService } from "../src/services/agent-communication-s
  * owning room's Main conversation here; the post is keyed on the run's
  * harness run and receipt, so a retry lands once, and it is a message from the
  * Sidekick that does not wake the room's agent. The first post test drives the
- * whole path: a real run child of a real `AutomationDO`, the provider double
+ * whole path: a real run child of a real hosted Sidekick, the provider double
  * calling the tool, WorkspaceDO resolving the home and admitting the run-as
  * person, the room's conversation object appending the post.
  */
@@ -33,9 +33,7 @@ import {
 } from "@rally/contracts";
 
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
-import type { AutomationDO } from "../src/durable-objects/automation-do";
 import {
-  automationDOName,
   conversationObjectName,
   workspaceDOName,
 } from "../src/durable-objects/names";
@@ -51,7 +49,6 @@ import {
 import {
   deliverChildEffects,
   deliverEffectsToWorkspace,
-  deliverParentEffects,
   pendingChildEffects,
 } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
@@ -59,6 +56,7 @@ import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 import { useOpenRouterDouble, type ProviderCall, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { runSidekickAlarms, sidekickWorkspace } from "./helpers/sidekick";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ad10");
@@ -175,10 +173,9 @@ const provider = useOpenRouterDouble(async (call) => {
 useSelectedModel();
 useHeldEffectQueue();
 
-function automationStub(): DurableObjectStub<AutomationDO> {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
-    automationDOName("global", WORKSPACE_ID, AUTOMATION_ID),
-  ));
+/** The Organization object that hosts this Sidekick, and every other in the workspace. */
+function sidekickHost() {
+  return sidekickWorkspace(TEST_ENV, WORKSPACE_ID);
 }
 
 /** The room's parent, hosted by the workspace object. */
@@ -353,11 +350,10 @@ async function seedRoomAutomation(): Promise<void> {
     automationId: AUTOMATION_ID,
   });
   expect(created.created).toBe(true);
-  await automationStub().submitDefinition({ ...addressed(), draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
-  const detail = await runInDurableObject(automationStub(), (instance: AutomationDO) =>
-    instance.apply({ ...addressed(), actor: manager() }));
+  await sidekickHost().sidekickSubmitDefinition({ ...addressed(), draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
+  const detail = await runInDurableObject(sidekickHost(), (instance: WorkspaceDO) =>
+    instance.sidekickApply({ ...addressed(), actor: manager() }));
   expect(detail).toMatchObject({ lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID });
-  await deliverParentEffects(TEST_ENV, automationStub());
 }
 
 interface RunRow extends Record<string, SqlStorageValue> {
@@ -508,26 +504,22 @@ describe("a room Sidekick's run and the room's agents", () => {
       executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
     const created = await service.createSidekick("workstream", context);
     const sidekickId = asAutomationId(created.sidekickId);
-    const sidekick = env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
-      automationDOName("global", WORKSPACE_ID, sidekickId),
-    ));
+    const sidekick = sidekickHost();
     const authoring = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, sidekickId),
     ));
     await service.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK: save this research guide.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     expect((await settledRun(authoring))[0]).toMatchObject({ status: "completed", error_json: null });
-    const detail = () => sidekick.readDetail({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor: manager() });
+    const detail = () => sidekick.sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: sidekickId, actor: manager() });
     expect(await detail()).toMatchObject({ name: "Research guide", lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID });
     expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
-    await deliverParentEffects(TEST_ENV, sidekick);
     const discovered = await service.sidekicks();
     expect(discovered.sidekicks.find((item) => item.sidekickId === sidekickId)).toMatchObject({ agentId: created.agentId, scope: "workstream" });
     await service.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: add cost comparison.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     expect((await settledRun(authoring, 2))[1]).toMatchObject({ status: "completed", error_json: null });
     expect(await detail()).toMatchObject({ name: "Revised research guide", lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID });
-    await deliverParentEffects(TEST_ENV, sidekick);
     expect((await service.sidekicks()).sidekicks.map((item) => item.sidekickId).sort())
       .toEqual(discovered.sidekicks.map((item) => item.sidekickId).sort());
     const setupCall = provider.calls.find((call) => call.toolNames.some((name) => name.endsWith("submit_draft")));
@@ -1601,19 +1593,19 @@ describe("a room Sidekick's run and the room's agents", () => {
 
   it.each(["deleted", "room_archived"] as const)("refuses child reservation for a %s Sidekick", async (reason) => {
     const childId = asSubstreamId(crypto.randomUUID());
-    await runInDurableObject(automationStub(), (_instance, state) => {
-      if (reason === "deleted") state.storage.sql.exec("UPDATE automation SET lifecycle = 'deleted'");
-      else state.storage.sql.exec("UPDATE automation SET owning_room_archived_at = ?", Date.now());
+    await runInDurableObject(sidekickHost(), (_instance, state) => {
+      if (reason === "deleted") state.storage.sql.exec("UPDATE automation_directory SET lifecycle = 'deleted' WHERE automation_id = ?", AUTOMATION_ID);
+      else state.storage.sql.exec("UPDATE automation_directory SET owning_room_archived_at = ? WHERE automation_id = ?", Date.now(), AUTOMATION_ID);
     });
-    await expect(Promise.resolve(automationStub().reserveAgentChild({
+    await expect(Promise.resolve(sidekickHost().reserveAgentChild({
       workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, substreamId: childId, createdByUserId: AUTHOR_ID,
     }))).rejects.toThrow("workstream_archived");
-    await expect(Promise.resolve(automationStub().reserveChild({
+    await expect(Promise.resolve(sidekickHost().reserveChild({
       workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, substreamId: childId, createdByUserId: AUTHOR_ID,
       kind: "child", authorityGeneration: 1,
     }))).rejects.toThrow("workstream_archived");
-    const registered = await runInDurableObject(automationStub(), (_instance, state) =>
-      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM conversation_children WHERE substream_id = ?", childId).one().n);
+    const registered = await runInDurableObject(sidekickHost(), (_instance, state) =>
+      state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM sidekick_children WHERE sidekick_id = ? AND substream_id = ?", AUTOMATION_ID, childId).one().n);
     expect(registered).toBe(0);
   });
 
@@ -1635,10 +1627,10 @@ describe("a room Sidekick's run and the room's agents", () => {
   });
 
   it("posts the run's result to its home with conversation_post, once, without waking the room", async () => {
-    const started = await automationStub().runNow({ ...addressed(), actor: manager(), idempotencyKey: "post-result-0001" });
+    const started = await sidekickHost().sidekickRunNow({ ...addressed(), actor: manager(), idempotencyKey: "post-result-0001" });
 
     // The run child: provisioned by the run alarm, ends after the tool round trip.
-    await runDurableObjectAlarm(automationStub());
+    await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
     const [run] = await settledRun(runChild(started.runId));
     expect(run).toMatchObject({ status: "completed", error_json: null });
     // Prompt and tool setup share the execution definition. Assert on the
@@ -1692,13 +1684,13 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect(await roomParent().authority({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID }))
       .toEqual({ exists: true, authorityGeneration: 1, archived: true });
 
-    const automation = await runInDurableObject(automationStub(), (_instance, state) =>
+    const automation = await runInDurableObject(sidekickHost(), (_instance, state) =>
       state.storage.sql.exec<{ lifecycle: string; paused_by: string | null; owning_room_archived_at: number | null }>(
-        `SELECT lifecycle, paused_by, owning_room_archived_at FROM automation WHERE id = 1`,
+        `SELECT lifecycle, paused_by, owning_room_archived_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
       ).one());
     expect(automation).toMatchObject({ lifecycle: "paused", paused_by: "room_archive" });
     expect(automation.owning_room_archived_at).not.toBeNull();
-    expect(await automationStub().authority({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID }))
+    expect(await sidekickHost().authority({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID }))
       .toEqual({ exists: true, authorityGeneration: 1, archived: true });
   });
 });

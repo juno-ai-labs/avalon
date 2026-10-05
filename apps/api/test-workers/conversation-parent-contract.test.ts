@@ -16,7 +16,7 @@ import { searchAudienceGroup, searchAudienceGroupId } from '../src/services/sear
  *
  * A `SubstreamAgent` does not decide who may read it or whether it may still
  * be written; its parent does. A room's parent, hosted in the Organization's
- * `WorkspaceDO`, answers from the room's scope and participants, `AutomationDO` from the automation's author and scope and,
+ * `WorkspaceDO`, answers from the room's scope and participants, and from a hosted Sidekick's author and scope and,
  * for a room's automation, from the room's participants through WorkspaceDO.
  * Both report an archive rather than folding it into the answer: an archived
  * parent's conversations stay readable and refuse every write, so a child
@@ -36,9 +36,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type UserId } from "@rally/contracts";
 
-import { AutomationDO } from "../src/durable-objects/automation-do";
 import {
-  automationDOName,
   conversationObjectName,
   substreamLoopId,
   workspaceDOName,
@@ -58,7 +56,7 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { consumeEffectBodies, pendingChildEffects, deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
+import { consumeEffectBodies, pendingChildEffects, deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { hostedParentStub, listVisiblePrivateChildren, readSharedWorkstream } from "./helpers/hosted-parent";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -135,10 +133,10 @@ function conversation(parentId: string, substreamId = "0") {
   ));
 }
 
-function automationStub(automationId: string): DurableObjectStub<AutomationDO> {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
-    automationDOName("global", WORKSPACE_ID, asAutomationId(automationId)),
-  ));
+/** The Organization object, which hosts every Sidekick's parent beside every Channel's. */
+function automationStub(automationId: string) {
+  void automationId;
+  return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
 async function seedRegionalDatabase(): Promise<void> {
@@ -237,7 +235,6 @@ async function seedAutomation(scope: "personal" | "workspace" | "workstream", ow
     automationId,
   });
   expect(created.created).toBe(true);
-  await deliverParentEffects(TEST_ENV, automationStub(automationId));
   return automationId;
 }
 
@@ -643,7 +640,7 @@ describe("conversation parent contract", () => {
     });
     await projectAuthorization(TEST_ENV, { type: 'authorization_projection_v1', region: 'global',
       workspaceId: WORKSPACE_ID, parentId, substreamId: asSubstreamId('0') });
-    const automations = vi.spyOn(AutomationDO.prototype, 'readAuthorizationFacts');
+    const automations = vi.spyOn(WorkspaceDO.prototype, 'sidekickReadAuthorizationFacts');
     const identities = vi.spyOn(WorkstreamIdentityStorage.prototype, 'readAuthorizationFacts');
     const access = createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID });
     const addresses = ids.map(resourceId => ({ kind: 'resource' as const, workspaceId: WORKSPACE_ID, resourceId }));
@@ -1238,7 +1235,7 @@ describe("conversation parent contract", () => {
       .toEqual({ exists: true, authorityGeneration: 1, archived: true });
   });
 
-  it("AutomationDO admits the author, every member of a workspace automation, and a room automation's participants", async () => {
+  it("a hosted Sidekick admits the author, every member of a workspace automation, and a room automation's participants", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
     const personal = await seedAutomation("personal", null);
     const shared = await seedAutomation("workspace", null);
@@ -1279,7 +1276,7 @@ describe("conversation parent contract", () => {
       .toEqual({ authorized: false, archived: true });
     expect(await automationStub(owned).authority({ workspaceId: WORKSPACE_ID, parentId: owned }))
       .toEqual({ exists: true, authorityGeneration: 1, archived: true });
-    await automationStub(personal).remove({
+    await automationStub(personal).sidekickRemove({
       workspaceId: WORKSPACE_ID,
       automationId: personal,
       actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },

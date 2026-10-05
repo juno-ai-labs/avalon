@@ -2,7 +2,6 @@ import { fallbackWorkspacePlacementAffinity } from "../lib/durable-object-namesp
 import { Hono } from "hono";
 import {
   AutomationDraftSchema,
-  asAutomationId,
   asUserId,
   asWorkspaceId,
   type WorkstreamId,
@@ -11,7 +10,7 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 
 import type { Env } from "../env";
-import { automationDOName, workspaceDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
 import { sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -38,6 +37,7 @@ import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import type { PersistedRunStatus } from "../durable-objects/workstream-harness-run-storage";
+import { hostedParentStub } from "../services/conversation-parent-client";
 
 const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
 
@@ -243,20 +243,15 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
       owningWorkstreamId: null,
       automationId: automation.id,
     });
-    const object = await durableObjectStubForWorkspace(
-      env,
-      env.AUTOMATION_DOS,
-      asWorkspaceId(workspaceId),
-      automationDOName(env.AVALON_REGION, asWorkspaceId(workspaceId), asAutomationId(automationId)),
-    );
-    await object.submitDefinition({
+    const workspace = await hostedParentStub(env, workspaceId);
+    await workspace.sidekickSubmitDefinition({
       workspaceId: asWorkspaceId(workspaceId),
       automationId,
       draft: { ...automation.draft, suggestedScope: automation.scope },
       evaluatorRules: null,
       submittedByRunId: null,
     });
-    await object.apply({
+    await workspace.sidekickApply({
       workspaceId: asWorkspaceId(workspaceId),
       automationId,
       actor: { userId: asUserId(automation.authorUserId), actorRole: "owner", participantOfOwningWorkstream: false },
