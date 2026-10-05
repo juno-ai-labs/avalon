@@ -61,7 +61,8 @@ export const WorkspaceSpaceGeneralRequestSchema = SpaceActorSchema.extend({
 export type WorkspaceSpaceGeneralRequest = z.infer<typeof WorkspaceSpaceGeneralRequestSchema>;
 
 export const WorkspaceSpaceReserveRequestSchema = SpaceActorSchema.extend({
-  space: CreateSpaceRequestSchema,
+  /** Always with an icon: the service stands one in when the person chose none. */
+  space: CreateSpaceRequestSchema.extend({ iconKey: SpaceIconKeySchema }),
   /**
    * The creation identity. `SpaceService` always names one, because the D1
    * anchor is written under it before this call; absent only for a caller
@@ -153,6 +154,11 @@ export const WorkspaceSpacePresentationRequestSchema = SpaceActorSchema.extend({
     iconKey: SpaceIconKeySchema,
     colorKey: SpaceColorKeySchema,
   }),
+  /**
+   * Write only if the Space is still at this revision. Set by the icon Rally
+   * chooses after creation, so it never lands over anything a person changed.
+   */
+  ifRevision: z.number().int().positive().optional(),
 }).strict();
 export type WorkspaceSpacePresentationRequest = z.infer<typeof WorkspaceSpacePresentationRequestSchema>;
 

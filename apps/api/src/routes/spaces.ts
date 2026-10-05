@@ -43,7 +43,11 @@ export const spaceRoutes = new Hono<HonoAppEnv>();
 
 spaceRoutes.post("/", zValidator("json", CreateSpaceRequestSchema), async (c) =>
   c.json(SpaceSummarySchema.parse(
-    await new SpaceService(c.env, getAuth(c)).create(c.req.valid("json")),
+    await new SpaceService(c.env, getAuth(c)).create(
+      c.req.valid("json"),
+      undefined,
+      (work) => c.executionCtx.waitUntil(work),
+    ),
   ), 201),
 );
 

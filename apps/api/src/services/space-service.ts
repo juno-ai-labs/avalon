@@ -6,6 +6,7 @@ import {
   type ContainerOrder,
   ContainerOrderSchema,
   type CreateSpaceRequest,
+  DEFAULT_WORKSTREAM_ICON_KEY,
   MoveChannelBetweenSpacesResultSchema,
   type SpaceChannelPage,
   SpaceChannelPageSchema,
@@ -47,9 +48,10 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
-import { diagnosticErrorCode, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { spaceAccessError } from "./channel-access-service";
 import { ResourceService } from "./resource-service";
+import { chooseSpaceIcon } from "./workstream-naming-service";
 import { claimParentAnchor } from "./workstream-runtime-database";
 
 /**
@@ -268,8 +270,15 @@ export class SpaceService {
    * Space is listed. WorkspaceDO then writes the Space and its hosted parent in
    * one transaction, and that is the whole Space: nothing outside WorkspaceDO
    * holds any of it.
+   *
+   * A request with no icon is reserved under the catalog's neutral mark and
+   * handed to {@link chooseIcon}, off the caller's clock when `defer` is given.
    */
-  async create(input: CreateSpaceRequest, spaceId?: SpaceId): Promise<SpaceSummary> {
+  async create(
+    input: CreateSpaceRequest,
+    spaceId?: SpaceId,
+    defer?: (work: Promise<void>) => void,
+  ): Promise<SpaceSummary> {
     const workspace = await this.workspace();
     const actor = { workspaceId: asWorkspaceId(this.auth.workspaceId), userId: asUserId(this.auth.userId) };
     const admitted = await workspace.admitSpaceCreation(actor);
@@ -279,16 +288,63 @@ export class SpaceService {
       claimParentAnchor(this.env, this.auth.workspaceId, id, "space"));
     const reservation = WorkspaceSpaceReserveResultSchema.parse(await workspace.reserveSpace({
       ...actor,
-      space: input,
+      space: { ...input, iconKey: input.iconKey ?? DEFAULT_WORKSTREAM_ICON_KEY },
       spaceId: id,
     }));
     if (!reservation.ok) throw spaceRefusal(reservation.code, input.name, reservation.unreachableUserIds, reservation.blockedWorkstreamIds);
     const reserved = reservation.space;
+    // A replay that let Rally choose the icon cannot compare it: the first
+    // attempt's pass may already have written one.
     if (spaceId && (reserved.name !== input.name.trim() || reserved.scope !== input.scope
-      || reserved.iconKey !== input.iconKey || reserved.colorKey !== input.colorKey || reserved.reach === "through_channel")) {
+      || (input.iconKey !== undefined && reserved.iconKey !== input.iconKey)
+      || reserved.colorKey !== input.colorKey || reserved.reach === "through_channel")) {
       throw new ApiError(409, "space_revision_conflict", "The creation identity already names a different Space");
     }
+    if (input.iconKey === undefined && reservation.created) {
+      const choosing = this.chooseIcon(reserved);
+      if (defer) defer(choosing); else await choosing;
+    }
     return reserved;
+  }
+
+  /**
+   * Give a Space Rally created without an icon one chosen from its name.
+   *
+   * The Channel naming call and prompt, so a Space and a Channel about the
+   * same thing reach for the same mark. Written only while the Space is at
+   * the revision it was created at: any edit a person makes first (its name,
+   * its icon, its audience) moves the revision, and the generated icon stands
+   * down rather than undo it. Never rejects; the Space already exists with a
+   * neutral icon, which is what it keeps when this produces nothing.
+   */
+  private async chooseIcon(space: SpaceSummary): Promise<void> {
+    const fields = { workspace_id: this.auth.workspaceId, space_id: space.id };
+    try {
+      const iconKey = await chooseSpaceIcon(this.env, {
+        workspaceId: this.auth.workspaceId,
+        spaceId: space.id,
+        name: space.name,
+        userId: this.auth.userId,
+      });
+      if (iconKey === null || iconKey === space.iconKey) return;
+      const result = await (await this.workspace()).noteSpacePresentation({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: asUserId(this.auth.userId),
+        spaceId: space.id,
+        presentation: { name: space.name, iconKey, colorKey: space.colorKey },
+        ifRevision: space.revision,
+      });
+      logInfo(this.env, "space_icon_chosen", {
+        ...fields,
+        icon: iconKey,
+        outcome: result.ok ? "written" : result.code,
+      });
+    } catch (error) {
+      logWarn(this.env, "space_icon_failed", {
+        ...fields,
+        error_code: diagnosticErrorCode(error, "space_icon_write_failed"),
+      });
+    }
   }
 
   /**
