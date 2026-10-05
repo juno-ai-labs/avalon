@@ -4729,19 +4729,32 @@ async function loadConnectorTriggerContext(
  * The rendered personal system prompt of the member whose own turn this is, or
  * the empty string.
  *
- * Only a run a person started for themselves carries it: a Sidekick run may act
- * as a user (`run_as_user_id`) and a background agent inherits its parent's
- * principal, but neither is a turn that person activated. The text comes from
- * the conversation's own copy, never from WorkspaceDO, so it costs inference no
- * hop and may lag an edit by a turn. In the prefix it breaks prompt caching
- * across members in one room; that cost was accepted for this feature.
+ * Only a run a person started for themselves carries it, so the reason is an
+ * allowlist of their own acts: a message, an answer, or a retry, in Rally or
+ * from a linked Slack account. Every other reason runs as a user without that
+ * user acting (a digest, a wake-up an earlier run scheduled, a connector
+ * trigger, an inbound email), and a Sidekick run (`run_as_user_id`) or a
+ * background agent inherits a principal it was not given by a message. The
+ * text comes from the conversation's own copy, never from WorkspaceDO, so it
+ * costs inference no hop and may lag an edit by a turn. In the prefix it
+ * breaks prompt caching across members in one room; that cost was accepted.
  */
+const PERSONAL_SYSTEM_PROMPT_REASONS = new Set([
+  "opening_message",
+  "human_message",
+  "elicitation_answer",
+  "manual_retry",
+  "slack_workspace_opening_message",
+  "slack_workspace_message",
+  "slack_workspace_elicitation_answer",
+]);
+
 function personalSystemPromptFor(
   input: WorkstreamWorkflowInput,
   read: ((userId: string) => string) | undefined,
 ): string {
-  if (!read || input.executionPrincipal.type !== "user" || input.automationRun
-    || input.backgroundAgent || input.parentKind === "automation") return "";
+  if (!read || input.executionPrincipal.type !== "user" || !PERSONAL_SYSTEM_PROMPT_REASONS.has(input.reason)
+    || input.automationRun || input.backgroundAgent || input.parentKind === "automation") return "";
   return renderPersonalSystemPrompt(read(input.executionPrincipal.userId));
 }
 
@@ -8751,6 +8764,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  personalSystemPromptFor,
   executeAuthorizedConnectorTool,
   assertFrozenConnectionAuthorized,
   prePaginationTool,
