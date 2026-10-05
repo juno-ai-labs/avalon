@@ -496,7 +496,7 @@ const accountSessionFailure = new AccountSessionFailure({
       ? dialog.showMessageBox(parent, options)
       : dialog.showMessageBox(options);
   },
-  onError: (error) => logError('rally', 'account session logout failed', error),
+  onError: (error) => logError('rally', 'account session recovery failed', error),
 });
 const rendererCrashRecovery = new RendererCrashRecovery({
   showMessageBox: (options) => {
@@ -1742,8 +1742,11 @@ async function endAccountSession(rejected?: StoredAuth): Promise<void> {
       loggingOut = false;
     }
     // Local sign-out and its notice must not wait for an unreachable server.
-    void revokeStoredCredentials(auth).catch((error: unknown) => {
-      logWarn('rally', 'could not revoke every session after account failure', error);
+    void revokeStoredCredentials(auth).then((failures) => {
+      if (failures.length > 0) logWarn('rally', 'could not revoke every session after account failure',
+        new AggregateError(failures, 'Rally could not revoke every stored session'));
+    }).catch((error: unknown) => {
+      logWarn('rally', 'could not revoke sessions after account failure', error);
     });
     return true;
   }));
@@ -2816,7 +2819,7 @@ function coalescedRefreshSession(): Promise<DesktopSession> {
   return refreshInFlight;
 }
 
-async function revokeStoredCredentials(stored: StoredAuthSet): Promise<void> {
+async function revokeStoredCredentials(stored: StoredAuthSet): Promise<unknown[]> {
   const failures: unknown[] = [];
   const credentials = [
     ...(stored.account ? [stored.account] : []),
@@ -2839,9 +2842,7 @@ async function revokeStoredCredentials(stored: StoredAuthSet): Promise<void> {
       failures.push(error);
     }
   }
-  if (failures.length > 0) {
-    throw new AggregateError(failures, 'Rally could not revoke every stored session');
-  }
+  return failures;
 }
 
 async function logout(): Promise<void> {
@@ -2864,7 +2865,7 @@ async function logout(): Promise<void> {
     settingsWindow?.close();
     sidekicksWindow?.close();
     if (stored) {
-      try { await revokeStoredCredentials(stored); }
+      try { failures.push(...await revokeStoredCredentials(stored)); }
       catch (error) { failures.push(error); }
     }
   } finally {

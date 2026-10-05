@@ -11,27 +11,29 @@ export class AccountSessionFailure {
 
   constructor(private readonly dependencies: AccountSessionFailureDependencies) {}
 
-  end(signOutIfCurrent: () => Promise<boolean>): Promise<void> {
-    if (this.pending) return this.pending;
-    this.pending = this.endOnce(signOutIfCurrent).finally(() => { this.pending = null; });
-    return this.pending;
-  }
-
-  private async endOnce(signOutIfCurrent: () => Promise<boolean>): Promise<void> {
+  async end(signOutIfCurrent: () => Promise<boolean>): Promise<void> {
     try {
       if (!await signOutIfCurrent()) return;
-      await this.dependencies.showMessageBox({
-        type: 'warning',
-        title: 'Sign in to Rally again',
-        message: 'Your Rally session has ended.',
-        detail: 'Rally could not restore your account session. You have been signed out. Sign in again to continue.',
-        buttons: ['OK'],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-      });
+      // Each caller checks its own credential. Only the notice is shared.
+      if (!this.pending) {
+        this.pending = this.showNotice().finally(() => { this.pending = null; });
+      }
+      await this.pending;
     } catch (error) {
       this.dependencies.onError(error);
     }
+  }
+
+  private async showNotice(): Promise<void> {
+    await this.dependencies.showMessageBox({
+      type: 'warning',
+      title: 'Sign in to Rally again',
+      message: 'Your Rally session has ended.',
+      detail: 'Rally could not restore your account session. You have been signed out. Sign in again to continue.',
+      buttons: ['OK'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
   }
 }
