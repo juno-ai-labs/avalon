@@ -1846,6 +1846,8 @@ previous Channel's presence standing.
 frame that is well formed but names something the viewer cannot see gets the
 answer it would get for "no Channel", not a close.
 
+Shipped in [#1093](https://github.com/juno-ai-labs/avalon/pull/1093).
+
 ### 2026-10-01 — A person added by somebody else keeps the newest message unread
 
 **What changed:** `startReadCursorAtLatest` takes `leaveLatestUnread`. An add
