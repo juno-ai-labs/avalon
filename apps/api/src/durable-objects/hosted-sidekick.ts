@@ -279,8 +279,11 @@ export interface SidekickRunProvisioning {
 export interface HostedSidekickHost {
   env: Env;
   storage: DurableObjectStorage;
+  /**
+   * The Organization's alarm entries. A hosted Sidekick only writes them;
+   * `WorkspaceDO` re-arms its one native alarm after every Sidekick call.
+   */
   alarms: ScheduledAlarmStore;
-  armNextAlarm(): Promise<void>;
   /**
    * Replace this Sidekick's connector registrations, inside the caller's
    * transaction, and return the connector-event sequence they take effect
@@ -620,7 +623,6 @@ export class HostedSidekick {
         code: error instanceof Error ? error.message : "sidekick_memory_tables_failed",
       });
     });
-    await this.host.armNextAlarm();
     return this.detail();
   }
 
@@ -674,7 +676,6 @@ export class HostedSidekick {
     if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can be paused");
     this.storage.transactionSync(() => this.pauseBy("person", Date.now()));
     await this.host.afterRegistrations(this.sidekickId, null, []);
-    await this.host.armNextAlarm();
   }
 
   async resume(input: AutomationActorRequest): Promise<void> {
@@ -688,7 +689,6 @@ export class HostedSidekick {
     }
     const evaluators = this.storage.transactionSync(() => this.resumeFromPause(Date.now()));
     await this.host.afterRegistrations(this.sidekickId, row.accepted_definition_revision, evaluators);
-    await this.host.armNextAlarm();
   }
 
   async remove(input: AutomationActorRequest): Promise<void> {
@@ -708,7 +708,6 @@ export class HostedSidekick {
       this.touchDirectory(now);
     });
     await this.host.afterRegistrations(this.sidekickId, null, []);
-    await this.host.armNextAlarm();
   }
 
   /**
@@ -762,7 +761,6 @@ export class HostedSidekick {
       { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
       null,
     );
-    await this.host.armNextAlarm();
     return admitted;
   }
 
@@ -785,7 +783,6 @@ export class HostedSidekick {
       null,
       request.seed,
     );
-    await this.host.armNextAlarm();
     return admitted;
   }
 
@@ -819,21 +816,28 @@ export class HostedSidekick {
       : { kind: "admit" };
   }
 
-  externalEventAdmissionPlan(input: AutomationExternalEventAdmission): AutomationExternalEventPlan {
-    const request = parseRpcInput(AutomationExternalEventAdmissionSchema, input, "external_event_admission_plan");
-    return this.externalEventPlan(request);
-  }
-
   /** Admit one matched external event, once. */
-  async admitExternalEvent(input: AutomationExternalEventAdmission): Promise<{ admitted: boolean; outcomeCode: string }> {
+  async admitExternalEvent(input: AutomationExternalEventAdmission): Promise<{
+    admitted: boolean;
+    outcomeCode: string;
+    judge?: { conditions: string[]; connectorType: string | null };
+  }> {
     const request = parseRpcInput(AutomationExternalEventAdmissionSchema, input, "admit_external_event");
     const plan = this.externalEventPlan(request);
     if (plan.kind === "refuse") return { admitted: false, outcomeCode: plan.outcomeCode };
     if (plan.kind === "judge") {
       // The condition the member wrote is the gate: a delivery that did not
       // bring a verdict is refused, and both halves of a verdict must agree.
+      // The refusal carries the conditions, so the caller can judge them and
+      // ask again without a separate planning call.
       const verdict = request.conditionVerdict;
-      if (!verdict) return { admitted: false, outcomeCode: "sidekick_semantic_condition_unjudged" };
+      if (!verdict) {
+        return {
+          admitted: false,
+          outcomeCode: "sidekick_semantic_condition_unjudged",
+          judge: { conditions: plan.conditions, connectorType: plan.connectorType },
+        };
+      }
       if (!verdict.admit || verdict.code !== "condition_met") {
         return { admitted: false, outcomeCode: `sidekick_semantic_${verdict.code}` };
       }
@@ -845,7 +849,6 @@ export class HostedSidekick {
       occurredAt: request.event.occurredAt,
       payloadHash: request.payloadHash,
     }, externalEventOpening(request.event));
-    await this.host.armNextAlarm();
     return {
       admitted: true,
       outcomeCode: admitted.reused ? "sidekick_occurrence_replayed" : "sidekick_occurrence_admitted",
@@ -904,7 +907,6 @@ export class HostedSidekick {
       );
       return run;
     });
-    await this.host.armNextAlarm();
     return { admitted: true, duplicate: admitted.reused, outcomeCode: "admitted", runId: admitted.runId };
   }
 

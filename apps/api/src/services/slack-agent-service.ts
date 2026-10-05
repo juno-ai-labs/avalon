@@ -135,7 +135,7 @@ import { claimParentAnchor } from "./workstream-runtime-database";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { SLACK_THREAD_CLAIM_LEASE_MS } from "../durable-objects/workspace-slack-storage";
 import type { AdmitExternalMessageInput } from "../durable-objects/workstream-external-message-protocol";
-import { sidekickClient } from "./sidekick-client";
+import { hostedParentStub } from "./conversation-parent-client";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -2161,7 +2161,7 @@ export class SlackAgentService {
 
   /** A Sidekick run's state and its Sidekick's lifecycle, from the Sidekick object. */
   private async sidekickRunState(connection: SlackConnectionRow, sidekickId: string, runId: string) {
-    return (await sidekickClient(this.env, asWorkspaceId(connection.workspace_id))).readRunState({
+    return (await hostedParentStub(this.env, connection.workspace_id)).sidekickReadRunState({
       workspaceId: asWorkspaceId(connection.workspace_id),
       automationId: sidekickId,
       runId,

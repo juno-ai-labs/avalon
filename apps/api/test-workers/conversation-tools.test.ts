@@ -40,7 +40,7 @@ import {
 import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { withHostedParent } from "./helpers/hosted-parent";
-import { applySidekick, sidekickStub, sidekickWorkspace } from "./helpers/sidekick";
+import { applySidekick, sidekickWorkspace } from "./helpers/sidekick";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -85,9 +85,6 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-function automation() {
-  return sidekickStub(TEST_ENV, WORKSPACE_ID);
-}
 
 function conversation(parentId: string, substreamId: SubstreamId | "0" = "0") {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
@@ -194,7 +191,7 @@ async function seedSidekick(home: SubstreamId | "0"): Promise<void> {
     owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId: AUTOMATION_ID,
   });
   const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
-  await automation().submitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
+  await workspace().sidekickSubmitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
   await applySidekick(TEST_ENV, {
     ...addressed, actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true },
   });

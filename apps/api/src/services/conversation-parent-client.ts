@@ -28,7 +28,12 @@ export async function conversationParentStub(
   return hostedParentStub(env, asWorkspaceId(address.workspaceId));
 }
 
-/** The Organization object that hosts every Channel and Space parent of one workspace. */
+/**
+ * The Organization object that hosts every parent of one workspace: its
+ * Channels, Spaces and Sidekicks. A caller that needs several of them, or
+ * several Sidekicks, holds this one stub and asks in one call where a batch
+ * method exists, since every call queues on the same object.
+ */
 export async function hostedParentStub(env: Env, workspaceId: string): Promise<DurableObjectStub<WorkspaceDO>> {
   const id = asWorkspaceId(workspaceId);
   return durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, id, workspaceDOName(env.AVALON_REGION, id));

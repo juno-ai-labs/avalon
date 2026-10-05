@@ -5,7 +5,7 @@ import { runtimeDeferral } from "../lib/defer";
 import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
-import { conversationParentStub } from "./conversation-parent-client";
+import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
@@ -293,7 +293,6 @@ import {
 import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
-import { sidekickClient } from "./sidekick-client";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
@@ -2012,17 +2011,14 @@ function createAvalonAutomationsPlugin(
             input.parentId, input.backgroundAgent ? "0" : input.substreamId ?? "0")
           : null;
         const actor = { userId: asUserId(authorUserId), participantOfOwningWorkstream: input.parentKind === "automation" || options?.canManage === true };
-        const ids: string[] = [];
-        if (input.parentKind === "automation") {
-          ids.push(authoredAutomationId);
-        } else if (options?.canManage) {
-          const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
-            workspaceDOName(env.AVALON_REGION, workspaceId));
-          const owned = await workspace.automationIdsOwnedByWorkstream({ workspaceId, workstreamId: input.parentId });
-          ids.push(...owned.automationIds);
-        }
-        const sidekicks = await Promise.all(ids.map(async (automationId) => {
-          const detail = AutomationDetailSchema.parse(await (await sidekickClient(env, workspaceId)).readDetail({ workspaceId, automationId: asAutomationId(automationId), actor }));
+        // One Organization call for every Sidekick this conversation edits:
+        // its own, or each one the Channel owns when the person may manage it.
+        const selection = input.parentKind === "automation" ? { automationIds: [authoredAutomationId] }
+          : options?.canManage ? { channelOwnedBy: input.parentId } : null;
+        const details = selection === null ? [] : await (await hostedParentStub(env, workspaceId))
+          .sidekickReadDetails({ workspaceId, actor, ...selection });
+        const sidekicks = details.map((read: unknown) => {
+          const detail = AutomationDetailSchema.parse(read);
           return {
             sidekickId: detail.id,
             canEdit: true,
@@ -2039,7 +2035,7 @@ function createAvalonAutomationsPlugin(
               ? { ...detail.currentDefinition, definitionVersion: 2, triggers: [...detail.currentDefinition.triggers, { type: "inbound_email" }] }
               : detail.currentDefinition,
           };
-        }));
+        });
         if (input.parentKind !== "workstream") return { sidekicks };
         return { sidekicks, workspaceSidekicks: (options?.items ?? []).map((item) => ({
           sidekickId: item.id, name: item.name, description: item.description, available: item.available,
@@ -2085,7 +2081,7 @@ function createAvalonAutomationsPlugin(
             automationId: authoredAutomationId,
           });
         }
-        const automation = await sidekickClient(env, asWorkspaceId(input.workspaceId));
+        const workspace = await hostedParentStub(env, input.workspaceId);
         const membership = await env.DB.prepare(
           `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
         ).bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" }>();
@@ -2095,7 +2091,7 @@ function createAvalonAutomationsPlugin(
           workspaceId: asWorkspaceId(input.workspaceId), region: input.region,
           role: membership.role, analyticsWorkspaceId: null,
         }).actorRequest(targetId);
-        const submitted = await automation.saveDefinition({
+        const submitted = await workspace.sidekickSaveDefinition({
           workspaceId: asWorkspaceId(input.workspaceId),
           automationId: targetId,
           draft: { ...draft, definitionVersion: 2 },
@@ -6496,7 +6492,7 @@ async function readRunAuthority(
   // rather than finish on stale consent.
   const run = input.automationRun;
   startedAt = Date.now();
-  const live = await (await sidekickClient(env, asWorkspaceId(input.workspaceId))).readRunState({
+  const live = await (await hostedParentStub(env, input.workspaceId)).sidekickReadRunState({
     workspaceId: asWorkspaceId(input.workspaceId),
     automationId: run.automationId,
     runId: run.runId,
@@ -6553,8 +6549,8 @@ async function readAutomationRunDefinition(
 ): Promise<AutomationRunDefinitionV1> {
   const run = input.automationRun;
   if (!run) throw new Error("sidekick_run_reference_missing");
-  const automation = await sidekickClient(env, asWorkspaceId(input.workspaceId));
-  return AutomationRunDefinitionV1Schema.parse(await automation.readRunDefinition({
+  const workspace = await hostedParentStub(env, input.workspaceId);
+  return AutomationRunDefinitionV1Schema.parse(await workspace.sidekickReadRunDefinition({
     workspaceId: asWorkspaceId(input.workspaceId),
     automationId: run.automationId,
     runId: run.runId,
