@@ -972,6 +972,17 @@ describe('what a breakout shows of where it came from', () => {
       .toEqual(['Main turn 1', 'Main turn 2']);
   });
 
+  it('ends at the text of the branched answer, not at the work row that opens its turn', () => {
+    const answer: Message[] = [
+      { ...turn(1), authorType: 'human', text: 'Engineering of connectors' },
+      { ...turn(2), id: 'row-2-work', messageType: 'thought', text: '' },
+      { ...turn(2), text: 'Ready to help with connectors' },
+      turn(3),
+    ];
+    expect(branchProvenance(answer, 'turn-2').map((message) => message.id))
+      .toEqual(['row-1', 'row-2-work', 'row-2']);
+  });
+
   it('shows nothing for a breakout started from the sidebar, or from a turn off the loaded window', () => {
     expect(branchProvenance(transcript, null)).toEqual([]);
     // Not the newest turns: a branch point this client cannot see is provenance
