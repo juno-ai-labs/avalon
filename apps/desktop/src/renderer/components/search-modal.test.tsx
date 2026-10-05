@@ -35,15 +35,17 @@ async function reachEndOfList() {
     }
   });
 }
-function setup(search: React.ComponentProps<typeof SearchModal>['search']) {
+function setup(search: React.ComponentProps<typeof SearchModal>['search'],
+  places: Pick<React.ComponentProps<typeof SearchModal>, 'channels' | 'spaces'> = {}) {
   const onSelect = vi.fn();
+  const onSelectPlace = vi.fn();
   const onOpenChange = vi.fn();
   const client = new QueryClient();
   const tree = (open: boolean) => <QueryClientProvider client={client}><SearchModal workspaceId="workspace:user"
-    open={open} onOpenChange={onOpenChange} onSelect={onSelect} search={search} /></QueryClientProvider>;
+    open={open} onOpenChange={onOpenChange} onSelect={onSelect} search={search} onSelectPlace={onSelectPlace} {...places} /></QueryClientProvider>;
   const view = render(tree(true));
   // RTL wraps `rerender` in `act`, so opening and closing settles like a click.
-  return { onSelect, onOpenChange, client, setOpen: (open: boolean) => { view.rerender(tree(open)); } };
+  return { onSelect, onSelectPlace, onOpenChange, client, setOpen: (open: boolean) => { view.rerender(tree(open)); } };
 }
 describe('organization search modal', () => {
   afterEach(() => { focusManager.setFocused(undefined); });
@@ -57,7 +59,7 @@ describe('organization search modal', () => {
   it('queries the selected source and opens the highlighted canonical result with Enter', async () => {
     const search = vi.fn(async () => ({ results: [result] }));
     const { onSelect, onOpenChange } = setup(search);
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files']);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files', 'Channels']);
     fireEvent.click(screen.getByRole('tab', { name: 'Messages' }));
     const input = screen.getByRole('combobox');
     fireEvent.change(input, { target: { value: 'danil' } });
@@ -70,6 +72,33 @@ describe('organization search modal', () => {
     expect(onSelect).toHaveBeenCalledWith(result);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+  it('finds Channels and Spaces by name without asking the Worker, and opens the chosen one', async () => {
+    const search = vi.fn(async () => ({ results: [result] }));
+    const { onSelectPlace, onOpenChange } = setup(search, {
+      channels: [{ kind: 'channel', id: 'channel-1', name: 'Pricing review' }, { kind: 'channel', id: 'channel-2', name: 'Hiring' }],
+      spaces: [{ kind: 'space', id: 'space-1', name: 'Launch' }, { kind: 'space', id: 'space-2', name: 'Pricing' }],
+    });
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent))
+      .toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files', 'Channels', 'Spaces']);
+    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
+    // An empty query lists every Channel.
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Pricing reviewChannel', 'HiringChannel']);
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'PRIC' } });
+    const option = screen.getByRole('option');
+    expect(option.querySelector('strong')).toHaveTextContent('Pric');
+    fireEvent.click(screen.getByRole('tab', { name: 'Spaces' }));
+    expect(screen.getByRole('option')).toHaveTextContent('Pricing');
+    fireEvent.change(input, { target: { value: 'nothing' } });
+    expect(screen.getByText('No results')).toBeVisible();
+    fireEvent.change(input, { target: { value: 'launch' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onSelectPlace).toHaveBeenCalledWith({ kind: 'space', id: 'space-1', name: 'Launch' });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+    expect(search).not.toHaveBeenCalled();
+  });
+
   it('continues past an empty page as its end comes into view and measures through the first result paint', async () => {
     const end = vi.fn();
     const trace = vi.spyOn(perfTrace, 'startPerfTrace').mockReturnValue({
