@@ -712,6 +712,37 @@ describe('MessageBlock markdown', () => {
     expect(chip?.querySelector('img')).toHaveAttribute('src', 'https://example.com/ada.png');
   });
 
+  it("draws a person's typed @Rally as a Rally chip, but not inside code", () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-rally-mention',
+      text: 'As prep @Rally, read `@Rally` and email@Rally.dev',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    const chips = document.querySelectorAll('.mention-chip-rally');
+    expect(chips).toHaveLength(1);
+    expect(chips[0]?.textContent).toBe('RRally');
+    expect(chips[0]?.querySelector('.mention-chip-avatar-rally')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText('@Rally', { selector: 'code' })).toBeInTheDocument();
+    expect(screen.getByText(/email@Rally\.dev/u)).toBeInTheDocument();
+  });
+
+  it("leaves an agent's @Rally as text", () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-rally-mention-agent',
+      authorType: 'agent',
+      author: undefined,
+      text: 'Mention @Rally in a thread.',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(document.querySelector('.mention-chip-rally')).not.toBeInTheDocument();
+  });
+
   it('still resolves a stored bare person: mention to a chip', () => {
     const personId = '00000000-0000-7000-8000-000000000042';
     const link = `[@Ada Lovelace](person:${personId})`;
