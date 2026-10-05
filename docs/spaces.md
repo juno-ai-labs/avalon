@@ -2131,6 +2131,8 @@ an icon. With no `OPENROUTER_API_KEY` or an unreachable model the Space keeps
 `circle-dot`. A new revision-advancing write that runs automatically right after
 creation would silently disable this pass.
 
+Pull request: [#1099](https://github.com/juno-ai-labs/avalon/pull/1099).
+
 ### 2026-09-30 — Archived leftover Channels do not block Space archive
 
 **What changed:** `prepareArchive` tests final membership against Channels that
