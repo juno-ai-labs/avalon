@@ -2695,12 +2695,14 @@ export function MessageBlock({
   // Every queued message says the same thing, whatever will deliver it: Rally
   // has not read it yet.
   const pendingLabel = pending ? 'Unseen' : null;
-  // Only a settled text turn can be a cutoff — a streaming or undelivered one
+  // Only a settled turn of what was said can be a cutoff: text, or a
+  // Sidekick's result, which the capture keeps. A streaming or undelivered one
   // has no fixed end to freeze. The id is read into a local so the callback
   // closes over the value the condition checked rather than re-asserting it.
   const cutoffTurnId = message.transcriptTurnId;
   const startSubstream = onStartSubstream && cutoffTurnId !== undefined
-    && message.messageType === 'text' && !message.streaming && !message.deliveryState
+    && (message.messageType === 'text' || message.messageType === 'automation_activation')
+    && !message.streaming && !message.deliveryState
     ? () => onStartSubstream(cutoffTurnId)
     : undefined;
   const article = (
