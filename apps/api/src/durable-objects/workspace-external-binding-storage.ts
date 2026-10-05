@@ -76,6 +76,19 @@ export const EXTERNAL_CONVERSATION_BINDINGS_MIGRATION: readonly string[] = [
 const REPLACEABLE_BY_LASTING_SUSPENSION =
   "(state = 'active' OR (state = 'suspended' AND suspended_reason = 'connection_disconnected'))";
 
+/**
+ * Migration 90: whether a room's Space is one it joined by name rather than
+ * its own. Recorded at link time because nothing else can say later: the
+ * room-derived id stops matching once Slack renumbers a room, and a Space's
+ * scope can be changed. Every row before this one is a room's own Space or a
+ * conversation, since matching did not exist, so the default is the truth for
+ * them.
+ */
+export const EXTERNAL_BINDING_SPACE_MATCHED_MIGRATION: readonly string[] = [
+  `ALTER TABLE external_conversation_bindings
+     ADD COLUMN space_matched INTEGER NOT NULL DEFAULT 0 CHECK (space_matched IN (0, 1))`,
+];
+
 interface BindingRow extends Record<string, SqlStorageValue> {
   installation_id: string;
   path_json: string;
@@ -89,6 +102,8 @@ interface BindingRow extends Record<string, SqlStorageValue> {
   claim_key: string | null;
   created_at: string;
   updated_at: string;
+  /** Read only where it is selected: `resolve`. */
+  space_matched?: number;
 }
 
 const COLUMNS = `installation_id, path_json, target_kind, space_id, parent_kind, parent_id,
@@ -197,7 +212,7 @@ export class ExternalConversationBindingStorage {
   }): ExternalBindingResolution {
     const keys = input.path.map((_, index) => externalPathKey(input.path.slice(0, index + 1)));
     const rows = this.sql.exec<BindingRow>(
-      `SELECT ${COLUMNS} FROM external_conversation_bindings
+      `SELECT ${COLUMNS}, space_matched FROM external_conversation_bindings
         WHERE installation_id = ? AND path_json IN (${keys.map(() => "?").join(", ")})`,
       input.installationId,
       ...keys,
@@ -220,7 +235,9 @@ export class ExternalConversationBindingStorage {
     const nearest = [...ancestors].reverse().find((row) => row?.state === "active");
     if (input.addressed && nearest?.target_kind === "space"
       && (exact === undefined || reclaimable)) {
-      return { outcome: "spawn", spaceId: nearest.space_id!, roomPath: pathOf(nearest) };
+      return {
+        outcome: "spawn", spaceId: nearest.space_id!, roomPath: pathOf(nearest), spaceMatched: nearest.space_matched === 1,
+      };
     }
     return { outcome: "none", roomBound: ancestors.some((row) => row !== undefined) };
   }
@@ -312,7 +329,7 @@ export class ExternalConversationBindingStorage {
     installationId: string,
     path: ExternalPath,
     at: string,
-    create: () => string | null,
+    create: () => { spaceId: string; matched: boolean } | null,
   ): { outcome: "linked" | "existing" | "reactivated"; spaceId: string } | null {
     return this.storage.transactionSync(() => {
       const existing = this.row(installationId, path);
@@ -331,18 +348,19 @@ export class ExternalConversationBindingStorage {
         }
         return { outcome: "existing" as const, spaceId: existing.space_id! };
       }
-      const spaceId = create();
-      if (spaceId === null) return null;
+      const created = create();
+      if (created === null) return null;
       this.sql.exec(
-        `INSERT INTO external_conversation_bindings (${COLUMNS})
-         VALUES (?, ?, 'space', ?, NULL, NULL, NULL, 'active', NULL, NULL, ?, ?)`,
+        `INSERT INTO external_conversation_bindings (${COLUMNS}, space_matched)
+         VALUES (?, ?, 'space', ?, NULL, NULL, NULL, 'active', NULL, NULL, ?, ?, ?)`,
         installationId,
         externalPathKey(path),
-        spaceId,
+        created.spaceId,
         at,
         at,
+        created.matched ? 1 : 0,
       );
-      return { outcome: "linked" as const, spaceId };
+      return { outcome: "linked" as const, spaceId: created.spaceId };
     });
   }
 
