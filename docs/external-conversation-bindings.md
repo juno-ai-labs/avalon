@@ -81,9 +81,9 @@ and the active room binding together. A public room makes a public Space. A
 private channel or group DM makes a private Space whose audience is the room's
 members that Rally can map, seated through the existing roster rules. A public
 room whose name matches a live Organization-wide Space links to that Space
-instead of making one. Names compare ignoring case, with a dash read as a space
-and runs of spaces as one, so `#general` lands in "General" and
-`#product-launch` in "Product Launch". The ingress asks `externalRoomSpaceMatch` before
+instead of making one. Names compare ignoring case, spaces and dashes, so
+`#general` lands in "General" and `#product-launch` or `#productlaunch` in
+"Product Launch". The ingress asks `externalRoomSpaceMatch` before
 it claims a D1 anchor, so a matched room leaves none behind, and
 `linkExternalRoom` refuses a matched Space archived in between. The oldest
 match wins when several share a name. A private room never matches: its Space's
@@ -323,15 +323,16 @@ source, so a run cannot widen what the bot joins.
 ### 2026-10-05 — A public room joins the existing Space it is named for
 
 **What changed:** Linking a public room first looks for a live
-Organization-wide Space with the same name, ignoring case and reading a dash as
-a space (`WorkspaceSpaceStorage.organizationSpaceNamed`, exposed as
+Organization-wide Space with the same name, ignoring case, spaces and dashes
+(`WorkspaceSpaceStorage.organizationSpaceNamed`, exposed as
 `WorkspaceDO.externalRoomSpaceMatch`), and links the room into it rather than
 creating a second Space. `linkExternalRoom` now refuses to bind to an archived
 Space.
 
 **Why:** Inviting Rally to `#general` made a Space named "general" beside the
 Organization's "General", so the team's threads split across two Spaces with
-the same name.
+the same name. Slack channel names hold no spaces, so a match has to ignore
+them for `#productlaunch` to find "Product Launch".
 
 **Considered and rejected:** Matching inside `linkExternalRoom`'s transaction
 alone. The ingress claims the D1 anchor for the room-derived id before that
