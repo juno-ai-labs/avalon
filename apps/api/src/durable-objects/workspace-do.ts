@@ -999,11 +999,14 @@ import {
   ExternalBindingSuspendRequestSchema,
   ExternalBindingSuspendResultSchema,
   ExternalRoomLinkRequestSchema,
+  ExternalRoomSpaceMatchRequestSchema,
+  type ExternalRoomSpaceMatchResult,
   type ExternalBindingResolution,
   type ExternalRoomLinkResult,
 } from "./workspace-external-binding-protocol";
 import {
   EXTERNAL_CONVERSATION_BINDINGS_MIGRATION,
+  EXTERNAL_BINDING_SPACE_MATCHED_MIGRATION,
   ExternalConversationBindingStorage,
 } from "./workspace-external-binding-storage";
 import {
@@ -4142,6 +4145,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 89,
   description: "a member's display preferences",
   statements: WORKSPACE_MEMBER_PREFERENCES_MIGRATION,
+}, {
+  version: 90,
+  description: "record whether a room's Space is one it joined by name",
+  // Provenance the Slack Connect spawn check needs, which neither the room
+  // id nor the Space's scope keeps; see docs/external-conversation-bindings.md.
+  statements: EXTERNAL_BINDING_SPACE_MATCHED_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -11473,6 +11482,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return relationship;
   }
 
+  /** `activeSpaceMember` from the table alone, for a synchronous commit; unknown reads as no. */
+  private knownActiveMember(userId: string): boolean {
+    const known = this.knownRelationship(userId);
+    return known?.status === "active" && known.accessClass === "member";
+  }
+
   /** The table's answer, with no D1 read; `undefined` for somebody it has never heard of. */
   private knownRelationship(userId: string): WorkspaceRelationship | null | undefined {
     const row = this.state.storage.sql.exec<{ relationship_json: string | null }>(
@@ -13312,6 +13327,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * The Organization-wide Space a public room should join instead of making
+   * its own. A Space whose creator is no longer an active member is not
+   * offered: an unlinked sender's Channel is placed as that creator.
+   */
+  async externalRoomSpaceMatch(input: unknown): Promise<ExternalRoomSpaceMatchResult> {
+    await this.initialized;
+    const request = parseRpcInput(ExternalRoomSpaceMatchRequestSchema, input, "external_room_space_match");
+    this.assertWorkspace(request.workspaceId);
+    return { spaceId: (await this.roomSpaceMatch(request.workspaceId, request.name)).usable };
+  }
+
+  /** The Space `name` matches (`found`), and that Space if it may be offered (`usable`). */
+  private async roomSpaceMatch(workspaceId: string, name: string): Promise<{ found: string | null; usable: string | null }> {
+    const match = this.spaceStorage().organizationSpaceNamed(name);
+    const usable = match?.createdByUserId != null && await this.activeSpaceMember(workspaceId, match.createdByUserId);
+    return { found: match?.spaceId ?? null, usable: usable ? match.spaceId : null };
+  }
+
+  /**
    * Link a shared provider room: its Space and its room binding in one
    * transaction, or the Space an existing binding already names.
    *
@@ -13344,32 +13378,47 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal };
-    const parent = await this.spaceParentReservation(request.spaceId);
+    // This link decides the match, whatever the caller's earlier ask answered:
+    // a Space that now matches is joined, and a `matched` id that no longer
+    // does is refused, since it has no anchor of its own to be created under.
+    const match = request.spaceMatch ? await this.roomSpaceMatch(request.workspaceId, request.space.name) : null;
+    if (request.spaceMatch === "matched" && match?.usable !== request.spaceId) return { ok: false, code: "space_not_found" };
+    const spaceId = match?.usable ?? request.spaceId;
+    const parent = await this.spaceParentReservation(spaceId);
     if (!parent.ok) return { ok: false, code: parent.code };
     const storage = this.spaceStorage();
     const reservation: WorkspaceSpaceReserveRequest = {
       workspaceId: asWorkspaceId(request.workspaceId),
       userId: asUserId(request.userId),
-      spaceId: asSpaceId(request.spaceId),
+      spaceId: asSpaceId(spaceId),
       space: { name: request.space.name, iconKey: "users", colorKey: "blue", scope: request.space.scope },
     };
     const participants = [...new Set([request.userId, ...request.participantUserIds])];
     const linked = await this.withMembersLearned(() => this.state.storage.transactionSync(() => (
       bindings.linkRoom(request.installationId, request.path, request.at, () => {
-        const reserved = storage.reserveForCreation(reservation, request.spaceId);
+        // The awaits above let a Space edit or a departure in; the match, and
+        // whether its creator may still be offered, must be the ones decided.
+        if (match) {
+          const current = storage.organizationSpaceNamed(request.space.name);
+          const usable = current?.createdByUserId != null && this.knownActiveMember(current.createdByUserId)
+            ? current.spaceId
+            : null;
+          if ((current?.spaceId ?? null) !== match.found || usable !== match.usable) return null;
+        }
+        const reserved = storage.reserveForCreation(reservation, spaceId);
         if (!reserved.space) return null;
         if (reserved.created) parent.reserve(request.userId, reserved.space);
         if (request.space.scope === "personal" && participants.length > 1) {
           const seated = storage.applyAudience({
             workspaceId: asWorkspaceId(request.workspaceId),
             userId: asUserId(request.userId),
-            spaceId: asSpaceId(request.spaceId),
+            spaceId: asSpaceId(spaceId),
             operationId: uuidV7(),
             audience: { scope: "personal", participantUserIds: participants.map(asUserId) },
           });
           if (seated === false || seated === "self_excluded") throw new Error("external_room_audience_refused");
         }
-        return request.spaceId;
+        return { spaceId, matched: match?.usable != null };
       })
     )));
     if (!linked) return { ok: false, code: "space_not_found" };

@@ -129,6 +129,9 @@ describe("WorkspaceDO migration 85", () => {
 
     // The key the migration wrote is the key the storage reads: a reply in
     // the old thread delivers to its Channel, and the room itself is unbound.
+    // The storage is today's, so the object is brought to today's schema first,
+    // as every object is before it serves a request.
+    apply(database, Number.MAX_SAFE_INTEGER, BINDING_MIGRATION_VERSION);
     const bindings = storageOver(database);
     expect(bindings.resolve({
       installationId: "slack:T1",
@@ -169,5 +172,29 @@ describe("WorkspaceDO migration 85", () => {
     // A path that is not a non-empty array.
     expect(insert(`('slack:T1', '[]', 'space', 'S1', NULL, NULL, NULL, 'active', NULL, NULL, 'a', 'a')`))
       .toThrow(/CHECK constraint failed/u);
+  });
+});
+
+describe("WorkspaceDO migration 90", () => {
+  it("records every binding written before it as a room's own Space, and accepts only a flag", () => {
+    const database = openDatabase();
+    apply(database, 89);
+    database.prepare(
+      `INSERT INTO external_conversation_bindings
+         (installation_id, path_json, target_kind, space_id, state, created_at, updated_at)
+       VALUES ('slack:T1', '["C1"]', 'space', '00000000-0000-7000-8000-0000000b1d30', 'active',
+               '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z')`,
+    ).run();
+
+    apply(database, 90, 89);
+
+    expect(storageOver(database).resolve({
+      installationId: "slack:T1", path: ["C1", "1.0"], addressed: true, claimKey: null, pendingStaleBefore: "2000-01-01T00:00:00.000Z",
+    })).toEqual({
+      outcome: "spawn", spaceId: "00000000-0000-7000-8000-0000000b1d30", roomPath: ["C1"], spaceMatched: false,
+    });
+    expect(() => database.exec(
+      "UPDATE external_conversation_bindings SET space_matched = 2 WHERE path_json = '[\"C1\"]'",
+    )).toThrow(/CHECK/u);
   });
 });
