@@ -8639,7 +8639,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `SELECT show_agent_work FROM member_preferences WHERE user_id = ?`,
       userId,
     ).toArray()[0];
-    return row ? { showAgentWork: row.show_agent_work === 1 } : DEFAULT_MEMBER_PREFERENCES;
+    return row ? { showAgentWork: row.show_agent_work === 1 } : { ...DEFAULT_MEMBER_PREFERENCES };
   }
 
   async spaceSummary(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
