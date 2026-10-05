@@ -302,13 +302,34 @@ describe("importing a Sidekick from its legacy object", () => {
     expect(await ledger()).toMatchObject({ state: "imported" });
   });
 
-  it("marks a Sidekick whose legacy object never held a row as done, and drops its stale listing", async () => {
+  it("marks a Sidekick whose legacy object never held a row as done, listed as it was and opened by nothing", async () => {
     await publishLegacyDirectory();
 
     expect(await workspace().requestSidekickImport({ workspaceId: WORKSPACE_ID, automationId: SIDEKICK_ID }))
       .toEqual({ state: "imported", lastErrorCode: null });
-    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
-      `SELECT 1 FROM automation_directory WHERE automation_id = ?`, SIDEKICK_ID,
-    ).toArray())).toEqual([]);
+    const listed = await workspace().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
+    expect(listed.items.map((item) => item.id)).toEqual([SIDEKICK_ID]);
+    expect(await touch()).toMatchObject({ code: "sidekick_not_found" });
+  });
+
+  it("refuses a late legacy copy of a row a hosted write owns", async () => {
+    await seedLegacySidekick();
+    await publishLegacyDirectory();
+    expect(await touch()).toMatchObject({ state: "pending" });
+
+    const effect = {
+      kind: "directory_automation", automationId: SIDEKICK_ID, authorUserId: AUTHOR_ID, lifecycle: "deleted",
+      scope: "personal", owningWorkstreamId: null, title: "Stale copy", description: "", nextRunAt: null,
+    } satisfies Extract<ParentEffect, { kind: "directory_automation" }>;
+    expect(await workspace().applyAutomationDirectory({
+      workspaceId: WORKSPACE_ID,
+      envelope: {
+        kind: "parent_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
+        parentKind: "automation", parentId: SIDEKICK_ID, generation: 1, messageId: "late-copy",
+        partitionKey: "automation", sourceVersion: 99, requiredProjectionVersion: null,
+        payloadHash: conversationEffectHash(effect), effect,
+      },
+    })).toEqual({ applied: false });
+    expect(await touch()).toMatchObject({ lifecycle: "active" });
   });
 });

@@ -5987,9 +5987,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       now, automationId,
     );
     if (exported.status === "missing") {
-      // A directory row whose object never held one: nothing can open it, so
-      // the row goes and the ledger says why.
-      sql.exec(`DELETE FROM automation_directory WHERE automation_id = ?`, automationId);
+      // A directory row whose object never held one: nothing more to move. The
+      // row is left as it was listed before the move; a read of the Sidekick
+      // answers not found, as it did then.
       markImported();
       logWarn(this.env, "sidekick_import_object_missing", { workspace_id: workspaceId, automation_id: automationId });
       return null;
@@ -8201,12 +8201,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // Until the legacy class is deleted, a Sidekick's own object can still
         // publish here: one the ledger had not heard of (created just before
         // the move, or whose earlier message was lost) is recorded as pending
-        // so it is imported rather than left behind. One already imported owns
-        // this row itself, and a late legacy copy must not overwrite it.
+        // so it is imported rather than left behind. A row a hosted write owns
+        // (its `region` is set) is the Sidekick's own, and a late legacy copy
+        // must not overwrite it.
+        const hosted = this.state.storage.sql.exec(
+          `SELECT 1 FROM automation_directory WHERE automation_id = ? AND region IS NOT NULL`, effect.automationId,
+        ).toArray().length > 0;
+        if (hosted) return { applied: false };
         const ledger = this.state.storage.sql.exec<{ state: string }>(
           `SELECT state FROM sidekick_imports WHERE sidekick_id = ?`, effect.automationId,
         ).toArray()[0];
-        if (ledger?.state === "imported") return { applied: false };
         if (!ledger) {
           this.state.storage.sql.exec(`INSERT INTO sidekick_imports (sidekick_id, state) VALUES (?, 'pending')`, effect.automationId);
         }
