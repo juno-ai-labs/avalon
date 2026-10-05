@@ -1118,8 +1118,9 @@ for serving". Production names only because its flag already serves Terra, so
 any unreachable or absent flag, and every local sandbox, got no names and no
 icons. Terra accepts the schema.
 
-**Consequences:** The fallback, `google/gemini-3.8-flash`, still fails this
-call, for another reason: it refuses the `reasoning: none` naming sends. A
+**Consequences:** The Gemini fallbacks serve naming only with the plain-string
+icon and `reasoningRequired` from the same pull request; see
+[`workstream-naming.md`](workstream-naming.md#changelog). A
 `.env.local` that sets the key, as one copied from the old `.env.example` does,
 outranks the new default until it is edited.
 

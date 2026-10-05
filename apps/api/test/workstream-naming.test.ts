@@ -1,7 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWorkstreamNameMessages } from "@rally/agent-harness";
-import { WORKSTREAM_ICON_KEYS } from "@rally/contracts";
 
 import type { Env } from "../src/env";
 import {
@@ -160,17 +159,17 @@ describe("work-stream naming", () => {
     const schema = (request?.response_format as {
       json_schema: {
         schema: {
-          properties: { title: { maxLength: number }; icon: { enum: string[] } };
+          properties: { title: { maxLength: number }; icon: Record<string, unknown> };
           required: string[];
         };
       };
     }).json_schema.schema;
     expect(schema.properties.title.maxLength).toBe(80);
-    // The icon is advertised as the whole catalog and as a required property.
-    // `strict: true` is what turns the enum into a decoding constraint rather
-    // than a hint, and a `required` a provider honours is what stops it
+    // The icon is a required plain string. Not an enum of the catalog: Gemini
+    // refuses a 253-value enum outright, and the parse already drops an answer
+    // off the catalog. A `required` a provider honours is what stops it
     // answering with a name and no icon at all.
-    expect(schema.properties.icon.enum).toEqual([...WORKSTREAM_ICON_KEYS]);
+    expect(schema.properties.icon).toEqual({ type: "string" });
     expect(schema.required).toEqual(["title", "icon"]);
     // The request is what is being named, and it is data: it reaches the model
     // as user-role content and never as part of the naming policy.
