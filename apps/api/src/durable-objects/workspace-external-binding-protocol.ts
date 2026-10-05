@@ -121,12 +121,14 @@ export const ExternalBindingResolutionSchema = deferredZodSchema(() => z.discrim
    * An addressed message under an active Space: create a Channel there.
    * `space` is the Space as WorkspaceDO holds it now: who it is for, and the
    * member who linked it, who places a Channel opened for a Slack sender with
-   * no Rally identity. Absent only if the Space row is gone.
+   * no Rally identity. Absent only if the Space row is gone. `spaceMatched`:
+   * the room joined this Space by name rather than getting its own.
    */
   z.strictObject({
     outcome: z.literal("spawn"),
     spaceId: IdSchema,
     roomPath: ExternalPathSchema,
+    spaceMatched: z.boolean(),
     space: z.strictObject({
       scope: z.enum(["personal", "workspace"]),
       createdByUserId: IdSchema.nullable(),

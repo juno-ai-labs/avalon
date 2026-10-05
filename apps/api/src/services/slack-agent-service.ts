@@ -1630,6 +1630,7 @@ export class SlackAgentService {
           spaceId: resolution.spaceId,
           spaceScope: resolution.space?.scope ?? "personal",
           spaceActorUserId: resolution.space?.createdByUserId ?? null,
+          spaceMatched: resolution.spaceMatched,
           claim: {
             installationId,
             path,
@@ -1706,11 +1707,8 @@ export class SlackAgentService {
     // A room that joined an existing Space by name, rather than getting its
     // own, may since have been shared through Slack Connect: an outside
     // organization's thread must not open work in this Organization's Space.
-    // A matched Space is always Organization-wide, and a private room's own
-    // Space never is, so scope tells them apart even after Slack renumbers a
-    // private room it shares (`channel_id_changed`), when the id no longer can.
-    if (route?.kind === "spawn" && route.spaceScope === "workspace"
-      && route.spaceId !== await stableUuid(`external-room-space:${installationId}:${channelId}`)
+    // The binding records which it is; a room's own Space pays nothing.
+    if (route?.kind === "spawn" && route.spaceMatched
       && slackExternalRoom((await slackApi(token, "conversations.info", { channel: channelId }, AbortSignal.timeout(5_000))).channel)
         .externallyShared) {
       logWarn(this.env, "external_binding_placement_refused", {
@@ -4244,6 +4242,8 @@ type SlackThreadRoute =
       spaceId: string;
       spaceScope: "personal" | "workspace";
       spaceActorUserId: string | null;
+      /** The room joined this Space by name rather than getting its own. */
+      spaceMatched: boolean;
       claim: ExternalBindingClaim;
     };
 

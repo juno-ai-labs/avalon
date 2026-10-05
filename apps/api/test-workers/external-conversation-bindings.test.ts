@@ -302,7 +302,18 @@ describe("a room named for an existing Space", () => {
     expect(linked).toEqual({ ok: true, outcome: "linked", spaceId: general });
     expect(await spaceIds()).toEqual([privateRoom.spaceId, archived.spaceId].sort());
     expect(await resolve(["C1", "1.0"], { addressed: true, claimKey: "event:general" }))
-      .toMatchObject({ outcome: "spawn", spaceId: general });
+      .toMatchObject({ outcome: "spawn", spaceId: general, spaceMatched: true });
+    // The record survives Slack renumbering the room, which the id could not.
+    await workspace().moveExternalConversationBindings({
+      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, from: ["C1"], to: ["C9"], at: at(),
+    });
+    expect(await resolve(["C9", "1.0"], { addressed: true, claimKey: "event:moved" }))
+      .toMatchObject({ outcome: "spawn", spaceId: general, spaceMatched: true });
+    // A room's own Space is recorded as its own.
+    const own = await linkRoom("C5", "00000000-0000-7000-8000-000000000e39", { spaceMatch: "unmatched", name: "launch" });
+    if (!own.ok) throw new Error("link refused");
+    expect(await resolve(["C5", "1.0"], { addressed: true, claimKey: "event:own" }))
+      .toMatchObject({ outcome: "spawn", spaceId: own.spaceId, spaceMatched: false });
   });
 
   it("ignores spaces, dashes and underscores in a room's name, so `#room-c3`, `#room_c3` and `#roomc3` match \"room C3\"", async () => {
