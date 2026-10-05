@@ -17,7 +17,8 @@ import { isComposingKeyEvent } from '../lib/ime';
  * modal itself and drawn with its own mark in its own colour.
  */
 export type SearchPlace =
-  | { kind: 'channel'; id: string; name: string; appearance?: WorkstreamAppearance | undefined }
+  // `substreamId` is the conversation the Channel opens on for this reader (its sidebar row's).
+  | { kind: 'channel'; id: string; name: string; substreamId?: string | undefined; appearance?: WorkstreamAppearance | undefined }
   // A Breakout is listed with the Channels. Without a look of its own it wears its Channel's.
   | { kind: 'breakout'; id: string; channelId: string; channelName: string; name: string;
     appearance?: WorkstreamAppearance | undefined }
@@ -91,9 +92,9 @@ interface SearchModalProps {
   search: (request: SearchRequest, signal: AbortSignal) => Promise<SearchResponse>;
   onSelect: (result: SearchResult) => void;
   /**
-   * The Channels and Spaces the window already holds. The sidebar's walk of
-   * every Space makes these complete, so their tabs match names here and never
-   * ask the Worker. Without `spaces` (Spaces off) there is no Spaces tab.
+   * The Channels and Spaces the window already holds; their tabs match names
+   * here and never ask the Worker. Without `spaces` (Spaces off) there is no
+   * Spaces tab.
    */
   channels?: readonly SearchPlace[];
   spaces?: readonly SearchPlace[] | undefined;
@@ -237,8 +238,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
   const continuationFailed = response.isFetchNextPageError
     && (!(response.error instanceof ApiError) || response.error.status >= 500);
   // A place tab lists its own kind; All puts every matching place above the
-  // content results, which arrive later and so never push a place down. All
-  // shows every match: how many is a product number nobody has set yet.
+  // content results, which arrive later and so never push a place down. No
+  // cap: how many is the team's number to set.
   const places = !open || !searchable ? []
     : placeTab ? matchPlaces(placeTab === 'channels' ? channels : spaces ?? [], normalized)
     : activeTab === 'all' ? matchPlaces([...channels, ...spaces ?? []], normalized) : [];
@@ -368,6 +369,9 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
                 </div>
               </div>;
             })}
+            {/* Places answer at once; say content is still coming beneath them. */}
+            {places.length > 0 && !placeTab && results.length === 0 && (response.isFetching || settledQuery !== normalized)
+              && <div className="rally-search-pending" role="status">Searching…</div>}
             {canContinue && <div ref={sentinel} className="rally-search-sentinel" aria-hidden="true" />}
           </div>
           {canContinue && (continuationFailed || response.isFetchingNextPage) && <div className="rally-search-footer" role="status">
@@ -378,9 +382,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
           </div>}
         </div>
         {rowCount === 0 && !(canContinue && continuationFailed) && <div className="rally-search-state" role="status">
-          {placeTab ? (searchable ? 'No results' : 'What are you looking for?')
-            : !normalized ? 'Search messages, links, artifacts, and files'
-            : !searchable ? 'What are you looking for?'
+          {!searchable ? 'What are you looking for?'
+            : placeTab ? 'No results'
             : (response.isFetching || settledQuery !== normalized || canContinue) ? 'Searching…'
             : response.isError ? 'Search could not be completed. Please try again.' : 'No results'}
         </div>}

@@ -395,23 +395,10 @@ All, Messages, Links, Artifacts, and Files tabs use literal case-insensitive
 substring retrieval. BM25 and ANN are available at the shared boundary but are
 not yet exposed through this member endpoint.
 
-The modal's Channels and Spaces tabs never reach this endpoint. They match the
-query as a case-insensitive substring of the names in the Channel and Space
-lists the window already holds (the sidebar's walk of every Space makes the
-Channel list complete). The Channels tab
-lists each Channel followed by the Breakouts the device holds for it. Each row
-wears its place's own mark in its own colour: `WorkstreamMark` for a Channel and
-a Breakout (a Breakout with no look of its own wears its Channel's), `SpaceIcon`
-for a Space. Opening a Channel lands where its sidebar row does
-(`channelDestination`); a Breakout opens beside its Channel. All lists every
-matching place above the content results, which arrive later and so never push
-a place down; it shows every match, since nobody has set how many it should.
-The Spaces tab is absent where Spaces are off.
-
-No tab searches until the trimmed query is three characters long
-(`SEARCH_MIN_CHARACTERS`, a number the team set); until then the modal asks
-"What are you looking for?". Shorter queries match nearly everything, and on
-the content tabs each would cost a Worker round trip.
+The modal's Channels and Spaces tabs, and the places All lists above content,
+never reach this endpoint: they match names in the lists the desktop already
+holds. No tab searches until the query is three characters long
+(`SEARCH_MIN_CHARACTERS`, a number the team set).
 
 Admission is the `audience` clause (see Invariants); loaders only render and
 never read an owner. The route revalidates the workspace session before
@@ -733,10 +720,9 @@ filter on the WorkspaceDO directory, which adds a round trip for the same
 answer.
 
 **What a future change has to respect:** These tabs are only as complete as the
-desktop's Channel and Breakout lists. If the sidebar stops walking every Space,
-they need a server source. All has no cap on places; a short query in a large
-Organization fills the first screen with them, and a cap is the team's number
-to set.
+desktop's Channel and Breakout lists; the sidebar's walk of every Space is what
+makes them complete, and without it they need a server source. All has no cap
+on places, and a cap is the team's number to set.
 
 ### 2026-09-28 — Embedding batches check the index first; memory search drops its per-run keys
 
