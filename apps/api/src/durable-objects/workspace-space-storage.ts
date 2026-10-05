@@ -3282,6 +3282,26 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
+   * The live Organization-wide Space named `name`, ignoring case and
+   * surrounding whitespace, or nothing. A connector room joins this Space
+   * rather than minting a second one beside it, so Slack's `#general` lands in
+   * "General". Oldest first when several share the name, so the answer does not
+   * change as newer ones arrive.
+   *
+   * Compared in TypeScript because SQLite's `NOCASE` folds ASCII only, and a
+   * room name is not ASCII by rule.
+   */
+  organizationSpaceNamed(name: string): string | null {
+    if (!this.ready()) return null;
+    const wanted = name.trim().toLowerCase();
+    return this.storage.sql.exec<{ space_id: string; title: string } & Record<string, SqlStorageValue>>(
+      `SELECT space_id, title FROM spaces
+        WHERE scope = 'workspace' AND archived_at IS NULL
+        ORDER BY created_at, space_id`,
+    ).toArray().find((row) => row.title.trim().toLowerCase() === wanted)?.space_id ?? null;
+  }
+
+  /**
    * Take the next piece of cutover work, and move its retry gate out of reach.
    *
    * One claim at a time, because the phases are ordered and a page's cursor is

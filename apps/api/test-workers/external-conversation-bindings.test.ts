@@ -275,6 +275,43 @@ describe("linking a shared room", () => {
   });
 });
 
+describe("a room named for an existing Space", () => {
+  const match = async (name: string) => (await workspace().externalRoomSpaceMatch({ workspaceId: WORKSPACE_ID, name })).spaceId;
+  const generalId = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ space_id: string }>(
+    "SELECT space_id FROM spaces WHERE system_role = 'general'",
+  ).one().space_id);
+
+  it("matches the live Organization-wide Space of that name ignoring case, and links the room into it", async () => {
+    const general = await generalId();
+    const privateRoom = await linkRoom("G1", "00000000-0000-7000-8000-000000000e31", { scope: "personal" });
+    const archived = await linkRoom("C2", "00000000-0000-7000-8000-000000000e32");
+    if (!privateRoom.ok || !archived.ok) throw new Error("link refused");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE spaces SET archived_at = 1 WHERE space_id = ?", archived.spaceId);
+    });
+
+    expect(await match("  gEnErAl ")).toBe(general);
+    expect(await match("ROOM G1")).toBeNull();
+    expect(await match("ROOM C2")).toBeNull();
+    expect(await match("generals")).toBeNull();
+
+    const linked = await linkRoom("C1", general);
+    expect(linked).toEqual({ ok: true, outcome: "linked", spaceId: general });
+    expect(await spaceIds()).toEqual([privateRoom.spaceId, archived.spaceId].sort());
+    expect(await resolve(["C1", "1.0"], { addressed: true, claimKey: "event:general" }))
+      .toMatchObject({ outcome: "spawn", spaceId: general });
+  });
+
+  it("refuses to link a room into a matched Space that was archived before the link", async () => {
+    const general = await generalId();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE spaces SET archived_at = 1 WHERE space_id = ?", general);
+    });
+    expect(await linkRoom("C1", general)).toEqual({ ok: false, code: "space_not_found" });
+    expect(await bindingRows()).toEqual([]);
+  });
+});
+
 describe("a thread addressed under a linked room", () => {
   it("becomes one Channel per thread in the room's Space; an unrelated message creates nothing", async () => {
     const linked = await linkRoom("C1", "00000000-0000-7000-8000-000000000e31");
