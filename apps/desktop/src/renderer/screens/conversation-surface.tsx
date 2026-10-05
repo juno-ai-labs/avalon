@@ -490,11 +490,8 @@ const BRANCH_PROVENANCE_TURNS = 5;
  * The turns shown, faded, above a substream's composer: the message it branches
  * from and the ones that led to it, oldest first.
  *
- * Only written rows (a person's or Rally's text, or a Sidekick's result), and
- * the window counts turns rather than rows. Work timing, tool calls and other
- * activity rows are how an answer was reached, not what was said, and counting
- * them let one busy answer push the conversation out of a five-row window. An
- * answer split over several text rows is one turn.
+ * Only written rows, counted in turns: see "What reaches a Breakout" in
+ * docs/substream-creation.md.
  *
  * A substream started from the sidebar branches from wherever the conversation
  * has reached rather than from a message somebody pointed at, and it shows
@@ -506,11 +503,7 @@ export function branchProvenance(
   throughTurnId: string | null,
 ): Message[] {
   if (throughTurnId === null) return [];
-  // The turn's last row, not its first: an answer is several rows sharing one
-  // turn id, and its work row comes before its text, so cutting at the first
-  // match drops the message that was branched from.
-  // `findLastIndex` would say it more directly, but the renderer's lib target
-  // predates it.
+  // The turn's last row: its work row comes first and shares its id.
   let cutoff = -1;
   for (let index = transcript.length - 1; index >= 0; index -= 1) {
     const message = transcript[index]!;

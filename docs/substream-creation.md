@@ -89,10 +89,9 @@ both sides of the submit, per
 What sits above that composer is the branch provenance:
 
 - **From a message** — the turn that was branched from and the four before it,
-  counted in turns of written text: a person's or Rally's text and a Sidekick's
-  result. Work timing, thinking and tool rows are not drawn and do not count.
-  They fade out upward under a gradient mask and are inert to the pointer. They say what
-  is being branched out of. They are not what the substream inherits: the
+  counted in turns of what was said (see the invariant below), faded out upward
+  under a gradient mask and inert to the pointer. They say what is being
+  branched out of. They are not what the substream inherits: the
   platform still freezes a summary of the conversation through that cutoff, and
   those turns are the only part of it anybody is shown. They are also part of
   composing rather than part of the substream, so the keystroke that submits is
@@ -353,17 +352,20 @@ initializer receiving the creator and validated configuration; a future policy
 that needs the main roster must obtain it from the parent's authority, not infer
 it from the current viewer or copy a client-provided list.
 
-“Full history” means eligible participant text, attribution, mentions and
-attachment references. Eligible text is what people, Rally, and Sidekicks wrote:
-a Sidekick's result is a `system` turn, and the capture keeps it as actor
-`sidekick` under the name frozen into the row, while every other `system` turn
-is Rally's bookkeeping and stays out. It is not a clone of the tool protocol: tool inputs and
-results, thinking, run state, elicitation state and queued instructions are not
+“Full history” means what was said (see the invariant below), with
+attribution, mentions and attachment references. It is not a clone of the tool
+protocol: tool inputs and results, thinking, run state, elicitation state and queued instructions are not
 inherited. [Agent harness](agent-harness.md) owns how these inert records enter
 the first model context without becoming executable historical work.
 
 ## Invariants
 
+- **What reaches a Breakout is what was said.** The capture and the launch pane
+  admit the same rows: a person's or Rally's `text`, and a Sidekick's result,
+  which is a `system` turn admitted only by its `automation_activation` message
+  type and captured as actor `sidekick` under the name frozen into the row. Tool
+  and thinking blocks, work rows, elicitations, suggestions and every other
+  `system` turn stay out, and the pane counts its five in turns, not rows.
 - **Explicit child membership alone admits a child, and discovery asks the
   same question.** Parent visibility is neither required nor enough: parent
   participants cannot enumerate or open someone else's private child, and
@@ -515,8 +517,10 @@ five completion/error cases.
 - Summary and initial-context unit suites: pinned inference routing, inert
   model rendering and provenance.
 - `apps/api/test/substream-context-storage.test.ts`: real SQLite schema,
-  completed-prefix capture, frozen retry, excluded execution blocks and idle
-  immutable installation. Mutation proof removes the cutoff turn.
+  completed-prefix capture, frozen retry, excluded execution blocks, what was
+  said (text and Sidekick results in; system bookkeeping and elicitations out)
+  and idle immutable installation. Mutation proofs remove the cutoff turn,
+  restore the skip on every `system` turn, and admit every text block.
 - `apps/api/test-workers/substream-creation-runtime.test.ts`: real workerd
   parent/source/child prepare-confirm with provider HTTP doubled;
   duplicate confirmation, creator-only access, cancellation and no initial run
@@ -563,28 +567,29 @@ substitute for real-provider latency or window-level acceptance.
 ### 2026-10-05 — Breakouts start from what was said, Sidekick results included
 
 **What changed:** The capture behind a Breakout's starting context keeps a
-Sidekick's result, as a new `sidekick` actor labelled with the Sidekick's name,
-where it used to drop every `system` turn. The launch surface draws only
-written turns, five of them, ending at the turn branched from rather than at
+Sidekick's result, as a new `sidekick` actor, and drops elicitation and
+suggestion text it used to keep, so it admits what the launch pane draws. The
+pane counts five turns of that, ending at the turn branched from rather than at
 that turn's first row.
 
 **Why:** A Breakout started from a Rally answer showed "Worked for 6s" and not
 the answer: the window cut at the first row of the turn, and the work row comes
-first. Counting rows also let tool and thinking rows crowd out the conversation.
-On the server, tool blocks were already excluded, but so were Sidekick results,
-which are written for the room and are often what a Breakout is about.
+first. Counting rows also let work rows crowd out the conversation. On the
+server, tool blocks were already excluded, but so were Sidekick results, which
+are written for the room and are context a Breakout started after them needs.
 
 **Considered and rejected:** Admitting every `system` turn and letting the
-summary sort it out. Most system rows are Rally's bookkeeping (joins, agent
-exchanges), and the summary model would spend its handoff on them. Keeping the
-work rows in the drawn window, collapsed, was also rejected: they say how an
-answer was reached, and the window is there to say what is being branched from.
+summary sort it out: most are Rally's bookkeeping, and the summary would spend
+its handoff on them. Sending a Sidekick result as actor `external`, which every
+installed client already parses: it would tell the model a person outside
+Rally said it.
 
-**Consequences:** Only text reaches a Breakout. Tool protocol, thinking and
-Rally's own system rows stay out of both the capture and the drawn window. A
-`system` turn is admitted only by its `automation_activation` message type,
-never by its actor, and a reader of `SubstreamContextMessage` must handle the
-`sidekick` actor.
+**Consequences:** Desktop clients built before this change reject a history
+part carrying actor `sidekick`, and a frozen capture fails the same way on every
+snapshot. That is safe while `SUBSTREAM_CONTEXT_POLICY` is `summary`, whose
+parts carry no messages; moving to a history-carrying policy must wait until
+installed clients accept `sidekick`. Starting a Breakout from a Sidekick result
+itself is still not offered.
 
 Shipped in #1095.
 
