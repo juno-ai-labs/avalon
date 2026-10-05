@@ -185,6 +185,17 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "opportunity_provenance_edges",
   "opportunity_provenance_nodes",
   "scope_grant_directory", // Typed candidate projection/read RPCs own this table.
+  // A hosted Sidekick's tables (migration 88). `HostedSidekick` reads and
+  // writes them through the object's own storage, behind the `sidekick*`
+  // facade, and they are named in `WORKSPACE_TYPED_RPC_ONLY_TABLES`.
+  "sidekick_revisions",
+  "sidekick_schedules",
+  "sidekick_runs",
+  "sidekick_email_receipts",
+  "sidekick_children",
+  "sidekick_child_projections",
+  "sidekick_child_receipts",
+  "sidekick_imports",
   // The Space authority's ten tables. Every one of them is reached through
   // the typed Space RPCs in `workspace-space-protocol.ts` and nothing else — a
   // Space is a relationship the Organization owns, not product state a runtime
