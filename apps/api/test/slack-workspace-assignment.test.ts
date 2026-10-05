@@ -3235,7 +3235,7 @@ describe("Slack replies routed by external conversation bindings", () => {
 
     expect(asked).toEqual([{ workspaceId: expect.any(String), name: "general" }]);
     expect(links).toHaveLength(1);
-    expect(links[0]).toMatchObject({ path: ["CGEN"], spaceId: general, space: { name: "general", scope: "workspace" } });
+    expect(links[0]).toMatchObject({ path: ["CGEN"], spaceId: general, matched: true, space: { name: "general", scope: "workspace" } });
     expect(admit).not.toHaveBeenCalled();
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams WHERE id = ?").get(general)).toEqual({ count: 0 });
   });

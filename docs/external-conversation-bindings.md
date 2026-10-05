@@ -84,8 +84,10 @@ room whose name matches a live Organization-wide Space links to that Space
 instead of making one. Names compare ignoring case, spaces, dashes and
 underscores, so `#general` lands in "General" and `#product-launch`,
 `#product_launch` or `#productlaunch` in "Product Launch". The ingress asks `externalRoomSpaceMatch` before
-it claims a D1 anchor, so a matched room leaves none behind, and
-`linkExternalRoom` refuses a matched Space archived in between. The oldest
+it claims a D1 anchor, so a matched room leaves none behind, and passes
+`matched: true` to `linkExternalRoom`, which asks the match again inside its
+transaction and refuses a Space renamed, made private or archived in between
+(`space_not_found`). The oldest
 match wins when several share a name. A private room never matches: its Space's
 audience is the room's members, and an existing Space's is not. A mention
 in a room that has no binding runs the same step first (`fall_through` mode), so
@@ -326,8 +328,9 @@ source, so a run cannot widen what the bot joins.
 Organization-wide Space with the same name, ignoring case, spaces, dashes and
 underscores (`WorkspaceSpaceStorage.organizationSpaceNamed`, exposed as
 `WorkspaceDO.externalRoomSpaceMatch`), and links the room into it rather than
-creating a second Space. `linkExternalRoom` now refuses to bind to an archived
-Space.
+creating a second Space. A matched link re-asks the match inside
+`linkExternalRoom`'s transaction, so a Space renamed, made private or archived
+in between is refused rather than bound.
 
 **Why:** Inviting Rally to `#general` made a Space named "general" beside the
 Organization's "General", so the team's threads split across two Spaces with

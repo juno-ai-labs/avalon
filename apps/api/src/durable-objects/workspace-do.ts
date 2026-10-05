@@ -13373,10 +13373,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const participants = [...new Set([request.userId, ...request.participantUserIds])];
     const linked = await this.withMembersLearned(() => this.state.storage.transactionSync(() => (
       bindings.linkRoom(request.installationId, request.path, request.at, () => {
+        // The match was a separate event: the Space may since have been
+        // renamed, archived or made private, so it is asked again here, where
+        // the binding commits.
+        if (request.matched && storage.organizationSpaceNamed(request.space.name) !== request.spaceId) return null;
         const reserved = storage.reserveForCreation(reservation, request.spaceId);
-        // An existing Space the room's name matched may have been archived
-        // since it was matched; a room never binds to an archived Space.
-        if (!reserved.space || reserved.space.status !== "active") return null;
+        if (!reserved.space) return null;
         if (reserved.created) parent.reserve(request.userId, reserved.space);
         if (request.space.scope === "personal" && participants.length > 1) {
           const seated = storage.applyAudience({
