@@ -50,7 +50,6 @@ import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { spaceAccessError } from "./channel-access-service";
 import { ResourceService } from "./resource-service";
 import { claimParentAnchor } from "./workstream-runtime-database";
-import { sidekickClient } from "./sidekick-client";
 
 /**
  * One refusal per closed code, each naming the Space it is about.
@@ -525,15 +524,24 @@ export class SpaceService {
     if (kind === "resource") {
       await new ResourceService(this.env, this.auth).getAttachable(targetId);
       await this.assertResourceAudience(space, targetId);
-    } else {
-      await this.assertSidekickScope(targetId);
     }
+    // A Sidekick default must be an Organization Sidekick: a personal one
+    // would be offered in every member Channel and runnable by nobody but its
+    // author. The write checks that from the directory in the same call.
     const result = WorkspaceSpaceDefaultResultSchema.parse(await (await this.workspace()).addSpaceDefault({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
       kind,
       targetId,
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message === "sidekick_not_found") {
+        throw new ApiError(404, "sidekick_not_found", "Sidekick not found");
+      }
+      if (error instanceof Error && error.message === "sidekick_attachment_scope_invalid") {
+        throw new ApiError(422, "sidekick_attachment_scope_invalid", "Choose an Organization Sidekick");
+      }
+      throw error;
     }));
     if (!result.ok) {
       throw spaceRefusal(result.code, space.name, result.unreachableUserIds, result.blockedWorkstreamIds);
@@ -731,27 +739,6 @@ export class SpaceService {
         if (!(error instanceof ApiError) || error.status !== 404) throw error;
         throw spaceRefusal("space_default_audience_mismatch", space.name);
       }
-    }
-  }
-
-  /**
-   * A Space hands down Organization Sidekicks only.
-   *
-   * The same eligibility `WorkstreamService.setSidekickRecommendation` asks
-   * for: a personal Sidekick recommended to a Space would be offered in every
-   * member Channel and runnable by nobody but its author.
-   */
-  private async assertSidekickScope(sidekickId: string): Promise<void> {
-    const source = await sidekickClient(this.env, this.auth.workspaceId);
-    const sidekick = await source.readAuthorizationFacts({
-      workspaceId: this.auth.workspaceId,
-      parentId: sidekickId,
-      userId: this.auth.userId,
-      substreamIds: [],
-    });
-    if (!sidekick.exists) throw new ApiError(404, "sidekick_not_found", "Sidekick not found");
-    if (sidekick.scope !== "workspace") {
-      throw new ApiError(422, "sidekick_attachment_scope_invalid", "Choose an Organization Sidekick");
     }
   }
 
