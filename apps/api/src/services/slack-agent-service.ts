@@ -1706,8 +1706,10 @@ export class SlackAgentService {
     // A room that joined an existing Space by name, rather than getting its
     // own, may since have been shared through Slack Connect: an outside
     // organization's thread must not open work in this Organization's Space.
-    // Asked only for a matched room, so a room's own Space pays nothing.
-    if (route?.kind === "spawn"
+    // A matched Space is always Organization-wide, and a private room's own
+    // Space never is, so scope tells them apart even after Slack renumbers a
+    // private room it shares (`channel_id_changed`), when the id no longer can.
+    if (route?.kind === "spawn" && route.spaceScope === "workspace"
       && route.spaceId !== await stableUuid(`external-room-space:${installationId}:${channelId}`)
       && slackExternalRoom((await slackApi(token, "conversations.info", { channel: channelId }, AbortSignal.timeout(5_000))).channel)
         .externallyShared) {

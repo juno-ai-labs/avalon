@@ -2127,6 +2127,55 @@ describe("Slack public channel membership", () => {
     ).get()).toEqual({ count: 0 });
   });
 
+  it("does not refuse a private room's own Space after Slack renumbers it for Slack Connect", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    // The room's own private Space, derived from its old id; the binding has
+    // since moved to the id Slack gave the room when it was shared.
+    objectDatabase.exec(`
+      INSERT INTO spaces
+        (space_id, title, scope, authority_generation, source_version, payload_hash,
+         revision, created_at, updated_at, created_by_user_id)
+      VALUES ('00000000-0000-7000-8000-0000000000b1', 'launch-private', 'personal', 1, 1,
+              'fixture', 1, 0, 0, '019fc4e0-4444-7000-8000-000000000044');
+      INSERT INTO external_conversation_bindings
+        (installation_id, path_json, target_kind, space_id, state, created_at, updated_at)
+      VALUES ('slack:T123', '["C123"]', 'space', '00000000-0000-7000-8000-0000000000b1', 'active',
+              '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z');
+    `);
+    insertSlackEventJob(objectDatabase, "event:renumbered-shared", appMention("EvRenumberedShared"));
+    const posted: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const json = (body: unknown) => new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      if (url.pathname.endsWith("conversations.info")) {
+        return json({
+          ok: true,
+          channel: { id: "C123", name: "launch-private", is_private: true, is_ext_shared: true, is_im: false, is_mpim: false },
+        });
+      }
+      if (url.pathname.endsWith("chat.postMessage")) {
+        posted.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return json({ ok: true, channel: "C123", ts: "1.1" });
+      }
+      // Past the placement checks, the mention goes on to start work; this test stops there.
+      throw new Error("past_placement_checks");
+    }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined),
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:renumbered-shared").catch(() => undefined);
+
+    expect(posted.map((message) => String(message.text)).filter((text) => text.includes("shared with another organization")))
+      .toEqual([]);
+  });
+
   it("refuses to open a Channel in an Organization-wide Space for a room that has become private", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
