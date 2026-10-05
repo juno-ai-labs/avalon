@@ -111,6 +111,8 @@ export class AutomationService {
   async listSidekicks(): Promise<{ items: AutomationSummary[] }> {
     return (await this.workspace()).listSidekickDirectoryForAuthorizedMember({
       workspaceId: this.auth.workspaceId, userId: this.auth.userId,
+      // What this request's authentication read, so the object does not read it again.
+      ...(this.auth.accessClass ? { accessClass: this.auth.accessClass, role: this.auth.role } : {}),
     });
   }
 

@@ -8481,9 +8481,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * and `AutomationService.listSidekicks` for an authenticated request. Scope
    * filtering remains local.
    */
-  async listSidekickDirectoryForAuthorizedMember(input: { workspaceId: string; userId: string }): Promise<{ items: AutomationSummary[] }> {
+  async listSidekickDirectoryForAuthorizedMember(input: {
+    workspaceId: string;
+    userId: string;
+    /** What the caller's authentication already read; the object reads it only when absent. */
+    accessClass?: "member" | "guest";
+    role?: "owner" | "admin" | "member" | null;
+  }): Promise<{ items: AutomationSummary[] }> {
     await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema, userId: UserIdSchema,
+      accessClass: z.enum(["member", "guest"]).optional(),
+      role: z.enum(["owner", "admin", "member"]).nullable().optional(),
+    }).parse(input);
     this.assertWorkspace(request.workspaceId);
     const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & {
       author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string;
@@ -8495,11 +8505,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // detail screen applies: a guest is not listed Organization-scope
     // Sidekicks, a Breakout-homed one is listed to that Breakout's members,
     // and a personal one to the person it runs as.
-    const relationship = await this.readRelationship(request.workspaceId, request.userId);
-    const actor = { userId: request.userId, actorRole: relationship?.accessClass === "guest" ? null : relationship?.role ?? null };
+    // The role decides Organization-scope rows only, so it is read at most
+    // once and only when such a row is not already the person's own.
+    let actorRole: "owner" | "admin" | "member" | null | undefined = request.accessClass === undefined
+      ? undefined
+      : request.accessClass === "guest" ? null : request.role ?? null;
     const host = this.hostedSidekickHost();
     const items: AutomationSummary[] = [];
     for (const row of candidates) {
+      const own = row.author_user_id === request.userId || row.run_as_user_id === request.userId;
+      if (actorRole === undefined && row.scope === "workspace" && !own) {
+        const relationship = await this.readRelationship(request.workspaceId, request.userId);
+        actorRole = relationship?.accessClass === "guest" ? null : relationship?.role ?? null;
+      }
+      const actor = { userId: request.userId, actorRole: actorRole ?? null };
       if (await sidekickReaderAllows({ ...row, run_as_user_id: row.run_as_user_id ?? null }, actor, host)) {
         items.push(automationSummary(row, this.invalidAppearanceReporter(request.workspaceId)));
       }
