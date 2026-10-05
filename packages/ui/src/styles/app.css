@@ -2440,8 +2440,7 @@ pre {
 }
 .personal-system-prompt textarea:focus { border-color: var(--av-sys-color-focus-default); box-shadow: var(--av-sys-focus-ring-default); }
 .personal-system-prompt-actions { display: flex; justify-content: flex-end; }
-.personal-system-prompt::after { background: var(--av-sys-color-border-subtle); bottom: 0; content: ''; height: .5px; left: 14px; position: absolute; right: 14px; }
-.personal-system-prompt:last-child::after { content: none; }
+.personal-system-prompt:not(:last-child)::after { background: var(--av-sys-color-border-subtle); bottom: 0; content: ''; height: .5px; left: 14px; position: absolute; right: 14px; }
 .terminal-network-actions {
   align-items: center;
   border-top: 1px solid var(--av-sys-color-border-subtle);

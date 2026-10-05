@@ -1910,16 +1910,21 @@ describe('hiding the agent\'s work', () => {
     toolEvent: { id, toolCallId: id, name: `${id}_call`, status: 'completed', pluginId: 'p', pluginName: 'P' },
   });
 
-  it('drops thinking, tool and plugin rows but keeps what the reader must act on', () => {
+  it('drops thinking, tool and plugin rows but keeps the run timer and what the reader must act on', () => {
     const shown = withoutAgentWork([
       row('reply', {}),
       tool('read'),
       row('activity', { messageType: 'plugin_activity' }),
       tool('connect'),
-      row('thought', { messageType: 'thought' }),
+      row('thinking', {
+        messageType: 'thought',
+        thoughtEvent: { status: 'completed', durationMs: 900, activeVerb: 'thinking', completedVerb: 'thought' },
+      }),
+      // The response's own total: the live timer, then "Worked for".
+      row('working', { messageType: 'thought', thoughtEvent: { status: 'started', durationMs: 0 } }),
     ], (message) => message.id === 'connect');
 
-    expect(shown.map((message) => message.id)).toEqual(['reply', 'connect']);
+    expect(shown.map((message) => message.id)).toEqual(['reply', 'connect', 'working']);
   });
 });
 

@@ -1,4 +1,4 @@
-import { IdSchema, WorkspaceIdSchema } from "@rally/contracts";
+import { IdSchema, MemberPreferencesSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { z } from "zod";
 
 /**
@@ -19,3 +19,8 @@ export const MemberPreferencesReadRequestSchema = z.strictObject({
   userId: IdSchema,
 });
 export type MemberPreferencesReadRequest = z.infer<typeof MemberPreferencesReadRequestSchema>;
+
+export const MemberPreferencesWriteRequestSchema = MemberPreferencesReadRequestSchema.extend({
+  preferences: MemberPreferencesSchema,
+});
+export type MemberPreferencesWriteRequest = z.infer<typeof MemberPreferencesWriteRequestSchema>;
