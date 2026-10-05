@@ -59,7 +59,11 @@ const workspaceSyncInbox = createWorkspaceSyncRelayInbox();
 const networkRecoveryInbox = new NetworkRecoveryInbox();
 ipcRenderer.on(NETWORK_RECOVERY_IPC.changed, (_event, raw: unknown) => networkRecoveryInbox.receive(raw));
 // Start before React: a newly opened window inherits an ongoing session reset.
-void ipcRenderer.invoke(NETWORK_RECOVERY_IPC.state).then((raw: unknown) => networkRecoveryInbox.receive(raw)).catch(() => undefined);
+const networkRecoveryReady = ipcRenderer.invoke(NETWORK_RECOVERY_IPC.state).then((raw: unknown) => {
+  networkRecoveryInbox.receive(raw);
+});
+// Keep an IPC failure observable to requests without an unhandled rejection.
+void networkRecoveryReady.catch(() => undefined);
 
 ipcRenderer.on('embedded-browser:state', (_event, raw: unknown) => {
   if (!raw || typeof raw !== 'object' || !('tabs' in raw) || !Array.isArray(raw.tabs)) return;
@@ -143,6 +147,7 @@ ipcRenderer.on('deep-link-error:changed', (_event, rawNotice: unknown) => {
 });
 
 const bridge: RallyDesktopBridge = {
+  waitForNetworkRecoveryState: () => networkRecoveryReady,
   getNetworkRecoveryState: () => networkRecoveryInbox.state,
   onNetworkRecoveryState: (listener) => networkRecoveryInbox.subscribe(listener),
   reportNetworkTicket: async (observation) => {

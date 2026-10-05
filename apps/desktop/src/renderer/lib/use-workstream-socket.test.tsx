@@ -418,6 +418,7 @@ describe('useWorkstreamSocket', () => {
     owner.unmount();
     queryClient.clear();
   });
+
   it('keeps the canonical feed resident without a screen while the socket owner is retained', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('WebSocket', FakeWebSocket);
