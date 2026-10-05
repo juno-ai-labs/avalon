@@ -800,9 +800,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         spacesReadOnly={guestSession}
         inactiveSpaces={visibleInactiveSpaces}
         spacesReady={spacesReady}
-        // The rows on screen are the last ones the socket delivered and the
-        // connection is down. They stay, marked out of date, with the one retry
-        // there is: a list nothing fetches has nothing to refetch.
         onArchiveWorkstream={async (workstream) => {
           // Thrown rather than returned, unlike the handlers around it. The
           // sidebar treats this promise resolving as the archive having
