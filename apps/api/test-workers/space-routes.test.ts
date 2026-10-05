@@ -388,7 +388,7 @@ describe("a Space created without an icon", () => {
   });
 
   beforeEach(() => { namingModelReachable = true; });
-  afterEach(() => { namingModelReachable = false; });
+  afterEach(() => { namingModelReachable = false; gate = Promise.resolve(); });
 
   async function storedIcon(spaceId: string): Promise<string | undefined> {
     return (await spaceDirectories(OWNER)).active.items.find((item) => item.id === spaceId)?.iconKey;
@@ -402,7 +402,6 @@ describe("a Space created without an icon", () => {
     const created = await request("/spaces", OWNER_AUTH, { name: "Hiring", colorKey: "blue", scope: "personal" });
     expect(created).toMatchObject({ status: 201, body: { iconKey: "circle-dot" } });
 
-    gate = Promise.resolve();
     expect(await storedIcon((created.body as SpaceSummary).id)).toBe("rocket");
   });
 
@@ -420,7 +419,6 @@ describe("a Space created without an icon", () => {
 
     release();
     await Promise.all(deferred);
-    gate = Promise.resolve();
     expect(await storedIcon(created.id)).toBe("target");
   });
 });
