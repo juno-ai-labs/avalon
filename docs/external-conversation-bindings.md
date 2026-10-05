@@ -100,8 +100,13 @@ with no Rally identity opens its Channel acting as that creator; the room gets
 its own Space instead. A private room never matches: its Space's audience is
 the room's members, and an existing Space's is not. Neither does a Slack
 Connect room (`is_ext_shared` or `is_pending_ext_shared`), which Slack reports
-as public but whose members include another organization. An `unmatched` link
-that finds a match leaves the room's anchor unused, which costs nothing.
+as public but whose members include another organization. A matched room shared
+through Slack Connect after it linked is refused at spawn: a thread that would
+open a Channel in a Space other than the room's own first asks
+`conversations.info`, and an externally shared room gets a
+`room_shared_externally` notice instead. A room's own Space skips that call.
+An `unmatched` link that finds a match leaves the room's anchor unused, which
+costs nothing.
 
 A mention
 in a room that has no binding runs the same step first (`fall_through` mode), so
@@ -351,7 +356,8 @@ Space that starts matching after the ingress asked is joined rather than
 duplicated, and one renamed, made private or archived in between is refused
 rather than bound. A Space whose creator has left is
 never matched, since that creator is who an unlinked sender's Channel is placed
-as. Slack Connect rooms never match.
+as. Slack Connect rooms never match, and a matched room later shared through
+Slack Connect opens no new Channel there.
 
 **Why:** Inviting Rally to `#general` made a Space named "general" beside the
 Organization's "General", so the team's threads split across two Spaces with
