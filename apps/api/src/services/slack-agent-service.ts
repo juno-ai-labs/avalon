@@ -2004,6 +2004,7 @@ export class SlackAgentService {
         spaceId,
         space: { name: room.displayName, scope: room.visibility === "public" ? "workspace" : "personal" },
         participantUserIds: room.visibility === "private" ? audience.userIds : [],
+        ...(matched ? { matched: true } : {}),
         at: nowIso(),
       }));
     } catch (error) {

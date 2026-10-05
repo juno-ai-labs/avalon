@@ -111,6 +111,8 @@ async function linkRoom(roomId: string, spaceId: string, input: {
   scope?: "personal" | "workspace";
   userId?: UserId;
   participantUserIds?: UserId[];
+  matched?: boolean;
+  name?: string;
 } = {}) {
   return workspace().linkExternalRoom({
     workspaceId: WORKSPACE_ID,
@@ -118,8 +120,9 @@ async function linkRoom(roomId: string, spaceId: string, input: {
     path: [roomId],
     userId: input.userId ?? USER_ID,
     spaceId,
-    space: { name: `room ${roomId}`, scope: input.scope ?? "workspace" },
+    space: { name: input.name ?? `room ${roomId}`, scope: input.scope ?? "workspace" },
     participantUserIds: input.participantUserIds ?? [],
+    ...(input.matched ? { matched: true } : {}),
     at: at(),
   });
 }
@@ -295,7 +298,7 @@ describe("a room named for an existing Space", () => {
     expect(await match("ROOM C2")).toBeNull();
     expect(await match("generals")).toBeNull();
 
-    const linked = await linkRoom("C1", general);
+    const linked = await linkRoom("C1", general, { matched: true, name: "general" });
     expect(linked).toEqual({ ok: true, outcome: "linked", spaceId: general });
     expect(await spaceIds()).toEqual([privateRoom.spaceId, archived.spaceId].sort());
     expect(await resolve(["C1", "1.0"], { addressed: true, claimKey: "event:general" }))
@@ -312,12 +315,19 @@ describe("a room named for an existing Space", () => {
     expect(await match("room.c3")).toBeNull();
   });
 
-  it("refuses to link a room into a matched Space that was archived before the link", async () => {
+  it("refuses to link a room into a matched Space that was renamed, made private or archived before the link", async () => {
     const general = await generalId();
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE spaces SET archived_at = 1 WHERE space_id = ?", general);
-    });
-    expect(await linkRoom("C1", general)).toEqual({ ok: false, code: "space_not_found" });
+    const edits = [
+      "UPDATE spaces SET title = 'Everyone' WHERE space_id = ?",
+      "UPDATE spaces SET title = 'General', scope = 'personal' WHERE space_id = ?",
+      "UPDATE spaces SET scope = 'workspace', archived_at = 1 WHERE space_id = ?",
+    ];
+    for (const edit of edits) {
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(edit, general);
+      });
+      expect(await linkRoom("C1", general, { matched: true, name: "general" })).toEqual({ ok: false, code: "space_not_found" });
+    }
     expect(await bindingRows()).toEqual([]);
   });
 });
