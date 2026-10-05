@@ -543,13 +543,17 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // A Channel still being created has no conversation to open yet. Each
   // Channel is followed by the Breakouts this device holds for it, read when
   // the modal opens: the socket keeps those lists for every Channel.
-  const searchChannels = useMemo(() => !searchOpen ? [] : sidebarWorkstreams.filter((channel) => !channel.pending)
-    .flatMap((channel): SearchPlace[] => [
-      { kind: 'channel', id: channel.id, name: channel.title, appearance: channel.appearance },
-      ...(heldChannelBreakouts(queryClient, [channel.id])[channel.id] ?? []).map((breakout): SearchPlace => ({
+  const searchChannels = useMemo(() => {
+    if (!searchOpen) return [];
+    const channels = sidebarWorkstreams.filter((channel) => !channel.pending);
+    const breakouts = heldChannelBreakouts(queryClient, channels.map((channel) => channel.id));
+    return channels.flatMap((channel): SearchPlace[] => [
+      { kind: 'channel', id: channel.id, name: channel.title, substreamId: channel.associativeSubstreamId, appearance: channel.appearance },
+      ...(breakouts[channel.id] ?? []).map((breakout): SearchPlace => ({
         kind: 'breakout', id: breakout.substreamId, channelId: channel.id, channelName: channel.title,
         name: breakout.title, appearance: breakout.appearance ?? channel.appearance })),
-    ]), [searchOpen, sidebarWorkstreams, queryClient]);
+    ]);
+  }, [searchOpen, sidebarWorkstreams, queryClient]);
   const searchSpaces = useMemo(() => (spaces.data?.items ?? []).map((space): SearchPlace => (
     { kind: 'space', id: space.id, name: space.name, iconKey: space.iconKey, colorKey: space.colorKey })), [spaces.data]);
   const visibleInactiveSpaces = inactiveSpaces.data?.items ?? [];
@@ -972,7 +976,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onSelectPlace={(place) => {
           if (place.kind === 'space') navigate(`/spaces/${encodeURIComponent(place.id)}`);
           else if (place.kind === 'breakout') navigate(channelDestination({ id: place.channelId, associativeSubstreamId: place.id }));
-          else navigate(channelDestination(sidebarWorkstreams.find((candidate) => candidate.id === place.id) ?? { id: place.id }));
+          else navigate(channelDestination({ id: place.id, associativeSubstreamId: place.substreamId }));
         }}
         onSelect={(result) => {
           const target = result.location;
