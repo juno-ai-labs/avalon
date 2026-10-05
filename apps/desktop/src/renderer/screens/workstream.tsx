@@ -495,6 +495,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       attachments: opening.attachments,
       createdAt,
       text: opening.text,
+      mentions: opening.mentions,
       startedAt: Date.parse(createdAt),
     });
     setCreationError(null);
@@ -548,7 +549,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
             text: opening.text,
             mentions: opening.mentions,
             attachments: opening.attachments,
-          }, creator),
+          }, creator, members.data ?? []),
         );
       }
       // Nothing else is this attempt's to do: it is not the one on screen, so

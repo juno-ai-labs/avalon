@@ -7,6 +7,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { optimisticOpeningTranscript } from '../lib/launched-conversation';
+import { optimisticMentionRendering } from '../lib/transcript';
 import type { MentionIdentity } from '../lib/api';
 import { holdCreationTraceUntilSendReady, startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { mentionOptionId, useMentionNavigation } from '../lib/use-mention-navigation';
@@ -56,6 +57,8 @@ interface LaunchingWorkstream {
   /** Frozen at submit so the optimistic turn and the persisted one agree. */
   createdAt: string;
   openingMessage: string;
+  /** The popover selections, so the drawn turn shows chips rather than plain `@Name`. */
+  mentions: MentionIdentity[];
   /** Drives the work timer, which the created stream keeps counting from. */
   startedAt: number;
 }
@@ -314,7 +317,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
           text: input.openingMessage,
           mentions: input.mentions,
           attachments: input.attachments,
-        }, workspace.currentUser),
+        }, workspace.currentUser, members.data ?? []),
       );
       void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
@@ -378,7 +381,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     // Before the request, not after it: this is the whole point of the screen
     // below, and a state set in the same commit as the send is what makes the
     // work stream appear to open on the keystroke rather than on the response.
-    setLaunching({ attachments, createdAt, openingMessage, startedAt: Date.parse(createdAt) });
+    setLaunching({ attachments, createdAt, openingMessage, mentions, startedAt: Date.parse(createdAt) });
     // The sidebar lists the Channel on the same keystroke, under the id the
     // server will create it with, so its row there is already the real one
     // and the server's answer only fills it in. Placed in exactly the Space
@@ -422,7 +425,10 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
 
   // Text or files: `submit` accepts a create carrying only attachments, and
   // that turn is a bubble of tiles rather than an empty one.
-  const openingTurn: Message | null = launching
+  const openingMentions = launching
+    ? optimisticMentionRendering(launching.openingMessage, launching.mentions, members.data ?? [])
+    : null;
+  const openingTurn: Message | null = launching && openingMentions
     ? {
       id: 'launching-opening-message',
       workstreamId: 'launching',
@@ -430,7 +436,8 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
       authorType: 'human',
       author: workspace.currentUser,
       messageType: 'text',
-      text: launching.openingMessage,
+      text: openingMentions.text,
+      mentions: openingMentions.mentions,
       attachments: launching.attachments,
       createdAt: launching.createdAt,
     }
