@@ -283,13 +283,11 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 socket was `unavailable` is gone, along with `spacesOutOfDate`,
 `onRetrySpaces` and the workspace socket's `reconnect`.
 
-**Why:** The socket is `unavailable` only when offline or closed for good.
-Offline already reconnects on the `online` event and on wake. A close for good
-(access revoked, session inactive, invalid frame) sets `permanentlyClosed`, so
-`reconnect` returned at once and the button did nothing. The case #1090 made
-line up, opening a Channel, was the second kind: WorkspaceDO closed the socket
-with 4400 on presence for a Channel it had not listed. That close is fixed at
-its source (see [`workstream-durable-object.md`](workstream-durable-object.md)).
+**Why:** The socket is `unavailable` only when offline, which reconnects on
+its own, or when closed for good, where `reconnect` was a no-op, so the button
+never recovered anything. The close that made it appear after opening a Channel
+is fixed at its source; see the 2026-10-05 entry in
+[`workstream-durable-object.md`](workstream-durable-object.md#changelog).
 
 **Considered and rejected:** Making the button clear `permanentlyClosed`. A
 revoked or inactive session needs access or a sign-in, not a retry, and an
