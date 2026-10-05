@@ -16,7 +16,7 @@ right panel.
 | Path | Responsibility |
 | --- | --- |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
-| `packages/ui/src/components/space-pills.tsx` | `SidebarTopActions` (the round buttons beside the window controls), `SpacePillStrip`, `SpacePill`, `SpacePillAddButton`, `SpacePillIconButton` (the 28px marks that lead the strip). |
+| `packages/ui/src/components/space-pills.tsx` | `SidebarTopActions` (the round buttons beside the window controls), `SpacePillStrip`, `SpacePill`, `SpacePillAddButton`, `SpacePillIconButton` (the 28px mark New space is built on). |
 | `packages/ui/src/components/navigation.tsx` | `ChannelRowContent`: glyph, title, time, Space subtitle, activity dot. |
 | `packages/ui/src/components/title-pill.tsx` | `TitlePill`, `TitlePillHeader` (ancestors left, current centred, trailing right), the menu building blocks, `TitlePillClose`. |
 | `packages/ui/src/components/conversation-menus.tsx` | `ChannelMenu` and `BreakoutMenu`: everything the deleted Channel sidebar held, as title-pill menus. Also `ConversationRowActions` and `PENDING_SUBSTREAM_DRAFT_ID`. |
@@ -50,8 +50,7 @@ and no **New channel**: their sidebar is read-only and filled from the
 shared-navigation directory.
 
 Under it, the Space pills, whose row fades at whichever edge has pills scrolled past it (the app's scroll-edge fade, on the inline axis). The round **New space** button, a folder with a plus, leads, and its
-right-click offers **Restore archived space**. When the Space directory is
-stale (`spacesOutOfDate`), a round 28px **Refresh** sits beside it. Then **All**, then each Space by
+right-click offers **Restore archived space**. Then **All**, then each Space by
 name, case-insensitive A to Z (`compareAlphabeticalName`). Pills cannot be
 reordered by drag or keyboard; dragging a Channel onto a pill still places it
 in that Space. **General has no pill.** It is where a Channel lives
@@ -277,6 +276,27 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-05 — The Space strip has no Refresh
+
+**What changed:** The round **Refresh** that appeared when the Organization
+socket was `unavailable` is gone, along with `spacesOutOfDate`,
+`onRetrySpaces` and the workspace socket's `reconnect`.
+
+**Why:** The socket is `unavailable` only when offline or closed for good.
+Offline already reconnects on the `online` event and on wake. A close for good
+(access revoked, session inactive, invalid frame) sets `permanentlyClosed`, so
+`reconnect` returned at once and the button did nothing. The case #1090 made
+line up, opening a Channel, was the second kind: WorkspaceDO closed the socket
+with 4400 on presence for a Channel it had not listed. That close is fixed at
+its source (see [`workstream-durable-object.md`](workstream-durable-object.md)).
+
+**Considered and rejected:** Making the button clear `permanentlyClosed`. A
+revoked or inactive session needs access or a sign-in, not a retry, and an
+invalid frame would be sent again.
+
+**Consequences:** A stale Space directory has no manual recovery in the strip.
+If one is needed later, it needs a socket state it can actually recover from.
 
 ### 2026-10-04 — Stale-directory refresh stays a 28px pill
 
