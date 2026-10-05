@@ -356,10 +356,10 @@ never acquire a product WebSocket.
   removes that exact workspace entry; ordinary transport failures retain it.
 - Failed attention reads keep the last values and label their relative update
   time. Discovery reconciliation removes a membership that has actually ended.
-- Discovery that cannot run leaves the stored set listed and says which state
-  the account is in; a missing identity credential is restored by the next
-  switch or creation through a browser sign-in, never shown as a menu item
-  that comes and goes or a caption that outlives the reconnect.
+- Temporary discovery failures leave the stored set listed and report that
+  account information is unavailable. On the Mac app, a missing account
+  credential in a signed-in organization or a terminal account renewal failure
+  clears the complete local session and shows the native sign-in notice.
 - An unreachable target region leaves the active workspace intact and reports
   that connectivity is required. A link into the active workspace needs no
   connectivity to open and fails on its first read like any other request.
@@ -400,11 +400,15 @@ A terminal account failure ends all local sessions instead. Lockdown
 encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
+## Changelog
+
 ### 2026-10-05 — A terminal account failure ends the desktop session
 
 **What changed:** Missing account identity in an otherwise signed-in desktop,
 and terminal account refresh failures, clear the complete local session and
-show one main-process-owned native notice across concurrent requests.
+show one main-process-owned native notice across concurrent requests. Each
+request checks its own credential before notice coalescing, so a stale rejection
+cannot suppress recovery for the current credential.
 
 **Why:** Preserving organization credentials after losing account identity left
 the app apparently signed in while Account settings could no longer load.
