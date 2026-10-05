@@ -41,9 +41,14 @@ Organization, private to its author, and a plain text box for now.
   conversation's next turn after the one that refreshed its copy, and a
   conversation's first turn for a member runs without it.
 - **Only a turn the member started carries it.** The execution principal must be
-  a user, and the run must not be a Sidekick run (which may act as a user through
-  `run_as_user_id`), a background agent, or under an automation parent. Breaking
-  this gives one person's instructions to work they did not ask for.
+  a user, and the run's reason must be one of their own acts: a message, an
+  elicitation answer or a retry, in Rally or from a linked Slack account. That is
+  an allowlist (`PERSONAL_SYSTEM_PROMPT_REASONS`) because digests, scheduled
+  wake-ups, connector triggers and inbound email all run as a user without that
+  user acting, and a new reason should be left out until someone decides
+  otherwise. Sidekick runs (`run_as_user_id`), background agents and runs under
+  an automation parent are also excluded. Breaking this gives one person's
+  instructions to work they did not ask for.
 - **It influences, not controls.** The preamble says so, which keeps it below
   the platform policy and the authorized task context above it.
 - **Blank text changes no byte.** A member with none gets the same prefix as
