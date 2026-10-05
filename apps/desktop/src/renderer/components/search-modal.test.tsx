@@ -167,6 +167,8 @@ describe('organization search modal', () => {
     // Places answer at once; content follows below them.
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Pricing reviewChannel', 'PricingSpace']);
     expect(screen.getByText('Searching…')).toBeVisible();
+    // A listbox holds only options; the status line sits beside it.
+    expect(screen.getByRole('listbox')).not.toContainElement(screen.getByText('Searching…'));
     await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(3));
     expect(screen.queryByText('Searching…')).not.toBeInTheDocument();
     expect(screen.getAllByRole('option')[2]).toHaveTextContent('Alex Danilowicz replied');

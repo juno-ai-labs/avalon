@@ -402,14 +402,6 @@ export function spacesEnabledForSession(session: ClientSession | null): boolean 
 }
 
 /**
- * The Channel rail: the socket's rows, the same list for a member and a guest.
- *
- * The workspace socket lists a Channel when any conversation in it is this
- * person's to open (see `docs/listing-rules.md`). Where Main is not one of
- * them, the conversation directory says which are, and the row opens on the
- * first it lists rather than on Main. The directory adds no rows of its own.
- */
-/**
  * The Channels search lists, each followed by its Breakouts: the ones the
  * socket holds for this reader as a member (`held`), and the ones a grant
  * reaches, which only the shared navigation directory lists. A Channel still
@@ -436,6 +428,14 @@ export function searchChannelPlaces(
   });
 }
 
+/**
+ * The Channel rail: the socket's rows, the same list for a member and a guest.
+ *
+ * The workspace socket lists a Channel when any conversation in it is this
+ * person's to open (see `docs/listing-rules.md`). Where Main is not one of
+ * them, the conversation directory says which are, and the row opens on the
+ * first it lists rather than on Main. The directory adds no rows of its own.
+ */
 export function associativeWorkstreamsForSidebar(
   directory: SharedNavigationDirectory | undefined,
   workstreams: readonly WorkstreamSummary[] | undefined,
