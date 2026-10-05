@@ -3298,15 +3298,19 @@ export class WorkspaceSpaceStorage {
    * Compared in TypeScript because SQLite's `NOCASE` folds ASCII only, and a
    * room name is not ASCII by rule.
    */
-  organizationSpaceNamed(name: string): string | null {
+  organizationSpaceNamed(name: string): { spaceId: string; createdByUserId: string | null } | null {
     if (!this.ready()) return null;
     const wanted = spaceMatchName(name);
-    const rows = this.storage.sql.exec<{ space_id: string; title: string } & Record<string, SqlStorageValue>>(
-      `SELECT space_id, title FROM spaces
+    const rows = this.storage.sql.exec<
+      { space_id: string; title: string; created_by_user_id: string | null } & Record<string, SqlStorageValue>
+    >(
+      `SELECT space_id, title, created_by_user_id FROM spaces
         WHERE scope = 'workspace' AND archived_at IS NULL
         ORDER BY created_at, space_id`,
     );
-    for (const row of rows) if (spaceMatchName(row.title) === wanted) return row.space_id;
+    for (const row of rows) {
+      if (spaceMatchName(row.title) === wanted) return { spaceId: row.space_id, createdByUserId: row.created_by_user_id };
+    }
     return null;
   }
 

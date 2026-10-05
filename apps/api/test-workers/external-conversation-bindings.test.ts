@@ -315,6 +315,17 @@ describe("a room named for an existing Space", () => {
     expect(await match("room.c3")).toBeNull();
   });
 
+  it("does not offer a Space whose creator is no longer a member, so the room gets its own", async () => {
+    const general = await generalId();
+    expect(await match("general")).toBe(general);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE spaces SET created_by_user_id = '00000000-0000-7000-8000-000000000ec9' WHERE space_id = ?", general,
+      );
+    });
+    expect(await match("general")).toBeNull();
+  });
+
   it("refuses to link a room into a matched Space that was renamed, made private or archived before the link", async () => {
     const general = await generalId();
     const edits = [

@@ -13334,14 +13334,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * its own. Asked before the D1 anchor is claimed, so a room that matches
    * leaves no anchor for a Space never made; `linkExternalRoom` then links the
    * matched id as an existing Space.
+   *
+   * A thread from a sender with no Rally identity opens its Channel acting as
+   * the Space's creator, so a Space whose creator is no longer an active member
+   * is not offered: the room gets its own Space, made by the member linking it,
+   * as it did before matching existed.
    */
   async externalRoomSpaceMatch(input: unknown) {
     await this.initialized;
     const request = parseRpcInput(ExternalRoomSpaceMatchRequestSchema, input, "external_room_space_match");
     this.assertWorkspace(request.workspaceId);
-    return ExternalRoomSpaceMatchResultSchema.parse({
-      spaceId: this.spaceStorage().organizationSpaceNamed(request.name),
-    });
+    const match = this.spaceStorage().organizationSpaceNamed(request.name);
+    const usable = match?.createdByUserId != null
+      && await this.activeSpaceMember(request.workspaceId, match.createdByUserId);
+    return ExternalRoomSpaceMatchResultSchema.parse({ spaceId: usable ? match.spaceId : null });
   }
 
   async linkExternalRoom(input: unknown): Promise<ExternalRoomLinkResult> {
@@ -13376,7 +13382,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // The match was a separate event: the Space may since have been
         // renamed, archived or made private, so it is asked again here, where
         // the binding commits.
-        if (request.matched && storage.organizationSpaceNamed(request.space.name) !== request.spaceId) return null;
+        if (request.matched && storage.organizationSpaceNamed(request.space.name)?.spaceId !== request.spaceId) return null;
         const reserved = storage.reserveForCreation(reservation, request.spaceId);
         if (!reserved.space) return null;
         if (reserved.created) parent.reserve(request.userId, reserved.space);
