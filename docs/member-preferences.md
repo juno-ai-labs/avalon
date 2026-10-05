@@ -23,9 +23,9 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    write publishes `viewer_preferences` to the member alone, and their other
    windows refetch. The settings switch updates the cache optimistically and
    puts it back if the write fails.
-4. **Use.** With agent work off, `withoutAgentWork` drops `thought`,
-   `tool_event` and `plugin_activity` rows before the transcript is grouped, so
-   no "Worked for" group is built from them. Rows that ask the
+4. **Use.** With agent work off, `withoutAgentWork` drops the agent's thinking
+   rows, its `tool_event` rows and its `plugin_activity` rows before the
+   transcript is grouped. Rows that ask the
    reader to act stay: connecting an account and authorizing a resource.
 
 ## Invariants
@@ -33,6 +33,11 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
 - **A preference never hides something the member must act on.** Without the
   connection and authorization cards, the agent would wait on a request nobody
   can see.
+- **The run's own timer stays.** The response's `working` row is the live
+  "Rally is working" indicator and, once settled, the "Worked for" total.
+  Without it a long run shows nothing between the question and the answer,
+  because the bottom activity slot defers to the feed once the transcript owns
+  the run's timing.
 - **Display only.** Nothing here changes what the agent does or what the server
   stores in the transcript.
 - **Guests keep the defaults.** The REST routes are under the members-only

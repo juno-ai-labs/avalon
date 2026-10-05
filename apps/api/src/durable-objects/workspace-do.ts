@@ -106,7 +106,6 @@ import {
   WorkspaceReachChangedEventSchema,
   WorkspaceSocketSyncEventSchema,
   DEFAULT_MEMBER_PREFERENCES,
-  MemberPreferencesSchema,
   type MemberPreferences,
   WorkspaceSyncTopicSchema,
   WORKSTREAM_NAMING_GRACE_MS,
@@ -755,8 +754,10 @@ import {
 } from "./personal-system-prompt";
 import {
   MemberPreferencesReadRequestSchema,
+  MemberPreferencesWriteRequestSchema,
   WORKSPACE_MEMBER_PREFERENCES_MIGRATION,
   type MemberPreferencesReadRequest,
+  type MemberPreferencesWriteRequest,
 } from "./member-preferences";
 import { ObservedChannelSchema } from "./workstream-access-protocol";
 import {
@@ -8618,13 +8619,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** Replace this person's display preferences and answer with what was stored. */
-  async saveMemberPreferences(input: MemberPreferencesReadRequest & { preferences: MemberPreferences }): Promise<MemberPreferences> {
+  async saveMemberPreferences(input: MemberPreferencesWriteRequest): Promise<MemberPreferences> {
     await this.initialized;
-    const request = parseRpcInput(
-      MemberPreferencesReadRequestSchema.extend({ preferences: MemberPreferencesSchema }),
-      input,
-      "save_member_preferences",
-    );
+    const request = parseRpcInput(MemberPreferencesWriteRequestSchema, input, "save_member_preferences");
     this.assertWorkspace(request.workspaceId);
     this.state.storage.sql.exec(
       `INSERT INTO member_preferences (user_id, show_agent_work, updated_at) VALUES (?, ?, ?)
@@ -8634,7 +8631,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.preferences.showAgentWork ? 1 : 0,
       Date.now(),
     );
-    return this.readMemberPreferences(request.userId);
+    return request.preferences;
   }
 
   private readMemberPreferences(userId: string): MemberPreferences {

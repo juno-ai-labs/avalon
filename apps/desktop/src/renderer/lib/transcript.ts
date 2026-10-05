@@ -1421,19 +1421,26 @@ function continuesPluginActivityRun(message: Message): boolean {
 
 /**
  * The transcript without the agent's work (its thinking, tool calls and plugin
- * calls), for a member who turned it off. `keep` spares the tool rows that ask the reader to act
- * (connecting an account, authorizing a resource): hiding those would leave
- * the agent waiting on a request nobody can see.
+ * calls), for a member who turned it off.
+ *
+ * The response's own `working` row stays: it is the live "Rally is working"
+ * timer and, once settled, the "Worked for" total, and without it a long run
+ * shows nothing between the question and the answer. `keep` spares the tool
+ * rows that ask the reader to act (connecting an account, authorizing a
+ * resource): hiding those would leave the agent waiting on a request nobody
+ * can see.
  */
 export function withoutAgentWork(
   messages: readonly Message[],
   keep: (message: Message) => boolean,
 ): Message[] {
-  return messages.filter((message) => (
-    message.messageType !== 'tool_event'
-      && message.messageType !== 'plugin_activity'
-      && message.messageType !== 'thought'
-  ) || keep(message));
+  return messages.filter((message) => {
+    if (message.messageType === 'thought') {
+      return !message.thoughtEvent || !isThinkingEvent(message.thoughtEvent);
+    }
+    return (message.messageType !== 'tool_event' && message.messageType !== 'plugin_activity')
+      || keep(message);
+  });
 }
 
 /**
