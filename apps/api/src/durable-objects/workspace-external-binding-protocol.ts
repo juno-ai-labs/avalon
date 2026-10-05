@@ -264,3 +264,12 @@ export const ExternalRoomLinkResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(false), code: z.string().min(1) }),
 ]);
 export type ExternalRoomLinkResult = z.infer<typeof ExternalRoomLinkResultSchema>;
+
+/** The existing Organization-wide Space a public room's name matches, asked before an anchor is claimed. */
+export const ExternalRoomSpaceMatchRequestSchema = z.strictObject({
+  workspaceId: IdSchema,
+  name: z.string().trim().min(1),
+});
+export const ExternalRoomSpaceMatchResultSchema = z.strictObject({
+  spaceId: IdSchema.nullable(),
+});

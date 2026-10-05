@@ -999,6 +999,8 @@ import {
   ExternalBindingSuspendRequestSchema,
   ExternalBindingSuspendResultSchema,
   ExternalRoomLinkRequestSchema,
+  ExternalRoomSpaceMatchRequestSchema,
+  ExternalRoomSpaceMatchResultSchema,
   type ExternalBindingResolution,
   type ExternalRoomLinkResult,
 } from "./workspace-external-binding-protocol";
@@ -13327,6 +13329,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * provision since Spaces stopped opening one, so the reservation is the
    * whole Space and the binding is written active beside it.
    */
+  /**
+   * The Organization-wide Space a public room should join instead of creating
+   * its own. Asked before the D1 anchor is claimed, so a room that matches
+   * leaves no anchor for a Space never made; `linkExternalRoom` then links the
+   * matched id as an existing Space.
+   */
+  async externalRoomSpaceMatch(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(ExternalRoomSpaceMatchRequestSchema, input, "external_room_space_match");
+    this.assertWorkspace(request.workspaceId);
+    return ExternalRoomSpaceMatchResultSchema.parse({
+      spaceId: this.spaceStorage().organizationSpaceNamed(request.name),
+    });
+  }
+
   async linkExternalRoom(input: unknown): Promise<ExternalRoomLinkResult> {
     await this.initialized;
     const request = parseRpcInput(ExternalRoomLinkRequestSchema, input, "link_external_room");
@@ -13357,7 +13374,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const linked = await this.withMembersLearned(() => this.state.storage.transactionSync(() => (
       bindings.linkRoom(request.installationId, request.path, request.at, () => {
         const reserved = storage.reserveForCreation(reservation, request.spaceId);
-        if (!reserved.space) return null;
+        // An existing Space the room's name matched may have been archived
+        // since it was matched; a room never binds to an archived Space.
+        if (!reserved.space || reserved.space.status !== "active") return null;
         if (reserved.created) parent.reserve(request.userId, reserved.space);
         if (request.space.scope === "personal" && participants.length > 1) {
           const seated = storage.applyAudience({
