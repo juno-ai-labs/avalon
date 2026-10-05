@@ -3206,6 +3206,7 @@ describe("Slack replies routed by external conversation bindings", () => {
     expect(links).toHaveLength(1);
     expect(links[0]).toMatchObject({
       path: ["CPUB"], userId: LINKED_USER, space: { name: "launch", scope: "workspace" }, participantUserIds: [],
+      spaceMatch: "unmatched",
     });
     // One line in the room saying what inviting Rally did.
     expect(roomPosts).toEqual([expect.objectContaining({ channel: "CPUB", text: expect.stringContaining("Rally is here") })]);
@@ -3235,7 +3236,7 @@ describe("Slack replies routed by external conversation bindings", () => {
 
     expect(asked).toEqual([{ workspaceId: expect.any(String), name: "general" }]);
     expect(links).toHaveLength(1);
-    expect(links[0]).toMatchObject({ path: ["CGEN"], spaceId: general, matched: true, space: { name: "general", scope: "workspace" } });
+    expect(links[0]).toMatchObject({ path: ["CGEN"], spaceId: general, spaceMatch: "matched", space: { name: "general", scope: "workspace" } });
     expect(admit).not.toHaveBeenCalled();
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams WHERE id = ?").get(general)).toEqual({ count: 0 });
   });
@@ -3259,6 +3260,7 @@ describe("Slack replies routed by external conversation bindings", () => {
     expect(matcher).not.toHaveBeenCalled();
     expect(links).toHaveLength(1);
     expect(links[0]!.spaceId).toBe("6594616a-fafc-5c5c-a4d9-3d7e512b42d5");
+    expect(links[0]).not.toHaveProperty("spaceMatch");
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams WHERE id = ?").get(String(links[0]!.spaceId)))
       .toEqual({ count: 1 });
   });
@@ -3282,7 +3284,7 @@ describe("Slack replies routed by external conversation bindings", () => {
     expect(matcher).not.toHaveBeenCalled();
     expect(links).toHaveLength(1);
     expect(links[0]).toMatchObject({ path: ["CEXT"], space: { name: "general", scope: "workspace" } });
-    expect(links[0]).not.toHaveProperty("matched");
+    expect(links[0]).not.toHaveProperty("spaceMatch");
   });
 
   it("suspends a room when the bot leaves or it is archived, moves it when renumbered, and ignores a person leaving", async () => {

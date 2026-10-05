@@ -86,18 +86,22 @@ Space instead of making one. Names compare ignoring case, spaces, dashes and
 underscores, so `#general` lands in "General" and `#product-launch`,
 `#product_launch` or `#productlaunch` in "Product Launch". A name made only of
 separators matches nothing. The oldest match wins when several share a name.
-The ingress asks `externalRoomSpaceMatch` before it claims a D1 anchor, because
-a matched room needs none, and passes `matched: true` to `linkExternalRoom`,
-which asks the match again inside its transaction and refuses a Space renamed,
-made private or archived in between (`space_not_found`). A match whose creator
+`linkExternalRoom` decides the match. The ingress asks `externalRoomSpaceMatch`
+first only to learn whether to claim a D1 anchor, since a matched room needs
+none, and passes `spaceMatch`: `matched` with the matched id, or `unmatched`
+with the room's own, anchored id. The link looks again: a Space that matches
+now is joined either way, a `matched` id that no longer matches is refused
+(`space_not_found`) because it has no anchor to be created under, and the
+transaction refuses if the match changed during the link's own awaits. The
+schema accepts `spaceMatch` only for an Organization-wide room that seats
+nobody. A match whose creator
 is no longer an active member is not offered, because a thread from a sender
 with no Rally identity opens its Channel acting as that creator; the room gets
 its own Space instead. A private room never matches: its Space's audience is
 the room's members, and an existing Space's is not. Neither does a Slack
 Connect room (`is_ext_shared` or `is_pending_ext_shared`), which Slack reports
-as public but whose members include another organization. An attempt that
-claimed its anchor and then failed may, on retry, find a match made in between;
-that leaves its anchor unused, which costs nothing.
+as public but whose members include another organization. An `unmatched` link
+that finds a match leaves the room's anchor unused, which costs nothing.
 
 A mention
 in a room that has no binding runs the same step first (`fall_through` mode), so
@@ -342,9 +346,10 @@ source, so a run cannot widen what the bot joins.
 Organization-wide Space with the same name, ignoring case, spaces, dashes and
 underscores (`WorkspaceSpaceStorage.organizationSpaceNamed`, exposed as
 `WorkspaceDO.externalRoomSpaceMatch`), and links the room into it rather than
-creating a second Space. A matched link re-asks the match inside
-`linkExternalRoom`'s transaction, so a Space renamed, made private or archived
-in between is refused rather than bound. A Space whose creator has left is
+creating a second Space. `linkExternalRoom` decides the match itself, so a
+Space that starts matching after the ingress asked is joined rather than
+duplicated, and one renamed, made private or archived in between is refused
+rather than bound. A Space whose creator has left is
 never matched, since that creator is who an unlinked sender's Channel is placed
 as. Slack Connect rooms never match.
 
@@ -355,9 +360,10 @@ the gap as a dash, an underscore or nothing, so a match has to ignore all three
 for `#product-launch`, `#product_launch` and `#productlaunch` to find "Product
 Launch".
 
-**Considered and rejected:** Matching inside `linkExternalRoom`'s transaction
-alone. The ingress claims the D1 anchor for the room-derived id before that
-call, so a match found there would leave an anchor for a Space never made.
+**Considered and rejected:** Matching only in the ingress. Its answer is a
+separate event from the link, so a Space created or edited in between would be
+duplicated or wrongly bound. Matching only in `linkExternalRoom`: the ingress
+would have to claim an anchor for every room, matched or not.
 Matching private rooms: an existing private Space's audience is not the room's,
 and adopting one would either widen it or hide the room's threads from members.
 Matching Slack Connect rooms: an outside organization could name its shared

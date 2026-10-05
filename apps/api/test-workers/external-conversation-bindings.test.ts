@@ -111,7 +111,7 @@ async function linkRoom(roomId: string, spaceId: string, input: {
   scope?: "personal" | "workspace";
   userId?: UserId;
   participantUserIds?: UserId[];
-  matched?: boolean;
+  spaceMatch?: "matched" | "unmatched";
   name?: string;
 } = {}) {
   return workspace().linkExternalRoom({
@@ -122,7 +122,7 @@ async function linkRoom(roomId: string, spaceId: string, input: {
     spaceId,
     space: { name: input.name ?? `room ${roomId}`, scope: input.scope ?? "workspace" },
     participantUserIds: input.participantUserIds ?? [],
-    ...(input.matched ? { matched: true } : {}),
+    ...(input.spaceMatch ? { spaceMatch: input.spaceMatch } : {}),
     at: at(),
   });
 }
@@ -298,7 +298,7 @@ describe("a room named for an existing Space", () => {
     expect(await match("ROOM C2")).toBeNull();
     expect(await match("generals")).toBeNull();
 
-    const linked = await linkRoom("C1", general, { matched: true, name: "general" });
+    const linked = await linkRoom("C1", general, { spaceMatch: "matched", name: "general" });
     expect(linked).toEqual({ ok: true, outcome: "linked", spaceId: general });
     expect(await spaceIds()).toEqual([privateRoom.spaceId, archived.spaceId].sort());
     expect(await resolve(["C1", "1.0"], { addressed: true, claimKey: "event:general" }))
@@ -330,6 +330,26 @@ describe("a room named for an existing Space", () => {
     expect(await match("general")).toBeNull();
   });
 
+  it("joins a Space that started matching after the caller's ask, rather than making a second one", async () => {
+    const general = await generalId();
+    // The caller asked while nothing matched and minted the room's own id.
+    const linked = await linkRoom("C1", "00000000-0000-7000-8000-000000000e35", { spaceMatch: "unmatched", name: "general" });
+    expect(linked).toEqual({ ok: true, outcome: "linked", spaceId: general });
+    expect(await spaceIds()).toEqual([]);
+    // Without a match, the room's own id is used.
+    const own = await linkRoom("C2", "00000000-0000-7000-8000-000000000e36", { spaceMatch: "unmatched", name: "launch" });
+    expect(own).toEqual({ ok: true, outcome: "linked", spaceId: "00000000-0000-7000-8000-000000000e36" });
+  });
+
+  it("refuses a match request for a private room or one that seats participants", async () => {
+    await expect(linkRoom("G1", "00000000-0000-7000-8000-000000000e37", { spaceMatch: "unmatched", scope: "personal" }))
+      .rejects.toThrow();
+    await expect(linkRoom("C1", "00000000-0000-7000-8000-000000000e38", {
+      spaceMatch: "unmatched", participantUserIds: [OTHER_USER_ID],
+    })).rejects.toThrow();
+    expect(await bindingRows()).toEqual([]);
+  });
+
   it("refuses to link a room into a matched Space that was renamed, made private or archived before the link", async () => {
     const general = await generalId();
     const edits = [
@@ -341,7 +361,7 @@ describe("a room named for an existing Space", () => {
       await runInDurableObject(workspace(), (_instance, state) => {
         state.storage.sql.exec(edit, general);
       });
-      expect(await linkRoom("C1", general, { matched: true, name: "general" })).toEqual({ ok: false, code: "space_not_found" });
+      expect(await linkRoom("C1", general, { spaceMatch: "matched", name: "general" })).toEqual({ ok: false, code: "space_not_found" });
     }
     expect(await bindingRows()).toEqual([]);
   });

@@ -13322,10 +13322,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(ExternalRoomSpaceMatchRequestSchema, input, "external_room_space_match");
     this.assertWorkspace(request.workspaceId);
-    const match = this.spaceStorage().organizationSpaceNamed(request.name);
-    const usable = match?.createdByUserId != null
-      && await this.activeSpaceMember(request.workspaceId, match.createdByUserId);
-    return { spaceId: usable ? match.spaceId : null };
+    return { spaceId: (await this.roomSpaceMatch(request.workspaceId, request.name)).usable };
+  }
+
+  /** The Space `name` matches (`found`), and that Space if it may be offered (`usable`). */
+  private async roomSpaceMatch(workspaceId: string, name: string): Promise<{ found: string | null; usable: string | null }> {
+    const match = this.spaceStorage().organizationSpaceNamed(name);
+    const usable = match?.createdByUserId != null && await this.activeSpaceMember(workspaceId, match.createdByUserId);
+    return { found: match?.spaceId ?? null, usable: usable ? match.spaceId : null };
   }
 
   /**
@@ -13361,34 +13365,40 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal };
-    const parent = await this.spaceParentReservation(request.spaceId);
+    // This link decides the match, whatever the caller's earlier ask answered:
+    // a Space that now matches is joined, and a `matched` id that no longer
+    // does is refused, since it has no anchor of its own to be created under.
+    const match = request.spaceMatch ? await this.roomSpaceMatch(request.workspaceId, request.space.name) : null;
+    if (request.spaceMatch === "matched" && match?.usable !== request.spaceId) return { ok: false, code: "space_not_found" };
+    const spaceId = match?.usable ?? request.spaceId;
+    const parent = await this.spaceParentReservation(spaceId);
     if (!parent.ok) return { ok: false, code: parent.code };
     const storage = this.spaceStorage();
     const reservation: WorkspaceSpaceReserveRequest = {
       workspaceId: asWorkspaceId(request.workspaceId),
       userId: asUserId(request.userId),
-      spaceId: asSpaceId(request.spaceId),
+      spaceId: asSpaceId(spaceId),
       space: { name: request.space.name, iconKey: "users", colorKey: "blue", scope: request.space.scope },
     };
     const participants = [...new Set([request.userId, ...request.participantUserIds])];
     const linked = await this.withMembersLearned(() => this.state.storage.transactionSync(() => (
       bindings.linkRoom(request.installationId, request.path, request.at, () => {
-        // The match was a separate event; ask it again where the binding commits.
-        if (request.matched && storage.organizationSpaceNamed(request.space.name)?.spaceId !== request.spaceId) return null;
-        const reserved = storage.reserveForCreation(reservation, request.spaceId);
+        // The awaits above let a Space edit in; the match must still be the one decided.
+        if (match && (storage.organizationSpaceNamed(request.space.name)?.spaceId ?? null) !== match.found) return null;
+        const reserved = storage.reserveForCreation(reservation, spaceId);
         if (!reserved.space) return null;
         if (reserved.created) parent.reserve(request.userId, reserved.space);
         if (request.space.scope === "personal" && participants.length > 1) {
           const seated = storage.applyAudience({
             workspaceId: asWorkspaceId(request.workspaceId),
             userId: asUserId(request.userId),
-            spaceId: asSpaceId(request.spaceId),
+            spaceId: asSpaceId(spaceId),
             operationId: uuidV7(),
             audience: { scope: "personal", participantUserIds: participants.map(asUserId) },
           });
           if (seated === false || seated === "self_excluded") throw new Error("external_room_audience_refused");
         }
-        return request.spaceId;
+        return spaceId;
       })
     )));
     if (!linked) return { ok: false, code: "space_not_found" };
