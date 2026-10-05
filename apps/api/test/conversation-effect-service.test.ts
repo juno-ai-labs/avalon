@@ -222,14 +222,6 @@ function hostingWorkstreamParent(
   });
 }
 
-/** An automation parent, answering the same contract method. */
-function automationParent(receiveChildEffects: (input: unknown) => Promise<void>): Env["AUTOMATION_DOS"] {
-  return createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
-    idFromName: () => createTestDurableObjectId("automation"),
-    get: () => ({ receiveChildEffects }),
-  });
-}
-
 function workspaceSyncNamespace(listable = true) {
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys = ON");
@@ -846,14 +838,17 @@ describe("the activity Queue consumer's effect legs", () => {
     }
   });
 
-  it("carries an automation run's effect to the automation, not to a work stream", async () => {
+  it("carries an automation run's effect to the Organization object that hosts its Sidekick", async () => {
     const database = seedAuthority();
     const workspace = workspaceSyncNamespace();
-    const workstreamReceive = vi.fn(async () => undefined);
-    const automationReceive = vi.fn(async () => undefined);
+    const hostedReceive = vi.fn(async () => undefined);
     const env = regionalEnv(database, workspace, {
-      workstreamReceive,
-      AUTOMATION_DOS: automationParent(automationReceive),
+      workstreamReceive: hostedReceive,
+      // The legacy Sidekick object is never addressed for a run's effects.
+      AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
+        idFromName: () => { throw new Error("legacy_sidekick_binding_used"); },
+        get: () => { throw new Error("legacy_sidekick_binding_used"); },
+      }),
     });
     const envelope = childMessage(directoryCommon("Run 1"), {
       messageId: `run:${RUN_ID}`,
@@ -864,8 +859,8 @@ describe("the activity Queue consumer's effect legs", () => {
     const { batch, ack, retry } = queued(envelope);
     try {
       await consumeActivityQueue(batch, env);
-      expect(automationReceive).toHaveBeenCalledWith({ substreamId: RUN_ID, envelopes: [envelope] });
-      expect(workstreamReceive).not.toHaveBeenCalled();
+      // One receiver for every parent; it dispatches on the envelope's kind.
+      expect(hostedReceive).toHaveBeenCalledWith({ substreamId: RUN_ID, envelopes: [envelope] });
       expect(ack).toHaveBeenCalledOnce();
       expect(retry).not.toHaveBeenCalled();
     } finally {
