@@ -74,7 +74,7 @@ import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-updat
 import { SpaceBootstrapService, spaceBootstrapDriver } from "../services/space-bootstrap-service";
 import { SpaceService } from "../services/space-service";
 import { WorkstreamService } from "../services/workstream-service";
-import { sidekickClient } from "../services/sidekick-client";
+import { hostedParentStub } from "../services/conversation-parent-client";
 
 /**
  * The shape of a Project default delivery, kept only to recognize one.
@@ -369,13 +369,13 @@ async function consumeOne(message: Message<unknown>, env: Env,
     // registration, so a redelivery finds its own receipt and does nothing.
     try {
       if (input.destination.kind === "automation") {
-        const automation = await sidekickClient(env, input.workspaceId);
+        const workspace = await hostedParentStub(env, input.workspaceId);
         // A `semantic_activity` trigger's written condition is tested here,
         // between the object's plan and its admission: it is the only trigger
         // type whose gate is a sentence, and the classifier that judges it
         // belongs in a Worker rather than inside the object.
         const result = await admitExternalEventWithSemanticGate(env, {
-          sidekick: automation,
+          sidekick: { admitExternalEvent: (admission) => workspace.sidekickAdmitExternalEvent(admission) },
           workspaceId: input.workspaceId,
           defer: runtimeDeferral,
           admission: {

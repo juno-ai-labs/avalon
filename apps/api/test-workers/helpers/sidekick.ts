@@ -4,23 +4,19 @@ import { asWorkspaceId } from "@rally/contracts";
 import type { WorkspaceDO } from "../../src/durable-objects/workspace-do";
 import { workspaceDOName } from "../../src/durable-objects/names";
 import type { Env } from "../../src/env";
-import { sidekickClientFor } from "../../src/services/sidekick-client";
 import { provisionSidekickRun } from "../../src/services/sidekick-run-provisioning";
 
 /**
  * A hosted Sidekick, addressed the way production addresses it.
  *
- * Every Sidekick lives in its Organization's `WorkspaceDO`. A test that used
- * to hold a `SidekickDO` stub holds this client instead, with the same method
- * names, and reads the Sidekick's rows from the Organization object's
- * `automation_directory` and `sidekick_*` tables, keyed by `sidekick_id`.
+ * Every Sidekick lives in its Organization's `WorkspaceDO`, which answers its
+ * methods as `sidekick*` (`sidekickPause`, `sidekickRunNow`) and the parent
+ * contract under the shared names with the Sidekick's id as `parentId`. Its
+ * rows are the Organization object's `automation_directory` and `sidekick_*`
+ * tables, keyed by `sidekick_id`.
  */
 export function sidekickWorkspace(env: Env, workspaceId: string, region: string = "global") {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName(region, asWorkspaceId(workspaceId))));
-}
-
-export function sidekickStub(env: Env, workspaceId: string, region: string = "global") {
-  return sidekickClientFor(sidekickWorkspace(env, workspaceId, region));
 }
 
 /**
@@ -53,7 +49,7 @@ export async function provisionStartedSidekickRuns(env: Env, workspaceId: string
     await provisionSidekickRun(env, {
       kind: "sidekick_run_provision",
       region,
-      workspaceId,
+      workspaceId: asWorkspaceId(workspaceId),
       automationId: run.sidekick_id,
       runId: run.run_id,
     });

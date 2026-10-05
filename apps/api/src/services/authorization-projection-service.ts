@@ -4,7 +4,6 @@ import type { AuthorizationProjectionJob } from '../durable-objects/authorizatio
 import { authorizationWorkspace } from './authorization-service';
 import { createIdentityObjectPort } from '../runtime/identity-port';
 import { createResourceObjectPort } from '../runtime/resource-port';
-import { sidekickClient } from './sidekick-client';
 
 /** Reference-only Queue jobs always reload canonical state; old deliveries cannot resurrect links. */
 export async function projectAuthorization(env: Env, job: AuthorizationProjectionJob, refreshExisting = true): Promise<void> {
@@ -20,13 +19,8 @@ export async function projectAuthorization(env: Env, job: AuthorizationProjectio
     const resolved = await workspace.resolveHostedParent({ workspaceId: job.workspaceId, parentId: job.parentId });
     if (resolved.kind === 'space') throw new Error('authorization_projection_space_parent_unsupported');
     const request = { workspaceId: job.workspaceId, parentId: job.parentId };
-    let substreamIds: string[];
-    if (resolved.kind === 'workstream') substreamIds = (await workspace.listAuthorizationChildren(request)).substreamIds;
-    else {
-      const automation = await sidekickClient(env, job.workspaceId);
-      const present = await automation.authorizationDiscoveryChildren(request);
-      substreamIds = present.substreamIds;
-    }
+    // The Organization answers a Sidekick's children here too.
+    const { substreamIds } = await workspace.listAuthorizationChildren(request);
     if (job.substreamId === undefined || !substreamIds.includes(job.substreamId)) {
       await workspace.registerAuthorizationChildren({ workspaceId: job.workspaceId, parentId: job.parentId,
         substreamIds, ...(job.mutationAt === undefined ? {} : { mutationAt: job.mutationAt }), refreshExisting: job.substreamId === undefined ? refreshExisting : false });

@@ -12,7 +12,7 @@ import {
   type SidekickRunContinuationRefusalCode,
 } from "../durable-objects/automation-do-protocol";
 import type { Env } from "../env";
-import { sidekickClient } from "./sidekick-client";
+import { hostedParentStub } from "./conversation-parent-client";
 
 /**
  * Input to a Sidekick run child continues that run.
@@ -31,8 +31,8 @@ export async function continueSidekickRun(
   input: { region: Region; workspaceId: string; automationId: string; runId: string },
 ): Promise<SidekickRunContinuation> {
   const workspaceId = asWorkspaceId(input.workspaceId);
-  const sidekick = await sidekickClient(env, workspaceId);
-  return SidekickRunContinuationSchema.parse(await sidekick.continueRun({
+  const workspace = await hostedParentStub(env, workspaceId);
+  return SidekickRunContinuationSchema.parse(await workspace.sidekickContinueRun({
     workspaceId,
     automationId: input.automationId,
     runId: input.runId,

@@ -29,6 +29,9 @@ import {
   WorkspaceSocketClientEventTypeSchema,
   isUnknownSocketEvent,
   safeParseSocketEvent,
+  type AutomationDetail,
+  type SidekickAttachment,
+  type SidekickSkillSource,
 } from "@rally/contracts";
 import {
   InstallationCreateSchema,
@@ -1050,7 +1053,11 @@ import {
 import {
   AUTOMATION_RUN_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
+  SidekickBatchDetailRequestSchema,
+  SidekickBatchSkillReadRequestSchema,
   SidekickExportSchema,
+  type SidekickBatchDetailRequest,
+  type SidekickBatchSkillReadRequest,
   SidekickRunProvisionQueueMessageSchema,
   type SidekickExport,
 } from "./automation-do-protocol";
@@ -5733,6 +5740,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async listAuthorizationChildren(input: Parameters<HostedParent["listAuthorizationChildren"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) {
+      return sidekick.authorizationDiscoveryChildren({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.parentId });
+    }
     return (await this.hostedParent(input.parentId, input.workspaceId)).listAuthorizationChildren(input);
   }
 
@@ -5745,13 +5756,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
     if (!sidekick) return { exists: false as const, validatedAt: Date.now() };
     return sidekick.readAuthorizationFacts(input);
-  }
-
-  /** A Sidekick's children for authorization discovery, run here as a Channel's is. */
-  async authorizationDiscoveryChildren(input: { workspaceId: string; parentId: string }): Promise<{ substreamIds: string[] }> {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (!sidekick) return { substreamIds: [] };
-    return sidekick.authorizationDiscoveryChildren({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.parentId });
   }
 
   // ---------------------------------------------------------------------------
@@ -5795,7 +5799,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       env: this.env,
       storage: this.state.storage,
       alarms: this.scheduledAlarms,
-      armNextAlarm: async () => { await this.armNextAlarm(); },
       writeRegistrations: (automationId, evaluators) => this.writeSidekickRegistrations(automationId, evaluators),
       afterRegistrations: (automationId, revision, evaluators) => this.afterSidekickRegistrations(automationId, revision, evaluators),
       noteDirectoryChanged: (automationId, deleted, now) => {
@@ -5862,6 +5865,37 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       await this.armNextAlarm();
     }
+  }
+
+  /**
+   * Run a hosted Sidekick read. A read writes nothing, so it skips what a
+   * write owes afterward: no sidebar publish and no alarm re-arm. A run asks
+   * for its state before every provider write, so this is a hot path.
+   */
+  private async sidekickRead<T>(automationId: string, workspaceId: string, run: (sidekick: HostedSidekick) => T): Promise<T> {
+    return run(await this.hostedSidekick(automationId, workspaceId));
+  }
+
+  /**
+   * The Sidekicks a batch read covers: the ids asked for, plus every one a
+   * Channel recommends or owns when `channelId` is given, plus every active
+   * loadable one when `allLoadable` is set. Every list lives here, so a
+   * caller asks once rather than fetching the ids first. Order is the
+   * caller's, then the Channel's, then the Organization's, with no repeats;
+   * an id that names no Sidekick is skipped.
+   */
+  private selectedSidekicks(selection: {
+    automationIds?: readonly string[] | undefined;
+    channelId?: string | undefined;
+    allLoadable?: boolean | undefined;
+    workspaceId: string;
+  }): string[] {
+    const ids = [...(selection.automationIds ?? [])];
+    if (selection.channelId !== undefined) {
+      ids.push(...this.recommendedSidekickIdsFor(selection.channelId), ...this.automationIdsOwnedBy(selection.channelId));
+    }
+    if (selection.allLoadable) ids.push(...this.loadableSidekickIds(selection.workspaceId));
+    return [...new Set(ids)].filter((id) => this.isSidekickParent(id));
   }
 
   private async ensureSidekickImported(automationId: string): Promise<void> {
@@ -6184,7 +6218,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async sidekickReadDetail(input: Parameters<HostedSidekick["readDetail"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.readDetail(input));
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readDetail(input));
   }
 
   async sidekickSetAppearance(input: Parameters<HostedSidekick["setAppearance"]>[0]) {
@@ -6212,15 +6246,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async sidekickListRuns(input: Parameters<HostedSidekick["listRuns"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.listRuns(input));
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.listRuns(input));
   }
 
   async sidekickClaimExecutionPrincipal(input: Parameters<HostedSidekick["claimExecutionPrincipal"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.claimExecutionPrincipal(input));
-  }
-
-  async sidekickExternalEventAdmissionPlan(input: Parameters<HostedSidekick["externalEventAdmissionPlan"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.externalEventAdmissionPlan(input));
   }
 
   async sidekickAdmitExternalEvent(input: Parameters<HostedSidekick["admitExternalEvent"]>[0]) {
@@ -6232,33 +6262,91 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async sidekickReadSkillSource(input: Parameters<HostedSidekick["readSkillSource"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.readSkillSource(input));
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readSkillSource(input));
   }
 
   async sidekickReadSkillSummary(input: Parameters<HostedSidekick["readSkillSummary"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.readSkillSummary(input));
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readSkillSummary(input));
   }
 
   async sidekickReadRunDefinition(input: Parameters<HostedSidekick["readRunDefinition"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.readRunDefinition(input));
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readRunDefinition(input));
   }
 
   async sidekickReadRunState(input: Parameters<HostedSidekick["readRunState"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.readRunState(input));
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readRunState(input));
   }
 
   async sidekickContinueRun(input: Parameters<HostedSidekick["continueRun"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.continueRun(input));
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.continueRun(input));
   }
 
   /** For the provisioning consumer: what to start, or `null` once the run is no longer pending. */
   async sidekickRunProvisioning(input: Parameters<HostedSidekick["runProvisioning"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runProvisioning(input));
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.runProvisioning(input));
   }
 
   /** For the provisioning consumer: the run's loop started. */
   async sidekickRunProvisioned(input: Parameters<HostedSidekick["runProvisioned"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runProvisioned(input));
+  }
+
+  // Batch reads. Every Sidekick in an Organization is here, so a caller that
+  // needs several asks once: one call, answered from local rows, instead of
+  // one call per Sidekick queued behind each other on this object.
+
+  /** Rail metadata for each selected Sidekick the audience may see, optionally only Organization ones. */
+  async sidekickReadSkillSummaries(input: SidekickBatchSkillReadRequest): Promise<SidekickAttachment[]> {
+    await this.initialized;
+    const { automationIds, channelId, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
+    const summaries: SidekickAttachment[] = [];
+    for (const automationId of this.selectedSidekicks({ automationIds, channelId, allLoadable, workspaceId: request.workspaceId })) {
+      const sidekick = await this.hostedSidekick(automationId, request.workspaceId);
+      if (onlyScope !== undefined && sidekick.row()?.scope !== onlyScope) continue;
+      const summary = sidekick.readSkillSummary({ ...request, automationId });
+      if (summary) summaries.push(summary);
+    }
+    return summaries;
+  }
+
+  /** What each selected Sidekick lends a run as a skill; one entry per Sidekick that lends one. */
+  async sidekickReadSkillSources(input: SidekickBatchSkillReadRequest): Promise<SidekickSkillSource[]> {
+    await this.initialized;
+    const { automationIds, channelId, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
+    const sources: SidekickSkillSource[] = [];
+    for (const automationId of this.selectedSidekicks({ automationIds, channelId, allLoadable, workspaceId: request.workspaceId })) {
+      const sidekick = await this.hostedSidekick(automationId, request.workspaceId);
+      if (onlyScope !== undefined && sidekick.row()?.scope !== onlyScope) continue;
+      const source = sidekick.readSkillSource({ ...request, automationId });
+      if (source) sources.push(source);
+    }
+    return sources;
+  }
+
+  /** The detail of each selected Sidekick, for an actor who may read every one of them. */
+  async sidekickReadDetails(input: SidekickBatchDetailRequest): Promise<AutomationDetail[]> {
+    await this.initialized;
+    const { automationIds, channelOwnedBy, ...request } = SidekickBatchDetailRequestSchema.parse(input);
+    const ids = [...new Set([...(automationIds ?? []), ...(channelOwnedBy === undefined ? [] : this.automationIdsOwnedBy(channelOwnedBy))])];
+    const details: AutomationDetail[] = [];
+    for (const automationId of ids) {
+      const sidekick = await this.hostedSidekick(automationId, request.workspaceId);
+      details.push(await sidekick.readDetail({ ...request, automationId }));
+    }
+    return details;
+  }
+
+  /**
+   * A Sidekick a Channel or Space may recommend: one that exists and belongs
+   * to the Organization. Read from the directory row, which carries its scope
+   * before an import too, so the check costs no call of its own.
+   */
+  private assertRecommendableSidekick(sidekickId: string): void {
+    const row = this.state.storage.sql.exec<{ scope: string; lifecycle: string }>(
+      `SELECT scope, lifecycle FROM automation_directory WHERE automation_id = ?`, sidekickId,
+    ).toArray()[0];
+    if (!row || row.lifecycle === "deleted") throw new Error("sidekick_not_found");
+    if (row.scope !== "workspace") throw new Error("sidekick_attachment_scope_invalid");
   }
 
   // Sidekick recommendations.
@@ -6272,7 +6360,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async setSidekickRecommendation(input: Parameters<HostedParent["setSidekickRecommendation"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).setSidekickRecommendation(input);
+    const parent = await this.hostedParent(input.parentId, input.workspaceId);
+    if (input.attached) this.assertRecommendableSidekick(input.sidekickId);
+    return parent.setSidekickRecommendation(input);
   }
 
   // Space access provenance.
@@ -7922,6 +8012,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { automationIds: this.automationIdsOwnedBy(request.workstreamId) };
   }
 
+  /** The Sidekicks a Channel recommends, read from its hosted parent's rows. */
+  private recommendedSidekickIdsFor(channelId: string): string[] {
+    return this.state.storage.sql.exec<{ sidekick_id: string }>(
+      `SELECT sidekick_id FROM parent_sidekicks WHERE parent_id = ? ORDER BY attached_at, sidekick_id`, channelId,
+    ).toArray().map((row) => row.sidekick_id);
+  }
+
   /** The live Sidekicks a Channel owns, each an `automation` revocation hop. */
   private automationIdsOwnedBy(workstreamId: string): string[] {
     return this.state.storage.sql.exec<{ automation_id: string }>(
@@ -8354,9 +8451,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
+    return this.loadableSidekickIds(request.workspaceId);
+  }
+
+  private loadableSidekickIds(workspaceId: string): string[] {
     return this.state.storage.sql.exec<{ automation_id: string }>(
       `SELECT automation_id FROM automation_directory WHERE workspace_id = ? AND lifecycle = 'active' AND loadable = 1 ORDER BY automation_id`,
-      request.workspaceId,
+      workspaceId,
     ).toArray().map((row) => row.automation_id);
   }
 
@@ -10017,6 +10118,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    if (request.kind === "sidekick") this.assertRecommendableSidekick(request.targetId);
     const storage = this.spaceStorage();
     // A Sidekick default is also the Space's recommendation, which a Channel
     // created in the Space reads from its hosted parent. Written right after
