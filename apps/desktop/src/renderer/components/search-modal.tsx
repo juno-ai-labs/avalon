@@ -74,6 +74,13 @@ const SEARCH_VISIBLE_PAGE_SIZE = Math.ceil((360 - 16) / (52 + 2));
  * rather than extend it.
  */
 const SEARCH_RESULT_CACHE_MS = 30_000;
+/**
+ * Characters a query needs before the modal searches content or mixes places
+ * into All: 3, set by the team on 2026-10-05. Shorter queries match nearly
+ * everything and each one is a Worker round trip nobody reads. The Channels and
+ * Spaces tabs filter a list already on screen, so they answer from the first one.
+ */
+const SEARCH_MIN_CHARACTERS = 3;
 /** A page, stamped with the moment the Worker admitted it. */
 interface AdmittedSearchPage extends SearchResponse { admittedAt: number }
 const ICONS = { messages: MessageSquare, links: Link, artifacts: Shapes, files: File };
@@ -133,6 +140,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
   const list = useRef<HTMLDivElement>(null);
   const listId = useId();
   const normalized = query.trim();
+  // Counted in characters, not UTF-16 units, so three ideographs or emoji count as three.
+  const searchable = [...normalized].length >= SEARCH_MIN_CHARACTERS;
   const trace = useRef<PerfTrace | null>(null);
   const traceTotals = useRef({ request: 0, scope: 0, retrieval: 0, hydration: 0, server: 0 });
   const inputAt = useRef<number | null>(null);
@@ -187,7 +196,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
       }
       return { ...page, admittedAt: Date.now() };
     },
-    enabled: open && !placeTab && settledQuery.length > 0 && settledQuery === normalized,
+    enabled: open && !placeTab && searchable && settledQuery === normalized,
     // Reopening on the same words repaints the last pages rather than
     // reauthorizing them; after the window one keystroke's worth of results is
     // read again.
@@ -220,11 +229,11 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
   // shows every match: how many is a product number nobody has set yet.
   const places = !open ? []
     : placeTab ? matchPlaces(placeTab === 'channels' ? channels : spaces ?? [], normalized)
-    : activeTab === 'all' && normalized ? matchPlaces([...channels, ...spaces ?? []], normalized) : [];
-  const results = open && !placeTab && normalized && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
+    : activeTab === 'all' && searchable ? matchPlaces([...channels, ...spaces ?? []], normalized) : [];
+  const results = open && !placeTab && searchable && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
     ? [...new Map((response.data?.pages.flatMap((page) => page.results) ?? []).map((result) => [result.id, result])).values()] : [];
   useEffect(() => {
-    if (!open || placeTab || !normalized || settledQuery !== normalized || response.isFetching || !response.isFetched) return;
+    if (!open || placeTab || !searchable || settledQuery !== normalized || response.isFetching || !response.isFetched) return;
     // Keep time-to-results open across explicit continuation, including the user's wait.
     if (!response.isError && results.length === 0 && response.hasNextPage) return;
     const current = trace.current;
@@ -237,8 +246,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
       if (trace.current === current) trace.current = null;
     }); });
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
-  }, [open, placeTab, normalized, settledQuery, response.isFetching, response.isFetched, response.isError, results.length, response.hasNextPage]);
-  const canContinue = open && !placeTab && settledQuery === normalized && response.hasNextPage && (!response.isError || continuationFailed);
+  }, [open, placeTab, searchable, normalized, settledQuery, response.isFetching, response.isFetched, response.isError, results.length, response.hasNextPage]);
+  const canContinue = open && !placeTab && searchable && settledQuery === normalized && response.hasNextPage && (!response.isError || continuationFailed);
   const loadMore = () => {
     if (canContinue && !response.isFetching) void response.fetchNextPage({ cancelRefetch: false });
   };
@@ -359,6 +368,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
         {rowCount === 0 && !(canContinue && continuationFailed) && <div className="rally-search-state" role="status">
           {placeTab ? (normalized ? 'No results' : placeTab === 'channels' ? 'No channels' : 'No spaces')
             : !normalized ? 'Search messages, links, artifacts, and files'
+            : !searchable ? `Type at least ${SEARCH_MIN_CHARACTERS} characters to search`
             : (response.isFetching || settledQuery !== normalized || canContinue) ? 'Searching…'
             : response.isError ? 'Search could not be completed. Please try again.' : 'No results'}
         </div>}
