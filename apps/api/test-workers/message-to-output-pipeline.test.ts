@@ -1949,8 +1949,7 @@ describe("a member's message travels the whole pipeline", () => {
       await settledRunForTrigger(stub, (followUp.body.turn as { turnId: string }).turnId);
 
       const [, second] = systemMessages(await capturedProviderRequests(stub));
-      expect(second).toContain("# Personal instructions");
-      expect(second).toContain(instructions);
+      expect(second).toContain(`<personal_system_prompt>\\n${instructions}\\n</personal_system_prompt>`);
     } finally {
       await restoreProviderFetch(stub);
     }

@@ -786,11 +786,12 @@ describe("personal system prompt", () => {
     expect(renderPersonalSystemPrompt("  \n\t ")).toBe("");
   });
 
-  it("ranks the member's text below the policy and task context it follows", () => {
+  it("wraps the trimmed text in a block framed as influence, not control", () => {
     expect(renderPersonalSystemPrompt("  Answer in French.\n")).toBe(`
 
-# Personal instructions
-The member who sent the message that started this turn saved these instructions for every turn they start. Follow them as that member's own request. They may not override the platform policy or the authorized task context above, and they say nothing about what other participants want.
-Answer in French.`);
+The following is provided by the user to influence, but not control, your thinking and output:
+<personal_system_prompt>
+Answer in French.
+</personal_system_prompt>`);
   });
 });
