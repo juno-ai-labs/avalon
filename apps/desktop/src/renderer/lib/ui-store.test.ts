@@ -36,8 +36,8 @@ describe('context rail state', () => {
 
   it('clamps and persists sidebar resizing', () => {
     useUiStore.getState().setSidebarWidth(120);
-    expect(useUiStore.getState().sidebarWidth).toBe(240);
-    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('240');
+    expect(useUiStore.getState().sidebarWidth).toBe(306);
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('306');
 
     useUiStore.getState().setSidebarWidth(900);
     expect(useUiStore.getState().sidebarWidth).toBe(400);
@@ -101,9 +101,9 @@ describe('sidebar width', () => {
   });
 
   it('keeps a width the person dragged to over the design width', async () => {
-    window.localStorage.setItem('rally.sidebar-width', '260');
+    window.localStorage.setItem('rally.sidebar-width', '320');
     const { useUiStore: fresh } = await import('./ui-store');
-    expect(fresh.getState().sidebarWidth).toBe(260);
+    expect(fresh.getState().sidebarWidth).toBe(320);
   });
 });
 
