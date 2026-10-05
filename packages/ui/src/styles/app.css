@@ -2426,7 +2426,7 @@ pre {
 }
 .terminal-network-domains textarea:focus { border-color: var(--av-sys-color-focus-default); box-shadow: var(--av-sys-focus-ring-default); }
 .terminal-network-domains small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 1.45; }
-.personal-system-prompt { display: flex; flex-direction: column; gap: 9px; padding: 14px; }
+.personal-system-prompt { display: flex; flex-direction: column; gap: 9px; padding: 14px; position: relative; }
 .personal-system-prompt > label { display: flex; flex-direction: column; gap: 9px; }
 .personal-system-prompt textarea {
   background: var(--av-sys-color-surface-default);
@@ -2440,6 +2440,7 @@ pre {
 }
 .personal-system-prompt textarea:focus { border-color: var(--av-sys-color-focus-default); box-shadow: var(--av-sys-focus-ring-default); }
 .personal-system-prompt-actions { display: flex; justify-content: flex-end; }
+.personal-system-prompt:not(:last-child)::after { background: var(--av-sys-color-border-subtle); bottom: 0; content: ''; height: .5px; left: 14px; position: absolute; right: 14px; }
 .terminal-network-actions {
   align-items: center;
   border-top: 1px solid var(--av-sys-color-border-subtle);

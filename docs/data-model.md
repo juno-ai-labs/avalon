@@ -485,6 +485,8 @@ SQL joins.
   system prompt for this Organization, copied into each SubstreamAgent's
   `personal_system_prompt_copies` (its migration 72); see
   [`personal-system-prompt.md`](personal-system-prompt.md).
+  `member_preferences` (migration 89) holds each member's display preferences;
+  see [`member-preferences.md`](member-preferences.md).
   `space_channel_memberships` is keyed by Space and Channel with **no**
   uniqueness on the Channel, because a Channel belongs to as many Spaces as it
   was added to. `space_intents` is one row per staged cross-object operation
