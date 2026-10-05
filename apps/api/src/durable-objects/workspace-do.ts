@@ -5927,6 +5927,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const workspaceId = this.workspaceId();
     if (!workspaceId) throw new Error("workspace_identity_unknown");
     let reregister: { evaluators: unknown[]; revision: number } | null;
+    let moved: boolean;
     try {
       const legacy = await durableObjectStubForWorkspace(this.env, this.env.AUTOMATION_DOS, workspaceId,
         automationDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asAutomationId(automationId)));
@@ -5936,6 +5937,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const exported = parsed.data;
       const now = Date.now();
       reregister = this.state.storage.transactionSync(() => this.writeSidekickImport(automationId, workspaceId, exported, now));
+      moved = exported.status !== "missing";
     } catch (error) {
       // A failure that carries no code of its own is named by its class: the
       // ledger row and the operator notice need more than the fallback, and
@@ -5969,6 +5971,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       throw new ApiError(503, code, code);
     }
     if (reregister) await this.afterSidekickRegistrations(automationId, reregister.revision, reregister.evaluators);
+    // A legacy object that held nothing leaves the listing as it was, so
+    // there is nothing to push; a push here would race a directory write.
+    if (!moved) return;
     this.publishSidebarList("automations");
     await this.armNextAlarm();
   }
