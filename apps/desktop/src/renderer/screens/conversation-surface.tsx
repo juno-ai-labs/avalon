@@ -500,8 +500,19 @@ export function branchProvenance(
   throughTurnId: string | null,
 ): Message[] {
   if (throughTurnId === null) return [];
-  const cutoff = transcript.findIndex((message) =>
-    message.transcriptTurnId === throughTurnId || message.id === throughTurnId);
+  // The turn's last row, not its first: an answer is several rows sharing one
+  // turn id, and its work row comes before its text, so cutting at the first
+  // match shows "Worked for" with the message that was branched from missing.
+  // `findLastIndex` would say it more directly, but the renderer's lib target
+  // predates it.
+  let cutoff = -1;
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    const message = transcript[index]!;
+    if (message.transcriptTurnId === throughTurnId || message.id === throughTurnId) {
+      cutoff = index;
+      break;
+    }
+  }
   // A branch point outside the loaded window is not an error and not a reason
   // to show the wrong turns: the substream is still the one that was asked
   // for, and its provenance is simply not on the client to draw.
