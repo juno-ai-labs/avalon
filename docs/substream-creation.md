@@ -147,7 +147,11 @@ is created behind them: `POST …/substreams/prepare` freezes and
 summarizes, then `POST …/substreams/confirm` carries the message. The response
 names the canonical turn, which is seeded into the child's transcript with the
 child's detail before the navigation, so the child's screen paints the same turn
-in the same place rather than showing its opening state. A creation that fails
+in the same place rather than showing its opening state. Both the drawn turn
+and the seed carry the room's mention rewrite rather than the draft's plain
+`@Name`, so a mention is a chip from the first frame — the rule and its reason
+are in [Work-stream creation](workstream-creation.md), which shares this path.
+A creation that fails
 takes the optimistic turn back off the screen and puts the words back in the
 composer.
 
