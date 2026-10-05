@@ -847,6 +847,27 @@ describe('New channel home', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Welcome back, Adam' })).not.toBeInTheDocument());
   });
 
+  it('draws a picked mention as a chip on the in-flight opening turn', async () => {
+    // The chip is drawn from the room's `[@Name](person://<id>)` form, so a
+    // turn built from the draft's plain `@Name` reads as text for as long as
+    // the create is in flight.
+    api.createWorkstream.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.focus(composer);
+    fireEvent.change(composer, { target: { value: 'ask @Sam' } });
+    await screen.findByRole('listbox', { name: 'Mentions' });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(composer).toHaveValue('ask @Samantha Lee '));
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    const turn = await screen.findByRole('article', { name: 'Message from Adam Juhasz' });
+    const chip = within(turn).getByText('Samantha Lee').closest('.mention-chip');
+    expect(chip).toHaveAttribute('data-person-id', teammate.id);
+    expect(within(turn).queryByText(/@Samantha Lee/)).not.toBeInTheDocument();
+  });
+
   // The hand-off is built on the composer being one object across both states.
   // Remounting it would restart its own state and split the transition into two
   // elements swapping places, which is the thing the animation exists to avoid.
