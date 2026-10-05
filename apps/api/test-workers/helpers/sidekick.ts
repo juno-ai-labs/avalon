@@ -1,6 +1,7 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { asWorkspaceId } from "@rally/contracts";
 
+import { HostedSidekick, type HostedSidekickHost } from "../../src/durable-objects/hosted-sidekick";
 import type { WorkspaceDO } from "../../src/durable-objects/workspace-do";
 import { workspaceDOName } from "../../src/durable-objects/names";
 import type { Env } from "../../src/env";
@@ -61,4 +62,21 @@ export async function provisionStartedSidekickRuns(env: Env, workspaceId: string
 export async function runSidekickAlarms(env: Env, workspaceId: string, region = "global"): Promise<string[]> {
   await runDurableObjectAlarm(sidekickWorkspace(env, workspaceId, region));
   return provisionStartedSidekickRuns(env, workspaceId, region);
+}
+
+/**
+ * Replace a Sidekick's connector registrations the way an apply does, and set
+ * its activation boundary to the sequence they take effect after, without the
+ * rest of an apply. For a test that controls the event sequence itself.
+ */
+export async function writeSidekickRegistrations(
+  env: Env, workspaceId: string, automationId: string, evaluators: readonly unknown[], region = "global",
+): Promise<void> {
+  await runInDurableObject(sidekickWorkspace(env, workspaceId, region), (instance, state) => {
+    const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
+    const sidekick = new HostedSidekick(host, automationId) as unknown as {
+      writeRegistrations: (evaluators: readonly unknown[], now: number) => void;
+    };
+    state.storage.transactionSync(() => sidekick.writeRegistrations(evaluators, Date.now()));
+  });
 }
