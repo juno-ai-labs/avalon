@@ -109,6 +109,19 @@ export const AutomationActivationV1Schema = z.strictObject({
 export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;
 
 /**
+ * The Sidekick's name, off an activation row's structured content.
+ *
+ * Frozen at delivery rather than looked up, so a rename does not rewrite what
+ * an earlier conversation said. A malformed or absent object is not worth
+ * failing a whole projection over: the text still arrives, under a name that
+ * says only what it is.
+ */
+export function automationActivationName(structuredContent: unknown): string {
+  const parsed = AutomationActivationV1Schema.safeParse(structuredContent);
+  return parsed.success ? parsed.data.automationName : "Sidekick";
+}
+
+/**
  * The card proposing an automation an agent drafted in this work stream.
  *
  * A `system` row: Rally noting that something now exists for the room to look
