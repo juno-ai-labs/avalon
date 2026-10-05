@@ -159,12 +159,7 @@ function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Elem
 }
 
 /** Settings → Account: the text the agent adds to its system prompt on turns this person starts. */
-function PersonalSystemPromptSetting({ api, workspaceId, children }: {
-  api: RallyApi;
-  workspaceId: string;
-  /** Further Agent rows, drawn in the same card below the prompt. */
-  children?: React.ReactNode;
-}): React.JSX.Element {
+function PersonalSystemPromptSetting({ api, workspaceId }: { api: RallyApi; workspaceId: string }): React.JSX.Element {
   const queryClient = useQueryClient();
   // Per Organization, so the key carries it: another Organization's text must
   // never show while this one's read is in flight.
@@ -184,33 +179,27 @@ function PersonalSystemPromptSetting({ api, workspaceId, children }: {
   const value = draft ?? saved.data ?? '';
   const changed = draft !== null && draft !== saved.data;
   return (
-    <>
-      <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Agent</h2></div>
-      <div className="settings-list-card">
-        <div className="personal-system-prompt">
-          <label>
-            <SettingCopy setting={settings.personalSystemPrompt} />
-            <textarea
-              aria-label="Personal system prompt"
-              disabled={saved.data === undefined || save.isPending}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="For example: Answer briefly. I work in Go and Postgres."
-              rows={5}
-              value={value}
-            />
-          </label>
-          <div className="personal-system-prompt-actions">
-            <Button disabled={!changed || save.isPending} onClick={() => save.mutate(value)}>
-              {save.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
-              Save
-            </Button>
-          </div>
-        </div>
-        {children}
+    <div className="personal-system-prompt">
+      <label>
+        <SettingCopy setting={settings.personalSystemPrompt} />
+        <textarea
+          aria-label="Personal system prompt"
+          disabled={saved.data === undefined || save.isPending}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="For example: Answer briefly. I work in Go and Postgres."
+          rows={5}
+          value={value}
+        />
+      </label>
+      <div className="personal-system-prompt-actions">
+        <Button disabled={!changed || save.isPending} onClick={() => save.mutate(value)}>
+          {save.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+          Save
+        </Button>
       </div>
       {saved.error && <InlineError>{saved.error.message}</InlineError>}
       {save.error && <InlineError>{save.error.message}</InlineError>}
-    </>
+    </div>
   );
 }
 
@@ -1416,11 +1405,13 @@ export function WorkspaceSettingsScreen({
                   </label>
                 </div>
                 {updateUserTimezone.error && <InlineError>{updateUserTimezone.error.message}</InlineError>}
-                {api && (
-                  <PersonalSystemPromptSetting api={api} key={workspace.id} workspaceId={workspace.id}>
+                {api && <>
+                  <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Agent</h2></div>
+                  <div className="settings-list-card">
+                    <PersonalSystemPromptSetting api={api} key={workspace.id} workspaceId={workspace.id} />
                     <AgentWorkSetting api={api} workspaceId={workspace.id} />
-                  </PersonalSystemPromptSetting>
-                )}
+                  </div>
+                </>}
                 </>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Session</h2></div>
                 <div className="settings-list-card">
