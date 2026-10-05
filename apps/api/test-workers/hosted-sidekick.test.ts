@@ -1447,6 +1447,21 @@ describe("a hosted Sidekick", () => {
     ]);
   });
 
+  it("answers a run conversation's terminal deadline from its own projection, not a Channel's", async () => {
+    await activeAutomation();
+    const runId = "00000000-0000-7000-8000-00000000ad61";
+    const effect = { kind: "directory_common", state: "running", nextTerminalActionAt: "2026-10-06T09:00:00.000Z" };
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO sidekick_child_projections (sidekick_id, substream_id, source_version, payload_hash, effect_json, updated_at)
+         VALUES (?, ?, 1, 'hash', ?, ?)`,
+        AUTOMATION_ID, runId, JSON.stringify(effect), Date.now(),
+      );
+    });
+    expect(await workspaceStub().childTerminalDeadlines({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID }))
+      .toEqual({ items: [{ substreamId: runId, nextTerminalActionAt: "2026-10-06T09:00:00.000Z" }] });
+  });
+
   it("provisions the run as a child substream whose loop reads its definition by revision, then follows its state", async () => {
     await activeAutomation();
     const revised = await submit({ ...DEFINITION, instructions: "Count the open pull requests and report the number." });

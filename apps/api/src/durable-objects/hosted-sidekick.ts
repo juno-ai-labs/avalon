@@ -46,6 +46,8 @@ import {
   ConversationParentListChildrenResultSchema,
   ConversationParentReserveChildRequestSchema,
   ConversationParentReserveChildResultSchema,
+  ConversationParentTerminalDeadlinesRequestSchema,
+  ConversationParentTerminalDeadlinesResultSchema,
   type ConversationParentAuthorityRequest,
   type ConversationParentAuthorityResult,
   type ConversationParentAuthorizeViewerRequest,
@@ -54,6 +56,8 @@ import {
   type ConversationParentListChildrenResult,
   type ConversationParentReserveChildRequest,
   type ConversationParentReserveChildResult,
+  type ConversationParentTerminalDeadlinesRequest,
+  type ConversationParentTerminalDeadlinesResult,
 } from "@rally/contracts/conversation-parent";
 
 import type { Env } from "../env";
@@ -1217,6 +1221,22 @@ export class HostedSidekick {
     }
     this.registerChild(request.substreamId, request.kind, request.createdByUserId, Date.now());
     return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration: row.authority_generation });
+  }
+
+  /** The children whose own projection names a terminal action, soonest first. */
+  childTerminalDeadlines(input: ConversationParentTerminalDeadlinesRequest): ConversationParentTerminalDeadlinesResult {
+    const request = ConversationParentTerminalDeadlinesRequestSchema.parse(input);
+    this.assertSidekick(request.workspaceId, request.parentId);
+    return ConversationParentTerminalDeadlinesResultSchema.parse({
+      items: this.sql.exec<{ substream_id: string; next_terminal_action_at: string }>(
+        `SELECT substream_id, json_extract(effect_json, '$.nextTerminalActionAt') AS next_terminal_action_at
+           FROM sidekick_child_projections
+          WHERE sidekick_id = ? AND json_extract(effect_json, '$.kind') = 'directory_common'
+            AND json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
+          ORDER BY next_terminal_action_at, substream_id`,
+        this.sidekickId,
+      ).toArray().map((row) => ({ substreamId: row.substream_id, nextTerminalActionAt: row.next_terminal_action_at })),
+    });
   }
 
   listChildren(input: ConversationParentListChildrenRequest): ConversationParentListChildrenResult {
