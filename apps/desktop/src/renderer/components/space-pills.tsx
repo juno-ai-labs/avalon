@@ -1,8 +1,8 @@
-import { IconArchive, IconRefresh, IconRestore } from '@tabler/icons-react';
+import { IconArchive, IconRestore } from '@tabler/icons-react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-icon';
-import { SpacePill, SpacePillAddButton, SpacePillIconButton, SpacePillStrip } from '@rally/ui/components/space-pills';
+import { SpacePill, SpacePillAddButton, SpacePillStrip } from '@rally/ui/components/space-pills';
 import { compareAlphabeticalName } from '@rally/ui/lib/alphabetical';
 import clsx from 'clsx';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react';
@@ -12,7 +12,7 @@ import { blockedChannelLabel, spaceFailureSentence, spaceRefusalChannelIds } fro
 import type { WorkstreamSummary } from '../lib/types';
 import { NewWorkstreamMenu } from './new-workstream-menu';
 import { AcknowledgedErrorDialog, type AcknowledgedError } from './acknowledged-error-dialog';
-import { Button, InlineError, Modal, Tip } from './primitives';
+import { Button, InlineError, Modal } from './primitives';
 
 interface SpacePillsProps {
   inactiveSpaces: SpaceSummary[];
@@ -24,12 +24,10 @@ interface SpacePillsProps {
   selectedSpaceId: string | null;
   revealSelection?: { revision: number; spaceId: string } | null;
   ready: boolean;
-  outOfDate: boolean;
   onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
   onCreateSpace: (name: string) => Promise<void>;
   onArchive?: ((spaceId: string) => Promise<void>) | undefined;
   onMoveChannel: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
-  onRetry: () => void;
   onRestore: (spaceId: string) => Promise<void>;
   onSelect: (spaceId: string | null) => void;
   workstreams: WorkstreamSummary[];
@@ -60,12 +58,10 @@ export function SpacePills({
   selectedSpaceId,
   revealSelection = null,
   ready,
-  outOfDate,
   onCreateChannel,
   onCreateSpace,
   onArchive,
   onMoveChannel,
-  onRetry,
   onRestore,
   onSelect,
   workstreams,
@@ -180,18 +176,10 @@ export function SpacePills({
       </ContextMenu.Content>
     </ContextMenu.Portal>
   </ContextMenu.Root>;
-  const refreshButton = ready && outOfDate
-    ? <Tip describesTrigger={false} label="Refresh spaces">
-        <SpacePillIconButton icon={IconRefresh} label="Refresh spaces" onClick={onRetry} />
-      </Tip>
-    : null;
-  const leading = addButton || refreshButton
-    ? <>{addButton}{refreshButton}</>
-    : undefined;
 
   return (
     <>
-      <SpacePillStrip leading={leading} ref={scrollRef}>
+      <SpacePillStrip leading={addButton || undefined} ref={scrollRef}>
         {!ready ? (
           <span className="space-pill-strip-note">Opening this organization…</span>
         ) : loading && spaces.length === 0 ? (
