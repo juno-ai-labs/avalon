@@ -1707,10 +1707,12 @@ export class SlackAgentService {
     // A room that joined an existing Space by name, rather than getting its
     // own, may since have been shared through Slack Connect: an outside
     // organization's thread must not open work in this Organization's Space.
-    // The binding records which it is; a room's own Space pays nothing.
+    // The binding records which it is; a room's own Space pays nothing, and
+    // Slack is asked again only when the lookup above did not ask it.
     if (route?.kind === "spawn" && route.spaceMatched
-      && slackExternalRoom((await slackApi(token, "conversations.info", { channel: channelId }, AbortSignal.timeout(5_000))).channel)
-        .externallyShared) {
+      && (channelResolution.externallyShared
+        ?? slackExternalRoom((await slackApi(token, "conversations.info", { channel: channelId }, AbortSignal.timeout(5_000))).channel)
+          .externallyShared)) {
       logWarn(this.env, "external_binding_placement_refused", {
         workspace_id: connection.workspace_id,
         connection_id: connection.id,
@@ -1943,6 +1945,7 @@ export class SlackAgentService {
       channelName: room.kind === "shared" ? room.displayName.slice(0, 255) : null,
       failure: null,
       threadable: room.threadable,
+      externallyShared: room.externallyShared,
     };
     if (room.kind === "direct") return { outcome: "ignored", reason: "direct_message", channel };
     if (room.archived) return { outcome: "ignored", reason: "room_archived", channel };
@@ -4233,6 +4236,8 @@ type SlackChannelResolution = {
   failure: SlackPromptSource["channelResolutionFailure"];
   /** Absent reads as threadable: only Slack's explicit flag turns threads off. */
   threadable?: boolean;
+  /** Shared through Slack Connect; absent when the source did not ask Slack. */
+  externallyShared?: boolean;
 };
 
 type SlackThreadRoute =
@@ -4470,10 +4475,11 @@ async function resolveSlackChannelType(
     // a conversation as public; anything else stays private, because this
     // classification gates whether Avalon will start a workspace task here.
     const threadable = result.channel.is_non_threadable !== true;
+    const externallyShared = result.channel.is_ext_shared === true || result.channel.is_pending_ext_shared === true;
     if (result.channel.is_mpim === true || result.channel.is_private !== false) {
-      return { channelType: "private", channelName, failure: null, threadable };
+      return { channelType: "private", channelName, failure: null, threadable, externallyShared };
     }
-    return { channelType: "public", channelName, failure: null, threadable };
+    return { channelType: "public", channelName, failure: null, threadable, externallyShared };
   } catch (error) {
     const reason = slackErrorReason(error);
     logWarn(env, "slack_conversation_privacy_lookup_failed", {

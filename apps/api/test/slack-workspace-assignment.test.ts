@@ -2095,6 +2095,7 @@ describe("Slack public channel membership", () => {
     `);
     insertSlackEventJob(objectDatabase, "event:now-shared", appMention("EvNowShared"));
     const posted: Array<Record<string, unknown>> = [];
+    let lookups = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
       const json = (body: unknown) => new Response(JSON.stringify(body), {
@@ -2102,6 +2103,7 @@ describe("Slack public channel membership", () => {
         headers: { "content-type": "application/json" },
       });
       if (url.pathname.endsWith("conversations.info")) {
+        lookups += 1;
         return json({
           ok: true,
           channel: { id: "C123", name: "general", is_private: false, is_ext_shared: true, is_im: false, is_mpim: false },
@@ -2121,6 +2123,8 @@ describe("Slack public channel membership", () => {
 
     expect(posted).toHaveLength(1);
     expect(String(posted[0]!.text)).toContain("shared with another organization");
+    // The room lookup already said so; Slack is not asked twice.
+    expect(lookups).toBe(1);
     expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM slack_agent_sessions").get()).toEqual({ count: 0 });
     expect(objectDatabase.prepare(
       "SELECT COUNT(*) AS count FROM external_conversation_bindings WHERE path_json <> '[\"C123\"]'",
