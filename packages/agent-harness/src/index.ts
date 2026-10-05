@@ -18,6 +18,7 @@ import {
   withoutUnusableAutomationResourceIds,
   AutomationDraftSchema,
   ConnectorConnectionCardInputSchema,
+  ConnectorConnectionStateInputSchema,
   PickedAppearanceSchema,
   PROJECT_COLOR_KEYS_STORABLE,
   PROJECT_COLOR_RING,
@@ -3386,15 +3387,19 @@ export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
 const connectorConnectionCardInputJsonSchema = memoizedValue(
   () => z.toJSONSchema(ConnectorConnectionCardInputSchema, { io: "input" }) as Record<string, unknown>,
 );
+const connectorConnectionStateInputJsonSchema = memoizedValue(
+  () => z.toJSONSchema(ConnectorConnectionStateInputSchema, { io: "input" }) as Record<string, unknown>,
+);
 
 /** Read the durable connection state for the same trusted catalog selection a card presents. */
 export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
   name: "get_connector_connection_state",
   description: [
-    "Check Rally's saved connection state for a connector and scope. Call this first.",
+    "Check Rally's saved connection state for a connector. Call this first.",
+    "Omit scope or use preferred unless the request explicitly says Personal or Organization; preferred resolves the current user's Personal connection first, then an existing Organization connection.",
     "Returns connected, reconnect_required, not_connected, or unavailable.",
     "If connected, continue the task and do not show a card.",
-    "If reconnect_required or not_connected blocks the task, briefly explain why, then call show_connector_connection with the same connectorId and scope.",
+    "The result contains the resolved personal or workspace scope. If reconnect_required or not_connected blocks the task, briefly explain why, then call show_connector_connection with the same connectorId and that resolved scope.",
     "If unavailable, explain that this connector is not configured in this Rally region and do not show a card.",
     "This checks Rally's saved state, not the provider directly.",
   ].join(" "),
@@ -3402,7 +3407,7 @@ export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
   mode: "read",
   idempotency: "safe",
   get inputSchema() {
-    return connectorConnectionCardInputJsonSchema();
+    return connectorConnectionStateInputJsonSchema();
   },
 } as const satisfies ToolDefinition;
 

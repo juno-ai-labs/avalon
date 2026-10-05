@@ -132,7 +132,12 @@ are the initial annotated tools.
 
 `get_connector_connection_state` and `show_connector_connection` are
 the user-run-only recovery pair. Both accept only a trusted connector catalog
-id and `personal`/`workspace` scope. The read returns `connected`,
+id. The read accepts an optional `preferred` scope: it resolves the current
+user's Personal connection first, then an existing Organization connection,
+and returns the resolved explicit `personal`/`workspace` scope. “My Drive” is
+explicitly personal; only an explicit Organization request selects workspace
+without preference. The presentation tool accepts only that resolved explicit
+scope. The read returns `connected`,
 `reconnect_required`, or `not_connected` from the caller-visible WorkspaceDO
 rows; `connected` is the last durable state Rally observed, not a provider
 health check. The presentation tool asks the main desktop feed for a
@@ -147,11 +152,13 @@ history rather than depending on a transient started event.
 
 The model-facing flow is deliberately literal:
 
-1. Call `get_connector_connection_state` with `connectorId` and `scope`.
+1. Call `get_connector_connection_state` with `connectorId`; omit `scope` unless
+   the request explicitly distinguishes Personal from Organization.
 2. If it returns `connected`, continue the task and do not show a card.
 3. If it returns `reconnect_required` or `not_connected` and that blocks the
    task, explain the blocker briefly.
-4. Call `show_connector_connection` with the same values, then stop the
+4. Call `show_connector_connection` with the same connector id and the explicit
+   scope returned by the state read, then stop the
    connector-dependent work for that run. Do not claim the connection worked.
 
 ### 1. Fail loud, never silently ignore an input
@@ -1196,6 +1203,24 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-10-05 — Connector state resolution becomes personal-first
+
+**What changed:** The connector-state read now accepts omitted/`preferred`
+scope, resolves Personal before Organization, and returns the explicit scope a
+connection card needs. Plugin catalog labels expose trusted Personal or
+Organization scope.
+
+**Why:** Requiring the model to choose a scope made “my Drive” ambiguous and
+gave it no reliable way to distinguish two same-provider plugins. The tool now
+owns the default from caller-visible stored authority.
+
+**Rejected:** Letting the card accept `preferred`. A durable card must identify
+one concrete authorization target; only the read performs resolution.
+
+**What a future change must respect:** Explicit Organization remains exact,
+while omitted scope and “my” intent stay personal-first even when the personal
+row needs reconnecting.
 
 ### 2026-09-20 — Give optional scalar arguments an explicit unspecified value
 
