@@ -9,7 +9,7 @@
 
 | Direction | Hop | Kind | After the move |
 | --- | --- | --- | --- |
-| `SidekickDO` → `WorkspaceDO` | `directory_automation` effect via `durable_outbox` → `ACTIVITY_QUEUE` → `applyAutomationDirectory` | Queue, two legs | Deleted. The rail reads `sidekicks`. |
+| `SidekickDO` → `WorkspaceDO` | `directory_automation` effect via `durable_outbox` → `ACTIVITY_QUEUE` → `applyAutomationDirectory` | Queue, two legs | The rail reads `sidekicks`. Until the class is deleted the receiver only seeds a `pending` import row for an unseen id, so a Sidekick created by the old path is not lost; then it is deleted. |
 | `SidekickDO` → `WorkspaceDO` | `applyExternalEventRegistrations` from `apply`'s tail (`sidekick-do.ts` ~2040) | RPC | Same transaction as apply. |
 | `SidekickDO` → `WorkspaceDO` | `authorizeViewer`, `readManagementAccess`, `workstreamParticipant` from `SidekickDO.authorizeViewer` (~1468 to 1507) | RPC | Local reads. |
 | `WorkspaceDO` → `SidekickDO` | `setOwningRoomArchived` on room archive (`workspace-do.ts` ~11461) | RPC, best effort per Sidekick | Same transaction as the archive. |
@@ -34,7 +34,7 @@ and dispatches to the hosted parent. Callers change only the stub they ask.
 | `readSkillSource`, `readSkillSummary` | `services/sidekick-skills.ts`, `services/workstream-service.ts` |
 | `readRunDefinition`, `readRunState` | `services/integrations.ts`, `services/slack-agent-service.ts` |
 | `continueRun` | `services/sidekick-run-continuation.ts` |
-| `authorizeViewer`, `authority`, `reserveAgentChild`, `listChildren`, `receiveChildEffects` | The parent contract. Already on the facade for Channels and Spaces. |
+| `authorizeViewer`, `authority`, `reserveAgentChild`, `listChildren`, `receiveChildEffects` | The parent contract. Already on the facade for Channels and Spaces. `receiveChildEffects` needs one Sidekick hook: the role maps an accepted child common projection onto `sidekick_runs.state`, `summary` and `completed_at` in the same transaction, as `SidekickDO.onChildCommonProjection` does today. |
 | `readAuthorizationFacts`, `authorizationDiscoveryChildren` | `services/authorization-service.ts`, `authorization-projection-service.ts`, `workstream-service.ts`, `space-service.ts`. Discovery for a hosted Sidekick runs in the object, as it already does for a hosted Channel, instead of a Queue message whose consumer calls back in. |
 | `childrenForRetirement`, `retireObject` | Retirement. The Sidekick node kind goes; its children are enumerated from `parent_children`. |
 | `runInspectionSql`, `forceMigration` | Engineering MCP and migration tracker. Removed with the class. |
@@ -45,7 +45,7 @@ and dispatches to the hosted parent. Callers change only the stub they ask.
 | Subsystem | Change | Document to update in the same change |
 | --- | --- | --- |
 | Hosted parents | Third role, new tables, storage budget line | [`hosted-conversation-parents.md`](../../hosted-conversation-parents.md) |
-| Sidekick lifecycle | Where state lives, apply's single transaction, the deleted directory projection | [`automation-lifecycle.md`](../../automation-lifecycle.md) |
+| Sidekick lifecycle | Where state lives, apply's single transaction, the `sidekick_memory_tables` entry, the deleted directory projection | [`automation-lifecycle.md`](../../automation-lifecycle.md) |
 | Object hierarchy | `WorkspaceDO → {hosted Channel, Space and Sidekick parents} → SubstreamAgent` | [`workstream-durable-object.md`](../../workstream-durable-object.md) |
 | Alarms | Sidekick kinds become `WorkspaceDO` stored entries | [`durable-object-alarms.md`](../../durable-object-alarms.md) |
 | Revocation | `automation` hop kind removed | [`access-revocation.md`](../../access-revocation.md) |
@@ -72,8 +72,21 @@ and dispatches to the hosted parent. Callers change only the stub they ask.
   first export page. The last import transaction re-arms the entry at its
   exported due instant; a past instant fires on the next alarm. The occurrence
   key's uniqueness keeps it from running twice.
-- **An outbox row in flight.** `durable_outbox` rows are imported into
-  `parent_outbox` with their message ids, so a send that had already left
-  before the freeze is deduplicated downstream by the same key it carried.
+- **An outbox row in flight.** `durable_outbox` rows of kind
+  `directory_automation` are dropped: `sidekicks` supersedes them, and
+  `parent_outbox` refuses directory rows (`parent_outbox_directory_row`).
+  Every other kind (`activity_event`, the two notification kinds and the
+  child directory kinds) is imported into `parent_outbox` with its message id,
+  so a send that had already left before the freeze is deduplicated
+  downstream by the same key it carried.
+- **A `directory_automation` message already on the Queue.** It reaches the
+  seeding-only `applyAutomationDirectory`, which adds a `pending` import row if
+  the id is new and otherwise acknowledges. It never writes the rail.
+- **An object with no directory row.** `create` commits the `SidekickDO`
+  before its directory message is delivered, and an older Worker can create
+  one during the deploy. Its import row comes from that message, or from the
+  first request naming it. The gate compares `sidekick_imports` with the
+  migration tracker's sweep of the namespace, so an object neither path has
+  reached still blocks the deletion.
 - **A retired Organization.** Its tombstone refuses the import; its `pending`
   rows are ignored by the gate, as six were for the Channel move.
