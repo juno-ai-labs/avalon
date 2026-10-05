@@ -313,6 +313,10 @@ describe("a room named for an existing Space", () => {
     expect(await match("roomc3")).toBe(spaced.spaceId);
     expect(await match("room_c3")).toBe(spaced.spaceId);
     expect(await match("room.c3")).toBeNull();
+    // A name that is only separators matches nothing, not every such Space.
+    const dashes = await linkRoom("C4", "00000000-0000-7000-8000-000000000e34", { name: "-" });
+    if (!dashes.ok) throw new Error("link refused");
+    expect(await match("--")).toBeNull();
   });
 
   it("does not offer a Space whose creator is no longer a member, so the room gets its own", async () => {

@@ -251,10 +251,7 @@ export const ExternalRoomLinkRequestSchema = deferredZodSchema(() => BindingKeyS
   }),
   /** Seated beside the actor in a private room's Space. */
   participantUserIds: z.array(IdSchema),
-  /**
-   * `spaceId` is the existing Space `externalRoomSpaceMatch` answered. The link
-   * re-asks inside its transaction and binds only if that Space still matches.
-   */
+  /** `spaceId` is the Space `externalRoomSpaceMatch` answered; bind only if it still matches. */
   matched: z.boolean().optional(),
   at: TimestampSchema,
 }).strict());
@@ -270,11 +267,12 @@ export const ExternalRoomLinkResultSchema = z.discriminatedUnion("ok", [
 ]);
 export type ExternalRoomLinkResult = z.infer<typeof ExternalRoomLinkResultSchema>;
 
-/** The existing Organization-wide Space a public room's name matches, asked before an anchor is claimed. */
+/** The existing Organization-wide Space a public room's name matches. */
 export const ExternalRoomSpaceMatchRequestSchema = z.strictObject({
   workspaceId: IdSchema,
-  name: z.string().trim().min(1),
+  name: z.string(),
 });
 export const ExternalRoomSpaceMatchResultSchema = z.strictObject({
   spaceId: IdSchema.nullable(),
 });
+export type ExternalRoomSpaceMatchResult = z.infer<typeof ExternalRoomSpaceMatchResultSchema>;

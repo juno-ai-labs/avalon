@@ -108,7 +108,7 @@ export const SPACE_CHANNEL_PAGE_SIZE = 250;
  */
 export const SPACE_BOOTSTRAP_PAGE_SIZE = 50;
 
-/** A Space name as `organizationSpaceNamed` compares it. */
+/** A Space name as `organizationSpaceNamed` compares it: no case, spaces, dashes or underscores. */
 function spaceMatchName(name: string): string {
   return name.toLowerCase().replace(/[\s_-]+/gu, "");
 }
@@ -3287,20 +3287,15 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * The live Organization-wide Space named `name`, or nothing. Names compare
-   * ignoring case, spaces, dashes and underscores, so Slack's `#general` lands
-   * in "General" and `#product-launch`, `#product_launch` or `#productlaunch`
-   * in "Product Launch". A connector
-   * room joins this Space rather than minting a second one
-   * beside it. Oldest first when several share the name, so the answer does not
-   * change as newer ones arrive.
-   *
-   * Compared in TypeScript because SQLite's `NOCASE` folds ASCII only, and a
-   * room name is not ASCII by rule.
+   * The oldest live Organization-wide Space named `name`, compared as
+   * `spaceMatchName` reads both, or nothing. Compared in TypeScript because the
+   * separators it drops and SQLite's ASCII-only `NOCASE` are both out of reach
+   * of an index.
    */
   organizationSpaceNamed(name: string): { spaceId: string; createdByUserId: string | null } | null {
     if (!this.ready()) return null;
     const wanted = spaceMatchName(name);
+    if (wanted === "") return null;
     const rows = this.storage.sql.exec<
       { space_id: string; title: string; created_by_user_id: string | null } & Record<string, SqlStorageValue>
     >(
