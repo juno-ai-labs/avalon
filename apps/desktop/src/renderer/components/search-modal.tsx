@@ -97,20 +97,33 @@ interface SearchModalProps {
    */
   channels?: readonly SearchPlace[];
   spaces?: readonly SearchPlace[] | undefined;
-  onSelectPlace?: (place: SearchPlace) => void;
+  onSelectPlace: (place: SearchPlace) => void;
+}
+
+/**
+ * Where the query first appears in a name, ignoring case, as a span of the
+ * name itself. Each window of the original is lowered and compared, rather
+ * than finding the query in the lowered name: lowering can change a string's
+ * length (`İ` becomes two code units), and an index into the lowered copy
+ * would then highlight the wrong letters.
+ */
+function nameMatch(name: string, query: string): { start: number; end: number } | null {
+  const needle = query.toLocaleLowerCase();
+  for (let start = 0; start + query.length <= name.length; start += 1) {
+    if (name.slice(start, start + query.length).toLocaleLowerCase() === needle) return { start, end: start + query.length };
+  }
+  return null;
 }
 
 /** Places whose name holds the query, in the order given. */
 function matchPlaces(places: readonly SearchPlace[], query: string): SearchPlace[] {
-  const needle = query.toLocaleLowerCase();
-  return places.filter((place) => place.name.toLocaleLowerCase().includes(needle));
+  return places.filter((place) => nameMatch(place.name, query));
 }
 
 function HighlightedName({ name, query }: { name: string; query: string }): React.JSX.Element {
-  const start = query ? name.toLocaleLowerCase().indexOf(query.toLocaleLowerCase()) : -1;
-  if (start < 0) return <>{name}</>;
-  const end = start + query.length;
-  return <>{name.slice(0, start)}<strong>{name.slice(start, end)}</strong>{name.slice(end)}</>;
+  const match = nameMatch(name, query);
+  if (!match) return <>{name}</>;
+  return <>{name.slice(0, match.start)}<strong>{name.slice(match.start, match.end)}</strong>{name.slice(match.end)}</>;
 }
 
 function HighlightedExcerpt({ result }: { result: SearchResult }): React.JSX.Element {
@@ -275,7 +288,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
   const choose = (index: number) => {
     if (index < places.length) {
       const place = places[index];
-      if (!place || !onSelectPlace) return;
+      if (!place) return;
       onSelectPlace(place);
     } else {
       const result = results[index - places.length];
