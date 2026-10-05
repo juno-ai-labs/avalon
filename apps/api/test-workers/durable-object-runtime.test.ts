@@ -1961,6 +1961,45 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("keeps the socket open and records no Channel when presence names one the viewer cannot see", async () => {
+    await seedOpenAuthority();
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const socket = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-000000000419");
+    const closed = nextClose(socket).then((event) => {
+      throw new Error(`workspace socket closed with ${event.code}`);
+    });
+    try {
+      socket.send(JSON.stringify({
+        type: "set_presence",
+        revision: 1,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      // Frames are handled in order, so a page answered after the presence
+      // frame proves the socket outlived it.
+      const page = nextMessageOfType(socket, "workspace_workstream_page");
+      socket.send(JSON.stringify({
+        type: "list_workstreams",
+        requestId: "00000000-0000-7000-8000-00000000041a",
+        limit: 20,
+        includeSystem: false,
+      }));
+      await Promise.race([page, closed]);
+      const attachment = await runInDurableObject(workspace, (_instance, state) =>
+        state.getWebSockets()[0]!.deserializeAttachment() as Record<string, unknown>);
+      expect(attachment).toMatchObject({
+        presenceRevision: 1,
+        applicationState: "foreground",
+        foregroundWorkstreamId: null,
+      });
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
   it("re-evaluates a changed product flag privately for subscribed users", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(

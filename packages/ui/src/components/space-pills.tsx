@@ -5,9 +5,8 @@ import type { ComponentPropsWithRef, ReactNode } from 'react';
 /**
  * The row of Space pills at the top of the sidebar.
  *
- * The leading slot (New space, and Refresh when the directory is stale) stays
- * put while the pills scroll sideways under it, so those controls are never
- * scrolled out of reach. Hosts own what a pill does; this owns only the shape.
+ * The leading slot (New space) stays put while the pills scroll sideways under
+ * it, so the one creation control is never scrolled out of reach. Hosts own what a pill does; this owns only the shape.
  */
 export function SpacePillStrip({ children, className, leading, ...props }: ComponentPropsWithRef<'div'> & {
   leading?: ReactNode;
