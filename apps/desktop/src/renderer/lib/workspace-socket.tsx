@@ -982,7 +982,11 @@ export function WorkspaceSocketProvider({
               sendPresence();
             }
             if (sync.data.viewerPreferences) {
-              queryClient.setQueryData(memberPreferencesQueryKey(workspaceId), sync.data.viewerPreferences);
+              // Cancelled first: a REST read started before this answer holds
+              // older data and would otherwise land on top of it, fresh forever.
+              const key = memberPreferencesQueryKey(workspaceId);
+              void queryClient.cancelQueries({ queryKey: key });
+              queryClient.setQueryData(key, sync.data.viewerPreferences);
             }
             if (sync.data.featureFlags) {
               queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, sync.data.featureFlags);
