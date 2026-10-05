@@ -57,6 +57,13 @@ function aliasesFor(type: string): string[] {
 }
 
 describe("finding a connector in the catalog", () => {
+  it("labels credential plugins with trusted product scope", () => {
+    expect(__integrationTesting.scopedConnectorPluginDisplayName("Google Drive + Docs + Sheets", "personal"))
+      .toBe("Google Drive + Docs + Sheets — Personal");
+    expect(__integrationTesting.scopedConnectorPluginDisplayName("Google Drive + Docs + Sheets", "workspace"))
+      .toBe("Google Drive + Docs + Sheets — Organization");
+  });
+
   it.each(TOOL_CONNECTORS)("gives %s aliases beyond its own name", (type) => {
     const adapter = registry.get(type);
     const aliases = aliasesFor(type);

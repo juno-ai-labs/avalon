@@ -78,6 +78,33 @@ export const ConnectorConnectionCardInputSchema = ConnectorConnectionCardShape.s
 
 export type ConnectorConnectionCardInput = z.infer<typeof ConnectorConnectionCardInputSchema>;
 
+export const ConnectorConnectionStateScopeSchema = z.enum([
+  "preferred",
+  ...ConnectorConnectionCardScopes,
+]).describe(
+  "Omit or use preferred to resolve the current user's Personal connection first and otherwise an existing Organization connection. Use personal for an explicitly personal request such as my Drive. Use workspace only for an explicit Organization request.",
+);
+
+/**
+ * A state check may ask Rally to choose the caller's most natural credential.
+ * Card presentation remains explicit: the state result carries the resolved
+ * personal/workspace scope that a follow-up card must use.
+ */
+export const ConnectorConnectionStateInputSchema = z.strictObject({
+  connectorId: ConnectorConnectionCardShape.shape.connectorId,
+  scope: ConnectorConnectionStateScopeSchema.optional(),
+}).superRefine((input, context) => {
+  if (input.scope === undefined || input.scope === "preferred") return;
+  const supportedScopes: readonly ConnectorConnectionCardScope[] = ConnectorConnectionCardCatalog[input.connectorId].scopes;
+  if (supportedScopes.includes(input.scope)) return;
+  context.addIssue({
+    code: "custom",
+    path: ["scope"],
+    message: `${input.connectorId} does not support a ${input.scope} connection card`,
+  });
+});
+export type ConnectorConnectionStateInput = z.infer<typeof ConnectorConnectionStateInputSchema>;
+
 export const ConnectorConnectionStateSchema = z.enum([
   "connected",
   "reconnect_required",

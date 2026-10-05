@@ -6,6 +6,7 @@ import {
   ConnectorConnectionCardIds,
   ConnectorConnectionCardInputSchema,
   ConnectorConnectionCardScopes,
+  ConnectorConnectionStateInputSchema,
   ConnectorConnectionStateResultSchema,
   connectorConnectionCardSummary,
   connectorConnectionCardInputFromToolEvent,
@@ -39,6 +40,19 @@ describe("connector connection card contract", () => {
       scope: "personal",
       state: "unavailable",
     }).state).toBe("unavailable");
+  });
+
+  it("accepts preferred or omitted state scope while keeping cards explicit", () => {
+    expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "google-drive-workspace" }))
+      .toEqual({ connectorId: "google-drive-workspace" });
+    expect(ConnectorConnectionStateInputSchema.parse({
+      connectorId: "google-drive-workspace",
+      scope: "preferred",
+    })).toEqual({ connectorId: "google-drive-workspace", scope: "preferred" });
+    expect(ConnectorConnectionStateInputSchema.safeParse({ connectorId: "granola", scope: "workspace" }).success)
+      .toBe(false);
+    expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "slack", scope: "preferred" }).success)
+      .toBe(false);
   });
 
   it("recovers durable card identity without accepting arbitrary summary prose", () => {

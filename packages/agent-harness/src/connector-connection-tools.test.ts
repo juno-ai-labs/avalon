@@ -14,8 +14,11 @@ describe("connector connection tool guidance", () => {
     expect(check.name).toBe("get_connector_connection_state");
     expect(show.name).toBe("show_connector_connection");
     expect(check.description).toContain("Call this first.");
+    expect(check.description).toContain("Omit scope or use preferred");
+    expect(check.description).toContain("Personal connection first");
+    expect(check.description).toContain("resolved scope");
     expect(check.description).toContain("connected, reconnect_required, not_connected, or unavailable");
-    expect(check.description).toContain("show_connector_connection with the same connectorId and scope");
+    expect(check.description).toContain("show_connector_connection with the same connectorId and that resolved scope");
     expect(show.description).toContain("Call only after get_connector_connection_state returns");
     expect(show.description).toContain("Use the same connectorId and scope.");
     expect(show.description).toContain("do not claim the connector is connected");
@@ -28,7 +31,7 @@ describe("connector connection tool guidance", () => {
       required?: string[];
     };
 
-    expect(schema.required).toEqual(["connectorId", "scope"]);
+    expect(schema.required).toEqual(["connectorId"]);
     expect(schema.additionalProperties).toBe(false);
     // Two independent facts, because reading the split back off the same
     // catalog the sentence is built from asserts nothing: a wrong scope would
@@ -50,7 +53,7 @@ describe("connector connection tool guidance", () => {
       expect(connectorIds, id).toContain(id);
     }
     expect(schema.properties?.scope?.description)
-      .toBe("Use personal for the current user's account. Use workspace only for an id described as personal or workspace.");
-    expect(AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION.inputSchema).toEqual(schema);
+      .toBe("Omit or use preferred to resolve the current user's Personal connection first and otherwise an existing Organization connection. Use personal for an explicitly personal request such as my Drive. Use workspace only for an explicit Organization request.");
+    expect(AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION.inputSchema).not.toEqual(schema);
   });
 });

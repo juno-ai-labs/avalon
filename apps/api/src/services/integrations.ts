@@ -106,6 +106,7 @@ import {
   AutomationRunDefinitionV1Schema,
   ConnectorConnectionCardCatalog,
   ConnectorConnectionCardInputSchema,
+  ConnectorConnectionStateInputSchema,
   ConnectorConnectionStateResultSchema,
   connectorConnectionCardSummary,
   type AutomationRunDefinitionV1,
@@ -2262,7 +2263,7 @@ async function loadAutomationCreatorPluginCatalog(
     }
     catalog.push({
       pluginId: modelPluginId,
-      displayName: presentation.displayName,
+      displayName: scopedConnectorPluginDisplayName(presentation.displayName, scope),
       icon: connectorAutomationPluginIcon(String(row.connector_type), presentation.displayName),
       description: presentation.description,
       scope,
@@ -5730,7 +5731,7 @@ async function loadHarnessTools(
       canonicalId: pluginId,
       modelId: modelPluginId,
       shortWireName,
-      displayName: presentation.displayName,
+      displayName: scopedConnectorPluginDisplayName(presentation.displayName, scope),
       connectorType: String(row.connector_type),
       ...(row.connector_type === "custom_mcp"
         ? { activityDisplayName: customMcpActivityName(row.display_name) }
@@ -6156,6 +6157,14 @@ function connectorPluginPresentation(
       combinedExamples,
     ].filter(Boolean).join("\n\n"),
   };
+}
+
+/** Trusted credential scope shown beside a plugin wherever the model chooses one. */
+function scopedConnectorPluginDisplayName(
+  displayName: string,
+  scope: "personal" | "workspace",
+): string {
+  return `${displayName} — ${scope === "personal" ? "Personal" : "Organization"}`;
 }
 
 function connectorAutomationPluginIcon(connectorType: string, displayName: string): AutomationPluginIcon {
@@ -7552,7 +7561,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
               : []),
             ...(coreTools.some((tool) => tool.definition.name === "get_connector_connection_state")
               && coreTools.some((tool) => tool.definition.name === "show_connector_connection")
-              ? ["For a connector, call get_connector_connection_state first. If it returns connected, continue without a card. If it returns reconnect_required or not_connected and that blocks the task, explain why and call show_connector_connection with the same connectorId and scope. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. Do not invent an authorization URL or claim the connection succeeded."]
+              ? ["For a connector, call get_connector_connection_state first. Omit scope unless the request explicitly distinguishes Personal from Organization; preferred resolves the current user's Personal connection first. If it returns connected, continue without a card. If it returns reconnect_required or not_connected and that blocks the task, explain why and call show_connector_connection with the same connectorId and the resolved scope from the result. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. Do not invent an authorization URL or claim the connection succeeded."]
               : []),
           ].join(" "),
           tools: coreTools,
@@ -7694,36 +7703,51 @@ async function readConnectorConnectionState(
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "executionPrincipal">,
   raw: unknown,
 ) {
-  const request = ConnectorConnectionCardInputSchema.parse(raw);
+  const request = ConnectorConnectionStateInputSchema.parse(raw);
   if (input.executionPrincipal.type !== "user") throw new Error("connector_connection_state_requires_user");
   const catalog = ConnectorConnectionCardCatalog[request.connectorId];
   const available = connectorRegistryForEnv(env).list()
     .some((manifest) => manifest.type === catalog.providerType);
   if (!available) {
-    return ConnectorConnectionStateResultSchema.parse({ ...request, state: "unavailable" });
+    const scope = request.scope === "workspace" ? "workspace" : "personal";
+    return ConnectorConnectionStateResultSchema.parse({ connectorId: request.connectorId, scope, state: "unavailable" });
   }
+  const supportedScopes: readonly ("personal" | "workspace")[] = catalog.scopes;
+  const requestedScopes: readonly ("personal" | "workspace")[] = request.scope === "personal" || request.scope === "workspace"
+    ? [request.scope]
+    : supportedScopes.includes("workspace")
+      ? ["personal", "workspace"]
+      : ["personal"];
   const result = await env.DB.prepare(
-    `SELECT granted_scopes_json, status FROM connector_connections
-      WHERE workspace_id = ? AND connector_type = ? AND scope = ?
+    `SELECT granted_scopes_json, scope, status FROM connector_connections
+      WHERE workspace_id = ? AND connector_type = ? AND scope IN (${requestedScopes.map(() => "?").join(", ")})
         AND (scope = 'workspace' OR owner_user_id = ?)`,
   ).bind(
     input.workspaceId,
     catalog.providerType,
-    request.scope,
+    ...requestedScopes,
     input.executionPrincipal.userId,
-  ).all<{ granted_scopes_json: string; status: string }>();
+  ).all<{ granted_scopes_json: string; scope: "personal" | "workspace"; status: string }>();
   const matching = (result.results ?? []).filter((row) => {
     if (catalog.capabilityPrefixes.length === 0) return true;
     const capabilities = parseJson<string[]>(row.granted_scopes_json, []);
     return capabilities.some((capability) =>
       catalog.capabilityPrefixes.some((prefix) => capability.startsWith(prefix)));
   });
-  const state = matching.some((row) => row.status === "healthy")
+  const scope = request.scope === "personal" || request.scope === "workspace"
+    ? request.scope
+    : matching.some((row) => row.scope === "personal")
+      ? "personal"
+      : matching.some((row) => row.scope === "workspace")
+        ? "workspace"
+        : "personal";
+  const scoped = matching.filter((row) => row.scope === scope);
+  const state = scoped.some((row) => row.status === "healthy")
     ? "connected"
-    : matching.some((row) => row.status === "needs_reconnect" || row.status === "error")
+    : scoped.some((row) => row.status === "needs_reconnect" || row.status === "error")
       ? "reconnect_required"
       : "not_connected";
-  return ConnectorConnectionStateResultSchema.parse({ ...request, state });
+  return ConnectorConnectionStateResultSchema.parse({ connectorId: request.connectorId, scope, state });
 }
 
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
@@ -7750,7 +7774,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       {
         definition: AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
         validateInput: (raw: unknown) => {
-          const parsed = ConnectorConnectionCardInputSchema.safeParse(raw);
+          const parsed = ConnectorConnectionStateInputSchema.safeParse(raw);
           return parsed.success ? null : parsed.error;
         },
         execute: async (raw: unknown) => {
@@ -8766,6 +8790,7 @@ export const __integrationTesting = {
   createAvalonTools,
   connectorSearchAliases,
   connectorPluginPresentation,
+  scopedConnectorPluginDisplayName,
   customMcpActivityName,
   toolInvocationOwningPlugin,
   transcriptPluginPresentation,

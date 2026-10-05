@@ -47,6 +47,14 @@ and the card's presence is not evidence that OAuth completed. A paired read
 tool resolves the same catalog id and scope against caller-visible WorkspaceDO
 rows, returning durable `connected`, `reconnect_required`, `not_connected`, or
 `unavailable` state without pretending to have made a fresh provider call.
+When scope is omitted or `preferred`, the read chooses the current user's
+matching personal row before an Organization row; a personal row that needs a
+reconnect still wins over a healthy Organization row, because silently changing
+the account behind “my Drive” is worse than surfacing its recovery. The result
+always carries the resolved explicit scope for a subsequent card. Connector
+plugin catalog labels append trusted **Personal** or **Organization** scope so
+two credentials of the same provider are distinguishable without exposing a
+provider-authored account label to the model.
 
 The started tool fact retains the validated catalog id and scope, and transcript
 lifecycle updates carry that safe input into the terminal fact. The feed can
@@ -1479,6 +1487,27 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-10-05 — Unspecified connector scope means the current person's connection first
+
+**What changed:** The connector-state tool accepts an omitted or `preferred`
+scope and resolves Personal before Organization, while its result keeps an
+explicit scope for a later connection card. Credential plugin labels now append
+trusted **Personal** or **Organization** scope.
+
+**Why:** “My Drive” could be checked as the Organization connection even when
+the current person had connected their own Drive, and two same-provider plugins
+were indistinguishable in the catalog. Scope must come from stored connection
+authority rather than a model guessing from nearly identical names.
+
+**Rejected:** Prefer whichever connection is healthy. That silently changes the
+account when the person's connection needs a reconnect, precisely when the
+recovery tool must name the intended credential.
+
+**What a future change must respect:** Preference is about identity, not health:
+any matching Personal row wins over Organization, and only an explicit
+Organization request bypasses it. Card presentation remains explicit and uses
+the resolved state result rather than accepting `preferred`.
 
 ### 2026-09-28: The GitHub delivery message is sent as `v8`
 

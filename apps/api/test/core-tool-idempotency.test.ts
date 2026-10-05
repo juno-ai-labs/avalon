@@ -238,6 +238,8 @@ describe("Avalon connector connection tools", () => {
     );
     await expect(stateTool!.execute({ connectorId: "slack", scope: "workspace" }, context()))
       .resolves.toMatchObject({ output: { state: "connected" } });
+    await expect(stateTool!.execute({ connectorId: "slack" }, context()))
+      .resolves.toMatchObject({ output: { scope: "workspace", state: "connected" } });
     await expect(stateTool!.execute({ connectorId: "slack", scope: "personal" }, context()))
       .resolves.toMatchObject({ output: { state: "not_connected" } });
 
@@ -280,6 +282,8 @@ describe("Avalon connector connection tools", () => {
         },
         summary: "google-drive-workspace personal connection is connected",
       });
+    await expect(stateTool!.execute({ connectorId: "google-drive-workspace" }, context()))
+      .resolves.toMatchObject({ output: { scope: "personal", state: "connected" } });
 
     objectDatabase.prepare(
       "UPDATE connector_connections SET status = 'needs_reconnect' WHERE model_plugin_id = 'plugin_google'",
@@ -305,6 +309,8 @@ describe("Avalon connector connection tools", () => {
     );
     await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "workspace" }, context()))
       .resolves.toMatchObject({ output: { state: "connected" } });
+    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "preferred" }, context()))
+      .resolves.toMatchObject({ output: { scope: "personal", state: "reconnect_required" } });
   });
 
   it("returns easy-English current time in the user's configured timezone", async () => {
