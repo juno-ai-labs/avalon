@@ -466,6 +466,18 @@ describe('Organization settings', () => {
     }
   });
 
+  it('paints the agent-work switch from what this device last saw while the server read is pending', async () => {
+    window.localStorage.setItem(`rally:member-preferences:${workspace.id}`, JSON.stringify({ showAgentWork: false }));
+    api.getMyPreferences.mockReturnValue(new Promise(() => {}));
+    try {
+      renderSettings();
+      openSettingsSection('Account');
+      expect(await screen.findByRole('switch', { name: /Show agent work/u })).not.toBeChecked();
+    } finally {
+      window.localStorage.removeItem(`rally:member-preferences:${workspace.id}`);
+    }
+  });
+
   it('saves the agent-work switch to the server', async () => {
     api.getMyPreferences.mockResolvedValue({ showAgentWork: true });
     api.updateMyPreferences.mockImplementation(async (next: { showAgentWork: boolean }) => next);

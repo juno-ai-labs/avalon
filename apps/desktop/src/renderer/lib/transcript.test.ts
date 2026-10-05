@@ -1910,11 +1910,25 @@ describe('hiding the agent\'s work', () => {
     toolEvent: { id, toolCallId: id, name: `${id}_call`, status: 'completed', pluginId: 'p', pluginName: 'P' },
   });
 
-  it('drops thinking, tool and plugin rows but keeps the run timer and what the reader must act on', () => {
+  it('drops thinking, tool and plugin rows but keeps agent messages, the run timer and what the reader must act on', () => {
     const shown = withoutAgentWork([
       row('reply', {}),
       tool('read'),
-      row('activity', { messageType: 'plugin_activity' }),
+      row('activity', {
+        messageType: 'plugin_activity',
+        pluginActivity: {
+          groupKey: 'p', name: 'P', icon: 'plug', active: false, durationMs: 10, activeVerb: 'using', completedVerb: 'used',
+        },
+      }),
+      // A teammate's message: counted, carrying the turn's read position.
+      row('teammate', {
+        messageType: 'plugin_activity',
+        attentionSequenceNumber: 7,
+        pluginActivity: {
+          groupKey: 'agents', name: 'Agents', icon: 'rally', active: false, durationMs: null, count: 1,
+          activeVerb: 'messaging', completedVerb: 'messaged',
+        },
+      }),
       tool('connect'),
       row('thinking', {
         messageType: 'thought',
@@ -1924,7 +1938,7 @@ describe('hiding the agent\'s work', () => {
       row('working', { messageType: 'thought', thoughtEvent: { status: 'started', durationMs: 0 } }),
     ], (message) => message.id === 'connect');
 
-    expect(shown.map((message) => message.id)).toEqual(['reply', 'connect', 'working']);
+    expect(shown.map((message) => message.id)).toEqual(['reply', 'teammate', 'connect', 'working']);
   });
 });
 

@@ -18,14 +18,19 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
 2. **First paint.** The WorkspaceDO's answer to a workspace socket `subscribe`
    carries `viewerPreferences` beside `featureFlags`. The renderer writes it to
    `['member-preferences', workspaceId]`, so the first frame already honours it
-   without a separate read.
+   without a separate read. Before the socket answers, the renderer paints the
+   last value this device saw for that Organization (`localStorage`), so a cold
+   launch does not flash the defaults. Applying the socket's answer cancels any
+   REST read still in flight, so an older answer cannot land on top of it.
 3. **Change.** `PUT /workspace/me/preferences` replaces the whole record. The
    write publishes `viewer_preferences` to the member alone, and their other
    windows refetch. The settings switch updates the cache optimistically and
    puts it back if the write fails.
 4. **Use.** With agent work off, `withoutAgentWork` drops the agent's thinking
-   rows, its `tool_event` rows and its `plugin_activity` rows before the
-   transcript is grouped. Rows that ask the
+   rows, its `tool_event` rows and its timed `plugin_activity` rows before the
+   transcript is grouped. Counted `plugin_activity` rows are messages between
+   agents, not calls, and stay: each carries its turn's attention ordinal, and
+   hiding it would leave the conversation unread with nothing to read. Rows that ask the
    reader to act stay: connecting an account and authorizing a resource.
 
 ## Invariants
