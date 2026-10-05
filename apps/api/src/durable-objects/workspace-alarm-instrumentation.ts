@@ -16,6 +16,7 @@ export type WorkspaceScheduledAlarmPhase =
   | "parent_outbox"
   | "parent_breakouts"
   | "directory_followup"
+  | "sidekick_import"
   | "final_rearm";
 
 export type ObservableWorkspaceScheduledAlarmKind =
@@ -28,6 +29,9 @@ export type ObservableWorkspaceScheduledAlarmKind =
   | "parent_participant_projection"
   | "parent_participant_migration"
   | "parent_invitation_delivery"
+  | "automation_schedule"
+  | "automation_run"
+  | "sidekick_memory_tables"
   | "unknown";
 
 const OBSERVABLE_ALARM_KINDS = new Set<ObservableWorkspaceScheduledAlarmKind>([
@@ -40,6 +44,9 @@ const OBSERVABLE_ALARM_KINDS = new Set<ObservableWorkspaceScheduledAlarmKind>([
   "parent_participant_projection",
   "parent_participant_migration",
   "parent_invitation_delivery",
+  "automation_schedule",
+  "automation_run",
+  "sidekick_memory_tables",
 ]);
 
 export function observableWorkspaceScheduledAlarmKind(

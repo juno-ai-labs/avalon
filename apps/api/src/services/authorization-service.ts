@@ -9,7 +9,7 @@ import { createIdentityObjectPort } from '../runtime/identity-port';
 import { conversationParentStub } from './conversation-parent-client';
 import { ApiError } from '../lib/api-error';
 import { logWarn } from '../observability/logger';
-import type { AutomationDO } from '../durable-objects/automation-do';
+import type { HostedSidekick } from '../durable-objects/hosted-sidekick';
 import type { WorkspaceDO } from '../durable-objects/workspace-do';
 import type { WorkstreamResourceStorage } from '../durable-objects/workstream-resource-storage';
 import {
@@ -104,8 +104,8 @@ export class AuthorizationService {
 /** Owner observations, including settled reads, live for exactly one batch. */
 class AuthorizationBatch {
   private readonly parents = new Map<string, Promise<Awaited<ReturnType<WorkspaceDO['readAuthorizationFacts']>>>>();
-  private readonly automations = new Map<string, Promise<Awaited<ReturnType<AutomationDO['readAuthorizationFacts']>>>>();
-  private readonly automationViewers = new Map<string, Promise<Awaited<ReturnType<AutomationDO['authorizeViewer']>> & { validatedAt: number }>>();
+  private readonly automations = new Map<string, Promise<ReturnType<HostedSidekick['readAuthorizationFacts']>>>();
+  private readonly automationViewers = new Map<string, Promise<Awaited<ReturnType<HostedSidekick['authorizeViewer']>> & { validatedAt: number }>>();
   private readonly identities = new Map<string, Promise<Awaited<ReturnType<ReturnType<typeof createIdentityObjectPort>['readAuthorizationFacts']>>>>();
   private readonly attachments = new Map<string, Promise<ReturnType<WorkstreamResourceStorage['readAuthorizationFacts']>>>();
   private readonly memberships = new Map<string, Promise<{ active: boolean; guest: boolean; validatedAt: number }>>();
@@ -228,9 +228,10 @@ class AuthorizationBatch {
     }
     const automation = await conversationParentStub(this.env, {
       workspaceId: subject.workspaceId, parentKind: 'automation', parentId: resource.parentId,
-    }) as DurableObjectStub<AutomationDO>;
+    });
     const facts = await ownerEvidence(this.automations, JSON.stringify([subject, resource.parentId, resource.substreamId]),
-      () => automation.readAuthorizationFacts({ ...request, substreamIds: [resource.substreamId] }));
+      async () => await automation.sidekickReadAuthorizationFacts({ ...request, substreamIds: [resource.substreamId] }) as
+        ReturnType<HostedSidekick['readAuthorizationFacts']>);
     if (!facts.exists) return { status: 'not_found', resource,
       evidence: [{ owner: resource.parentId, revision: 'absent', validatedAt: Math.min(workstream.validatedAt, facts.validatedAt) }] };
     const evidence = { owner: resource.parentId, revision: facts.revision, validatedAt: facts.validatedAt };

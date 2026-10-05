@@ -1,6 +1,5 @@
 import {
   asArtifactId,
-  asAutomationId,
   asWorkspaceId,
   asWorkstreamId,
   type SubstreamId,
@@ -9,7 +8,6 @@ import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 
 import {
   artifactHostDOName,
-  automationDOName,
   conversationObjectName,
   workspaceDOName,
 } from "../durable-objects/names";
@@ -167,11 +165,13 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
   }
 
   if (target.scope === "automation") {
+    // The Sidekick's parent is hosted by its Organization object, which
+    // imports one still in its legacy object before it answers.
     const automation = await durableObjectStubForWorkspace(
       env,
-      env.AUTOMATION_DOS,
+      env.WORKSPACE_DOS,
       workspaceId,
-      automationDOName(env.AVALON_REGION, workspaceId, asAutomationId(target.automationId)),
+      workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
     const { children } = await automation.listChildren({
