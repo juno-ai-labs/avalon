@@ -985,14 +985,15 @@ describe('what a breakout shows of where it came from', () => {
       // One answer split over two text rows is one turn.
       { ...turn(3), id: 'row-3-more', text: 'Main turn 3, continued' },
       activity(4, 'tool_event'),
-      turn(4),
+      // A Sidekick's result is written text and counts as a turn.
+      { ...turn(4), authorType: 'system', messageType: 'automation_activation', text: 'Sidekick result 4' },
       turn(5),
       activity(6, 'thought'),
       turn(6),
       turn(7),
     ];
     expect(branchProvenance(busy, 'turn-6').map((message) => message.text))
-      .toEqual(['Main turn 2', 'Main turn 3', 'Main turn 3, continued', 'Main turn 4', 'Main turn 5', 'Main turn 6']);
+      .toEqual(['Main turn 2', 'Main turn 3', 'Main turn 3, continued', 'Sidekick result 4', 'Main turn 5', 'Main turn 6']);
   });
 
   it('shows nothing for a breakout started from the sidebar, or from a turn off the loaded window', () => {
