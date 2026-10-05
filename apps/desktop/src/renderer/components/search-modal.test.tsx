@@ -76,7 +76,7 @@ describe('organization search modal', () => {
     channels: [
       { kind: 'channel', id: '00000000-0000-7000-8000-0000000000c1', name: 'Pricing review' },
       { kind: 'breakout', id: '00000000-0000-7000-8000-0000000000b1', channelId: '00000000-0000-7000-8000-0000000000c1',
-        channelName: 'Pricing review', name: 'Discount tiers' },
+        channelName: 'Pricing review', name: 'Hiring plan' },
       { kind: 'channel', id: '00000000-0000-7000-8000-0000000000c2', name: 'Hiring' },
     ],
     spaces: [
@@ -91,14 +91,19 @@ describe('organization search modal', () => {
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent))
       .toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files', 'Channels', 'Spaces']);
     fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
-    // An empty query lists every Channel, each followed by its Breakouts.
+    const input = screen.getByRole('combobox');
+    // Each Channel is followed by its Breakouts.
+    fireEvent.change(input, { target: { value: 'ing' } });
     expect(screen.getAllByRole('option').map((option) => option.textContent))
-      .toEqual(['Pricing reviewChannel', 'Discount tiersBreakout in Pricing review', 'HiringChannel']);
+      .toEqual(['Pricing reviewChannel', 'Hiring planBreakout in Pricing review', 'HiringChannel']);
+    fireEvent.change(input, { target: { value: 'i' } });
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'plan' } });
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Hiring planBreakout in Pricing review']);
     // Each place wears its own mark, not a generic symbol.
     for (const option of screen.getAllByRole('option')) expect(option.querySelector('svg.workstream-mark')).not.toBeNull();
-    const input = screen.getByRole('combobox');
-    fireEvent.change(input, { target: { value: 'TIER' } });
-    expect(screen.getByRole('option').querySelector('strong')).toHaveTextContent('tier');
+    fireEvent.change(input, { target: { value: 'PLAN' } });
+    expect(screen.getByRole('option').querySelector('strong')).toHaveTextContent('plan');
     fireEvent.click(screen.getByRole('tab', { name: 'Spaces' }));
     fireEvent.change(input, { target: { value: 'nothing' } });
     expect(screen.getByText('No results')).toBeVisible();
@@ -111,7 +116,7 @@ describe('organization search modal', () => {
     expect(search).not.toHaveBeenCalled();
   });
 
-  it('waits for three characters before searching content or listing places in All', async () => {
+  it('waits for three characters before searching on any tab', async () => {
     const search = vi.fn(async () => ({ results: [result] }));
     setup(search, PLACES);
     const input = screen.getByRole('combobox');
@@ -119,10 +124,11 @@ describe('organization search modal', () => {
     await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
     expect(search).not.toHaveBeenCalled();
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
-    expect(screen.getByText('Type at least 3 characters to search')).toBeVisible();
-    // The Channels tab filters what is already on screen, so it does not wait.
+    expect(screen.getByText('What are you looking for?')).toBeVisible();
+    // The place tabs wait as well.
     fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Pricing reviewChannel']);
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+    expect(screen.getByText('What are you looking for?')).toBeVisible();
     fireEvent.click(screen.getByRole('tab', { name: 'All' }));
     fireEvent.change(input, { target: { value: 'pri' } });
     await waitFor(() => expect(search).toHaveBeenCalledWith({ query: 'pri', category: 'all', pageSize: 7 }, expect.any(AbortSignal)));
