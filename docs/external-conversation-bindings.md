@@ -102,9 +102,15 @@ the room's members, and an existing Space's is not. Neither does a Slack
 Connect room (`is_ext_shared` or `is_pending_ext_shared`), which Slack reports
 as public but whose members include another organization. A matched room shared
 through Slack Connect after it linked is refused at spawn: a thread that would
-open a Channel in a Space other than the room's own first asks
-`conversations.info`, and an externally shared room gets a
+open a Channel in an Organization-wide Space other than the room's own first
+asks `conversations.info`, and an externally shared room gets a
 `room_shared_externally` notice instead. A room's own Space skips that call.
+Scope, not the id alone, marks a matched Space: Slack renumbers a private room
+it shares (`channel_id_changed`), after which the id no longer derives the
+room's own Space, but that Space is personal and a matched one never is. A
+public room's own Space whose id changed is still read as matched and refused
+once shared, with the notice; the binding does not record which it is, and
+that costs a migration nobody has needed yet.
 An `unmatched` link that finds a match leaves the room's anchor unused, which
 costs nothing.
 
