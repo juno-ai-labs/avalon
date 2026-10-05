@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { ArrowRight, GitBranch, LockKeyhole, Plus, Search } from 'lucide-react';
+import { IconCornerDownRight } from '@tabler/icons-react';
+import { ArrowRight, LockKeyhole, Plus, Search } from 'lucide-react';
 import { onboardingMotion } from '../lib/onboarding-motion';
 import { Button, InlineError, RallyMark } from './primitives';
 import { PersonalAvatar } from './personal-avatar';
@@ -79,7 +80,7 @@ function SubstreamStory(): React.JSX.Element {
     <aside className="onboarding-substream-nav">
       <strong>Customer pilot</strong>
       <button type="button" className={!child ? 'is-selected' : ''} onClick={() => { setPhase(0); setOpenFile(false); }}>Main log</button>
-      {child && <div className="onboarding-substream-branch"><GitBranch size={17} /><button type="button" className="is-selected" onClick={() => setPhase(5)}><PersonalAvatar initials="A" color="blue" /><span>Feedback questions</span></button></div>}
+      {child && <div className="onboarding-substream-branch"><IconCornerDownRight aria-hidden="true" size={17} stroke={1.9} /><button type="button" className="is-selected" onClick={() => setPhase(5)}><PersonalAvatar initials="A" color="blue" /><span>Feedback questions</span></button></div>}
     </aside>
     <div className="onboarding-substream-conversation">
       <div className="onboarding-substream-caption">{child ? <><LockKeyhole size={13} /> Private to Aspen</> : 'Main log'}</div>
@@ -88,7 +89,7 @@ function SubstreamStory(): React.JSX.Element {
         <p>The customer pilot plan is ready.</p>
         <ResourceEmbedCard label="Customer pilot plan" resource={{ id: 'substream-demo-plan', title: 'Customer pilot plan.md', resourceType: 'file', mimeType: 'text/markdown' }} onOpen={() => setOpenFile((value) => !value)} />
         {openFile && <p>Welcome session · Tuesday<br />Feedback session · Friday<br />Next · Review what customers learned</p>}
-        <button className={`onboarding-substream-start ${phase === 1 ? 'is-highlighted' : ''}`} type="button" onClick={() => setPhase(2)}><GitBranch size={14} /> Start breakout</button>
+        <button className={`onboarding-substream-start ${phase === 1 ? 'is-highlighted' : ''}`} type="button" onClick={() => setPhase(2)}><IconCornerDownRight aria-hidden="true" size={14} stroke={1.9} /> Start breakout</button>
       </div>}
       {phase === 2 && <div className="onboarding-substream-review"><strong>Review starting context</strong><p>Customer pilot · Five customers<br />Feedback session planned for Friday</p><Button className="button-primary" onClick={() => setPhase(3)}>Create breakout</Button></div>}
       {child && <div className="onboarding-substream-chat">
