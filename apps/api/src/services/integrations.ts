@@ -69,7 +69,7 @@ import {
 } from "@rally/agent-harness";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
-  AutomationActivationV1Schema,
+  automationActivationName,
   AutomationDetailSchema,
   ConnectorResourceAuthorizationHintSchema,
   ConnectorResourceAuthorizationRequestSchema,
@@ -1170,19 +1170,6 @@ async function loadTriggerFencedTranscriptMessages(
  * pairs. Unfinished or malformed receipts are omitted as one healed unit, so a
  * later run can never inherit a dangling call or an orphaned result.
  */
-/**
- * The automation's name, off the activation object.
- *
- * Frozen at delivery rather than looked up, so a rename does not rewrite what
- * an earlier run's context said. A malformed or absent object is not worth
- * failing a whole projection over — the result still reaches the model, wearing
- * a name that says only what it is.
- */
-function automationActivationName(structuredContent: unknown): string {
-  const parsed = AutomationActivationV1Schema.safeParse(structuredContent);
-  return parsed.success ? parsed.data.automationName : "An automation";
-}
-
 async function projectModelProtocolTranscript(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "triggerMessageId" | "substreamId">
