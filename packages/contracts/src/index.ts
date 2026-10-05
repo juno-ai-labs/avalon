@@ -1787,6 +1787,9 @@ export const ConnectorOAuthAttemptSchema = z.object({
 export const RefreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u);
 export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema });
 export const UpdateUserTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
+/** A member's personal system prompt for one Organization; empty means none. */
+export const PersonalSystemPromptSchema = z.strictObject({ personalSystemPrompt: z.string() });
+export type PersonalSystemPrompt = z.infer<typeof PersonalSystemPromptSchema>;
 export const UpdateWorkspaceRequestSchema = z.object({ timezone: IanaTimezoneSchema });
 
 // --- Digest ---------------------------------------------------------------

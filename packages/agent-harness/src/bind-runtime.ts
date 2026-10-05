@@ -1183,9 +1183,15 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             throw new Error("resident_context_exclusion_misaligned");
           }
         }
-        const summaryInput = excludedPositions.size === 0
-          ? messages
-          : messages.filter((_message, position) => !excludedPositions.has(position));
+        // The principal's own section stays out of the summariser's system
+        // message: the summary becomes the checkpoint every later run reads,
+        // whoever started it.
+        const summarySystemContent = runtime.renderSystemPrompt(residentSection, { withPrincipal: false }).content;
+        const summarySystemMessage: ProviderSystemMessage = { role: "system", content: summarySystemContent };
+        const summaryInput = [
+          summarySystemMessage,
+          ...messages.filter((_message, position) => position > 0 && !excludedPositions.has(position)),
+        ];
         // The compacted system message is rendered, not copied: the same
         // render the run's system message came from, with the section the
         // ledger proposes (or the one it already has, where no ledger is wired).
@@ -1208,9 +1214,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               { role: "user", content: instruction },
             ],
             tools: undefined,
-            systemPrompt: {
-              content: typeof systemMessage.content === "string" ? systemMessage.content : "",
-            },
+            systemPrompt: { content: summarySystemContent },
             signal,
             turnId: attempt === 1
               ? `${input.harnessRunId}:compaction:${currentCompactionIndex}`
@@ -2554,7 +2558,8 @@ async function createPluginRuntime(
   startupTiming: (phase: HarnessStartupTiming["phase"], startedAt: number) => void,
 ): Promise<{
   active: Set<string>;
-  renderSystemPrompt: (residentSection?: string | null) => RenderedSystemPrompt;
+  /** `withPrincipal: false` leaves out `principalSystemSection`, for the compaction summariser. */
+  renderSystemPrompt: (residentSection?: string | null, options?: { withPrincipal?: boolean }) => RenderedSystemPrompt;
   buildWireTools: () => ProviderTool[];
   activate: (ids: string[]) => void;
   reauthorizeActive: () => Promise<void>;
@@ -2947,7 +2952,8 @@ async function createPluginRuntime(
   return {
     active,
     skills,
-    renderSystemPrompt: (residentSection = null) => renderStableSystemPrompt(input.systemPrompt, active, registry, input.config.maxCatalogTokens ?? DEFAULT_CATALOG_TOKENS, skills, residentSection),
+    renderSystemPrompt: (residentSection = null, options) => renderStableSystemPrompt(input.systemPrompt, active, registry, input.config.maxCatalogTokens ?? DEFAULT_CATALOG_TOKENS, skills, residentSection,
+      options?.withPrincipal === false ? "" : input.principalSystemSection ?? ""),
     buildWireTools: () => {
       const definitions: ProviderTool[] = [];
       for (const id of [...active].sort()) {
@@ -3088,6 +3094,7 @@ function renderStableSystemPrompt(
    * where the cached prefix is already lost.
    */
   residentSection: string | null = null,
+  principalSection = "",
 ): RenderedSystemPrompt {
   const activeSections = [...active]
     .sort()
@@ -3137,7 +3144,7 @@ function renderStableSystemPrompt(
     ? `# Active Skill Instructions\n${skills.instructions.join("\n\n")}`
     : "";
   return {
-    content: [base, pluginSection, skillSection, activeInstructions, skillInstructions, residentSection ?? ""]
+    content: [base, pluginSection, skillSection, activeInstructions, skillInstructions, residentSection ?? "", principalSection]
       .filter(Boolean)
       .join("\n\n"),
   };

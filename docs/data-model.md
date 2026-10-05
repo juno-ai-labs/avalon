@@ -481,6 +481,10 @@ SQL joins.
   `workspace_pinned_order` (migration 87) is one person's order for the Pinned
   section under All, kept apart so older Workers and clients never meet it — and
   `workspace_space_state` is the one waterline both directories share.
+  `member_personal_system_prompts` (migration 88) is each member's personal
+  system prompt for this Organization, copied into each SubstreamAgent's
+  `personal_system_prompt_copies` (its migration 72); see
+  [`personal-system-prompt.md`](personal-system-prompt.md).
   `space_channel_memberships` is keyed by Space and Channel with **no**
   uniqueness on the Channel, because a Channel belongs to as many Spaces as it
   was added to. `space_intents` is one row per staged cross-object operation
