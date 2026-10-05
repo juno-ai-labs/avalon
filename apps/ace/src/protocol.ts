@@ -88,7 +88,7 @@ export const MANAGED_MODELS = [
     key: 'agent-model-workstream-naming',
     label: 'Work-stream naming',
     description: 'Creates the short work-stream title from the opening request while the creator waits.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
+    defaultRouting: { model: 'openai/gpt-5.6-terra', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
     rank: 5,
