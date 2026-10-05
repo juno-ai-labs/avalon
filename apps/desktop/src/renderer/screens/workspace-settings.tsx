@@ -157,17 +157,20 @@ function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Elem
 }
 
 /** Settings → Account: the text the agent adds to its system prompt on turns this person starts. */
-function PersonalSystemPromptSetting({ api }: { api: RallyApi }): React.JSX.Element {
+function PersonalSystemPromptSetting({ api, workspaceId }: { api: RallyApi; workspaceId: string }): React.JSX.Element {
   const queryClient = useQueryClient();
+  // Per Organization, so the key carries it: another Organization's text must
+  // never show while this one's read is in flight.
+  const queryKey = ['personal-system-prompt', workspaceId];
   const saved = useQuery({
-    queryKey: ['personal-system-prompt'],
+    queryKey,
     queryFn: ({ signal }) => api.getMyPersonalSystemPrompt(signal),
   });
   const [draft, setDraft] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: (text: string) => api.updateMyPersonalSystemPrompt(text),
     onSuccess: (text) => {
-      queryClient.setQueryData(['personal-system-prompt'], text);
+      queryClient.setQueryData(queryKey, text);
       setDraft(null);
     },
   });
@@ -1374,7 +1377,7 @@ export function WorkspaceSettingsScreen({
                   </label>
                 </div>
                 {updateUserTimezone.error && <InlineError>{updateUserTimezone.error.message}</InlineError>}
-                {api && <PersonalSystemPromptSetting api={api} />}
+                {api && <PersonalSystemPromptSetting api={api} key={workspace.id} workspaceId={workspace.id} />}
                 </>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Session</h2></div>
                 <div className="settings-list-card">
