@@ -988,8 +988,10 @@ describe('what a breakout shows of where it came from', () => {
       // A Sidekick's result is written text and counts as a turn.
       { ...turn(4), authorType: 'system', messageType: 'automation_activation', text: 'Sidekick result 4' },
       turn(5),
-      activity(6, 'thought'),
+      // The row the reported bug drew: a settled answer's folded work.
+      activity(6, 'work_accordion'),
       turn(6),
+      { ...activity(6, 'system'), authorType: 'system', text: 'Ada joined the conversation' },
       turn(7),
     ];
     expect(branchProvenance(busy, 'turn-6').map((message) => message.text))

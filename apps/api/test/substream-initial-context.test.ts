@@ -63,6 +63,25 @@ describe("substream initial model context", () => {
     });
   });
 
+  it("names a Sidekick as one, under the user role it shares with people", () => {
+    const seed = context();
+    seed.parts = [{
+      kind: "history",
+      messages: [{
+        turnId: "turn-2",
+        transcriptSequence: 2,
+        actor: "sidekick",
+        authorUserId: null,
+        authorLabel: "Pipeline digest",
+        createdAt: "2026-09-04T12:00:00.000Z",
+        blocks: [{ text: "Weekly pipeline: 4 new deals", mentions: [], attachments: [] }],
+      }],
+    }];
+    const [message] = renderSubstreamInitialContext(seed);
+    expect(message?.role).toBe("user");
+    expect(JSON.stringify(message?.content)).toContain("Author: Pipeline digest (Sidekick)");
+  });
+
   it("renders no messages when no seed is installed", () => {
     expect(renderSubstreamInitialContext(null)).toEqual([]);
   });

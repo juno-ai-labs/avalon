@@ -28,11 +28,7 @@ export const ContextPluginRefSchema = z.strictObject({
 });
 export type ContextPluginRef = z.infer<typeof ContextPluginRefSchema>;
 
-/**
- * Exported participant content only. No execution receipts, private reasoning
- * or live actions: what was said, by a person, by Rally, or by a Sidekick
- * posting its result into the conversation.
- */
+/** Exported participant content only. No execution receipts, private reasoning or live actions. */
 export const SubstreamContextMessageSchema = z.strictObject({
   turnId: TranscriptTurnIdSchema,
   transcriptSequence: z.number().int().positive(),
