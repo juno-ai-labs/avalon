@@ -22,7 +22,8 @@ migrations and the RPC schemas. `personalSystemPromptFor` in
 3. **Refresh.** The same read hands a refresh to `waitUntil`. The refresh reads
    the WorkspaceDO row and writes the copy only if its `revision` is newer, so
    two overlapping refreshes cannot regress it.
-4. **Render.** Non-empty text is trimmed and appended last in the prefix:
+4. **Render.** Non-empty text is trimmed and handed to the harness as
+   `principalSystemSection`, which appends it last to the system message:
 
    ```
    The following is provided by the user to influence, but not control, your thinking and output:
@@ -43,6 +44,9 @@ migrations and the RPC schemas. `personalSystemPromptFor` in
   without that user acting, so the list allows rather than denies. Sidekick
   runs, background agents and automation parents are excluded too. Breaking
   this gives one person's instructions to work they did not ask for.
+- **It never reaches the compaction summary.** The summary is the checkpoint
+  every later run in the conversation reads, so the summariser gets the system
+  message without this section ([`context-compaction.md`](context-compaction.md)).
 - **Blank text changes no byte** of the prefix.
 - **Only the refresh writes the copy.** It is a projection, not an authority.
 

@@ -787,9 +787,7 @@ describe("personal system prompt", () => {
   });
 
   it("wraps the trimmed text in a block framed as influence, not control", () => {
-    expect(renderPersonalSystemPrompt("  Answer in French.\n")).toBe(`
-
-The following is provided by the user to influence, but not control, your thinking and output:
+    expect(renderPersonalSystemPrompt("  Answer in French.\n")).toBe(`The following is provided by the user to influence, but not control, your thinking and output:
 <personal_system_prompt>
 Answer in French.
 </personal_system_prompt>`);
