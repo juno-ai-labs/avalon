@@ -39,6 +39,7 @@ const api = vi.hoisted(() => ({
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
   setWorkspaceMemberRole: vi.fn(),
+  removeWorkspaceMember: vi.fn(),
   getTerminalWorkspaceSettings: vi.fn(),
   previewTerminalNetworkPolicy: vi.fn(),
   applyTerminalNetworkPolicy: vi.fn(),
@@ -379,6 +380,7 @@ describe('Organization settings', () => {
     });
     api.createWorkspaceInvitation.mockResolvedValue({ invitation, inviteUrl, emailDelivery: 'sent' });
     api.revokeWorkspaceInvitation.mockResolvedValue(undefined);
+    api.removeWorkspaceMember.mockResolvedValue(undefined);
     leaveWorkspace.mockResolvedValue({ outcome: 'left' });
     api.getTerminalWorkspaceSettings.mockResolvedValue({
       availability: 'supported', mode: 'trusted_only', revision: 1, verificationState: 'verified',
@@ -432,6 +434,39 @@ describe('Organization settings', () => {
     await waitFor(() => expect(api.promoteWorkspaceGuest).toHaveBeenCalledWith(guest.id, { incarnation: 'membership', expectedRevision: 3 }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Make Guest Sam a member' })).not.toBeInTheDocument());
     expect(screen.getByText('Guest Sam')).toBeVisible();
+  });
+
+  it('removes a member or guest from the organization after confirmation', async () => {
+    const guest = { ...member, id: 'user-5', name: 'Guest Sam', email: 'guest.sam@example.com', accessClass: 'guest' as const, role: null, incarnation: 'membership', revision: 3 };
+    api.getWorkspaceMembers.mockResolvedValue([owner, member, namesake, guest]);
+    api.removeWorkspaceMember.mockImplementationOnce(async () => {
+      api.getWorkspaceMembers.mockResolvedValue([owner, namesake, guest]);
+    });
+    renderSettings();
+    openSettingsSection('Organization');
+    expect(await screen.findByRole('button', { name: 'Remove Sam (sam@example.com) from this organization' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Remove Sam (sam.reed@example.com) from this organization' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Remove Guest Sam (guest.sam@example.com) from this organization' })).toBeVisible();
+    // The owner's row has none: removing them is refused for an administrator
+    // and is self-removal for the owner, which Leave already covers.
+    expect(screen.queryByRole('button', { name: /Remove Adam/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Sam (sam@example.com) from this organization' }));
+    expect(api.removeWorkspaceMember).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'Remove Sam from Rally Studio?' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(api.removeWorkspaceMember).not.toHaveBeenCalled();
+    expect(screen.queryByRole('heading', { name: 'Remove Sam from Rally Studio?' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Guest Sam (guest.sam@example.com) from this organization' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Sam (sam@example.com) from this organization' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Remove$/ }));
+    await waitFor(() => expect(api.removeWorkspaceMember).toHaveBeenCalledWith(workspace.id, member.id));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove Sam (sam@example.com) from this organization' })).not.toBeInTheDocument());
+    expect(screen.getByText('Sam')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Remove Guest Sam (guest.sam@example.com) from this organization' })).toBeVisible();
   });
 
   it('keeps a guest on their own sections even when a link names a member\'s', async () => {
@@ -553,6 +588,7 @@ describe('Organization settings', () => {
     }
     expect(signOut).not.toHaveBeenCalled();
     expect(leaveWorkspace).not.toHaveBeenCalled();
+    expect(api.removeWorkspaceMember).not.toHaveBeenCalled();
     expect(api.createWorkspaceInvitation).not.toHaveBeenCalled();
     expect(api.startProviderConnection).not.toHaveBeenCalled();
     expect(api.applyTerminalNetworkPolicy).not.toHaveBeenCalled();
@@ -2130,6 +2166,11 @@ describe('Organization settings', () => {
       () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(secondAdmin.id, 'member'),
       { timeout: 10_000 },
     );
+    // Riley is the viewer, so Leave is how they exit; Sam is a member they
+    // can take out of the organization.
+    expect(screen.queryByRole('button', { name: 'Remove Riley (riley@example.com) from this organization' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Sam (sam@example.com) from this organization' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Remove Adam/ })).not.toBeInTheDocument();
 
     // The other half of the same change: inviting an administrator was the
     // owner's alone, and an administrator now has that option too.
@@ -2143,6 +2184,7 @@ describe('Organization settings', () => {
     openSettingsSection('Organization');
     expect(await screen.findByText('Adam')).toBeVisible();
     expect(screen.queryByRole('button', { name: /administrator/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /from this organization/i })).not.toBeInTheDocument();
   });
 
   it('does not expose invitation management to regular members', async () => {

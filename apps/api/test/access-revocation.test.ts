@@ -200,6 +200,30 @@ describe("removing a member", () => {
     // A refusal writes nothing, so nothing is announced either.
     expect(sent).toEqual([]);
   });
+
+  it("removes a guest the same way it removes a member", async () => {
+    const database = seed();
+    const guest = asUserId("00000000-0000-7000-8000-000000000005");
+    database.prepare(
+      `INSERT INTO users(id, google_subject, email, name, created_at, updated_at)
+       VALUES (?, ?, ?, 'Guest Person', ?, ?)`,
+    ).run(guest, `google-${guest}`, "guest@example.test", NOW, NOW);
+    database.prepare(
+      `INSERT INTO workspace_members(workspace_id, user_id, role, status, access_class, joined_at)
+       VALUES (?, ?, NULL, 'active', 'guest', ?)`,
+    ).run(WORKSPACE, guest, NOW);
+    const { env, sent } = environment(database);
+
+    await new WorkspaceService(env, auth(OWNER, "owner")).removeMember(guest);
+
+    const remaining = database.prepare(
+      `SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
+    ).get(WORKSPACE, guest) as { count: number };
+    expect(remaining.count).toBe(0);
+    expect(removedRelationships(sent)).toEqual([expect.objectContaining({
+      workspaceId: WORKSPACE, userId: guest,
+    })]);
+  });
 });
 
 describe("removing a room participant", () => {

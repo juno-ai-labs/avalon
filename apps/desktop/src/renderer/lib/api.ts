@@ -950,6 +950,14 @@ export class RallyApi {
     });
   }
 
+  /** End somebody else's membership or guest access in this organization. */
+  async removeWorkspaceMember(workspaceId: string, userId: string): Promise<void> {
+    await this.requestVoid(
+      `/workspaces/${encodeURIComponent(workspaceId)}/membership/member/${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    );
+  }
+
   async promoteWorkspaceGuest(userId: string, input: { incarnation: string; expectedRevision: number }) {
     return this.request(`/workspace/members/${encodeURIComponent(userId)}/promote`, {
       method: 'POST', body: PromoteWorkspaceGuestSchema.parse(input), schema: WorkspaceRelationshipSchema,

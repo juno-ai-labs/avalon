@@ -22,7 +22,11 @@ and revision. An owner or administrator can use Make member in desktop Settings;
 `POST /workspace/members/:id/promote` compares both values in the guarded D1 write.
 A stale request returns a conflict and refreshes the roster. Promotion retains
 identity and session bindings; the durable relationship delivery invalidates
-participant/directory views without closing valid conversations.
+participant/directory views without closing valid conversations. They can also
+Remove a guest or a member from that roster: Settings confirms, then `DELETE`s
+`/workspaces/:workspaceId/membership/member/:userId`. The owner row and the
+viewer's own row have no remove control. Ending the membership is
+[`access-revocation.md`](access-revocation.md).
 
 ## Where the code lives
 

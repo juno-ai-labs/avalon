@@ -151,12 +151,17 @@ The Connections section adds none: each row's tool count arrives in
 `/connections` itself ([`connectors.md`](connectors.md#settings-tool-counts)).
 
 The roster the Workspace section draws is also where a member is made an
-administrator or handed back: each row an administrator may act on carries a
-promote/demote control that `PATCH`es `/workspace/members/:userId/role`, and the
-answer invalidates both the roster and `['workspace']` — the second because the
-viewer may have just demoted themselves.
+administrator or handed back, a guest is made a member, and a member or guest
+is taken out of the organization: each row an administrator may act on carries
+those controls. Role changes `PATCH` `/workspace/members/:userId/role` and
+invalidate both the roster and `['workspace']` — the second because the viewer
+may have just demoted themselves.
 [`workspace-member-roles.md`](workspace-member-roles.md) owns the rules behind
-that control and what the server refuses.
+that control and what the server refuses. Removal confirms, then `DELETE`s
+`/workspaces/:workspaceId/membership/member/:userId`, and invalidates the
+roster; the owner row and the viewer's own row have no remove control, because
+the server refuses both. [`access-revocation.md`](access-revocation.md) owns
+the membership ending itself.
 
 Two of those used to be read twice per open, and both because staleness had been
 bypassed rather than tuned:

@@ -48,6 +48,7 @@ the D1 intent for the existing scheduled recovery path.
 | `apps/api/src/services/access-revocation.ts` | The message schema, the publish helpers, the expired-session sweep, and `revocationClosesSocket` — the one place that decides whether a socket belongs to a revocation. Every producer goes through here. |
 | `apps/api/src/queues/access-revocation-consumer.ts` | One hop per message: resolve the object, call it, publish the children it names. |
 | `apps/api/src/routes/workspace-membership.ts` | The administrator removal route and `DELETE /workspaces/:workspaceId/membership`, where a member leaves for themself. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The organization roster's Remove control, which confirms and then calls the administrator removal route for a member or guest. |
 | `apps/api/src/services/workspace-service.ts` | `removeMember` and `leaveWorkspace` — end the D1 membership and immediately dispatch its trigger-recorded relationship intent in the same request. Final-member leave suspends the row during atomic workspace abandonment instead of deleting it, but publishes the same membership-wide revocation. |
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/worker-events.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate — and session expiry plus durable relationship dispatch on the existing cron. |

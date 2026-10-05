@@ -550,10 +550,16 @@ export function WorkspaceSettingsScreen({
     staleTime: 30_000,
   });
   const [promotion, setPromotion] = useState<{ id: string; name: string; incarnation: string; revision: number } | null>(null);
+  const [removal, setRemoval] = useState<{ id: string; name: string } | null>(null);
   const promoteGuest = useMutation({
     mutationFn: (guest: { id: string; incarnation: string; revision: number }) =>
       api!.promoteWorkspaceGuest(guest.id, { incarnation: guest.incarnation, expectedRevision: guest.revision }),
     onSuccess: () => setPromotion(null),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
+  });
+  const removeMember = useMutation({
+    mutationFn: (userId: string) => api!.removeWorkspaceMember(workspace.id, userId),
+    onSuccess: () => setRemoval(null),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
   });
   const leavingClosesWorkspace = members.data?.length === 1;
@@ -1404,8 +1410,11 @@ export function WorkspaceSettingsScreen({
                           * member first, while a member is handed the same
                           * powers the viewer is using right now. The owner has
                           * no control beside them either way — their role is
-                          * the one the server refuses to reassign, so drawing a
-                          * button that can only fail is worse than drawing none.
+                          * the one the server refuses to reassign, and ending
+                          * their membership is refused for an administrator
+                          * and is self-removal for the owner, so drawing a
+                          * button that can only fail is worse than drawing
+                          * none.
                           */}
                         {isAdmin && member.accessClass === 'guest' && member.incarnation && member.revision && (
                           <Button disabled={promoteGuest.isPending} aria-label={`Make ${member.name} a member`}
@@ -1435,6 +1444,19 @@ export function WorkspaceSettingsScreen({
                             {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
                           </Button>
                         )}
+                        {isAdmin && member.id !== workspace.currentUser.id && member.role !== 'owner'
+                          && member.status !== 'invited' && (
+                          <Button
+                            aria-label={`Remove ${member.name} (${member.email}) from this organization`}
+                            disabled={removeMember.isPending}
+                            onClick={() => {
+                              removeMember.reset();
+                              setRemoval({ id: member.id, name: member.name });
+                            }}
+                          >
+                            Remove
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1446,6 +1468,36 @@ export function WorkspaceSettingsScreen({
                   {promoteGuest.error && <InlineError>{promoteGuest.error.message}</InlineError>}
                   <Button disabled={promoteGuest.isPending} onClick={() => setPromotion(null)}>Cancel</Button>
                   <Button disabled={promoteGuest.isPending} onClick={() => { if (promotion) promoteGuest.mutate(promotion); }}>Make member</Button>
+                </Modal>
+                <Modal
+                  open={removal !== null}
+                  onOpenChange={(open) => {
+                    if (!open && !removeMember.isPending) {
+                      setRemoval(null);
+                      removeMember.reset();
+                    }
+                  }}
+                  title={`Remove ${removal?.name ?? 'this person'} from ${workspace.name}?`}
+                  description={`${removal?.name ?? 'This person'} will lose access to this organization. Their conversations and contributions stay in place.`}
+                >
+                  {removeMember.error && <InlineError>{removeMember.error.message}</InlineError>}
+                  <Button
+                    disabled={removeMember.isPending}
+                    onClick={() => {
+                      setRemoval(null);
+                      removeMember.reset();
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    className="button-danger"
+                    disabled={removeMember.isPending}
+                    onClick={() => { if (removal) removeMember.mutate(removal.id); }}
+                  >
+                    {removeMember.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+                    Remove
+                  </Button>
                 </Modal>
 
                 {isSettingAvailable(settings.invitations, settingsContext) && (

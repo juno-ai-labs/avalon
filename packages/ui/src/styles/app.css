@@ -2697,7 +2697,7 @@ pre {
    each: an explicit track is never collapsed, so a row that draws no control —
    the owner's, an invited member's, every row for a member — still paid the
    column gap and sat its badge 11px inside the others. */
-.settings-member-actions { align-items: center; display: flex; gap: 11px; }
+.settings-member-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 11px; justify-content: flex-end; }
 .settings-member-row:last-child { border-bottom: 0; }
 
 .settings-diagnostics { margin: 0; padding: 0 14px; }
