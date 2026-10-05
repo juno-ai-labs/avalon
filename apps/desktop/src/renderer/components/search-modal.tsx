@@ -1,16 +1,37 @@
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { File, Hash, LayoutGrid, Link, MessageSquare, Search, Shapes } from 'lucide-react';
+import { File, Link, MessageSquare, Search, Shapes } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { SearchCategory, SearchRequest, SearchResponse, SearchResult } from '@rally/contracts/search';
+import type { SpaceColorKey, SpaceIconKey, WorkstreamAppearance } from '@rally/contracts';
+import { SpaceIcon } from '@rally/ui/components/space-icon';
+import { WorkstreamMark } from '@rally/ui/components/workstream-glyph';
 import { Button } from './primitives';
 import { RelativeTime } from './relative-time';
 import { ApiError } from '../lib/api';
 import { isComposingKeyEvent } from '../lib/ime';
 
-/** A Channel or Space the reader can open, matched by name in the modal itself. */
-export interface SearchPlace { kind: 'channel' | 'space'; id: string; name: string }
+/**
+ * A Channel, Breakout or Space the reader can open, matched by name in the
+ * modal itself and drawn with its own mark in its own colour.
+ */
+export type SearchPlace =
+  | { kind: 'channel'; id: string; name: string; appearance?: WorkstreamAppearance | undefined }
+  // A Breakout is listed with the Channels. Without a look of its own it wears its Channel's.
+  | { kind: 'breakout'; id: string; channelId: string; channelName: string; name: string;
+    appearance?: WorkstreamAppearance | undefined }
+  | { kind: 'space'; id: string; name: string; iconKey: SpaceIconKey; colorKey: SpaceColorKey };
+
+const placeKey = (place: SearchPlace) => place.kind === 'breakout' ? `breakout:${place.channelId}/${place.id}` : `${place.kind}:${place.id}`;
+
+function PlaceIcon({ place }: { place: SearchPlace }): React.JSX.Element {
+  if (place.kind === 'space') return <SpaceIcon size={18} space={place} />;
+  return <WorkstreamMark appearance={place.appearance} id={place.kind === 'breakout' ? place.channelId : place.id} size={18} />;
+}
+
+const placeSource = (place: SearchPlace) => place.kind === 'space' ? 'Space'
+  : place.kind === 'breakout' ? `Breakout in ${place.channelName}` : 'Channel';
 type PlaceTab = 'channels' | 'spaces';
 type SearchTab = SearchCategory | PlaceTab;
 const isPlaceTab = (tab: SearchTab): tab is PlaceTab => tab === 'channels' || tab === 'spaces';
@@ -194,7 +215,12 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
   });
   const continuationFailed = response.isFetchNextPageError
     && (!(response.error instanceof ApiError) || response.error.status >= 500);
-  const places = open && placeTab ? matchPlaces(placeTab === 'channels' ? channels : spaces ?? [], normalized) : [];
+  // A place tab lists its own kind; All puts every matching place above the
+  // content results, which arrive later and so never push a place down. All
+  // shows every match: how many is a product number nobody has set yet.
+  const places = !open ? []
+    : placeTab ? matchPlaces(placeTab === 'channels' ? channels : spaces ?? [], normalized)
+    : activeTab === 'all' && normalized ? matchPlaces([...channels, ...spaces ?? []], normalized) : [];
   const results = open && !placeTab && normalized && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
     ? [...new Map((response.data?.pages.flatMap((page) => page.results) ?? []).map((result) => [result.id, result])).values()] : [];
   useEffect(() => {
@@ -229,7 +255,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
     observer.observe(target);
     return () => observer.disconnect();
   }, [canContinue, continuationFailed, results.length]);
-  const rowCount = placeTab ? places.length : results.length;
+  const rowCount = places.length + results.length;
   const active = Math.min(selected, Math.max(0, rowCount - 1));
   // Also when the footer opens or closes: it takes its room from the list, and
   // the state that opens it is one the reader reaches without moving the
@@ -239,12 +265,12 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [active, response.isFetchingNextPage, continuationFailed]);
   const choose = (index: number) => {
-    if (placeTab) {
+    if (index < places.length) {
       const place = places[index];
       if (!place || !onSelectPlace) return;
       onSelectPlace(place);
     } else {
-      const result = results[index];
+      const result = results[index - places.length];
       if (!result) return;
       onSelect(result);
     }
@@ -298,19 +324,19 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
               if (element.scrollTop + element.clientHeight >= element.scrollHeight - 1) loadMore();
             }}>
             {places.map((place, index) => {
-              const Icon = place.kind === 'channel' ? Hash : LayoutGrid;
-              return <div key={place.id} id={`${listId}-${index}`} role="option" aria-selected={index === active}
+              return <div key={placeKey(place)} id={`${listId}-${index}`} role="option" aria-selected={index === active}
                 className="rally-search-result" onMouseMove={() => setSelected(index)}
                 onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
-                <span className={`rally-search-result-icon is-${place.kind}`}><Icon size={18} aria-hidden="true" /></span>
+                <span className={`rally-search-result-icon is-${place.kind}`}><PlaceIcon place={place} /></span>
                 <div className="rally-search-result-copy">
                   <div className="rally-search-result-excerpt"><HighlightedName name={place.name} query={normalized} /></div>
-                  <div className="rally-search-result-source">{place.kind === 'channel' ? 'Channel' : 'Space'}</div>
+                  <div className="rally-search-result-source">{placeSource(place)}</div>
                 </div>
               </div>;
             })}
-            {results.map((result, index) => {
+            {results.map((result, resultIndex) => {
               const Icon = ICONS[result.category];
+              const index = places.length + resultIndex;
               return <div key={result.id} id={`${listId}-${index}`} role="option" aria-selected={index === active}
                 className="rally-search-result" onMouseMove={() => setSelected(index)}
                 onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
