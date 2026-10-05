@@ -32,6 +32,7 @@ import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstrea
 import { activeRealtimeWorkstreamId } from '../lib/workspace-workstream-sockets';
 import { useWorkspaceSocket, type SidebarConnect, type WorkspaceSocketState } from '../lib/workspace-socket';
 import { channelDestination, useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
+import { heldChannelBreakouts } from '../lib/channel-viewer-state';
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import {
   evictCachedWorkstream,
@@ -539,11 +540,18 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     [associativeNavigation.data, workstreams.data],
   );
   const visibleSpaces = spaces.data?.items ?? [];
-  // A Channel still being created has no conversation to open yet.
-  const searchChannels = useMemo(() => sidebarWorkstreams.filter((channel) => !channel.pending).map((channel): SearchPlace => (
-    { kind: 'channel', id: channel.id, name: channel.title })), [sidebarWorkstreams]);
+  // A Channel still being created has no conversation to open yet. Each
+  // Channel is followed by the Breakouts this device holds for it, read when
+  // the modal opens: the socket keeps those lists for every Channel.
+  const searchChannels = useMemo(() => !searchOpen ? [] : sidebarWorkstreams.filter((channel) => !channel.pending)
+    .flatMap((channel): SearchPlace[] => [
+      { kind: 'channel', id: channel.id, name: channel.title, appearance: channel.appearance },
+      ...(heldChannelBreakouts(queryClient, [channel.id])[channel.id] ?? []).map((breakout): SearchPlace => ({
+        kind: 'breakout', id: breakout.substreamId, channelId: channel.id, channelName: channel.title,
+        name: breakout.title, appearance: breakout.appearance ?? channel.appearance })),
+    ]), [searchOpen, sidebarWorkstreams, queryClient]);
   const searchSpaces = useMemo(() => (spaces.data?.items ?? []).map((space): SearchPlace => (
-    { kind: 'space', id: space.id, name: space.name })), [spaces.data]);
+    { kind: 'space', id: space.id, name: space.name, iconKey: space.iconKey, colorKey: space.colorKey })), [spaces.data]);
   const visibleInactiveSpaces = inactiveSpaces.data?.items ?? [];
   const spacesReady = socketSpacesReady;
   const pinnedOrder = usePinnedOrder();
@@ -962,9 +970,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         search={(request, signal) => api.searchWorkspace(request, signal)}
         channels={searchChannels} spaces={spacesEnabled ? searchSpaces : undefined}
         onSelectPlace={(place) => {
-          if (place.kind === 'space') { navigate(`/spaces/${encodeURIComponent(place.id)}`); return; }
-          const channel = sidebarWorkstreams.find((candidate) => candidate.id === place.id);
-          navigate(channelDestination(channel ?? { id: place.id }));
+          if (place.kind === 'space') navigate(`/spaces/${encodeURIComponent(place.id)}`);
+          else if (place.kind === 'breakout') navigate(channelDestination({ id: place.channelId, associativeSubstreamId: place.id }));
+          else navigate(channelDestination(sidebarWorkstreams.find((candidate) => candidate.id === place.id) ?? { id: place.id }));
         }}
         onSelect={(result) => {
           const target = result.location;
