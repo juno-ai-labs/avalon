@@ -83,6 +83,9 @@ immediately, including while the first account lookup is pending. Account provid
 exempt accounts keep their workspace and socket rather than remounting them.
 Account appearance editing shows a loading status until the authoritative profile
 loads; a settled failure remains an error.
+On the Mac app, a missing account credential or a terminal account renewal
+failure ends the complete local session and shows a native sign-in notice;
+it cannot leave Account settings unavailable inside an otherwise signed-in app.
 An identity without a workspace still waits for its introduction status and
 retains the retry/sign-out flow. Eligible accounts still receive their unfinished
 introduction and workspace journey when account details arrive. Workspace journey

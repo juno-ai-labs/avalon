@@ -73,9 +73,17 @@ makes a *concurrent* pair of renewals with the same token succeed twice, each
 rotating, and the answer that reaches the desktop first is the one persisted.
 The device is then holding a token the service accepts only until the grace
 ends; the next renewal is a 401, which is terminal, and the credential is
-surrendered. For the identity credential that means the next switch or
-creation first sends the person through a browser sign-in, and every
-discovered-only workspace gone from the menu until it has.
+surrendered. On the Mac app, a terminal identity renewal failure ends the
+entire local session and shows **Your Rally session has ended.** in a native
+modal. A signed-in organization with no account credential takes the same path
+when an account request discovers it. Main clears all credentials and profiles,
+broadcasts sign-out, and closes auxiliary windows before showing the notice;
+the person returns to sign-in rather than continuing with broken account
+settings. Existing server sessions are revoked in the background using the
+same revocation path as explicit sign-out; an unreachable server cannot delay
+the local cleanup or notice. Network errors and server failures retain credentials for retry.
+The cleanup compares the rejected credential with the current one under the
+session mutation lock, so an old failure cannot erase a newer sign-in.
 
 Every renewal therefore goes through `credential-refresh.ts`: two requests
 that found the same access token expired share one rotation and persist the
@@ -154,11 +162,9 @@ relies on the browser showing Rally's sign-in page, because the only
 surface a link has is the notice window, whose title reads as a failure and
 which the main window cannot take down once the link has opened. A link
 waits for its sign-in outside the deep-link queue, which the sign-in's own
-callback must be free to come through. A renewal of the identity
-credential that the service refuses for good — the surrender in
-[Credential renewal](#credential-renewal) — answers the request that needed
-it with the same code, so the click that discovered the credential was dead
-is the click that signs in, not the one after. The exchange also invalidates
+callback must be free to come through. A terminal identity renewal now ends
+the whole local session as described in [Credential renewal](#credential-renewal),
+rather than preserving an organization with no account identity. The exchange also invalidates
 the menu's directory query the moment it lands, so nothing the renderer holds
 about the account outlives the sign-in that changed it. There is no timeout
 on the wait: that would be a limit with a number nobody has chosen, and the
@@ -389,9 +395,22 @@ Refresh material stays in Electron main and is never exposed through preload.
 Each workspace credential is bearer authority for exactly one regional
 workspace; selecting a workspace does not broaden it. The feature flag changes
 presentation only. On revocation or departure, main removes exactly the affected
-credential/profile/drafts before another workspace becomes active. Lockdown
+organization credential/profile/drafts before another workspace becomes active.
+A terminal account failure ends all local sessions instead. Lockdown
 encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
+
+### 2026-10-05 — A terminal account failure ends the desktop session
+
+**What changed:** Missing account identity in an otherwise signed-in desktop,
+and terminal account refresh failures, clear the complete local session and
+show one main-process-owned native notice across concurrent requests.
+
+**Why:** Preserving organization credentials after losing account identity left
+the app apparently signed in while Account settings could no longer load.
+Silent partial credential removal and in-place account reconnection were rejected
+in favor of an explicit sign-out. Transient failures still retain credentials,
+and delayed failures must respect a newer credential's binding and tokens.
 
 ### 2026-10-03 — The Mac app lists, activates and opens guest workspaces
 

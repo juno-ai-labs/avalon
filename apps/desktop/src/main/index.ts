@@ -89,6 +89,7 @@ import type {
 import { generatedArtifactWindowDocument } from '../common/generated-artifact-window';
 import { readArtifactWindows, writeArtifactWindows, type ArtifactWindowState } from './artifact-window-state';
 import { logError, logWarn } from '../common/logger';
+import { AccountSessionFailure } from './account-session-failure';
 import {
   defaultDesktopReleaseChannel,
   parseDesktopReleaseChannel,
@@ -488,6 +489,15 @@ async function reportTelemetryProductIntent(
 
 let mainWindow: BrowserWindow | null = null;
 let applicationIsQuitting = false;
+const accountSessionFailure = new AccountSessionFailure({
+  showMessageBox: (options) => {
+    const parent = mainWindow;
+    return parent && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized()
+      ? dialog.showMessageBox(parent, options)
+      : dialog.showMessageBox(options);
+  },
+  onError: (error) => logError('rally', 'account session logout failed', error),
+});
 const rendererCrashRecovery = new RendererCrashRecovery({
   showMessageBox: (options) => {
     const parent = mainWindow;
@@ -1710,6 +1720,35 @@ async function clearStoredSession(): Promise<void> {
   await withSessionMutation(clearStoredSessionUnlocked);
 }
 
+/** A dead account cannot leave otherwise valid organization windows signed in. */
+async function endAccountSession(rejected?: StoredAuth): Promise<void> {
+  await accountSessionFailure.end(() => withSessionMutation(async () => {
+    if (loggingOut || updateInstallationPending || applicationIsQuitting) return false;
+    const auth = await loadStoredAuthSet();
+    if (!auth) return false;
+    // A delayed rejection must never sign out a newer browser sign-in.
+    if (rejected) {
+      if (!auth.account || !storedAuthMatches(auth.account, rejected)) return false;
+    } else if (auth.account || auth.workspaces.length === 0) return false;
+    sessionLifecycleEpoch += 1;
+    desktopAuthAttempts.clear();
+    desktopPush.signOut(auth.workspaces);
+    loggingOut = true;
+    try {
+      await clearStoredSessionUnlocked();
+      settingsWindow?.close();
+      sidekicksWindow?.close();
+    } finally {
+      loggingOut = false;
+    }
+    // Local sign-out and its notice must not wait for an unreachable server.
+    void revokeStoredCredentials(auth).catch((error: unknown) => {
+      logWarn('rally', 'could not revoke every session after account failure', error);
+    });
+    return true;
+  }));
+}
+
 async function removeStoredCredentialUnlocked(rejected: StoredAuth): Promise<void> {
   const auth = await loadStoredAuthSet();
   if (!auth) return;
@@ -2040,7 +2079,9 @@ async function requestSession(
   });
   if (!response.ok) throw await responseError(response);
   const parsed = SessionSchema.safeParse(await response.json());
-  if (!parsed.success) throw new UnusableCredentialError('Rally returned an invalid authentication session');
+  if (!parsed.success) throw new UnusableCredentialError(
+    zodDiagnosticCode(parsed.error, 'authentication_session') ?? 'authentication_session_invalid',
+  );
   const returnedApiBaseUrl = new URL(parsed.data.apiBaseUrl).toString().replace(/\/$/u, '');
   if (returnedApiBaseUrl !== apiBaseUrl) {
     throw new UnusableCredentialError('The regional service returned a mismatched endpoint');
@@ -2191,7 +2232,10 @@ async function requireOnboardingIdentitySession(): Promise<WireSession> {
   const stored = await loadStoredIdentitySession().catch((error: unknown) => {
     throw identityRenewalFailure(error);
   });
-  if (!stored) throw accountReconnectRequiredFailure();
+  if (!stored) {
+    await endAccountSession();
+    throw accountReconnectRequiredFailure();
+  }
   if (stored.apiBaseUrl !== configuredApiBase('global')) {
     throw new Error('Organization setup requires a Rally platform identity session');
   }
@@ -2391,7 +2435,8 @@ async function refreshStoredCredentialOnce(previous: StoredAuth): Promise<WireSe
   } catch (error) {
     if (refreshFailureIsTerminal(error)) {
       try {
-        await withSessionMutation(() => removeStoredCredentialUnlocked(previous));
+        if (previous.binding.workspaceId === null) await endAccountSession(previous);
+        else await withSessionMutation(() => removeStoredCredentialUnlocked(previous));
       } catch (cleanupError) {
         logWarn('rally', 'could not remove a terminally rejected stored credential', cleanupError);
       }
@@ -2724,7 +2769,8 @@ async function refreshActiveSessionOnce(previousAuth: StoredAuth, expectedLifecy
     // session.
     if (refreshFailureIsTerminal(error)) {
       try {
-        await withSessionMutation(async () => {
+        if (previousAuth.binding.workspaceId === null) await endAccountSession(previousAuth);
+        else await withSessionMutation(async () => {
           if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) return;
           const currentAuth = await loadStoredAuth();
           if (!currentAuth || !storedAuthMatches(currentAuth, previousAuth)) return;
@@ -2770,6 +2816,34 @@ function coalescedRefreshSession(): Promise<DesktopSession> {
   return refreshInFlight;
 }
 
+async function revokeStoredCredentials(stored: StoredAuthSet): Promise<void> {
+  const failures: unknown[] = [];
+  const credentials = [
+    ...(stored.account ? [stored.account] : []),
+    ...stored.workspaces,
+  ];
+  for (const credential of credentials) {
+    try {
+      const apiBaseUrl = apiBaseForAuth(credential);
+      const response = await net.fetch(`${apiBaseUrl}/auth/logout`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${credential.accessToken}`,
+        },
+        body: JSON.stringify({ refreshToken: credential.refreshToken }),
+      });
+      if (!response.ok) throw await responseError(response);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Rally could not revoke every stored session');
+  }
+}
+
 async function logout(): Promise<void> {
   // The renderer treats a failed expiry refresh as a reason to clear native
   // credentials. During updater shutdown, networking is expected to be torn
@@ -2790,27 +2864,8 @@ async function logout(): Promise<void> {
     settingsWindow?.close();
     sidekicksWindow?.close();
     if (stored) {
-      const credentials = [
-        ...(stored.account ? [stored.account] : []),
-        ...stored.workspaces,
-      ];
-      for (const credential of credentials) {
-        try {
-          const apiBaseUrl = apiBaseForAuth(credential);
-          const response = await net.fetch(`${apiBaseUrl}/auth/logout`, {
-            method: 'POST',
-            headers: {
-              Accept: 'application/json',
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${credential.accessToken}`,
-            },
-            body: JSON.stringify({ refreshToken: credential.refreshToken }),
-          });
-          if (!response.ok) throw await responseError(response);
-        } catch (error) {
-          failures.push(error);
-        }
-      }
+      try { await revokeStoredCredentials(stored); }
+      catch (error) { failures.push(error); }
     }
   } finally {
     loggingOut = false;
