@@ -323,12 +323,12 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   ));
 
   server.registerTool("retry_sidekick_import", {
-    description: "Move a Sidekick from its legacy SidekickDO into its Organization's WorkspaceDO again, after repairing what made the last import fail. Returns `imported`, or `pending` with the code the new attempt failed on. Changes production state.",
+    description: "Move a Sidekick from its legacy SidekickDO into its Organization's WorkspaceDO again, after repairing what made the last import fail. Returns `imported`, or `pending` with the code the new attempt failed on. Changes production state and cannot be undone: the export it asks for freezes the legacy object.",
     inputSchema: {
       workspaceId: WorkspaceIdSchema,
       sidekickId: AutomationIdSchema,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, ({ workspaceId, sidekickId }) => tool(
     principal,
     "retry_sidekick_import",

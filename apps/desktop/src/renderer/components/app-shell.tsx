@@ -31,7 +31,8 @@ import { usePinnedOrder, useSpaceDirectories, useSpacesReady } from '../lib/use-
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { activeRealtimeWorkstreamId } from '../lib/workspace-workstream-sockets';
 import { useWorkspaceSocket, type SidebarConnect, type WorkspaceSocketState } from '../lib/workspace-socket';
-import { useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
+import { channelDestination, useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
+import { heldChannelBreakouts, isWorkstreamChildrenQueryKey, type ChannelBreakoutLists } from '../lib/channel-viewer-state';
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import {
   evictCachedWorkstream,
@@ -41,7 +42,7 @@ import {
 } from '../lib/workstreams-cache';
 import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
-import { SearchModal } from './search-modal';
+import { SearchModal, type SearchPlace } from './search-modal';
 import { Sidebar } from './sidebar';
 import { OrganizationUsageMenuItem } from './organization-usage';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
@@ -86,8 +87,10 @@ export function upsertSpaceDirectory(
     // A REST response does not advance the socket receiver's ledger. The next
     // authoritative socket snapshot still has to be accepted at this version.
     waterline: current?.waterline ?? 0,
+    // The socket can deliver a later revision before this response lands, for
+    // example the icon Rally chooses for a new Space; keep the newer one.
     items: current?.items.some((item) => item.id === space.id)
-      ? current.items.map((item) => item.id === space.id ? space : item)
+      ? current.items.map((item) => item.id === space.id && item.revision < space.revision ? space : item)
       : [...(current?.items ?? []), space],
   };
 }
@@ -401,6 +404,33 @@ export function spacesEnabledForSession(session: ClientSession | null): boolean 
 }
 
 /**
+ * The Channels search lists, each followed by its Breakouts: the ones the
+ * socket holds for this reader as a member (`held`), and the ones a grant
+ * reaches, which only the shared navigation directory lists. A Channel still
+ * being created is left to the caller to drop.
+ */
+export function searchChannelPlaces(
+  channels: readonly WorkstreamSummary[],
+  held: ChannelBreakoutLists,
+  directory: SharedNavigationDirectory | undefined,
+): SearchPlace[] {
+  const shared = new Map((directory?.workstreams ?? []).map((entry) => [entry.parentId, entry.conversations]));
+  return channels.flatMap((channel): SearchPlace[] => {
+    const breakouts = new Map<string, { title: string; appearance?: WorkstreamSummary['appearance'] }>();
+    for (const conversation of shared.get(channel.id) ?? []) {
+      if (conversation.substreamId !== '0' && !conversation.archived) breakouts.set(conversation.substreamId, conversation);
+    }
+    for (const breakout of held[channel.id] ?? []) breakouts.set(breakout.substreamId, breakout);
+    return [
+      { kind: 'channel', id: channel.id, name: channel.title, substreamId: channel.associativeSubstreamId, appearance: channel.appearance },
+      ...[...breakouts].map(([substreamId, breakout]): SearchPlace => ({
+        kind: 'breakout', id: substreamId, channelId: channel.id, channelName: channel.title,
+        name: breakout.title, appearance: breakout.appearance, channelAppearance: channel.appearance })),
+    ];
+  });
+}
+
+/**
  * The Channel rail: the socket's rows, the same list for a member and a guest.
  *
  * The workspace socket lists a Channel when any conversation in it is this
@@ -539,6 +569,24 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     [associativeNavigation.data, workstreams.data],
   );
   const visibleSpaces = spaces.data?.items ?? [];
+  // While search is open, a Breakout list the socket writes re-reads the
+  // places, so a Breakout created or renamed meanwhile shows at once.
+  const [breakoutListsVersion, setBreakoutListsVersion] = useState(0);
+  useEffect(() => {
+    if (!searchOpen) return;
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (event.type === 'updated' && isWorkstreamChildrenQueryKey(event.query.queryKey)) setBreakoutListsVersion((version) => version + 1);
+    });
+  }, [searchOpen, queryClient]);
+  const searchChannels = useMemo(() => {
+    if (!searchOpen) return [];
+    const channels = sidebarWorkstreams.filter((channel) => !channel.pending);
+    return searchChannelPlaces(channels, heldChannelBreakouts(queryClient, channels.map((channel) => channel.id)),
+      associativeNavigation.data);
+    // `breakoutListsVersion` is how a Breakout list written to the cache reaches this read.
+  }, [searchOpen, sidebarWorkstreams, associativeNavigation.data, breakoutListsVersion, queryClient]);
+  const searchSpaces = useMemo(() => (spaces.data?.items ?? []).map((space): SearchPlace => (
+    { kind: 'space', id: space.id, name: space.name, iconKey: space.iconKey, colorKey: space.colorKey })), [spaces.data]);
   const visibleInactiveSpaces = inactiveSpaces.data?.items ?? [];
   const spacesReady = socketSpacesReady;
   const pinnedOrder = usePinnedOrder();
@@ -670,12 +718,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',
   ].filter(Boolean).join(' ');
   const {
-    loadedSpaceIds, prioritizeSpace, reconnect, setForegroundWorkstreamId, sidebarConnect, state: workspaceSocketState,
+    loadedSpaceIds, prioritizeSpace, setForegroundWorkstreamId, sidebarConnect, state: workspaceSocketState,
   } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
-  // A pending Channel may not be in the Organization's directory yet, and the
-  // workspace socket closes for good on presence naming a Channel it cannot see.
+  // A pending Channel may not be in the Organization's directory yet, and
+  // WorkspaceDO records presence naming one it has not listed as no Channel.
   const foregroundWorkstreamId = activeRealtimeWorkstreamId(activeWorkstreamId, workstreams.data);
   useEffect(() => {
     setForegroundWorkstreamId(foregroundWorkstreamId);
@@ -800,11 +848,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         spacesReadOnly={guestSession}
         inactiveSpaces={visibleInactiveSpaces}
         spacesReady={spacesReady}
-        // The rows on screen are the last ones the socket delivered and the
-        // connection is down. They stay, marked out of date, with the one retry
-        // there is: a list nothing fetches has nothing to refetch.
-        spacesOutOfDate={workspaceSocketState === 'unavailable'}
-        onRetrySpaces={reconnect}
         onArchiveWorkstream={async (workstream) => {
           // Thrown rather than returned, unlike the handlers around it. The
           // sidebar treats this promise resolving as the archive having
@@ -955,6 +998,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       {api && <SearchModal key={`${workspace.id}:${workspace.currentUser.id}`} workspaceId={`${workspace.id}:${workspace.currentUser.id}`}
         open={searchOpen} onOpenChange={setSearchOpen}
         search={(request, signal) => api.searchWorkspace(request, signal)}
+        channels={searchChannels} spaces={spacesEnabled ? searchSpaces : undefined}
+        onSelectPlace={(place) => {
+          if (place.kind === 'space') navigate(`/spaces/${encodeURIComponent(place.id)}`);
+          else if (place.kind === 'breakout') navigate(channelDestination({ id: place.channelId, associativeSubstreamId: place.id }));
+          else navigate(channelDestination({ id: place.id, associativeSubstreamId: place.substreamId }));
+        }}
         onSelect={(result) => {
           const target = result.location;
           if (target.kind === 'message') {

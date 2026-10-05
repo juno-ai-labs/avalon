@@ -383,11 +383,14 @@ describe('New channel home', () => {
     })));
     await waitFor(() => expect(queryClient.getQueryData(['ordered-transcript', 'new-workstream']))
       .toMatchObject({ ranges: [{ turns: [{ blocks: [{
+        // The room's stored form, which is what draws the chip: the seed holds
+        // it from the first paint rather than waiting for the canonical turn.
+        text: `ask [@Samantha Lee](person://${teammate.id})`,
         mentions: [{
           type: 'person',
           userId: teammate.id,
           startOffset: 4,
-          endOffset: 17,
+          endOffset: 66,
         }],
       }] }] }] }));
   });
@@ -842,6 +845,27 @@ describe('New channel home', () => {
     expect(within(turn).getByText('Prepare the launch brief')).toBeVisible();
     expect(screen.getByRole('status', { name: 'Rally is working' })).toBeVisible();
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Welcome back, Adam' })).not.toBeInTheDocument());
+  });
+
+  it('draws a picked mention as a chip on the in-flight opening turn', async () => {
+    // The chip is drawn from the room's `[@Name](person://<id>)` form, so a
+    // turn built from the draft's plain `@Name` reads as text for as long as
+    // the create is in flight.
+    api.createWorkstream.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.focus(composer);
+    fireEvent.change(composer, { target: { value: 'ask @Sam' } });
+    await screen.findByRole('listbox', { name: 'Mentions' });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(composer).toHaveValue('ask @Samantha Lee '));
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    const turn = await screen.findByRole('article', { name: 'Message from Adam Juhasz' });
+    const chip = within(turn).getByText('Samantha Lee').closest('.mention-chip');
+    expect(chip).toHaveAttribute('data-person-id', teammate.id);
+    expect(within(turn).queryByText(/@Samantha Lee/)).not.toBeInTheDocument();
   });
 
   // The hand-off is built on the composer being one object across both states.

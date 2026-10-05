@@ -374,6 +374,16 @@ than whichever rejection landed first.
   whatever was left of it. Motion is for things the turn does not sit on: the
   dock's participant row, which is below the transcript, and the turn's own 7px
   arrival.
+- **The optimistic turn renders the room's text, not the draft's.** A mention
+  chip is drawn from the `[@Name](person://<id>)` Markdown the room stores, and
+  the draft holds only the plain `@Name` and the popover selections. Both the
+  in-flight turn and the transcript `optimisticOpeningTranscript` seeds run them
+  through `prepareMentionMarkdown` (via `optimisticMentionRendering` and
+  `prepareDraftMentions` in `lib/transcript.ts`), the rewrite the room itself
+  applies, so the chip is there from the first frame and the bubble's width does
+  not change at the swap. Only the rendering is rewritten: the request still
+  carries the draft as typed, with its offsets, and the room decides which
+  mentions it accepts.
 - **`launching` is set in the same commit as the request, and cleared on
   failure.** An optimistic turn stands for a work stream that does not exist; it
   cannot remain on screen next to an error explaining why it never will.

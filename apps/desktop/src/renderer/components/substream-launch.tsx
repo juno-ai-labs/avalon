@@ -5,6 +5,7 @@ import { IconCornerDownRight } from '@tabler/icons-react';
 import { type ReactNode, useRef, useState } from 'react';
 import type { RallyApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
+import { optimisticMentionRendering } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import type { Message, MessageAttachment, WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { RallyRegion } from '../../common/desktop';
@@ -46,6 +47,8 @@ export interface LaunchingSubstream {
   /** Frozen at submit so the optimistic turn and the persisted one agree. */
   createdAt: string;
   text: string;
+  /** The popover selections, so the drawn turn shows chips rather than plain `@Name`. */
+  mentions: MentionIdentity[];
   /** Drives the work timer, which the created substream keeps counting from. */
   startedAt: number;
 }
@@ -208,7 +211,8 @@ export function SubstreamLaunchSurface({
     }
   };
 
-  const openingTurn: Message | null = launching
+  const openingMentions = launching ? optimisticMentionRendering(launching.text, launching.mentions, members) : null;
+  const openingTurn: Message | null = launching && openingMentions
     ? {
       id: 'launching-substream-message',
       workstreamId: parent.id,
@@ -216,7 +220,8 @@ export function SubstreamLaunchSurface({
       authorType: 'human',
       ...(currentUser ? { author: currentUser } : {}),
       messageType: 'text',
-      text: launching.text,
+      text: openingMentions.text,
+      mentions: openingMentions.mentions,
       attachments: launching.attachments,
       createdAt: launching.createdAt,
     }

@@ -21,7 +21,7 @@
 
 import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asAutomationId,
@@ -64,6 +64,8 @@ import { hostedParentStub } from "./helpers/hosted-parent";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { runSidekickAlarms } from "./helpers/sidekick";
+import { SidekickRunProvisionQueueMessageSchema } from "../src/durable-objects/automation-do-protocol";
+import { provisionSidekickRun } from "../src/services/sidekick-run-provisioning";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -1188,6 +1190,30 @@ describe("a hosted Sidekick", () => {
     expect(pending).toHaveLength(1);
     expect(pending[0]!.due_at).toBeGreaterThan(before);
     expect(await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId })).toMatchObject({ state: "pending" });
+  });
+
+  it("arms no resend for a run that reported in while its message was being sent", async () => {
+    await activeAutomation();
+    // The consumer runs before the send returns, the way a fast Queue
+    // delivery can, so the report lands while the alarm is still awaiting.
+    type QueueSend = { send: (body: unknown, options?: QueueSendOptions) => Promise<void> };
+    const prototype = Object.getPrototypeOf(TEST_ENV.ACTIVITY_QUEUE) as QueueSend;
+    const original = prototype.send;
+    const send = vi.spyOn(prototype, "send").mockImplementation(async function (this: QueueSend, body, options) {
+      const provision = SidekickRunProvisionQueueMessageSchema.safeParse(body);
+      if (provision.success) return provisionSidekickRun(TEST_ENV, provision.data);
+      return original.call(this, body, options);
+    });
+    try {
+      const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "resend-run-02" });
+      await runDurableObjectAlarm(workspaceStub());
+      await expect.poll(async () => (await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId }))?.state)
+        .not.toBe("pending");
+      expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND && alarm.alarm_key === started.runId))
+        .toEqual([]);
+    } finally {
+      send.mockRestore();
+    }
   });
 
   it("pauses one Sidekick without touching another's pending run", async () => {

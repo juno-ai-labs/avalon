@@ -68,7 +68,7 @@ function legacy(id: string = SIDEKICK_ID) {
  * pending manual run, its main conversation, an unsent sidebar row, and the
  * alarm entries for the schedule and the run.
  */
-async function seedLegacySidekick(options: { runAsUserId?: string } = {}): Promise<void> {
+async function seedLegacySidekick(options: { runAsUserId?: string; owningWorkstreamId?: string } = {}): Promise<void> {
   const now = Date.now();
   await runInDurableObject(legacy(), async (instance, state) => {
     const sql = state.storage.sql;
@@ -78,9 +78,10 @@ async function seedLegacySidekick(options: { runAsUserId?: string } = {}): Promi
          current_definition_revision, accepted_definition_revision, connector_bindings_json, default_plugin_ids_json,
          activity_source_plugin_ids_json, evaluator_projection_json, model_override, email_address,
          effective_after_event_sequence, authority_generation, created_at, updated_at, loadable)
-       VALUES (1, ?, ?, 'global', ?, ?, 'active', NULL, 'personal', NULL, NULL, 'Hourly helper', 'Runs every hour',
+       VALUES (1, ?, ?, 'global', ?, ?, 'active', NULL, ?, ?, NULL, 'Hourly helper', 'Runs every hour',
          2, 2, '{}', '[]', '{}', '[]', NULL, NULL, 0, 1, ?, ?, 0)`,
-      SIDEKICK_ID, WORKSPACE_ID, AUTHOR_ID, options.runAsUserId ?? AUTHOR_ID, now, now,
+      SIDEKICK_ID, WORKSPACE_ID, AUTHOR_ID, options.runAsUserId ?? AUTHOR_ID,
+      options.owningWorkstreamId ? "workstream" : "personal", options.owningWorkstreamId ?? null, now, now,
     );
     for (const revision of [1, 2]) {
       sql.exec(
@@ -269,6 +270,14 @@ describe("importing a Sidekick from its legacy object", () => {
     const listed = await workspace().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
     expect(listed.items.map((item) => item.id)).toEqual([SIDEKICK_ID]);
 
+    // Another request inside the backoff fails with the same code and does
+    // not ask the legacy object again.
+    const exports = vi.spyOn(SidekickDO.prototype, "exportForImport");
+    expect(await touch()).toMatchObject({ status: 503, code: (refused as { code: string }).code });
+    expect(exports).not.toHaveBeenCalled();
+    exports.mockRestore();
+    expect(await ledger()).toMatchObject({ attempts: 1 });
+
     // An operator repairs the frozen row, then retries.
     await legacy().runInspectionSql({ sql: "UPDATE automation SET run_as_user_id = ? WHERE id = 1", bindings: [AUTHOR_ID] });
     expect(await workspace().retrySidekickImport({ workspaceId: WORKSPACE_ID, automationId: SIDEKICK_ID }))
@@ -310,6 +319,40 @@ describe("importing a Sidekick from its legacy object", () => {
     const listed = await workspace().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
     expect(listed.items.map((item) => item.id)).toEqual([SIDEKICK_ID]);
     expect(await touch()).toMatchObject({ code: "sidekick_not_found" });
+  });
+
+  it("pauses a Sidekick whose Channel was archived while its import was failing", async () => {
+    const roomId = "00000000-0000-7000-8000-00000000ee05";
+    await seedLegacySidekick({ owningWorkstreamId: roomId });
+    await publishLegacyDirectory();
+    // The Channel is archived in the Organization object before the import
+    // lands: the archive's own notice found nothing it could import then.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO channels (
+           workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+           title, description, preview, scope, exact_state, system_kind, last_activity_at,
+           completed_at, archived_at, email_address, origin_type, origin_label,
+           created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+           title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+           next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+           source_created_at, source_updated_at, projected_at)
+         VALUES (?, 1, 1, 'event-room', 'h', 'Room', '', '', 'personal', 'idle', NULL, ?,
+                 NULL, ?, NULL, 'ad_hoc', NULL, NULL, NULL, NULL, NULL,
+                 'settled', 0, 0, NULL, NULL, NULL, ?, ?, ?)`,
+        roomId, Date.now(), Date.now(), Date.now(), Date.now(), Date.now(),
+      );
+    });
+
+    await touch();
+
+    expect(await ledger()).toMatchObject({ state: "imported" });
+    const row = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+      lifecycle: string; paused_by: string | null; owning_room_archived_at: number | null;
+    }>(`SELECT lifecycle, paused_by, owning_room_archived_at FROM automation_directory WHERE automation_id = ?`,
+      SIDEKICK_ID).one());
+    expect(row).toMatchObject({ lifecycle: "paused", paused_by: "room_archive" });
+    expect(row.owning_room_archived_at).not.toBeNull();
   });
 
   it("refuses a late legacy copy of a row a hosted write owns", async () => {

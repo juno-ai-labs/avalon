@@ -972,6 +972,32 @@ describe('what a breakout shows of where it came from', () => {
       .toEqual(['Main turn 1', 'Main turn 2']);
   });
 
+  it('shows only text, counting five turns of it past the activity rows between them', () => {
+    const activity = (sequence: number, messageType: Message['messageType']): Message => ({
+      ...turn(sequence), id: `row-${sequence}-${messageType}`, messageType, text: '',
+    });
+    const busy: Message[] = [
+      turn(1),
+      turn(2),
+      activity(3, 'thought'),
+      activity(3, 'tool_event'),
+      turn(3),
+      // One answer split over two text rows is one turn.
+      { ...turn(3), id: 'row-3-more', text: 'Main turn 3, continued' },
+      activity(4, 'tool_event'),
+      // A Sidekick's result is written text and counts as a turn.
+      { ...turn(4), authorType: 'system', messageType: 'automation_activation', text: 'Sidekick result 4' },
+      turn(5),
+      // The row the reported bug drew: a settled answer's folded work.
+      activity(6, 'work_accordion'),
+      turn(6),
+      { ...activity(6, 'system'), authorType: 'system', text: 'Ada joined the conversation' },
+      turn(7),
+    ];
+    expect(branchProvenance(busy, 'turn-6').map((message) => message.text))
+      .toEqual(['Main turn 2', 'Main turn 3', 'Main turn 3, continued', 'Sidekick result 4', 'Main turn 5', 'Main turn 6']);
+  });
+
   it('shows nothing for a breakout started from the sidebar, or from a turn off the loaded window', () => {
     expect(branchProvenance(transcript, null)).toEqual([]);
     // Not the newest turns: a branch point this client cannot see is provenance

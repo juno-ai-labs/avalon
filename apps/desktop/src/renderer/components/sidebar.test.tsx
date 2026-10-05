@@ -1781,30 +1781,6 @@ describe('Sidebar channel markers', () => {
     expect(screen.queryByRole('menuitem', { name: 'Add to space' })).not.toBeInTheDocument();
   });
 
-  it('keeps the spaces it has and offers a retry when the directory is out of date', () => {
-    const onRetrySpaces = vi.fn();
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            onRetrySpaces={onRetrySpaces}
-            onSignOut={vi.fn()}
-            spaces={[general(), space()]}
-            spacesOutOfDate
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    expect(pill('Hiring')).toBeVisible();
-    expect(screen.queryByText('These spaces may be out of date.')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh spaces' }));
-    expect(onRetrySpaces).toHaveBeenCalled();
-  });
-
   it('opens the same Channel after switching between either containing Space', () => {
     const hiring = space();
     const launch = space('00000000-0000-7000-8000-0000000000f3', 'Launch');

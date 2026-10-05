@@ -796,3 +796,53 @@ describe("the WorkspaceDO ranking-request parking column", () => {
     }]);
   });
 });
+
+describe("the WorkspaceDO hosted-Sidekick migration", () => {
+  const HOSTED_SIDEKICK_VERSION = 91;
+
+  it("keeps every directory row and enrols each one for import", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, HOSTED_SIDEKICK_VERSION - 1);
+    seedIdentity(database);
+    const insert = database.prepare(
+      `INSERT INTO automation_directory
+         (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
+          owning_workstream_id, title, description, next_run_at, projected_at)
+       VALUES (?, ?, ?, 3, 'h', ?, ?, ?, ?, '', ?, 7)`,
+    );
+    insert.run("00000000-0000-7000-8000-0000000000c1", WORKSPACE_ID, "00000000-0000-7000-8000-0000000000c3",
+      "active", "workspace", null, "Morning briefing", 1_000);
+    insert.run("00000000-0000-7000-8000-0000000000c2", WORKSPACE_ID, "00000000-0000-7000-8000-0000000000c3",
+      "paused", "workstream", "00000000-0000-7000-8000-0000000000c4", "Call prep", null);
+
+    apply(database, HOSTED_SIDEKICK_VERSION, HOSTED_SIDEKICK_VERSION - 1);
+
+    // What the legacy object published survives as it was; the definition
+    // columns stay empty until the import writes them, and `region` unset is
+    // what lets a late legacy copy still land.
+    expect(database.prepare(
+      `SELECT automation_id, lifecycle, scope, owning_workstream_id, title, next_run_at, source_version,
+              region, paused_by, accepted_definition_revision, authority_generation
+         FROM automation_directory ORDER BY automation_id`,
+    ).all()).toEqual([
+      { automation_id: "00000000-0000-7000-8000-0000000000c1", lifecycle: "active", scope: "workspace",
+        owning_workstream_id: null, title: "Morning briefing", next_run_at: 1_000, source_version: 3,
+        region: null, paused_by: null, accepted_definition_revision: null, authority_generation: null },
+      { automation_id: "00000000-0000-7000-8000-0000000000c2", lifecycle: "paused", scope: "workstream",
+        owning_workstream_id: "00000000-0000-7000-8000-0000000000c4", title: "Call prep", next_run_at: null,
+        source_version: 3, region: null, paused_by: null, accepted_definition_revision: null,
+        authority_generation: null },
+    ]);
+    expect(database.prepare(
+      `SELECT sidekick_id, state, attempts, not_before, imported_at FROM sidekick_imports ORDER BY sidekick_id`,
+    ).all()).toEqual([
+      { sidekick_id: "00000000-0000-7000-8000-0000000000c1", state: "pending", attempts: 0, not_before: 0, imported_at: null },
+      { sidekick_id: "00000000-0000-7000-8000-0000000000c2", state: "pending", attempts: 0, not_before: 0, imported_at: null },
+    ]);
+    // The tables a hosted Sidekick writes exist, empty.
+    for (const table of ["sidekick_revisions", "sidekick_schedules", "sidekick_runs", "sidekick_children"]) {
+      expect(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 0 });
+    }
+  });
+});

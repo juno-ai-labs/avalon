@@ -139,6 +139,7 @@ const INTERLEAVED_TOOLS_MODEL = "pipeline-b12/primary";
 const QUEUED_FOLLOW_UP_MODEL = "pipeline-queued/primary";
 const RETRY_AFTER_ASSISTANT_TURN_MODEL = "pipeline-retry-fence/primary";
 const ASIDE_MODEL = "pipeline-aside/primary";
+const PERSONAL_PROMPT_MODEL = "pipeline-personal-prompt/primary";
 const ASIDE_WINDOW_MODEL = "pipeline-aside-window/primary";
 const ASIDE_ELICITATION_MODEL = "pipeline-aside-elicitation/primary";
 const ASIDE_BACKLOG_MODEL = "pipeline-aside-backlog/primary";
@@ -297,6 +298,7 @@ async function initializeWorkstream(
   openingMessage: string,
   modelOverride: string | null = null,
   participantUserIds: readonly string[] = [],
+  reason = "user_message",
 ): Promise<{
   status: number;
   body: Record<string, unknown>;
@@ -320,7 +322,7 @@ async function initializeWorkstream(
       attachmentIds: [],
       modelOverride,
       executionPrincipal: { type: "user", userId: USER_ID },
-      reason: "user_message",
+      reason,
     },
   });
 }
@@ -1891,6 +1893,63 @@ describe("a member's message travels the whole pipeline", () => {
       // installed, because an `installScriptedProvider` that itself threw
       // reaches here too.
       await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("renders a saved personal system prompt from the conversation's copy, a turn after it is saved", async () => {
+    const stub = agentStub();
+    const instructions = "Answer in French, and keep every reply under fifty words.";
+    const systemMessages = (requests: Awaited<ReturnType<typeof capturedProviderRequests>>) => requests
+      .filter((request) => request.url === "https://openrouter.ai/api/v1/chat/completions")
+      .map((request) => JSON.stringify((request.body.messages as Array<{ role?: unknown; content?: unknown }>)
+        .filter((message) => message.role === "system")));
+    try {
+      await env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID)).savePersonalSystemPrompt({
+        workspaceId: WORKSPACE_ID,
+        userId: USER_ID,
+        personalSystemPrompt: instructions,
+      });
+      await installScriptedProvider(stub, [
+        [{ choices: [{ delta: { content: "first answer" }, finish_reason: "stop" }] }],
+        [{ choices: [{ delta: { content: "second answer" }, finish_reason: "stop" }] }],
+      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [] });
+      const opened = await initializeWorkstream(stub, "first message", PERSONAL_PROMPT_MODEL, [], "opening_message");
+      await externallySettledRun(stub, opened.body.harnessRunId as string);
+      await waitForLoopRelease(stub);
+
+      // The first turn never waits on WorkspaceDO, so it ran on an empty copy
+      // and refreshed the copy behind itself.
+      expect(systemMessages(await capturedProviderRequests(stub))).toEqual([
+        expect.not.stringContaining(instructions),
+      ]);
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ text: string }>(
+          `SELECT text FROM personal_system_prompt_copies WHERE user_id = ?`,
+          USER_ID,
+        ).toArray()[0]?.text ?? null), {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "the first turn never refreshed the conversation's copy",
+      }).toBe(instructions);
+
+      const followUp = await product(stub, {
+        operation: "create_message",
+        auth: AUTH,
+        input: {
+          text: "second message",
+          clientMessageId: "pipeline-personal-prompt-1",
+          mentions: [],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+        },
+      });
+      expect(followUp.status).toBe(200);
+      await settledRunForTrigger(stub, (followUp.body.turn as { turnId: string }).turnId);
+
+      const [, second] = systemMessages(await capturedProviderRequests(stub));
+      expect(second).toContain(`<personal_system_prompt>\\n${instructions}\\n</personal_system_prompt>`);
+    } finally {
       await restoreProviderFetch(stub);
     }
   });

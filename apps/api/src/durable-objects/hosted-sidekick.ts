@@ -1511,6 +1511,9 @@ export class HostedSidekick {
       this.registerChild(runId, "child", null, now);
     });
     await this.host.sendRunProvision({ workspaceId: row.workspace_id, automationId: this.sidekickId, runId });
+    // The report can land while the send is awaited; a run it settled needs
+    // no resend.
+    if (this.run(runId)?.state !== "pending") return { progressed: true };
     // Asked again later unless the report comes first. The drain deletes an
     // entry at the instant that ran whatever the handler returned, and nothing
     // rebuilds a run's entry from its row, so the resend is this entry moved

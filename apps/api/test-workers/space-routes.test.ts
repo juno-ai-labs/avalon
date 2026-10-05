@@ -90,8 +90,20 @@ function routeEnv(): Env {
     ...env,
     SESSION_SIGNING_KEY: SESSION_KEY,
     WORKSTREAM_EMAIL_ADDRESS_KEY: "workerd-test-email-address-key-0123456789",
+    ...(namingModelReachable ? NAMING_MODEL : {}),
   } satisfies Env;
 }
+
+/**
+ * The key and model the naming call needs, which the shared binding lacks.
+ * Off by default, because only a suite with a provider double installed may
+ * let a request reach the model.
+ */
+const NAMING_MODEL = {
+  OPENROUTER_API_KEY: "workerd-test-openrouter-key",
+  OPENROUTER_CLASSIFIER_MODEL: "double/naming",
+} as const;
+let namingModelReachable = false;
 
 const app = createApp();
 
@@ -363,6 +375,51 @@ describe("POST /spaces", () => {
       .toContainEqual(expect.objectContaining({ id: created.id }));
     expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
       .not.toContain(created.id);
+  });
+});
+
+describe("a Space created without an icon", () => {
+  // Opened by the gate when a case wants a person's edit to land first.
+  let gate: Promise<void> = Promise.resolve();
+  useSelectedModel();
+  useOpenRouterDouble(async () => {
+    await gate;
+    return { say: JSON.stringify({ title: "Hiring pipeline", icon: "rocket" }) };
+  });
+
+  beforeEach(() => { namingModelReachable = true; });
+  afterEach(() => { namingModelReachable = false; gate = Promise.resolve(); });
+
+  async function storedIcon(spaceId: string): Promise<string | undefined> {
+    return (await spaceDirectories(OWNER)).active.items.find((item) => item.id === spaceId)?.iconKey;
+  }
+
+  it("is given the icon Rally chooses from its name", async () => {
+    // Through the route, which hands the pass to `waitUntil`; `request` waits
+    // on that execution context before it returns. The slow answer is what
+    // tells the two apart: a pass the route let go of lands after the read.
+    gate = new Promise((resolve) => setTimeout(resolve, 1_000));
+    const created = await request("/spaces", OWNER_AUTH, { name: "Hiring", colorKey: "blue", scope: "personal" });
+    expect(created).toMatchObject({ status: 201, body: { iconKey: "circle-dot" } });
+
+    expect(await storedIcon((created.body as SpaceSummary).id)).toBe("rocket");
+  });
+
+  it("keeps the icon a person picks while Rally is still choosing", async () => {
+    let release = () => {};
+    gate = new Promise((resolve) => { release = resolve; });
+    const deferred: Promise<void>[] = [];
+    const service = new SpaceService(routeEnv(), OWNER_AUTH);
+    const created = await service.create(
+      { name: "Hiring", colorKey: "blue", scope: "personal" },
+      undefined,
+      (work) => deferred.push(work),
+    );
+    await service.updatePresentation(asSpaceId(created.id), { name: "Hiring", iconKey: "target", colorKey: "blue" });
+
+    release();
+    await Promise.all(deferred);
+    expect(await storedIcon(created.id)).toBe("target");
   });
 });
 

@@ -88,9 +88,12 @@ both sides of the submit, per
 
 What sits above that composer is the branch provenance:
 
-- **From a message** — the turn that was branched from and the four before it,
-  faded out upward under a gradient mask and inert to the pointer. They say what
-  is being branched out of. They are not what the substream inherits: the
+- **From a message** — offered on any settled turn the capture keeps: a
+  person's or Rally's text, or a Sidekick's result. Above the composer sit the
+  turn that was branched from and the four before it, counted in turns of what
+  was said (see the invariant below), faded out upward under a gradient mask
+  and inert to the pointer. They say what is being branched out of. They are
+  not what the substream inherits: the
   platform still freezes a summary of the conversation through that cutoff, and
   those turns are the only part of it anybody is shown. They are also part of
   composing rather than part of the substream, so the keystroke that submits is
@@ -147,7 +150,11 @@ is created behind them: `POST …/substreams/prepare` freezes and
 summarizes, then `POST …/substreams/confirm` carries the message. The response
 names the canonical turn, which is seeded into the child's transcript with the
 child's detail before the navigation, so the child's screen paints the same turn
-in the same place rather than showing its opening state. A creation that fails
+in the same place rather than showing its opening state. Both the drawn turn
+and the seed carry the room's mention rewrite rather than the draft's plain
+`@Name`, so a mention is a chip from the first frame — the rule and its reason
+are in [Work-stream creation](workstream-creation.md), which shares this path.
+A creation that fails
 takes the optimistic turn back off the screen and puts the words back in the
 composer.
 
@@ -351,14 +358,20 @@ initializer receiving the creator and validated configuration; a future policy
 that needs the main roster must obtain it from the parent's authority, not infer
 it from the current viewer or copy a client-provided list.
 
-“Full history” means eligible participant text, attribution, mentions and
-attachment references. It is not a clone of the tool protocol: tool inputs and
-results, thinking, run state, elicitation state and queued instructions are not
+“Full history” means what was said (see the invariant below), with
+attribution, mentions and attachment references. It is not a clone of the tool
+protocol: tool inputs and results, thinking, run state, elicitation state and queued instructions are not
 inherited. [Agent harness](agent-harness.md) owns how these inert records enter
 the first model context without becoming executable historical work.
 
 ## Invariants
 
+- **What reaches a Breakout is what was said.** The capture and the launch pane
+  admit the same rows: a person's or Rally's `text`, and a Sidekick's result,
+  which is a `system` turn admitted only by its `automation_activation` message
+  type and captured as actor `sidekick` under the name frozen into the row. Tool
+  and thinking blocks, work rows, elicitations, suggestions and every other
+  `system` turn stay out, and the pane counts its five in turns, not rows.
 - **Explicit child membership alone admits a child, and discovery asks the
   same question.** Parent visibility is neither required nor enough: parent
   participants cannot enumerate or open someone else's private child, and
@@ -510,8 +523,10 @@ five completion/error cases.
 - Summary and initial-context unit suites: pinned inference routing, inert
   model rendering and provenance.
 - `apps/api/test/substream-context-storage.test.ts`: real SQLite schema,
-  completed-prefix capture, frozen retry, excluded execution blocks and idle
-  immutable installation. Mutation proof removes the cutoff turn.
+  completed-prefix capture, frozen retry, excluded execution blocks, what was
+  said (text and Sidekick results in; system bookkeeping and elicitations out)
+  and idle immutable installation. Mutation proofs remove the cutoff turn,
+  restore the skip on every `system` turn, and admit every text block.
 - `apps/api/test-workers/substream-creation-runtime.test.ts`: real workerd
   parent/source/child prepare-confirm with provider HTTP doubled;
   duplicate confirmation, creator-only access, cancellation and no initial run
@@ -554,6 +569,36 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-10-05 — Breakouts start from what was said, Sidekick results included
+
+**What changed:** The capture behind a Breakout's starting context keeps a
+Sidekick's result, as a new `sidekick` actor, and drops elicitation and
+suggestion text it used to keep, so it admits what the launch pane draws. The
+pane counts five turns of that, ending at the turn branched from rather than at
+that turn's first row. A Breakout can be started from a Sidekick result.
+
+**Why:** A Breakout started from a Rally answer showed "Worked for 6s" and not
+the answer: the window cut at the first row of the turn, and the work row comes
+first. Counting rows also let work rows crowd out the conversation. On the
+server, tool blocks were already excluded, but so were Sidekick results, which
+are written for the room and are often what a Breakout is about.
+
+**Considered and rejected:** Admitting every `system` turn and letting the
+summary sort it out: most are Rally's bookkeeping, and the summary would spend
+its handoff on them. Sending a Sidekick result as actor `external`, which every
+installed client already parses: it would tell the model a person outside
+Rally said it.
+
+**Consequences:** Desktop clients built before this change reject a history
+part carrying actor `sidekick`, and a frozen capture fails the same way on every
+snapshot. That is safe while `SUBSTREAM_CONTEXT_POLICY` is `summary`, whose
+parts carry no messages; moving to a history-carrying policy must wait until
+installed clients accept `sidekick`. A cutoff is any settled turn the capture
+keeps; offering one the capture skips would fail creation as
+`substream_source_turn_not_completed`.
+
+Shipped in #1095.
 
 ### 2026-09-24 — A Breakout's roster is its own
 
