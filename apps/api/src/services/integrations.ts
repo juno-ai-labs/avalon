@@ -2798,8 +2798,8 @@ export async function runWorkstreamHarness(
       memoryContextMs: 0,
       memoryRecallRequired: false,
     })
-    : loadRunPromptContext(env, input, attemptLease, workstream, runDefinitionPreparation,
-      personalSystemPromptFor(input, runtime?.persistentLoop?.personalSystemPrompt)));
+    : loadRunPromptContext(env, input, attemptLease, workstream, runDefinitionPreparation));
+  const personalSystemPrompt = profile ? "" : personalSystemPromptFor(input, runtime?.persistentLoop?.personalSystemPrompt);
   const toolsPreparation = new Preparation(() => profile
     ? Promise.resolve(profileHarnessTools(profile.plugins(input,
       localWorkstreamAuthority(env, input.workspaceId, input.parentId, "desktopAction"))))
@@ -3400,6 +3400,8 @@ export async function runWorkstreamHarness(
           : input.executionPrincipal.workspaceId,
       },
       systemPrompt: promptContext.systemPrompt,
+      // Its own field so compaction can keep it out of the shared summary.
+      ...(personalSystemPrompt ? { principalSystemSection: personalSystemPrompt } : {}),
       // A persistent loop bootstraps from canonical transcript history once.
       // Activation-only wrappers cross the separately fenced durable boundary
       // below; a resumed execution must never replace the Bind head with a
@@ -4788,7 +4790,6 @@ async function loadRunPromptContext(
   workstream: { title: string; objective: string },
   runDefinitionPreparation = new Preparation(() => input.automationRun
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null)),
-  personalSystemPrompt = "",
 ): Promise<{
   systemPrompt: string;
   additionalMessages: ModelMessage[];
@@ -5027,9 +5028,7 @@ async function loadRunPromptContext(
       ...(automationContext ? { sidekick: automationContext } : {}),
     }) + (input.backgroundAgent || input.parentKind === "automation"
       ? "\nFor requests from another agent, send results and questions back to that agent. Ask that agent for missing information instead of asking participants. Your final response stays here; it is not forwarded."
-      : "") + "\nContinue existing agents through messages. Before creating a Sidekick, look for a suitable one owned by this workstream. If none fits, create one here by default. Send setup instructions to its authoring agent; that agent drafts the configuration."
-      // Last, so a member with none leaves every byte before it unchanged.
-      + personalSystemPrompt,
+      : "") + "\nContinue existing agents through messages. Before creating a Sidekick, look for a suitable one owned by this workstream. If none fits, create one here by default. Send setup instructions to its authoring agent; that agent drafts the configuration.",
     additionalMessages,
     memoryContextHash: frozenMemory?.memoryContextHash ?? null,
     memoryContextMs: memoryContextPreparation?.elapsedMs ?? 0,
