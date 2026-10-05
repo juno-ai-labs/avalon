@@ -431,6 +431,71 @@ function remarkSoftBreaks() {
   };
 }
 
+/**
+ * A typed `@Rally` in a person's message, matched with the composer's own
+ * boundaries (`mention-highlight.ts`): an opening space or bracket before the
+ * `@`, and a space, punctuation, or the end after the name.
+ */
+const RALLY_MENTION = /(^|[\s([{])(@rally)(?=[\s\p{P}]|$)/giu;
+
+/**
+ * Rally's chip: the person chip's shape with Rally's own avatar. Built from
+ * nested `hName` nodes, so remark-rehype emits the spans directly and no
+ * component or link scheme stands behind it for message text to forge.
+ */
+function rallyMentionNode(): MarkdownRewriteNode {
+  return {
+    type: 'rallyMention',
+    data: { hName: 'span', hProperties: { className: ['mention-chip', 'mention-chip-rally'] } },
+    children: [
+      {
+        type: 'rallyMentionAvatar',
+        data: { hName: 'span', hProperties: { className: ['mention-chip-avatar', 'mention-chip-avatar-rally'], 'aria-hidden': 'true' } },
+        children: [{ type: 'rallyMentionInitial', data: { hName: 'span' }, children: [{ type: 'text', value: 'R' }] }],
+      },
+      {
+        type: 'rallyMentionLabel',
+        data: { hName: 'span', hProperties: { className: ['mention-chip-label'] } },
+        children: [{ type: 'text', value: 'Rally' }],
+      },
+    ],
+  };
+}
+
+/**
+ * Draws a person's `@Rally` as a chip. Rally carries no stored mention
+ * identity, so the text is the mention, exactly as the composer highlights it.
+ * Links keep their labels and code stays literal.
+ */
+function remarkRallyMentions() {
+  return (tree: unknown) => {
+    const visit = (node: MarkdownRewriteNode): void => {
+      if (node.type === 'link' || node.type === 'code' || node.type === 'inlineCode') return;
+      const children = node.children;
+      if (!children) return;
+      node.children = children.flatMap((child) => {
+        if (child.type !== 'text' || child.value === undefined) {
+          visit(child);
+          return [child];
+        }
+        const value = child.value;
+        const parts: MarkdownRewriteNode[] = [];
+        let cursor = 0;
+        for (const match of value.matchAll(RALLY_MENTION)) {
+          const start = match.index + match[1]!.length;
+          if (start > cursor) parts.push({ type: 'text', value: value.slice(cursor, start) });
+          parts.push(rallyMentionNode());
+          cursor = start + match[2]!.length;
+        }
+        if (cursor === 0) return [child];
+        if (cursor < value.length) parts.push({ type: 'text', value: value.slice(cursor) });
+        return parts;
+      });
+    };
+    visit(tree as MarkdownRewriteNode);
+  };
+}
+
 function rewriteMarkdownBreaks(node: MarkdownRewriteNode): void {
   if (node.type === 'code' || node.type === 'inlineCode') return;
   const children = node.children;
@@ -1056,6 +1121,7 @@ export function MarkdownBody({
   glance = false,
   mentions = NO_MENTIONS,
   preserveLineBreaks = false,
+  rallyMentions = false,
   speechKind = 'response',
   still = false,
   streaming = false,
@@ -1087,6 +1153,8 @@ export function MarkdownBody({
   mentions?: MessageMention[];
   /** Human chat messages keep the visible line breaks entered in the composer. */
   preserveLineBreaks?: boolean;
+  /** A person's message, where a typed `@Rally` addresses Rally and draws as a chip. */
+  rallyMentions?: boolean;
   /**
    * This body is being rendered into a picture rather than onto the screen.
    *
@@ -1313,8 +1381,9 @@ export function MarkdownBody({
   // literal `[^foo]` of a reference nothing ever defined stays literal.
   const remarkPlugins = useMemo(() => {
     const base = streaming ? STREAMING_REMARK_PLUGINS : REMARK_PLUGINS;
-    return preserveLineBreaks ? [...base, remarkSoftBreaks] : base;
-  }, [preserveLineBreaks, streaming]);
+    if (!preserveLineBreaks && !rallyMentions) return base;
+    return [...base, ...(preserveLineBreaks ? [remarkSoftBreaks] : []), ...(rallyMentions ? [remarkRallyMentions] : [])];
+  }, [preserveLineBreaks, rallyMentions, streaming]);
   const tailRemarkPlugins = useMemo(() => preserveLineBreaks
     ? [...STREAMING_TAIL_REMARK_PLUGINS, remarkSoftBreaks]
     : STREAMING_TAIL_REMARK_PLUGINS, [preserveLineBreaks]);
@@ -2746,6 +2815,7 @@ export function MessageBlock({
               <MarkdownBody
                 mentions={message.mentions}
                 preserveLineBreaks
+                rallyMentions
                 speechKind="message"
                 telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
                 verbatim
