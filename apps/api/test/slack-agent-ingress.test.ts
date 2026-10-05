@@ -227,7 +227,9 @@ describe("Slack Agent durable ingress", () => {
       "xoxb-test",
       "CPRIVATE",
       "channel",
-    )).resolves.toEqual({ channelType: "private", channelName: "founders-boiler-room", failure: null, threadable: true });
+    )).resolves.toEqual({
+      channelType: "private", channelName: "founders-boiler-room", failure: null, threadable: true, externallyShared: false,
+    });
     expect(fetcher).toHaveBeenCalledOnce();
     expect(__slackAgentTesting.slackChannelType("CPRIVATE")).toBe("unknown");
   });
