@@ -133,6 +133,25 @@ describe('organization search modal', () => {
     await waitFor(() => expect(search).toHaveBeenCalledWith({ query: 'pri', category: 'all', pageSize: 7 }, expect.any(AbortSignal)));
   });
 
+  it('draws a Breakout with no look of its own in exactly its Channel\'s mark', () => {
+    const channelId = '00000000-0000-7000-8000-0000000000c4';
+    setup(async () => ({ results: [] }), { channels: [
+      { kind: 'channel', id: channelId, name: 'Pricing review' },
+      { kind: 'breakout', id: '00000000-0000-7000-8000-0000000000b4', channelId, channelName: 'Pricing review', name: 'Pricing tiers' },
+    ] });
+    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'pricing' } });
+    const [channel, breakout] = screen.getAllByRole('option').map((option) => option.querySelector('.rally-search-result-icon')!.innerHTML);
+    expect(breakout).toBe(channel);
+  });
+
+  it('says the content search failed even when places matched', async () => {
+    setup(async () => { throw new ApiError('Unavailable', 503); }, PLACES);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'pric' } });
+    expect(await screen.findByText('Search could not be completed. Please try again.')).toBeVisible();
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+  });
+
   it('highlights the matched letters of a name whose lowercase is longer', () => {
     setup(async () => ({ results: [] }), { channels: [{ kind: 'channel', id: '00000000-0000-7000-8000-0000000000c3', name: 'İİ Pricing' }] });
     fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
