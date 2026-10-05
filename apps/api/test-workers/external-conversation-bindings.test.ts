@@ -302,6 +302,14 @@ describe("a room named for an existing Space", () => {
       .toMatchObject({ outcome: "spawn", spaceId: general });
   });
 
+  it("reads a dash in a room's name as a space, so `#room-c3` matches \"room C3\"", async () => {
+    const spaced = await linkRoom("C3", "00000000-0000-7000-8000-000000000e33");
+    if (!spaced.ok) throw new Error("link refused");
+    expect(await match("ROOM-C3")).toBe(spaced.spaceId);
+    expect(await match("room--c3")).toBe(spaced.spaceId);
+    expect(await match("roomc3")).toBeNull();
+  });
+
   it("refuses to link a room into a matched Space that was archived before the link", async () => {
     const general = await generalId();
     await runInDurableObject(workspace(), (_instance, state) => {
