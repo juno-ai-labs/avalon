@@ -1790,6 +1790,13 @@ export const UpdateUserTimezoneRequestSchema = z.object({ timezone: IanaTimezone
 /** A member's personal system prompt for one Organization; empty means none. */
 export const PersonalSystemPromptSchema = z.strictObject({ personalSystemPrompt: z.string() });
 export type PersonalSystemPrompt = z.infer<typeof PersonalSystemPromptSchema>;
+/** A member's display preferences for one Organization. Whole on read and on write. */
+export const MemberPreferencesSchema = z.strictObject({
+  /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */
+  showAgentWork: z.boolean(),
+});
+export type MemberPreferences = z.infer<typeof MemberPreferencesSchema>;
+export const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = { showAgentWork: true };
 export const UpdateWorkspaceRequestSchema = z.object({ timezone: IanaTimezoneSchema });
 
 // --- Digest ---------------------------------------------------------------
@@ -2639,6 +2646,8 @@ export const WorkspaceSocketSyncEventSchema = z.strictObject({
   sidebar: WorkspaceSidebarSchema.optional(),
   /** Per-viewer values, present only on the private answer to subscribe. */
   featureFlags: ClientFeatureFlagsSchema.optional(),
+  /** This viewer's display preferences, beside `featureFlags` and for the same reason. */
+  viewerPreferences: MemberPreferencesSchema.optional(),
 }).superRefine((event, context) => {
   if (event.topics.length === 0 && event.sidebar === undefined) {
     context.addIssue({

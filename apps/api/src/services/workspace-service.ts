@@ -1,6 +1,6 @@
 import { promoteWorkspaceGuest } from "./workspace-relationship-service";
 import type { Region } from "@rally/contracts/regions";
-import { PersonalPresentationSchema } from '@rally/contracts';
+import { MemberPreferencesSchema, PersonalPresentationSchema, type MemberPreferences } from '@rally/contracts';
 import {
   AssignableMemberRoleSchema,
   asUserId,
@@ -393,6 +393,21 @@ export class WorkspaceService {
       this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
     );
+  }
+
+  async getMyPreferences() {
+    return MemberPreferencesSchema.parse(await (await this.workspaceObject()).memberPreferences({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: this.auth.userId,
+    }));
+  }
+
+  async updateMyPreferences(preferences: MemberPreferences) {
+    return MemberPreferencesSchema.parse(await (await this.workspaceObject()).saveMemberPreferences({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: this.auth.userId,
+      preferences,
+    }));
   }
 
   async getMyPersonalSystemPrompt() {

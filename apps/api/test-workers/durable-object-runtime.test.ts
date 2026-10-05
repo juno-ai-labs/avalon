@@ -2860,6 +2860,46 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("answers subscribe with the viewer's stored display preferences", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // Nothing stored is every default.
+    await expect(stub.memberPreferences({ workspaceId: WORKSPACE_ID, userId: USER_ID }))
+      .resolves.toEqual({ showAgentWork: true });
+    await expect(stub.saveMemberPreferences({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      preferences: { showAgentWork: false },
+    })).resolves.toEqual({ showAgentWork: false });
+
+    const response = await stub.fetch("https://workspace.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000709",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    try {
+      const answer = nextMessage(socket);
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      const event = JSON.parse(String((await answer).data)) as { viewerPreferences?: unknown };
+      // On the answer itself, so the first frame hides the calls without a read.
+      expect(event.viewerPreferences).toEqual({ showAgentWork: false });
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
   it("includes every live-state work stream beyond both the recent page and 1,250 rows", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
