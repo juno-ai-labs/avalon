@@ -114,9 +114,11 @@ interface SearchModalProps {
  * would then highlight the wrong letters.
  */
 function nameMatch(name: string, query: string): { start: number; end: number } | null {
-  const needle = query.toLocaleLowerCase();
+  // `toLowerCase`, not `toLocaleLowerCase`: under a Turkish locale the latter
+  // lowers `I` to dotless `ı`, and "pricing" would stop matching "Pricing".
+  const needle = query.toLowerCase();
   for (let start = 0; start + query.length <= name.length; start += 1) {
-    if (name.slice(start, start + query.length).toLocaleLowerCase() === needle) return { start, end: start + query.length };
+    if (name.slice(start, start + query.length).toLowerCase() === needle) return { start, end: start + query.length };
   }
   return null;
 }
@@ -345,35 +347,40 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
         {/* One fixed-height body: the list and the pagination footer divide it, so
             no state either of them enters can resize the modal around the reader. */}
         <div className="rally-search-body">
-          <div className="rally-search-results" ref={list} id={listId} role="listbox" aria-label="Results" aria-busy={response.isFetching}
+          {/* The scroller holds the listbox and, after it, the status lines: a
+              listbox may hold only options, so a status beside the places sits
+              outside it while still reading as the next line beneath them. */}
+          <div className="rally-search-results" ref={list}
             onScroll={(event) => {
               const element = event.currentTarget;
               if (element.scrollTop + element.clientHeight >= element.scrollHeight - 1) loadMore();
             }}>
-            {places.map((place, index) => {
-              return <div key={placeKey(place)} id={`${listId}-${index}`} role="option" aria-selected={index === active}
-                className="rally-search-result" onMouseMove={() => setSelected(index)}
-                onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
-                <span className={`rally-search-result-icon is-${place.kind}`}><PlaceIcon place={place} /></span>
-                <div className="rally-search-result-copy">
-                  <div className="rally-search-result-excerpt"><HighlightedName name={place.name} query={normalized} /></div>
-                  <div className="rally-search-result-source">{placeSource(place)}</div>
-                </div>
-              </div>;
-            })}
-            {results.map((result, resultIndex) => {
-              const Icon = ICONS[result.category];
-              const index = places.length + resultIndex;
-              return <div key={result.id} id={`${listId}-${index}`} role="option" aria-selected={index === active}
-                className="rally-search-result" onMouseMove={() => setSelected(index)}
-                onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
-                <span className={`rally-search-result-icon is-${result.category}`}><Icon size={18} aria-hidden="true" /></span>
-                <div className="rally-search-result-copy">
-                  <div className="rally-search-result-excerpt"><HighlightedExcerpt result={result} /></div>
-                  <div className="rally-search-result-source">{result.sourceLabel || result.title}{result.occurredAt && <> · <RelativeTime value={result.occurredAt} /></>}</div>
-                </div>
-              </div>;
-            })}
+            <div className="rally-search-options" id={listId} role="listbox" aria-label="Results" aria-busy={response.isFetching}>
+              {places.map((place, index) => {
+                return <div key={placeKey(place)} id={`${listId}-${index}`} role="option" aria-selected={index === active}
+                  className="rally-search-result" onMouseMove={() => setSelected(index)}
+                  onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
+                  <span className={`rally-search-result-icon is-${place.kind}`}><PlaceIcon place={place} /></span>
+                  <div className="rally-search-result-copy">
+                    <div className="rally-search-result-excerpt"><HighlightedName name={place.name} query={normalized} /></div>
+                    <div className="rally-search-result-source">{placeSource(place)}</div>
+                  </div>
+                </div>;
+              })}
+              {results.map((result, resultIndex) => {
+                const Icon = ICONS[result.category];
+                const index = places.length + resultIndex;
+                return <div key={result.id} id={`${listId}-${index}`} role="option" aria-selected={index === active}
+                  className="rally-search-result" onMouseMove={() => setSelected(index)}
+                  onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
+                  <span className={`rally-search-result-icon is-${result.category}`}><Icon size={18} aria-hidden="true" /></span>
+                  <div className="rally-search-result-copy">
+                    <div className="rally-search-result-excerpt"><HighlightedExcerpt result={result} /></div>
+                    <div className="rally-search-result-source">{result.sourceLabel || result.title}{result.occurredAt && <> · <RelativeTime value={result.occurredAt} /></>}</div>
+                  </div>
+                </div>;
+              })}
+            </div>
             {/* Places answer at once; say what the content search is doing beneath them. */}
             {places.length > 0 && !placeTab && results.length === 0 && (response.isFetching || settledQuery !== normalized
               ? <div className="rally-search-pending" role="status">Searching…</div>
