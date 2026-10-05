@@ -72,31 +72,59 @@ describe('organization search modal', () => {
     expect(onSelect).toHaveBeenCalledWith(result);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
-  it('finds Channels and Spaces by name without asking the Worker, and opens the chosen one', async () => {
+  const PLACES = {
+    channels: [
+      { kind: 'channel', id: '00000000-0000-7000-8000-0000000000c1', name: 'Pricing review' },
+      { kind: 'breakout', id: '00000000-0000-7000-8000-0000000000b1', channelId: '00000000-0000-7000-8000-0000000000c1',
+        channelName: 'Pricing review', name: 'Discount tiers' },
+      { kind: 'channel', id: '00000000-0000-7000-8000-0000000000c2', name: 'Hiring' },
+    ],
+    spaces: [
+      { kind: 'space', id: 'space-1', name: 'Launch', iconKey: 'flag', colorKey: 'rose' },
+      { kind: 'space', id: 'space-2', name: 'Pricing', iconKey: 'target', colorKey: 'teal' },
+    ],
+  } satisfies Pick<React.ComponentProps<typeof SearchModal>, 'channels' | 'spaces'>;
+
+  it('finds Channels, their Breakouts and Spaces by name without asking the Worker, and opens the chosen one', async () => {
     const search = vi.fn(async () => ({ results: [result] }));
-    const { onSelectPlace, onOpenChange } = setup(search, {
-      channels: [{ kind: 'channel', id: 'channel-1', name: 'Pricing review' }, { kind: 'channel', id: 'channel-2', name: 'Hiring' }],
-      spaces: [{ kind: 'space', id: 'space-1', name: 'Launch' }, { kind: 'space', id: 'space-2', name: 'Pricing' }],
-    });
+    const { onSelectPlace, onOpenChange } = setup(search, PLACES);
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent))
       .toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files', 'Channels', 'Spaces']);
     fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
-    // An empty query lists every Channel.
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Pricing reviewChannel', 'HiringChannel']);
+    // An empty query lists every Channel, each followed by its Breakouts.
+    expect(screen.getAllByRole('option').map((option) => option.textContent))
+      .toEqual(['Pricing reviewChannel', 'Discount tiersBreakout in Pricing review', 'HiringChannel']);
+    // Each place wears its own mark, not a generic symbol.
+    for (const option of screen.getAllByRole('option')) expect(option.querySelector('svg.workstream-mark')).not.toBeNull();
     const input = screen.getByRole('combobox');
-    fireEvent.change(input, { target: { value: 'PRIC' } });
-    const option = screen.getByRole('option');
-    expect(option.querySelector('strong')).toHaveTextContent('Pric');
+    fireEvent.change(input, { target: { value: 'TIER' } });
+    expect(screen.getByRole('option').querySelector('strong')).toHaveTextContent('tier');
     fireEvent.click(screen.getByRole('tab', { name: 'Spaces' }));
-    expect(screen.getByRole('option')).toHaveTextContent('Pricing');
     fireEvent.change(input, { target: { value: 'nothing' } });
     expect(screen.getByText('No results')).toBeVisible();
     fireEvent.change(input, { target: { value: 'launch' } });
+    expect(screen.getByRole('option').querySelector('svg')).toHaveAttribute('stroke');
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onSelectPlace).toHaveBeenCalledWith({ kind: 'space', id: 'space-1', name: 'Launch' });
+    expect(onSelectPlace).toHaveBeenCalledWith(PLACES.spaces[0]);
     expect(onOpenChange).toHaveBeenCalledWith(false);
     await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
     expect(search).not.toHaveBeenCalled();
+  });
+
+  it('puts matching places above the content results in All', async () => {
+    const search = vi.fn(async () => ({ results: [result] }));
+    const { onSelect, onSelectPlace } = setup(search, PLACES);
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'pric' } });
+    // Places answer at once; content follows below them.
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Pricing reviewChannel', 'PricingSpace']);
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(3));
+    expect(screen.getAllByRole('option')[2]).toHaveTextContent('Alex Danilowicz replied');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onSelect).toHaveBeenCalledWith(result);
+    expect(onSelectPlace).not.toHaveBeenCalled();
   });
 
   it('continues past an empty page as its end comes into view and measures through the first result paint', async () => {
