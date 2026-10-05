@@ -5985,7 +5985,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .composer-toolbar { min-height: 34px; padding: 1px 6px 5px; }
 .composer-tools > .icon-button { border-radius: var(--av-sys-size-radius-pill); }
 .composer-send { height: 30px; width: 30px; }
-.rally-mention-icon { align-items: center; background: var(--av-sys-color-text-default); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-on-inverse); display: flex; height: 24px; justify-content: center; width: 24px; }
 
 @media (min-width: 1181px) {
   .workspace-shell.rail-open .main-pane { padding-right: var(--rail-slot); }
