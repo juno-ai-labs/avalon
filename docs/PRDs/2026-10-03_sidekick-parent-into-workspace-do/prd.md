@@ -211,6 +211,15 @@ those viewers.
 Decisions made while building step 1 that differ from, or add to, the design
 below. Newest first.
 
+- **2026-10-05: An archive's Sidekick pauses reach the socket after the
+  archived Channel, not in its frame.** The pauses commit in the archive's
+  follow-up pass, one local transaction per Sidekick, and the rail drain sends
+  each as the Channel's row with a higher rail waterline once its write
+  finishes, so a client sees the archived Channel and then its paused
+  Sidekicks, milliseconds apart. Sharing one frame would mean pausing inside
+  the archive's directory transaction, which runs before the pass has imported
+  any pending Sidekick. The acceptance item "in one workspace-socket frame" is
+  not met; what a client converges on is the same.
 - **2026-10-05: No compatibility client; batch reads instead.** The first cut
   kept `SidekickDO`'s method names in a client so each caller changed one line.
   It was removed in the same change: it hid that every call lands on one
