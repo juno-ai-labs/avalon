@@ -71,3 +71,13 @@ export function firstLandingWorkstream(workstreams: WorkstreamSummary[]): Workst
   // Never a create still in flight, which has no screen to land on yet.
   return workstreams.filter((workstream) => !workstream.pending).sort(compareWorkstreamRecency)[0];
 }
+
+/**
+ * Where opening a Channel lands: its Main, or the Breakout this viewer enters
+ * it through when Main is not theirs.
+ */
+export function channelDestination(channel: { id: string; associativeSubstreamId?: string | null | undefined }): string {
+  return `/workstreams/${channel.id}${channel.associativeSubstreamId && channel.associativeSubstreamId !== '0'
+    ? `?substream=${encodeURIComponent(channel.associativeSubstreamId)}`
+    : ''}`;
+}
