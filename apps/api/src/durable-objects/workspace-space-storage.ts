@@ -110,7 +110,7 @@ export const SPACE_BOOTSTRAP_PAGE_SIZE = 50;
 
 /** A Space name as `organizationSpaceNamed` compares it. */
 function spaceMatchName(name: string): string {
-  return name.toLowerCase().replace(/-/gu, " ").replace(/\s+/gu, " ").trim();
+  return name.toLowerCase().replace(/[\s-]+/gu, "");
 }
 
 const SPACE_ICON_FALLBACK = "briefcase";
@@ -3288,9 +3288,9 @@ export class WorkspaceSpaceStorage {
 
   /**
    * The live Organization-wide Space named `name`, or nothing. Names compare
-   * ignoring case, with a dash read as a space and runs of spaces as one, so
-   * Slack's `#general` lands in "General" and `#product-launch` in "Product
-   * Launch". A connector room joins this Space rather than minting a second one
+   * ignoring case, spaces and dashes, so Slack's `#general` lands in "General"
+   * and `#product-launch` or `#productlaunch` in "Product Launch". A connector
+   * room joins this Space rather than minting a second one
    * beside it. Oldest first when several share the name, so the answer does not
    * change as newer ones arrive.
    *
