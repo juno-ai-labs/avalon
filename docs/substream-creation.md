@@ -89,7 +89,9 @@ both sides of the submit, per
 What sits above that composer is the branch provenance:
 
 - **From a message** — the turn that was branched from and the four before it,
-  faded out upward under a gradient mask and inert to the pointer. They say what
+  counted in turns of written text: a person's or Rally's text and a Sidekick's
+  result. Work timing, thinking and tool rows are not drawn and do not count.
+  They fade out upward under a gradient mask and are inert to the pointer. They say what
   is being branched out of. They are not what the substream inherits: the
   platform still freezes a summary of the conversation through that cutoff, and
   those turns are the only part of it anybody is shown. They are also part of
@@ -352,7 +354,10 @@ that needs the main roster must obtain it from the parent's authority, not infer
 it from the current viewer or copy a client-provided list.
 
 “Full history” means eligible participant text, attribution, mentions and
-attachment references. It is not a clone of the tool protocol: tool inputs and
+attachment references. Eligible text is what people, Rally, and Sidekicks wrote:
+a Sidekick's result is a `system` turn, and the capture keeps it as actor
+`sidekick` under the name frozen into the row, while every other `system` turn
+is Rally's bookkeeping and stays out. It is not a clone of the tool protocol: tool inputs and
 results, thinking, run state, elicitation state and queued instructions are not
 inherited. [Agent harness](agent-harness.md) owns how these inert records enter
 the first model context without becoming executable historical work.
@@ -554,6 +559,25 @@ Run the focused suites with the package-local Vitest paths per
 substitute for real-provider latency or window-level acceptance.
 
 ## Changelog
+
+### 2026-10-05 — Breakouts start from what was said, Sidekick results included
+
+**What changed:** The capture behind a Breakout's starting context keeps a
+Sidekick's result, as a new `sidekick` actor labelled with the Sidekick's name,
+where it used to drop every `system` turn. The launch surface draws only
+written turns, five of them, ending at the turn branched from rather than at
+that turn's first row.
+
+**Why:** A Breakout started from a Rally answer showed "Worked for 6s" and not
+the answer: the window cut at the first row of the turn, and the work row comes
+first. Counting rows also let tool and thinking rows crowd out the conversation.
+On the server, tool blocks were already excluded, but so were Sidekick results,
+which are written for the room and are often what a Breakout is about.
+
+**What a future change has to respect:** only text reaches a Breakout. Tool
+protocol, thinking and Rally's own system rows stay out of both the capture and
+the drawn window. A `system` turn is admitted only by its
+`automation_activation` message type, never by its actor.
 
 ### 2026-09-24 — A Breakout's roster is its own
 
