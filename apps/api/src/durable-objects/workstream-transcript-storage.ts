@@ -1,6 +1,6 @@
 import { stableUuid } from "../lib/stable-uuid";
 import {
-  AutomationActivationV1Schema,
+  automationActivationName,
   PreparedConversationSchema,
   ImportedMessageProvenanceSchema,
   type PreparedConversation,
@@ -587,30 +587,23 @@ export class WorkstreamTranscriptStorage {
         if (turn.activityId && this.sql.exec<{ lifecycle_state: string }>(
           `SELECT lifecycle_state FROM transcript_activities WHERE activity_id = ?`, turn.activityId,
         ).toArray()[0]?.lifecycle_state === "active") break;
-        // Only what was said. Tool and thinking blocks are how an answer was
-        // reached, and a system turn is Rally's own bookkeeping, except a
-        // Sidekick's result: that is written for the people in the room, and
-        // a breakout working from the conversation needs it as much as
-        // anything a person wrote.
+        // Only what was said, matching what the launch pane draws: ordinary
+        // text, or a Sidekick's result on an otherwise excluded system turn.
         const sidekick = turn.actor === "system";
-        const blocks = turn.blocks.flatMap((block) => block.type === "text"
-          && (!sidekick || block.messageType === "automation_activation")
-          ? [{ text: block.text, mentions: block.mentions ?? [], attachments: block.attachments ?? [] }]
-          : []);
+        const said = turn.blocks.flatMap((block) => block.type === "text"
+          && (block.messageType ?? "text") === (sidekick ? "automation_activation" : "text") ? [block] : []);
+        const blocks = said.map((block) => ({
+          text: block.text, mentions: block.mentions ?? [], attachments: block.attachments ?? [],
+        }));
         if (blocks.length === 0) continue;
-        const activation = sidekick
-          ? turn.blocks.flatMap((block) => block.type === "text" && block.messageType === "automation_activation"
-            ? [AutomationActivationV1Schema.safeParse(block.structuredContent)] : [])[0]
-          : undefined;
         messages.push(SubstreamContextMessageSchema.parse({
           turnId: turn.turnId,
           transcriptSequence: turn.transcriptSequence,
           actor: sidekick ? "sidekick" : turn.actor,
           authorUserId: turn.actor === "human" ? turn.authorUserId : null,
-          // The name frozen into the row at delivery, as the feed shows it.
           authorLabel: turn.actor === "human" ? turn.authorSnapshot?.displayName ?? turn.authorUserId
             : turn.actor === "external" ? turn.externalActor?.displayName ?? "External participant"
-            : sidekick ? (activation?.success ? activation.data.automationName : "Sidekick") : "Rally",
+            : sidekick ? automationActivationName(said[0]?.structuredContent) : "Rally",
           createdAt: turn.createdAtUtc,
           blocks,
         }));
