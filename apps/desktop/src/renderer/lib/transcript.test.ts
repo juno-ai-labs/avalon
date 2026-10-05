@@ -14,6 +14,7 @@ import {
   orderedTranscriptMessages,
   composeTranscript,
   groupPluginToolMessages,
+  withoutAgentWork,
   groupThinkingMessages,
   mergeCanonicalTranscriptSnapshot,
   mergeRealtimeTranscriptActivity,
@@ -1891,6 +1892,34 @@ describe('grouping tool calls by plugin', () => {
     ]);
 
     expect(grouped.map((message) => message.sequenceNumber)).toEqual([1, 2]);
+  });
+});
+
+describe('hiding the agent\'s work', () => {
+  const row = (id: string, extra: Partial<Message>): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'text',
+    createdAt: '2026-08-26T12:00:00.000Z',
+    ...extra,
+  });
+  const tool = (id: string): Message => row(id, {
+    messageType: 'tool_event',
+    toolEvent: { id, toolCallId: id, name: `${id}_call`, status: 'completed', pluginId: 'p', pluginName: 'P' },
+  });
+
+  it('drops thinking, tool and plugin rows but keeps what the reader must act on', () => {
+    const shown = withoutAgentWork([
+      row('reply', {}),
+      tool('read'),
+      row('activity', { messageType: 'plugin_activity' }),
+      tool('connect'),
+      row('thought', { messageType: 'thought' }),
+    ], (message) => message.id === 'connect');
+
+    expect(shown.map((message) => message.id)).toEqual(['reply', 'connect']);
   });
 });
 

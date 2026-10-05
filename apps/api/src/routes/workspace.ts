@@ -10,6 +10,7 @@ import {
   CreateWorkspaceInvitationRequestSchema,
   IdSchema,
   CreateWorkspaceInvitationResponseSchema,
+  MemberPreferencesSchema,
   PersonalSystemPromptSchema,
   UpdateUserTimezoneRequestSchema,
   UpdateWorkspaceMemberRoleRequestSchema,
@@ -114,6 +115,13 @@ workspaceRoutes.patch("/me", zValidator("json", UpdateUserTimezoneRequestSchema)
 workspaceRoutes.get("/me/system-prompt", async (c) =>
   c.json(PersonalSystemPromptSchema.parse(
     await new WorkspaceService(c.env, getAuth(c)).getMyPersonalSystemPrompt())),
+);
+workspaceRoutes.get("/me/preferences", async (c) =>
+  c.json(MemberPreferencesSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getMyPreferences())),
+);
+workspaceRoutes.put("/me/preferences", zValidator("json", MemberPreferencesSchema), async (c) =>
+  c.json(MemberPreferencesSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).updateMyPreferences(c.req.valid("json")))),
 );
 workspaceRoutes.put("/me/system-prompt", zValidator("json", PersonalSystemPromptSchema), async (c) =>
   c.json(PersonalSystemPromptSchema.parse(

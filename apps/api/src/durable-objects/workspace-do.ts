@@ -105,6 +105,9 @@ import {
   WorkspacePresenceEventSchema,
   WorkspaceReachChangedEventSchema,
   WorkspaceSocketSyncEventSchema,
+  DEFAULT_MEMBER_PREFERENCES,
+  MemberPreferencesSchema,
+  type MemberPreferences,
   WorkspaceSyncTopicSchema,
   WORKSTREAM_NAMING_GRACE_MS,
   WorkstreamIdSchema,
@@ -750,6 +753,11 @@ import {
   type PersonalSystemPromptRecord,
   type PersonalSystemPromptWriteRequest,
 } from "./personal-system-prompt";
+import {
+  MemberPreferencesReadRequestSchema,
+  WORKSPACE_MEMBER_PREFERENCES_MIGRATION,
+  type MemberPreferencesReadRequest,
+} from "./member-preferences";
 import { ObservedChannelSchema } from "./workstream-access-protocol";
 import {
   SELECT_WORKSPACE_BREAKOUT,
@@ -4129,6 +4137,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 88,
   description: "a member's personal system prompt",
   statements: WORKSPACE_PERSONAL_SYSTEM_PROMPT_MIGRATION,
+}, {
+  version: 89,
+  description: "a member's display preferences",
+  statements: WORKSPACE_MEMBER_PREFERENCES_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -8596,6 +8608,41 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       Date.now(),
     ).one();
     return { personalSystemPrompt: row.text, revision: row.revision };
+  }
+
+  async memberPreferences(input: MemberPreferencesReadRequest): Promise<MemberPreferences> {
+    await this.initialized;
+    const request = parseRpcInput(MemberPreferencesReadRequestSchema, input, "member_preferences");
+    this.assertWorkspace(request.workspaceId);
+    return this.readMemberPreferences(request.userId);
+  }
+
+  /** Replace this person's display preferences and answer with what was stored. */
+  async saveMemberPreferences(input: MemberPreferencesReadRequest & { preferences: MemberPreferences }): Promise<MemberPreferences> {
+    await this.initialized;
+    const request = parseRpcInput(
+      MemberPreferencesReadRequestSchema.extend({ preferences: MemberPreferencesSchema }),
+      input,
+      "save_member_preferences",
+    );
+    this.assertWorkspace(request.workspaceId);
+    this.state.storage.sql.exec(
+      `INSERT INTO member_preferences (user_id, show_agent_work, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET show_agent_work = excluded.show_agent_work,
+         updated_at = excluded.updated_at`,
+      request.userId,
+      request.preferences.showAgentWork ? 1 : 0,
+      Date.now(),
+    );
+    return this.readMemberPreferences(request.userId);
+  }
+
+  private readMemberPreferences(userId: string): MemberPreferences {
+    const row = this.state.storage.sql.exec<{ show_agent_work: number }>(
+      `SELECT show_agent_work FROM member_preferences WHERE user_id = ?`,
+      userId,
+    ).toArray()[0];
+    return row ? { showAgentWork: row.show_agent_work === 1 } : DEFAULT_MEMBER_PREFERENCES;
   }
 
   async spaceSummary(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
@@ -16198,6 +16245,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // ignore.
     const sidebar = this.sidebarPayload(attachment);
     this.logWorkspaceSocketHandshake(attachment, "sidebar_built", diagnosticAttemptId);
+    const viewerPreferences = this.readMemberPreferences(attachment.userId);
     let events: WorkspaceSocketSyncEvent[];
     if (afterWaterline === 0) {
       events = [{
@@ -16271,7 +16319,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
     this.logWorkspaceSocketHandshake(attachment, "flags_resolved", diagnosticAttemptId);
     for (const event of events) {
-      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({ ...event, featureFlags })));
+      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({ ...event, featureFlags, viewerPreferences })));
     }
     this.logWorkspaceSocketHandshake(attachment, "sync_sent", diagnosticAttemptId);
     socket.serializeAttachment({

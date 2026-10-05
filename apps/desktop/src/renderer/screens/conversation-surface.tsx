@@ -69,7 +69,9 @@ import {
   transcriptOverlaysQueryKey,
   type TranscriptOverlay,
   upsertTranscriptOverlay,
+  withoutAgentWork,
 } from '../lib/transcript';
+import { useMemberPreferences } from '../lib/use-member-preferences';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
@@ -108,7 +110,11 @@ import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
-import { ConnectorConnectionsProvider } from '../components/connector-mentions';
+import {
+  ConnectorConnectionsProvider,
+  connectorConnectionCardInput,
+  connectorResourceAuthorizationRequest,
+} from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { useRailExitFade } from '../components/rail-surface';
 import { EmbeddedBrowserRail } from '../components/embedded-browser-rail';
@@ -1593,20 +1599,30 @@ export function ConversationSurface({
       || overlay.provenance.source === 'stream_event'
       || overlay.provenance.source === 'socket_event')
     .map((overlay) => overlay.message.id)), [transcriptOverlays.data]);
+  // A guest is refused the members' `/workspace` routes, so a guest keeps the
+  // defaults; the socket still answers with whatever is stored.
+  const showAgentWork = useMemberPreferences(
+    session?.workspace?.accessClass === 'guest' ? null : api,
+    workspaceId,
+  ).data.showAgentWork;
   const transcript = useMemo(
     () => {
       const feedOverlays = transcriptOverlays.data ?? [];
+      const composed = dedupeAdjacentConnectorConnectionCards(
+        composeTranscript(canonicalTranscript, feedOverlays),
+      );
       return collapseSettledWorkIntoAccordion(
         foldSettledWorkIntoMessages(
           groupThinkingMessages(
-            groupPluginToolMessages(dedupeAdjacentConnectorConnectionCards(
-              composeTranscript(canonicalTranscript, feedOverlays),
-            )),
+            groupPluginToolMessages(showAgentWork ? composed : withoutAgentWork(composed, (message) => (
+              connectorResourceAuthorizationRequest(message) !== null
+                || connectorConnectionCardInput(message) !== null
+            ))),
           ),
         ),
       );
     },
-    [canonicalTranscript, transcriptOverlays.data],
+    [canonicalTranscript, transcriptOverlays.data, showAgentWork],
   );
   // Above every early return: a hook below one runs on some renders only.
   const replyCount = useMemo(() => (
