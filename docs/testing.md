@@ -42,9 +42,9 @@ once and passes on a rerun.
 `pnpm test` runs every package's `test` script recursively, and `@rally/api`'s
 runs the Node suite *and then* the workerd suite — so a green `pnpm test`
 includes workerd. CI splits them across `api-tests-workers-1-of-n` through
-`api-tests-workers-4-of-n`; each runs the package-owned workers command with a
+`api-tests-workers-8-of-n`; each runs the package-owned workers command with a
 Vitest shard, and the container and release suites are their own matrix jobs.
-`deploy-api.yml` must use those same four workers shards rather than appending
+`deploy-api.yml` must use those same eight workers shards rather than appending
 unsharded `test:workers` onto a Node lane: that dumps the whole suite into one
 Miniflare, which is more `reset()` interleave than PR CI ever sees, and it is
 how a green pull request has already failed deploy verify on the same SHA.
