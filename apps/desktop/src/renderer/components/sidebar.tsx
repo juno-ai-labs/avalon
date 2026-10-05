@@ -46,6 +46,7 @@ import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
+import { channelDestination } from '../lib/workstream-landing';
 import { Avatar, Button, IconButton, InlineError, Meter, Modal, StatusDot, Tip } from './primitives';
 import { AcknowledgedErrorDialog } from './acknowledged-error-dialog';
 import { ManageAccessDialog } from './manage-access-dialog';
@@ -549,9 +550,7 @@ function WorkstreamRow({
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
   const attentionCount = workstreamAttentionCount(workstream);
   const hasActivityForViewer = workstreamHasActivityForViewer(workstream);
-  const destination = `/workstreams/${workstream.id}${workstream.associativeSubstreamId && workstream.associativeSubstreamId !== '0'
-    ? `?substream=${encodeURIComponent(workstream.associativeSubstreamId)}`
-    : ''}`;
+  const destination = channelDestination(workstream);
   const [previewOpen, setPreviewOpen] = useState(false);
   const previewOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

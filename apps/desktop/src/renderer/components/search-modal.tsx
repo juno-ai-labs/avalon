@@ -1,7 +1,7 @@
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { File, Link, MessageSquare, Search, Shapes } from 'lucide-react';
+import { File, Hash, LayoutGrid, Link, MessageSquare, Search, Shapes } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { SearchCategory, SearchRequest, SearchResponse, SearchResult } from '@rally/contracts/search';
 import { Button } from './primitives';
@@ -9,11 +9,17 @@ import { RelativeTime } from './relative-time';
 import { ApiError } from '../lib/api';
 import { isComposingKeyEvent } from '../lib/ime';
 
-const TABS: Array<{ id: SearchCategory; label: string }> = [
+/** A Channel or Space the reader can open, matched by name in the modal itself. */
+export interface SearchPlace { kind: 'channel' | 'space'; id: string; name: string }
+type PlaceTab = 'channels' | 'spaces';
+type SearchTab = SearchCategory | PlaceTab;
+const isPlaceTab = (tab: SearchTab): tab is PlaceTab => tab === 'channels' || tab === 'spaces';
+const CONTENT_TABS: Array<{ id: SearchTab; label: string }> = [
   { id: 'all', label: 'All' }, { id: 'messages', label: 'Messages' },
   { id: 'links', label: 'Links' }, { id: 'artifacts', label: 'Artifacts' },
-  { id: 'files', label: 'Files' },
+  { id: 'files', label: 'Files' }, { id: 'channels', label: 'Channels' },
 ];
+const SPACES_TAB = { id: 'spaces', label: 'Spaces' } as const;
 // The 360px body minus 16px padding, divided by a 52px two-line row plus 2px
 // gap. The list is the whole body until a pagination footer takes part of it.
 const SEARCH_VISIBLE_PAGE_SIZE = Math.ceil((360 - 16) / (52 + 2));
@@ -57,6 +63,27 @@ interface SearchModalProps {
   onOpenChange: (open: boolean) => void;
   search: (request: SearchRequest, signal: AbortSignal) => Promise<SearchResponse>;
   onSelect: (result: SearchResult) => void;
+  /**
+   * The Channels and Spaces the window already holds. The sidebar's walk of
+   * every Space makes these complete, so their tabs match names here and never
+   * ask the Worker. Without `spaces` (Spaces off) there is no Spaces tab.
+   */
+  channels?: readonly SearchPlace[];
+  spaces?: readonly SearchPlace[] | undefined;
+  onSelectPlace?: (place: SearchPlace) => void;
+}
+
+/** Places whose name holds the query, in the order given; every place for an empty query. */
+function matchPlaces(places: readonly SearchPlace[], query: string): SearchPlace[] {
+  const needle = query.toLocaleLowerCase();
+  return needle ? places.filter((place) => place.name.toLocaleLowerCase().includes(needle)) : [...places];
+}
+
+function HighlightedName({ name, query }: { name: string; query: string }): React.JSX.Element {
+  const start = query ? name.toLocaleLowerCase().indexOf(query.toLocaleLowerCase()) : -1;
+  if (start < 0) return <>{name}</>;
+  const end = start + query.length;
+  return <>{name.slice(0, start)}<strong>{name.slice(start, end)}</strong>{name.slice(end)}</>;
 }
 
 function HighlightedExcerpt({ result }: { result: SearchResult }): React.JSX.Element {
@@ -71,9 +98,15 @@ function HighlightedExcerpt({ result }: { result: SearchResult }): React.JSX.Ele
   return <>{fragments}{result.excerpt.slice(cursor)}</>;
 }
 
-export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect }: SearchModalProps): React.JSX.Element {
+export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect, channels = [], spaces, onSelectPlace }: SearchModalProps): React.JSX.Element {
   const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<SearchCategory>('all');
+  const [tab, setTab] = useState<SearchTab>('all');
+  const tabs = spaces ? [...CONTENT_TABS, SPACES_TAB] : CONTENT_TABS;
+  // A Spaces tab left selected after Spaces turned off falls back to All.
+  const activeTab: SearchTab = tabs.some((candidate) => candidate.id === tab) ? tab : 'all';
+  const placeTab = isPlaceTab(activeTab) ? activeTab : null;
+  // The Worker's category; a place tab never asks it, so this value is unused there.
+  const category: SearchCategory = isPlaceTab(activeTab) ? 'all' : activeTab;
   const [selected, setSelected] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -133,7 +166,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
       }
       return { ...page, admittedAt: Date.now() };
     },
-    enabled: open && settledQuery.length > 0 && settledQuery === normalized,
+    enabled: open && !placeTab && settledQuery.length > 0 && settledQuery === normalized,
     // Reopening on the same words repaints the last pages rather than
     // reauthorizing them; after the window one keystroke's worth of results is
     // read again.
@@ -161,10 +194,11 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
   });
   const continuationFailed = response.isFetchNextPageError
     && (!(response.error instanceof ApiError) || response.error.status >= 500);
-  const results = open && normalized && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
+  const places = open && placeTab ? matchPlaces(placeTab === 'channels' ? channels : spaces ?? [], normalized) : [];
+  const results = open && !placeTab && normalized && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
     ? [...new Map((response.data?.pages.flatMap((page) => page.results) ?? []).map((result) => [result.id, result])).values()] : [];
   useEffect(() => {
-    if (!open || !normalized || settledQuery !== normalized || response.isFetching || !response.isFetched) return;
+    if (!open || placeTab || !normalized || settledQuery !== normalized || response.isFetching || !response.isFetched) return;
     // Keep time-to-results open across explicit continuation, including the user's wait.
     if (!response.isError && results.length === 0 && response.hasNextPage) return;
     const current = trace.current;
@@ -177,8 +211,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
       if (trace.current === current) trace.current = null;
     }); });
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
-  }, [open, normalized, settledQuery, response.isFetching, response.isFetched, response.isError, results.length, response.hasNextPage]);
-  const canContinue = open && settledQuery === normalized && response.hasNextPage && (!response.isError || continuationFailed);
+  }, [open, placeTab, normalized, settledQuery, response.isFetching, response.isFetched, response.isError, results.length, response.hasNextPage]);
+  const canContinue = open && !placeTab && settledQuery === normalized && response.hasNextPage && (!response.isError || continuationFailed);
   const loadMore = () => {
     if (canContinue && !response.isFetching) void response.fetchNextPage({ cancelRefetch: false });
   };
@@ -195,7 +229,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     observer.observe(target);
     return () => observer.disconnect();
   }, [canContinue, continuationFailed, results.length]);
-  const active = Math.min(selected, Math.max(0, results.length - 1));
+  const rowCount = placeTab ? places.length : results.length;
+  const active = Math.min(selected, Math.max(0, rowCount - 1));
   // Also when the footer opens or closes: it takes its room from the list, and
   // the state that opens it is one the reader reaches without moving the
   // highlight — the last row is what asks for the next page — so `active` alone
@@ -204,9 +239,15 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [active, response.isFetchingNextPage, continuationFailed]);
   const choose = (index: number) => {
-    const result = results[index];
-    if (!result) return;
-    onSelect(result);
+    if (placeTab) {
+      const place = places[index];
+      if (!place || !onSelectPlace) return;
+      onSelectPlace(place);
+    } else {
+      const result = results[index];
+      if (!result) return;
+      onSelect(result);
+    }
     onOpenChange(false);
   };
   return <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -219,8 +260,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
         <div className="rally-search-input-row">
           <Search aria-hidden="true" size={16} />
           <input ref={input} aria-label="Search organization" role="combobox" aria-autocomplete="list"
-            aria-expanded={results.length > 0} aria-controls={listId}
-            aria-activedescendant={results[active] ? `${listId}-${active}` : undefined}
+            aria-expanded={rowCount > 0} aria-controls={listId}
+            aria-activedescendant={rowCount > active ? `${listId}-${active}` : undefined}
             placeholder="Search" value={query} autoComplete="off" spellCheck={false}
             onChange={(event) => { beginSearch(); setQuery(event.currentTarget.value); setSelected(0); }}
             onKeyDown={(event) => {
@@ -228,8 +269,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 // Reaching the last row by keyboard is the same signal as scrolling to it.
-                if (event.key === 'ArrowDown' && active >= results.length - 1) loadMore();
-                setSelected(Math.max(0, Math.min(results.length - 1, active + (event.key === 'ArrowDown' ? 1 : -1))));
+                if (event.key === 'ArrowDown' && active >= rowCount - 1) loadMore();
+                setSelected(Math.max(0, Math.min(rowCount - 1, active + (event.key === 'ArrowDown' ? 1 : -1))));
               } else if (event.key === 'Enter') { event.preventDefault(); choose(active); }
               else if ((event.metaKey || event.ctrlKey) && /^[1-9]$/u.test(event.key)) {
                 event.preventDefault(); choose(Number(event.key) - 1);
@@ -237,16 +278,16 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
             }} />
         </div>
         <div className="rally-search-tabs" role="tablist" aria-label="Filter results">
-          {TABS.map((tab, index) => <button key={tab.id} type="button" role="tab"
-            aria-selected={category === tab.id} tabIndex={category === tab.id ? 0 : -1}
-            onClick={() => { beginSearch(); setCategory(tab.id); setSelected(0); input.current?.focus(); }}
+          {tabs.map((candidate, index) => <button key={candidate.id} type="button" role="tab"
+            aria-selected={activeTab === candidate.id} tabIndex={activeTab === candidate.id ? 0 : -1}
+            onClick={() => { beginSearch(); setTab(candidate.id); setSelected(0); input.current?.focus(); }}
             onKeyDown={(event) => {
               if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
               event.preventDefault();
-              const next = (index + (event.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length;
-              beginSearch(); setCategory(TABS[next]!.id); setSelected(0);
+              const next = (index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+              beginSearch(); setTab(tabs[next]!.id); setSelected(0);
               event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('button')[next]?.focus();
-            }}>{tab.label}</button>)}
+            }}>{candidate.label}</button>)}
         </div>
         {/* One fixed-height body: the list and the pagination footer divide it, so
             no state either of them enters can resize the modal around the reader. */}
@@ -256,6 +297,18 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
               const element = event.currentTarget;
               if (element.scrollTop + element.clientHeight >= element.scrollHeight - 1) loadMore();
             }}>
+            {places.map((place, index) => {
+              const Icon = place.kind === 'channel' ? Hash : LayoutGrid;
+              return <div key={place.id} id={`${listId}-${index}`} role="option" aria-selected={index === active}
+                className="rally-search-result" onMouseMove={() => setSelected(index)}
+                onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
+                <span className={`rally-search-result-icon is-${place.kind}`}><Icon size={18} aria-hidden="true" /></span>
+                <div className="rally-search-result-copy">
+                  <div className="rally-search-result-excerpt"><HighlightedName name={place.name} query={normalized} /></div>
+                  <div className="rally-search-result-source">{place.kind === 'channel' ? 'Channel' : 'Space'}</div>
+                </div>
+              </div>;
+            })}
             {results.map((result, index) => {
               const Icon = ICONS[result.category];
               return <div key={result.id} id={`${listId}-${index}`} role="option" aria-selected={index === active}
@@ -277,8 +330,9 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect 
               : <div>Loading more…</div>}
           </div>}
         </div>
-        {results.length === 0 && !(canContinue && continuationFailed) && <div className="rally-search-state" role="status">
-          {!normalized ? 'Search messages, links, artifacts, and files'
+        {rowCount === 0 && !(canContinue && continuationFailed) && <div className="rally-search-state" role="status">
+          {placeTab ? (normalized ? 'No results' : placeTab === 'channels' ? 'No channels' : 'No spaces')
+            : !normalized ? 'Search messages, links, artifacts, and files'
             : (response.isFetching || settledQuery !== normalized || canContinue) ? 'Searching…'
             : response.isError ? 'Search could not be completed. Please try again.' : 'No results'}
         </div>}

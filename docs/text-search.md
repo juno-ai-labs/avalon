@@ -34,7 +34,7 @@ before a search needs it.
 - `apps/api/src/durable-objects/search-projection-outbox.ts`,
   `resource-search-projection.ts`, and `conversation-link-search.ts`: transactional
   indexing intent, Queue dispatch, and asynchronous Browser Run capture.
-- `apps/desktop/src/renderer/components/search-modal.tsx`: the five-tab member UI.
+- `apps/desktop/src/renderer/components/search-modal.tsx`: the member UI: five content tabs, plus Channels and Spaces tabs it answers itself.
 - `apps/api/test/text-search.test.ts`: source grant and canonical loading tests.
 
 ## How it works
@@ -395,6 +395,13 @@ All, Messages, Links, Artifacts, and Files tabs use literal case-insensitive
 substring retrieval. BM25 and ANN are available at the shared boundary but are
 not yet exposed through this member endpoint.
 
+The modal's Channels and Spaces tabs never reach this endpoint. They match the
+query as a case-insensitive substring of the names in the Channel and Space
+lists the window already holds (the sidebar's walk of every Space makes the
+Channel list complete), and an empty query lists every one. Opening a Channel
+lands where its sidebar row does (`channelDestination`). The Spaces tab is
+absent where Spaces are off. All does not include them.
+
 Admission is the `audience` clause (see Invariants); loaders only render and
 never read an owner. The route revalidates the workspace session before
 returning. The index returns candidate identifiers, the canonical text and the
@@ -694,6 +701,28 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-10-05 — Channels and Spaces tabs in the search modal
+
+**What changed:** The modal gains Channels and Spaces tabs after Files. Each
+matches names from the lists the desktop already holds and opens the chosen
+place; neither calls `POST /search`.
+
+**Why:** The modal found content but not places. The desktop holds every Space
+and, through the Space walk, every Channel the reader can open, so matching
+there answers on the keystroke with no index rows, no Worker round trip and no
+debounce.
+
+**Considered and rejected:** Indexing Channel and Space names in Turbopuffer,
+which needs a new row kind with its own audience and re-projection on every
+rename and membership change, for lists the client already has. A server name
+filter on the WorkspaceDO directory, which adds a round trip for the same
+answer. Mixing places into All, which needs a cap on how many show; that number
+was not ours to pick.
+
+**What a future change has to respect:** These tabs are only as complete as the
+desktop's Channel list. If the sidebar stops walking every Space, they need a
+server source.
 
 ### 2026-09-28 — Embedding batches check the index first; memory search drops its per-run keys
 

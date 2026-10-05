@@ -31,7 +31,7 @@ import { usePinnedOrder, useSpaceDirectories, useSpacesReady } from '../lib/use-
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { activeRealtimeWorkstreamId } from '../lib/workspace-workstream-sockets';
 import { useWorkspaceSocket, type SidebarConnect, type WorkspaceSocketState } from '../lib/workspace-socket';
-import { useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
+import { channelDestination, useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import {
   evictCachedWorkstream,
@@ -41,7 +41,7 @@ import {
 } from '../lib/workstreams-cache';
 import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
-import { SearchModal } from './search-modal';
+import { SearchModal, type SearchPlace } from './search-modal';
 import { Sidebar } from './sidebar';
 import { OrganizationUsageMenuItem } from './organization-usage';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
@@ -539,6 +539,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     [associativeNavigation.data, workstreams.data],
   );
   const visibleSpaces = spaces.data?.items ?? [];
+  // A Channel still being created has no conversation to open yet.
+  const searchChannels = useMemo(() => sidebarWorkstreams.filter((channel) => !channel.pending).map((channel): SearchPlace => (
+    { kind: 'channel', id: channel.id, name: channel.title })), [sidebarWorkstreams]);
+  const searchSpaces = useMemo(() => (spaces.data?.items ?? []).map((space): SearchPlace => (
+    { kind: 'space', id: space.id, name: space.name })), [spaces.data]);
   const visibleInactiveSpaces = inactiveSpaces.data?.items ?? [];
   const spacesReady = socketSpacesReady;
   const pinnedOrder = usePinnedOrder();
@@ -955,6 +960,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       {api && <SearchModal key={`${workspace.id}:${workspace.currentUser.id}`} workspaceId={`${workspace.id}:${workspace.currentUser.id}`}
         open={searchOpen} onOpenChange={setSearchOpen}
         search={(request, signal) => api.searchWorkspace(request, signal)}
+        channels={searchChannels} spaces={spacesEnabled ? searchSpaces : undefined}
+        onSelectPlace={(place) => {
+          if (place.kind === 'space') { navigate(`/spaces/${encodeURIComponent(place.id)}`); return; }
+          const channel = sidebarWorkstreams.find((candidate) => candidate.id === place.id);
+          navigate(channelDestination(channel ?? { id: place.id }));
+        }}
         onSelect={(result) => {
           const target = result.location;
           if (target.kind === 'message') {
