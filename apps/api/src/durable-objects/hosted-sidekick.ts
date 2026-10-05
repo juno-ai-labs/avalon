@@ -108,7 +108,7 @@ import {
 } from "./automation-do-protocol";
 import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
 import { sidekickAudienceAllows } from "./sidekick-audience";
-import { scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
+import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
 
 /**
  * A Sidekick's parent, hosted in its Organization's `WorkspaceDO`.
@@ -349,23 +349,38 @@ export async function sidekickReaderAllows(
     owning_workstream_id: string | null; owning_substream_id: string; workspace_id: string;
   },
   actor: { userId: string; actorRole: "owner" | "admin" | "member" | null },
-  host: Pick<HostedSidekickHost, "workstreamParticipant" | "channelViewer">,
+  host: Pick<HostedSidekickHost, "workstreamParticipant" | "readManagementAccess" | "channelViewer">,
+  rule: "participant" | "manager" = "participant",
 ): Promise<boolean> {
   if (row.lifecycle === "deleted") return false;
   if (row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return true;
   if (row.scope === "workspace") return actor.actorRole != null;
   if (row.scope !== "workstream" || row.owning_workstream_id === null) return false;
-  return homeAdmits(row, actor.userId, host);
+  return homeAdmits(row, actor.userId, host, rule);
 }
 
-/** Whether a Channel-scoped Sidekick's home admits this person: Main's participants, or a Breakout's members. */
+/**
+ * Whether a Channel-scoped Sidekick's home admits this person. For a
+ * Main-homed one, `participant` asks the Channel's own participant rows, which
+ * leave an archived Channel out and cost no read beyond this object's; that is
+ * the viewer's and the library's rule. `manager` asks who may manage the
+ * Channel, grants and an archive included, which is the rule the management
+ * API applied before the move. A Breakout-homed one admits the Breakout's
+ * members either way.
+ */
 async function homeAdmits(
   row: { owning_workstream_id: string | null; owning_substream_id: string; workspace_id: string },
   userId: string,
-  host: Pick<HostedSidekickHost, "workstreamParticipant" | "channelViewer">,
+  host: Pick<HostedSidekickHost, "workstreamParticipant" | "readManagementAccess" | "channelViewer">,
+  rule: "participant" | "manager" = "participant",
 ): Promise<boolean> {
   if (row.owning_workstream_id === null) return false;
   if (row.owning_substream_id === "0") {
+    if (rule === "manager") {
+      return (await host.readManagementAccess({
+        workspaceId: row.workspace_id, parentId: row.owning_workstream_id, userId,
+      })).allowed;
+    }
     return (await host.workstreamParticipant({
       workspaceId: row.workspace_id, workstreamId: row.owning_workstream_id, userId,
     })).participant;
@@ -1471,8 +1486,8 @@ export class HostedSidekick {
    * Records whose transcript the run will hold and registers its child first,
    * because `continueRun` relies on both; then one Queue message, whose
    * consumer opens the child and starts its loop and reports back with
-   * `runProvisioned`. The entry stays armed until that report, and sends again
-   * on its own backoff if none comes; every step of provisioning is idempotent
+   * `runProvisioned`. The entry is moved later and sends again if no report
+   * comes first; every step of provisioning is idempotent
    * on the run id. Awaiting the child here would hold every other alarm job in
    * the Organization behind one cold conversation.
    */
@@ -1496,7 +1511,20 @@ export class HostedSidekick {
       this.registerChild(runId, "child", null, now);
     });
     await this.host.sendRunProvision({ workspaceId: row.workspace_id, automationId: this.sidekickId, runId });
-    return { waitMs: scheduledAlarmRetryDelay(attempt + 1) };
+    // Asked again later unless the report comes first. The drain deletes an
+    // entry at the instant that ran whatever the handler returned, and nothing
+    // rebuilds a run's entry from its row, so the resend is this entry moved
+    // to a later instant, which the delete does not match. Moving it resets
+    // the drain's attempt count, so the wait grows with the run's age instead:
+    // a run whose report never comes is asked about less and less often.
+    void attempt;
+    const step = 1 + Math.floor(Math.log2(1 + Math.max(0, now - run.created_at) / SCHEDULED_ALARM_RETRY_BASE_MS));
+    this.host.alarms.schedule({
+      kind: AUTOMATION_RUN_ALARM_KIND,
+      key: sidekickAlarmKey(this.sidekickId, runId),
+      dueAt: now + scheduledAlarmRetryDelay(step),
+    }, now);
+    return { progressed: true };
   }
 
   /** What the provisioning consumer needs for one pending run; `null` once it is not pending. */
@@ -1946,8 +1974,14 @@ export class HostedSidekick {
   /** Who may change a Sidekick (`sidekickManager`). */
   private async assertManager(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
     if (row.scope === "workstream") {
-      // The home's people manage it, and so does the person who asked for it.
-      if (row.author_user_id === actor.userId || await homeAdmits(row, actor.userId, this.host)) return;
+      // Whoever may manage the owning Channel manages it, as a grant or an
+      // archive leaves that, and so does the person who asked for it. No
+      // Breakout narrowing here: that is the reader's and viewer's rule, and a
+      // Channel's managers manage what it owns wherever it is homed.
+      if (row.author_user_id === actor.userId) return;
+      if (row.owning_workstream_id !== null && (await this.host.readManagementAccess({
+        workspaceId: row.workspace_id, parentId: row.owning_workstream_id, userId: actor.userId,
+      })).allowed) return;
       throw forbidden();
     }
     if (row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return;
@@ -1958,7 +1992,7 @@ export class HostedSidekick {
   /** The management API's read check (`sidekickReader`). */
   private async assertReader(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-    if (await sidekickReaderAllows(row, { userId: actor.userId, actorRole: actor.actorRole ?? null }, this.host)) return;
+    if (await sidekickReaderAllows(row, { userId: actor.userId, actorRole: actor.actorRole ?? null }, this.host, "manager")) return;
     throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
   }
 
