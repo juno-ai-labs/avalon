@@ -143,7 +143,7 @@ anything.** It used to — the object the automation fired on, ownerless, becaus
 an automation fired and nobody attached anything, from
 `startActivityAutomation` in the activity consumer. The durable automation
 lifecycle replaced that producer with the automation object's run provisioning
-(`AutomationDO.provisionRun` today), which attaches a resource only for an
+(`provisionSidekickRun` today), which attaches a resource only for an
 inbound-email trigger's opening message. A run
 fired by a Slack message or a Linear issue therefore starts with no record of the
 object it fired on, and the agent answers about a thread it cannot see — the
@@ -264,7 +264,7 @@ It deliberately does **not** cover:
   See [`contextual-routing.md`](contextual-routing.md).
 - **Inbound email.** An automation run created from an address attaches its email
   resource itself, from the opening stored on its run row; that is
-  `AutomationDO`'s and is not rewritten here.
+  the hosted Sidekick's and is not rewritten here.
 - **What the model does with the attachment.** The pageable
   `list_resources` index and bounded read/search tools are
   [`agent-harness.md`](agent-harness.md) and

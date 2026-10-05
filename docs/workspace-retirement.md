@@ -48,13 +48,12 @@ So `applyRetirementGate` replaces every callable method on the prototype chain,
 once, at module load. Prototype replacement rather than a proxy around the
 instance is what survives real workerd, which dispatches to ordinary own
 properties of a prototype. The three gated classes (`WorkspaceDO`,
-`SidekickDO`, deployed under the Cloudflare class name `AutomationDO`, and
-`SubstreamAgent`) extend `ScheduledDurableObject`, so the tombstone and its two
-entry points live there. Four gate policies are declared, one for the abstract
-`ConversationParentDurableObject` base `SidekickDO` extends and one for each
-concrete class, and each declares only its exceptions.
+`SidekickDO`, deployed under the Cloudflare class name `AutomationDO` and kept
+only to export its rows, and `SubstreamAgent`) extend `ScheduledDurableObject`,
+so the tombstone and its two entry points live there. One gate policy is
+declared per class, and each declares only its exceptions.
 
-Channel and Space parents have no object of their own: their state is rows in
+Channel, Space and Sidekick parents have no object of their own: their state is rows in
 `WorkspaceDO` ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)),
 so the Organization's tombstone closes them. The gate does not wrap
 accessors — a getter is state, not a door — so a getter that does work is not

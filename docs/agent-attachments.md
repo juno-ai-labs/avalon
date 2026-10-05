@@ -216,7 +216,7 @@ the aggregate supplements that working set rather than replacing it.
 
 There is no separate hydration path for an automation any more. An automation
 is drafted in a conversation of its own, a `SubstreamAgent` under its
-`AutomationDO`, and attachments there are ordinary conversation attachments
+Sidekick, and attachments there are ordinary conversation attachments
 admitted, frozen, and read exactly as in a work stream. The compiler request
 that once carried up to ten draft uploads under `automation_*` wire names is
 gone with the compiler ([`automation-lifecycle.md`](automation-lifecycle.md)).

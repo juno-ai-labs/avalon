@@ -134,7 +134,7 @@ workstream             ──▶ WorkspaceDO    ──▶ [substreamIds]   (revo
 workstream_audience_narrowed
                        ──▶ WorkspaceDO    ──▶ [substreams per closed reader] + [automationIds the room owns]
                                               (revokeNarrowedAudienceAccess)
-automation             ──▶ AutomationDO   ──▶ [substreamIds]   (listChildren; it holds no socket)
+automation             ──▶ WorkspaceDO    ──▶ [substreamIds]   (listChildren; a Sidekick holds no socket)
 space                  ──▶ WorkspaceDO    ──▶ [substreamIds]   (listChildren; a Space holds no socket)
 substream              ──▶ SubstreamAgent ──▶ (leaf)
 artifact               ──▶ ArtifactHostDO ──▶ (leaf)
@@ -184,8 +184,8 @@ would throw and drop a retraction.
 An automation is a *sibling* of the work streams under a workspace rather than a
 child of one, and like a work stream it is a parent of conversations: its own
 chat is substream `0` under it and each run is a further substream, all of them
-`SubstreamAgent`s with sockets. The automation object itself holds no socket,
-so its hop is `AutomationDO.listChildren` and one `substream` message per child,
+`SubstreamAgent`s with sockets. A Sidekick holds no socket, so its hop is the
+Organization's `listChildren` for the Sidekick and one `substream` message per child,
 keyed by the automation id as the parent. Its list comes from
 `automation_directory`, the one place the workspace knows an automation exists,
 and is unfiltered by person for the reason the artifact list is: an
@@ -263,8 +263,8 @@ from the rule. Close code
 `WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE` tells the desktop this was a retraction
 rather than a network drop.
 
-`AutomationDO` has no `revokeSocketAccess` at all: it holds no socket, and the
-consumer asks it `listChildren` and fans out one substream hop per child, so
+A Sidekick has no `revokeSocketAccess` at all: it holds no socket, and the
+consumer asks `WorkspaceDO.listChildren` for it and fans out one substream hop per child, so
 the conversations under it close through `SubstreamAgent`'s shared predicate
 like every other conversation.
 
@@ -366,7 +366,7 @@ own:
   owns Channel and Space parents inside `WorkspaceDO`,
   [`workstream-durable-object.md`](workstream-durable-object.md) owns the
   conversations under them, and
-  [`automation-lifecycle.md`](automation-lifecycle.md) owns `AutomationDO`;
+  [`automation-lifecycle.md`](automation-lifecycle.md) owns Sidekicks;
   this module adds one method to each socket-holding object and reads the
   parent contract's `listChildren` from the one that holds none.
 - **Choosing a queue over RPC for a new hop.** [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md)

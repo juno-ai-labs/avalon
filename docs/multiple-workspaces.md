@@ -275,7 +275,7 @@ delete, the API returns `409` instead of applying a newly destructive outcome.
 All admission and refresh paths join `abandoned_at IS NULL`, and the ordinary
 access-revocation producer closes every socket the membership held.
 
-An automation's runs are conversations under its `AutomationDO`, and their
+An automation's runs are conversations under its Sidekick, and their
 loops re-check the execution principal's membership before every provider
 write; a run whose principal lost the workspace stops there. The automation
 object itself reads no workspace lifecycle before its alarms fire, so a

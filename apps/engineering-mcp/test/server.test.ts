@@ -60,6 +60,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     runArtifactSql: vi.fn<EngineeringInspectionRpcBinding["runArtifactSql"]>(
       async () => ({ found: false }),
     ),
+    retrySidekickImport: vi.fn<EngineeringInspectionRpcBinding["retrySidekickImport"]>(
+      async () => ({ found: false }),
+    ),
   };
 }
 
@@ -127,6 +130,7 @@ describe("Rally engineering MCP tools", () => {
       "run_workspace_sql",
       "run_substream_sql",
       "run_sidekick_sql",
+      "retry_sidekick_import",
       "run_artifact_sql",
       "list_feature_flags",
       "update_feature_flag",
@@ -406,6 +410,38 @@ describe("Rally engineering MCP tools", () => {
       query: { sql: "SELECT lifecycle FROM automation", bindings: [] },
     });
     expect(enterprise.runSidekickSql).not.toHaveBeenCalled();
+  });
+
+  it("retries a Sidekick's import in the one region that holds it and reports the ledger state", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000ebb");
+    const sidekickId = asAutomationId("00000000-0000-7000-8000-000000000ebc");
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(enterprise.resolveSidekick).mockResolvedValue({
+      found: true,
+      value: { region: "enterprise", workspaceId, sidekickId, authorityGeneration: 3 },
+    });
+    vi.mocked(enterprise.retrySidekickImport).mockResolvedValue({
+      found: true,
+      value: { region: "enterprise", workspaceId, sidekickId, state: "pending", lastErrorCode: "sidekick_export:automation.lifecycle:invalid_value" },
+    });
+
+    const response = await rpc(
+      testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
+      "tools/call",
+      { name: "retry_sidekick_import", arguments: { workspaceId, sidekickId } },
+    );
+    const result = response.result as { content: Array<{ text: string }>; isError?: boolean };
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0]!.text)).toEqual({
+      region: "enterprise",
+      workspaceId,
+      sidekickId,
+      state: "pending",
+      lastErrorCode: "sidekick_export:automation.lifecycle:invalid_value",
+    });
+    expect(enterprise.retrySidekickImport).toHaveBeenCalledWith({ workspaceId, sidekickId, authorityGeneration: 3 });
+    expect(global.retrySidekickImport).not.toHaveBeenCalled();
   });
 
   it("routes bound artifact SQL to the supervisor in exactly one regional authority", async () => {

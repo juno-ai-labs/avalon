@@ -90,7 +90,7 @@ admission is split in two.
    leaves the ordinary regional upgrade checks as the fallback. Before any of
    that, the Worker resolves which kind of parent the id names
    (`WorkspaceDO.resolveHostedParent` first, which answers a Channel or Space
-   with its authority in one call, then `AutomationDO.authority`, else 404; a
+   or Sidekick with its authority in one call, else 404; a
    Space is not a conversation this route opens),
    asks that parent's `authorizeViewer`, and for an automation seats the reader
    on the conversation, because the parent's rule is wider than the
@@ -456,8 +456,8 @@ Every subscribe carries it, cold or resuming. A resume where no topic moved
 still gets one, under `reason: "resume"` with an empty topic list — the one
 event shape allowed to name no topics, because it exists to hand over state
 rather than to report news. That matters because a push can be missed while a
-socket is away and produce no topic at all: an AutomationDO projecting its
-next run time into `automation_directory` is exactly that; it advances the
+socket is away and produce no topic at all: a Sidekick moving its
+next run time in `automation_directory` is exactly that; it advances the
 automations list and its waterline without naming a `workspace_sync` topic. A resume that missed nothing costs the
 bytes and applies nothing, since every list carries the waterline its pushes
 carry and the client's comparison drops it. Receivers must apply the sidebar
@@ -525,10 +525,9 @@ Notes go through `runWorkspaceSql`, the one entry point every write to that
 table passes through — a desktop REST write, a Workflow, and a workspace alarm —
 and `SIDEBAR_LIST_SOURCE_TABLES` maps the written table to the list it
 invalidates. Automations no longer have a workspace-local table to watch: the
-authority is each automation's own `AutomationDO`, which delivers its row over
-its outbox and the Queue, and `applyAutomationDirectory` advances the
-`automations` waterline and republishes the list inside the same transaction
-that accepts the row. Both paths end in the same
+authority is each Sidekick's own `automation_directory` row in the same
+object, and every Sidekick write advances the `automations` waterline and
+republishes the list in the same call that changes the row. Both paths end in the same
 `workspace_sidebar_list` push.
 
 That push exists rather than another `workspace_sync` topic for a reason that
