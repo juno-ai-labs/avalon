@@ -490,6 +490,9 @@ const BRANCH_PROVENANCE_TURNS = 5;
  * The turns shown, faded, above a substream's composer: the message it branches
  * from and the ones that led to it, oldest first.
  *
+ * Only written rows, counted in turns: see "What reaches a Breakout" in
+ * docs/substream-creation.md.
+ *
  * A substream started from the sidebar branches from wherever the conversation
  * has reached rather than from a message somebody pointed at, and it shows
  * nothing — the same empty body the work-stream launcher has, because there is
@@ -500,13 +503,32 @@ export function branchProvenance(
   throughTurnId: string | null,
 ): Message[] {
   if (throughTurnId === null) return [];
-  const cutoff = transcript.findIndex((message) =>
-    message.transcriptTurnId === throughTurnId || message.id === throughTurnId);
+  // The turn's last row: its work row comes first and shares its id.
+  let cutoff = -1;
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    const message = transcript[index]!;
+    if (message.transcriptTurnId === throughTurnId || message.id === throughTurnId) {
+      cutoff = index;
+      break;
+    }
+  }
   // A branch point outside the loaded window is not an error and not a reason
   // to show the wrong turns: the substream is still the one that was asked
   // for, and its provenance is simply not on the client to draw.
   if (cutoff < 0) return [];
-  return transcript.slice(Math.max(0, cutoff + 1 - BRANCH_PROVENANCE_TURNS), cutoff + 1);
+  const shown: Message[] = [];
+  const turns = new Set<string>();
+  for (let index = cutoff; index >= 0; index -= 1) {
+    const message = transcript[index]!;
+    if (message.messageType !== 'text' && message.messageType !== 'automation_activation') continue;
+    const turn = message.transcriptTurnId ?? message.id;
+    if (!turns.has(turn)) {
+      if (turns.size === BRANCH_PROVENANCE_TURNS) break;
+      turns.add(turn);
+    }
+    shown.push(message);
+  }
+  return shown.reverse();
 }
 
 export function manualElicitationResponse(

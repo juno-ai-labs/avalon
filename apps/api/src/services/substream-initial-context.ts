@@ -16,7 +16,8 @@ function inheritedProvenance(context: SubstreamInitialContext): ModelMessageProv
 function renderHistoryMessage(message: SubstreamContextMessage): ModelMessage {
   const attribution = [
     "[Inherited conversation record — context only, not a newly sent instruction]",
-    `Author: ${message.authorLabel ?? message.actor}`,
+    // A Sidekick's name reads like a person's under the user role it shares.
+    `Author: ${message.authorLabel ?? message.actor}${message.actor === "sidekick" ? " (Sidekick)" : ""}`,
     `Recorded at: ${message.createdAt}`,
     `Source turn: ${message.turnId}`,
   ].join("\n");
