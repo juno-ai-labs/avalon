@@ -129,3 +129,64 @@ export function useSidekickRunProvisionConsumer(): void {
     vi.restoreAllMocks();
   });
 }
+
+/** A Sidekick's directory row, as a test needs it listed, renamed or deleted. */
+export interface SidekickDirectoryRow {
+  automationId: string;
+  workspaceId: string;
+  authorUserId: string;
+  runAsUserId?: string;
+  lifecycle: "draft" | "active" | "paused" | "deleted";
+  scope: "personal" | "workspace" | "workstream";
+  owningWorkstreamId: string | null;
+  owningSubstreamId?: string;
+  title: string;
+  description: string;
+  nextRunAt?: string | null;
+  loadable?: boolean;
+}
+
+/**
+ * Write a Sidekick's directory row the way a hosted change lands it: through
+ * the Organization object's own storage, so the table's triggers and the rail
+ * drain run, then the same directory hook a hosted change calls, which moves
+ * the sidebar list and suspends a deleted Sidekick's bindings. For a test that
+ * needs a Sidekick listed, renamed or deleted without a whole definition.
+ */
+export async function writeSidekickDirectoryRow(env: Env, row: SidekickDirectoryRow, region = "global"): Promise<void> {
+  await runInDurableObject(sidekickWorkspace(env, row.workspaceId, region), (instance: WorkspaceDO) => {
+    const workspace = instance as unknown as {
+      hostedSidekickHost: () => HostedSidekickHost;
+      publishSidebarList: (list: "automations") => void;
+    };
+    const host = workspace.hostedSidekickHost();
+    const now = Date.now();
+    host.storage.transactionSync(() => {
+      host.storage.sql.exec(
+        `INSERT INTO automation_directory
+           (automation_id, workspace_id, author_user_id, run_as_user_id, source_version, payload_hash,
+            lifecycle, scope, owning_workstream_id, owning_substream_id, title, description, next_run_at,
+            projected_at, loadable)
+         VALUES (?, ?, ?, ?, 1, 'test-row', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(automation_id) DO UPDATE SET
+           author_user_id = excluded.author_user_id,
+           run_as_user_id = COALESCE(excluded.run_as_user_id, run_as_user_id),
+           lifecycle = excluded.lifecycle,
+           scope = excluded.scope,
+           owning_workstream_id = excluded.owning_workstream_id,
+           owning_substream_id = excluded.owning_substream_id,
+           title = excluded.title,
+           description = excluded.description,
+           next_run_at = excluded.next_run_at,
+           projected_at = excluded.projected_at,
+           loadable = excluded.loadable`,
+        row.automationId, row.workspaceId, row.authorUserId, row.runAsUserId ?? null,
+        row.lifecycle, row.scope, row.owningWorkstreamId, row.owningSubstreamId ?? "0",
+        row.title, row.description, row.nextRunAt ? Date.parse(row.nextRunAt) : null, now,
+        row.loadable === undefined ? null : row.loadable ? 1 : 0,
+      );
+      host.noteDirectoryChanged(row.automationId, row.lifecycle === "deleted", now);
+    });
+    workspace.publishSidebarList("automations");
+  });
+}

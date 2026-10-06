@@ -2,7 +2,6 @@
 
 import { env } from "cloudflare:workers";
 import {
-  asAutomationId,
   asSpaceId,
   asSubstreamId,
   asUserId,
@@ -31,7 +30,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
-import { AUTOMATION_DO_SCHEMA_MIGRATIONS, AutomationDO } from "../src/durable-objects/automation-do";
+import { type SidekickDirectoryRow, writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
@@ -55,7 +54,6 @@ import {
   deliverEffectsToWorkspaceInOrder,
 } from "./helpers/conversation-effects";
 import {
-  automationDOName,
   conversationObjectName,
   substreamLoopId,
   workspaceDOName,
@@ -78,7 +76,6 @@ const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000102");
 const CHILD_SUBSTREAM_ID = asSubstreamId("00000000-0000-7000-8000-000000000103");
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000104");
 const SESSION_ID = "runtime-test-session";
-const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-00000000010a");
 const SPACE_ID = asSpaceId("00000000-0000-7000-8000-00000000010b");
 const OTHER_SPACE_ID = asSpaceId("00000000-0000-7000-8000-00000000010c");
 
@@ -257,7 +254,6 @@ function nextMessages(socket: WebSocket, count: number): Promise<MessageEvent[]>
 
 type DirectoryCommonEffect = Extract<ConversationEffect, { kind: "directory_common" }>;
 type DirectoryUserEffect = Extract<ConversationEffect, { kind: "directory_user" }>;
-type AutomationDirectoryEffect = Extract<ParentEffect, { kind: "directory_automation" }>;
 
 function partitionKeyFor(effect: ConversationEffect | ParentEffect): string {
   return effect.kind === "directory_user" ? `user:${effect.userId}` : "common";
@@ -306,29 +302,6 @@ function parentEffectEnvelope(
     generation: 1,
     messageId,
     partitionKey: partitionKeyFor(effect),
-    sourceVersion,
-    requiredProjectionVersion: null,
-    payloadHash: conversationEffectHash(effect),
-    effect,
-  };
-}
-
-/** An automation's own sidebar row, as its `AutomationDO` publishes it. */
-function automationDirectoryEnvelope(
-  effect: AutomationDirectoryEffect,
-  messageId: string,
-  sourceVersion = 1,
-): ParentEffectEnvelope {
-  return {
-    kind: "parent_effect",
-    contractVersion: 1,
-    region: "global",
-    workspaceId: WORKSPACE_ID,
-    parentKind: "automation",
-    parentId: effect.automationId,
-    generation: 1,
-    messageId,
-    partitionKey: "automation",
     sourceVersion,
     requiredProjectionVersion: null,
     payloadHash: conversationEffectHash(effect),
@@ -1079,23 +1052,6 @@ describe("Durable Objects in the Workers runtime", () => {
           "assistant_turn_reservations",
         ],
         absentTables: ["agent_run_dispatches", "run_steering"],
-      },
-      {
-        namespace: env.AUTOMATION_DOS,
-        name: automationDOName("global", WORKSPACE_ID, AUTOMATION_ID),
-        constructor: AutomationDO,
-        migrations: AUTOMATION_DO_SCHEMA_MIGRATIONS.length,
-        // Its own rows beside the parent tables the legacy WorkstreamDO had.
-        tables: [
-          "_sql_schema_migrations",
-          "automation",
-          "definition_revisions",
-          "schedules",
-          "runs",
-          "conversation_children",
-          "substream_directory",
-          "durable_outbox",
-        ],
       },
       {
         namespace: env.WORKSPACE_DOS,
@@ -2768,10 +2724,8 @@ describe("Durable Objects in the Workers runtime", () => {
         },
       ],
     })).resolves.toMatchObject({ status: 200 });
-    await expect(stub.applyAutomationDirectory({
-      workspaceId: WORKSPACE_ID,
-      envelope: automationDirectoryEnvelope({
-        kind: "directory_automation",
+    await writeSidekickDirectoryRow(env, {
+        workspaceId: WORKSPACE_ID,
         automationId: subscriptionId,
         authorUserId: USER_ID,
         lifecycle: "active",
@@ -2780,15 +2734,12 @@ describe("Durable Objects in the Workers runtime", () => {
         title: "Monday brief",
         description: "Every Monday",
         nextRunAt: null,
-      }, "monday-brief-v1"),
-    })).resolves.toEqual({ applied: true });
+      });
     // The author owns both rows, but this one belongs to the room's rail. If
     // the top-level query selects by author alone, its third scope makes the
     // whole WorkspaceSidebar schema fail before the socket can send anything.
-    await expect(stub.applyAutomationDirectory({
-      workspaceId: WORKSPACE_ID,
-      envelope: automationDirectoryEnvelope({
-        kind: "directory_automation",
+    await writeSidekickDirectoryRow(env, {
+        workspaceId: WORKSPACE_ID,
         automationId: workstreamSubscriptionId,
         authorUserId: USER_ID,
         lifecycle: "active",
@@ -2797,8 +2748,7 @@ describe("Durable Objects in the Workers runtime", () => {
         title: "Room-owned standup",
         description: "Lives on the work stream's own automation rail",
         nextRunAt: null,
-      }, "room-owned-standup-v1"),
-    })).resolves.toEqual({ applied: true });
+      });
 
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
@@ -3008,12 +2958,9 @@ describe("Durable Objects in the Workers runtime", () => {
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
 
     const subscriptionId = "00000000-0000-7000-8000-000000000803";
-    const row = (
-      lifecycle: "active" | "paused",
-      nextRunAt: string,
-    ): AutomationDirectoryEffect => ({
-      kind: "directory_automation",
+    const row = (lifecycle: "active" | "paused", nextRunAt: string): SidekickDirectoryRow => ({
       automationId: subscriptionId,
+      workspaceId: WORKSPACE_ID,
       authorUserId: USER_ID,
       lifecycle,
       scope: "workspace",
@@ -3022,10 +2969,7 @@ describe("Durable Objects in the Workers runtime", () => {
       description: "Every Monday",
       nextRunAt,
     });
-    await expect(stub.applyAutomationDirectory({
-      workspaceId: WORKSPACE_ID,
-      envelope: automationDirectoryEnvelope(row("active", "2026-08-28T09:00:00.000Z"), "weekly-changelog-v1"),
-    })).resolves.toEqual({ applied: true });
+    await writeSidekickDirectoryRow(env, row("active", "2026-08-28T09:00:00.000Z"));
 
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
@@ -3047,13 +2991,9 @@ describe("Durable Objects in the Workers runtime", () => {
       socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
       expect(JSON.parse(String((await subscribed).data))).toMatchObject({ type: "workspace_sync" });
 
-      // The automation's own row is the only automation write that reaches
-      // the workspace sidebar; the schedule itself stays in AutomationDO.
+      // The Sidekick's directory row is what reaches the workspace sidebar.
       const pushed = nextMessage(socket!);
-      await expect(stub.applyAutomationDirectory({
-        workspaceId: WORKSPACE_ID,
-        envelope: automationDirectoryEnvelope(row("active", "2026-09-04T09:00:00.000Z"), "weekly-changelog-v2", 2),
-      })).resolves.toEqual({ applied: true });
+      await writeSidekickDirectoryRow(env, row("active", "2026-09-04T09:00:00.000Z"));
 
       const event = JSON.parse(String((await pushed).data)) as {
         type: string;
@@ -3073,22 +3013,13 @@ describe("Durable Objects in the Workers runtime", () => {
       // leaves this one alone: two lists that change independently keep
       // independent counters, or a note write would hide an automation update.
       const secondPush = nextMessage(socket!);
-      await expect(stub.applyAutomationDirectory({
-        workspaceId: WORKSPACE_ID,
-        envelope: automationDirectoryEnvelope(row("paused", "2026-09-04T09:00:00.000Z"), "weekly-changelog-v3", 3),
-      })).resolves.toEqual({ applied: true });
+      await writeSidekickDirectoryRow(env, row("paused", "2026-09-04T09:00:00.000Z"));
       const second = JSON.parse(String((await secondPush).data)) as {
         waterline: number;
         items: Array<{ status: string }>;
       };
       expect(second.waterline).toBeGreaterThan(event.waterline);
       expect(second.items[0]?.status).toBe("paused");
-      // A stale version is not a write: the counter stays put and nothing is
-      // pushed, so a Queue redelivery cannot roll the sidebar back.
-      await expect(stub.applyAutomationDirectory({
-        workspaceId: WORKSPACE_ID,
-        envelope: automationDirectoryEnvelope(row("active", "2026-09-04T09:00:00.000Z"), "weekly-changelog-v2", 2),
-      })).resolves.toEqual({ applied: false });
     } finally {
       socket!.close(1000, "test complete");
     }

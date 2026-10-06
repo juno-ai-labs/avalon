@@ -141,9 +141,7 @@ export async function retireWorkspaceGraph(
     try {
       // Every parent, a Channel's, a Space's and a Sidekick's, is hosted by
       // this workspace's own object, which is already closed and answers only
-      // the retirement read. A Sidekick still in its legacy object is imported
-      // by that read first; the export froze the legacy object, so there is
-      // nothing left there to close.
+      // the retirement read.
       const parent = workspace;
 
       // Asked before the parent is closed, so its children go first. The read

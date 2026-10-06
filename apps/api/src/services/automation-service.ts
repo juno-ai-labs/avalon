@@ -174,7 +174,7 @@ export class AutomationService {
    * Start one run whose model bytes come from a demo's pack instead of a
    * provider. Only the demo seeder calls this; `POST /sidekicks/:id/run` goes
    * to `runNow`, whose request shape cannot carry a seed. See
-   * `SidekickDO.runSeeded`.
+   * `HostedSidekick.runSeeded`.
    */
   async runSeeded(automationId: string, seed: DemoSeed): Promise<{ runId: string; reused: boolean }> {
     const workspace = await this.workspace();
