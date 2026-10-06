@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * Space intents staged before WorkspaceDO migration 93, finished in place.
+ * Space intents staged before WorkspaceDO migration 94, finished in place.
  *
  * Every Space operation is one transaction of WorkspaceDO now, so nothing
  * stages an intent any more. A row a Worker left unsettled at the deploy is

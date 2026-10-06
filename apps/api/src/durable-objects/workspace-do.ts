@@ -9358,7 +9358,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Move a Channel between two Spaces in one transaction of this object. A
    * Space grants no reader, so nothing outside it takes part. `moved: false`
-   * only for a target already staged `joining` before migration 93, which the
+   * only for a target already staged `joining` before migration 94, which the
    * caller finishes as an add then a removal.
    */
   async moveSpaceMembership(
@@ -9493,7 +9493,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Finish one intent staged before migration 93, for a `space_intent_resume`
+   * Finish one intent staged before migration 94, for a `space_intent_resume`
    * message already on the Queue. Nothing stages new ones; the alarm finishes
    * the rest in place.
    */

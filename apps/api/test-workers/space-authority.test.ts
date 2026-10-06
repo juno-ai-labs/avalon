@@ -235,7 +235,7 @@ async function openGeneral(): Promise<{ created: boolean; space: SpaceSummary }>
  * One Space, reserved as every Space now is: Organization-wide.
  *
  * `personal` writes a *legacy* row instead — a Space made private before
- * WorkspaceDO migration 93, which nothing can create any more — for the
+ * WorkspaceDO migration 94, which nothing can create any more — for the
  * listing rules that still read the scope a stored row carries.
  */
 async function reserve(

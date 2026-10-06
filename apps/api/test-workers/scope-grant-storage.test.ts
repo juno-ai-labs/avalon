@@ -71,7 +71,7 @@ function grantOperationCount(state: DurableObjectState): number {
 }
 
 /**
- * A grant row as a Space seated it before WorkspaceDO migration 93: written
+ * A grant row as a Space seated it before WorkspaceDO migration 94: written
  * through the ordinary path, then marked `space` the way that path marked it.
  * No live code writes `source_kind = 'space'` any more.
  */
@@ -98,7 +98,7 @@ describe("workstream scope grants in real workerd", () => {
     });
   });
 
-  it("given a grant a Space seated before migration 93, when the Channel adds that reader, then the row becomes direct and is published", async () => {
+  it("given a grant a Space seated before migration 94, when the Channel adds that reader, then the row becomes direct and is published", async () => {
     await withStorage("scope-grant-space-provenance", (store, state) => {
       const target = command().target;
       seatLegacySpaceGrant(store, state);

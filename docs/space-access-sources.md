@@ -5,7 +5,7 @@ the Channels placed in it: an Organization-wide Space made a Channel public, and
 a private Space seated its participants. Every Space is Organization-wide now
 and grants no reader ([`spaces.md`](spaces.md#every-space-is-organization-wide)),
 so the code that applied and withdrew a Space's audience on its Channels was
-deleted. WorkspaceDO migration 93 dropped its tables.
+deleted. WorkspaceDO migration 94 dropped its tables.
 
 This document keeps what that code taught, for whoever builds anything that lets
 one object grant access to another. Read it before designing a new "source" of
@@ -51,7 +51,7 @@ readers: most of these were learned from a bug.
    nobody owned.
 5. **A replayed receipt runs the old rules.** Steps were idempotent by storing
    their plan under an operation id. That made retries safe, but after a rule
-   change a stored plan replays the rule that wrote it. Migration 93 had to drop
+   change a stored plan replays the rule that wrote it. Migration 94 had to drop
    those receipts before the tables went. Any receipt that stores a *decision*
    rather than a *result* needs a plan for rule changes.
 6. **Fence the retraction too.** A retraction deletes the row that later steps
@@ -95,7 +95,7 @@ rule. Membership changes are now one WorkspaceDO transaction each.
 
 ## What is left
 
-- `parent_grants.source_kind = 'space'` rows written before migration 93. They
+- `parent_grants.source_kind = 'space'` rows written before migration 94. They
   stay out of the scope-grant directory; an ordinary removal revokes one, and a
   direct share promotes it to `direct`.
 - `space_intents` rows of the old kinds staged before the deploy. The alarm

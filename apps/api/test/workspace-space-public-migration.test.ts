@@ -1,5 +1,5 @@
 /**
- * WorkspaceDO migration 93 makes every Space Organization-wide. A Space grants
+ * WorkspaceDO migration 94 makes every Space Organization-wide. A Space grants
  * no reader to its Channels, so the migration touches Spaces and nothing that
  * says who reads a Channel. This proves the SQL against the shipped schema:
  * which Spaces change, that no audience walk is staged, and that the client
@@ -13,7 +13,7 @@ import { WorkspaceSpaceStorage } from "../src/durable-objects/workspace-space-st
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
-const PUBLIC_MIGRATION_VERSION = 93;
+const PUBLIC_MIGRATION_VERSION = 94;
 const GENERAL = "00000000-0000-7000-8000-000000000931";
 const PRIVATE = "00000000-0000-7000-8000-000000000932";
 const ARCHIVED = "00000000-0000-7000-8000-000000000933";
@@ -70,7 +70,7 @@ afterEach(() => {
   while (openDatabases.length > 0) openDatabases.pop()?.close();
 });
 
-describe("WorkspaceDO migration 93", () => {
+describe("WorkspaceDO migration 94", () => {
   it("widens every private Space, archived ones too, and stages nothing for their Channels", () => {
     const database = openDatabase();
     apply(database, PUBLIC_MIGRATION_VERSION - 1);

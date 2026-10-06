@@ -83,7 +83,7 @@ The parent state moved in under a `parent_` prefix, one row set per parent:
 | `scope_invitations`, `scope_invitation_operations` | `parent_invitations`, `parent_invitation_operations` |
 | `connector_participant_admissions` | `parent_connector_admissions` |
 | `workstream_sidekick_attachments` | `parent_sidekicks` |
-| `workstream_direct_audience`, `workstream_space_access_sources`, `workstream_space_supplied_readers`, `workstream_access_operations` | `parent_direct_audience`, `parent_space_sources`, `parent_space_readers`, `parent_access_operations` (dropped by WorkspaceDO migration 93) |
+| `workstream_direct_audience`, `workstream_space_access_sources`, `workstream_space_supplied_readers`, `workstream_access_operations` | `parent_direct_audience`, `parent_space_sources`, `parent_space_readers`, `parent_access_operations` (dropped by WorkspaceDO migration 94) |
 | `workstream_socket_ticket_receipts` | `workspace_socket_ticket_receipts` (already existed) |
 | `scope_grant_deliveries` | dropped; nothing had written it since WorkstreamDO migration 17 |
 
