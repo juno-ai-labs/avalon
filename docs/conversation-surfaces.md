@@ -705,6 +705,8 @@ click its focus opens no tip until a key is pressed; triggers carry their
 `aria-label`, so little is lost. The answer is permissive until the tracking is
 installed, so a test mounting one component sees the old behaviour.
 
+Shipped in [#1127](https://github.com/juno-ai-labs/avalon/pull/1127).
+
 ### 2026-09-24 — One composer host on every surface
 
 **What changed:** `WorkstreamComposer` takes a `ComposerConversation` (the four
