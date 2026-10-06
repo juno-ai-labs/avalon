@@ -305,12 +305,17 @@ removes the previous one:
 A transition removes only the emoji Rally itself last placed, recorded in
 `slack_agent_sessions.reaction_current`, so a member's own reaction on the same
 message survives. The outcome transition re-reads that column immediately before
-acting and writes it back conditionally, because a follow-up prompt can re-anchor
-the reaction while delivery is in flight: removing a stale emoji answers
+acting and writes it back conditionally: removing a stale emoji answers
 `no_reaction`, which is a successful retry, and would otherwise leave two Rally
 reactions on the message — the one thing the single-slot rule exists to prevent.
 The reaction sits on the *triggering* message rather than the thread root, and
 each new prompt in a thread moves it.
+
+**Known gap:** a session holds one reaction slot, but a follow-up prompt is
+admitted while an earlier run in the thread is still live. The follow-up moves
+the slot to its own message, usually with the same acknowledgement emoji, so the
+conditional write cannot tell the anchors apart: the earlier run's outcome can
+land on the follow-up's message, or leave its own message showing `eyes`.
 
 Reaction sets resolve most-specific-wins: the built-in defaults, then a workspace
 override on the installation's `config_json`, then a per-run override. An
@@ -794,6 +799,8 @@ briefing's three/one/zero-result cases.
 
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
+## Changelog
+
 ### 2026-10-06 — The rotating working reaction was removed
 
 **What changed:** The working reaction that cycled `brain` → `mag` →
@@ -805,12 +812,18 @@ stays on the message until delivery swaps in the outcome reaction.
 **Why:** The user asked for it removed. The reasoning behind that request was not
 recorded.
 
-**What a future change has to respect:** `slack_agent_sessions.reaction_cursor`
+**Considered and rejected:** Placing one fixed working emoji in place of the
+rotation. It adds a transition and a Slack call per run for no information the
+acknowledgement does not already give.
+
+**Consequences:** `slack_agent_sessions.reaction_cursor`
 still exists in WorkspaceDO's released SQLite migrations but nothing reads or
 writes it. A reaction override saved with `working` or `workingIntervalMs` still
 parses; those keys are accepted and ignored so the override's other states
 survive. Bringing a rotation back needs a new class name, since `v14` retires
 `SlackReactionTicker` for good.
+
+Shipped in #1123.
 
 ### 2026-09-27 — Bindings route Slack messages, and the bot joins only where it is wanted
 
