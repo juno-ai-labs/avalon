@@ -211,6 +211,16 @@ describe("WorkspaceDO attention", () => {
       });
   });
 
+  it("leaves Organization-wide conversations out of a guest's count, as a guest's sidebar does", async () => {
+    await seed({ id: "00000000-0000-7000-8000-0000000009e1", scope: "workspace", participant: false, latest: 2, seen: 0 });
+    await seed({ id: "00000000-0000-7000-8000-0000000009e2", latest: 2, seen: 0 });
+
+    await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
+      .resolves.toMatchObject({ attentionCount: 2 });
+    await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "guest" }))
+      .resolves.toMatchObject({ attentionCount: 1 });
+  });
+
   it("counts each Breakout the reader may list that is unread or unseen, as the sidebar menu does", async () => {
     const channelId = "00000000-0000-7000-8000-0000000009c1";
     await seed({ id: channelId, latest: 2, seen: 2 });

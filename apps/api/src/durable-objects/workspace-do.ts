@@ -12405,7 +12405,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       waitingForYou: row.waiting_for_you,
       waitingReason,
       hasUnreadActivity: row.has_unread_activity === 1,
-      attentionCount: this.spaceStorage().readerAttentionCount(member(request.userId)),
+      attentionCount: this.spaceStorage().readerAttentionCount({ userId: request.userId, accessClass: request.accessClass ?? "member" }),
     });
   }
 

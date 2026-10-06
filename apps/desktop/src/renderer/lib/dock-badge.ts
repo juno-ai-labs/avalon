@@ -8,9 +8,9 @@ import { desktopBridge } from './platform';
  * Organization). APNs sets the same number while Rally is not running
  * (`docs/push-notifications.md`).
  *
- * `complete` is the menu's own "every Channel is loaded": a count from a half
- * walked directory would lower the badge APNs last set, so nothing is sent
- * until the directory has loaded.
+ * `complete` says the count is whole: every Channel and every Breakout list it
+ * reads has loaded. A count from a half-loaded directory would lower the badge
+ * APNs last set, so nothing is sent until then.
  */
 export function useDockBadge(count: number, complete: boolean): void {
   useEffect(() => {

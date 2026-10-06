@@ -570,12 +570,14 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     () => associativeWorkstreamsForSidebar(associativeNavigation.data, workstreams.data),
     [associativeNavigation.data, workstreams.data],
   );
-  const attentionItems = useAttentionItems(sidebarWorkstreams);
+  const { items: attentionItems, breakoutListsLoaded } = useAttentionItems(sidebarWorkstreams);
   // The menu only says "nothing" once every Channel is loaded: the Space walk
   // has finished, no page is left unread, and the walk did not fail.
   const attentionComplete = workstreams.data !== undefined && !workstreams.hasMore
     && !workstreams.isFetching && !workstreams.isError;
-  useDockBadge(attentionItems.length, attentionComplete);
+  // A Breakout list still on its way would make the count a floor, and the
+  // dock would then lower the badge APNs set from the full count.
+  useDockBadge(attentionItems.length, attentionComplete && breakoutListsLoaded);
   const visibleSpaces = spaces.data?.items ?? [];
   // While search is open, a Breakout list the socket writes re-reads the
   // places, so a Breakout created or renamed meanwhile shows at once.

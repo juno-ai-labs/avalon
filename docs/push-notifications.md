@@ -63,7 +63,7 @@ Omitting `badge` would leave the previous icon count in place; `0` clears it.
 
 The Mac also sets its own dock badge while Rally runs. `useDockBadge` sends the
 menu's count to main (`dock-badge:set`, `app.setBadgeCount`) on every change
-once the Channel directory has loaded, so reading a conversation lowers the
+once the Channel directory and every Breakout list the count reads have loaded, so reading a conversation lowers the
 badge at once; APNs only sets it when an alert arrives. Unmounting the shell
 (sign-out, switching Organization) clears it. The local badge needs no APNs
 registration, but macOS shows a badge only while notifications, with badges,
@@ -284,8 +284,12 @@ every Organization: the menu is per Organization, and iOS holds one session.
 
 **Consequences:** The server count and `attentionItems` on the client must
 change together; `waitingForReaderSql` is the server's copy of
-`readerMarkerStatus`. Guests are counted with member listing rules here, as the
-`attention` read already did.
+`readerMarkerStatus`. The count takes the reader's access class, so a guest's
+badge leaves out Organization-wide conversations their sidebar does not list.
+The Mac waits for every Breakout list the count needs before writing, since a
+missing list would lower the APNs badge.
+
+Shipped in #1121.
 
 ### 2026-10-03 — Web Push for browser members
 
