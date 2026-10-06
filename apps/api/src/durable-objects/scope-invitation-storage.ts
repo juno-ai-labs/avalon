@@ -10,6 +10,13 @@ import { ScheduledAlarmStore } from "./scheduled-alarms";
  */
 export const SCOPE_INVITATION_DELIVERY_ALARM = "parent_invitation_delivery";
 
+/**
+ * One-time: write `scope_share_recipients` rows for a parent's shares that were
+ * pending before that table existed, so signing in claims them like any
+ * other. Keyed by parent id; scheduled by WorkspaceDO migration 93.
+ */
+export const SCOPE_INVITATION_INDEX_ALARM = "parent_invitation_index";
+
 /** The alarm key naming one parent's invitation. */
 export function scopeInvitationAlarmKey(parentId: string, invitationId: string): string {
   return `${parentId}:${invitationId}`;
@@ -21,7 +28,6 @@ export interface ScopeInvitationRecord {
   summary: ScopeInvitationSummary;
   actorUserId: string;
   actorIncarnation: string;
-  tokenHash: string;
   deliveryEncrypted: string;
   grantOperationIds: string[];
   deliveredAt: number | null;
@@ -35,13 +41,13 @@ export class ScopeInvitationStorage {
   read(id: string): ScopeInvitationRecord | null {
     const row = this.storage.sql.exec<{
       summary_json: string; actor_user_id: string; actor_incarnation: string;
-      token_hash: string; delivery_encrypted: string; grant_operations_json: string; delivered_at: number | null;
+      delivery_encrypted: string; grant_operations_json: string; delivered_at: number | null;
       accepted_incarnation: string | null;
     }>("SELECT * FROM parent_invitations WHERE parent_id = ? AND id = ?", this.parentId, id).toArray()[0];
     return row ? {
       summary: ScopeInvitationSummarySchema.parse(JSON.parse(row.summary_json)),
       actorUserId: row.actor_user_id, actorIncarnation: row.actor_incarnation,
-      tokenHash: row.token_hash, deliveryEncrypted: row.delivery_encrypted,
+      deliveryEncrypted: row.delivery_encrypted,
       grantOperationIds: z.array(z.string().uuid()).parse(JSON.parse(row.grant_operations_json)),
       deliveredAt: row.delivered_at, acceptedIncarnation: row.accepted_incarnation,
     } : null;
@@ -71,7 +77,7 @@ export class ScopeInvitationStorage {
   }
 
   create(input: CreateScopeInvitations, actorIncarnation: string, invitations: Array<{
-    id: string; email: string; tokenHash: string; deliveryEncrypted: string; grantOperationIds: string[];
+    id: string; email: string; deliveryEncrypted: string; grantOperationIds: string[];
   }>): ScopeInvitationSummary[] {
     const request = CreateScopeInvitationsSchema.parse(input);
     return this.storage.transactionSync(() => {
@@ -90,7 +96,8 @@ export class ScopeInvitationStorage {
         this.storage.sql.exec(`INSERT INTO parent_invitations
           (parent_id,id,operation_id,actor_user_id,actor_incarnation,summary_json,token_hash,delivery_encrypted,grant_operations_json,created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, this.parentId, invite.id, request.operationId, request.actorUserId,
-          actorIncarnation, JSON.stringify(summary), invite.tokenHash, invite.deliveryEncrypted, JSON.stringify(invite.grantOperationIds), Date.now());
+          // `token_hash` is retired but still NOT NULL UNIQUE; the id satisfies both.
+          actorIncarnation, JSON.stringify(summary), invite.id, invite.deliveryEncrypted, JSON.stringify(invite.grantOperationIds), Date.now());
         new ScheduledAlarmStore(this.storage.sql).schedule({ kind: SCOPE_INVITATION_DELIVERY_ALARM,
           key: scopeInvitationAlarmKey(this.parentId, invite.id), dueAt: Date.now() });
         return summary;

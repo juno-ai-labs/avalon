@@ -78,19 +78,21 @@ it, and with nothing in the link to consume, an email one-time code or Google
 sign-in is already a human proving they hold the mailbox.
 
 Creation writes one `scope_share_recipients` row per address in D1, naming the
-Channel that holds the share, before the Organization object records it. The
-share stays in the object, beside the grants it becomes; the row only says where
-to ask. Writing it first, with the other external awaits, means a denied or
-replayed creation can leave a row pointing at nothing pending. That is harmless:
-a claim that finds nothing removes it. Creation writes the row again once the
-share is recorded, and a claim that deletes rows re-checks afterwards and
-restores any whose address gained a pending share meanwhile: a claim settling
-an address's last share and a new share to that address can otherwise race,
-leaving the new share with no row.
+Channel that holds the share, once the Organization object has recorded it, so
+a refused caller writes no rows. The share stays in the object, beside the
+grants it becomes; the row only says where to ask. If that write fails the
+request fails, and the sharer's retry replays the same operation to it. A claim
+or revocation that deletes rows re-checks afterwards and restores any whose
+address gained a pending share meanwhile, so a delete racing a new share to the
+same address cannot leave it without a row. A share whose sharer's membership
+was replaced can never be claimed, so a claim that meets one retires it, and its
+row clears instead of costing every later sign-in. Every refusal is logged as
+`scope_invitation_claim_refused` with its reason.
 
-`claimScopeInvitations` (`scope-invitation-claims.ts`) reads the user's verified
-addresses from `user_verified_emails`, plus any address the caller has verified
-itself, looks up their rows, and asks each Channel to claim. It runs at two
+`claimScopeInvitations` (`scope-invitation-claims.ts`) looks up rows for the
+user's verified addresses in `user_verified_emails`, plus any address the caller
+has verified itself, in one D1 query, and asks each Channel to claim, in
+parallel. It runs at two
 points:
 
 - **Browser session registration**, which every browser sign-in passes through:
@@ -336,16 +338,12 @@ it opens nothing, since the revoked share is never claimed.
 
 `token_hash` on `parent_invitations` is retired but still `NOT NULL UNIQUE`; new
 rows store the invitation's own id there rather than paying for a table rebuild.
-Shares made before this change have no lookup row, and the `inv_` token in their
-email (`/invite#inv_…`) is the only record of their Channel. The browser keeps
-that token in page memory and, once signed in, posts it to
-`POST /sharing/claim-link`, which reads the Channel from its `link_payloads` row
-and runs the ordinary claim with the caller's verified addresses. The token is
-routing, never proof: someone signed in with another address claims nothing.
-A Google sign-in from such a link leaves the page and loses the token; email
-sign-in, which those emails asked for, keeps it. Remove the route and
-`LEGACY_INVITATION_LINK` once no such share can still be pending. A corrupted receipt or unavailable
-identity authority remains an error, never a grant.
+Shares made before this change had no lookup row. WorkspaceDO migration 93
+schedules a `parent_invitation_index` alarm for each parent holding a pending
+share, and the alarm writes that parent's rows, once, with the alarm system's
+retries. The server does all of it: an old `/invite#inv_…` link is just a
+sign-in page, and signing in claims the share like any other. A corrupted
+receipt or unavailable identity authority remains an error, never a grant.
 
 ## Testing
 
@@ -415,16 +413,19 @@ after sign-in was smaller, but kept a client-side protocol, an unauthenticated
 preview route and a link secret for a step nobody sees. Moving pending shares
 into D1 entirely would split a share from the grants it becomes, losing the
 single transaction that stops an interrupted claim restoring a later
-revocation; the lookup row is only a hint for that reason.
+revocation; the lookup row is only a hint for that reason. Having the browser keep an
+old link's token and present it after sign-in, so shares made before this
+change still reach their recipient, was replaced by a one-time server-side
+index (WorkspaceDO migration 93): the browser should carry no protocol.
 
 **Consequences.** A share is held by an address, so anyone who later holds a
 verified sign-in for it takes what is still pending; revoke a share sent to a
 wrong address. Email-only identities do not cross deployments, so a second
 deployment serving Organizations needs the link's sign-in to happen there.
 `parent_invitations.token_hash` is retired but still constrained, and stores
-the invitation id. Shares made before this change keep reaching their
-recipient through the token in their old email, via `POST /sharing/claim-link`,
-until none is left pending.
+the invitation id. Shares made before this change are indexed by a one-time
+WorkspaceDO alarm (migration 93), so old links need no special handling. The
+`link_payloads` table is no longer used and can be dropped after deploy.
 
 PR: [#1120](https://github.com/juno-ai-labs/avalon/pull/1120). PRD: [guest sharing](PRDs/2026-09-16_guest-sharing-browser/prd.md).
 

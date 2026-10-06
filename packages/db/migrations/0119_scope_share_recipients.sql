@@ -6,10 +6,9 @@
 -- row only says which Channel to ask, so that signing in as the address can
 -- claim the share without a link or an acceptance step.
 --
--- Written before the object records the share and deleted by the object once
--- nothing for that address is left pending there. A row whose share was never
--- recorded, or has since been revoked, is harmless: claiming finds nothing
--- pending and removes it.
+-- Written once the object has recorded the share, and deleted by the object
+-- once nothing for that address is left pending there. Shares pending before
+-- this table existed are indexed by WorkspaceDO migration 93.
 CREATE TABLE scope_share_recipients (
   email TEXT NOT NULL COLLATE NOCASE,
   workspace_id TEXT NOT NULL,
