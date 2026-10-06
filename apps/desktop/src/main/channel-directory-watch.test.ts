@@ -241,6 +241,35 @@ describe('channel directory watch', () => {
     expect(subject.watch.snapshot().channels.map((channel) => channel.id)).toEqual([ACME]);
   });
 
+  it('is not whole again until a Space added after the walk has been read', async () => {
+    const subject = harness();
+    subject.watch.start();
+    const socket = await subject.connected();
+    socket.message(subscribeAnswer([GENERAL]));
+    socket.message(spaceAnswer(socket.requests('space_channels')[0]!, [row(ACME)]));
+    await flush();
+    expect(subject.watch.snapshot().complete).toBe(true);
+
+    socket.message({
+      type: 'workspace_space_snapshot',
+      occurredAt: '2026-10-06T11:00:00.000Z',
+      spaces: {
+        active: { waterline: 5, items: [space(GENERAL, 'General'), space(HIRING, 'Hiring')] },
+        inactive: { waterline: 5, items: [] },
+      },
+      ordering: [],
+      spacesReady: true,
+    });
+    const hiring = socket.requests('space_channels').find((frame) => frame['spaceId'] === HIRING);
+    expect(hiring).toBeDefined();
+    expect(subject.watch.snapshot().complete).toBe(false);
+
+    socket.message(spaceAnswer(hiring!, [row(PRICING, { latestAttentionSequenceNumber: 6 })]));
+    await flush();
+    expect(subject.watch.snapshot().complete).toBe(true);
+    expect(subject.watch.snapshot().channels.map((channel) => channel.id)).toEqual([ACME, PRICING]);
+  });
+
   it('reads the list again on reconnect and drops what the new walk did not return', async () => {
     const subject = harness();
     subject.watch.start();
