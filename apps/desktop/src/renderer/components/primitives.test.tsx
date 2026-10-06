@@ -365,6 +365,23 @@ describe('Tip across an application switch', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Copy response');
   });
 
+  it('stays shut on a focus code moves after a pointer press, and opens after a key', async () => {
+    const copy = renderTip();
+
+    // A tap elsewhere, then focus moved here by code: a menu level focusing its
+    // first control. Nobody tabbed to it, so it answers nothing.
+    fireEvent.pointerDown(window, { pointerType: 'touch' });
+    fireEvent.focus(copy);
+
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+
+    fireEvent.blur(copy);
+    fireEvent.keyDown(window, { key: 'Tab' });
+    fireEvent.focus(copy);
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Copy response');
+  });
+
   it('takes a caller-controlled hint down with the window as well', async () => {
     // `DragHint` renders `open` itself, so dropping the tip's own state cannot
     // close it — and a resize handle's hint is the one most likely to still be

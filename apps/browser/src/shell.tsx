@@ -16,6 +16,7 @@ import { clearWorkspaceLocalCache } from '../../desktop/src/renderer/lib/local-c
 import { desktopBridge } from '../../desktop/src/renderer/lib/platform';
 import { reconcileWebPush } from '../../desktop/src/renderer/lib/web-push';
 import { createQueryClient } from '../../desktop/src/renderer/lib/query-client';
+import { useWindowActivationTracking } from '../../desktop/src/renderer/lib/window-activation';
 import { NEW_SIDEKICK_TARGET } from '../../desktop/src/common/sidekicks';
 import { shellLocation } from './session';
 import { browserRequest } from './transport';
@@ -141,6 +142,10 @@ export default function BrowserShell(props: {
   onRevalidate: () => void;
 }): React.JSX.Element {
   const [queryClient] = useState(() => createQueryClient());
+  // The desktop's `App` installs this and the browser mounts below it, so the
+  // tips and previews that ask it get the same answers here. See
+  // `lib/window-activation.ts`.
+  useWindowActivationTracking();
   // The desktop shell routes by hash. Rewrite a canonical link into that form
   // once, before its router first reads the location.
   useState(() => {
