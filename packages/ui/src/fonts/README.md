@@ -8,6 +8,7 @@ than fetch. See [`docs/theming.md`](../../../../../docs/theming.md).
 | File | Family | Axes | Upstream |
 | --- | --- | --- | --- |
 | `geist-mono-latin-variable.woff2` | Geist Mono | weight 100–900 | [vercel/geist-font](https://github.com/vercel/geist-font) |
+| `inter-latin-variable.woff2` | Inter | weight 100–900 | [rsms/inter](https://github.com/rsms/inter) via `@fontsource-variable/inter` 5.3.0 (licence: [`OFL-Inter.txt`](OFL-Inter.txt)) |
 
 The font is licensed under the SIL Open Font License 1.1; the licence is in
 [`OFL.txt`](OFL.txt) and must stay beside the files it covers. Adding a font

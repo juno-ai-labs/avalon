@@ -9,6 +9,13 @@
  */
 
 @font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+  src: url('../fonts/inter-latin-variable.woff2') format('woff2');
+}
+@font-face {
   font-family: 'Geist Mono';
   font-style: normal;
   font-weight: 100 900;
@@ -366,7 +373,7 @@
   /* System sans-serif for application UI, including secondary windows and
    * portals. Bundled Geist Mono remains available for code and technical
    * content. */
-  --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --av-sys-font-family-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
   /* The sizes the interface sets, as against the document size a theme
@@ -796,7 +803,7 @@
 
   --av-sys-space-event-gap: calc(var(--av-ref-space-unit) * 2);
 
-  --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --av-sys-font-family-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
   --av-sys-font-size-base: 14px;

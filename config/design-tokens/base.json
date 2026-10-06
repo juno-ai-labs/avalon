@@ -55,7 +55,7 @@
     "sys.space.block.gap": "calc({ref.space.unit} * 4)",
     "sys.space.prose.gap": "calc({ref.space.unit} * 4)",
     "sys.space.event.gap": "calc({ref.space.unit} * 2)",
-    "sys.font.family.ui": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", system-ui, sans-serif",
+    "sys.font.family.ui": "\"Inter\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", system-ui, sans-serif",
     "sys.font.family.mono": "\"Geist Mono\", ui-monospace, SFMono-Regular, Consolas, \"Liberation Mono\", monospace",
     "sys.font.size.base": "14px",
     "sys.font.size.prose": "16.5px",

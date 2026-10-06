@@ -6,6 +6,15 @@
   "description": "The dark GrokBot-inspired Rally appearance.",
   "fonts": [
     {
+      "family": "Inter",
+      "style": "normal",
+      "weight": "100 900",
+      "display": "block",
+      "src": {
+        "bundled": "inter-latin-variable.woff2"
+      }
+    },
+    {
       "family": "Geist Mono",
       "style": "normal",
       "weight": "100 900",
