@@ -3777,11 +3777,13 @@ export class SlackAgentService {
       // Re-read rather than trusting the snapshot `deliverWorkstreamOutcome`
       // took at the top. Between that read and this call a legacy stream close,
       // the complete saved-turn post, the needs-input DMs, and the status clear
-      // have all run on 5-10s timeouts, and a follow-up prompt in the same
-      // thread may have re-anchored the reaction meanwhile. Removing a stale
-      // emoji answers `no_reaction`, which is swallowed as success — leaving two
-      // Rally reactions on the message, which is the one invariant this
-      // feature has.
+      // have all run on 5-10s timeouts, and another writer may have changed
+      // `reaction_current` meanwhile. Removing a stale emoji answers
+      // `no_reaction`, which is swallowed as success — leaving two Rally
+      // reactions on the message, which is the one invariant this feature has.
+      // Known gap: a follow-up prompt admitted while this run is live moves the
+      // session's single reaction slot to its own message, usually with the same
+      // emoji, and this check cannot tell the two anchors apart.
       const workspace = await this.workspaceDirectory(session.workspace_id);
       const placed = WorkspaceSlackSessionResultSchema.parse(
         await workspace.slackSessionById({
