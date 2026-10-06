@@ -6516,6 +6516,11 @@ async function readRunAuthority(
   // the automation still wants it done. Pausing or deleting marks the run row,
   // and a run that outlived its consent must stop issuing provider writes
   // rather than finish on stale consent.
+  //
+  // `pending` is live too. Provisioning starts the loop and only then reports
+  // the run running, so the loop's first check can land between the two; only
+  // provisioning starts a run's loop, and a pause or delete moves even a
+  // pending run to `stopped`.
   const run = input.automationRun;
   startedAt = Date.now();
   const live = await (await hostedParentStub(env, input.workspaceId)).sidekickReadRunState({
@@ -6525,7 +6530,8 @@ async function readRunAuthority(
   });
   recordOptionalTiming(onTiming, "automation", startedAt);
   if (!live || live.lifecycle !== "active"
-    || (live.state !== "running" && live.state !== "needs_input" && !continuedAfterFinish(input, live))) {
+    || (live.state !== "pending" && live.state !== "running" && live.state !== "needs_input"
+      && !continuedAfterFinish(input, live))) {
     throw new ConnectorError("unauthorized", "This automation run is no longer running");
   }
   const snapshot: RunAuthoritySnapshot = {

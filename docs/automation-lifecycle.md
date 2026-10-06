@@ -1049,6 +1049,30 @@ on every transcript update.
 
 ## Changelog
 
+### 2026-10-06 — A run's loop may act while its row still reads `pending`
+
+**What changed:** The check a Sidekick run's loop makes before it acts
+(`readRunAuthority`) accepts a `pending` run as live, as well as `running` and
+`needs_input`.
+
+**Why:** Since provisioning moved to the activity Queue (#1106), the consumer
+starts the run's loop and only then reports the run running. A loop that
+started quickly checked in between and was refused with "This automation run is
+no longer running". In production the GitHub PR Firehose Sidekick's run for a
+newly opened PR failed this way, 222 ms before the report landed, with no model
+call made.
+
+**Considered and rejected:** Reporting the run running before starting the
+loop. A loop start that then failed would leave a `running` row the resend
+never revisits, since it re-sends only `pending` runs.
+
+**Consequences:** `pending` means "admitted and not stopped": only provisioning
+starts a run's loop, and a pause or delete moves even a pending run to
+`stopped`, which the check still refuses. A new run state must be classified
+here as live or not.
+
+Shipped in [#1111](https://github.com/juno-ai-labs/avalon/pull/1111).
+
 ### 2026-10-05 — A Sidekick lives in its Organization object
 
 **What changed:** Every Sidekick's definition, revisions, schedules, runs and
