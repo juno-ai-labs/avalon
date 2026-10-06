@@ -87,14 +87,14 @@ export type SpaceScope = z.infer<typeof SpaceScopeSchema>;
  * The only audience a Space may be given: every Space is Organization-wide.
  *
  * A product decision, not a default. `SpaceScopeSchema` still reads
- * `personal` because rows written before WorkspaceDO migration 93 said so;
+ * `personal` because rows written before WorkspaceDO migration 94 said so;
  * nothing may write it again. A Space's audience also grants nothing to the
  * Channels in it: each Channel owns its own (see `docs/spaces.md#every-space-is-organization-wide`).
  */
 export const SpaceRequestScopeSchema = z.literal("workspace");
 
 /**
- * A creation's scope. A desktop released before migration 93 sends
+ * A creation's scope. A desktop released before migration 94 sends
  * `personal` for every Space its sidebar makes, and nothing refuses a client by
  * version, so the old value is read as the only one there is rather than
  * failing every creation from a build that has not updated.

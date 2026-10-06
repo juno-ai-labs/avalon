@@ -543,7 +543,7 @@ export class SpaceService {
    * Finish a staged operation whose request never came back, for a
    * `space_intent_resume` message already on the Queue.
    *
-   * Only intents staged before migration 93 exist; WorkspaceDO finishes each
+   * Only intents staged before migration 94 exist; WorkspaceDO finishes each
    * in one transaction (`resumeLegacyIntent`).
    */
   async resumeIntent(operationId: string): Promise<SpaceIntentResumeOutcome> {

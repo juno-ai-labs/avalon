@@ -279,7 +279,7 @@ export class ScopeGrantStorage {
       } else if (current && current.active === request.active
         && current.membershipIncarnation === membershipIncarnation
         // Equal admission is not equal provenance. An add over a row a Space
-        // seated before migration 93 makes the Channel responsible for that
+        // seated before migration 94 makes the Channel responsible for that
         // reader and must publish the shared directory projection even though
         // `active` stays true.
         && !(request.active && this.sourceKind(request.userId, request.target) === "space")) {
@@ -290,7 +290,7 @@ export class ScopeGrantStorage {
           target: request.target, active: request.active, revision, membershipIncarnation });
         const grantJson = JSON.stringify(grant);
         // Every write is the Channel's own decision, so it is direct and
-        // published. A row a Space seated before migration 93 becomes direct
+        // published. A row a Space seated before migration 94 becomes direct
         // on its next write.
         this.storage.sql.exec(
           `INSERT INTO parent_grants (parent_id, user_id, scope_kind, substream_id, grant_json, source_kind, source_id)
