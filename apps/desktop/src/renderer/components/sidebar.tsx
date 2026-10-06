@@ -12,7 +12,7 @@ import {
   SidebarScroll,
 } from '@rally/ui/components/resizable-sidebar';
 import { SidebarTopActions } from '@rally/ui/components/space-pills';
-import { IconCloudDownload, IconDeviceDesktopDown, IconMessagePlus, IconSearch } from '@tabler/icons-react';
+import { IconCloudDownload, IconDeviceDesktopDown, IconMenu2, IconMessagePlus, IconSearch } from '@tabler/icons-react';
 import { NewWorkstreamMenu } from './new-workstream-menu';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -20,7 +20,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { conversationNeedsViewer, type CreateSpaceRequest, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconArrowsSort, IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
+import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
@@ -29,10 +29,11 @@ import {
   consumeDeepLinkWorkstreamNavigation,
   useDeepLinkWorkstreamNavigation,
 } from '../lib/deep-link-navigation';
-import { formatDateTime, formatSidebarActivityTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, recencyTimestamp, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
+import { formatDateTime, formatSidebarActivityTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
 import { committedOrder, moveWithin, orderByStoredIds } from '../lib/personal-order';
 import { compareAlphabeticalName, compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
+import { compareRecentChannels } from '../../common/recency-groups';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import type { AttentionItem } from '../lib/attention-items';
 import { desktopBridge } from '../lib/platform';
@@ -194,14 +195,8 @@ function workstreamHasActivityForViewer(workstream: WorkstreamSummary): boolean 
   return workstream.hasUnread === true || workstreamAttentionCount(workstream) > 0;
 }
 
-/**
- * Newest last activity first, ties A to Z. The Channel's own last activity,
- * not when this reader last opened it: the row's time shows the same value,
- * so the order and the times down the list agree.
- */
-function compareRecent(left: WorkstreamSummary, right: WorkstreamSummary): number {
-  return recencyTimestamp(right) - recencyTimestamp(left) || compareAlphabeticalTitle(left, right);
-}
+/** The sidebar's Recent sort, shared with the menu bar. */
+const compareRecent = compareRecentChannels;
 
 type WorkstreamComparator = (left: WorkstreamSummary, right: WorkstreamSummary) => number;
 
@@ -247,6 +242,9 @@ const LOAD_MORE_DISTANCE = 400;
 
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
+const NAVIGATION_SHEET_ID = 'rally-navigation';
+/** The `max-width` of the phone layout in `app.css`; the two move together. */
+const PHONE_LAYOUT_MAX_WIDTH = 640;
 
 /**
  * How long the sidebar will wait for the list to carry a pin before it stops
@@ -1097,6 +1095,39 @@ export function Sidebar({
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  const menuToggle = useRef<HTMLButtonElement>(null);
+  // While the phone sheet is open, `AppShell` makes the conversation behind it
+  // inert. Escape closes it as it would any menu and hands focus back to the
+  // button, since the control that held it is about to be hidden. Widening
+  // past the phone layout closes it too, so an open sheet never leaves the
+  // conversation inert at a width where no sheet is drawn.
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      // A menu or dialog open over the sheet takes this Escape for itself. A
+      // tooltip does not, though Radix marks its Escape handled too: every
+      // focused top-bar button shows one. Heard in the capture phase, before
+      // Radix's own listener has closed the menu this looks for.
+      if (event.key !== 'Escape' || document.querySelector('[role="menu"], [role="dialog"]')) return;
+      setSidebarOpen(false);
+      menuToggle.current?.focus();
+    };
+    const closeWhenWide = (): void => {
+      if (window.innerWidth > PHONE_LAYOUT_MAX_WIDTH) setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape, true);
+    window.addEventListener('resize', closeWhenWide);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape, true);
+      window.removeEventListener('resize', closeWhenWide);
+    };
+  }, [setSidebarOpen, sidebarOpen]);
+  // Anything that opens somewhere new closes the sheet, whoever navigated: a
+  // row, a pill that had to leave the open Channel, a search result, or the
+  // New channel form, whose dialogs portal outside the sheet.
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname, setSidebarOpen]);
   const selectedSpaceFilter = useUiStore((state) => state.sidebarSpaceFilter);
   const setSelectedSpaceFilter = useUiStore((state) => state.setSidebarSpaceFilter);
   const channelSort = useUiStore((state) => state.sidebarChannelSort);
@@ -2147,12 +2178,9 @@ export function Sidebar({
 
   return (
     <>
-      <IconButton className="mobile-sidebar-trigger" label="Open navigation" onClick={() => setSidebarOpen(true)}>
-        <Menu size={17} />
-      </IconButton>
-      {sidebarOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setSidebarOpen(false)} type="button" />}
       <ResizableSidebar
         aria-label="Rally navigation"
+        id={NAVIGATION_SHEET_ID}
         className={clsx('sidebar single-sidebar', sidebarOpen && 'is-mobile-open')}
         collapsible={false}
         compact={false}
@@ -2164,7 +2192,21 @@ export function Sidebar({
         sidebarRef={panel}
         width={sidebarWidth}
       >
-        <SidebarTopActions aria-label="Rally actions">
+        {/* The phone sheet's menu button; CSS hides it above 640px. */}
+        <SidebarTopActions
+          aria-label="Rally actions"
+          leading={<IconButton
+            aria-controls={NAVIGATION_SHEET_ID}
+            aria-expanded={sidebarOpen}
+            className="sidebar-menu-toggle window-no-drag"
+            label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            ref={menuToggle}
+            showTooltip={false}
+          >
+            <IconMenu2 aria-hidden="true" size={20} stroke={1.8} />
+          </IconButton>}
+        >
           {downloadedUpdate !== null && <IconButton className="sidebar-top-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
             <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
           </IconButton>}
@@ -2232,7 +2274,11 @@ export function Sidebar({
         <SidebarScroll
           as="nav"
           aria-label={spaces === undefined ? 'Organization navigation' : 'Channels'}
-          onClick={() => setSidebarOpen(false)}
+          // Opening a Channel closes the phone sheet; a sort toggle or a row
+          // menu inside it does not.
+          onClick={(event) => {
+            if ((event.target as Element).closest('a')) setSidebarOpen(false);
+          }}
           onScroll={loadMoreWhenNearBottom}
           scrollRef={scrollRef}
         >

@@ -129,7 +129,10 @@ whose Main is theirs (`mainReachable`).
 
 ### Google sign-in
 
-The entry offers **Continue with Google** under the email form.
+The signed-out entry leads with **Continue with Google** as the primary button,
+with **Continue with email** under it. Choosing email swaps both buttons for the
+email form, whose **Other sign-in options** link swaps them back. An invitation
+page opens straight on the email form.
 `POST /browser/google/start` stores a `browser_identity` OAuth state with a
 return path on the browser host and sets an HttpOnly session cookie
 `<cookie>-google-<state>` holding the same state. The callback checks that
@@ -347,6 +350,10 @@ Its screens draw the desktop's sign-in card and the shared `RallyMark`,
 `Button`, `ConnectorMark` and `InlineError`. A sign-in or picker change belongs
 in `@rally/ui`'s `app.css` so both hosts move together; the browser's
 `styles.css` keeps only what a web page adds.
+Every wait from page load to the shell draws `BrowserBoot`. A signed-in link
+never falls through to the signed-in card while its organization opens, since
+that card's organization list is empty for a link and reads as "no access"; nor,
+when the link names another deployment, to the spent code's card.
 Collaboration code loads after authentication through one explicit lazy boundary;
 this is the browser-only exception to static imports. The browser declares its
 desktop dependency because it consumes the existing collaboration implementation;
@@ -365,8 +372,9 @@ allows HTTPS remote images for existing avatars and Markdown images. Socket
 routing still relies on the existing ticket and source-object admission; there
 is no separate browser permission model or arbitrary forwarding destination.
 
-The mobile navigation uses the existing Radix dialog primitive for focus trapping,
-Escape and outside dismissal, including landing and archived states. Archive and
+At phone width the shared sidebar becomes a top bar with a menu button that
+drops the navigation in as a sheet
+([`desktop-shell.md`](desktop-shell.md#at-phone-width)). Archive and
 guest promotion use the shared confirmation modal. Sharing fixes its target to
 the clicked conversation and shows only email input and submission feedback.
 
@@ -553,6 +561,43 @@ organization list shows a loading line until it has loaded, so a fresh sign-in
 never says nothing was shared before the server answers.
 
 PR: [#1120](https://github.com/juno-ai-labs/avalon/pull/1120).
+
+### 2026-10-06 — Lead sign-in with Google
+
+**What changed:** The signed-out entry shows **Continue with Google** as the
+primary button and **Continue with email** under it, instead of the email form
+with Google below. Choosing email reveals the form in place; **Other sign-in
+options** returns to the two buttons. Invitation pages still open on the email
+form, since Google stays hidden there.
+
+**Why:** Product asked for Google as the main path into the browser client,
+with email kept as a second choice that does not crowd the first screen. The
+Mac and iPhone apps already sign in with Google only, so leading with it puts
+the browser on the same path. Any reasoning beyond that request was not
+recorded.
+
+**Considered and rejected:** Keeping the email form visible under a primary
+Google button. It leaves the first screen as crowded as before and still reads
+as two equal paths.
+
+**Consequences:** The choice is page state only, and it resets once a session
+exists, so every later signed-out screen in the tab starts from Google again. A
+returned Google failure stays on screen through the switch to email and clears
+when an email sign-in starts, as before. Invitation pages skip the choice and
+open on the email form, because Google stays hidden there.
+
+Shipped in #1125.
+
+### 2026-10-06 — A signed-in link opens behind the boot screen
+
+**What changed:** Until a linked organization opens, the entry shows
+`BrowserBoot`. Before, it showed the signed-in card, with an empty organization
+list, or for a link to another deployment the spent code's "Check your email"
+card.
+
+**Why:** Both read as a failure (no access, or a code to enter again) during an
+ordinary wait. Whatever is added between sign-in and the shell has to keep
+this: the organization's open is a wait, not a state of the card.
 
 ### 2026-10-03 — Guests get the desktop shell too
 
