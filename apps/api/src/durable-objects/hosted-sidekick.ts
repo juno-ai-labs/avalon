@@ -116,8 +116,8 @@ import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type Scheduled
  * Constructed per call for one Sidekick, over the Organization object's own
  * storage: the definition row is the Sidekick's `automation_directory` row,
  * and every other table leads with `sidekick_id`. This is what `SidekickDO`
- * was, moved; the method names and their contracts are the ones that object
- * answered, so a caller changes only which object it asks.
+ * was, moved. It reads and writes the Organization's rows directly, so a
+ * method that needs several of them reads them in one statement.
  *
  * Substream `0` is the Sidekick's authoring conversation and each run is a
  * child substream whose id is the run id. Nothing a child reports leaves this
@@ -251,6 +251,14 @@ interface RunRow extends Record<string, SqlStorageValue> {
   updated_at: number;
 }
 
+/** One run with its Sidekick and a definition revision, read together by `runView`. */
+interface RunView {
+  sidekick: HostedSidekickRow;
+  run: RunRow | null;
+  /** The revision asked for, else the run's own; null when neither exists. */
+  revision: { definition_revision: number; definition_json: string } | null;
+}
+
 interface ScheduleDefinition {
   acceptedAt: number;
   intervalSeconds?: number;
@@ -299,9 +307,8 @@ export interface HostedSidekickHost {
   afterRegistrations(automationId: string, revision: number | null, evaluators: readonly unknown[]): Promise<void>;
   /** Inside the transaction that changed a directory row: the sidebar's waterline and a deleted Sidekick's bindings. */
   noteDirectoryChanged(automationId: string, deleted: boolean, now: number): void;
-  /** This Organization's runtime tables, read without leaving the object. */
-  workspaceDatabase(workspaceId: string): D1Database;
-  workstreamParticipant(input: { workspaceId: string; workstreamId: string; userId: string }): Promise<{ participant: boolean }>;
+  /** Whether a person is an active participant of a live Channel: a read of this object's own rows. */
+  isChannelParticipant(workstreamId: string, userId: string): boolean;
   /** A Channel's or Breakout's own viewer decision, for a Sidekick homed there. */
   channelViewer(input: {
     workspaceId: string; parentId: string; substreamId: string; userId: string; requireGrantAuthority?: boolean;
@@ -349,7 +356,7 @@ export async function sidekickReaderAllows(
     owning_workstream_id: string | null; owning_substream_id: string; workspace_id: string;
   },
   actor: { userId: string; actorRole: "owner" | "admin" | "member" | null },
-  host: Pick<HostedSidekickHost, "workstreamParticipant" | "readManagementAccess" | "channelViewer">,
+  host: Pick<HostedSidekickHost, "isChannelParticipant" | "readManagementAccess" | "channelViewer">,
   rule: "participant" | "manager" = "participant",
 ): Promise<boolean> {
   if (row.lifecycle === "deleted") return false;
@@ -371,7 +378,7 @@ export async function sidekickReaderAllows(
 async function homeAdmits(
   row: { owning_workstream_id: string | null; owning_substream_id: string; workspace_id: string },
   userId: string,
-  host: Pick<HostedSidekickHost, "workstreamParticipant" | "readManagementAccess" | "channelViewer">,
+  host: Pick<HostedSidekickHost, "isChannelParticipant" | "readManagementAccess" | "channelViewer">,
   rule: "participant" | "manager" = "participant",
 ): Promise<boolean> {
   if (row.owning_workstream_id === null) return false;
@@ -381,14 +388,67 @@ async function homeAdmits(
         workspaceId: row.workspace_id, parentId: row.owning_workstream_id, userId,
       })).allowed;
     }
-    return (await host.workstreamParticipant({
-      workspaceId: row.workspace_id, workstreamId: row.owning_workstream_id, userId,
-    })).participant;
+    return host.isChannelParticipant(row.owning_workstream_id, userId);
   }
   return (await host.channelViewer({
     workspaceId: row.workspace_id, parentId: row.owning_workstream_id,
     substreamId: row.owning_substream_id, userId,
   })).authorized;
+}
+
+/** An agent's child reservation: the reservation request without what the parent supplies itself. */
+const AgentChildReservationSchema = ConversationParentReserveChildRequestSchema.omit({
+  authorityGeneration: true, directory: true, kind: true,
+});
+
+/** What a skill read says about its audience: the request without the Sidekick it names. */
+type SidekickAudienceRequest = Omit<SidekickSkillReadRequest, "workspaceId" | "automationId">;
+
+/** Instruction-use audience is independent of authoring/history admission. */
+function skillAudienceAllows(row: HostedSidekickRow, request: SidekickAudienceRequest): boolean {
+  return sidekickAudienceAllows({
+    scope: row.scope,
+    authorUserId: row.author_user_id,
+    runAsUserId: row.run_as_user_id,
+    owningWorkstreamId: row.owning_workstream_id,
+  }, request);
+}
+
+/**
+ * A Sidekick's rail metadata for one receiving conversation, from its row
+ * alone; `null` when the conversation's audience may not see it. Pure, so a
+ * batch read decides every row it selected in one pass.
+ */
+export function skillSummary(
+  row: HostedSidekickRow,
+  request: SidekickAudienceRequest,
+): SidekickAttachment | null {
+  if (row.lifecycle === "deleted" || !skillAudienceAllows(row, request)) return null;
+  return SidekickAttachmentSchema.parse({
+    id: row.automation_id, name: row.title, description: row.description,
+    available: row.lifecycle === "active" && row.loadable === 1
+      && row.accepted_definition_revision !== null && row.owning_room_archived_at === null,
+  });
+}
+
+/**
+ * What a Sidekick lends a run as a skill, from its row and accepted revision;
+ * `null` when it lends nothing to this conversation. Pure, like `skillSummary`.
+ */
+export function skillSource(
+  row: HostedSidekickRow & { accepted_definition_json: string | null },
+  request: SidekickAudienceRequest,
+): SidekickSkillSource | null {
+  if (row.lifecycle === "deleted" || row.accepted_definition_revision === null || row.owning_room_archived_at !== null) return null;
+  if (!request.existingExecution && (row.lifecycle !== "active" || row.loadable !== 1)) return null;
+  if (!skillAudienceAllows(row, request)) return null;
+  if (row.accepted_definition_json === null) throw new Error("sidekick_accepted_revision_missing");
+  const definition = AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json));
+  return SidekickSkillSourceSchema.parse({
+    id: row.automation_id, revision: row.accepted_definition_revision, loadable: row.loadable === 1,
+    name: definition.name, description: definition.description,
+    whenToUse: definition.whenToUse || definition.description, instructions: definition.instructions,
+  });
 }
 
 export class HostedSidekick {
@@ -422,13 +482,11 @@ export class HostedSidekick {
   async create(input: AutomationCreateRequest): Promise<{ created: boolean }> {
     const request = parseRpcInput(AutomationCreateRequestSchema, input, "create");
     if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
-    if (this.row()) {
-      this.assertSidekick(request.workspaceId, request.automationId);
-      return { created: false };
-    }
     const now = Date.now();
-    this.storage.transactionSync(() => {
-      this.sql.exec(
+    // The insert is the existence check: a repeat finds the row and returns
+    // nothing, and is answered from the row it found.
+    return this.storage.transactionSync(() => {
+      const created = this.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, region, author_user_id, run_as_user_id, source_version, payload_hash,
             lifecycle, paused_by, scope, owning_workstream_id, owning_substream_id, owning_room_archived_at,
@@ -438,7 +496,9 @@ export class HostedSidekick {
             model_override, email_address, effective_after_event_sequence, authority_generation,
             stop_generation, chat_appearance_json, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, ?, ?, NULL, '', '', NULL, ?, 0, NULL,
-                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, NULL, ?, 0, NULL, ?, ?)`,
+                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, NULL, ?, 0, NULL, ?, ?)
+         ON CONFLICT(automation_id) DO NOTHING
+         RETURNING automation_id`,
         request.automationId,
         request.workspaceId,
         this.env.AVALON_REGION,
@@ -451,11 +511,15 @@ export class HostedSidekick {
         request.authorityGeneration,
         now,
         now,
-      );
+      ).toArray().length === 1;
+      if (!created) {
+        this.assertSidekick(request.workspaceId, request.automationId);
+        return { created: false };
+      }
       this.registerChild("0", "main", request.authorUserId, now);
       this.host.noteDirectoryChanged(this.sidekickId, false, now);
+      return { created: true };
     });
-    return { created: true };
   }
 
   /**
@@ -618,7 +682,7 @@ export class HostedSidekick {
         now,
         this.sidekickId,
       );
-      this.writeRegistrations(paused ? [] : prepared.evaluators, now);
+      const effectiveAfter = this.writeRegistrations(paused ? [] : prepared.evaluators);
       if (definition.triggers.length > 0 && definition.memoryTables.length > 0) {
         this.host.alarms.schedule({
           kind: SIDEKICK_MEMORY_TABLES_ALARM_KIND,
@@ -626,7 +690,7 @@ export class HostedSidekick {
           dueAt: now,
         }, now);
       }
-      this.touchDirectory(now);
+      this.touchDirectory(now, effectiveAfter);
     });
     await this.host.afterRegistrations(this.sidekickId, revision.definition_revision, prepared.evaluators);
     await this.materializeMemoryTables(revision.definition_revision).catch((error: unknown) => {
@@ -714,11 +778,11 @@ export class HostedSidekick {
       this.stopOpenRuns(now);
       this.cancelSidekickAlarms();
       this.sql.exec(
-        `UPDATE automation_directory SET lifecycle = 'deleted', updated_at = ? WHERE automation_id = ?`,
+        `UPDATE automation_directory SET lifecycle = 'deleted', stop_generation = stop_generation + 1, updated_at = ?
+          WHERE automation_id = ?`,
         now, this.sidekickId,
       );
-      this.writeRegistrations([], now);
-      this.touchDirectory(now);
+      this.touchDirectory(now, this.writeRegistrations([]));
     });
     await this.host.afterRegistrations(this.sidekickId, null, []);
   }
@@ -761,15 +825,17 @@ export class HostedSidekick {
 
   async runNow(input: AutomationRunNowRequest): Promise<{ runId: string; reused: boolean }> {
     const request = parseRpcInput(AutomationRunNowRequestSchema, input, "run_now");
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
-    await this.assertManager(row, request.actor);
+    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    // Read after the access check's await: a revision applied or a pause
+    // made meanwhile is what the run must see.
+    const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
     if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
-    const accepted = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
-    const definition = accepted ? AutomationDraftSchema.parse(JSON.parse(accepted.definition_json)) : null;
+    const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
     if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
       throw new ApiError(409, "sidekick_not_runnable", "Use this Sidekick in a conversation");
     }
     const admitted = this.admitOccurrence(
+      row.accepted_definition_revision,
       `manual:${request.idempotencyKey}`,
       { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
       null,
@@ -784,13 +850,15 @@ export class HostedSidekick {
    */
   async runSeeded(input: AutomationRunSeededRequest): Promise<{ runId: string; reused: boolean }> {
     const request = parseRpcInput(AutomationRunSeededRequestSchema, input, "run_seeded");
+    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    // Read after the access check's await, as `runNow` does.
     const row = this.assertSidekick(request.workspaceId, request.automationId);
-    await this.assertManager(row, request.actor);
     if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
     if (request.seed.assistant === null) {
       throw new ApiError(422, "demo_seed_run_without_script", "A seeded run needs a turn to answer with");
     }
     const admitted = this.admitOccurrence(
+      row.accepted_definition_revision,
       `seed:${request.seed.packVersion}:${request.seed.actionId}`,
       { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
       null,
@@ -803,11 +871,12 @@ export class HostedSidekick {
    * What this delivery has to do before it may admit its event. Every check
    * `admitExternalEvent` applies lives here and is read by both.
    */
-  private externalEventPlan(request: AutomationExternalEventAdmission): AutomationExternalEventPlan {
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
+  private externalEventPlan(
+    request: AutomationExternalEventAdmission,
+    row: HostedSidekickRow & { accepted_definition_json: string | null },
+  ): AutomationExternalEventPlan {
     if (row.lifecycle !== "active") return { kind: "refuse", outcomeCode: `sidekick_${row.lifecycle}` };
-    const revision = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
-    const definition = revision ? AutomationDraftSchema.parse(JSON.parse(revision.definition_json)) : null;
+    const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
     if (definition?.definitionVersion === 2) {
       const sources = z.array(z.object({ evaluatorId: z.string(), source: z.object({ eventType: z.string() }) })).parse(JSON.parse(row.evaluator_projection_json));
       if (!definition.triggers.some(isExternalEventTrigger) || !sources.some((entry) => entry.evaluatorId === request.registrationId && entry.source.eventType === request.event.eventType)) {
@@ -836,7 +905,8 @@ export class HostedSidekick {
     judge?: { conditions: string[]; connectorType: string | null };
   }> {
     const request = parseRpcInput(AutomationExternalEventAdmissionSchema, input, "admit_external_event");
-    const plan = this.externalEventPlan(request);
+    const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
+    const plan = this.externalEventPlan(request, row);
     if (plan.kind === "refuse") return { admitted: false, outcomeCode: plan.outcomeCode };
     if (plan.kind === "judge") {
       // The condition the member wrote is the gate: a delivery that did not
@@ -855,7 +925,7 @@ export class HostedSidekick {
         return { admitted: false, outcomeCode: `sidekick_semantic_${verdict.code}` };
       }
     }
-    const admitted = this.admitOccurrence(externalEventOccurrenceKey(request.event), {
+    const admitted = this.admitOccurrence(row.accepted_definition_revision, externalEventOccurrenceKey(request.event), {
       kind: "external_event",
       workspaceEventId: request.event.id,
       eventType: request.event.eventType,
@@ -876,7 +946,7 @@ export class HostedSidekick {
     admitted: boolean; duplicate: boolean; outcomeCode: string; runId: string | null;
   }> {
     const request = parseRpcInput(AutomationInboundEmailAdmissionSchema, input, "admit_inbound_email");
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
+    const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
     const existing = first(this.sql.exec<{ run_id: string | null; outcome_code: string }>(
       `SELECT run_id, outcome_code FROM sidekick_email_receipts WHERE sidekick_id = ? AND resend_email_id = ?`,
       this.sidekickId, request.resendEmailId,
@@ -884,8 +954,8 @@ export class HostedSidekick {
     if (existing) {
       return { admitted: existing.run_id !== null, duplicate: true, outcomeCode: existing.outcome_code, runId: existing.run_id };
     }
-    const accepted = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
-    const emailEnabled = accepted !== null && sidekickReceivesEmail(AutomationDraftSchema.parse(JSON.parse(accepted.definition_json)));
+    const emailEnabled = row.accepted_definition_json !== null
+      && sidekickReceivesEmail(AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)));
     const refusal = row.lifecycle !== "active"
       ? "sidekick_not_active"
       : !emailEnabled || row.email_address === null || row.email_address.toLowerCase() !== request.emailAddress.toLowerCase()
@@ -908,6 +978,7 @@ export class HostedSidekick {
     }
     const admitted = this.storage.transactionSync(() => {
       const run = this.admitOccurrence(
+        row.accepted_definition_revision,
         `inbound_email:${request.resendEmailId}`,
         { kind: "inbound_email", receiptId: uuidV7(now), occurredAt: request.receivedAt },
         { textContent: request.textContent, structuredContent: request.structuredContent, resourceId: request.resourceId },
@@ -923,63 +994,39 @@ export class HostedSidekick {
     return { admitted: true, duplicate: admitted.reused, outcomeCode: "admitted", runId: admitted.runId };
   }
 
-  /** Instruction-use audience is independent of authoring/history admission. */
-  private skillAudienceAllows(row: HostedSidekickRow, request: SidekickSkillReadRequest): boolean {
-    return sidekickAudienceAllows({
-      scope: row.scope,
-      authorUserId: row.author_user_id,
-      runAsUserId: row.run_as_user_id,
-      owningWorkstreamId: row.owning_workstream_id,
-    }, request);
-  }
-
   /** Minimal rail metadata for an already admitted receiving conversation. */
   readSkillSummary(input: SidekickSkillReadRequest): SidekickAttachment | null {
     const request = SidekickSkillReadRequestSchema.parse(input);
     const row = this.row();
     if (!row) return null;
-    this.assertSidekick(request.workspaceId, request.automationId);
-    if (row.lifecycle === "deleted" || !this.skillAudienceAllows(row, request)) return null;
-    return SidekickAttachmentSchema.parse({
-      id: row.automation_id, name: row.title, description: row.description,
-      available: row.lifecycle === "active" && row.loadable === 1
-        && row.accepted_definition_revision !== null && row.owning_room_archived_at === null,
-    });
+    return skillSummary(this.assertIdentity(row, request.workspaceId, request.automationId), request);
   }
 
   /** What a run reads at start: its definition by revision, and how it was triggered. */
   readSkillSource(input: SidekickSkillReadRequest): SidekickSkillSource | null {
     const request = parseRpcInput(SidekickSkillReadRequestSchema, input, "read_skill_source");
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
-    if (row.lifecycle === "deleted" || row.accepted_definition_revision === null || row.owning_room_archived_at !== null) return null;
-    if (!request.existingExecution && (row.lifecycle !== "active" || row.loadable !== 1)) return null;
-    if (!this.skillAudienceAllows(row, request)) return null;
-    const revision = this.revision(row.accepted_definition_revision);
-    if (!revision) throw new Error("sidekick_accepted_revision_missing");
-    const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
-    return SidekickSkillSourceSchema.parse({
-      id: row.automation_id, revision: revision.definition_revision, loadable: row.loadable === 1,
-      name: definition.name, description: definition.description,
-      whenToUse: definition.whenToUse || definition.description, instructions: definition.instructions,
-    });
+    return skillSource(this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId), request);
   }
+
 
   readRunDefinition(input: AutomationRunDefinitionRequest): AutomationRunDefinitionV1 {
     const request = parseRpcInput(AutomationRunDefinitionRequestSchema, input, "read_run_definition");
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
-    const run = this.run(request.runId);
-    if (!run) throw new ApiError(404, "sidekick_run_not_found", "This run does not exist");
     // A continued run names the revision it continued under; a scheduled start
     // names the one it was admitted under, which is the run row's own.
-    const definitionRevision = request.definitionRevision ?? run.definition_revision;
-    const revision = this.revision(definitionRevision);
+    return this.runDefinition(this.assertRunView(
+      this.runView(request.runId, request.definitionRevision ?? null), request.workspaceId, request.automationId,
+    ));
+  }
+
+  private runDefinition({ sidekick, run, revision }: RunView): AutomationRunDefinitionV1 {
+    if (!run) throw new ApiError(404, "sidekick_run_not_found", "This run does not exist");
     if (!revision) throw new ApiError(404, "sidekick_definition_not_found", "The run's definition revision is missing");
     const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
     return AutomationRunDefinitionV1Schema.parse({
       schemaVersion: 1,
-      automationId: row.automation_id,
+      automationId: sidekick.automation_id,
       runId: run.run_id,
-      definitionRevision,
+      definitionRevision: revision.definition_revision,
       definition: {
         name: definition.name,
         description: definition.description,
@@ -991,14 +1038,14 @@ export class HostedSidekick {
         recommendedPlugins: definition.recommendedPlugins,
         memoryTables: definition.memoryTables,
       },
-      defaultPluginIds: JSON.parse(row.default_plugin_ids_json),
-      activitySourcePluginIds: JSON.parse(row.activity_source_plugin_ids_json),
-      connectorBindings: JSON.parse(row.connector_bindings_json),
-      scope: row.scope,
-      owningWorkstreamId: row.owning_workstream_id,
-      owningSubstreamId: row.owning_substream_id,
-      runAsUserId: row.run_as_user_id,
-      modelOverride: row.model_override,
+      defaultPluginIds: JSON.parse(sidekick.default_plugin_ids_json),
+      activitySourcePluginIds: JSON.parse(sidekick.activity_source_plugin_ids_json),
+      connectorBindings: JSON.parse(sidekick.connector_bindings_json),
+      scope: sidekick.scope,
+      owningWorkstreamId: sidekick.owning_workstream_id,
+      owningSubstreamId: sidekick.owning_substream_id,
+      runAsUserId: sidekick.run_as_user_id,
+      modelOverride: sidekick.model_override,
       trigger: JSON.parse(run.trigger_json),
       opening: run.opening_json ? JSON.parse(run.opening_json) : null,
       state: run.state,
@@ -1014,10 +1061,9 @@ export class HostedSidekick {
     state: RunState; lifecycle: Lifecycle; completedAt: number | null; stopGeneration: number;
   } | null {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_state");
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
-    const run = this.run(request.runId);
+    const { sidekick, run } = this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId);
     return run
-      ? { state: run.state, lifecycle: row.lifecycle, completedAt: run.completed_at, stopGeneration: row.stop_generation }
+      ? { state: run.state, lifecycle: sidekick.lifecycle, completedAt: run.completed_at, stopGeneration: sidekick.stop_generation }
       : null;
   }
 
@@ -1028,31 +1074,31 @@ export class HostedSidekick {
    */
   continueRun(input: AutomationRunRequest): SidekickRunContinuation {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "continue_run");
-    const row = this.row();
-    if (!row) return { outcome: "refused", code: "run_not_found" };
-    this.assertSidekick(request.workspaceId, request.automationId);
-    if (row.lifecycle === "deleted") return { outcome: "refused", code: "sidekick_deleted" };
-    if (row.lifecycle === "paused") return { outcome: "refused", code: "sidekick_paused" };
-    const run = this.run(request.runId);
-    if (!run || row.lifecycle !== "active" || row.accepted_definition_revision === null) {
+    const view = this.runView(request.runId);
+    if (!view) return { outcome: "refused", code: "run_not_found" };
+    const { sidekick, run } = view;
+    this.assertIdentity(sidekick, request.workspaceId, request.automationId);
+    if (sidekick.lifecycle === "deleted") return { outcome: "refused", code: "sidekick_deleted" };
+    if (sidekick.lifecycle === "paused") return { outcome: "refused", code: "sidekick_paused" };
+    if (!run || sidekick.lifecycle !== "active" || sidekick.accepted_definition_revision === null) {
       return { outcome: "refused", code: "run_not_found" };
     }
     // The transcript the continuation would read is the run-as user's it was
     // provisioned for; a claim since then moves who the Sidekick runs as.
-    if (run.run_as_user_id !== null && run.run_as_user_id !== row.run_as_user_id) {
+    if (run.run_as_user_id !== null && run.run_as_user_id !== sidekick.run_as_user_id) {
       return { outcome: "refused", code: "run_principal_changed" };
     }
     return SidekickRunContinuationSchema.parse({
       outcome: "continue",
       automationRun: {
         schemaVersion: 1,
-        automationId: asAutomationId(row.automation_id),
+        automationId: asAutomationId(sidekick.automation_id),
         runId: run.run_id,
-        definitionRevision: row.accepted_definition_revision,
+        definitionRevision: sidekick.accepted_definition_revision,
         trigger: JSON.parse(run.trigger_json),
       },
-      executionPrincipal: { type: "user", userId: asUserId(row.run_as_user_id) },
-      stopGeneration: row.stop_generation,
+      executionPrincipal: { type: "user", userId: asUserId(sidekick.run_as_user_id) },
+      stopGeneration: sidekick.stop_generation,
     });
   }
 
@@ -1076,51 +1122,60 @@ export class HostedSidekick {
    */
   async claimExecutionPrincipal(input: AutomationActorRequest): Promise<AutomationExecutionPrincipalClaim> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "claim_execution_principal");
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
-    await this.assertManager(row, request.actor);
-    const bindings = JSON.parse(row.connector_bindings_json) as Record<string, string>;
-    const connections = await this.host.workspaceDatabase(row.workspace_id).prepare(
-      `SELECT id, scope, owner_user_id, model_plugin_id, status
-         FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'`,
-    ).bind(row.workspace_id).all<{
-      id: string; scope: string; owner_user_id: string | null; model_plugin_id: string; status: string;
-    }>();
-    const rows = connections.results ?? [];
-    const byId = new Map(rows.map((connection) => [connection.id, connection]));
-    const claimantByPlugin = new Map(rows
-      .filter((connection) => connection.scope === "workspace" || connection.owner_user_id === request.actor.userId)
-      .map((connection) => [connection.model_plugin_id, connection]));
-    const rebound: string[] = [];
-    const unbound: string[] = [];
-    const next = { ...bindings };
-    for (const [pluginId, connectionId] of Object.entries(bindings)) {
-      const bound = byId.get(connectionId);
-      if (bound && (bound.scope === "workspace" || bound.owner_user_id === request.actor.userId)) continue;
-      const replacement = claimantByPlugin.get(pluginId);
-      if (!replacement) {
-        unbound.push(pluginId);
-        continue;
+    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    const claimant = request.actor.userId;
+    // The bindings and the connections are this object's rows, so the read
+    // and the rebind are one transaction: nothing can move between them.
+    const claim = this.storage.transactionSync(() => {
+      const row = this.assertSidekick(request.workspaceId, request.automationId);
+      const bindings = JSON.parse(row.connector_bindings_json) as Record<string, string>;
+      // Per bound plugin: whether its connection is usable by the claimant
+      // (an Organization one, or the claimant's own), and if not, the
+      // plugin's connection when the claimant may use it (one per plugin).
+      const decisions = this.sql.exec<{ plugin_id: string; usable: number; replacement_id: string | null }>(
+        `SELECT binding.key AS plugin_id,
+                EXISTS (
+                  SELECT 1 FROM connector_connections bound
+                   WHERE bound.id = binding.value AND bound.workspace_id = ?1 AND bound.status <> 'disabled'
+                     AND (bound.scope = 'workspace' OR bound.owner_user_id = ?2)
+                ) AS usable,
+                (SELECT replacement.id FROM connector_connections replacement
+                  WHERE replacement.workspace_id = ?1 AND replacement.status <> 'disabled'
+                    AND replacement.model_plugin_id = binding.key
+                    AND (replacement.scope = 'workspace' OR replacement.owner_user_id = ?2)
+                  ORDER BY replacement.id LIMIT 1) AS replacement_id
+           FROM json_each(?3) binding`,
+        row.workspace_id, claimant, row.connector_bindings_json,
+      ).toArray();
+      const next = { ...bindings };
+      const rebound: string[] = [];
+      const unbound: string[] = [];
+      for (const decision of decisions) {
+        if (decision.usable === 1) continue;
+        if (decision.replacement_id === null) {
+          unbound.push(decision.plugin_id);
+          continue;
+        }
+        next[decision.plugin_id] = decision.replacement_id;
+        rebound.push(decision.plugin_id);
       }
-      next[pluginId] = replacement.id;
-      rebound.push(pluginId);
-    }
-    const changed = row.run_as_user_id !== request.actor.userId || rebound.length > 0;
-    if (changed) {
-      const now = Date.now();
-      this.storage.transactionSync(() => {
+      const changed = row.run_as_user_id !== claimant || rebound.length > 0;
+      if (changed) {
+        const now = Date.now();
         this.sql.exec(
           `UPDATE automation_directory SET run_as_user_id = ?, connector_bindings_json = ?, updated_at = ?
             WHERE automation_id = ?`,
-          request.actor.userId, JSON.stringify(next), now, this.sidekickId,
+          claimant, JSON.stringify(next), now, this.sidekickId,
         );
         this.touchDirectory(now);
-      });
-    }
+      }
+      return { rebound, unbound, changed };
+    });
     return AutomationExecutionPrincipalClaimSchema.parse({
-      principalUserId: request.actor.userId,
-      reboundPluginIds: rebound,
-      unboundProviders: unbound,
-      changed,
+      principalUserId: claimant,
+      reboundPluginIds: claim.rebound,
+      unboundProviders: claim.unbound,
+      changed: claim.changed,
     });
   }
 
@@ -1140,7 +1195,7 @@ export class HostedSidekick {
     if (!row || row.lifecycle === "deleted") {
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: true });
     }
-    this.assertSidekick(request.workspaceId, request.parentId);
+    this.assertIdentity(row, request.workspaceId, request.parentId);
     if (request.requireGrantAuthority) return this.sidekickGrantViewer(row, request.userId);
     return ConversationParentAuthorizeViewerResultSchema.parse({
       authorized: await this.sidekickViewer(row, request.userId),
@@ -1182,7 +1237,7 @@ export class HostedSidekick {
     const request = parseRpcInput(ConversationParentAuthorityRequestSchema, input, "authorization_discovery_children");
     const row = this.row();
     if (!row || row.lifecycle === "deleted") return { substreamIds: [] };
-    this.assertSidekick(request.workspaceId, request.parentId);
+    this.assertIdentity(row, request.workspaceId, request.parentId);
     // A registered, unprovisioned child is unresolved authority, not evidence
     // that its content can be discarded.
     return { substreamIds: this.childRegistry().map((child) => child.substreamId) };
@@ -1193,7 +1248,7 @@ export class HostedSidekick {
     const request = parseRpcInput(ConversationAuthorizationRequestSchema, input, "read_authorization_facts");
     const row = this.row();
     if (!row || row.lifecycle === "deleted") return { exists: false as const, validatedAt: Date.now() };
-    this.assertSidekick(request.workspaceId, request.parentId);
+    this.assertIdentity(row, request.workspaceId, request.parentId);
     return {
       exists: true as const, scope: row.scope, owningWorkstreamId: row.owning_workstream_id,
       owningSubstreamId: row.owning_substream_id,
@@ -1207,7 +1262,7 @@ export class HostedSidekick {
     const request = parseRpcInput(ConversationParentAuthorityRequestSchema, input, "authority");
     const row = this.row();
     if (!row) return ConversationParentAuthorityResultSchema.parse({ exists: false, authorityGeneration: 0, archived: false });
-    this.assertSidekick(request.workspaceId, request.parentId);
+    this.assertIdentity(row, request.workspaceId, request.parentId);
     return ConversationParentAuthorityResultSchema.parse({
       exists: true,
       authorityGeneration: row.authority_generation,
@@ -1217,9 +1272,12 @@ export class HostedSidekick {
 
   /** Reserve against current parent authority without a caller-side preflight call. */
   reserveAgentChild(input: Omit<ConversationParentReserveChildRequest, "authorityGeneration" | "directory" | "kind">): ConversationParentReserveChildResult {
-    const authority = this.authority({ workspaceId: input.workspaceId, parentId: input.parentId });
-    if (!authority.exists || authority.archived) throw new Error("workstream_archived");
-    return this.reserveChild({ ...input, kind: "child", authorityGeneration: authority.authorityGeneration });
+    const request = parseRpcInput(AgentChildReservationSchema, input, "reserve_agent_child");
+    const row = this.row();
+    if (!row || row.lifecycle === "deleted" || row.owning_room_archived_at !== null) throw new Error("workstream_archived");
+    this.assertIdentity(row, request.workspaceId, request.parentId);
+    this.registerChild(request.substreamId, "child", request.createdByUserId, Date.now());
+    return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration: row.authority_generation });
   }
 
   reserveChild(input: ConversationParentReserveChildRequest): ConversationParentReserveChildResult {
@@ -1266,51 +1324,58 @@ export class HostedSidekick {
    */
   receiveChildEffects(input: ReceiveChildEffectsRequest): { messageId: string; payloadHash: string }[] {
     const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
+    // The Sidekick's identity does not change inside a batch, so it is read
+    // once; each envelope is still its own transaction.
+    const row = this.row();
+    if (!row) throw new Error("sidekick_missing");
     const accepted: { messageId: string; payloadHash: string }[] = [];
     for (const envelope of request.envelopes) {
       if (envelope.region !== this.env.AVALON_REGION) throw new Error("conversation_effect_region_mismatch");
       if (envelope.substreamId !== request.substreamId) throw new Error("conversation_effect_substream_mismatch");
+      if (envelope.parentKind !== "automation") throw new Error("sidekick_effect_parent_kind_mismatch");
+      if (row.workspace_id !== envelope.workspaceId || row.automation_id !== envelope.parentId) {
+        throw new Error("sidekick_effect_identity_mismatch");
+      }
       this.applyChildEnvelope(request.substreamId, envelope);
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
+    // The receipt is a replay fence, not history: past retention a
+    // redelivery converges on the projection's version. Once per batch.
+    const now = Date.now();
+    this.sql.exec(
+      `DELETE FROM sidekick_child_receipts
+        WHERE (sidekick_id, substream_id, message_id) IN (
+          SELECT sidekick_id, substream_id, message_id FROM sidekick_child_receipts
+           WHERE received_at < ? ORDER BY received_at LIMIT 100
+        )`,
+      now - CHILD_EFFECT_RECEIPT_RETENTION_MS,
+    );
     return accepted;
   }
 
   private applyChildEnvelope(substreamId: string, envelope: ConversationEffectEnvelope): void {
     this.storage.transactionSync(() => {
       const now = Date.now();
-      if (envelope.parentKind !== "automation") throw new Error("sidekick_effect_parent_kind_mismatch");
-      const row = this.row();
-      if (!row) throw new Error("sidekick_missing");
-      if (row.workspace_id !== envelope.workspaceId || row.automation_id !== envelope.parentId) {
-        throw new Error("sidekick_effect_identity_mismatch");
-      }
-      const receipt = first(this.sql.exec<{ payload_hash: string }>(
-        `SELECT payload_hash FROM sidekick_child_receipts WHERE sidekick_id = ? AND substream_id = ? AND message_id = ?`,
-        this.sidekickId, substreamId, envelope.messageId,
-      ));
-      if (receipt) {
-        if (receipt.payload_hash !== envelope.payloadHash) throw new Error("substream_effect_idempotency_conflict");
+      // The receipt first: its insert is the witness that this envelope is
+      // new, and a redelivery reads the hash it was first accepted with.
+      const fresh = this.sql.exec(
+        `INSERT INTO sidekick_child_receipts(sidekick_id, substream_id, message_id, payload_hash, received_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(sidekick_id, substream_id, message_id) DO NOTHING
+         RETURNING message_id`,
+        this.sidekickId, substreamId, envelope.messageId, envelope.payloadHash, now,
+      ).toArray().length === 1;
+      if (!fresh) {
+        const receipt = first(this.sql.exec<{ payload_hash: string }>(
+          `SELECT payload_hash FROM sidekick_child_receipts WHERE sidekick_id = ? AND substream_id = ? AND message_id = ?`,
+          this.sidekickId, substreamId, envelope.messageId,
+        ));
+        if (receipt?.payload_hash !== envelope.payloadHash) throw new Error("substream_effect_idempotency_conflict");
         return;
       }
       if (envelope.effect.kind === "directory_common" && this.acceptChildProjection(substreamId, envelope, now)) {
         this.onChildCommonProjection(substreamId, envelope.effect, now);
       }
-      this.sql.exec(
-        `INSERT INTO sidekick_child_receipts(sidekick_id, substream_id, message_id, payload_hash, received_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        this.sidekickId, substreamId, envelope.messageId, envelope.payloadHash, now,
-      );
-      // The receipt is a replay fence, not history: past retention a
-      // redelivery converges on the projection's version.
-      this.sql.exec(
-        `DELETE FROM sidekick_child_receipts
-          WHERE (sidekick_id, substream_id, message_id) IN (
-            SELECT sidekick_id, substream_id, message_id FROM sidekick_child_receipts
-             WHERE received_at < ? ORDER BY received_at LIMIT 100
-          )`,
-        now - CHILD_EFFECT_RECEIPT_RETENTION_MS,
-      );
     });
   }
 
@@ -1350,26 +1415,22 @@ export class HostedSidekick {
     if (substreamId === "0") return;
     const next = RUN_STATE_FROM_CONVERSATION_STATE[effect.state] ?? null;
     if (next === null) return;
-    const run = this.run(substreamId);
-    if (!run) return;
-    const summary = effect.preview || null;
-    const finished = TERMINAL_RUN_STATES.has(run.state);
     const live = !TERMINAL_RUN_STATES.has(next);
-    const reopens = finished && live && effect.state !== "idle" && this.row()?.lifecycle === "active";
-    if (run.state === next || (finished && !reopens)) {
-      if (!finished) {
-        this.sql.exec(
-          `UPDATE sidekick_runs SET summary = ?, updated_at = ? WHERE sidekick_id = ? AND run_id = ?`,
-          summary, now, this.sidekickId, substreamId,
-        );
-      }
-      return;
-    }
+    // One statement. An open run takes the new summary, and the new state when
+    // it differs. A finished run is left alone unless it reopens: a live state
+    // other than `idle`, while the Sidekick is active.
     this.sql.exec(
       `UPDATE sidekick_runs
-          SET state = ?, summary = ?, completed_at = CASE WHEN ? THEN ? ELSE completed_at END, updated_at = ?
-        WHERE sidekick_id = ? AND run_id = ?`,
-      next, summary, live ? 0 : 1, now, now, this.sidekickId, substreamId,
+          SET summary = ?1, updated_at = ?2,
+              state = CASE WHEN state <> ?3 THEN ?3 ELSE state END,
+              completed_at = CASE WHEN state <> ?3 AND ?4 = 0 THEN ?2 ELSE completed_at END
+        WHERE sidekick_id = ?5 AND run_id = ?6
+          AND (state NOT IN (SELECT value FROM json_each(?8))
+            OR (?4 = 1 AND ?7 = 1 AND (
+              SELECT lifecycle FROM automation_directory WHERE automation_id = ?5
+            ) = 'active'))`,
+      effect.preview || null, now, next, live ? 1 : 0, this.sidekickId, substreamId, effect.state !== "idle" ? 1 : 0,
+      JSON.stringify([...TERMINAL_RUN_STATES]),
     );
   }
 
@@ -1392,21 +1453,25 @@ export class HostedSidekick {
   }
 
   private async executeSchedule(scheduleId: string): Promise<void> {
-    const row = this.row();
-    const schedule = first(this.sql.exec<ScheduleRow>(
-      `SELECT schedule_id, schedule_kind, definition_json, next_due_at FROM sidekick_schedules
-        WHERE sidekick_id = ? AND schedule_id = ?`,
+    // Only an active Sidekick's due schedule fires; anything else reads nothing.
+    const due = first(this.sql.exec<ScheduleRow & { accepted_definition_revision: number | null }>(
+      `SELECT schedule.schedule_id, schedule.schedule_kind, schedule.definition_json, schedule.next_due_at,
+              directory.accepted_definition_revision
+         FROM sidekick_schedules schedule
+         JOIN automation_directory directory ON directory.automation_id = schedule.sidekick_id
+        WHERE schedule.sidekick_id = ? AND schedule.schedule_id = ?
+          AND schedule.next_due_at IS NOT NULL AND directory.lifecycle = 'active'`,
       this.sidekickId, scheduleId,
     ));
-    if (!row || !schedule || schedule.next_due_at === null || row.lifecycle !== "active") return;
+    if (!due || due.next_due_at === null) return;
     const now = Date.now();
-    const dueAt = schedule.next_due_at;
-    const nextDueAt = scheduleDueAfter(schedule.schedule_kind, schedule.definition_json, now);
+    const dueAt = due.next_due_at;
+    const nextDueAt = scheduleDueAfter(due.schedule_kind, due.definition_json, now);
     this.storage.transactionSync(() => {
-      this.admitOccurrence(`schedule:${scheduleId}:${dueAt}`, {
+      this.admitOccurrence(due.accepted_definition_revision, `schedule:${scheduleId}:${dueAt}`, {
         kind: "schedule",
         scheduleId,
-        scheduleKind: schedule.schedule_kind,
+        scheduleKind: due.schedule_kind,
         plannedFor: dueAt,
       }, null);
       this.sql.exec(
@@ -1429,45 +1494,41 @@ export class HostedSidekick {
    * child substream id.
    */
   private admitOccurrence(
+    acceptedRevision: number | null,
     occurrenceKey: string,
     trigger: AutomationRunTriggerV1,
     opening: { textContent: string; structuredContent: Record<string, unknown>; resourceId: string | null } | null,
     seed: DemoSeed | null = null,
   ): { runId: string; reused: boolean } {
-    const row = this.row();
-    if (!row || row.accepted_definition_revision === null) {
+    if (acceptedRevision === null) {
       throw new ApiError(409, "sidekick_not_active", "The Sidekick has no accepted definition");
     }
     const now = Date.now();
     const runId = uuidV7(now);
-    const inserted = this.sql.exec<{ run_id: string }>(
-      `INSERT OR IGNORE INTO sidekick_runs
+    // One statement either way: a new occurrence returns the run it made, a
+    // repeated one the run it made before (the no-op update is what lets the
+    // conflict branch return its row).
+    const run = first(this.sql.exec<{ run_id: string; state: RunState }>(
+      `INSERT INTO sidekick_runs
          (sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state,
           summary, opening_json, seed_json, created_at, started_at, completed_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, NULL, NULL, ?)
-       RETURNING run_id`,
+       ON CONFLICT(sidekick_id, occurrence_key) DO UPDATE SET occurrence_key = excluded.occurrence_key
+       RETURNING run_id, state`,
       this.sidekickId,
       runId,
       occurrenceKey,
       JSON.stringify(trigger),
-      row.accepted_definition_revision,
+      acceptedRevision,
       uuidV7(now + 1),
       opening ? JSON.stringify(opening) : null,
       seed ? JSON.stringify(seed) : null,
       now,
       now,
-    ).toArray()[0];
-    if (!inserted) {
-      const existing = first(this.sql.exec<{ run_id: string; state: string }>(
-        `SELECT run_id, state FROM sidekick_runs WHERE sidekick_id = ? AND occurrence_key = ?`,
-        this.sidekickId, occurrenceKey,
-      ));
-      if (!existing) throw new Error("sidekick_occurrence_missing");
-      if (existing.state === "pending") this.armRunStart(existing.run_id, now);
-      return { runId: existing.run_id, reused: true };
-    }
-    this.armRunStart(runId, now);
-    return { runId, reused: false };
+    ));
+    if (!run) throw new Error("sidekick_occurrence_missing");
+    if (run.state === "pending") this.armRunStart(run.run_id, now);
+    return { runId: run.run_id, reused: run.run_id !== runId };
   }
 
   private armRunStart(runId: string, now: number): void {
@@ -1486,9 +1547,9 @@ export class HostedSidekick {
    * the Organization behind one cold conversation.
    */
   private async startRun(runId: string, attempt: number): Promise<ScheduledAlarmOutcome> {
-    const row = this.row();
-    const run = this.run(runId);
-    if (!row || !run || run.state !== "pending") return { progressed: true };
+    const view = this.runView(runId);
+    if (!view?.run || view.run.state !== "pending") return { progressed: true };
+    const { sidekick: row, run } = view;
     const now = Date.now();
     if (row.lifecycle !== "active") {
       this.sql.exec(
@@ -1507,7 +1568,7 @@ export class HostedSidekick {
     await this.host.sendRunProvision({ workspaceId: row.workspace_id, automationId: this.sidekickId, runId });
     // The report can land while the send is awaited; a run it settled needs
     // no resend.
-    if (this.run(runId)?.state !== "pending") return { progressed: true };
+    if (this.runState(runId) !== "pending") return { progressed: true };
     // Asked again later unless the report comes first. The drain deletes an
     // entry at the instant that ran whatever the handler returned, and nothing
     // rebuilds a run's entry from its row, so the resend is this entry moved
@@ -1527,19 +1588,19 @@ export class HostedSidekick {
   /** What the provisioning consumer needs for one pending run; `null` once it is not pending. */
   runProvisioning(input: AutomationRunRequest): SidekickRunProvisioning | null {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "run_provisioning");
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
-    const run = this.run(request.runId);
-    if (!run || run.state !== "pending" || row.lifecycle !== "active") return null;
+    const view = this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId);
+    const { sidekick, run } = view;
+    if (!run || run.state !== "pending" || sidekick.lifecycle !== "active") return null;
     return {
-      region: row.region,
-      workspaceId: row.workspace_id,
-      automationId: row.automation_id,
+      region: sidekick.region,
+      workspaceId: sidekick.workspace_id,
+      automationId: sidekick.automation_id,
       runId: run.run_id,
       harnessRunId: run.harness_run_id,
-      runAsUserId: run.run_as_user_id ?? row.run_as_user_id,
-      modelOverride: row.model_override,
+      runAsUserId: run.run_as_user_id ?? sidekick.run_as_user_id,
+      modelOverride: sidekick.model_override,
       definitionRevision: run.definition_revision,
-      definition: this.readRunDefinition(request),
+      definition: this.runDefinition(view),
       seedJson: run.seed_json,
     };
   }
@@ -1593,50 +1654,51 @@ export class HostedSidekick {
     this.stopOpenRuns(now);
     this.cancelSidekickAlarms();
     this.sql.exec(
-      `UPDATE automation_directory SET lifecycle = 'paused', paused_by = ?, updated_at = ? WHERE automation_id = ?`,
+      `UPDATE automation_directory
+          SET lifecycle = 'paused', paused_by = ?, stop_generation = stop_generation + 1, updated_at = ?
+        WHERE automation_id = ?`,
       by, now, this.sidekickId,
     );
-    this.writeRegistrations([], now);
-    this.touchDirectory(now);
+    this.touchDirectory(now, this.writeRegistrations([]));
   }
 
   /** Returns the registrations it restored, for the caller's post-commit step. */
   private resumeFromPause(now: number): unknown[] {
-    const row = this.row();
-    if (!row) throw new Error("sidekick_missing");
-    for (const schedule of this.schedules()) {
-      const nextDueAt = scheduleDueAfter(schedule.schedule_kind, schedule.definition_json, now);
-      this.sql.exec(
-        `UPDATE sidekick_schedules SET next_due_at = ?, updated_at = ? WHERE sidekick_id = ? AND schedule_id = ?`,
-        nextDueAt, now, this.sidekickId, schedule.schedule_id,
-      );
-      if (nextDueAt !== null) {
-        this.host.alarms.schedule({
-          kind: AUTOMATION_SCHEDULE_ALARM_KIND, key: sidekickAlarmKey(this.sidekickId, schedule.schedule_id), dueAt: nextDueAt,
-        }, now);
-      }
-    }
+    // Each schedule's next instant is computed here (a calendar rule needs
+    // the recurrence library), then written in one statement.
+    const due = this.schedules().map((schedule) => ({
+      id: schedule.schedule_id, dueAt: scheduleDueAfter(schedule.schedule_kind, schedule.definition_json, now),
+    }));
     this.sql.exec(
-      `UPDATE automation_directory SET lifecycle = 'active', paused_by = NULL, updated_at = ? WHERE automation_id = ?`,
-      now, this.sidekickId,
+      `UPDATE sidekick_schedules
+          SET next_due_at = due.value ->> '$.dueAt', updated_at = ?1
+         FROM json_each(?3) due
+        WHERE sidekick_schedules.sidekick_id = ?2 AND sidekick_schedules.schedule_id = due.value ->> '$.id'`,
+      now, this.sidekickId, JSON.stringify(due),
     );
-    const evaluators = JSON.parse(row.evaluator_projection_json) as unknown[];
-    this.writeRegistrations(evaluators, now);
-    this.touchDirectory(now);
+    this.scheduleEntries(due, now);
+    const resumed = first(this.sql.exec<{ evaluator_projection_json: string }>(
+      `UPDATE automation_directory SET lifecycle = 'active', paused_by = NULL, updated_at = ?
+        WHERE automation_id = ? RETURNING evaluator_projection_json`,
+      now, this.sidekickId,
+    ));
+    if (!resumed) throw new Error("sidekick_missing");
+    const evaluators = JSON.parse(resumed.evaluator_projection_json) as unknown[];
+    this.touchDirectory(now, this.writeRegistrations(evaluators));
     return evaluators;
   }
 
+  /**
+   * Stop this Sidekick's open runs. The caller moves `stop_generation` in the
+   * same transaction, in the update that changes the lifecycle, so no
+   * continuation can be approved between the two and read the old count with
+   * the new stop.
+   */
   private stopOpenRuns(now: number): void {
     this.sql.exec(
       `UPDATE sidekick_runs SET state = 'stopped', completed_at = ?, updated_at = ?
         WHERE sidekick_id = ? AND state IN ('pending', 'running', 'needs_input')`,
       now, now, this.sidekickId,
-    );
-    // In the same transaction as the stop, so no continuation can be approved
-    // between the two and read the old count with the new stop.
-    this.sql.exec(
-      `UPDATE automation_directory SET stop_generation = stop_generation + 1 WHERE automation_id = ?`,
-      this.sidekickId,
     );
   }
 
@@ -1645,43 +1707,43 @@ export class HostedSidekick {
    * Sidekick's: every entry key starts with the Sidekick's id.
    */
   private cancelSidekickAlarms(): void {
-    const prefix = sidekickAlarmKey(this.sidekickId, "");
-    for (const kind of [AUTOMATION_SCHEDULE_ALARM_KIND, AUTOMATION_RUN_ALARM_KIND]) {
-      for (const alarm of this.host.alarms.list(kind)) {
-        if (alarm.key.startsWith(prefix)) this.host.alarms.cancel(kind, alarm.key);
-      }
-    }
+    this.host.alarms.cancelByKeyPrefix(
+      [AUTOMATION_SCHEDULE_ALARM_KIND, AUTOMATION_RUN_ALARM_KIND], sidekickAlarmKey(this.sidekickId, ""),
+    );
   }
 
   /** The schedules of a newly accepted revision, and their entries, replacing the last ones. */
   private replaceSchedules(definitionRevision: number, schedules: readonly PreparedSchedule[], paused: boolean, now: number): void {
-    for (const previous of this.schedules()) {
-      this.host.alarms.cancel(AUTOMATION_SCHEDULE_ALARM_KIND, sidekickAlarmKey(this.sidekickId, previous.schedule_id));
-    }
+    this.host.alarms.cancelByKeyPrefix([AUTOMATION_SCHEDULE_ALARM_KIND], sidekickAlarmKey(this.sidekickId, ""));
     this.sql.exec(`DELETE FROM sidekick_schedules WHERE sidekick_id = ?`, this.sidekickId);
-    for (const schedule of schedules) {
-      this.sql.exec(
-        `INSERT INTO sidekick_schedules
-           (sidekick_id, schedule_id, definition_revision, schedule_kind, definition_json, next_due_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        this.sidekickId, schedule.id, definitionRevision, schedule.kind, JSON.stringify(schedule.definition),
-        schedule.nextDueAt, now,
-      );
-      if (!paused) {
-        this.host.alarms.schedule({
-          kind: AUTOMATION_SCHEDULE_ALARM_KIND, key: sidekickAlarmKey(this.sidekickId, schedule.id), dueAt: schedule.nextDueAt,
-        }, now);
-      }
+    this.sql.exec(
+      `INSERT INTO sidekick_schedules
+         (sidekick_id, schedule_id, definition_revision, schedule_kind, definition_json, next_due_at, updated_at)
+       SELECT ?1, schedule.value ->> '$.id', ?2, schedule.value ->> '$.kind', schedule.value ->> '$.definition',
+              schedule.value ->> '$.nextDueAt', ?3
+         FROM json_each(?4) schedule`,
+      this.sidekickId, definitionRevision, now,
+      JSON.stringify(schedules.map((schedule) => ({ ...schedule, definition: JSON.stringify(schedule.definition) }))),
+    );
+    if (!paused) this.scheduleEntries(schedules.map((schedule) => ({ id: schedule.id, dueAt: schedule.nextDueAt })), now);
+  }
+
+  /** Arm one schedule entry per due schedule. The store writes one row per entry; there is no set form of it. */
+  private scheduleEntries(entries: readonly { id: string; dueAt: number | null }[], now: number): void {
+    for (const entry of entries) {
+      if (entry.dueAt === null) continue;
+      this.host.alarms.schedule({
+        kind: AUTOMATION_SCHEDULE_ALARM_KIND, key: sidekickAlarmKey(this.sidekickId, entry.id), dueAt: entry.dueAt,
+      }, now);
     }
   }
 
-  /** This Sidekick's registrations, replaced whole, and the event sequence they take effect after. */
-  private writeRegistrations(evaluators: readonly unknown[], now: number): void {
-    const cutoff = this.host.writeRegistrations(this.sidekickId, evaluators);
-    this.sql.exec(
-      `UPDATE automation_directory SET effective_after_event_sequence = ?, updated_at = ? WHERE automation_id = ?`,
-      cutoff, now, this.sidekickId,
-    );
+  /**
+   * Replace this Sidekick's registrations and return the event sequence they
+   * take effect after; the caller's `touchDirectory` records it on the row.
+   */
+  private writeRegistrations(evaluators: readonly unknown[]): number {
+    return this.host.writeRegistrations(this.sidekickId, evaluators);
   }
 
   /**
@@ -1707,19 +1769,18 @@ export class HostedSidekick {
       ...selections.defaultPluginIds,
       ...Object.values(selections.activitySourcePluginIds),
     ])];
-    const database = this.host.workspaceDatabase(row.workspace_id);
-    const connections = selectedPluginIds.length === 0
-      ? { results: [] }
-      : await database.prepare(
-        `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, status, config_json
-           FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'`,
-      ).bind(row.workspace_id).all<{
-        id: string; connector_type: string; scope: string; owner_user_id: string | null;
-        model_plugin_id: string; status: string; config_json: string | null;
-      }>();
-    const connectionsByPlugin = new Map(
-      (connections.results ?? []).map((connection) => [connection.model_plugin_id, connection]),
-    );
+    // This Organization's own rows, read with `sql.exec` rather than the
+    // runtime database adapter, which parses each statement and does a
+    // request's bookkeeping that an in-object read does not need.
+    const connections = selectedPluginIds.length === 0 ? [] : this.sql.exec<{
+      id: string; connector_type: string; scope: string; owner_user_id: string | null;
+      model_plugin_id: string; status: string; config_json: string | null;
+    }>(
+      `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, status, config_json
+         FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'`,
+      row.workspace_id,
+    ).toArray();
+    const connectionsByPlugin = new Map(connections.map((connection) => [connection.model_plugin_id, connection]));
     const connectorBindings: Record<string, string> = {};
     for (const pluginId of selectedPluginIds) {
       const connection = connectionsByPlugin.get(pluginId);
@@ -1806,15 +1867,20 @@ export class HostedSidekick {
       }
     }
     const referencedResources = new Map<string, { pluginId: string; sourceBindingKey: string; resourceType: string }>();
+    // Every resource the evaluators watch, in one read.
+    const resourceIds = [...new Set(rules.evaluators.flatMap((evaluator) => evaluator.source.resourceId ? [evaluator.source.resourceId] : []))];
+    const resources = new Map(resourceIds.length === 0 ? [] : this.sql.exec<{
+      id: string; connection_id: string | null; resource_type: string;
+    }>(
+      `SELECT id, connection_id, resource_type FROM resources
+        WHERE workspace_id = ? AND id IN (SELECT value FROM json_each(?))`,
+      row.workspace_id, JSON.stringify(resourceIds),
+    ).toArray().map((resource) => [resource.id, resource]));
     for (const evaluator of rules.evaluators) {
       if (!evaluator.source.resourceId) continue;
       const selectedPluginId = selectedByBinding.get(evaluator.source.sourceBindingKey);
       const selectedConnection = selectedPluginId ? connectionsByPlugin.get(selectedPluginId) : undefined;
-      const resource = await database.prepare(
-        `SELECT id, connection_id, resource_type FROM resources WHERE workspace_id = ? AND id = ?`,
-      ).bind(row.workspace_id, evaluator.source.resourceId).first<{
-        id: string; connection_id: string | null; resource_type: string;
-      }>();
+      const resource = resources.get(evaluator.source.resourceId);
       if (!resource || resource.connection_id !== selectedConnection?.id || !selectedPluginId) {
         throw new ApiError(422, "sidekick_resource_not_found", "An evaluator names a resource this Sidekick cannot watch");
       }
@@ -1904,7 +1970,11 @@ export class HostedSidekick {
   // Reads and the directory.
   // ---------------------------------------------------------------------------
 
-  /** The Sidekick's row, once it is hosted: a row whose definition columns are still empty is one awaiting import. */
+  /**
+   * The Sidekick's row. `region` is set on every row a hosted Sidekick wrote;
+   * a row without it is one a retired Organization never imported, and reads
+   * as no Sidekick.
+   */
   row(): HostedSidekickRow | null {
     const row = first(this.sql.exec<HostedSidekickRow>(
       `SELECT * FROM automation_directory WHERE automation_id = ? AND region IS NOT NULL`, this.sidekickId,
@@ -1913,12 +1983,69 @@ export class HostedSidekick {
   }
 
   private assertSidekick(workspaceId: string, automationId: string): HostedSidekickRow {
-    const row = this.row();
+    return this.assertIdentity(this.row(), workspaceId, automationId);
+  }
+
+  private assertIdentity<T extends HostedSidekickRow>(row: T | null, workspaceId: string, automationId: string): T {
     if (!row) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
     if (row.workspace_id !== workspaceId || row.automation_id !== automationId) {
       throw new Error("sidekick_identity_mismatch");
     }
     return row;
+  }
+
+  /** The Sidekick with its accepted revision's definition, in one read; `accepted_definition_json` is null with none. */
+  private withAccepted(): (HostedSidekickRow & { accepted_definition_json: string | null }) | null {
+    return first(this.sql.exec<HostedSidekickRow & { accepted_definition_json: string | null }>(
+      `SELECT directory.*, revision.definition_json AS accepted_definition_json
+         FROM automation_directory directory
+         LEFT JOIN sidekick_revisions revision
+           ON revision.sidekick_id = directory.automation_id
+          AND revision.definition_revision = directory.accepted_definition_revision
+        WHERE directory.automation_id = ? AND directory.region IS NOT NULL`,
+      this.sidekickId,
+    ));
+  }
+
+  private assertRunView(view: RunView | null, workspaceId: string, automationId: string): RunView {
+    if (!view) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
+    this.assertIdentity(view.sidekick, workspaceId, automationId);
+    return view;
+  }
+
+  /**
+   * The Sidekick, one of its runs and a revision of its definition, in one
+   * read: `definitionRevision` when given, else the run's own. `null` when
+   * the Sidekick does not exist; `run` is null when the run does not.
+   */
+  private runView(runId: string, definitionRevision: number | null = null): RunView | null {
+    const row = first(this.sql.exec<HostedSidekickRow & { run: string | null; revision: string | null }>(
+      `SELECT directory.*,
+              CASE WHEN run.run_id IS NULL THEN NULL ELSE json_object(
+                'run_id', run.run_id, 'occurrence_key', run.occurrence_key, 'trigger_json', run.trigger_json,
+                'definition_revision', run.definition_revision, 'harness_run_id', run.harness_run_id,
+                'state', run.state, 'summary', run.summary, 'opening_json', run.opening_json,
+                'seed_json', run.seed_json, 'run_as_user_id', run.run_as_user_id, 'created_at', run.created_at,
+                'started_at', run.started_at, 'completed_at', run.completed_at, 'updated_at', run.updated_at
+              ) END AS run,
+              CASE WHEN revision.definition_revision IS NULL THEN NULL ELSE json_object(
+                'definition_revision', revision.definition_revision, 'definition_json', revision.definition_json
+              ) END AS revision
+         FROM automation_directory directory
+         LEFT JOIN sidekick_runs run ON run.sidekick_id = directory.automation_id AND run.run_id = ?2
+         LEFT JOIN sidekick_revisions revision
+           ON revision.sidekick_id = directory.automation_id
+          AND revision.definition_revision = COALESCE(?3, run.definition_revision)
+        WHERE directory.automation_id = ?1 AND directory.region IS NOT NULL`,
+      this.sidekickId, runId, definitionRevision,
+    ));
+    if (!row) return null;
+    const { run, revision, ...sidekick } = row;
+    return {
+      sidekick: sidekick as HostedSidekickRow,
+      run: run === null ? null : JSON.parse(run) as RunRow,
+      revision: revision === null ? null : JSON.parse(revision) as RunView["revision"],
+    };
   }
 
   private revision(definitionRevision: number): RevisionRow | null {
@@ -1938,13 +2065,10 @@ export class HostedSidekick {
     ).toArray();
   }
 
-  private run(runId: string): RunRow | null {
-    return first(this.sql.exec<RunRow>(
-      `SELECT run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state, summary,
-              opening_json, seed_json, run_as_user_id, created_at, started_at, completed_at, updated_at
-         FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`,
-      this.sidekickId, runId,
-    ));
+  private runState(runId: string): RunState | null {
+    return first(this.sql.exec<{ state: RunState }>(
+      `SELECT state FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, this.sidekickId, runId,
+    ))?.state ?? null;
   }
 
   /** Record a child; `false` when it was already there. */
@@ -1993,23 +2117,31 @@ export class HostedSidekick {
     throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
   }
 
-  private nextRunAt(row: HostedSidekickRow): number | null {
-    if (row.lifecycle !== "active") return null;
-    return first(this.sql.exec<{ next_due_at: number | null }>(
-      `SELECT MIN(next_due_at) AS next_due_at FROM sidekick_schedules WHERE sidekick_id = ?`, this.sidekickId,
-    ))?.next_due_at ?? null;
-  }
-
   detail(): AutomationDetail {
-    const row = this.row();
+    // The row with both revisions and its last run in one read; the recent
+    // runs are the second. `next_run_at` is kept by `touchDirectory`.
+    const row = first(this.sql.exec<HostedSidekickRow & {
+      next_run_at: number | null; current_definition_json: string | null;
+      accepted_definition_json: string | null; last_run_at: number | null;
+    }>(
+      `SELECT directory.*, current.definition_json AS current_definition_json,
+              accepted.definition_json AS accepted_definition_json,
+              (SELECT MAX(created_at) FROM sidekick_runs WHERE sidekick_id = directory.automation_id) AS last_run_at
+         FROM automation_directory directory
+         LEFT JOIN sidekick_revisions current
+           ON current.sidekick_id = directory.automation_id
+          AND current.definition_revision = directory.current_definition_revision
+         LEFT JOIN sidekick_revisions accepted
+           ON accepted.sidekick_id = directory.automation_id
+          AND accepted.definition_revision = directory.accepted_definition_revision
+        WHERE directory.automation_id = ? AND directory.region IS NOT NULL`,
+      this.sidekickId,
+    ));
     if (!row) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-    const current = this.revision(row.current_definition_revision);
-    const accepted = row.accepted_definition_revision === null ? null : this.revision(row.accepted_definition_revision);
-    const acceptedDefinition = accepted ? AutomationDraftSchema.parse(JSON.parse(accepted.definition_json)) : null;
-    const lastRunAt = first(this.sql.exec<{ created_at: number }>(
-      `SELECT created_at FROM sidekick_runs WHERE sidekick_id = ? ORDER BY created_at DESC LIMIT 1`, this.sidekickId,
-    ))?.created_at ?? null;
+    const acceptedDefinition = row.accepted_definition_json
+      ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json))
+      : null;
     return AutomationDetailSchema.parse({
       id: row.automation_id,
       ...(row.appearance_json ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) } : {}),
@@ -2020,13 +2152,13 @@ export class HostedSidekick {
       scope: row.scope,
       owningWorkstreamId: row.owning_workstream_id,
       status: row.lifecycle,
-      nextRunAt: iso(this.nextRunAt(row)),
-      lastRunAt: iso(lastRunAt),
+      nextRunAt: iso(row.lifecycle === "active" ? row.next_run_at : null),
+      lastRunAt: iso(row.last_run_at),
       updatedAt: iso(row.updated_at),
       lifecycle: row.lifecycle,
       authorUserId: row.author_user_id,
       runAsUserId: row.run_as_user_id,
-      currentDefinition: current ? JSON.parse(current.definition_json) : null,
+      currentDefinition: row.current_definition_json ? JSON.parse(row.current_definition_json) : null,
       currentDefinitionRevision: row.current_definition_revision,
       acceptedDefinitionRevision: row.accepted_definition_revision,
       runnable: acceptedDefinition !== null
@@ -2064,16 +2196,20 @@ export class HostedSidekick {
    * row last moved. Inside the caller's transaction; the sidebar learns from
    * the host.
    */
-  private touchDirectory(now: number): void {
-    const row = this.row();
-    if (!row) throw new Error("sidekick_missing");
-    this.sql.exec(
+  private touchDirectory(now: number, effectiveAfterEventSequence?: number): void {
+    const touched = first(this.sql.exec<{ lifecycle: Lifecycle }>(
       `UPDATE automation_directory
-          SET source_version = source_version + 1, payload_hash = 'hosted', next_run_at = ?, projected_at = ?
-        WHERE automation_id = ?`,
-      this.nextRunAt(row), now, this.sidekickId,
-    );
-    this.host.noteDirectoryChanged(this.sidekickId, row.lifecycle === "deleted", now);
+          SET source_version = source_version + 1, payload_hash = 'hosted', projected_at = ?1,
+              next_run_at = CASE WHEN lifecycle = 'active' THEN (
+                SELECT MIN(next_due_at) FROM sidekick_schedules WHERE sidekick_id = ?2
+              ) END,
+              effective_after_event_sequence = COALESCE(?3, effective_after_event_sequence)
+        WHERE automation_id = ?2
+        RETURNING lifecycle`,
+      now, this.sidekickId, effectiveAfterEventSequence ?? null,
+    ));
+    if (!touched) throw new Error("sidekick_missing");
+    this.host.noteDirectoryChanged(this.sidekickId, touched.lifecycle === "deleted", now);
   }
 }
 

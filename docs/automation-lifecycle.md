@@ -902,6 +902,7 @@ substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 | Suite | Command | Covers |
 | --- | --- | --- |
 | `apps/api/test-workers/automation-do.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg. |
+| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; and a run's loop acting while its row still reads `pending`, before provisioning reports it running. |
 | `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
 | `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read. |
 | `apps/desktop/src/renderer/screens/automation.test.tsx` | `pnpm --filter @rally/desktop test` | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived. |
@@ -1048,6 +1049,30 @@ Desktop and browser request management options only when their controls open, no
 on every transcript update.
 
 ## Changelog
+
+### 2026-10-06 — A run's loop may act while its row still reads `pending`
+
+**What changed:** The check a Sidekick run's loop makes before it acts
+(`readRunAuthority`) accepts a `pending` run as live, as well as `running` and
+`needs_input`.
+
+**Why:** Since provisioning moved to the activity Queue (#1106), the consumer
+starts the run's loop and only then reports the run running. A loop that
+started quickly checked in between and was refused with "This automation run is
+no longer running". In production the GitHub PR Firehose Sidekick's run for a
+newly opened PR failed this way, 222 ms before the report landed, with no model
+call made.
+
+**Considered and rejected:** Reporting the run running before starting the
+loop. A loop start that then failed would leave a `running` row the resend
+never revisits, since it re-sends only `pending` runs.
+
+**Consequences:** `pending` means "admitted and not stopped": only provisioning
+starts a run's loop, and a pause or delete moves even a pending run to
+`stopped`, which the check still refuses. A new run state must be classified
+here as live or not.
+
+Shipped in [#1111](https://github.com/juno-ai-labs/avalon/pull/1111).
 
 ### 2026-10-05 — A Sidekick lives in its Organization object
 
