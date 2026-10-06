@@ -144,10 +144,18 @@ selected product regions.
 
 ## Failure modes and limits
 
-- Error 10021 during any upload means that Worker's static graph still exceeds
-  Cloudflare's hard startup budget. Inspect its retained CPU profile and move a
-  coherent stateless capability behind a typed service boundary; do not retry
-  until timing happens to pass.
+- Cloudflare uses error 10021 for two different failures; read the message.
+  - **Startup budget.** The Worker's static graph exceeds Cloudflare's hard
+    startup budget. Inspect its retained CPU profile and move a coherent
+    stateless capability behind a typed service boundary; do not retry until
+    timing happens to pass.
+  - **`Pipeline binding error. Please try again later`.** A Pipelines
+    control-plane fault on a Worker with a Pipeline binding (the Global API),
+    not anything in the graph. The upload step retries it once after 60
+    seconds. If that also fails, rerun the failed job of the newest API run on
+    `main` once; if it still fails, check the pinned streams with
+    `node scripts/ensure-cloudflare-inference-lakehouse.mjs --check` before
+    retrying again.
 
 - A missing target Worker makes caller deployment fail. The workflow deploys or
   uploads target services first.
@@ -291,6 +299,26 @@ context-window KV snapshot and fetches the model catalog only when that snapshot
 is missing or at least 24 hours old. Inference performs the pricing KV reads
 for Azure-bound models in its route plan; each
 resident Channel agent reads the window snapshot once.
+
+### 2026-10-06 — Retry the Pipeline binding form of error 10021 once
+
+**What changed:** The Global version upload retries once, after 60 seconds,
+when Wrangler's output contains `Pipeline binding error`. Every other upload
+failure, including the startup-budget form of 10021, still fails the step at
+once.
+
+**Why:** The deploys for #1107, #1113 and #1115 each failed uploading
+`avalon-api-global` with `Pipeline binding error. Please try again later
+[code: 10021]`, and each time the next run succeeded with no change to the
+Worker or the pinned streams. Every miss needed someone to rerun by hand. This
+document also told readers that any 10021 was a startup-budget overrun that must
+not be retried, which sends them looking for code to move out of a graph that
+was never the problem.
+
+**Considered and rejected:** Retrying every 10021, which would hide a real
+startup-budget overrun behind a slower failure. The retry count and the wait
+are the team's numbers, not derived from any Cloudflare limit; raise them, or
+take a ticket to Cloudflare, if the retry starts failing too.
 
 ### 2026-09-23 — Move stable metadata and obsolete cutover checks off request reads
 

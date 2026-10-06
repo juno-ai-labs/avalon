@@ -389,15 +389,31 @@ jobs:
           DEPLOY_SHA: ${{ needs.verify.outputs.verified_sha }}
         run: |
           set -euo pipefail
+          # Cloudflare reports two unrelated failures as code 10021. A startup
+          # budget overrun is deterministic and must fail now. "Pipeline binding
+          # error. Please try again later" is a control-plane fault that has
+          # cleared on the next attempt (#1107, #1113, #1115), so that one alone
+          # gets one retry after 60 seconds. Both numbers are the team's choice.
           upload_version() {
             local config="$1"
             local output_name="$2"
             local output_file="${RUNNER_TEMP}/wrangler-${output_name}-${GITHUB_RUN_ATTEMPT}.json"
-            WRANGLER_OUTPUT_FILE_PATH="$output_file" \
-            pnpm --filter @rally/api exec wrangler versions upload \
-              --config "$config" \
-              --tag "$DEPLOY_SHA" \
-              --message "Verified GitHub deployment $DEPLOY_SHA"
+            local log_file="${RUNNER_TEMP}/wrangler-${output_name}-${GITHUB_RUN_ATTEMPT}.log"
+            local attempt
+            for attempt in 1 2; do
+              if WRANGLER_OUTPUT_FILE_PATH="$output_file" \
+                pnpm --filter @rally/api exec wrangler versions upload \
+                  --config "$config" \
+                  --tag "$DEPLOY_SHA" \
+                  --message "Verified GitHub deployment $DEPLOY_SHA" 2>&1 | tee "$log_file"; then
+                break
+              fi
+              if [ "$attempt" = 2 ] || ! grep -q 'Pipeline binding error' "$log_file"; then
+                return 1
+              fi
+              echo "::warning::Cloudflare Pipeline binding error (10021) uploading ${output_name}; retrying once in 60s"
+              sleep 60
+            done
             local version_id
             version_id="$(jq -r 'select(.type == "version-upload") | .version_id' "$output_file" | tail -n 1)"
             test -n "$version_id" && test "$version_id" != null
