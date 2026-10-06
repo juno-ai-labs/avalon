@@ -260,7 +260,7 @@ describe('New channel home', () => {
     expect(await screen.findByRole('textbox', { name: 'Opening channel message' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
-    // A Space's participants are who edit it, not who is in its Channels: the
+    // A Space's participants are its listed members, not who is in its Channels: the
     // bar starts with only the creator and lets them add people.
     const bar = screen.getByRole('group', { name: 'Participants:' });
     expect(within(bar).getByText('Morgan Ellis')).toBeVisible();

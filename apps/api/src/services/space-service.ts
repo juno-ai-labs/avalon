@@ -385,7 +385,7 @@ export class SpaceService {
   }
 
   /**
-   * Change who edits a Space: one WorkspaceDO write.
+   * Change a Space's participants: one WorkspaceDO write.
    *
    * Every Space is Organization-wide, so the request only names its
    * participants, and a Space grants no reader to its Channels
