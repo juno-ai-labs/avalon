@@ -55,28 +55,26 @@ Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to the number
 the sidebar's attention menu shows ([`attention-menu.md`](attention-menu.md)):
 each Main the recipient may open and each Breakout they may list, in an
 unarchived, non-system Channel, that is unread, unseen or mentions them. The
-directory `attention` read returns it as `attentionCount`
+directory `attention` read returns it as `readerAttentionCount`
 (`WorkspaceSpaceStorage.readerAttentionCount`). A run in `needs_input` is not
 counted, as the menu does not list it. A send from one workspace does not sum
 other workspaces: iOS holds one session, and a global inbox is out of scope.
 Omitting `badge` would leave the previous icon count in place; `0` clears it.
 
-The Mac also sets its own dock badge while Rally runs. `useDockBadge` sends the
-menu's count to main (`dock-badge:set`, `app.setBadgeCount`) on every change
-once the Channel directory and every Breakout list the count reads have loaded, so reading a conversation lowers the
-badge at once; APNs only sets it when an alert arrives. Unmounting the shell
-(sign-out, switching Organization) clears it. The local badge needs no APNs
-registration, but macOS shows a badge only while notifications, with badges,
-are allowed for Rally, so a user who denied notifications sees neither. The
-authorization request includes `UNAuthorizationOptionBadge`, and every
-permission read also reports the "Badge application icon" switch
-(`badgeSetting`) as `notificationBadgeStatus`. Settings → Notifications says
-when notifications or badges are off, with **Open System Settings**, which
-opens Rally's own entry (`com.apple.Notifications-Settings.extension?id=` the
-bundle id). Permission is re-read when a Rally window gains focus, so the
-notice clears on return from System Settings. While
-running, the local count is for the active Organization; an alert from another
-Organization carries that Organization's count.
+While Rally runs, the Mac sets the dock badge itself. `useDockBadge` sends the
+menu's count to main (`dock-badge:set`, `app.setBadgeCount`) on every change,
+once the Channel directory and every Breakout list the count reads have
+loaded, and clears it when the shell unmounts. Main re-applies the last count
+when a Rally window gains focus, since a background alert from another
+Organization sets that Organization's count. Foreground alerts leave `.badge`
+out of their presentation options, so they never replace it.
+
+macOS shows a badge only while notifications, with badges, are allowed for
+Rally. Authorization requests `UNAuthorizationOptionBadge`, each permission read
+(also on window focus) reports `badgeSetting` as `notificationBadgeStatus`, and
+Settings → Notifications offers **Open System Settings**
+(`com.apple.Notifications-Settings.extension?id=` the bundle id) when
+notifications or badges are off.
 APNs retains undelivered alerts for
 24 hours. Provider JWTs are shared through regional KV and refreshed at 50 minutes;
 no coordination object is introduced. Enqueue and send share the same
@@ -261,7 +259,7 @@ signed-Mac APNs/universal-link acceptance is claimed.
 
 ### 2026-10-06 — Badge is the sidebar attention count, set by APNs and the Mac
 
-**What changed:** `aps.badge` is now `attentionCount`: Mains and Breakouts that
+**What changed:** `aps.badge` is now `readerAttentionCount`: Mains and Breakouts that
 are unread, unseen or mention the reader, the attention menu's number. It
 replaces `unreadAndNeedsInputCount`, which counted Channels only and included
 read `needs_input` runs. The Mac app also sets the dock badge itself from the

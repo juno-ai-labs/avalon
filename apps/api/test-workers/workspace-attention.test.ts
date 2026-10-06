@@ -162,7 +162,7 @@ describe("WorkspaceDO attention", () => {
         waitingForYou: 4,
         waitingReason: "mentioned",
         hasUnreadActivity: true,
-        attentionCount: 3,
+        readerAttentionCount: 3,
       });
   });
 
@@ -187,7 +187,7 @@ describe("WorkspaceDO attention", () => {
         waitingForYou: 0,
         waitingReason: null,
         hasUnreadActivity: true,
-        attentionCount: 1,
+        readerAttentionCount: 1,
       });
   });
 
@@ -207,7 +207,7 @@ describe("WorkspaceDO attention", () => {
         waitingForYou: 2,
         waitingReason: "needs_input",
         hasUnreadActivity: true,
-        attentionCount: 2,
+        readerAttentionCount: 2,
       });
   });
 
@@ -216,9 +216,9 @@ describe("WorkspaceDO attention", () => {
     await seed({ id: "00000000-0000-7000-8000-0000000009e2", latest: 2, seen: 0 });
 
     await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
-      .resolves.toMatchObject({ attentionCount: 2 });
+      .resolves.toMatchObject({ readerAttentionCount: 2 });
     await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "guest" }))
-      .resolves.toMatchObject({ attentionCount: 1 });
+      .resolves.toMatchObject({ readerAttentionCount: 1 });
   });
 
   it("counts each Breakout the reader may list that is unread or unseen, as the sidebar menu does", async () => {
@@ -263,6 +263,6 @@ describe("WorkspaceDO attention", () => {
     });
 
     await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
-      .resolves.toMatchObject({ attentionCount: 2 });
+      .resolves.toMatchObject({ readerAttentionCount: 2 });
   });
 });

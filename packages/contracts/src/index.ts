@@ -406,7 +406,7 @@ export const WorkspaceAttentionSchema = z.object({
    * Conversations (each Main and each Breakout) unread, unseen or mentioning
    * this person: the sidebar attention menu's count, and the dock badge.
    */
-  attentionCount: z.number().int().nonnegative().default(0),
+  readerAttentionCount: z.number().int().nonnegative().default(0),
 });
 
 /**
