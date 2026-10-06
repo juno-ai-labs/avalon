@@ -14,8 +14,9 @@ with the same socket push that moves a sidebar dot.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/attention-items.ts` | `attentionItems`: which conversations are listed, why, and in what order. `useAttentionItems`: reads each Channel's Breakout list from the query cache. `attentionItemPath`: the route an item opens. |
-| `apps/desktop/src/renderer/lib/format.ts` | `readerMarkerStatus`: the reader's own marker on one conversation, ranked by `MARKER_PRECEDENCE`. `markerRank` exposes that ranking for sorting. |
+| `apps/desktop/src/common/attention-items.ts` | `attentionItems`: which conversations are listed, why, and in what order. `readerMarkerStatus`: the reader's own marker on one conversation, ranked by `MARKER_PRECEDENCE`; `markerRank` exposes that ranking for sorting. In `common/` because the macOS menu bar counts the same list in the main process ([`menu-bar.md`](menu-bar.md)). |
+| `apps/desktop/src/renderer/lib/attention-items.ts` | `useAttentionItems`: reads each Channel's Breakout list from the query cache. `attentionItemPath`: the route an item opens. Re-exports `attentionItems`. |
+| `apps/desktop/src/renderer/lib/format.ts` | Re-exports `readerMarkerStatus` and `markerRank` for renderer callers. |
 | `apps/desktop/src/renderer/components/attention-menu.tsx` | The trigger (count or bell), its tooltip, the dropdown and its rows. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | Calls `useAttentionItems` over the sidebar's rows and passes the result to `Sidebar`. |
 | `apps/desktop/src/renderer/components/sidebar.tsx` | Places `AttentionMenu` in `SidebarTopActions`, before search. |
@@ -59,6 +60,10 @@ first-open paths that clear the sidebar dot remove the row and lower the count.
 
 ## Invariants
 
+- **The menu bar's count is this menu's count.** The main process calls the
+  same `attentionItems` over its own socket's rows, reading Breakout lists under
+  the same `breakoutAttentionCount` condition `useAttentionItems` uses. Changing
+  what is listed here changes the number beside the status item with it.
 - **The menu and the sidebar dot read the same fields.** Both take unread,
   mentioned and unseen from the Channel row and its Breakout list. A second
   source (a new request, a separate store) would let the count say three while

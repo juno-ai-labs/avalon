@@ -106,7 +106,7 @@ describe('TelemetryReporter', () => {
     const { reporter, spool } = await harness({
       auth: { apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' },
     });
-    await reporter.menuBarOpened({ signedIn: true, recentCount: 10, pinnedCount: 2 });
+    await reporter.menuBarOpened({ signedIn: true, recentCount: 5, pinnedCount: 0, attentionCount: 12 });
     await reporter.menuBarActionSelected('open_rally');
     await reporter.commandShortcutsRevealed(9);
     await reporter.commandShortcutUsed(2, 'pinned_workstream');
@@ -120,7 +120,7 @@ describe('TelemetryReporter', () => {
       {
         name: 'menu_bar_opened',
         source: 'desktop-main',
-        properties: { signedIn: true, recentCount: 10, pinnedCount: 2 },
+        properties: { signedIn: true, recentCount: 5, pinnedCount: 0, attentionCount: 12 },
       },
       {
         name: 'menu_bar_action_selected',
