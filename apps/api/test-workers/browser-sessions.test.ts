@@ -5,6 +5,7 @@ import { expect, it } from "vitest";
 import { asUserId } from "@rally/contracts";
 import { BrowserSessionService } from "../src/services/browser-session-service";
 import { issueAccessToken } from "../src/services/auth-service";
+import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 
 it("converges concurrent browser activation in real D1 without changing another tab's session",async () => {
   await reset();
@@ -20,6 +21,8 @@ it("converges concurrent browser activation in real D1 without changing another 
     env.DB.prepare(`CREATE TRIGGER bind_session_incarnation AFTER INSERT ON sessions WHEN NEW.workspace_id IS NOT NULL
       BEGIN UPDATE sessions SET workspace_incarnation=(SELECT incarnation FROM workspace_members
       WHERE workspace_id=NEW.workspace_id AND user_id=NEW.user_id AND status='active') WHERE id=NEW.id; END`),
+    // Registering a session claims shares waiting for the user's addresses.
+    ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare("CREATE TABLE browser_sessions(session_id TEXT PRIMARY KEY,credential_hash TEXT UNIQUE)"),
     env.DB.prepare("CREATE TABLE browser_workspace_sessions(browser_session_id TEXT,workspace_id TEXT,session_id TEXT UNIQUE,PRIMARY KEY(browser_session_id,workspace_id))"),
     env.DB.prepare("INSERT INTO users(id,email,name,timezone,created_at) VALUES (?,'guest@example.test','Guest','UTC',?)").bind(userId,at),
