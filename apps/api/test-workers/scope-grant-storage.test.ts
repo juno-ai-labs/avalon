@@ -98,13 +98,6 @@ describe("workstream scope grants in real workerd", () => {
       expect(store.sourceKind(userId, target)).toBe("space");
       expect(deliveries(state)).toEqual([]);
 
-      // Removing the Channel's own claim cannot revoke a grant that has no
-      // direct claim at all: the Space still owns this active row.
-      expect(store.mutate(command({ active: false, expectedRevision: 1 })))
-        .toMatchObject({ status: "committed", grant: { active: true, revision: 1 } });
-      expect(store.sourceKind(userId, target)).toBe("space");
-      expect(deliveries(state)).toEqual([]);
-
       // A direct share over it is the Channel taking responsibility for this
       // reader, and it is published from then on: a Space leaving must not take
       // away access the Channel granted itself.
@@ -131,6 +124,21 @@ describe("workstream scope grants in real workerd", () => {
       // provenance is carrying: the same command without a Space behind it.
       expect(store.mutate(command({ active: false, expectedRevision: 2 })).status).toBe("committed");
       expect(store.read(userId, target)).toMatchObject({ active: false, revision: 3 });
+    });
+  });
+
+  // A Space no longer supplies any reader, so a reader one seated before is
+  // the Channel's to remove like any other; nothing else still claims them.
+  it("revokes a Space-seated grant on an ordinary removal", async () => {
+    const spaceSourceId = "00000000-0000-4000-8000-000000000007";
+    await withStorage("scope-grant-space-seated-removal", (store) => {
+      const target = command().target;
+      expect(store.mutate(command({ spaceSourceId })).status).toBe("committed");
+      expect(store.sourceKind(userId, target)).toBe("space");
+
+      expect(store.mutate(command({ active: false, expectedRevision: 1 })))
+        .toMatchObject({ status: "committed", grant: { active: false, revision: 2 } });
+      expect(store.read(userId, target)).toMatchObject({ active: false, revision: 2 });
     });
   });
 

@@ -306,6 +306,22 @@ describe("the audience a new work stream is created with", () => {
   });
 });
 
+describe("a create retried across the deploy that made Spaces Organization-wide", () => {
+  // The previous Worker's `POST /workstreams` named no scope and hashed
+  // `personal`; its retry now asks for `workspace`.
+  it("replays a receipt hashed private when the retry asks for Organization-wide", async () => {
+    const database = seededDatabase();
+    const { env, initializeInputs } = environment(database);
+    const service = new WorkstreamService(env, auth);
+    const clientMessageId = "rolling-deploy-retry";
+
+    const first = await service.create(createInput({ clientMessageId }));
+    await expect(service.create(createInput({ clientMessageId, scope: "workspace" })))
+      .resolves.toMatchObject({ workstream: { id: first.workstream.id } });
+    expect(initializeInputs).toHaveLength(1);
+  });
+});
+
 describe("a create that names its own id", () => {
   const namedId = "019a0000-0000-7000-8000-00000000c1a1";
 

@@ -101,8 +101,9 @@ member, changed during the link's own awaits. The schema accepts
 `spaceMatch` only for an Organization-wide room that seats nobody. A match
 whose creator is no longer an active member is not offered, because a thread
 from a sender with no Rally identity opens its Channel acting as that creator;
-the room gets its own Space instead. A private room never matches: its Space's audience is
-the room's members, and an existing Space's is not. Neither does a Slack
+the room gets its own Space instead. A private room never matches; that rule
+predates every Space being Organization-wide, and its old reason (a private
+room's Space seated the room's members) no longer holds. Neither does a Slack
 Connect room (`is_ext_shared` or `is_pending_ext_shared`), which Slack reports
 as public but whose members include another organization. A matched room shared
 through Slack Connect after it linked is refused at spawn: the room binding
@@ -111,8 +112,7 @@ and a thread under a matched room first asks `conversations.info`; an
 externally shared room gets a `room_shared_externally` notice instead. A
 room's own Space skips that call. Only the record can say which a Space is:
 Slack renumbers a private room it shares (`channel_id_changed`), so the
-room-derived id stops matching, and a matched Space's scope can be narrowed
-after the link.
+room-derived id stops matching.
 An `unmatched` link that finds a match leaves the room's anchor unused, which
 costs nothing.
 
