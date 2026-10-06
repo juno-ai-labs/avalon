@@ -1126,6 +1126,55 @@ describe("Slack connector principal delivery", () => {
     ).get()).toEqual({ last_delivery_key: "run-top-level:completed" });
   });
 
+  it("sends a needs-input connect prompt to the member who triggered the run, not the thread's opener", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    // U456 opened the thread and is linked; U999, who is not, sent the follow-up.
+    objectDatabase.exec(`
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         context_json, created_at, updated_at)
+      VALUES ('session-follow-up-member', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', NULL, 'workspace',
+              'T123', 'U456', 'C123', '1.0', 'event:follow-up-member',
+              '7a000000-0000-4000-8000-0000000000af', 'app_mention', 'public',
+              '{}', '2026-01-01', '2026-01-01');
+    `);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const method = url.pathname.split("/").at(-1)!;
+      calls.push({ method, body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown> });
+      const body = method === "conversations.open"
+        ? { ok: true, channel: { id: "D999" } }
+        : { ok: true, channel: "C123", ts: "3.0" };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }));
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined), undefined,
+      { PUBLIC_WEB_BASE_URL: "https://rallywith.ai" },
+    )).deliverWorkstreamOutcome(
+      "22222222-2222-4222-8222-222222222222",
+      "7a000000-0000-4000-8000-0000000000af",
+      "Which region should I deploy to?",
+      "run-follow-up:needs_input",
+      "needs_input",
+      { triggeringSlackUserId: "U999" },
+    );
+
+    expect(calls.filter((call) => call.method === "conversations.open").map((call) => call.body))
+      .toEqual([{ users: "U999" }]);
+    expect(calls.some((call) => call.method === "chat.postMessage" && call.body.channel === "D999"))
+      .toBe(true);
+  });
+
   it("settles an earlier run's outcome on its own message after a follow-up moved the slot", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";

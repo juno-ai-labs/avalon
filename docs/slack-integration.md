@@ -805,18 +805,23 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ## Changelog
 
-### 2026-10-06 — Each run settles the reaction on its own message
+### 2026-10-06 — Each run's outcome follows its own message and member
 
 **What changed:** Admission records the run's status-reaction anchor on
 `slackOrigin.reactionAnchor`, and delivery passes it to the outcome transition.
 `settleSlackSessionReaction` now also requires the expected `channelId` and
 `messageTs`, and its `UPDATE` matches them alongside `reaction_current`.
+Delivery also passes `slackOrigin.actorSlackUserId` as the triggering member,
+so a needs-input connect prompt reaches whoever sent the message.
 
 **Why:** A follow-up admitted while an earlier run was live moved the session's
 one slot to its own message with the same `eyes` emoji, and the settle compared
 only the emoji. The earlier run's outcome could land on the follow-up's message,
 or its own message kept `eyes` while the follow-up later gained a second Rally
-reaction. Raised by Copilot on #1123.
+reaction. Raised by Copilot on #1123. Separately, the 2026-08-15 entry routed
+the connect prompt to the triggering member, but the settlement path in
+`SubstreamAgent` no longer passed that member, so every prompt fell back to the
+thread's opener. When the wiring was lost was not recorded.
 
 **Considered and rejected:** An anchor generation column on
 `slack_agent_sessions`, captured at admission and matched on settle. It needs a
