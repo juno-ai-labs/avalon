@@ -26,6 +26,7 @@ import {
 import type {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
+  SlackOriginContext,
   UpdateWorkstreamRequestSchema,
 } from "@rally/contracts";
 import { z } from "zod";
@@ -362,11 +363,13 @@ export class WorkstreamObjectClient {
   async answerElicitation(
     elicitationId: string,
     input: z.infer<typeof AnswerElicitationRequestSchema>,
+    slackOrigin?: SlackOriginContext,
   ): Promise<{ elicitation: Elicitation | undefined }> {
     const parsed = AnsweredElicitationSchema.parse(await this.request({
       operation: "answer_elicitation",
       elicitationId,
       input,
+      ...(slackOrigin ? { slackOrigin } : {}),
     }));
     return { elicitation: parsed.elicitation };
   }
