@@ -271,6 +271,8 @@ describe('Sidebar channel markers', () => {
 
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(navigation).not.toHaveClass('is-mobile-open');
+    // The control that held focus is hidden with the sheet.
+    expect(toggle).toHaveFocus();
 
     fireEvent.click(toggle);
     // Re-sorting the list is not leaving it.
@@ -279,6 +281,33 @@ describe('Sidebar channel markers', () => {
     fireEvent.click(screen.getByRole('link', { name: /Beta/u }));
     expect(navigation).not.toHaveClass('is-mobile-open');
     expect(toggle).toHaveAccessibleName('Open navigation');
+  });
+
+  it('closes the phone sheet on navigation from outside it and when the window leaves phone width', () => {
+    function Elsewhere(): React.JSX.Element {
+      const navigate = useNavigate();
+      return <button onClick={() => void navigate('/workstreams/ws-b')} type="button">Search result</button>;
+    }
+    const innerWidth = window.innerWidth;
+    render(<MemoryRouter><Tooltip.Provider><Elsewhere /><Sidebar {...defaultActions} onSignOut={vi.fn()}
+      workspace={workspace} workstreams={[workstream('ws-b', 'Beta', 'completed')]} /></Tooltip.Provider></MemoryRouter>);
+    const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Search result' }));
+    expect(navigation).not.toHaveClass('is-mobile-open');
+
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      window.innerWidth = 390;
+      fireEvent(window, new Event('resize'));
+      expect(navigation).toHaveClass('is-mobile-open');
+      window.innerWidth = 1024;
+      fireEvent(window, new Event('resize'));
+      expect(navigation).not.toHaveClass('is-mobile-open');
+    } finally {
+      window.innerWidth = innerWidth;
+    }
   });
 
   it('marks sidebar creation telemetry only when the Channel setup is submitted', async () => {

@@ -248,6 +248,8 @@ const LOAD_MORE_DISTANCE = 400;
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
 const NAVIGATION_SHEET_ID = 'rally-navigation';
+/** The `max-width` of the phone layout in `app.css`; the two move together. */
+const PHONE_LAYOUT_MAX_WIDTH = 640;
 
 /**
  * How long the sidebar will wait for the list to carry a pin before it stops
@@ -1098,16 +1100,39 @@ export function Sidebar({
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
-  // Escape closes the phone sheet, as it would any menu. Listening only while
-  // it is open keeps Escape free for everything else the rest of the time.
+  const menuToggle = useRef<HTMLButtonElement>(null);
+  // While the phone sheet is open, `AppShell` makes the conversation behind it
+  // inert. Escape closes it as it would any menu and hands focus back to the
+  // button, since the control that held it is about to be hidden. Widening
+  // past the phone layout closes it too, so an open sheet never leaves the
+  // conversation inert at a width where no sheet is drawn.
   useEffect(() => {
     if (!sidebarOpen) return undefined;
-    const close = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !event.defaultPrevented) setSidebarOpen(false);
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      // A menu or dialog open over the sheet takes this Escape for itself. A
+      // tooltip does not, though Radix marks its Escape handled too: every
+      // focused top-bar button shows one. Heard in the capture phase, before
+      // Radix's own listener has closed the menu this looks for.
+      if (event.key !== 'Escape' || document.querySelector('[role="menu"], [role="dialog"]')) return;
+      setSidebarOpen(false);
+      menuToggle.current?.focus();
     };
-    window.addEventListener('keydown', close);
-    return () => window.removeEventListener('keydown', close);
+    const closeWhenWide = (): void => {
+      if (window.innerWidth > PHONE_LAYOUT_MAX_WIDTH) setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape, true);
+    window.addEventListener('resize', closeWhenWide);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape, true);
+      window.removeEventListener('resize', closeWhenWide);
+    };
   }, [setSidebarOpen, sidebarOpen]);
+  // Anything that opens somewhere new closes the sheet, whoever navigated: a
+  // row, a pill that had to leave the open Channel, a search result, or the
+  // New channel form, whose dialogs portal outside the sheet.
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname, setSidebarOpen]);
   const selectedSpaceFilter = useUiStore((state) => state.sidebarSpaceFilter);
   const setSelectedSpaceFilter = useUiStore((state) => state.setSidebarSpaceFilter);
   const channelSort = useUiStore((state) => state.sidebarChannelSort);
@@ -2183,6 +2208,7 @@ export function Sidebar({
             className="sidebar-menu-toggle window-no-drag"
             label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
             onClick={() => setSidebarOpen(!sidebarOpen)}
+            ref={menuToggle}
             showTooltip={false}
           >
             <IconMenu2 aria-hidden="true" size={20} stroke={1.8} />
