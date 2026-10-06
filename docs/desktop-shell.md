@@ -308,25 +308,20 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 ## Changelog
 
-### 2026-10-06 — No tick bar at phone width; Rally's turns fill the column
+### 2026-10-06 — No tick bar at phone width
 
-**What changed:** At 640px and narrower the tick bar is hidden, the
-transcript's left padding drops back to the 24px its right side already had,
-and Rally's turns take the column's full width instead of the 88% cap.
+**What changed:** At 640px and narrower the tick bar is hidden and the
+transcript's left padding drops from 48px to the 24px its right side has.
 
-**Why:** The rule that widens the left padding to 48px for the ticks is three
-classes deep and came after the narrow-width rule, so on a phone with any
-Breakout the transcript sat off-centre: 48px left, 24px right. A 40px tick bar
-cannot fit beside text in 24px, and the capped Rally turn left a ragged empty
-strip on the right of a phone screen.
+**Why:** A 40px bar starting 12px in cannot sit in a 24px gutter without
+covering text, and the 48px gutter it needed left the phone transcript
+off-centre.
 
-**Considered and rejected:** Keeping the ticks and the 48px gutter on both
-sides. It costs 48px of a 390px screen for a bar that chips and the Channel
-menu already cover.
+**Considered and rejected:** A 48px gutter on both sides. It costs 48px of a
+390px screen for a bar that chips and the Channel menu already cover.
 
-**Consequences:** The phone override sits after the tick-bar padding rule on
-purpose; both selectors weigh the same, so moving it above that rule silently
-brings the uneven padding back.
+**Consequences:** On a phone, chips and the Channel menu are the only ways to a
+Breakout.
 
 Shipped in [#1116](https://github.com/juno-ai-labs/avalon/pull/1116).
 
