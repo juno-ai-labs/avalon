@@ -48,6 +48,7 @@ interface NotificationRecipientIdentity {
   recipient_email: string;
   recipient_name: string;
   workspace_name: string;
+  access_class: "member" | "guest";
 }
 
 interface NotificationIntentTransitionPort {
@@ -200,7 +201,7 @@ export async function notificationDeliveryContext(env: Env, row: WorkspaceNotifi
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, typedWorkspaceId, workspaceDOName(env.AVALON_REGION, typedWorkspaceId));
   const identity = await workspaceRegionalDatabase(env).prepare(
     `SELECT user.email AS recipient_email, user.name AS recipient_name,
-            workspace.name AS workspace_name
+            workspace.name AS workspace_name, member.access_class AS access_class
        FROM users user JOIN workspaces workspace ON workspace.id = ?
        JOIN workspace_members member ON member.workspace_id = workspace.id
         AND member.user_id = user.id AND member.status = 'active'
