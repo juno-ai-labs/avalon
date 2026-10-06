@@ -572,6 +572,34 @@ describe("a room Sidekick's run and the room's agents", () => {
     ).one().n)).toBe(1);
   });
 
+  it("hands a Channel run's Slack outcome the member who triggered it and the message it reacted on", async () => {
+    const deliveries = vi.spyOn(SlackAgentService.prototype, "deliverWorkstreamOutcome").mockResolvedValue(undefined);
+    try {
+      const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+        parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+        harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+        executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID }, reason: "test",
+        // A follow-up from a second member in a thread somebody else opened.
+        slackOrigin: { teamId: "T1", actorSlackUserId: "U_FOLLOW_UP", channelId: "C1", channelName: null,
+          threadTs: "1.0", invocationType: "app_mention", channelType: "public", matchedAvalonUserId: null,
+          nearbyMessagesStatus: "not_applicable", nearbyMessages: [], attachments: [],
+          reactionAnchor: { channelId: "C1", messageTs: "9.0", reaction: "eyes" } } });
+      await runInDurableObject(roomConversation(), async (instance) => {
+        const target = instance as unknown as {
+          deliverAgentRunResult: (input: WorkstreamWorkflowInput, outcome: { status: "needs_input" }) => Promise<string | null>;
+        };
+        await target.deliverAgentRunResult(input, { status: "needs_input" });
+      });
+      expect(deliveries.mock.calls.map((args) => args.slice(3))).toEqual([[
+        `${input.harnessRunId}:needs_input`,
+        "needs_input",
+        { triggeringSlackUserId: "U_FOLLOW_UP", reactionAnchor: { channelId: "C1", messageTs: "9.0", reaction: "eyes" } },
+      ]]);
+    } finally {
+      deliveries.mockRestore();
+    }
+  });
+
   it("replays an explicit reply after lost admission confirmation and a cold restart", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,

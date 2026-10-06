@@ -5656,7 +5656,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       text,
       `${input.harnessRunId}:${outcome.status}`,
       outcome.status,
-      { reactionAnchor: input.slackOrigin?.reactionAnchor ?? null },
+      {
+        // The member whose message started this run, not the thread's opener:
+        // a needs-input connect prompt belongs to whoever asked.
+        triggeringSlackUserId: input.slackOrigin?.actorSlackUserId ?? null,
+        reactionAnchor: input.slackOrigin?.reactionAnchor ?? null,
+      },
     );
     return settlementDiagnosticCode;
   }
