@@ -10,11 +10,14 @@ import { browserOrigin } from "../lib/browser-origin";
 import { logEvent } from "../observability/logger";
 import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { zValidator } from "../middleware/validation";
-import { AuthService, issueAccessToken } from "../services/auth-service";
+import { AuthService, issueAccessToken, verifyAccessToken } from "../services/auth-service";
+import { telemetryOperationId } from "../telemetry/api-emitter";
+import { deferOnboardingOutcome, onboardingFailureResult } from "./onboarding";
 import { PlatformOnboardingService } from "../services/platform-onboarding-service";
 import { IDENTITY_REGION, configuredRegions, type Region } from "@rally/contracts/regions";
 import { BrowserSessionService, BrowserSessionSchema, BrowserWorkspacesSchema } from "../services/browser-session-service";
-import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserWorkspaceActivateSchema } from "@rally/contracts/browser-session";
+import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserWorkspaceActivateSchema,
+  BrowserWorkspaceCreateSchema, BrowserWorkspaceCreatedSchema } from "@rally/contracts/browser-session";
 import { startEmailLogin, deliverEmailLogin, redeemEmailLogin, EmailLoginStartSchema,
   EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
 
@@ -176,6 +179,29 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     const target = cookieOptions(c.env,region);
     setCookie(c,target.name,registration.credential,{ ...target.attributes,expires:new Date(registration.expiresAt) });
     return c.body(null,204);
+  });
+  /**
+   * Creates an organization for this browser through the same idempotent path
+   * the Mac app takes. That path ends in a bearer session, which a browser must
+   * never hold: it is revoked here, unread, and the browser opens the new
+   * organization with `/workspace/select` like any other. Creation is on Global,
+   * as it is on the Mac.
+   */
+  routes.post("/workspace/create",zValidator("json",BrowserWorkspaceCreateSchema),async (c) => {
+    const { name,operationId } = c.req.valid("json");
+    const region = c.env.AVALON_REGION;
+    if (region !== IDENTITY_REGION) throw new ApiError(409,"global_identity_required","Create an organization through Rally's identity deployment");
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    const telemetryId = telemetryOperationId(operationId);
+    try {
+      const session = await new PlatformOnboardingService(c.env,auth).createWorkspace(name,region,c.req.raw.cf,operationId);
+      await new AuthService(c.env).logout({ sessionId:(await verifyAccessToken(c.env,session.accessToken)).sessionId });
+      deferOnboardingOutcome(c,auth,session,"workspace_create_completed",region,telemetryId,"success");
+      return c.json(BrowserWorkspaceCreatedSchema.parse({ region,workspaceId:session.workspace?.id }),201);
+    } catch (error) {
+      deferOnboardingOutcome(c,auth,null,"workspace_create_completed",region,telemetryId,onboardingFailureResult(error));
+      throw error;
+    }
   });
   routes.post("/workspace/select",zValidator("json",z.strictObject({ workspaceId:WorkspaceIdSchema })),async (c) =>
     c.json(BrowserSessionSchema.parse(await new BrowserSessionService(c.env).select(credential(c),c.req.valid("json").workspaceId))));
