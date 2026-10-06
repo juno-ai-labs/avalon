@@ -4,8 +4,6 @@ Rally's regional stateful hierarchy is `WorkspaceDO -> {hosted Channel, Space
 and Sidekick parents} -> SubstreamAgent`. There is one `WorkspaceDO` per
 workspace, which hosts the parent authority of every Channel, Space and Sidekick
 in it, and one `SubstreamAgent` per independently addressable model context. A
-legacy `SidekickDO` per Sidekick only exports its rows until the class is
-deleted. A
 `SubstreamAgent` has a typed parent, `{kind: "workstream" | "automation" |
 "space", id}`; substream `0` is that parent's primary conversation (a work
 stream's main feed, an automation's own chat, or the idle conversation of a
@@ -32,7 +30,7 @@ by [`automation-lifecycle.md`](automation-lifecycle.md); this document owns the
 hierarchy, its identity, its effect pipeline, and the conversation object.
 
 The Durable Object classes in this subsystem (`WorkspaceDO` and
-`SubstreamAgent`, and the legacy `SidekickDO` until it is deleted) use SQLite-backed namespaces and explicit SQL only.
+`SubstreamAgent`) use SQLite-backed namespaces and explicit SQL only.
 The main conversation's SQLite also owns the imported-session source identity,
 per-message revision checkpoint, and re-import receipts. The append and checkpoint
 commit together; [session import](session-import.md) owns the update semantics.
@@ -300,7 +298,6 @@ Names include region for operator clarity and deterministic routing:
 WorkspaceDO       <region>:<workspace-id>                                in WORKSPACE_DOS
                   (hosts every Channel and Space parent, by parent id)
                   (and every Sidekick parent, by Sidekick id)
-SidekickDO        <region>:<workspace-id>:automation:<automation-id>     in AUTOMATION_DOS (legacy, export only)
 SubstreamAgent 0  <region>:<workspace-id>:<parent-id>                    in SUBSTREAM_AGENTS
 SubstreamAgent N  <region>:<workspace-id>:<parent-id>:<substream-id>
 ```
@@ -1657,7 +1654,7 @@ same-millisecond IDs in random order, so freshness always compares authority
 generation and the relevant common/viewer waterline, never UUID lexical order
 alone.
 
-### Hosted Sidekicks and the legacy `SidekickDO`
+### Hosted Sidekicks
 
 A Sidekick's rows are `WorkspaceDO`'s, keyed by `sidekick_id`:
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them)
@@ -1666,13 +1663,6 @@ they mean. `onChildCommonProjection` maps a run child's accepted conversation
 state onto `sidekick_runs.state`, and only a newer projection with a live state
 reopens a finished run (see
 [continuing a run](automation-lifecycle.md#continuing-a-run)).
-
-The legacy `SidekickDO` keeps its migrations in `sidekick-do.ts` so an object
-not yet imported reaches the schema the export reads: v1 is the automation's
-own tables, then the parent statements `conversation-parent-object.ts` exports,
-then `_internal_durable_alarms`, and v14 the export freeze and its alarm
-snapshot. Its columns are the ones the hosted tables carry under the same
-names.
 
 ### `SubstreamAgent`
 
@@ -1715,7 +1705,7 @@ path.
 
 ### `_internal_durable_alarms`
 
-Present in WorkspaceDO and SubstreamAgent alike (and the legacy SidekickDO),
+Present in WorkspaceDO and SubstreamAgent alike,
 added by each one's own migration history from the statements
 `durable-objects/scheduled-alarms.ts` exports.
 

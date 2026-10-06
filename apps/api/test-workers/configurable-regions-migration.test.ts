@@ -4,19 +4,12 @@ import { runInDurableObject } from 'cloudflare:test';
 import { expect, it } from 'vitest';
 import { applyDurableObjectSqliteMigrations } from '../src/durable-objects/sqlite-migrations';
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/workspace-do';
-import { AUTOMATION_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/sidekick-do';
 import { ARTIFACT_HOST_SCHEMA_MIGRATIONS } from '../src/durable-objects/artifact-host-do';
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from '../src/durable-objects/workstream-object-schema';
 
 const cases = [
   { component: 'workspace_do', migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, table: 'workspace_identity', row: {
     id: 1, workspace_id: 'workspace', region: 'global', placement_affinity: 'wnam', created_at: 1, updated_at: 2,
-  } },
-  { component: 'automation_do', migrations: AUTOMATION_DO_SCHEMA_MIGRATIONS, table: 'automation', row: {
-    id: 1, workspace_id: 'workspace', automation_id: 'automation', region: 'global', author_user_id: 'user',
-    run_as_user_id: 'user', lifecycle: 'active', scope: 'workspace', title: 'Preserved Sidekick', description: '',
-    current_definition_revision: 1, connector_bindings_json: '{}', default_plugin_ids_json: '[]',
-    activity_source_plugin_ids_json: '[]', evaluator_projection_json: '{}', authority_generation: 1, created_at: 1, updated_at: 2,
   } },
   { component: 'artifact_host', migrations: ARTIFACT_HOST_SCHEMA_MIGRATIONS, table: 'artifact_state', row: {
     id: 1, artifact_id: 'artifact', workspace_id: 'workspace', workstream_id: 'workstream', resource_id: 'resource',

@@ -516,7 +516,8 @@ WorkspaceDO to Queue to Worker and back for `resolveHostedParent`,
 into the object that enqueued it. The registration now runs in the enqueueing
 transaction and only per-conversation jobs are queued. Conversation jobs keep
 the Queue because they read a `SubstreamAgent`, and Sidekick parents because
-their children are in `AutomationDO`. A Channel whose legacy import is pending
+their children are `sidekick_children` rows, which the in-place path does not
+read. A Channel whose legacy import is pending
 keeps the Queue too: importing it needs an await, which a transaction cannot
 hold. The Worker's parent branch is kept for those and for messages already
 queued at deploy.

@@ -13,7 +13,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
-import { AUTOMATION_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/sidekick-do";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import {
   attachSidekickConversation,
@@ -33,7 +32,6 @@ const OTHER_CHANNEL = "00000000-0000-7000-8000-0000000000c2";
 const BREAKOUT = "00000000-0000-7000-8000-0000000000d1";
 const SIDEKICK = "00000000-0000-7000-8000-0000000000e1";
 const HOME_COLUMN_VERSION = 86;
-const SIDEKICK_HOME_VERSION = 11;
 
 function applyWorkspace(database: DatabaseSync, through: number, after = 0): void {
   for (const migration of WORKSPACE_DO_SCHEMA_MIGRATIONS) {
@@ -137,30 +135,6 @@ describe("the WorkspaceDO home-conversation migration", () => {
     expect(database.prepare(
       `SELECT parent_id, substream_id, attached_by_user_id FROM sidekick_conversation_attachments`,
     ).all()).toEqual([{ parent_id: OTHER_CHANNEL, substream_id: "0", attached_by_user_id: AUTHOR }]);
-  });
-});
-
-describe("the SidekickDO home-conversation migration", () => {
-  it("keeps an existing Sidekick's home at its Channel's Main conversation", () => {
-    const database = new DatabaseSync(":memory:");
-    for (const migration of AUTOMATION_DO_SCHEMA_MIGRATIONS) {
-      if (migration.version >= SIDEKICK_HOME_VERSION) break;
-      for (const statement of migration.statements) database.exec(statement);
-    }
-    database.prepare(
-      `INSERT INTO automation
-         (id, automation_id, workspace_id, region, author_user_id, run_as_user_id, lifecycle, scope,
-          owning_workstream_id, title, description, current_definition_revision, connector_bindings_json,
-          default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
-          authority_generation, created_at, updated_at)
-       VALUES (1, ?, ?, 'global', ?, ?, 'active', 'workstream', ?, 'Prep', '', 0, '{}', '[]', '{}', '[]', 1, 0, 0)`,
-    ).run(SIDEKICK, WORKSPACE_ID, AUTHOR, AUTHOR, CHANNEL);
-
-    for (const statement of AUTOMATION_DO_SCHEMA_MIGRATIONS.find((migration) =>
-      migration.version === SIDEKICK_HOME_VERSION)!.statements) database.exec(statement);
-
-    expect(database.prepare(`SELECT owning_workstream_id, owning_substream_id FROM automation`).get())
-      .toEqual({ owning_workstream_id: CHANNEL, owning_substream_id: "0" });
   });
 });
 

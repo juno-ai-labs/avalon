@@ -21,7 +21,6 @@ import {
   conversationEffectHash,
   type ConversationEffect,
   type ConversationEffectEnvelope,
-  type ParentEffectEnvelope,
   type SubstreamId,
   type UserId,
   type WorkstreamId,
@@ -30,6 +29,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mainAttachmentsUnreported } from "../src/durable-objects/channel-rails";
 import { hostedParentStub } from "./helpers/hosted-parent";
+import { type SidekickDirectoryRow, writeSidekickDirectoryRow } from "./helpers/sidekick";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000d7001");
 /** Organization-wide; member and owner are its participants. */
@@ -137,39 +137,22 @@ const channelAMain = (extra: Partial<CommonEffect> = {}) => common("Channel A", 
   ...extra,
 });
 
-let automationSeq = 0;
 function sidekick(automationId: string, extra: {
   title: string; scope: "personal" | "workspace" | "workstream"; owningWorkstreamId?: string; authorUserId?: string;
   runAsUserId?: string; nextRunAt?: string; lifecycle?: "active" | "deleted";
-}): ParentEffectEnvelope {
-  automationSeq += 1;
-  const effect = {
-    kind: "directory_automation" as const,
+}): SidekickDirectoryRow {
+  return {
     automationId,
+    workspaceId,
     authorUserId: extra.authorUserId ?? member,
     ...(extra.runAsUserId ? { runAsUserId: extra.runAsUserId } : {}),
-    lifecycle: extra.lifecycle ?? "active" as const,
+    lifecycle: extra.lifecycle ?? "active",
     loadable: true,
     scope: extra.scope,
     owningWorkstreamId: extra.owningWorkstreamId ?? null,
     title: extra.title,
     description: `${extra.title} does things`,
     nextRunAt: extra.nextRunAt ?? null,
-  };
-  return {
-    kind: "parent_effect",
-    contractVersion: 1,
-    region: "global",
-    workspaceId,
-    parentKind: "automation",
-    parentId: automationId,
-    generation: 1,
-    messageId: `automation-${automationSeq}`,
-    partitionKey: "automation",
-    sourceVersion: automationSeq,
-    requiredProjectionVersion: null,
-    payloadHash: conversationEffectHash(effect),
-    effect,
   };
 }
 
@@ -392,7 +375,7 @@ beforeEach(async () => {
     sidekick(skRecommended, { title: "Weekly brief", scope: "workspace" }),
     sidekick(skAttached, { title: "Summarizer", scope: "workspace" }),
     sidekick(skPersonal, { title: "My own", scope: "personal", authorUserId: owner }),
-  ]) await organization().applyAutomationDirectory({ workspaceId, envelope: automation });
+  ]) await writeSidekickDirectoryRow(env, automation);
   await organization().setSidekickRecommendation({
     workspaceId, parentId: channelA, userId: member, sidekickId: skRecommended, attached: true,
   });
@@ -423,8 +406,7 @@ describe("channel_rails answers", () => {
 
   it("shows a personal Sidekick to the person it runs as, as SidekickDO's audience does", async () => {
     const runAs = "00000000-0000-7000-8000-0000000d72f1";
-    await organization().applyAutomationDirectory({ workspaceId, envelope:
-      sidekick(runAs, { title: "Delegated", scope: "personal", authorUserId: owner, runAsUserId: member }) });
+    await writeSidekickDirectoryRow(env, sidekick(runAs, { title: "Delegated", scope: "personal", authorUserId: owner, runAsUserId: member }));
     await publish(channelB, [common("Channel B", { scope: "personal", sidekickAttachmentIds: [runAs] }), viewer(member, true, at)]);
     const connection = await connect(member);
     const rail = await railOf(connection, channelB);
@@ -494,8 +476,7 @@ describe("channel_rails answers", () => {
 
 describe("channel_rails for a guest, and a row that no longer parses", () => {
   it("tells a guest in the room that it owns nothing", async () => {
-    await organization().applyAutomationDirectory({ workspaceId, envelope:
-      sidekick("00000000-0000-7000-8000-0000000d72c1", { title: "C's helper", scope: "workstream", owningWorkstreamId: channelC }) });
+    await writeSidekickDirectoryRow(env, sidekick("00000000-0000-7000-8000-0000000d72c1", { title: "C's helper", scope: "workstream", owningWorkstreamId: channelC }));
     await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelC]));
     // A member in the same room is told what it owns.
     const ownerConnection = await connect(owner);
@@ -765,9 +746,7 @@ describe("the rail waterline", () => {
     const connection = await connect(owner);
     const before = (await railOf(connection, channelA)).railWaterline;
     const pushed = rowPast(connection, channelA, before);
-    await organization().applyAutomationDirectory({
-      workspaceId, envelope: sidekick(skRecommended, { title: "Monday brief", scope: "workspace" }),
-    });
+    await writeSidekickDirectoryRow(env, sidekick(skRecommended, { title: "Monday brief", scope: "workspace" }));
     await pushed;
     expect((await railOf(connection, channelA)).sidekicks.recommended[0]).toMatchObject({ name: "Monday brief" });
     connection.socket.close(1000, "done");
@@ -822,15 +801,15 @@ describe("the rail waterline", () => {
   it("advances when an owned Sidekick is renamed, and not when only its next run moved", async () => {
     const connection = await connect(owner);
     const before = (await railOf(connection, channelA)).railWaterline;
-    await organization().applyAutomationDirectory({ workspaceId, envelope: sidekick(skOwned, {
+    await writeSidekickDirectoryRow(env, sidekick(skOwned, {
       title: "Room helper", scope: "workstream", owningWorkstreamId: channelA, nextRunAt: "2026-09-26T09:00:00.000Z",
-    }) });
+    }));
     expect((await railOf(connection, channelA)).railWaterline).toBe(before);
 
     const pushed = rowPast(connection, channelA, before);
-    await organization().applyAutomationDirectory({ workspaceId, envelope: sidekick(skOwned, {
+    await writeSidekickDirectoryRow(env, sidekick(skOwned, {
       title: "Room helper, renamed", scope: "workstream", owningWorkstreamId: channelA,
-    }) });
+    }));
     await pushed;
     expect((await railOf(connection, channelA)).sidekicks.owned).toEqual([expect.objectContaining({ name: "Room helper, renamed" })]);
     connection.socket.close(1000, "done");
@@ -841,8 +820,7 @@ describe("the rail waterline", () => {
     const connection = await connect(owner);
     const before = (await railOf(connection, channelC)).railWaterline;
     const pushed = rowPast(connection, channelC, before);
-    await organization().applyAutomationDirectory({ workspaceId, envelope:
-      sidekick(added, { title: "New helper", scope: "workstream", owningWorkstreamId: channelC }) });
+    await writeSidekickDirectoryRow(env, sidekick(added, { title: "New helper", scope: "workstream", owningWorkstreamId: channelC }));
     await pushed;
     expect((await railOf(connection, channelC)).sidekicks.recommended.map((item) => item.id)).toEqual([added]);
     connection.socket.close(1000, "done");

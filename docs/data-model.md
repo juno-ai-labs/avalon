@@ -16,8 +16,8 @@ conversation-parent state, as `parent_*` rows keyed by parent id
 Each automation is a conversation parent hosted in `WorkspaceDO` beside the
 Channel and Space parents: its `automation_directory` row is its definition
 row, and its revisions, schedules, runs and receipts are the `sidekick_*`
-tables keyed by `sidekick_id` (WorkspaceDO migration 91). A legacy
-`SidekickDO` holds a Sidekick's rows only until it is imported. See
+tables keyed by `sidekick_id` (WorkspaceDO migration 91; migration 92 drops
+the import ledger after `SidekickDO` was deleted). See
 [`automation-lifecycle.md`](automation-lifecycle.md). D1 keeps no rebuildable
 workspace product serving projection. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;

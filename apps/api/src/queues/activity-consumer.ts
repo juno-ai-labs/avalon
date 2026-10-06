@@ -1148,9 +1148,9 @@ async function consumeEffect(
       return;
     }
     if (envelope.effect.kind === "directory_automation") {
-      const workspace = await workspaceDirectory(env, envelope.workspaceId);
-      await workspace.applyAutomationDirectory({ workspaceId: envelope.workspaceId, envelope });
-      logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "applied", reason: "sidekick_directory_applied" });
+      // Only the deleted SidekickDO published this; a Sidekick's directory
+      // row is now written where the Sidekick lives, so a late copy is dropped.
+      logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "ignored", reason: "sidekick_directory_producer_deleted" });
       message.ack();
       return;
     }
