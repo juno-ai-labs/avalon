@@ -154,7 +154,9 @@ A product decision: a Space can only be Organization-wide, and it grants no
 reader to the Channels in it. A Channel's audience is its own scope and
 participants, so a private Channel can sit in any Space, and **Make private**
 works on a Channel in General. The Space's participants are its listed members,
-not who reads its Channels. Like any Organization-wide Space, any active member
+not who reads its Channels: a Space never adds, removes or acts as a Channel
+participant, and every Channel starts with only its creator plus whoever the
+creator adds. Like any Organization-wide Space, any active member
 may edit one, so migration 93 also opened editing of formerly private Spaces to
 every member.
 
@@ -444,6 +446,12 @@ generation, the membership generation and the Space's lifecycle before
 attaching through `WorkstreamService.attachResource` or
 `setSidekickRecommendation`. A resource keeps the Queue because attaching one
 writes the Channel's main conversation, a `SubstreamAgent`.
+
+**A delivery acts as the person who staged it**: whoever put the Channel in the
+Space, or added the default. It never acts as a Space participant, because a
+Space's roster has no say over its Channels. A requester who is no longer an
+active member leaves the target `terminal` with
+`space_default_requester_inactive`.
 
 Removing a default advances its generation, which makes every queued target
 stale. It does **not** detach it from Channels that already have it: a Channel's
@@ -1529,7 +1537,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/channel-access-service.test.ts` | Against capability doubles: removing a direct reader is a plain removal gated on management access, and **Make private** publishes the socket narrowing only when the Channel was Organization-wide before the update. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
 | `apps/api/test-workers/helpers/space-membership.ts` | Not a suite: the fixture that puts a Channel in a Space's membership through WorkspaceDO's own storage calls and publications, for the suites above whose Channels have no conversation. `space-routes.test.ts` proves the product path. |
-| `apps/api/test-workers/space-legacy-intents.test.ts` | Intents staged before every Space operation became one transaction, finished by the alarm: a stored `add` activating its membership and staging the Space's defaults, a stored `move` switching both memberships, two moves racing for one placement, and a requester who is no longer an active member having nothing run as them, by the alarm and by the Queue consumer, with `space_intent_requester_inactive` on the row. |
+| `apps/api/test-workers/space-legacy-intents.test.ts` | Intents staged before every Space operation became one transaction, finished by the alarm: a stored `add` activating its membership and staging the Space's defaults, a stored `move` switching both memberships, two moves racing for one placement, and a requester who is no longer an active member having nothing run as them, by the alarm and by the Queue consumer, with `space_intent_requester_inactive` on the row; and a Space default's Queue delivery failing as `space_default_requester_inactive` when the person who staged it is inactive, rather than acting as a Space participant. |
 | `apps/api/test-workers/space-bootstrap.test.ts` | The cutover on real workerd: one General for every Channel including archived ones, one of them archived in its own conversation so only the directory can say who reads it; a Channel whose retained content is fenced to one reader still placed, because placement widens nothing; a connector placement's refusal reopening a finished cutover; an interrupted pass making no second General and no second membership; the refusal to close while a Channel is outside every Space; the directory handoff's guard reopening a finished cutover for a Channel whose row is committed while it is in no Space, and leaving it closed for a placed Channel, for a Channel arriving in the directory for the first time, and for a system one; that the development seed route places the Channels it restores; and that an Organization short of `complete` arms its own alarm on construction, due now, which is what "the fleet migration finishes without relying on user access" rests on. |
 | `apps/api/test-workers/space-creation.test.ts` | A Channel born in General with an active membership and the private audience it asked for; one General across creations; a Channel born in a named Space keeping its own audience and inheriting the Space's defaults; and that a creation whose membership cannot settle publishes no directory row by either path. |
 | `apps/api/test/workspace-space-retirement-migration.test.ts` | Migration 62 against the real ledger: a queued Project default settled before the drops rather than dropped under, an applied default leaving the Channel's own attachment alone, and the consumer's tombstone acknowledging a redelivered Project message by name. |
@@ -1871,7 +1879,8 @@ Channels, so the code that applied it (`SpaceChannelAccess`, the source plans,
 the hosted parent's source tables, member walks and the containment preview)
 was deleted and migration 93 drops its tables. Add, remove, move, archive and
 restore are each one WorkspaceDO transaction; `space_intents` rows staged before
-the deploy are finished by `resumeLegacyIntent`.
+the deploy are finished by `resumeLegacyIntent`. A default's Queue delivery acts
+as the person who staged it rather than as a Space participant.
 `channel_scope_locked_by_space` is no longer raised, and the cutover no longer
 asks containment before placing a private Channel in General.
 `POST /workstreams` asks for `workspace` itself, since General no longer makes

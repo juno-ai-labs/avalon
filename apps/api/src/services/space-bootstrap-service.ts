@@ -239,10 +239,8 @@ export class SpaceBootstrapService {
   /**
    * Place one Channel in General, or name the refusal that stopped it.
    *
-   * One WorkspaceDO call as the actor: it stages the membership, asks the
-   * Channel's conversation for General's audience and activates the
-   * membership, the same path a person adding a Channel takes, able to place
-   * an archived Channel as well.
+   * One WorkspaceDO transaction as the actor, the same path a person adding a
+   * Channel takes, able to place an archived Channel as well.
    */
   private async place(
     channel: SpaceBootstrapChannel,

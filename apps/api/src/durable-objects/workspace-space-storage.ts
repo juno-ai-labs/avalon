@@ -2885,11 +2885,6 @@ export class WorkspaceSpaceStorage {
     ).toArray().length === 1;
   }
 
-  defaultTargetActors(target: WorkspaceSpaceDefaultTarget): string[] {
-    if (!this.defaultTargetCurrent(target)) return [];
-    return this.participantUserIds(target.spaceId);
-  }
-
   completeDefaultTarget(target: WorkspaceSpaceDefaultTarget, now = Date.now()): boolean {
     return this.storage.transactionSync(() => {
       if (!this.defaultTargetCurrent(target)) return false;

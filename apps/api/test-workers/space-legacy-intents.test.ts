@@ -13,6 +13,9 @@
  * Real workerd because the property is the alarm and the transaction: a
  * resume that half-applied would leave a membership `joining` or an intent
  * pending, and both are read back from real storage.
+ *
+ * The Queue delivery of a Space default is here too, because it shares the
+ * fixture: it acts as the person who staged it, never as a Space participant.
  */
 import { env } from "cloudflare:workers";
 import {
@@ -359,5 +362,42 @@ describe("a stored resume from the Queue", () => {
     expect(await memberships(CHANNEL)).toEqual([{ space_id: spaceId, state: "joining" }]);
     expect(await intentRow(operationId))
       .toMatchObject({ state: "pending", last_error_code: "space_intent_requester_inactive" });
+  }, 60_000);
+});
+
+describe("a Space default on the Queue", () => {
+  it("given a requester who is no longer an active member, when the default is delivered, then it fails by name rather than acting as a Space participant", async () => {
+    const spaceId = await reserve("Company");
+    await publishChannel(CHANNEL);
+    await place(spaceId, CHANNEL);
+    const added = await workspace().addSpaceDefault({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, kind: "resource", targetId: RESOURCE_ID,
+    });
+    if (!added.ok) throw new Error(added.code);
+    // The Space's own participant (its creator) stays active; the person who
+    // staged this delivery does not.
+    await changeRelationships(env, WORKSPACE_ID, [MEMBER],
+      env.DB.prepare("UPDATE workspace_members SET status = 'suspended' WHERE workspace_id = ? AND user_id = ?")
+        .bind(WORKSPACE_ID, MEMBER));
+
+    const batch = createMessageBatch("avalon-global-activity", [{
+      id: crypto.randomUUID(),
+      timestamp: new Date(),
+      attempts: 1,
+      body: {
+        type: "space_default",
+        region: "global",
+        workspaceId: WORKSPACE_ID,
+        requestedByUserId: MEMBER,
+        ...added.targets[0]!,
+      },
+    }]);
+    await consumeActivityQueue(batch, env);
+    await getQueueResult(batch, createExecutionContext());
+
+    expect((await workspace().runInspectionSql({
+      sql: "SELECT state, last_error_code FROM space_default_targets WHERE workstream_id = ?",
+      bindings: [CHANNEL],
+    })).rows).toEqual([{ state: "terminal", last_error_code: "space_default_requester_inactive" }]);
   }, 60_000);
 });

@@ -503,17 +503,13 @@ async function consumeOne(message: Message<unknown>, env: Env,
       message.ack();
       return;
     }
-    const actorIds = await workspace.spaceDefaultTargetActors(target);
-    if (actorIds.length === 0) {
-      message.ack();
-      return;
-    }
+    // The delivery runs as the person whose action staged it: whoever put the
+    // Channel in the Space, or added the default. A Space's own roster has no
+    // say over its Channels, so it is never the actor.
     const member = await env.DB.prepare(
       `SELECT user_id, role FROM workspace_members
-        WHERE workspace_id = ? AND status = 'active' AND access_class = 'member'
-          AND user_id IN (${actorIds.map(() => "?").join(",")})
-        ORDER BY CASE WHEN user_id = ? THEN 0 ELSE 1 END, user_id LIMIT 1`,
-    ).bind(target.workspaceId, ...actorIds, target.requestedByUserId)
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active' AND access_class = 'member'`,
+    ).bind(target.workspaceId, target.requestedByUserId)
       .first<{ user_id: string; role: AuthContext["role"] }>();
     if (!member) {
       await workspace.failSpaceDefaultTarget(target);

@@ -9274,22 +9274,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * A new Channel's Organization-side birth: its Space memberships, the
-   * defaults those Spaces hand a new member, its parent row with the
-   * provisional directory row, and the record of which Space supplied which
-   * reader, in one transaction.
+   * defaults those Spaces hand a new member, and its parent row with the
+   * provisional directory row, in one transaction. A Space adds no reader:
+   * the Channel starts with its creator and whoever the creator named.
    *
    * Every row a creation needs from this object is in this database, so there
-   * is no staged membership, intent or cancellation: adding a Channel that
-   * already exists is `addSpaceChannel`, where the Channel's canonical
-   * operations run between the plan and the commit.
-   *
-   * The sources are recorded in birth mode: the coordinator opens the
-   * conversation with the union of these Spaces' audiences already written,
-   * so there is no canonical operation to run between the plan and its commit.
+   * is no staged membership, intent or cancellation; adding a Channel that
+   * already exists is `addSpaceChannel`.
    *
    * Idempotent for a retry of the same create: an active membership keeps its
-   * generation, the reservation finds its child registered, and the sources
-   * are recorded again at whatever revision the Spaces are at now.
+   * generation and the reservation finds its child registered.
    */
   async reserveChannelInSpaces(input: WorkspaceChannelReservationRequest): Promise<WorkspaceChannelReservationResult> {
     await this.initialized;
@@ -9642,13 +9636,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.spaceStorage().defaultTargetCurrent(request);
   }
 
-  async spaceDefaultTargetActors(input: SpaceDefaultQueueMessage): Promise<string[]> {
-    await this.initialized;
-    const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "space_default_target_actors");
-    this.assertWorkspace(request.workspaceId);
-    return this.spaceStorage().defaultTargetActors(request);
-  }
-
   async completeSpaceDefaultTarget(input: SpaceDefaultQueueMessage): Promise<boolean> {
     await this.initialized;
     const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "complete_space_default_target");
@@ -9671,7 +9658,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "fail_space_default_target");
     this.assertWorkspace(request.workspaceId);
-    return this.spaceStorage().failDefaultTarget(request, "space_no_active_participant");
+    return this.spaceStorage().failDefaultTarget(request, "space_default_requester_inactive");
   }
 
   /**

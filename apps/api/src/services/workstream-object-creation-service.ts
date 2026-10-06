@@ -405,9 +405,8 @@ export class WorkstreamObjectCreationService {
 
     // Every Channel is born in a Space, so this runs on every create rather
     // than on the ones that chose a destination. One WorkspaceDO call commits
-    // the memberships, the Space defaults the Channel inherits, the parent row
-    // with its provisional directory row, and the record of which Space
-    // supplied which reader, in one transaction. So a Channel is never listed
+    // the memberships, the Space defaults the Channel inherits, and the parent
+    // row with its provisional directory row, in one transaction. So a Channel is never listed
     // outside a Space, and a Space the caller may not reach, or that has been
     // archived, refuses here with nothing written.
     //
