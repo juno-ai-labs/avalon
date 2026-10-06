@@ -7,7 +7,7 @@ import { emptyMenuBarContent, type MenuBarActions, type MenuBarContent } from '.
 function noopActions(): MenuBarActions {
   return {
     selected: vi.fn(),
-    openWorkstream: vi.fn(),
+    openConversation: vi.fn(),
     openRally: vi.fn(),
     quit: vi.fn(),
   };
@@ -18,15 +18,19 @@ function harness(options: {
   stored?: Partial<StoredApplicationSettings>;
   content?: MenuBarContent;
   createTrayFails?: boolean;
-  now?: () => number;
+  signedIn?: boolean;
 } = {}) {
   const menus: MenuItemConstructorOptions[][] = [];
+  const titles: string[] = [];
   const destroy = vi.fn();
   const createTray = vi.fn((): MenuBarTray => {
     if (options.createTrayFails) throw new Error('no status item is available');
     return {
       setContextMenu: (template) => {
         menus.push(template);
+      },
+      setTitle: (title) => {
+        titles.push(title);
       },
       destroy,
     };
@@ -39,7 +43,7 @@ function harness(options: {
     appName: 'Rally',
     createTray,
     content: () => options.content ?? emptyMenuBarContent,
-    signedIn: () => true,
+    signedIn: () => options.signedIn ?? true,
     sectionHeaders: true,
     actions: noopActions(),
     readSettings: () => Promise.resolve(settings),
@@ -49,9 +53,8 @@ function harness(options: {
     },
     onChange,
     logWarning,
-    ...(options.now ? { now: options.now } : {}),
   });
-  return { controller, createTray, destroy, menus, onChange, logWarning, storedSettings: () => settings };
+  return { controller, createTray, destroy, menus, titles, onChange, logWarning, storedSettings: () => settings };
 }
 
 describe('menu bar controller', () => {
@@ -163,6 +166,7 @@ describe('menu bar controller', () => {
       setContextMenu: (template) => {
         menus.push(template);
       },
+      setTitle: vi.fn(),
       destroy: vi.fn(),
     }));
     const controller = new MenuBarController({
@@ -189,77 +193,41 @@ describe('menu bar controller', () => {
     expect(controller.present()).toBe(true);
   });
 
-  it('rebuilds the headings once a recency boundary has passed, with no new content', async () => {
-    // 23:30, so the row is under Today and the next boundary is midnight.
-    let now = new Date('2026-09-10T23:30:00').getTime();
-    const subject = harness({
-      now: () => now,
+  it('shows every waiting conversation as the number beside the icon, not only the five the menu lists', async () => {
+    const attention = Array.from({ length: 7 }, (_, index) => ({
+      key: `c${index}`,
+      workstreamId: `c${index}`,
+      substreamId: null,
+      title: `Channel ${index}`,
+      channelTitle: null,
+      reason: 'unread' as const,
+    }));
+    const subject = harness({ content: { attention, attentionComplete: true, recents: [] } });
+    await subject.controller.initialize();
+
+    expect(subject.titles.at(-1)).toBe('7');
+  });
+
+  it('shows no number while nothing is waiting, or nobody is signed in', async () => {
+    const quiet = harness({ content: { attention: [], attentionComplete: true, recents: [] } });
+    await quiet.controller.initialize();
+    expect(quiet.titles.at(-1)).toBe('');
+
+    const signedOut = harness({
+      signedIn: false,
       content: {
-        recents: [{ id: 'a', title: 'Acme renewal', lastActivityAt: new Date(now - 4 * 3_600_000).toISOString() }],
-        pinned: [],
+        attention: [{ key: 'a', workstreamId: 'a', substreamId: null, title: 'A', channelTitle: null, reason: 'unread' }],
+        attentionComplete: true,
+        recents: [],
       },
     });
-    await subject.controller.initialize();
-    expect(subject.menus.at(-1)?.map((item) => item.label)).toContain('Today');
-
-    // The pointer reaching the item before midnight must not rebuild: a
-    // crossing is not a reason to redraw a menu that is still true.
-    now += 60_000;
-    subject.controller.refreshIfHeadingsExpired();
-    expect(subject.menus).toHaveLength(1);
-
-    // Past midnight the same row belongs under Yesterday. Nothing about the
-    // content moved, and offline nothing would: a failed refresh publishes
-    // nothing, so without this the menu says Today until the next good fetch.
-    now += 31 * 60_000;
-    subject.controller.refreshIfHeadingsExpired();
-
-    const rebuilt = subject.menus.at(-1)?.map((item) => item.label);
-    expect(subject.menus).toHaveLength(2);
-    expect(rebuilt).toContain('Yesterday');
-    expect(rebuilt).not.toContain('Today');
+    await signedOut.controller.initialize();
+    expect(signedOut.titles.at(-1)).toBe('');
   });
 
-  it('does nothing when the item is off', () => {
-    const subject = harness({ stored: { menuBarEnabled: false } });
-    subject.controller.refreshIfHeadingsExpired();
-
-    expect(subject.menus).toHaveLength(0);
-    expect(subject.createTray).not.toHaveBeenCalled();
-  });
-
-  it('does not record a heading boundary for a build that failed', async () => {
-    let now = new Date('2026-09-10T23:30:00').getTime();
-    const subject = harness({ now: () => now });
-    await subject.controller.initialize();
-    subject.menus.length = 0;
-    const tray = subject.createTray.mock.results[0]?.value as MenuBarTray;
-    let failing = true;
-    vi.spyOn(tray, 'setContextMenu').mockImplementation((template) => {
-      if (failing) throw new Error('the status item went away');
-      subject.menus.push(template);
-    });
-
-    // Past midnight, so the headings have expired and a rebuild is due. A
-    // build that throws leaves the previous menu installed, so the boundary it
-    // would have recorded describes a menu nobody is looking at. Recording it
-    // anyway would suppress every retry until that boundary passed.
-    now += 31 * 60_000;
-    subject.controller.refreshIfHeadingsExpired();
-    expect(subject.logWarning).toHaveBeenCalledTimes(1);
-    expect(subject.menus).toHaveLength(0);
-
-    failing = false;
-    subject.controller.refreshIfHeadingsExpired();
-    expect(subject.menus).toHaveLength(1);
-  });
-
-  it('rebuilds the drop-down from whatever is currently cached', async () => {
+  it('rebuilds the drop-down from whatever is currently held', async () => {
     const subject = harness({
-      content: {
-        recents: [{ id: 'a', title: 'Acme renewal', lastActivityAt: new Date().toISOString() }],
-        pinned: [],
-      },
+      content: { attention: [], attentionComplete: true, recents: [{ id: 'a', title: 'Acme renewal', substreamId: null }] },
     });
     await subject.controller.initialize();
     subject.controller.refresh();

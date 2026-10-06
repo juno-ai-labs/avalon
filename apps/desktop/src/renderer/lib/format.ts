@@ -137,27 +137,9 @@ export function formatDuration(milliseconds?: number): string | undefined {
 
 export { statusLabel, statusDescription, harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
 import { harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
+import { MARKER_PRECEDENCE } from '../../common/attention-items';
 
-/**
- * The one ranking, most urgent first.
- *
- * Written as an order rather than as a chain of conditionals because the
- * question it answers — which of several true things does a person see — is a
- * product decision that gets revisited, and a list can be reordered without
- * anyone having to re-derive what the old nesting meant. The three personal
- * states are deliberately not grouped together: being mentioned outranks a run
- * that is working, while merely being unread does not.
- */
-const MARKER_PRECEDENCE: readonly WorkstreamMarkerStatus[] = [
-  'unseen',
-  'mentioned',
-  'running',
-  'needs_input',
-  'unread',
-  'completed',
-  'stopped',
-  'failed',
-];
+export { markerRank, readerMarkerStatus, type ReaderMarkerStatus } from '../../common/attention-items';
 
 /**
  * The marker a work stream shows this viewer.
@@ -180,33 +162,6 @@ export function workstreamMarkerStatus(
   // outside the ranking, and it cannot reach here now — but `find` is typed
   // `| undefined`, so the arm has to say something.
   return MARKER_PRECEDENCE.find((status) => active.has(status)) ?? own;
-}
-
-/** The markers that belong to the reader alone rather than to the run. */
-export type ReaderMarkerStatus = Extract<WorkstreamMarkerStatus, 'unseen' | 'mentioned' | 'unread'>;
-
-/**
- * The reader's own marker on a conversation, ignoring its run, or null when
- * the reader is caught up.
- *
- * The attention menu lists what is waiting for *this person*, and a running
- * agent is not: nobody has to do anything about it yet. The order between the
- * three is `MARKER_PRECEDENCE`'s, so it moves when that list does.
- */
-export function readerMarkerStatus(
-  conversation: { hasUnread?: boolean; unseen?: boolean; youAreMentioned?: boolean },
-): ReaderMarkerStatus | null {
-  const active = new Set<WorkstreamMarkerStatus>();
-  if (conversation.unseen === true) active.add('unseen');
-  if (conversation.youAreMentioned === true) active.add('mentioned');
-  if (conversation.hasUnread === true) active.add('unread');
-  return (MARKER_PRECEDENCE.find((status) => active.has(status)) as ReaderMarkerStatus | undefined) ?? null;
-}
-
-/** Where a marker sits in the one ranking; lower is more urgent. */
-export function markerRank(status: WorkstreamMarkerStatus): number {
-  const index = MARKER_PRECEDENCE.indexOf(status);
-  return index === -1 ? MARKER_PRECEDENCE.length : index;
 }
 
 /** The server-side range that describes one visible recency heading. */
