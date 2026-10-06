@@ -20,6 +20,8 @@ const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUID
 export const WorkspaceAttentionRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
+  /** Decides which conversations `readerAttentionCount` may count, as the sidebar's listing does. */
+  accessClass: z.enum(["member", "guest"]).optional(),
 }));
 
 export const WorkspaceAttentionResultSchema = deferredZodSchema(() => WorkspaceAttentionSchema.strict());

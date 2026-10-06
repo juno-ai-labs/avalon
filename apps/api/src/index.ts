@@ -6,7 +6,6 @@ export { SubstreamAgent } from "./durable-objects/substream-agent";
 export { MigrationProbeDO } from "./durable-objects/migration-probe-do";
 export { WorkspaceDO } from "./durable-objects/workspace-do";
 export { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
-export { SlackReactionTicker } from "./durable-objects/slack-reaction-ticker";
 export { ArtifactHostDO } from "./durable-objects/artifact-host-do";
 export { ArtifactAssetLoopback } from "./artifacts/asset-loopback";
 export { ConnectorPollWorkflow } from "./workflows/connector-poll";

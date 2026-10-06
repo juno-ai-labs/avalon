@@ -34,7 +34,7 @@ const workstreamSocketOpenContext = vi.hoisted(() => vi.fn((workstreamId: string
 const updateStatus = vi.hoisted(() => ({ current: { kind: 'idle' } as { kind: string; version?: string } }));
 const installDownloadedUpdate = vi.hoisted(() => vi.fn(async () => undefined));
 const applicationSettings = vi.hoisted(() => ({
-  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
+  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
   listeners: new Set<(settings: unknown) => void>(),
 }));
 
@@ -223,7 +223,7 @@ describe('Sidebar channel markers', () => {
     startWorkstreamSocketWarmup.mockReset();
     cancelWorkstreamSocketWarmup.mockReset();
     workstreamSocketOpenContext.mockReset().mockReturnValue({ state: 'cold' });
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 320, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
@@ -253,6 +253,61 @@ describe('Sidebar channel markers', () => {
 
     expect(screen.queryByLabelText('New channel draft')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /New channel/u })).not.toBeInTheDocument();
+  });
+
+  it('opens the phone sheet from the menu button and closes it on Escape or on opening a Channel', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[general()]}
+      workspace={workspace}
+      workstreams={[workstream('ws-a', 'Alpha', 'completed'), workstream('ws-b', 'Beta', 'completed')]} /></Tooltip.Provider></MemoryRouter>);
+    const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+    const toggle = screen.getByRole('button', { name: 'Open navigation' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(navigation).not.toHaveClass('is-mobile-open');
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAccessibleName('Close navigation');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(navigation).toHaveClass('is-mobile-open');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(navigation).not.toHaveClass('is-mobile-open');
+    // The control that held focus is hidden with the sheet.
+    expect(toggle).toHaveFocus();
+
+    fireEvent.click(toggle);
+    // Re-sorting the list is not leaving it.
+    fireEvent.click(screen.getByRole('button', { name: /^Sorted /u }));
+    expect(navigation).toHaveClass('is-mobile-open');
+    fireEvent.click(screen.getByRole('link', { name: /Beta/u }));
+    expect(navigation).not.toHaveClass('is-mobile-open');
+    expect(toggle).toHaveAccessibleName('Open navigation');
+  });
+
+  it('closes the phone sheet on navigation from outside it and when the window leaves phone width', () => {
+    function Elsewhere(): React.JSX.Element {
+      const navigate = useNavigate();
+      return <button onClick={() => void navigate('/workstreams/ws-b')} type="button">Search result</button>;
+    }
+    const innerWidth = window.innerWidth;
+    render(<MemoryRouter><Tooltip.Provider><Elsewhere /><Sidebar {...defaultActions} onSignOut={vi.fn()}
+      workspace={workspace} workstreams={[workstream('ws-b', 'Beta', 'completed')]} /></Tooltip.Provider></MemoryRouter>);
+    const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Search result' }));
+    expect(navigation).not.toHaveClass('is-mobile-open');
+
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      window.innerWidth = 390;
+      fireEvent(window, new Event('resize'));
+      expect(navigation).toHaveClass('is-mobile-open');
+      window.innerWidth = 1024;
+      fireEvent(window, new Event('resize'));
+      expect(navigation).not.toHaveClass('is-mobile-open');
+    } finally {
+      window.innerWidth = innerWidth;
+    }
   });
 
   it('marks sidebar creation telemetry only when the Channel setup is submitted', async () => {
@@ -3175,7 +3230,7 @@ describe('pinned channels', () => {
 describe('Sidebar channel paging', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
@@ -3284,7 +3339,7 @@ describe('Sidebar channel paging', () => {
 describe('the sidebar without a recency list', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
@@ -3479,7 +3534,7 @@ describe('the sidebar without a recency list', () => {
 describe('alphabetical channels inside a space', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     // Every case here is about the list under one Space, so that Space is
     // the filter the sidebar opens on.

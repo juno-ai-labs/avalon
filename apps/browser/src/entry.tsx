@@ -44,6 +44,16 @@ async function clearAllDrafts(): Promise<void> {
 }
 type Proof = { region: string; challengeId: string; credential: string; redemptionId: string };
 
+/**
+ * The one screen the browser shows while Rally opens: restoring a session,
+ * opening an organization, and downloading the signed-in shell. Each step
+ * draws the same mark in the same place, so the hand-off between them is
+ * invisible.
+ */
+export function BrowserBoot(): React.JSX.Element {
+  return <main className="onboarding-shell entry"><div className="boot-mark" role="status" aria-label="Opening Rally"><RallyMark /></div></main>;
+}
+
 /** This entry has no account setup step. Collaboration mounts after authentication. */
 export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void, onRevalidate: () => void) => ReactNode } = {}) {
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
@@ -52,6 +62,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [challenge, setChallenge] = useState<{ id: string; redemptionId: string } | null>(null);
+  // The signed-out screen leads with Google and opens the email form on request.
+  const [emailChosen, setEmailChosen] = useState(false);
   const [proof, setProof] = useState<Proof | null>(null);
   const [session, setSession] = useState<BrowserSession | null>(null);
   // Null until the list has loaded, so a fresh sign-in never says nothing was
@@ -68,6 +80,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const renewalAt = useRef(Number.POSITIVE_INFINITY);
   const sessionChannel = useRef<BroadcastChannel | null>(null);
   const refreshSession = useRef<((renew: boolean) => void) | null>(null);
+  // A later signed-out screen starts from the Google-first choice again.
+  useEffect(() => { if (session) setEmailChosen(false); }, [session]);
 
   useEffect(() => {
     let active = true;
@@ -223,6 +237,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     // session and user id. Leave that to the restore path, which activates it
     // through Global, rather than showing this deployment's session first.
     if (destination && destination.region !== (proof?.region ?? IDENTITY_REGION)) {
+      // The opening screen covers the restore; the spent code's card must not.
+      setChecking(true);
       refreshSession.current?.(false);
       return;
     }
@@ -293,12 +309,17 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   if (!proof && destination && workspaceSession && session && workspaceSession.user.id === session.user.id && renderCollaboration) {
     return <div className="browser-shell">
-      {error && <p role="alert">{error}</p>}
+      {error && <div className="browser-shell-error"><InlineError>{error}</InlineError></div>}
       <div className="browser-conversation">{renderCollaboration(destination.region, workspaceSession, signOutStable, revalidate)}</div>
     </div>;
   }
 
-  if (checking && !session && !proof) return <main className="onboarding-shell entry"><div className="boot-mark" role="status" aria-label="Opening Rally"><RallyMark /></div></main>;
+  if (checking && !session && !proof) return <BrowserBoot />;
+  // A signed-in link to an organization is still opening it; the signed-in
+  // card would show an empty organization list until it does. `busy` is an
+  // action on that card, such as sign-out, which also clears `error`. A
+  // workspace session for another user is the old account's, still pending.
+  if (!proof && destination && session && workspaceSession?.user.id !== session.user.id && !error && !busy && renderCollaboration) return <BrowserBoot />;
 
   const failure = error ?? (!session && !proof && !challenge ? googleNotice : null);
   return <main className="onboarding-shell signin-shell entry">
@@ -315,13 +336,16 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       </> : <>
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
         <p>{proof ? "Continue to your shared conversations." : challenge ? `Enter the code sent to ${email}, or open the sign-in link in that email.` : destination ? "Sign in with the email address the link was sent to." : "Your team, your work, and Rally. All in one place."}</p>
-        <form onSubmit={(event) => { void submit(event); }}>
+        {!proof && !challenge && !emailChosen ? <>
+          <Button className="button-primary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>
+          <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => setEmailChosen(true)}><Mail aria-hidden="true" size={16} />Continue with email</Button>
+        </> : <form onSubmit={(event) => { void submit(event); }}>
           {!proof && (challenge ? <label className="onboarding-field"><span>Sign-in code</span><span className="onboarding-input-wrap"><KeyRound aria-hidden="true" size={16} /><input key="otp" autoComplete="one-time-code" inputMode="numeric" required value={code} onChange={(event) => setCode(event.target.value)} /></span></label>
             : <label className="onboarding-field"><span>Email</span><span className="onboarding-input-wrap"><Mail aria-hidden="true" size={16} /><input key="email" type="email" autoComplete="email" placeholder="you@company.com" required value={email} onChange={(event) => setEmail(event.target.value)} /></span></label>)}
           <Button className="button-primary signin-button" disabled={busy || checking} type="submit">{busy && <LoaderCircle aria-hidden="true" className="spin" size={16} />}{busy ? "Please wait…" : proof || challenge ? "Continue" : "Email me a sign-in link"}</Button>
           {challenge && <button className="text-button onboarding-signout" type="button" disabled={busy} onClick={() => { issuance.current = null; setChallenge(null); setCode(""); setError(null); }}>Use another email or request a new code</button>}
-        </form>
-        {!proof && !challenge && <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>}
+          {!proof && !challenge && <button className="text-button onboarding-signout" type="button" disabled={busy} onClick={() => { setEmailChosen(false); setError(null); }}>Other sign-in options</button>}
+        </form>}
       </>}
       {/* A Google failure belongs to the signed-out screen it returned to, not to a later one. */}
       {failure && <InlineError>{failure}</InlineError>}

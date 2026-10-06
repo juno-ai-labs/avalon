@@ -18,7 +18,6 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 | `packages/connectors/src/slack.ts` | The adapter: capabilities, scope health, tools, activity types. |
 | `packages/connectors/src/slack-reactions.ts` | The reaction vocabulary and how an override resolves against it. |
 | `packages/connectors/src/slack-markdown.ts` | Agent markdown rendered as Slack blocks, and split at Slack's limit. |
-| `apps/api/src/durable-objects/slack-reaction-ticker.ts` | The alarm behind the rotating working reaction. |
 | `packages/contracts/src/index.ts` | The shared contracts both ends parse. |
 | `packages/db/migrations/0039_slack_connector.sql` | The regional schema. |
 | `apps/api/src/services/connection-service.ts` | OAuth and connection lifecycle. |
@@ -280,12 +279,11 @@ On a prompt Rally:
 1. adds the acknowledgement reaction when the invocation has a source message;
 2. sets the Slack Agent thread status;
 3. creates or resumes the durable workstream;
-4. starts the reaction rotation for that session;
-5. executes the ordinary authorized Rally harness;
-6. reloads the exact canonical final turn after terminal persistence;
-7. posts that complete saved turn in Slack's required 12,000-character chunks;
-8. stops the rotation and swaps the reaction for the one naming the outcome;
-9. links to the canonical Rally workstream and offers feedback.
+4. executes the ordinary authorized Rally harness;
+5. reloads the exact canonical final turn after terminal persistence;
+6. posts that complete saved turn in Slack's required 12,000-character chunks;
+7. swaps the reaction for the one naming the outcome;
+8. links to the canonical Rally workstream and offers feedback.
 
 The persisted Rally run is canonical. A Slack delivery failure never rewrites a completed run as failed.
 Rally never streams model output to Slack. A fixed status or reaction may change
@@ -301,35 +299,23 @@ removes the previous one:
 
 | State | Default | When |
 | --- | --- | --- |
-| Acknowledged | `eyes` | The prompt is admitted and authorized, before context gathering. |
-| Working | `brain` → `mag` → `writing_hand` → `gear` | Rotating while the run is live. |
+| Acknowledged | `eyes` | The prompt is admitted and authorized, and stays while the run is live. |
 | Outcome | `white_check_mark`, `question`, `warning`, `octagonal_sign` | The run reaches `completed`, `needs_input`, `failed`, or `stopped`. |
 
 A transition removes only the emoji Rally itself last placed, recorded in
 `slack_agent_sessions.reaction_current`, so a member's own reaction on the same
-message survives. Both transitions re-read that column immediately before acting
-and write it back conditionally, because delivery and a rotation tick can be in
-flight at once: removing a stale emoji answers `no_reaction`, which is a
-successful retry, and would otherwise leave the working reaction beside the
-outcome — the one thing the single-slot rule exists to prevent. The reaction sits on the *triggering* message rather than the
-thread root, and each new prompt in a thread moves it and restarts the rotation.
+message survives. The outcome transition re-reads that column immediately before
+acting and writes it back conditionally: removing a stale emoji answers
+`no_reaction`, which is a successful retry, and would otherwise leave two Rally
+reactions on the message — the one thing the single-slot rule exists to prevent.
+The reaction sits on the *triggering* message rather than the thread root, and
+each new prompt in a thread moves it.
 
-The rotation is a Durable Object alarm keyed by session, holding its cursor in
-its own SQLite database and stopping when the session's delivery key moves —
-which is delivery's own stamp that the run is over. A tick re-reads its own row
-before re-arming, so a stop that arrived while the tick was awaiting Slack
-cancels the rotation rather than being undone by it. **The outcome reaction never
-depends on it**: delivery applies that transition, and delivery runs on
-every terminal status whether or not a ticker ever started. That is what lets the
-rotation be treated as decoration — an alarm that is lost costs a cycling emoji,
-not a member's ability to tell that their task finished.
-
-The six-second default cadence is Slack's constraint rather than a preference.
-`reactions.add` and `reactions.remove` are Tier 3 methods — roughly 50 calls a
-minute, counted per method per workspace per app — and one rotation step spends
-one call in each bucket, so a single run uses ten of its fifty per minute and a
-workspace has room for about five concurrent runs. Faster cycling stalls in a
-busy workspace, where Slack's refusals land on whichever run ticks last.
+**Known gap:** a session holds one reaction slot, but a follow-up prompt is
+admitted while an earlier run in the thread is still live. The follow-up moves
+the slot to its own message, usually with the same acknowledgement emoji, so the
+conditional write cannot tell the anchors apart: the earlier run's outcome can
+land on the follow-up's message, or leave its own message showing `eyes`.
 
 Reaction sets resolve most-specific-wins: the built-in defaults, then a workspace
 override on the installation's `config_json`, then a per-run override. An
@@ -812,6 +798,31 @@ briefing's three/one/zero-result cases.
 8. Submit the exact scopes and test credentials/instructions. Explain why broad user scopes are optional and user initiated, why public-channel membership does not ingest ordinary channel traffic, how account linking works, and how automation approval/delivery binding works.
 
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
+
+## Changelog
+
+### 2026-10-06 — The rotating working reaction was removed
+
+**What changed:** The working reaction that cycled `brain` → `mag` →
+`writing_hand` → `gear` while a run was live is gone, along with the
+`SlackReactionTicker` Durable Object that drove it. Wrangler migration `v14`
+deletes the class and every object in its namespace. The acknowledgement now
+stays on the message until delivery swaps in the outcome reaction.
+
+**Why:** Removed at product request; the reasoning was not recorded.
+
+**Considered and rejected:** Placing one fixed working emoji in place of the
+rotation. It adds a transition and a Slack call per run for no information the
+acknowledgement does not already give.
+
+**Consequences:** `slack_agent_sessions.reaction_cursor`
+still exists in WorkspaceDO's released SQLite migrations but nothing reads or
+writes it. A reaction override saved with `working` or `workingIntervalMs` still
+parses; those keys are accepted and ignored so the override's other states
+survive. Bringing a rotation back needs a new class name, since `v14` retires
+`SlackReactionTicker` for good.
+
+Shipped in #1123.
 
 ### 2026-09-27 — Bindings route Slack messages, and the bot joins only where it is wanted
 

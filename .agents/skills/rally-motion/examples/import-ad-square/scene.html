@@ -1,0 +1,98 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Import ad (1:1)</title>
+<link rel="stylesheet" href="../../kit/fonts/fonts.css">
+<style>html,body{margin:0;background:#070707;overflow:hidden}canvas{display:block}</style>
+</head><body>
+<script src="../../kit/mark.js"></script>
+<script src="../../kit/engine.js"></script>
+<script src="../../kit/brand.js"></script>
+<script src="../../kit/components.js"></script>
+<script>
+// "Try multi-player AI for 60 days (on us)." -> import a Claude/ChatGPT session -> unleash teamwork,
+// then the imported thread continues live in a Channel. Square for the X feed.
+stage({ w: 1080, h: 1080, outW: 1200, duration: 17.5 });
+
+// ---------- timeline (seconds) ----------
+const T = {
+  card2: 1.98, card3: 4.38, hookOut: 5.8,
+  menu: 2.45, menuClick: 3.55, strike: 3.0, swap: 3.22,
+  appIn: 5.85, caps: [5.95, 8.7, 11.2], end: 13.55,
+};
+const APP = { x: 60, y: 318, w: 960, h: 722 };
+const MSGS = [
+  { t: 6.07, who: 'history', person: 'priya', agent: 'ChatGPT', items: [
+    { side: 'r', w: 430 }, { side: 'l', bars: [610, 570, 360] }, { side: 'r', w: 300 },
+    { side: 'l', bars: [640, 520] }, { side: 'r', w: 380 }, { side: 'l', bars: [590, 610, 450] }] },
+  { t: 6.67, who: 'divider', label: 'Imported from ChatGPT · now live with your team' },
+  { t: 6.85, who: 'priya', s: 'here’s my research. What do you think of “AI is better with friends”?', mention: '@Maya' },
+  { t: 8.85, who: 'maya', s: 'make it punchier', mention: '@Rally' },
+  { t: 9.5, who: 'rally', s: 'Your team. Your AI. One place.', stream: .6, big: true, react: 11.8,
+    segments: [['Your team. ', UI.text], ['Your AI. ', C.volt], ['One place.', UI.text]] },
+  { t: 11.25, who: 'priya', s: 'That’s the one.' },
+  { t: 11.75, who: 'theo', s: 'Shipping it.' },
+];
+const CAPS = [
+  { t0: T.caps[0], lines: [[['Your team and AI,', C.paper]], [['in one Channel.', C.volt]]] },
+  { t0: T.caps[1], lines: [[['Anyone can ask.', C.paper]], [['Everyone sees it.', C.volt]]] },
+  { t0: T.caps[2], lines: [[['Build on', C.paper]], [['each other.', C.volt]]] },
+];
+
+function hook(ctx, t) {
+  const out = eiX(prog(t, T.hookOut - .14, T.hookOut + .16)); if (out >= 1) return;
+  ctx.save(); ctx.globalAlpha = 1 - out; ctx.translate(0, -out * 320);
+  let r = hookCard(ctx, t, { tin: 0, tout: T.card2 - .08, size: 104, lh: 114, lines: [['Try multi-player AI', C.paper], ['for 60 days', C.volt], ['(on us).', C.volt]] });
+  if (r) r.done();
+  // card 2: "Claude" struck through, "ChatGPT" rises beside it
+  r = hookCard(ctx, t, { tin: T.card2, tout: T.card3 - .08, size: 116, lh: 124, lines: [['Import a', C.paper], ['', C.paper], ['session.', C.paper]] });
+  if (r) {
+    const y = r.y0 + r.lh, wC = measure(ctx, 'Claude', r.font, r.ls);
+    text(ctx, 'Claude', r.x, y, r.font, rgba(C.paper, 1 - .55 * eo3(prog(t, T.strike + .1, T.strike + .4))), 'left', r.ls);
+    strike(ctx, t, T.strike, r.x, y, wC, r.size);
+    const gx = r.x + wC + 34, gp = eoX(prog(t, T.swap, T.swap + .4));
+    if (gp > 0) { ctx.save(); ctx.beginPath(); ctx.rect(gx - 10, y - 110, 700, 140); ctx.clip(); text(ctx, 'ChatGPT', gx, y + (1 - gp) * 130, r.font, C.volt, 'left', r.ls); ctx.restore(); }
+    r.done();
+  }
+  // the app's real menu item, clicked
+  const mq = spring(t - T.menu, 22, .5) * (1 - eio5(prog(t, T.card3 - .08, T.card3 + .22)));
+  if (mq > .01) {
+    const label = 'Import Channel from Claude or ChatGPT', lw = measure(ctx, label, F.ui(600, 30)) + 96;
+    const R = { x: 72, y: 802, w: lw, h: 76 };
+    actionPill(ctx, R, label, { glyphName: 'import', pressedAt: T.menuClick, t, scale: mq, size: 30 });
+    const [cx, cy] = kf(t, [[T.menu, [1150, 1150]], [T.menuClick - .1, [72 + lw * .62, 856], eo5], [T.card3, [72 + lw * .62 + 20, 870]]]);
+    clickRing(ctx, cx, cy, t - T.menuClick, C.paper);
+    cursor(ctx, cx, cy, P.priya, 1.5, mq, Math.exp(-Math.abs(t - T.menuClick) * 30));
+  }
+  r = hookCard(ctx, t, { tin: T.card3, size: 116, lh: 124, lines: [['And unleash', C.paper], ['teamwork.', C.volt]] });
+  if (r) r.done();
+  // cursors: drifting round card 1, then everyone flies in for card 3
+  const leave = eiX(prog(t, T.card2 - .13, T.card2 + .22));
+  [['maya', 830, 230, -1, -1], ['theo', 880, 720, 1, 1], ['priya', 160, 735, -1, 1], ['rally', 560, 760, 0, 1]].forEach(([n, x, y, dx, dy], i) => {
+    if (leave < 1) cursor(ctx, x + Math.sin(t * 2 + i) * 10 + dx * leave * 700, y + Math.cos(t * 1.6 + i * 2) * 7 + dy * leave * 500, P[n], 1.5, 1);
+  });
+  [['maya', -100, 200, 820, 238], ['theo', 1180, 160, 900, 690], ['priya', -120, 1000, 150, 712], ['rally', 1200, 960, 610, 720]].forEach(([n, sx, sy, ex, ey], i) => {
+    const p = eo5(prog(t, T.card3 + .12 + i * .07, T.card3 + .67 + i * .07)); if (p <= 0) return;
+    cursor(ctx, lerp(sx, ex, p) + Math.sin(t * 2 + i) * 8 * p, lerp(sy, ey, p) + Math.cos(t * 1.6 + i * 2) * 6 * p, P[n], 1.5, 1);
+  });
+  ctx.restore();
+}
+
+function channel(ctx, t) {
+  const rise = eo5(prog(t, T.appIn, T.appIn + .55)), fall = eiX(prog(t, T.end - .15, T.end + .25));
+  if (rise <= 0 || fall >= 1) return;
+  ctx.save();
+  ctx.translate(0, (1 - rise) * 700 + fall * 60); ctx.globalAlpha = clamp(rise * 1.5) * (1 - fall);
+  channelWindow(ctx, APP, { title: 'launch-day', people: [P.maya, P.theo, P.priya, P.rally] });
+  chatStack(ctx, APP, MSGS, t);
+  ctx.restore();
+}
+
+start((ctx, t) => {
+  if (t >= T.end) { endCard(ctx, t - T.end); return; }
+  glow(ctx, W * .8, H * .1, 900, C.volt, .06);
+  hook(ctx, t);
+  captions(ctx, t, CAPS, { end: T.end });
+  channel(ctx, t);
+  brandBug(ctx, 1 - prog(t, T.end - .1, T.end + .15));
+});
+</script>
+</body></html>

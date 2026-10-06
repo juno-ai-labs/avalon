@@ -402,8 +402,11 @@ export const WorkspaceAttentionSchema = z.object({
   waitingForYou: z.number().int().nonnegative(),
   waitingReason: z.enum(["mentioned", "needs_input", "unseen"]).nullable(),
   hasUnreadActivity: z.boolean(),
-  /** Unread or participant `needs_input` work streams; each stream counts once. */
-  unreadAndNeedsInputCount: z.number().int().nonnegative().default(0),
+  /**
+   * Conversations (each Main and each Breakout) unread, unseen or mentioning
+   * this person: the sidebar attention menu's count, and the dock badge.
+   */
+  readerAttentionCount: z.number().int().nonnegative().default(0),
 });
 
 /**

@@ -31,6 +31,7 @@ export class DesktopPushNotifications {
   private installationId: string | null = null;
   private enabled = true;
   private permission = 'unavailable';
+  private badge: 'enabled' | 'disabled' | 'unknown' = 'unknown';
   private permissionResult: ((status: string) => void) | undefined;
   private serial: Promise<void> = Promise.resolve();
   private cancellation = new AbortController();
@@ -38,7 +39,7 @@ export class DesktopPushNotifications {
   private knownCredentials: StoredAuth[] = [];
   private observedFlag: boolean | undefined;
   constructor(private readonly dependencies: PushDependencies) {}
-  state() { return { pushNotificationsEnabled: this.enabled, pushNotificationStatus: this.permission }; }
+  state() { return { pushNotificationsEnabled: this.enabled, pushNotificationStatus: this.permission, notificationBadgeStatus: this.badge }; }
   async initialize(): Promise<void> {
     try {
       const settings = await readStoredApplicationSettings(app.getPath('userData'));
@@ -63,6 +64,7 @@ export class DesktopPushNotifications {
       binding.start((encoded) => {
         const event: unknown = JSON.parse(encoded);
         if (!event || typeof event !== 'object') return;
+        if ('badge' in event && (event.badge === 'enabled' || event.badge === 'disabled')) this.badge = event.badge;
         if ('permission' in event && typeof event.permission === 'string') {
           this.permission = event.permission;
           this.permissionResult?.(event.permission);

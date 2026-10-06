@@ -54,15 +54,18 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
     effect.kind === "mention_notification" ? effect.messageText : effect.workstreamObjectiveSnapshot ?? "",
     { sources: "none" },
   );
+  // The badge counts what this person's sidebar lists, and a guest's lists less.
+  const member = await workspaceRegionalDatabase(env).prepare(`SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
+    .bind(row.workspaceId, row.recipientUserId).first<{ access_class: "member" | "guest" }>();
   const attention = WorkspaceAttentionSchema.parse(await workspace.attention({
-    workspaceId: id, userId: row.recipientUserId,
+    workspaceId: id, userId: row.recipientUserId, accessClass: member?.access_class ?? "member",
   }));
   const url = await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
     workstreamId: row.workstreamId, ...(childId ? { substreamId: childId } : {}) });
   const data = { v: 1 as const, kind: row.notificationKind, region: env.AVALON_REGION, workspaceId: row.workspaceId, url };
   const collapseId = await pushCollapseId(row.workspaceId, row.intentId);
   const payload: PushPayloads = {
-    apns: renderPushPayload({ title, body, threadKey: row.workstreamId, badge: attention.unreadAndNeedsInputCount, data }),
+    apns: renderPushPayload({ title, body, threadKey: row.workstreamId, badge: attention.readerAttentionCount, data }),
     web: renderWebPushPayload({ title, body, collapseId, data, maxBytes: WEB_PUSH_PAYLOAD_BYTES }),
   };
   const db = workspaceRegionalDatabase(env);
