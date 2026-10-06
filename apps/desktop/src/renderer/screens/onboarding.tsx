@@ -1,9 +1,9 @@
-import { Building2, LoaderCircle } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { LoaderCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import type { RallyDesktopBridge } from '../../common/desktop';
 import { RallyMark, Button, ConnectorMark, InlineError } from '../components/primitives';
+import { CreateOrganizationCard } from './create-organization';
 import { useAppSession } from '../lib/app-session';
-import { isComposingKeyEvent } from '../lib/ime';
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
 import type { PendingWorkspaceInvitation } from '../lib/types';
@@ -105,82 +105,12 @@ export function SignInScreen(): React.JSX.Element {
 
 export function RegionOnboarding(): React.JSX.Element {
   const { finishWorkspaceSetup, session, signOut, workspaceName } = useAppSession();
-  const selected = 'global';
-  const [name, setName] = useState(workspaceName);
-  const [working, setWorking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const createOperation = useRef<{ fingerprint: string; id: string } | null>(null);
-
-  const continueSetup = async (): Promise<void> => {
-    // Holding Enter repeats it, and the button stays reachable while the first
-    // create is in flight: without this each repeat mints a fresh operation id,
-    // so the server answers the second one with a conflict on the reservation
-    // the first one took, and the funnel counts a workspace_create_requested
-    // per keystroke. The button's own `disabled` covers only the pointer.
-    if (working) return;
-    if (name.trim().length < 2) return;
-    const fingerprint = JSON.stringify({ name: name.trim(), region: selected });
-    const operation = createOperation.current?.fingerprint === fingerprint
-      ? createOperation.current
-      : { fingerprint, id: uuidV7() };
-    createOperation.current = operation;
-    const operationId = operation.id;
-    reportTelemetryProductIntent({
-      kind: 'workspace_create_requested',
-      selectedRegion: selected,
-      entrypoint: 'first_run',
-      operationId,
-    });
-    setWorking(true);
-    setError(null);
-    try {
-      await finishWorkspaceSetup(name, selected, operationId);
-      createOperation.current = null;
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Rally could not create this organization.');
-    } finally {
-      setWorking(false);
-    }
-  };
-
   return (
     <main className="onboarding-shell workspace-setup-shell window-drag">
-      <section className="onboarding-card workspace-setup-card window-no-drag" aria-labelledby="workspace-heading">
-        <RallyMark className="signin-mark" />
-        <div className="onboarding-copy">
-          <h1 id="workspace-heading">Create your organization</h1>
-          <p>A shared home for your team and Rally.</p>
-        </div>
-
-        <label className="onboarding-field">
-          <span>Organization name</span>
-          <span className="onboarding-input-wrap">
-            <Building2 aria-hidden="true" size={16} />
-            <input
-              autoComplete="organization"
-              autoFocus
-              maxLength={120}
-              onChange={(event) => setName(event.target.value)}
-              onKeyDown={(event) => {
-                // A plain input rather than a ComposerInput, so this field
-                // keeps its own copy of the guard. See `../lib/ime.ts`.
-                if (isComposingKeyEvent(event.nativeEvent)) return;
-                if (event.key === 'Enter') void continueSetup();
-              }}
-              placeholder="Acme"
-              value={name}
-            />
-          </span>
-        </label>
-
-        {error && <InlineError>{error}</InlineError>}
-        <Button className="button-primary onboarding-continue" disabled={working || name.trim().length < 2} onClick={() => void continueSetup()}>
-          {working && <LoaderCircle aria-hidden="true" className="spin" size={16} />}
-          Create organization
-        </Button>
+      <CreateOrganizationCard initialName={workspaceName} onCreate={(name, operationId) => finishWorkspaceSetup(name, 'global', operationId)}>
         {session && <p className="signed-in-identity">Signed in as {session.user.email}</p>}
         <button className="text-button onboarding-signout" onClick={() => void signOut()} type="button">Sign out</button>
-      </section>
+      </CreateOrganizationCard>
     </main>
   );
 }
