@@ -108,9 +108,7 @@ async function resolve(path: string[], input: { addressed?: boolean; claimKey?: 
 }
 
 async function linkRoom(roomId: string, spaceId: string, input: {
-  scope?: "personal" | "workspace";
   userId?: UserId;
-  participantUserIds?: UserId[];
   spaceMatch?: "matched" | "unmatched";
   name?: string;
 } = {}) {
@@ -120,8 +118,7 @@ async function linkRoom(roomId: string, spaceId: string, input: {
     path: [roomId],
     userId: input.userId ?? USER_ID,
     spaceId,
-    space: { name: input.name ?? `room ${roomId}`, scope: input.scope ?? "workspace" },
-    participantUserIds: input.participantUserIds ?? [],
+    space: { name: input.name ?? `room ${roomId}` },
     ...(input.spaceMatch ? { spaceMatch: input.spaceMatch } : {}),
     at: at(),
   });
@@ -233,23 +230,19 @@ describe("linking a shared room", () => {
     ]);
   });
 
-  it("gives a private room a personal Space of its known members, and a public room an Organization-wide one", async () => {
-    const privateRoom = await linkRoom("G1", "00000000-0000-7000-8000-000000000e11", {
-      scope: "personal", participantUserIds: [OTHER_USER_ID],
-    });
+  it("gives a private room and a public room alike an Organization-wide Space that lists only its linker", async () => {
+    const privateRoom = await linkRoom("G1", "00000000-0000-7000-8000-000000000e11");
     const publicRoom = await linkRoom("C1", "00000000-0000-7000-8000-000000000e12");
     if (!privateRoom.ok || !publicRoom.ok) throw new Error("link refused");
-    const privateSpace = await workspace().spaceSummary({
-      workspaceId: WORKSPACE_ID, userId: USER_ID, spaceId: asSpaceId(privateRoom.spaceId),
-    });
-    const publicSpace = await workspace().spaceSummary({
-      workspaceId: WORKSPACE_ID, userId: USER_ID, spaceId: asSpaceId(publicRoom.spaceId),
-    });
-    if (!privateSpace.ok || !publicSpace.ok) throw new Error("space unreadable");
-    expect(privateSpace.space.scope).toBe("personal");
-    expect(privateSpace.space.participants.map((participant) => participant.userId).sort())
-      .toEqual([USER_ID, OTHER_USER_ID].sort());
-    expect(publicSpace.space.scope).toBe("workspace");
+    for (const spaceId of [privateRoom.spaceId, publicRoom.spaceId]) {
+      // Read by somebody who did not link the room: an Organization-wide
+      // Space is theirs to see.
+      const summary = await workspace().spaceSummary({
+        workspaceId: WORKSPACE_ID, userId: OTHER_USER_ID, spaceId: asSpaceId(spaceId),
+      });
+      expect(summary).toMatchObject({ ok: true, space: { scope: "workspace", participants: [{ userId: USER_ID }] } });
+      if (summary.ok) expect(summary.space.participants).toHaveLength(1);
+    }
   });
 
   it("stops every thread when the bot is removed, and re-invitation reactivates the same binding and Space", async () => {
@@ -286,21 +279,19 @@ describe("a room named for an existing Space", () => {
 
   it("matches the live Organization-wide Space of that name ignoring case, and links the room into it", async () => {
     const general = await generalId();
-    const privateRoom = await linkRoom("G1", "00000000-0000-7000-8000-000000000e31", { scope: "personal" });
     const archived = await linkRoom("C2", "00000000-0000-7000-8000-000000000e32");
-    if (!privateRoom.ok || !archived.ok) throw new Error("link refused");
+    if (!archived.ok) throw new Error("link refused");
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec("UPDATE spaces SET archived_at = 1 WHERE space_id = ?", archived.spaceId);
     });
 
     expect(await match("  gEnErAl ")).toBe(general);
-    expect(await match("ROOM G1")).toBeNull();
     expect(await match("ROOM C2")).toBeNull();
     expect(await match("generals")).toBeNull();
 
     const linked = await linkRoom("C1", general, { spaceMatch: "matched", name: "general" });
     expect(linked).toEqual({ ok: true, outcome: "linked", spaceId: general });
-    expect(await spaceIds()).toEqual([privateRoom.spaceId, archived.spaceId].sort());
+    expect(await spaceIds()).toEqual([archived.spaceId]);
     expect(await resolve(["C1", "1.0"], { addressed: true, claimKey: "event:general" }))
       .toMatchObject({ outcome: "spawn", spaceId: general, spaceMatched: true });
     // The record survives Slack renumbering the room, which the id could not.
@@ -365,19 +356,10 @@ describe("a room named for an existing Space", () => {
       });
       return instance.linkExternalRoom({
         workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["C1"], userId: USER_ID, spaceId: general,
-        space: { name: "general", scope: "workspace" }, participantUserIds: [], spaceMatch: "matched", at: at(),
+        space: { name: "general" }, spaceMatch: "matched", at: at(),
       });
     });
     expect(result).toEqual({ ok: false, code: "space_not_found" });
-    expect(await bindingRows()).toEqual([]);
-  });
-
-  it("refuses a match request for a private room or one that seats participants", async () => {
-    await expect(linkRoom("G1", "00000000-0000-7000-8000-000000000e37", { spaceMatch: "unmatched", scope: "personal" }))
-      .rejects.toThrow();
-    await expect(linkRoom("C1", "00000000-0000-7000-8000-000000000e38", {
-      spaceMatch: "unmatched", participantUserIds: [OTHER_USER_ID],
-    })).rejects.toThrow();
     expect(await bindingRows()).toEqual([]);
   });
 
@@ -495,9 +477,7 @@ describe("a thread addressed under a linked room", () => {
   });
 
   it("starts two Channels for two addressed messages in a room without threads, for a sender with no Rally identity", async () => {
-    const linked = await linkRoom("G1", "00000000-0000-7000-8000-000000000e71", {
-      scope: "personal", participantUserIds: [OTHER_USER_ID],
-    });
+    const linked = await linkRoom("G1", "00000000-0000-7000-8000-000000000e71");
     if (!linked.ok) throw new Error("link refused");
     const created: string[] = [];
     for (const messageTs of ["5.0", "6.0"]) {
@@ -533,8 +513,9 @@ describe("a thread addressed under a linked room", () => {
       })).toEqual({ spaceIds: [linked.spaceId] });
     }
     expect(new Set(created).size).toBe(2);
-    // Born in the private room's Space, the Channels are personal, not widened,
-    // and ownerless: the sender has no Rally identity to credit.
+    // Born in the room's Organization-wide Space, the Channels keep the
+    // private room's audience, because a Space grants no reader, and are
+    // ownerless: the sender has no Rally identity to credit.
     const rows = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
       workstream_id: string; scope: string; created_by_user_id: string | null;
     }>(
@@ -546,9 +527,7 @@ describe("a thread addressed under a linked room", () => {
   });
 
   it("re-enters the Channel a failed attempt reserved when the same event is retried", async () => {
-    const linked = await linkRoom("G3", "00000000-0000-7000-8000-000000000e91", {
-      scope: "personal", participantUserIds: [OTHER_USER_ID],
-    });
+    const linked = await linkRoom("G3", "00000000-0000-7000-8000-000000000e91");
     if (!linked.ok) throw new Error("link refused");
     const attempt = () => new SlackWorkspaceWorkstreamService(creationEnv(), WORKSPACE_ID).create({
       actor: {
@@ -594,23 +573,7 @@ describe("a thread addressed under a linked room", () => {
     });
   });
 
-  it("refuses to place a Channel in a private room's Space its member cannot open, and binds nothing", async () => {
-    // The room was linked by another member: this one is not in its Space.
-    const linked = await linkRoom("G2", "00000000-0000-7000-8000-000000000e81", {
-      scope: "personal", userId: OTHER_USER_ID,
-    });
-    if (!linked.ok) throw new Error("link refused");
-    const failure = await createForThread("blocked", asSpaceId(linked.spaceId), ["G2", "1.0"])
-      .then(() => null, (error: unknown) => error);
-    expect(failure).toMatchObject({ status: 404 });
-    expect((await bindingRows()).filter((row) => row.path_json.startsWith("[\"G2\","))).toEqual([]);
-    const general = await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID });
-    // Nothing fell back to General either.
-    const page = await workspace().listSpaceChannels({
-      workspaceId: WORKSPACE_ID, userId: USER_ID, spaceId: asSpaceId(general.generalSpaceId!), cursor: null,
-    });
-    expect(page.ok && page.page.items.length).toBe(0);
-  });
+
 });
 
 describe("suspending bindings", () => {

@@ -231,6 +231,13 @@ async function openGeneral(): Promise<{ created: boolean; space: SpaceSummary }>
   return general;
 }
 
+/**
+ * One Space, reserved as every Space now is: Organization-wide.
+ *
+ * `personal` writes a *legacy* row instead — a Space made private before
+ * WorkspaceDO migration 93, which nothing can create any more — for the
+ * listing rules that still read the scope a stored row carries.
+ */
 async function reserve(
   name: string,
   scope: "personal" | "workspace" = "workspace",
@@ -239,10 +246,16 @@ async function reserve(
   const result = await workspace().reserveSpace({
     workspaceId: WORKSPACE_ID,
     userId,
-    space: { name, iconKey: "briefcase", colorKey: "blue", scope },
+    space: { name, iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
   });
   if (!result.ok) throw new Error(`reserveSpace refused: ${result.code}`);
-  return asSpaceId(result.space.id);
+  const spaceId = asSpaceId(result.space.id);
+  if (scope === "personal") {
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE spaces SET scope = 'personal' WHERE space_id = ?", spaceId);
+    });
+  }
+  return spaceId;
 }
 
 /**
@@ -765,16 +778,15 @@ describe("WorkspaceDO space authority", () => {
     }));
     if (!plan.ok) throw new Error(plan.code);
 
-    // The Space's audience changes underneath the staged membership. The
-    // audience that was applied to the Channel came from the Space as it was,
-    // so settling now would publish a placement granted from an audience that
-    // no longer exists.
+    // The Space's participants change underneath the staged membership,
+    // which advances the revision the membership was staged against, so
+    // settling now would publish a placement fenced on a Space that no longer
+    // exists in that form.
     await workspace().noteSpaceAudience({
       workspaceId: WORKSPACE_ID,
       userId: OWNER,
       spaceId,
-      operationId: "00000000-0000-7000-8000-00000000cf09",
-      audience: { scope: "personal", participantUserIds: [OWNER] },
+      audience: { scope: "workspace", participantUserIds: [OWNER] },
     });
 
     expect(await withSpaceStorage(workspace(), (storage) => storage.finalizeMembership({
@@ -987,7 +999,6 @@ describe("WorkspaceDO space authority", () => {
       }),
       workspace().noteSpaceAudience({
         ...asMember,
-        operationId: crypto.randomUUID(),
         audience: { scope: "workspace", participantUserIds: [MEMBER] },
       }),
       workspace().prepareSpaceArchive({ ...asMember, operationId: crypto.randomUUID() }),
@@ -1085,44 +1096,6 @@ describe("WorkspaceDO space authority", () => {
     await settleNudges(snapshots, 3);
     expect(snapshots).toEqual([[], [personal], []]);
     member.socket.close();
-  });
-
-  it("given an audience that leaves out its own caller, when the Space is narrowed, then it is refused and the Space does not move", async () => {
-    const personal = await reserve("Side work", "personal");
-
-    // `personal` admits its participants and nobody else, so this request
-    // would hand its own caller a Space they can no longer change and — with
-    // no Channel in it they can read — no longer see. Refused before the
-    // write, because the walk that follows would carry it to every member
-    // Channel and the one person who would ask for it back is the one who
-    // cannot.
-    await expect(workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      spaceId: personal,
-      operationId: crypto.randomUUID(),
-      audience: { scope: "personal", participantUserIds: [MEMBER] },
-    })).resolves.toMatchObject({ ok: false, code: "space_audience_self_excluded" });
-
-    // Nothing was written: the roster and the revision are as its own
-    // participant left them.
-    await expect(workspace().spaceSummary({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal,
-    })).resolves.toMatchObject({
-      ok: true,
-      space: { reach: "participant", scope: "personal", revision: 1, participants: [{ userId: OWNER }] },
-    });
-
-    // And the same narrowing *with* the caller on the list is the ordinary
-    // operation, so the refusal above is about the omission rather than about
-    // narrowing at all.
-    await expect(workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      spaceId: personal,
-      operationId: crypto.randomUUID(),
-      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
-    })).resolves.toMatchObject({ ok: true, space: { scope: "personal" } });
   });
 
   it("given a Space this viewer has no reach into, when its summary is read, then the row is not rendered at all", async () => {
@@ -1545,11 +1518,10 @@ describe("WorkspaceDO space authority", () => {
       bindings: [operationId],
     })).toMatchObject({ rows: [{ state: "settled", receipts_json: '["archived"]' }] });
     for (const workstreamId of [CHANNEL_A, CHANNEL_B]) {
-      expect(await workspace().readAccessSources({
-        workspaceId: WORKSPACE_ID, parentId: workstreamId, channel: observedChannel,
-      })).toMatchObject({
-        spaces: [{ spaceId: second, scope: "workspace", participantUserIds: [OWNER] }],
-      });
+      expect(await workspace().runInspectionSql({
+        sql: "SELECT space_id FROM parent_space_sources WHERE parent_id = ?",
+        bindings: [workstreamId],
+      })).toMatchObject({ rows: [{ space_id: second }] });
     }
   });
 
@@ -1583,20 +1555,13 @@ describe("WorkspaceDO space authority", () => {
     })).toMatchObject({ rows: [{ kind: "restore", state: "pending" }] });
   });
 
-  it("given General, when it is archived or made personal, then both are refused", async () => {
+  it("given General, when it is archived, then it is refused", async () => {
     const general = await openGeneral();
     expect(general).toMatchObject({ created: true, space: { name: "General", systemRole: "general" } });
 
     await expect(workspace().prepareSpaceArchive({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: general.space.id,
       operationId: crypto.randomUUID(),
-    })).resolves.toMatchObject({ ok: false, code: "space_protected" });
-    await expect(workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      spaceId: general.space.id,
-      operationId: "00000000-0000-7000-8000-00000000cf0a",
-      audience: { scope: "personal", participantUserIds: [OWNER] },
     })).resolves.toMatchObject({ ok: false, code: "space_protected" });
 
     // Idempotent: a second caller gets the same General rather than a second
@@ -1794,7 +1759,7 @@ describe("WorkspaceDO space authority", () => {
 
   it("given a participant added after creation, when they add and remove a Sidekick default, then the Space's recommendation follows", async () => {
     const sidekickId = "00000000-0000-7000-8000-00000000cf1c";
-    const spaceId = await reserve("Hiring", "personal");
+    const spaceId = await reserve("Hiring");
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(
         `INSERT INTO automation_directory
@@ -1815,8 +1780,7 @@ describe("WorkspaceDO space authority", () => {
       workspaceId: WORKSPACE_ID,
       userId: OWNER,
       spaceId,
-      operationId: "00000000-0000-7000-8000-00000000cf1d",
-      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+      audience: { scope: "workspace", participantUserIds: [OWNER, MEMBER] },
     });
     const rows = async () => (await workspace().runInspectionSql({
       sql: "SELECT sidekick_id FROM parent_sidekicks WHERE parent_id = ?", bindings: [spaceId],
@@ -2390,31 +2354,23 @@ describe("WorkspaceDO space authority", () => {
     });
   });
 
-  it("given an audience change, when it is recorded, then it stages an intent the alarm can resume", async () => {
+  it("given a participant change, when it is recorded, then it stages no intent and the Space stays Organization-wide", async () => {
     const spaceId = await reserve("Company");
-    const operationId = "00000000-0000-7000-8000-00000000cf0b";
 
     await expect(workspace().noteSpaceAudience({
       workspaceId: WORKSPACE_ID,
       userId: OWNER,
       spaceId,
-      operationId,
-      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+      audience: { scope: "workspace", participantUserIds: [OWNER, MEMBER] },
     })).resolves.toMatchObject({
       ok: true,
-      space: { scope: "personal", participants: [{ userId: OWNER }, { userId: MEMBER }] },
+      space: { scope: "workspace", participants: [{ userId: OWNER }, { userId: MEMBER }] },
     });
+    // A Space grants no reader, so there is nothing to carry to its Channels
+    // and nothing for the alarm to resume.
     expect(await workspace().runInspectionSql({
-      sql: "SELECT kind, state FROM space_intents WHERE operation_id = ?",
-      bindings: [operationId],
-    })).toMatchObject({ rows: [{ kind: "audience", state: "pending" }] });
-
-    await workspace().recordSpaceIntentReceipt({
-      workspaceId: WORKSPACE_ID, userId: OWNER, operationId, receipt: "audience_settled", settled: true,
-    });
-    expect(await workspace().runInspectionSql({
-      sql: "SELECT state, receipts_json FROM space_intents WHERE operation_id = ?",
-      bindings: [operationId],
-    })).toMatchObject({ rows: [{ state: "settled", receipts_json: '["audience_settled"]' }] });
+      sql: "SELECT kind FROM space_intents WHERE space_id = ?",
+      bindings: [spaceId],
+    })).toMatchObject({ rows: [] });
   });
 });
