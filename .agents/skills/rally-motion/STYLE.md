@@ -55,9 +55,12 @@ reactions from more than one person.
 
 Most people watch muted on a phone, so the words carry the story.
 
-- Statement card: at least 0.35s per word, never under 1.3s.
-- Caption over UI: hold 2.4s or more.
-- A chat message that matters: on screen 2s or more before the next caption.
+These floors are the timings of the approved cuts (the examples), not targets:
+aim above them.
+
+- Statement card: about 0.25s per word, never under 1.3s on screen.
+- Caption over UI: 2.3s or more from its first frame to the next caption's.
+- A chat message that matters: 1.8s or more before the next caption arrives.
 - The first frame must already be readable: it is the thumbnail when autoplay
   is off. `hookCard({ tin: 0 })` draws the first card fully at t = 0.
 - Logo on screen from frame 0 (`brandBug`), then the end card or the final hold.

@@ -32,7 +32,7 @@ function strike(ctx, t, t0, x, baseline, width, size) {
 // ---------- captions ----------
 /**
  * Two-line captions above a product UI. caps: [{ t0, lines: [[[text, color], ...], [[...]]] }].
- * Each holds until the next one starts (or `end`). Hold each >= 2.4s: people read them muted.
+ * Each holds until the next one starts (or `end`). Hold each >= 2.3s: people read them muted.
  */
 function captions(ctx, t, caps, { end, x = 72, y = 222, size = 74, lh = 80, top = 150, height = 172 } = {}) {
   const f = F.disp(800, size), ls = -size * .034;

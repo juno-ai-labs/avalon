@@ -23,7 +23,7 @@ function stage({ w, h, outW, fps = 60, duration, sub: subframes = 5, shutter = 0
   out.width = Math.round(w * OS); out.height = Math.round(h * OS);
   document.body.appendChild(out);
   ctxO = out.getContext('2d');
-  sub = new OffscreenCanvas(out.width, out.height); ctxS = sub.getContext('2d');
+  sub = new OffscreenCanvas(out.width, out.height); ctxS = sub.getContext('2d'); trackDepth(ctxS);
   window.STAGE_INFO = { width: out.width, height: out.height, fps, duration };
 }
 
@@ -100,15 +100,24 @@ function glow(ctx, x, y, r, color, a) {
 
 // ---------- render loop ----------
 const GRAIN = [];
-let leakWarned = false;
+let leakWarned = false, saveDepth = 0;
+// wraps save/restore on the frame context so drawFrame can see the stack depth
+function trackDepth(ctx) {
+  const save = ctx.save.bind(ctx), restore = ctx.restore.bind(ctx);
+  ctx.save = () => { saveDepth++; save(); };
+  ctx.restore = () => { saveDepth--; restore(); };
+}
 function drawFrame(ctx, t) {
   ctx.setTransform(OS, 0, 0, OS, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = STAGE.bg; ctx.fillRect(0, 0, W, H);
+  saveDepth = 0;
   FRAME(ctx, t);
-  // An unbalanced save/restore silently moves everything drawn after it (it
-  // once dragged the logo 80px down during a slide-in). Say so loudly.
+  // An unbalanced save/restore silently moves, clips or restyles everything
+  // drawn after it (it once dragged the logo 80px down during a slide-in).
+  // Count the stack depth, and check the whole matrix too. Say so loudly.
   const m = ctx.getTransform();
-  if (!leakWarned && (Math.abs(m.a - OS) > 1e-6 || Math.abs(m.e) > 1e-3 || Math.abs(m.f) > 1e-3 || ctx.globalAlpha !== 1)) {
+  const off = Math.abs(m.a - OS) + Math.abs(m.b) + Math.abs(m.c) + Math.abs(m.d - OS) + Math.abs(m.e) + Math.abs(m.f);
+  if (!leakWarned && (saveDepth !== 0 || off > 1e-3 || ctx.globalAlpha !== 1)) {
     leakWarned = true; console.warn(`rally-motion: canvas state leaked out of frame() at t=${t.toFixed(3)}; a save() is missing its restore()`);
   }
 }
