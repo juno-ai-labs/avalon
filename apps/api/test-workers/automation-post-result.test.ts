@@ -583,7 +583,7 @@ describe("a room Sidekick's run and the room's agents", () => {
         slackOrigin: { teamId: "T1", actorSlackUserId: "U_FOLLOW_UP", channelId: "C1", channelName: null,
           threadTs: "1.0", invocationType: "app_mention", channelType: "public", matchedAvalonUserId: null,
           nearbyMessagesStatus: "not_applicable", nearbyMessages: [], attachments: [],
-          reactionAnchor: { channelId: "C1", messageTs: "9.0", reaction: "eyes" } } });
+          reactionAnchor: { channelId: "C1", messageTs: "9.0" } } });
       await runInDurableObject(roomConversation(), async (instance) => {
         const target = instance as unknown as {
           deliverAgentRunResult: (input: WorkstreamWorkflowInput, outcome: { status: "needs_input" }) => Promise<string | null>;
@@ -593,7 +593,7 @@ describe("a room Sidekick's run and the room's agents", () => {
       expect(deliveries.mock.calls.map((args) => args.slice(3))).toEqual([[
         `${input.harnessRunId}:needs_input`,
         "needs_input",
-        { triggeringSlackUserId: "U_FOLLOW_UP", reactionAnchor: { channelId: "C1", messageTs: "9.0", reaction: "eyes" } },
+        { triggeringSlackUserId: "U_FOLLOW_UP", reactionAnchor: { channelId: "C1", messageTs: "9.0" } },
       ]]);
     } finally {
       deliveries.mockRestore();

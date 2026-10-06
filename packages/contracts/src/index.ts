@@ -3392,14 +3392,15 @@ export const SlackOriginContextSchema = z.strictObject({
   /** A link back to that message, built from the team, channel and timestamp. */
   permalink: httpsUrlSchema(2000).optional(),
   /**
-   * The message this run's status reaction sits on, and the emoji admission
-   * placed there. Carried so the outcome lands on this run's own message even
-   * after a follow-up in the same thread has moved the session's slot.
+   * The message this run's status reaction sits on. Carried so the outcome
+   * lands on this run's own message even after a follow-up in the same thread
+   * has moved the session's slot. Only what the event itself fixes: this rides
+   * in the message's admission identity, so a value a retry could answer
+   * differently (the emoji Slack accepted) would make the retry a conflict.
    */
   reactionAnchor: z.strictObject({
     channelId: z.string().min(1).max(255),
     messageTs: z.string().min(1).max(80),
-    reaction: z.string().min(1).max(255).nullable(),
   }).optional(),
   invocationType: z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]),
   channelType: z.enum(["public", "private", "im", "unknown"]),

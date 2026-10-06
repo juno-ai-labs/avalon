@@ -1217,7 +1217,7 @@ describe("Slack connector principal delivery", () => {
       null,
       "run-earlier:completed",
       "completed",
-      { reactionAnchor: { channelId: "C123", messageTs: "5.0", reaction: "eyes" } },
+      { reactionAnchor: { channelId: "C123", messageTs: "5.0" } },
     );
 
     expect(calls.filter((call) => call.method.startsWith("reactions.")).map((call) => ({
