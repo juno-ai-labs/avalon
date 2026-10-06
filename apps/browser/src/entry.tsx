@@ -64,6 +64,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [challenge, setChallenge] = useState<{ id: string; redemptionId: string } | null>(null);
+  // The signed-out screen leads with Google and opens the email form on request.
+  const [emailChosen, setEmailChosen] = useState(false);
   const [proof, setProof] = useState<Proof | null>(null);
   // Region resolved at parse time: the page opens an opaque link against the
   // deployment serving it, and an addressed link against the one it names.
@@ -386,14 +388,18 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       </> : <>
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
         <p>{proof ? "Continue to your shared conversations." : challenge ? `Enter the code sent to ${email}, or open the sign-in link in that email.` : invitation ? "Sign in with the email address that received this invitation." : "Your team, your work, and Rally. All in one place."}</p>
-        <form onSubmit={(event) => { void submit(event); }}>
+        {/* Leaving for Google would drop an invitation held only in this page's memory,
+            so an invitation goes straight to the email form. */}
+        {!proof && !challenge && !invitation && !emailChosen ? <>
+          <Button className="button-primary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>
+          <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => setEmailChosen(true)}><Mail aria-hidden="true" size={16} />Continue with email</Button>
+        </> : <form onSubmit={(event) => { void submit(event); }}>
           {!proof && (challenge ? <label className="onboarding-field"><span>Sign-in code</span><span className="onboarding-input-wrap"><KeyRound aria-hidden="true" size={16} /><input key="otp" autoComplete="one-time-code" inputMode="numeric" required value={code} onChange={(event) => setCode(event.target.value)} /></span></label>
             : <label className="onboarding-field"><span>Email</span><span className="onboarding-input-wrap"><Mail aria-hidden="true" size={16} /><input key="email" type="email" autoComplete="email" placeholder="you@company.com" required value={email} onChange={(event) => setEmail(event.target.value)} /></span></label>)}
           <Button className="button-primary signin-button" disabled={busy || checking} type="submit">{busy && <LoaderCircle aria-hidden="true" className="spin" size={16} />}{busy ? "Please wait…" : proof || challenge ? "Continue" : "Email me a sign-in link"}</Button>
           {challenge && <button className="text-button onboarding-signout" type="button" disabled={busy} onClick={() => { issuance.current = null; setChallenge(null); setCode(""); setError(null); }}>Use another email or request a new code</button>}
-        </form>
-        {/* Leaving for Google would drop an invitation held only in this page's memory. */}
-        {!proof && !challenge && !invitation && <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>}
+          {!proof && !challenge && !invitation && <button className="text-button onboarding-signout" type="button" disabled={busy} onClick={() => { setEmailChosen(false); setError(null); }}>Other sign-in options</button>}
+        </form>}
       </>}
       {/* A Google failure belongs to the signed-out screen it returned to, not to a later one. */}
       {failure && <InlineError>{failure}</InlineError>}
