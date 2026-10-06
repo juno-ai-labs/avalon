@@ -619,9 +619,14 @@ describe("suspending bindings", () => {
       workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["D1", "1.0"],
       target: { kind: "conversation", parentKind: "automation", parentId: SIDEKICK, substreamId: RUN }, at: at(),
     });
-    await writeSidekickDirectoryRow(env, {
-      automationId: SIDEKICK, workspaceId: WORKSPACE_ID, authorUserId: USER_ID, lifecycle: "deleted",
-      scope: "workspace", owningWorkstreamId: null, title: "Weekly call prep", description: "",
+    // Through the product path: a person archives the Sidekick.
+    await workspace().sidekickCreate({
+      workspaceId: WORKSPACE_ID, automationId: SIDEKICK, authorUserId: USER_ID,
+      scope: "personal", owningWorkstreamId: null, authorityGeneration: 1,
+    });
+    await workspace().sidekickRemove({
+      workspaceId: WORKSPACE_ID, automationId: SIDEKICK,
+      actor: { userId: USER_ID, actorRole: "member", participantOfOwningWorkstream: false },
     });
     expect(await resolve(["D1", "1.0"])).toEqual({ outcome: "suspended", path: ["D1", "1.0"], reason: "sidekick_deleted" });
   });

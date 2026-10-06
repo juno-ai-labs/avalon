@@ -218,11 +218,14 @@ design below. Newest first.
   and the retirement node already address the Organization object rather than
   `SidekickDO`, and a Sidekick's run conversations still need both, so what
   step 3 removes is their legacy target, not the kinds.
-- **2026-10-06: Step 2's gate passed with two Sidekicks never imported.** Every
-  Organization was at schema 91, and 46 of 48 Sidekicks were imported. The two
-  left are in retired Organizations (`Morgan Inc.-demo`, `BioPower-demo`), which
-  refuse new work, so they were not retried: nothing can read them. Their rows
-  go with the class.
+- **2026-10-06: Step 2's first two checks passed with two Sidekicks never
+  imported; the tracker check is still open.** Every Organization was at
+  schema 91, and 46 of 48 Sidekicks were imported. The two left are in retired
+  Organizations (`Morgan Inc.-demo`, `BioPower-demo`), which refuse new work, so
+  they were not retried: nothing can read them. Their rows go with the class.
+  The third check, the migration tracker's `SidekickDO` list against the
+  ledger, needs a person with tracker access, and step 3 does not merge until
+  it is done.
 
 - **2026-10-05: "One frame" for an archive means one send, after the pauses.**
   An archived Channel's row on the workspace socket is unlisted, and a

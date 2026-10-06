@@ -1153,11 +1153,10 @@ Organization does with them, which today is one list on one screen.
 A Sidekick
 forwards nothing: an automation's conversation and its runs are not workspace rooms, so
 their directory, activity, and notification effects are receipted, applied to
-the parent's own projections, and dropped. What the workspace hears from an
-automation is the automation's own `directory_automation` row, enqueued by the
-object itself whenever the automation changes, under the projection key
-`automation`, and applied by `WorkspaceDO.applyAutomationDirectory` on a
-strictly newer `sourceVersion` (equal with a different hash is a conflict).
+the parent's own projections, and dropped. A Sidekick's own sidebar row is its
+`automation_directory` row, written in place by `HostedSidekick` in the same
+`WorkspaceDO` transaction as the change; a late `directory_automation` message
+from the deleted `SidekickDO` is acknowledged and ignored.
 
 The directory `Workstream` that WorkspaceDO pushes for the sidebar carries a
 bounded participant preview on personal rows only: at most three user ids,
@@ -1230,7 +1229,6 @@ complete relationship map is:
 | SubstreamAgent (a Sidekick run child) | WorkspaceDO | typed RPC | child `durable_outbox` row on channel `external_conversation_binding_v1`, written in the tool receipt's `complete` transaction when a send reports where its replies arrive; the alarm delivers it with `recordOutboundExternalConversationBinding`, naming the child as the target, and deletes it once WorkspaceDO has it. A row that does not parse is parked `dead`. See [`external-conversation-bindings.md`](external-conversation-bindings.md) |
 | regional Queue Worker | WorkspaceDO (hosted parent) | typed RPC | `receiveChildEffects`: parent receipt, child projection, aggregate, state row, and outbox row in one transaction; a replay is answered from the receipt. A hosted parent's directory rows are applied inside that same transaction, never through `parent_outbox` |
 | WorkspaceDO (hosted parent) | regional Queue | Cloudflare Queue | activity and notification rows of `parent_outbox`, sent with the `parent_effect` envelope inline and deleted when the Queue accepts it |
-| regional Queue Worker | WorkspaceDO | typed RPC | `applyAutomationDirectory`: a legacy Sidekick's sidebar row, fenced on its own `sourceVersion`; it enrols the Sidekick for import and never overwrites an imported one |
 | WorkspaceDO alarm | regional Queue, then WorkspaceDO | Cloudflare Queue, typed RPC | `sidekick_run_provision`: a run's entry hands it to the consumer, which opens its conversation and reports `sidekickRunProvisioned`; the entry sends again, later each time, until the report |
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyWorkstreamRegionalEffect`: first-party activity event, all target edges, and the replay receipt commit atomically; the object-local sequence is the digest/feed cursor |
 | regional Queue Worker | WorkspaceDO | typed RPC | notification intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data |
