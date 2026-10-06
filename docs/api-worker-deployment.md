@@ -316,9 +316,16 @@ not be retried, which sends them looking for code to move out of a graph that
 was never the problem.
 
 **Considered and rejected:** Retrying every 10021, which would hide a real
-startup-budget overrun behind a slower failure. The retry count and the wait
-are the team's numbers, not derived from any Cloudflare limit; raise them, or
-take a ticket to Cloudflare, if the retry starts failing too.
+startup-budget overrun behind a slower failure.
+
+**Consequences:** A deploy that hits this error now takes up to 60 seconds
+longer before it either recovers or fails. The retry keys on Wrangler's message
+text, so a change to Cloudflare's wording silently turns the retry off; the
+failure then looks exactly as it did before this change. The count and the wait
+are the team's numbers, not derived from any Cloudflare limit; if the retry
+starts failing too, raise them or take a ticket to Cloudflare.
+
+Shipped in #1124.
 
 ### 2026-09-23 — Move stable metadata and obsolete cutover checks off request reads
 
