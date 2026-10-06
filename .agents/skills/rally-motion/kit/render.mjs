@@ -69,7 +69,7 @@ if (opt('video')) {
   const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(info.fps), '-c:v', 'png', '-i', '-',
     ...(wav ? ['-i', wav] : []),
     '-c:v', 'libx264', '-preset', 'slow', '-crf', '14', '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-tune', 'animation',
-    ...(wav ? ['-c:a', 'aac', '-b:a', '320k', '-shortest'] : []), '-movflags', '+faststart', out], { stdio: ['pipe', 'inherit', 'inherit'] });
+    ...(wav ? ['-af', 'apad', '-c:a', 'aac', '-b:a', '320k', '-shortest'] : []) /* pad a short score with silence: the picture sets the length */, '-movflags', '+faststart', out], { stdio: ['pipe', 'inherit', 'inherit'] });
   // a failed encode must fail the run, not hand over a missing or truncated film
   let ffDied = false;
   const ffExit = new Promise(r => ff.on('close', c => { ffDied = true; r(c); }));
@@ -88,7 +88,7 @@ if (opt('video')) {
   const code = await ffExit;
   if (code !== 0) { console.error(`ffmpeg failed (exit ${code}); no video written to ${out}`); await browser.close(); process.exit(1); }
   console.log('video:', out);
-  console.log('check sheet (one frame per second, read it):', sheet(checks, out.replace(/\.mp4$/, '-check.png'), 5));
+  console.log('check sheet (one frame per second, read it):', sheet(checks, out.replace(/\.[^./]+$/, '') + '-check.png', 5));
 }
 await browser.close();
 fs.rmSync(work, { recursive: true, force: true });
