@@ -7898,6 +7898,22 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-menu-person-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .title-menu-person-present { background: var(--av-sys-color-success-base); border-radius: 50%; flex: none; height: 7px; width: 7px; }
 .title-menu-person-role { color: var(--av-sys-color-text-muted); flex: none; font-size: 13.5px; }
+.title-menu-person-actions {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  height: 28px;
+  justify-content: center;
+  margin-left: -4px;
+  width: 28px;
+}
+.title-menu-person-actions:hover,
+.title-menu-person-actions[data-state="open"] { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); }
 .title-menu-add {
   background: var(--av-sys-color-surface-raised);
   border: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-strong);
