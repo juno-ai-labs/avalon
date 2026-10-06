@@ -7,13 +7,13 @@ import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:tes
 import { beforeEach, expect, it, vi } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { WorkspaceRelationshipSchema, type ScopeGrantTarget } from "@rally/contracts/scope-grants";
-import { ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
+import { SCOPE_INVITATION_INDEX_ALARM, ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
+import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
 import { decryptString } from "../src/lib/crypto";
 import { BrowserSessionService } from "../src/services/browser-session-service";
+import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
 import { openEmailLoginSecret } from "../src/services/email-login-service";
-import { claimLegacyInvitationLink, claimScopeInvitations } from "../src/services/scope-invitation-claims";
-import { defineLinkPayload, issueLinkPayload } from "@rally/db/link-payloads";
-import { z } from "zod";
+import { claimScopeInvitations } from "../src/services/scope-invitation-claims";
 import { promoteWorkspaceGuest } from "../src/services/workspace-relationship-service";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
@@ -87,8 +87,6 @@ beforeEach(async () => {
     env.DB.prepare("INSERT INTO sessions VALUES ('actor-session', ?, ?, 'global', 'actor-membership', NULL, '2099-01-01T00:00:00.000Z')").bind(actorId, workspaceId),
     ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare("INSERT INTO user_verified_emails VALUES ('guest@example.test',?)").bind(recipientId),
-    env.DB.prepare(`CREATE TABLE link_payloads (token_hash TEXT PRIMARY KEY, type TEXT NOT NULL, payload TEXT NOT NULL,
-      created_at TEXT NOT NULL, expires_at TEXT)`),
   ]);
   await seedParent(parentId, "Private parent", [main, child]);
 });
@@ -216,7 +214,7 @@ it("claims for an address Global verified that this deployment has not recorded"
   await env.DB.prepare("INSERT INTO users (id, name) VALUES (?, NULL)").bind(newcomerId).run();
   await claimScopeInvitations(env, newcomerId);
   expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: false });
-  await claimScopeInvitations(env, newcomerId, ["Newcomer@Example.test"]);
+  await claimScopeInvitations(env, newcomerId, "Newcomer@Example.test");
   expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true });
 });
 
@@ -237,26 +235,40 @@ it("claims on a real browser sign-in by code, with no acceptance step after it",
   expect(await selected.json()).toMatchObject({ user: { id: signedIn.user.id }, workspace: { id: workspaceId } });
 });
 
-it("claims a share made before claiming existed through the token its email carried", async () => {
-  // Such a share has no lookup row; the email's `inv_` token is the only
-  // record of its Channel, minted exactly as the earlier code minted it.
-  const share = await create([child], [NEWCOMER]);
+it("claims during regional discovery, which desktop sign-in and workspace switching use", async () => {
+  await create([child], [NEWCOMER]);
+  const at = new Date().toISOString();
+  await env.DB.batch([
+    ...["slug TEXT", "timezone TEXT", "created_at TEXT"].map((column) => env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN ${column}`)),
+    env.DB.prepare("UPDATE workspaces SET slug='shared', timezone='UTC', created_at=?").bind(at),
+    ...["platform_user_id TEXT", "google_subject TEXT", "avatar_url TEXT", "updated_at TEXT", "presentation_json TEXT"]
+      .map((column) => env.DB.prepare(`ALTER TABLE users ADD COLUMN ${column}`)),
+    // Known here only through the platform link: no verified-address row.
+    env.DB.prepare("INSERT INTO users (id, name, email, platform_user_id, google_subject) VALUES (?, 'Newcomer', ?, ?, 'google-newcomer')")
+      .bind(newcomerId, NEWCOMER, newcomerId),
+    env.DB.prepare(`CREATE TABLE workspace_invitations (id TEXT, workspace_id TEXT, email TEXT, role TEXT,
+      invited_by_user_id TEXT, expires_at TEXT, accepted_at TEXT, revoked_at TEXT, created_at TEXT)`),
+    env.DB.prepare("CREATE TABLE demo_operations (workspace_id TEXT, ready_at TEXT)"),
+  ]);
+  const discovery = await new RegionalOnboardingService(env).discover({ platformUserId: newcomerId,
+    googleSubject: "google-newcomer", email: "Newcomer@Example.test", name: "Newcomer", avatarUrl: null,
+    timezone: "UTC", createdAt: at });
+  expect(discovery.workspaces).toEqual([expect.objectContaining({ id: workspaceId, accessClass: "guest" })]);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true });
+});
+
+it("indexes a share that was pending before lookup rows existed, once, on the object's own schedule", async () => {
+  // Such a share has no lookup row. Migration 93 schedules one alarm per
+  // parent with a pending share; the alarm writes the rows.
+  await create([child], [NEWCOMER]);
   await env.DB.prepare("DELETE FROM scope_share_recipients").run();
-  const token = await issueLinkPayload(env.DB, defineLinkPayload("inv", z.strictObject({
-    workspaceId: z.string(), parentId: z.string(), invitationId: z.string() })),
-  { workspaceId, parentId, invitationId: share.id });
+  await runInDurableObject(room(), (_instance, state) => {
+    new ScheduledAlarmStore(state.storage.sql).schedule({ kind: SCOPE_INVITATION_INDEX_ALARM, key: parentId, dueAt: Date.now() });
+  });
+  await runDurableObjectAlarm(room());
+  expect(await routes(NEWCOMER)).toEqual([{ workspace_id: workspaceId, parent_id: parentId }]);
   await verifyNewcomer();
   await claimScopeInvitations(env, newcomerId);
-  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: false });
-
-  // The token is routing only: someone signed in with another address gets nothing.
-  expect(await claimLegacyInvitationLink(env, recipientId, token)).toEqual([]);
-  await env.DB.prepare("INSERT INTO sessions VALUES ('newcomer-session', ?, NULL, 'global', NULL, NULL, '2099-01-01T00:00:00.000Z')").bind(newcomerId).run();
-  const response = await createApp().request("/sharing/claim-link", { method: "POST", headers: {
-    authorization: `Bearer ${await bearer(newcomerId, "newcomer-session", null)}`, "content-type": "application/json" },
-  body: JSON.stringify({ link: token }) }, env);
-  expect(response.status, await response.clone().text()).toBe(200);
-  expect(await response.json()).toEqual({ targets: [child] });
   expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true });
 });
 
@@ -272,25 +284,31 @@ it("signs in without the share, rather than failing, when the claim lookup itsel
   expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true });
 });
 
-it("keeps the lookup row for a share recorded while a claim was deleting it", async () => {
-  // A claim settling the address's last share deletes its row; a new share to
-  // the same address can have written its row just before. Land that delete
-  // between this creation's first write and its commit.
+it("keeps the lookup row for a share recorded while a cleanup was deleting it", async () => {
+  // Revoking the address's last share deletes its row. A new share to the same
+  // address, recorded while that delete is in flight, must keep a row.
+  const first = await create([child], [NEWCOMER]);
   await runInDurableObject(room(), async (instance) => {
     const target = instance as unknown as { env: Env };
     const originalEnv = target.env;
     let raced = false;
     const database = new Proxy(originalEnv.DB, { get: (current, property) => property === "batch"
       ? async (statements: D1PreparedStatement[]) => {
-        const results = await current.batch(statements);
-        // The first batch is this creation's lookup-row write.
-        if (!raced) { raced = true; await current.prepare("DELETE FROM scope_share_recipients").run(); }
-        return results;
+        if (!raced && JSON.stringify(statements.map((statement) => (statement as unknown as { statement?: string }).statement ?? String(statement))).includes("DELETE")) {
+          raced = true;
+          // The new share lands, row and all, before the delete does.
+          target.env = originalEnv;
+          await instance.createScopeInvitations(invitation([child], [NEWCOMER]));
+          target.env = proxied;
+        }
+        return current.batch(statements);
       }
       : Reflect.get(current, property) });
-    target.env = new Proxy(originalEnv, { get: (current, property, receiver) => property === "DB" ? database : Reflect.get(current, property, receiver) });
+    const proxied = new Proxy(originalEnv, { get: (current, property, receiver) => property === "DB" ? database : Reflect.get(current, property, receiver) });
+    target.env = proxied;
     try {
-      expect(await instance.createScopeInvitations(invitation([child], [NEWCOMER]))).toMatchObject({ status: "created" });
+      expect(await instance.revokeScopeInvitation({ workspaceId, parentId, actorUserId: actorId,
+        invitationId: first.id, expectedRevision: 1 })).toMatchObject({ status: "revoked" });
       expect(raced).toBe(true);
     } finally { target.env = originalEnv; }
   });
@@ -389,9 +407,27 @@ it("commits all target grants with the claim, or leaves the share pending after 
   expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true });
 });
 
-it("keeps a share pending, not claimed, after the sharer's membership is replaced", async () => {
-  await create([child], [NEWCOMER]);
+it("retires, rather than grants, a share whose sharer's membership was replaced", async () => {
+  const share = await create([child], [NEWCOMER]);
   await changeRelationships(env, workspaceId, [actorId], env.DB.prepare("UPDATE workspace_members SET incarnation='replacement' WHERE user_id=?").bind(actorId));
+  await verifyNewcomer();
+  await claimScopeInvitations(env, newcomerId);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: false });
+  // Rejoining never restores the old share's authority, so it cannot become
+  // claimable: it is retired, and its lookup row stops costing every sign-in.
+  await withHostedParent(room(), parentId, (_parent, state) => {
+    expect(new ScopeInvitationStorage(state.storage, parentId).read(share.id)?.summary.status).toBe("revoked");
+  });
+  expect(await routes(NEWCOMER)).toEqual([]);
+});
+
+it("keeps the lookup row for a share that cannot be claimed yet", async () => {
+  await create([child], [NEWCOMER]);
+  // The sharer loses the share but keeps their membership: that can change back.
+  await withHostedParent(room(), parentId, (parent) => {
+    const grants = parent['scopeGrants'](child);
+    grants.mutateCurrent({ operationId: crypto.randomUUID(), actorUserId: actorId, userId: actorId, target: child, active: false }, "actor-membership");
+  });
   await verifyNewcomer();
   await claimScopeInvitations(env, newcomerId);
   expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: false });

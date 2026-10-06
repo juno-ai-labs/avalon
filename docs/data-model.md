@@ -125,19 +125,19 @@ workspace association; existing workspace deletion does not erase them. Both
 regions share schema, while this slice writes only Global. [Private access](private-access.md)
 owns their lookup, erasure, admission and delivery semantics.
 
-### Emailed link payloads
+### Scoped share lookup
 
-`link_payloads` holds what a link's URL deliberately does not say: one row per
-issued link, keyed by the SHA-256 digest of its token, carrying the token's type
-(its prefix), the JSON that type's schema validates, and the expiry of whatever
-the link addresses. Scoped invitations are its first kind, `inv`; the table is
-shared because a URL that should not describe its subject is a recurring shape.
-Rows are pointers and confer nothing: the authority the payload names still
-decides every question the link leads to. A row with an expiry is dropped by a
-later issue; one without is retained, because a digest-keyed row is reachable
-only by the token that was never stored, so only its minter can delete it.
-[`scope-invitations.md`](scope-invitations.md) owns the invitation kind, and the
-store is `packages/db/src/link-payloads.ts`.
+`scope_share_recipients` says which Channel to ask about a share addressed to an
+email: `(email COLLATE NOCASE, workspace_id, parent_id)`, written once the
+Organization object records the share and deleted by it once nothing for that
+address is pending there. Signing in reads it by the user's verified addresses.
+A row is a hint, never authority: the object decides. Shares pending before the
+table existed are indexed once by WorkspaceDO migration 93.
+[`scope-invitations.md`](scope-invitations.md) owns it.
+
+`link_payloads` (0114) is no longer read or written: its only kind was the
+invitation token that claiming retired. Drop it in a migration after this
+Worker has shipped; the previous Worker still reads it until then.
 
 ### Search projection state
 

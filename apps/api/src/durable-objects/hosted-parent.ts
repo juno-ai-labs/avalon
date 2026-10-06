@@ -2268,6 +2268,11 @@ export class HostedParent {
       (relationship) => this.host.noteRelationship(relationship));
   }
 
+  async indexPendingInvitations(): Promise<void> {
+    const metadata = this.metadataRow();
+    if (metadata) await this.scopeInvitations().indexPending(metadata.workspace_id);
+  }
+
   async deliverInvitation(invitationId: string): Promise<void> {
     return this.scopeInvitations().deliver(invitationId);
   }

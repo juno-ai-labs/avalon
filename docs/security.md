@@ -344,11 +344,19 @@ are hashed for sessions or AES-GCM encrypted for providers.
 
 Every resolvable connector callback and every newly emitted workspace-scoped
 external link carries `(region, workspace_id)` as routing context. Those values
-are public identifiers, not bearer authority. The scoped invitation link is the
-one exception, and deliberately: it names neither, because its recipient is not
-a member and what the pair describes — that a workspace exists and which
-deployment holds it — is disclosure to whoever the mail is forwarded to rather
-than routing anyone needs. The deployment holding its row is the routing. See
+are public identifiers, not bearer authority. Scoped invitation links follow the
+same rule: since shares are claimed by signing in with the shared-with address,
+the email links to the conversation's own addressed path, so a forwarded copy
+tells its reader the region, Organization and Channel ids while opening nothing
+for them. Hiding those ids took an opaque token and a store behind it, and the
+token's only other job, the acceptance secret, went with the acceptance step.
+
+Claiming has two consequences worth knowing. A share to an address that already
+has an account is claimed as it is made, so it adds that person to the
+Organization as a guest without them confirming anything, and the sharer can
+tell from the response and the Guest list whether the address has an account.
+Both follow from the product decision, recorded in the guest-sharing PRD, that
+proving the mailbox at sign-in is the only consent a share needs. See
 [`scope-invitations.md`](scope-invitations.md). The renderer must enter the target
 through Electron main, verify the returned session names the exact pair, and
 only then use the destination. Main answers a link that names the active

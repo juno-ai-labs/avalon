@@ -9,8 +9,7 @@ import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspacesSche
 import { browserRequest, BrowserApiError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 
-import { parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget, workstreamAddressedUrl } from "@rally/contracts/workstream-links";
-import { ClaimedInvitationLinkSchema } from "@rally/contracts/scope-grants";
+import { parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
 
 import { WorkspaceIdSchema } from "@rally/contracts";
 
@@ -54,12 +53,10 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [code, setCode] = useState("");
   const [challenge, setChallenge] = useState<{ id: string; redemptionId: string } | null>(null);
   const [proof, setProof] = useState<Proof | null>(null);
-  // Sign-in belongs to Global, which holds the identity. Signing in is also
-  // how a share addressed to the person's mailbox is taken up: the server
-  // claims it then, so a shared conversation's link needs no other step.
-  const signInRegion = IDENTITY_REGION;
   const [session, setSession] = useState<BrowserSession | null>(null);
-  const [workspaces, setWorkspaces] = useState<ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"]>([]);
+  // Null until the list has loaded, so a fresh sign-in never says nothing was
+  // shared before the server has answered.
+  const [workspaces, setWorkspaces] = useState<ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"] | null>(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +67,6 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const sessionUser = useRef<string | null>(null);
   const renewalAt = useRef(Number.POSITIVE_INFINITY);
   const sessionChannel = useRef<BroadcastChannel | null>(null);
-  const legacyLink = useRef<string | null>(null);
   const refreshSession = useRef<((renew: boolean) => void) | null>(null);
 
   useEffect(() => {
@@ -91,15 +87,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const selectedRegion = ConfiguredRegionSchema.safeParse(target?.region ?? fragment.get("region") ?? initialRegion);
     const selected = selectedRegion.success ? selectedRegion.data : initialRegion;
     setRegion(selected);
-    // Invitation emails once linked here with a token. Shares no longer need
-    // one: whoever signs in with the invited address holds them. But a share
-    // made before that has no other record of its Channel, so keep the token
-    // in this page's memory and present it once signed in. Drop it from history.
-    if (location.pathname === "/invite") {
-      const link = location.hash.slice(1);
-      if (/^inv_[A-Za-z0-9_-]+$/u.test(link)) legacyLink.current = link;
-      history.replaceState(null, "", "/");
-    }
+    // Invitation emails once linked here with a token. A share no longer needs
+    // one: signing in with its address claims it, so this is a sign-in page.
+    if (location.pathname === "/invite") history.replaceState(null, "", "/");
     const hasMagicProof = location.pathname === "/login/email" && fragment.has("token");
     if (hasMagicProof) {
       const input = EmailLoginRedeemSchema.safeParse({ challengeId: fragment.get("challenge"),
@@ -140,7 +130,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         if (!active || read !== sessionRead.current) return;
         if (cause instanceof BrowserApiError && (cause.status === 401 || cause.status === 403)) {
           void clearAllDrafts(); sessionUser.current = null;
-          setSession(null); setWorkspaceSession(null); setWorkspaces([]);
+          setSession(null); setWorkspaceSession(null); setWorkspaces(null);
           setError(cause.status === 403 ? cause.message : null);
         } else setError("Unable to restore your session. Try again.");
       }).finally(() => {
@@ -201,21 +191,6 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   }, [session?.expiresAt, session?.user.id, region]);
 
   useEffect(() => {
-    const link = legacyLink.current;
-    if (!session || !link) return;
-    legacyLink.current = null;
-    // Routing only: the server claims with the session's own verified addresses.
-    void browserRequest(IDENTITY_REGION, "/api/_/sharing/claim-link", ClaimedInvitationLinkSchema, { link })
-      .then(({ targets: [target] }) => {
-        if (target) location.assign(new URL(workstreamAddressedUrl(location.origin, { region: IDENTITY_REGION,
-          workspaceId: target.workspaceId, workstreamId: target.parentId,
-          ...(target.kind === "conversation" && target.substreamId !== "0" ? { substreamId: target.substreamId } : {}) })).pathname);
-      })
-      // The workspace list below still shows anything the sign-in itself claimed.
-      .catch(() => undefined);
-  }, [session]);
-
-  useEffect(() => {
     if (!session || !destination) { setWorkspaceSession(null); return; }
     if (session.workspace?.id === destination.workspaceId && session.workspace.region === destination.region) {
       setWorkspaceSession(session);
@@ -238,7 +213,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   }, [destination, session]);
 
   async function redeem(input: { challengeId: string; redemptionId: string; method: "otp" | "magic"; credential: string }) {
-    const current = await browserRequest(proof?.region ?? signInRegion, "/email/redeem", BrowserSessionSchema, input);
+    const current = await browserRequest(proof?.region ?? IDENTITY_REGION, "/email/redeem", BrowserSessionSchema, input);
     const read = ++sessionRead.current;
     await clearAllDrafts();
     if (read !== sessionRead.current) return;
@@ -247,14 +222,14 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     // A destination in another deployment is opened from there, with its own
     // session and user id. Leave that to the restore path, which activates it
     // through Global, rather than showing this deployment's session first.
-    if (destination && destination.region !== (proof?.region ?? signInRegion)) {
+    if (destination && destination.region !== (proof?.region ?? IDENTITY_REGION)) {
       refreshSession.current?.(false);
       return;
     }
     sessionUser.current = current.user.id;
     setSession(current);
     if (!destination) {
-      const result = await browserRequest(proof?.region ?? signInRegion, "/workspaces", BrowserWorkspacesSchema);
+      const result = await browserRequest(proof?.region ?? IDENTITY_REGION, "/workspaces", BrowserWorkspacesSchema);
       if (read === sessionRead.current) setWorkspaces(result.workspaces);
     }
   }
@@ -270,7 +245,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         const next = issuance.current?.email === normalizedEmail ? issuance.current
           : { email: normalizedEmail, id: crypto.randomUUID(), redemptionId: crypto.randomUUID() };
         issuance.current = next;
-        await browserRequest(signInRegion, "/email/start", EmailLoginStartedSchema, { challengeId: next.id, email: normalizedEmail });
+        await browserRequest(IDENTITY_REGION, "/email/start", EmailLoginStartedSchema, { challengeId: next.id, email: normalizedEmail });
         setChallenge(next);
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to continue. Please try again."); }
@@ -302,7 +277,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       await clearAllDrafts();
       if (read !== sessionRead.current) return;
       sessionUser.current = null;
-      setSession(null); setWorkspaces([]); setChallenge(null); setCode(""); issuance.current = null;
+      setSession(null); setWorkspaces(null); setChallenge(null); setCode(""); issuance.current = null;
       sessionChannel.current?.postMessage("session-changed");
       if (unreached) setError("Signed out here, but a Rally deployment did not respond. Sign out again to finish.");
     } catch { setError("Unable to sign out. Please try again."); }
@@ -332,7 +307,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       {session && !proof ? <>
         <h1>Your shared work</h1>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
-        {workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) =>
+        {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the conversation…" : "Loading your shared work…"}</p>
+          : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) =>
           <a className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ChevronRight aria-hidden="true" size={16} /></a>)}</nav>
           : <p className="entry-lead">Nothing has been shared with {session.user.email} yet.</p>}
         <button className="text-button onboarding-signout" disabled={busy} onClick={() => { void signOut(); }} type="button">Sign out</button>
