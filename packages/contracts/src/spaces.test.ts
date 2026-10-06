@@ -97,13 +97,15 @@ describe("space contracts", () => {
   });
 
   it("given custom presentation values, when Space creation is parsed, then the closed contract refuses them", () => {
-    const base = { name: "Hiring", iconKey: "briefcase", colorKey: "blue", scope: "personal" };
+    const base = { name: "Hiring", iconKey: "briefcase", colorKey: "blue", scope: "workspace" };
 
     expect(CreateSpaceRequestSchema.safeParse(base).success).toBe(true);
     expect(CreateSpaceRequestSchema.safeParse({ ...base, iconKey: "not-an-icon" }).success).toBe(false);
     expect(CreateSpaceRequestSchema.safeParse({ ...base, colorKey: "#123456" }).success).toBe(false);
     expect(CreateSpaceRequestSchema.safeParse({ ...base, name: "   " }).success).toBe(false);
     expect(CreateSpaceRequestSchema.safeParse({ ...base, scope: "organization" }).success).toBe(false);
+    // Every Space is Organization-wide: a private one cannot be asked for.
+    expect(CreateSpaceRequestSchema.safeParse({ ...base, scope: "personal" }).success).toBe(false);
     expect(CreateSpaceRequestSchema.safeParse({ ...base, extra: true }).success).toBe(false);
   });
 

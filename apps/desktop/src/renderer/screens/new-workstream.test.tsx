@@ -112,7 +112,7 @@ function workstream(
   };
 }
 
-function personalSpaceDirectory(spaceId: ReturnType<typeof asSpaceId>): SpaceDirectory {
+function spaceDirectory(spaceId: ReturnType<typeof asSpaceId>): SpaceDirectory {
   return {
     waterline: 1,
     items: [{
@@ -120,7 +120,7 @@ function personalSpaceDirectory(spaceId: ReturnType<typeof asSpaceId>): SpaceDir
       name: 'Hiring',
       iconKey: 'briefcase',
       colorKey: 'blue',
-      scope: 'personal',
+      scope: 'workspace',
       status: 'active',
       systemRole: null,
       revision: 1,
@@ -136,7 +136,7 @@ function personalSpaceDirectory(spaceId: ReturnType<typeof asSpaceId>): SpaceDir
 }
 
 function generalSpaceDirectory(): SpaceDirectory {
-  const [space] = personalSpaceDirectory(GENERAL_SPACE_ID).items;
+  const [space] = spaceDirectory(GENERAL_SPACE_ID).items;
   return {
     waterline: 1,
     items: [{ ...space!, name: 'General', scope: 'workspace', systemRole: 'general', participants: [] }],
@@ -253,33 +253,26 @@ describe('New channel home', () => {
     expect(workspaceSocket.listWorkstreams).not.toHaveBeenCalled();
   });
 
-  it('given a space launcher, when the first message is submitted, then it omits home sections and takes its participants from the space', async () => {
+  it('given a space launcher, when the first message is submitted, then it omits home sections and places the channel in that space', async () => {
     const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
-    renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId), undefined, 'Hiring plan');
+    renderSpaceScreen(spaceId, spaceDirectory(spaceId), undefined, 'Hiring plan');
 
     expect(await screen.findByRole('textbox', { name: 'Opening channel message' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
-    // The roster is the Space's: the bar names everyone in it and offers no way
-    // to add or remove anybody.
+    // A Space's participants are who edit it, not who is in its Channels: the
+    // bar starts with only the creator and lets them add people.
     const bar = screen.getByRole('group', { name: 'Participants:' });
-    await waitFor(() => expect(within(bar).getByText('Samantha Lee')).toBeVisible());
     expect(within(bar).getByText('Morgan Ellis')).toBeVisible();
-    expect(within(bar).getByText('Managed by the space')).toBeVisible();
-    expect(screen.queryByRole('combobox', { name: 'Search people' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Remove Samantha Lee' })).not.toBeInTheDocument();
-    // The chip and dialog that used to sit above the composer are gone.
-    expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Manage participants/u })).not.toBeInTheDocument();
+    expect(within(bar).queryByText('Samantha Lee')).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Search people' })).toBeVisible();
     const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
-    // Both halves of what a Space launcher owns: the roster it prefills from
-    // the personal Space, and the Space itself, which is what places the
-    // Channel rather than leaving it to General.
+    // The Space is what places the Channel rather than leaving it to General.
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
-      participantIds: [teammate.id],
+      participantIds: [],
       spaceIds: [spaceId],
       title: 'Hiring plan',
     })));
@@ -288,7 +281,7 @@ describe('New channel home', () => {
   it('keeps the chosen Channel name visible while creation is pending', async () => {
     api.createWorkstream.mockReturnValue(new Promise(() => undefined));
     const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
-    renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId), undefined, 'Hiring plan');
+    renderSpaceScreen(spaceId, spaceDirectory(spaceId), undefined, 'Hiring plan');
     const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -301,7 +294,7 @@ describe('New channel home', () => {
     let fail: (cause: Error) => void = () => undefined;
     api.createWorkstream.mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));
     const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
-    const queryClient = renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId), undefined, 'Hiring plan');
+    const queryClient = renderSpaceScreen(spaceId, spaceDirectory(spaceId), undefined, 'Hiring plan');
     const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
     fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -516,7 +509,7 @@ describe('New channel home', () => {
     const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
     const queryClient = scope === 'workspace'
       ? renderScreen()
-      : renderSpaceScreen(spaceId, personalSpaceDirectory(spaceId));
+      : renderSpaceScreen(spaceId, spaceDirectory(spaceId));
 
     expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus();
     expect(screen.queryByRole('listbox', { name: 'People' })).not.toBeInTheDocument();
@@ -529,7 +522,7 @@ describe('New channel home', () => {
     const secondId = asSpaceId('00000000-0000-7000-8000-0000000000f3');
     renderSpaceScreen(firstId, {
       waterline: 1,
-      items: [...personalSpaceDirectory(firstId).items, ...personalSpaceDirectory(secondId).items],
+      items: [...spaceDirectory(firstId).items, ...spaceDirectory(secondId).items],
     }, secondId);
     const firstComposer = screen.getByRole('textbox', { name: 'Opening channel message' });
     expect(firstComposer).toHaveFocus();

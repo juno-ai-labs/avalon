@@ -12,6 +12,7 @@ import {
   SpaceIdSchema,
   SpaceColorKeySchema,
   SpaceDefaultKindSchema,
+  SpaceRequestScopeSchema,
   SpaceScopeSchema,
   SpaceSummarySchema,
   UserIdSchema,
@@ -162,13 +163,11 @@ export const WorkspaceSpacePresentationRequestSchema = SpaceActorSchema.extend({
 }).strict();
 export type WorkspaceSpacePresentationRequest = z.infer<typeof WorkspaceSpacePresentationRequestSchema>;
 
-/** The scope and participants a Space's own authority has just accepted. */
+/** Who edits a Space; its scope is always Organization-wide. */
 export const WorkspaceSpaceAudienceNoteRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
-  /** The operation this change is staged under, so its receipts can settle it. */
-  operationId: IdSchema,
   audience: z.strictObject({
-    scope: SpaceScopeSchema,
+    scope: SpaceRequestScopeSchema,
     participantUserIds: z.array(UserIdSchema).min(1),
   }),
 }).strict();
