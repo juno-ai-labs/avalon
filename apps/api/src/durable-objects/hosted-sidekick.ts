@@ -251,34 +251,13 @@ interface RunRow extends Record<string, SqlStorageValue> {
   updated_at: number;
 }
 
-/**
- * One run read together with its Sidekick, and the revision when asked: the
- * row's own columns, then the run's prefixed `run_`, so the two
- * `run_as_user_id`s stay apart. Every run column is null when no run matches.
- */
-interface RunView extends HostedSidekickRow {
-  run_id: string | null;
-  run_state: RunState | null;
-  run_trigger_json: string | null;
-  run_opening_json: string | null;
-  run_definition_revision: number | null;
-  run_harness_run_id: string | null;
-  run_seed_json: string | null;
-  run_run_as_user_id: string | null;
-  run_created_at: number | null;
-  run_completed_at: number | null;
-  /** The revision `runView` was asked to join: the request's, else the run's own. */
-  revision_definition_revision: number | null;
-  revision_definition_json: string | null;
+/** One run with its Sidekick and a definition revision, read together by `runView`. */
+interface RunView {
+  sidekick: HostedSidekickRow;
+  run: RunRow | null;
+  /** The revision asked for, else the run's own; null when neither exists. */
+  revision: { definition_revision: number; definition_json: string } | null;
 }
-
-const RUN_VIEW_COLUMNS = `
-  directory.*,
-  run.run_id, run.state AS run_state, run.trigger_json AS run_trigger_json,
-  run.opening_json AS run_opening_json, run.definition_revision AS run_definition_revision,
-  run.harness_run_id AS run_harness_run_id, run.seed_json AS run_seed_json,
-  run.run_as_user_id AS run_run_as_user_id, run.created_at AS run_created_at,
-  run.completed_at AS run_completed_at`;
 
 interface ScheduleDefinition {
   acceptedAt: number;
@@ -1034,24 +1013,20 @@ export class HostedSidekick {
     const request = parseRpcInput(AutomationRunDefinitionRequestSchema, input, "read_run_definition");
     // A continued run names the revision it continued under; a scheduled start
     // names the one it was admitted under, which is the run row's own.
-    const view = this.assertIdentity(
-      this.runView(request.runId, { definitionRevision: request.definitionRevision ?? null }),
-      request.workspaceId, request.automationId,
-    );
-    return this.runDefinition(view);
+    return this.runDefinition(this.assertRunView(
+      this.runView(request.runId, request.definitionRevision ?? null), request.workspaceId, request.automationId,
+    ));
   }
 
-  private runDefinition(view: RunView): AutomationRunDefinitionV1 {
-    if (view.run_id === null) throw new ApiError(404, "sidekick_run_not_found", "This run does not exist");
-    if (view.revision_definition_json === null || view.revision_definition_revision === null) {
-      throw new ApiError(404, "sidekick_definition_not_found", "The run's definition revision is missing");
-    }
-    const definition = AutomationDraftSchema.parse(JSON.parse(view.revision_definition_json));
+  private runDefinition({ sidekick, run, revision }: RunView): AutomationRunDefinitionV1 {
+    if (!run) throw new ApiError(404, "sidekick_run_not_found", "This run does not exist");
+    if (!revision) throw new ApiError(404, "sidekick_definition_not_found", "The run's definition revision is missing");
+    const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
     return AutomationRunDefinitionV1Schema.parse({
       schemaVersion: 1,
-      automationId: view.automation_id,
-      runId: view.run_id,
-      definitionRevision: view.revision_definition_revision,
+      automationId: sidekick.automation_id,
+      runId: run.run_id,
+      definitionRevision: revision.definition_revision,
       definition: {
         name: definition.name,
         description: definition.description,
@@ -1063,17 +1038,17 @@ export class HostedSidekick {
         recommendedPlugins: definition.recommendedPlugins,
         memoryTables: definition.memoryTables,
       },
-      defaultPluginIds: JSON.parse(view.default_plugin_ids_json),
-      activitySourcePluginIds: JSON.parse(view.activity_source_plugin_ids_json),
-      connectorBindings: JSON.parse(view.connector_bindings_json),
-      scope: view.scope,
-      owningWorkstreamId: view.owning_workstream_id,
-      owningSubstreamId: view.owning_substream_id,
-      runAsUserId: view.run_as_user_id,
-      modelOverride: view.model_override,
-      trigger: JSON.parse(view.run_trigger_json!),
-      opening: view.run_opening_json ? JSON.parse(view.run_opening_json) : null,
-      state: view.run_state,
+      defaultPluginIds: JSON.parse(sidekick.default_plugin_ids_json),
+      activitySourcePluginIds: JSON.parse(sidekick.activity_source_plugin_ids_json),
+      connectorBindings: JSON.parse(sidekick.connector_bindings_json),
+      scope: sidekick.scope,
+      owningWorkstreamId: sidekick.owning_workstream_id,
+      owningSubstreamId: sidekick.owning_substream_id,
+      runAsUserId: sidekick.run_as_user_id,
+      modelOverride: sidekick.model_override,
+      trigger: JSON.parse(run.trigger_json),
+      opening: run.opening_json ? JSON.parse(run.opening_json) : null,
+      state: run.state,
     });
   }
 
@@ -1086,10 +1061,10 @@ export class HostedSidekick {
     state: RunState; lifecycle: Lifecycle; completedAt: number | null; stopGeneration: number;
   } | null {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_state");
-    const view = this.assertIdentity(this.runView(request.runId), request.workspaceId, request.automationId);
-    return view.run_state === null
-      ? null
-      : { state: view.run_state, lifecycle: view.lifecycle, completedAt: view.run_completed_at, stopGeneration: view.stop_generation };
+    const { sidekick, run } = this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId);
+    return run
+      ? { state: run.state, lifecycle: sidekick.lifecycle, completedAt: run.completed_at, stopGeneration: sidekick.stop_generation }
+      : null;
   }
 
   /**
@@ -1101,28 +1076,29 @@ export class HostedSidekick {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "continue_run");
     const view = this.runView(request.runId);
     if (!view) return { outcome: "refused", code: "run_not_found" };
-    this.assertIdentity(view, request.workspaceId, request.automationId);
-    if (view.lifecycle === "deleted") return { outcome: "refused", code: "sidekick_deleted" };
-    if (view.lifecycle === "paused") return { outcome: "refused", code: "sidekick_paused" };
-    if (view.run_id === null || view.lifecycle !== "active" || view.accepted_definition_revision === null) {
+    const { sidekick, run } = view;
+    this.assertIdentity(sidekick, request.workspaceId, request.automationId);
+    if (sidekick.lifecycle === "deleted") return { outcome: "refused", code: "sidekick_deleted" };
+    if (sidekick.lifecycle === "paused") return { outcome: "refused", code: "sidekick_paused" };
+    if (!run || sidekick.lifecycle !== "active" || sidekick.accepted_definition_revision === null) {
       return { outcome: "refused", code: "run_not_found" };
     }
     // The transcript the continuation would read is the run-as user's it was
     // provisioned for; a claim since then moves who the Sidekick runs as.
-    if (view.run_run_as_user_id !== null && view.run_run_as_user_id !== view.run_as_user_id) {
+    if (run.run_as_user_id !== null && run.run_as_user_id !== sidekick.run_as_user_id) {
       return { outcome: "refused", code: "run_principal_changed" };
     }
     return SidekickRunContinuationSchema.parse({
       outcome: "continue",
       automationRun: {
         schemaVersion: 1,
-        automationId: asAutomationId(view.automation_id),
-        runId: view.run_id,
-        definitionRevision: view.accepted_definition_revision,
-        trigger: JSON.parse(view.run_trigger_json!),
+        automationId: asAutomationId(sidekick.automation_id),
+        runId: run.run_id,
+        definitionRevision: sidekick.accepted_definition_revision,
+        trigger: JSON.parse(run.trigger_json),
       },
-      executionPrincipal: { type: "user", userId: asUserId(view.run_as_user_id) },
-      stopGeneration: view.stop_generation,
+      executionPrincipal: { type: "user", userId: asUserId(sidekick.run_as_user_id) },
+      stopGeneration: sidekick.stop_generation,
     });
   }
 
@@ -1167,7 +1143,7 @@ export class HostedSidekick {
                   WHERE replacement.workspace_id = ?1 AND replacement.status <> 'disabled'
                     AND replacement.model_plugin_id = binding.key
                     AND (replacement.scope = 'workspace' OR replacement.owner_user_id = ?2)
-                  LIMIT 1) AS replacement_id
+                  ORDER BY replacement.id LIMIT 1) AS replacement_id
            FROM json_each(?3) binding`,
         row.workspace_id, claimant, row.connector_bindings_json,
       ).toArray();
@@ -1449,11 +1425,12 @@ export class HostedSidekick {
               state = CASE WHEN state <> ?3 THEN ?3 ELSE state END,
               completed_at = CASE WHEN state <> ?3 AND ?4 = 0 THEN ?2 ELSE completed_at END
         WHERE sidekick_id = ?5 AND run_id = ?6
-          AND (state NOT IN ('completed', 'failed', 'stopped')
+          AND (state NOT IN (SELECT value FROM json_each(?8))
             OR (?4 = 1 AND ?7 = 1 AND (
               SELECT lifecycle FROM automation_directory WHERE automation_id = ?5
             ) = 'active'))`,
       effect.preview || null, now, next, live ? 1 : 0, this.sidekickId, substreamId, effect.state !== "idle" ? 1 : 0,
+      JSON.stringify([...TERMINAL_RUN_STATES]),
     );
   }
 
@@ -1570,8 +1547,9 @@ export class HostedSidekick {
    * the Organization behind one cold conversation.
    */
   private async startRun(runId: string, attempt: number): Promise<ScheduledAlarmOutcome> {
-    const row = this.runView(runId);
-    if (!row || row.run_state !== "pending") return { progressed: true };
+    const view = this.runView(runId);
+    if (!view?.run || view.run.state !== "pending") return { progressed: true };
+    const { sidekick: row, run } = view;
     const now = Date.now();
     if (row.lifecycle !== "active") {
       this.sql.exec(
@@ -1598,7 +1576,7 @@ export class HostedSidekick {
     // the drain's attempt count, so the wait grows with the run's age instead:
     // a run whose report never comes is asked about less and less often.
     void attempt;
-    const step = 1 + Math.floor(Math.log2(1 + Math.max(0, now - row.run_created_at!) / SCHEDULED_ALARM_RETRY_BASE_MS));
+    const step = 1 + Math.floor(Math.log2(1 + Math.max(0, now - run.created_at) / SCHEDULED_ALARM_RETRY_BASE_MS));
     this.host.alarms.schedule({
       kind: AUTOMATION_RUN_ALARM_KIND,
       key: sidekickAlarmKey(this.sidekickId, runId),
@@ -1610,21 +1588,20 @@ export class HostedSidekick {
   /** What the provisioning consumer needs for one pending run; `null` once it is not pending. */
   runProvisioning(input: AutomationRunRequest): SidekickRunProvisioning | null {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "run_provisioning");
-    const view = this.assertIdentity(
-      this.runView(request.runId, { definitionRevision: null }), request.workspaceId, request.automationId,
-    );
-    if (view.run_id === null || view.run_state !== "pending" || view.lifecycle !== "active") return null;
+    const view = this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId);
+    const { sidekick, run } = view;
+    if (!run || run.state !== "pending" || sidekick.lifecycle !== "active") return null;
     return {
-      region: view.region,
-      workspaceId: view.workspace_id,
-      automationId: view.automation_id,
-      runId: view.run_id,
-      harnessRunId: view.run_harness_run_id!,
-      runAsUserId: view.run_run_as_user_id ?? view.run_as_user_id,
-      modelOverride: view.model_override,
-      definitionRevision: view.run_definition_revision!,
+      region: sidekick.region,
+      workspaceId: sidekick.workspace_id,
+      automationId: sidekick.automation_id,
+      runId: run.run_id,
+      harnessRunId: run.harness_run_id,
+      runAsUserId: run.run_as_user_id ?? sidekick.run_as_user_id,
+      modelOverride: sidekick.model_override,
+      definitionRevision: run.definition_revision,
       definition: this.runDefinition(view),
-      seedJson: view.run_seed_json,
+      seedJson: run.seed_json,
     };
   }
 
@@ -1761,7 +1738,6 @@ export class HostedSidekick {
     }
   }
 
-  /** This Sidekick's registrations, replaced whole, and the event sequence they take effect after. */
   /**
    * Replace this Sidekick's registrations and return the event sequence they
    * take effect after; the caller's `touchDirectory` records it on the row.
@@ -1793,8 +1769,9 @@ export class HostedSidekick {
       ...selections.defaultPluginIds,
       ...Object.values(selections.activitySourcePluginIds),
     ])];
-    // This Organization's own rows: read directly, not through the runtime
-    // database adapter, which would re-enter this object as an RPC.
+    // This Organization's own rows, read with `sql.exec` rather than the
+    // runtime database adapter, which parses each statement and does a
+    // request's bookkeeping that an in-object read does not need.
     const connections = selectedPluginIds.length === 0 ? [] : this.sql.exec<{
       id: string; connector_type: string; scope: string; owner_user_id: string | null;
       model_plugin_id: string; status: string; config_json: string | null;
@@ -2030,34 +2007,45 @@ export class HostedSidekick {
     ));
   }
 
+  private assertRunView(view: RunView | null, workspaceId: string, automationId: string): RunView {
+    if (!view) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
+    this.assertIdentity(view.sidekick, workspaceId, automationId);
+    return view;
+  }
+
   /**
-   * The Sidekick and one of its runs in one read; with `revision`, also the
-   * definition revision given, or the run's own when it is `null`. The
-   * Sidekick is `null` when it does not exist; the run columns are null when
-   * the run does not.
+   * The Sidekick, one of its runs and a revision of its definition, in one
+   * read: `definitionRevision` when given, else the run's own. `null` when
+   * the Sidekick does not exist; `run` is null when the run does not.
    */
-  private runView(runId: string, revision?: { definitionRevision: number | null }): RunView | null {
-    if (revision === undefined) {
-      return first(this.sql.exec<RunView>(
-        `SELECT ${RUN_VIEW_COLUMNS}, NULL AS revision_definition_revision, NULL AS revision_definition_json
-           FROM automation_directory directory
-           LEFT JOIN sidekick_runs run ON run.sidekick_id = directory.automation_id AND run.run_id = ?2
-          WHERE directory.automation_id = ?1 AND directory.region IS NOT NULL`,
-        this.sidekickId, runId,
-      ));
-    }
-    return first(this.sql.exec<RunView>(
-      `SELECT ${RUN_VIEW_COLUMNS},
-              revision.definition_revision AS revision_definition_revision,
-              revision.definition_json AS revision_definition_json
+  private runView(runId: string, definitionRevision: number | null = null): RunView | null {
+    const row = first(this.sql.exec<HostedSidekickRow & { run: string | null; revision: string | null }>(
+      `SELECT directory.*,
+              CASE WHEN run.run_id IS NULL THEN NULL ELSE json_object(
+                'run_id', run.run_id, 'occurrence_key', run.occurrence_key, 'trigger_json', run.trigger_json,
+                'definition_revision', run.definition_revision, 'harness_run_id', run.harness_run_id,
+                'state', run.state, 'summary', run.summary, 'opening_json', run.opening_json,
+                'seed_json', run.seed_json, 'run_as_user_id', run.run_as_user_id, 'created_at', run.created_at,
+                'started_at', run.started_at, 'completed_at', run.completed_at, 'updated_at', run.updated_at
+              ) END AS run,
+              CASE WHEN revision.definition_revision IS NULL THEN NULL ELSE json_object(
+                'definition_revision', revision.definition_revision, 'definition_json', revision.definition_json
+              ) END AS revision
          FROM automation_directory directory
          LEFT JOIN sidekick_runs run ON run.sidekick_id = directory.automation_id AND run.run_id = ?2
          LEFT JOIN sidekick_revisions revision
            ON revision.sidekick_id = directory.automation_id
           AND revision.definition_revision = COALESCE(?3, run.definition_revision)
         WHERE directory.automation_id = ?1 AND directory.region IS NOT NULL`,
-      this.sidekickId, runId, revision.definitionRevision,
+      this.sidekickId, runId, definitionRevision,
     ));
+    if (!row) return null;
+    const { run, revision, ...sidekick } = row;
+    return {
+      sidekick: sidekick as HostedSidekickRow,
+      run: run === null ? null : JSON.parse(run) as RunRow,
+      revision: revision === null ? null : JSON.parse(revision) as RunView["revision"],
+    };
   }
 
   private revision(definitionRevision: number): RevisionRow | null {

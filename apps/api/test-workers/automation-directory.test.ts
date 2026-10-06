@@ -215,19 +215,22 @@ describe("automation directory", () => {
   });
 
   it("reads the Sidekicks asked for and the ones a Channel recommends in one call, asked-for first and each once", async () => {
-    const asked = nextAutomationId();
-    const recommended = nextAutomationId();
-    for (const [automationId, title] of [[asked, "Asked for"], [recommended, "Recommended"]] as const) {
+    // Created in this order, so their ids sort A < B < C < D: an order by id
+    // is not the order asked for.
+    const [a, b, c, d] = [nextAutomationId(), nextAutomationId(), nextAutomationId(), nextAutomationId()];
+    for (const [automationId, title] of [[a, "A"], [b, "B"], [c, "C"], [d, "D"]] as const) {
       await writeSidekickDirectoryRow(env, {
         automationId, workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
         lifecycle: "active", scope: "workspace", owningWorkstreamId: null, title, description: "",
       });
     }
-    // The Channel recommends both; the one also asked for keeps its asked-for place.
+    // The Channel recommends B first, then A, which is also asked for and
+    // keeps its asked-for place. B's place among the recommendations ties
+    // with C's among the asked-for, so only the tiers order them.
     await runInDurableObject(workspaceStub(), (_instance, state) => {
       // Hosted rows, as a Sidekick's own writes leave them.
       state.storage.sql.exec(`UPDATE automation_directory SET region = 'global'`);
-      for (const [sidekickId, attachedAt] of [[recommended, 1], [asked, 2]] as const) {
+      for (const [sidekickId, attachedAt] of [[b, 1], [a, 2]] as const) {
         state.storage.sql.exec(
           `INSERT INTO parent_sidekicks(parent_id, sidekick_id, attached_at) VALUES (?, ?, ?)`, ROOM_ID, sidekickId, attachedAt,
         );
@@ -235,11 +238,11 @@ describe("automation directory", () => {
     });
 
     const summaries = await workspaceStub().sidekickReadSkillSummaries({
-      workspaceId: WORKSPACE_ID, automationIds: [asked], channelId: ROOM_ID,
+      workspaceId: WORKSPACE_ID, automationIds: [d, c, a], channelId: ROOM_ID,
       principalUserId: AUTHOR_ID, conversationParentId: ROOM_ID, audienceScope: "workspace", audienceUserIds: [AUTHOR_ID],
     });
 
-    expect(summaries.map((summary) => summary.name)).toEqual(["Asked for", "Recommended"]);
+    expect(summaries.map((summary) => summary.name)).toEqual(["D", "C", "A", "B"]);
   });
 
   it("lists an authenticated member's library without the object re-reading their membership", async () => {

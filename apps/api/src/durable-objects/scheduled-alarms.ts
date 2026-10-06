@@ -260,7 +260,7 @@ export class ScheduledAlarmStore {
     if (prefix.length === 0) throw new Error("scheduled_alarm_prefix_empty");
     return this.sql.exec(
       `DELETE FROM _internal_durable_alarms
-        WHERE kind IN (SELECT value FROM json_each(?))
+        WHERE kind IN (SELECT value FROM json_each(?1))
           AND substr(alarm_key, 1, length(?2)) = ?2
         RETURNING alarm_key`,
       JSON.stringify(kinds),

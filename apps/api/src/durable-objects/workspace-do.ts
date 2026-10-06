@@ -5929,7 +5929,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          SELECT automation_id, 3, ROW_NUMBER() OVER (ORDER BY automation_id)
            FROM automation_directory WHERE ?3 = 1 AND workspace_id = ?4 AND lifecycle = 'active' AND loadable = 1
        ), ranked AS (
-         SELECT automation_id, MIN(tier * 1000000000 + position) AS rank FROM requested GROUP BY automation_id
+         SELECT automation_id, ROW_NUMBER() OVER (ORDER BY tier, position) AS rank
+           FROM (
+             SELECT automation_id, tier, position,
+                    ROW_NUMBER() OVER (PARTITION BY automation_id ORDER BY tier, position) AS occurrence
+               FROM requested
+           )
+          WHERE occurrence = 1
        )
        SELECT directory.*, accepted.definition_json AS accepted_definition_json
          FROM ranked
@@ -5968,11 +5974,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.replaceExternalEventRegistrationRows(request, destinationKey, Date.now()).effectiveAfterEventSequence;
   }
 
-  /** After a hosted Sidekick's registrations committed: the schedule kinds, and its Slack sources' joins keyed on its revision. */
+  /**
+   * After a hosted Sidekick's registrations committed: its Slack sources'
+   * joins, keyed on its revision. Its schedule entries were written in the
+   * change's own transaction, and the caller re-arms the native alarm.
+   */
   private async afterSidekickRegistrations(automationId: string, revision: number | null, evaluators: readonly unknown[]): Promise<void> {
     const workspaceId = this.workspaceId();
     if (!workspaceId) return;
-    await this.refreshScheduleKinds(workspaceId, ["schedule"]);
     if (revision !== null && evaluators.length > 0) await this.joinSidekickSlackSources(workspaceId, automationId, revision, evaluators);
   }
 
@@ -8207,26 +8216,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       role: z.enum(["owner", "admin", "member"]).nullable().optional(),
     }).parse(input);
     this.assertWorkspace(request.workspaceId);
-    // The participant rule for a Main-homed Channel Sidekick is a join here
-    // (`isWorkstreamParticipant`'s), so only a Breakout-homed one is asked
-    // about separately.
     const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & {
       author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string;
-      channel_participant: number;
     }>(
-      `SELECT directory.*,
-              EXISTS (
-                SELECT 1 FROM channel_viewers viewer
-                  JOIN channels channel
-                    ON channel.workstream_id = viewer.workstream_id
-                   AND channel.authority_generation = viewer.authority_generation
-                 WHERE viewer.workstream_id = directory.owning_workstream_id AND viewer.user_id = ?2
-                   AND viewer.is_participant = 1 AND channel.archived_at IS NULL
-              ) AS channel_participant
-         FROM automation_directory directory
-        WHERE directory.workspace_id = ?1 AND directory.lifecycle <> 'deleted'
-        ORDER BY directory.title COLLATE NOCASE, directory.automation_id`,
-      request.workspaceId, request.userId,
+      `SELECT * FROM automation_directory WHERE workspace_id = ? AND lifecycle <> 'deleted'
+       ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId,
     ).toArray();
     // The management read rule (`sidekickReaderAllows`), the same one the
     // detail screen applies: a guest is not listed Organization-scope
@@ -8246,10 +8240,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         actorRole = relationship?.accessClass === "guest" ? null : relationship?.role ?? null;
       }
       const actor = { userId: request.userId, actorRole: actorRole ?? null };
-      const readable = row.scope === "workstream" && row.owning_substream_id === "0" && !own
-        ? row.channel_participant === 1
-        : await sidekickReaderAllows({ ...row, run_as_user_id: row.run_as_user_id ?? null }, actor, host);
-      if (readable) items.push(automationSummary(row, this.invalidAppearanceReporter(request.workspaceId)));
+      // A Main-homed Channel Sidekick asks `isWorkstreamParticipant`, a local
+      // read; only a Breakout-homed one asks the Breakout's viewer rule.
+      if (await sidekickReaderAllows({ ...row, run_as_user_id: row.run_as_user_id ?? null }, actor, host)) {
+        items.push(automationSummary(row, this.invalidAppearanceReporter(request.workspaceId)));
+      }
     }
     return { items };
   }
@@ -12084,7 +12079,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (owned.length === 0) return;
     await this.ensureParentWorkspace(workspaceId);
     const host = this.hostedSidekickHost();
-    let registrationsMoved = false;
     // Each Sidekick's pause or resume, its registrations and its alarm entries
     // commit in one local transaction per Sidekick, right after the archive
     // that caused them, so one that fails leaves the others moved.
@@ -12098,9 +12092,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           workstreamId: row.workstream_id,
           archived: row.archived_at !== null || row.breakout_archived_at !== null,
         }, now));
-        if (outcome.outcomeCode === "sidekick_paused") registrationsMoved = true;
         if (outcome.outcomeCode === "sidekick_resumed") {
-          registrationsMoved = true;
           const resumed = sidekick.row();
           const evaluators = resumed ? JSON.parse(resumed.evaluator_projection_json) as unknown[] : [];
           if (resumed?.accepted_definition_revision != null && evaluators.length > 0) {
@@ -12115,16 +12107,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           code: diagnosticErrorCode(error, "sidekick_owning_room_archival_failed"),
         });
       }
-    }
-    // The schedule kinds are the Organization's, so they are refreshed once
-    // for every Sidekick the archive moved.
-    if (registrationsMoved) {
-      await this.refreshScheduleKinds(workspaceId, ["schedule"]).catch((error: unknown) => {
-        logWarn(this.env, "sidekick_owning_room_archival_failed", {
-          workspace_id: workspaceId,
-          code: diagnosticErrorCode(error, "sidekick_owning_room_archival_failed"),
-        });
-      });
     }
     // The automations list is not published here: the pass that ran this
     // sends it right after the archived Channel's row, in the same turn, so
