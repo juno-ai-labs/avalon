@@ -991,15 +991,45 @@ describe("a hosted Sidekick", () => {
       instance.sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "pause-run-0002" })))
       .rejects.toThrow("Only an active Sidekick can run");
 
+    // What a long pause leaves: the schedule's stored instant is in the past.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE sidekick_schedules SET next_due_at = 1 WHERE sidekick_id = ?`, AUTOMATION_ID);
+    });
+
     await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
 
     expect(await automationRow()).toMatchObject({ lifecycle: "active", paused_by: null });
     const rearmed = (await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND);
     expect(rearmed).toHaveLength(1);
     expect(rearmed[0]!.due_at).toBeGreaterThan(Date.now());
+    // The schedule row moves with its entry, and the Sidekick's next run with it.
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ next_due_at: number }>(
+      `SELECT next_due_at FROM sidekick_schedules WHERE sidekick_id = ?`, AUTOMATION_ID,
+    ).one().next_due_at)).toBe(rearmed[0]!.due_at);
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ next_run_at: number }>(
+      `SELECT next_run_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
+    ).one().next_run_at)).toBe(rearmed[0]!.due_at);
     // A stopped run stays stopped: resuming re-arms the future, not the past.
     expect(await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId }))
       .toMatchObject({ state: "stopped", lifecycle: "active" });
+  });
+
+  it("rebinds a plugin on a principal claim when the claimant cannot use its connection", async () => {
+    await activeAutomation();
+    await seedSlackConnection();
+    // Bound to a connection that is gone; the plugin's live one is the Organization's.
+    const foreign = "00000000-0000-7000-8000-00000000ad41";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE automation_directory SET connector_bindings_json = ? WHERE automation_id = ?`,
+        JSON.stringify({ plugin_slack: foreign }), AUTOMATION_ID,
+      );
+    });
+
+    const claim = await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() });
+
+    expect(claim).toMatchObject({ reboundPluginIds: ["plugin_slack"], unboundProviders: [], changed: true });
+    expect(JSON.parse((await automationRow()).connector_bindings_json!)).toEqual({ plugin_slack: SLACK_CONNECTION_ID });
   });
 
   it("removes: tombstones the row, reports archived, and is gone from the sidebar", async () => {
@@ -1594,6 +1624,21 @@ describe("a hosted Sidekick", () => {
     expect(await consumeEffectBodies(TEST_ENV, [regression])).toEqual({ acked: 1, retried: 0 });
     expect(await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId }))
       .toMatchObject({ state: "completed", lifecycle: "active" });
+
+    // A message already received is answered by its receipt: the same bytes
+    // again are accepted, different bytes under its id are refused.
+    const changed = { ...latestEffect, preview: "Different bytes under the same message id" };
+    const conflicting = ConversationEffectEnvelopeSchema.parse({
+      ...latest, effect: changed, payloadHash: conversationEffectHash(changed),
+    });
+    // Asked inside the object: a rejection over the stub is reported a second
+    // time as unhandled, which fails the run even when the assertion held.
+    await runInDurableObject(workspaceStub(), async (instance: WorkspaceDO) => {
+      await expect(instance.receiveChildEffects({ substreamId: started.runId, envelopes: [latest] }))
+        .resolves.toEqual({ accepted: [{ messageId: latest.messageId, payloadHash: latest.payloadHash }] });
+      await expect(instance.receiveChildEffects({ substreamId: started.runId, envelopes: [conflicting] }))
+        .rejects.toThrow("substream_effect_idempotency_conflict");
+    });
   });
 });
 
