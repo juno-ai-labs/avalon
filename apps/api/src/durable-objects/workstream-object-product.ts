@@ -5068,8 +5068,14 @@ export class WorkstreamObjectProductService {
     auth: AuthContext,
     elicitationId: string,
     rawInput: WorkstreamObjectAnswerElicitationInput,
+    /**
+     * The Slack message that carried the answer, when one did. Server-owned,
+     * like `createMessage`'s: only the internal product request reaches here
+     * with it, and the run the answer starts delivers back to that message.
+     */
+    slackOrigin?: unknown,
   ): Promise<WorkstreamObjectAnswerElicitationResult> {
-    return this.answerElicitationWithAuthority(auth, elicitationId, rawInput, true);
+    return this.answerElicitationWithAuthority(auth, elicitationId, rawInput, true, slackOrigin);
   }
 
   /** Answer from a room socket whose hibernation attachment already admitted this identity. */
@@ -5086,6 +5092,7 @@ export class WorkstreamObjectProductService {
     elicitationId: string,
     rawInput: WorkstreamObjectAnswerElicitationInput,
     reauthorizeWorkspaceMembership: boolean,
+    slackOrigin?: unknown,
   ): Promise<WorkstreamObjectAnswerElicitationResult> {
     const input = AnswerElicitationRequestSchema.parse(rawInput);
     const requestHash = workstreamImportHash({
@@ -5314,6 +5321,7 @@ export class WorkstreamObjectProductService {
           reason: "elicitation_answer",
           elicitationId,
           parentHarnessRunId: row.run_id,
+          slackOrigin: slackOrigin ?? null,
         }),
         attachmentsJson: "[]",
         mentionsJson: "[]",

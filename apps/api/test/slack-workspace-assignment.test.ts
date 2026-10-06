@@ -1126,6 +1126,179 @@ describe("Slack connector principal delivery", () => {
     ).get()).toEqual({ last_delivery_key: "run-top-level:completed" });
   });
 
+  it("settles the outcome on a follow-up steered into the run, which has no run of its own", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    // The run started at 5.0; a follow-up at 9.0 moved the slot and was steered into it.
+    objectDatabase.exec(`
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         reaction_channel_id, reaction_message_ts, reaction_current,
+         context_json, created_at, updated_at)
+      VALUES ('session-steered', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', NULL, 'workspace',
+              'T123', 'U456', 'C123', '1.0', 'event:steered',
+              '7a000000-0000-4000-8000-0000000000b0', 'app_mention', 'public',
+              'C123', '9.0', 'eyes',
+              '{}', '2026-01-01', '2026-01-01');
+    `);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      calls.push({
+        method: url.pathname.split("/").at(-1)!,
+        body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+      });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }));
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined), undefined,
+      { PUBLIC_WEB_BASE_URL: "https://rallywith.ai" },
+    )).deliverWorkstreamOutcome(
+      "22222222-2222-4222-8222-222222222222",
+      "7a000000-0000-4000-8000-0000000000b0",
+      null,
+      "run-steered:completed",
+      "completed",
+      {
+        reactionAnchor: { channelId: "C123", messageTs: "5.0" },
+        absorbedReactionAnchors: [{ channelId: "C123", messageTs: "9.0" }],
+      },
+    );
+
+    expect(calls.filter((call) => call.method.startsWith("reactions.")).map((call) => ({
+      method: call.method,
+      timestamp: call.body.timestamp,
+      name: call.body.name,
+    }))).toEqual([
+      { method: "reactions.remove", timestamp: "5.0", name: "eyes" },
+      { method: "reactions.add", timestamp: "5.0", name: "white_check_mark" },
+      { method: "reactions.remove", timestamp: "9.0", name: "eyes" },
+      { method: "reactions.add", timestamp: "9.0", name: "white_check_mark" },
+    ]);
+    // The slot is 9.0's, and this run answered it, so the outcome is recorded.
+    expect(objectDatabase.prepare(
+      `SELECT reaction_message_ts, reaction_current FROM slack_agent_sessions
+        WHERE id = 'session-steered'`,
+    ).get()).toEqual({ reaction_message_ts: "9.0", reaction_current: "white_check_mark" });
+  });
+
+  it("sends a needs-input connect prompt to the member who triggered the run, not the thread's opener", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    // U456 opened the thread and is linked; U999, who is not, sent the follow-up.
+    objectDatabase.exec(`
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         context_json, created_at, updated_at)
+      VALUES ('session-follow-up-member', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', NULL, 'workspace',
+              'T123', 'U456', 'C123', '1.0', 'event:follow-up-member',
+              '7a000000-0000-4000-8000-0000000000af', 'app_mention', 'public',
+              '{}', '2026-01-01', '2026-01-01');
+    `);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const method = url.pathname.split("/").at(-1)!;
+      calls.push({ method, body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown> });
+      const body = method === "conversations.open"
+        ? { ok: true, channel: { id: "D999" } }
+        : { ok: true, channel: "C123", ts: "3.0" };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }));
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined), undefined,
+      { PUBLIC_WEB_BASE_URL: "https://rallywith.ai" },
+    )).deliverWorkstreamOutcome(
+      "22222222-2222-4222-8222-222222222222",
+      "7a000000-0000-4000-8000-0000000000af",
+      "Which region should I deploy to?",
+      "run-follow-up:needs_input",
+      "needs_input",
+      { triggeringSlackUserId: "U999" },
+    );
+
+    expect(calls.filter((call) => call.method === "conversations.open").map((call) => call.body))
+      .toEqual([{ users: "U999" }]);
+    expect(calls.some((call) => call.method === "chat.postMessage" && call.body.channel === "D999"))
+      .toBe(true);
+  });
+
+  it("settles an earlier run's outcome on its own message after a follow-up moved the slot", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    // A follow-up at 9.0 was admitted while the run that started at 5.0 was
+    // live, and moved the slot with the same emoji.
+    objectDatabase.exec(`
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         reaction_channel_id, reaction_message_ts, reaction_current,
+         context_json, created_at, updated_at)
+      VALUES ('session-moved-anchor', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', NULL, 'workspace',
+              'T123', 'U456', 'C123', '1.0', 'event:moved-anchor',
+              '7a000000-0000-4000-8000-0000000000ae', 'app_mention', 'public',
+              'C123', '9.0', 'eyes',
+              '{}', '2026-01-01', '2026-01-01');
+    `);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      calls.push({
+        method: url.pathname.split("/").at(-1)!,
+        body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+      });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }));
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database, instance, credentialsKey, vi.fn(async () => undefined), undefined,
+      { PUBLIC_WEB_BASE_URL: "https://rallywith.ai" },
+    )).deliverWorkstreamOutcome(
+      "22222222-2222-4222-8222-222222222222",
+      "7a000000-0000-4000-8000-0000000000ae",
+      null,
+      "run-earlier:completed",
+      "completed",
+      { reactionAnchor: { channelId: "C123", messageTs: "5.0" } },
+    );
+
+    expect(calls.filter((call) => call.method.startsWith("reactions.")).map((call) => ({
+      method: call.method,
+      timestamp: call.body.timestamp,
+      name: call.body.name,
+    }))).toEqual([
+      { method: "reactions.remove", timestamp: "5.0", name: "eyes" },
+      { method: "reactions.add", timestamp: "5.0", name: "white_check_mark" },
+    ]);
+    // The slot still belongs to the follow-up.
+    expect(objectDatabase.prepare(
+      `SELECT reaction_message_ts, reaction_current FROM slack_agent_sessions
+        WHERE id = 'session-moved-anchor'`,
+    ).get()).toEqual({ reaction_message_ts: "9.0", reaction_current: "eyes" });
+  });
+
   it("presents the connector principal to the work-stream object, not a login session", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
