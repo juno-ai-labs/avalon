@@ -563,12 +563,23 @@ with Google below. Choosing email reveals the form in place; **Other sign-in
 options** returns to the two buttons. Invitation pages still open on the email
 form, since Google stays hidden there.
 
-**Why:** Product asked for Google as the main path into the browser client, with
-email kept as a second choice that does not crowd the first screen.
+**Why:** Product asked for Google as the main path into the browser client,
+with email kept as a second choice that does not crowd the first screen. The
+Mac and iPhone apps already sign in with Google only, so leading with it puts
+the browser on the same path. Any reasoning beyond that request was not
+recorded.
 
-**What a future change has to respect:** The choice is page state only. A
+**Considered and rejected:** Keeping the email form visible under a primary
+Google button. It leaves the first screen as crowded as before and still reads
+as two equal paths.
+
+**Consequences:** The choice is page state only, and it resets once a session
+exists, so every later signed-out screen in the tab starts from Google again. A
 returned Google failure stays on screen through the switch to email and clears
-when an email sign-in starts, as before.
+when an email sign-in starts, as before. Invitation pages skip the choice and
+open on the email form, because Google stays hidden there.
+
+Shipped in #1125.
 
 ### 2026-10-06 — A signed-in link opens behind the boot screen
 
