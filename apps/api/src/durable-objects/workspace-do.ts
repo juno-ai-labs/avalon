@@ -1063,6 +1063,9 @@ import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   hostedSidekickAlarmTarget,
+  skillSource,
+  skillSummary,
+  type HostedSidekickRow,
   sidekickReaderAllows,
   type HostedSidekickHost,
 } from "./hosted-sidekick";
@@ -5836,9 +5839,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (deleted) this.externalBindings().suspendDeletedSidekick(automationId, new Date(now).toISOString());
         this.sidekickDirectoryMoved = true;
       },
-      workspaceDatabase: (workspaceId) => this.localWorkspaceEnv(workspaceId).DB,
-      workstreamParticipant: (input) => this.workstreamParticipant(input),
-      channelViewer: (input) => this.authorizeViewer({
+      isChannelParticipant: (workstreamId, userId) => this.isWorkstreamParticipant(workstreamId, userId),
+      // A Sidekick's home is a Channel or one of its Breakouts, never another
+      // Sidekick, so this asks the hosted Channel parent directly.
+      channelViewer: async (input) => (await this.hostedParent(input.parentId, input.workspaceId)).authorizeViewer({
         workspaceId: asWorkspaceId(input.workspaceId),
         parentId: input.parentId,
         substreamId: asSubstreamId(input.substreamId),
@@ -5897,25 +5901,58 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * The Sidekicks a batch read covers: the ids asked for, plus every one a
-   * Channel recommends or owns when `channelId` is given, plus every active
-   * loadable one when `allLoadable` is set. Every list lives here, so a
-   * caller asks once rather than fetching the ids first. Order is the
-   * caller's, then the Channel's, then the Organization's, with no repeats;
-   * an id that names no Sidekick is skipped.
+   * The Sidekicks a batch read covers, each with its accepted revision, in one
+   * statement: the ids asked for, plus every one a Channel recommends or owns
+   * when `channelId` is given, plus every active loadable one when
+   * `allLoadable` is set. Order is the caller's, then the Channel's
+   * recommendations, then what it owns, then the Organization's, with no
+   * repeats; an id that names no Sidekick is skipped, and `onlyScope` keeps
+   * one scope.
    */
-  private selectedSidekicks(selection: {
+  private selectSidekickRows(selection: {
+    workspaceId: string;
     automationIds?: readonly string[] | undefined;
     channelId?: string | undefined;
     allLoadable?: boolean | undefined;
-    workspaceId: string;
-  }): string[] {
-    const ids = [...(selection.automationIds ?? [])];
-    if (selection.channelId !== undefined) {
-      ids.push(...this.recommendedSidekickIdsFor(selection.channelId), ...this.automationIdsOwnedBy(selection.channelId));
-    }
-    if (selection.allLoadable) ids.push(...this.loadableSidekickIds(selection.workspaceId));
-    return [...new Set(ids)].filter((id) => this.isSidekickParent(id));
+    onlyScope?: string | undefined;
+  }): (HostedSidekickRow & { accepted_definition_json: string | null })[] {
+    return this.state.storage.sql.exec<HostedSidekickRow & { accepted_definition_json: string | null }>(
+      `WITH requested(automation_id, tier, position) AS (
+         SELECT value, 0, key FROM json_each(?1)
+         UNION ALL
+         SELECT sidekick_id, 1, ROW_NUMBER() OVER (ORDER BY attached_at, sidekick_id)
+           FROM parent_sidekicks WHERE ?2 IS NOT NULL AND parent_id = ?2
+         UNION ALL
+         SELECT automation_id, 2, ROW_NUMBER() OVER (ORDER BY automation_id)
+           FROM automation_directory WHERE ?2 IS NOT NULL AND owning_workstream_id = ?2 AND lifecycle <> 'deleted'
+         UNION ALL
+         SELECT automation_id, 3, ROW_NUMBER() OVER (ORDER BY automation_id)
+           FROM automation_directory WHERE ?3 = 1 AND workspace_id = ?4 AND lifecycle = 'active' AND loadable = 1
+       ), ranked AS (
+         SELECT automation_id, ROW_NUMBER() OVER (ORDER BY tier, position) AS rank
+           FROM (
+             SELECT automation_id, tier, position,
+                    ROW_NUMBER() OVER (PARTITION BY automation_id ORDER BY tier, position) AS occurrence
+               FROM requested
+           )
+          WHERE occurrence = 1
+       )
+       SELECT directory.*, accepted.definition_json AS accepted_definition_json
+         FROM ranked
+         JOIN automation_directory directory
+           ON directory.automation_id = ranked.automation_id
+          AND directory.workspace_id = ?4 AND directory.region IS NOT NULL
+         LEFT JOIN sidekick_revisions accepted
+           ON accepted.sidekick_id = directory.automation_id
+          AND accepted.definition_revision = directory.accepted_definition_revision
+        WHERE ?5 IS NULL OR directory.scope = ?5
+        ORDER BY ranked.rank`,
+      JSON.stringify(selection.automationIds ?? []),
+      selection.channelId ?? null,
+      selection.allLoadable ? 1 : 0,
+      selection.workspaceId,
+      selection.onlyScope ?? null,
+    ).toArray();
   }
 
   /**
@@ -5937,17 +5974,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.replaceExternalEventRegistrationRows(request, destinationKey, Date.now()).effectiveAfterEventSequence;
   }
 
-  /** After a hosted Sidekick's registrations committed: the schedule kinds, and its Slack sources' joins keyed on its revision. */
+  /**
+   * After a hosted Sidekick's registrations committed: its Slack sources'
+   * joins, keyed on its revision. Its schedule entries were written in the
+   * change's own transaction, and the caller re-arms the native alarm.
+   */
   private async afterSidekickRegistrations(automationId: string, revision: number | null, evaluators: readonly unknown[]): Promise<void> {
     const workspaceId = this.workspaceId();
     if (!workspaceId) return;
-    await this.refreshScheduleKinds(workspaceId, ["schedule"]);
-    if (revision !== null && evaluators.length > 0) {
-      const parsed = ExternalEventRegistrationProjectionV1Schema.parse({
-        schemaVersion: 1, workspaceId, destination: { kind: "automation", automationId }, evaluators,
-      });
-      await this.joinSlackSourceConversations(workspaceId, automationId, revision, parsed.evaluators);
-    }
+    if (revision !== null && evaluators.length > 0) await this.joinSidekickSlackSources(workspaceId, automationId, revision, evaluators);
+  }
+
+  /** A Sidekick's Slack sources' joins, keyed on the revision whose registrations named them. */
+  private async joinSidekickSlackSources(
+    workspaceId: string, automationId: string, revision: number, evaluators: readonly unknown[],
+  ): Promise<void> {
+    const parsed = ExternalEventRegistrationProjectionV1Schema.parse({
+      schemaVersion: 1, workspaceId, destination: { kind: "automation", automationId }, evaluators,
+    });
+    await this.joinSlackSourceConversations(workspaceId, automationId, revision, parsed.evaluators);
   }
 
   // The Sidekick methods. Each calls the `HostedSidekick` method of the same
@@ -6055,28 +6100,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async sidekickReadSkillSummaries(input: SidekickBatchSkillReadRequest): Promise<SidekickAttachment[]> {
     await this.initialized;
     const { automationIds, channelId, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
-    const summaries: SidekickAttachment[] = [];
-    for (const automationId of this.selectedSidekicks({ automationIds, channelId, allLoadable, workspaceId: request.workspaceId })) {
-      const sidekick = await this.hostedSidekick(automationId, request.workspaceId);
-      if (onlyScope !== undefined && sidekick.row()?.scope !== onlyScope) continue;
-      const summary = sidekick.readSkillSummary({ ...request, automationId });
-      if (summary) summaries.push(summary);
-    }
-    return summaries;
+    await this.ensureParentWorkspace(request.workspaceId);
+    return this.selectSidekickRows({ workspaceId: request.workspaceId, automationIds, channelId, allLoadable, onlyScope })
+      .flatMap((row) => skillSummary(row, request) ?? []);
   }
 
   /** What each selected Sidekick lends a run as a skill; one entry per Sidekick that lends one. */
   async sidekickReadSkillSources(input: SidekickBatchSkillReadRequest): Promise<SidekickSkillSource[]> {
     await this.initialized;
     const { automationIds, channelId, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
-    const sources: SidekickSkillSource[] = [];
-    for (const automationId of this.selectedSidekicks({ automationIds, channelId, allLoadable, workspaceId: request.workspaceId })) {
-      const sidekick = await this.hostedSidekick(automationId, request.workspaceId);
-      if (onlyScope !== undefined && sidekick.row()?.scope !== onlyScope) continue;
-      const source = sidekick.readSkillSource({ ...request, automationId });
-      if (source) sources.push(source);
-    }
-    return sources;
+    await this.ensureParentWorkspace(request.workspaceId);
+    return this.selectSidekickRows({ workspaceId: request.workspaceId, automationIds, channelId, allLoadable, onlyScope })
+      .flatMap((row) => skillSource(row, request) ?? []);
   }
 
   /** The detail of each selected Sidekick, for an actor who may read every one of them. */
@@ -6084,10 +6119,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const { automationIds, channelOwnedBy, ...request } = SidekickBatchDetailRequestSchema.parse(input);
     const ids = [...new Set([...(automationIds ?? []), ...(channelOwnedBy === undefined ? [] : this.automationIdsOwnedBy(channelOwnedBy))])];
+    await this.ensureParentWorkspace(request.workspaceId);
+    const host = this.hostedSidekickHost();
     const details: AutomationDetail[] = [];
+    // Each detail is an access decision for this actor, so each is its own read.
     for (const automationId of ids) {
-      const sidekick = await this.hostedSidekick(automationId, request.workspaceId);
-      details.push(await sidekick.readDetail({ ...request, automationId }));
+      details.push(await new HostedSidekick(host, automationId).readDetail({ ...request, automationId }));
     }
     return details;
   }
@@ -7808,13 +7845,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { automationIds: this.automationIdsOwnedBy(request.workstreamId) };
   }
 
-  /** The Sidekicks a Channel recommends, read from its hosted parent's rows. */
-  private recommendedSidekickIdsFor(channelId: string): string[] {
-    return this.state.storage.sql.exec<{ sidekick_id: string }>(
-      `SELECT sidekick_id FROM parent_sidekicks WHERE parent_id = ? ORDER BY attached_at, sidekick_id`, channelId,
-    ).toArray().map((row) => row.sidekick_id);
-  }
-
   /** The live Sidekicks a Channel owns, each an `automation` revocation hop. */
   private automationIdsOwnedBy(workstreamId: string): string[] {
     return this.state.storage.sql.exec<{ automation_id: string }>(
@@ -8210,6 +8240,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         actorRole = relationship?.accessClass === "guest" ? null : relationship?.role ?? null;
       }
       const actor = { userId: request.userId, actorRole: actorRole ?? null };
+      // A Main-homed Channel Sidekick asks `isWorkstreamParticipant`, a local
+      // read; only a Breakout-homed one asks the Breakout's viewer rule.
       if (await sidekickReaderAllows({ ...row, run_as_user_id: row.run_as_user_id ?? null }, actor, host)) {
         items.push(automationSummary(row, this.invalidAppearanceReporter(request.workspaceId)));
       }
@@ -12045,13 +12077,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       onlyAutomationId,
     ).toArray();
     if (owned.length === 0) return;
-    // Each Sidekick is this object's own row now: its pause or resume, its
-    // registrations and its alarm entries commit in one local transaction per
-    // Sidekick, right after the archive that caused them.
+    await this.ensureParentWorkspace(workspaceId);
+    const host = this.hostedSidekickHost();
+    // Each Sidekick's pause or resume, its registrations and its alarm entries
+    // commit in one local transaction per Sidekick, right after the archive
+    // that caused them, so one that fails leaves the others moved.
     for (const row of owned) {
       try {
-        const sidekick = await this.sidekickParent(row.automation_id, workspaceId);
-        if (!sidekick) continue;
+        const sidekick = new HostedSidekick(host, row.automation_id);
         const now = Date.now();
         const outcome = this.state.storage.transactionSync(() => sidekick.setOwningRoomArchived({
           workspaceId: asWorkspaceId(workspaceId),
@@ -12059,11 +12092,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           workstreamId: row.workstream_id,
           archived: row.archived_at !== null || row.breakout_archived_at !== null,
         }, now));
-        if (outcome.outcomeCode === "sidekick_paused") await this.afterSidekickRegistrations(row.automation_id, null, []);
         if (outcome.outcomeCode === "sidekick_resumed") {
           const resumed = sidekick.row();
-          await this.afterSidekickRegistrations(row.automation_id, resumed?.accepted_definition_revision ?? null,
-            resumed ? JSON.parse(resumed.evaluator_projection_json) as unknown[] : []);
+          const evaluators = resumed ? JSON.parse(resumed.evaluator_projection_json) as unknown[] : [];
+          if (resumed?.accepted_definition_revision != null && evaluators.length > 0) {
+            await this.joinSidekickSlackSources(workspaceId, row.automation_id, resumed.accepted_definition_revision, evaluators);
+          }
         }
       } catch (error) {
         logWarn(this.env, "sidekick_owning_room_archival_failed", {

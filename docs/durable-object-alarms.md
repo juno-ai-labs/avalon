@@ -244,7 +244,10 @@ derived source has no way to carry that distinction.
 ### An automation's wake reasons
 
 A Sidekick's entries are `WorkspaceDO`'s, keyed `<sidekickId>:<key>` so each
-Sidekick can cancel its own by prefix:
+Sidekick can cancel its own by prefix. `cancelByKeyPrefix(kinds, prefix)` does
+that in one statement, only in the kinds named, and compares the prefix as text
+rather than as a `LIKE` pattern, so an id containing `%` or `_` matches only
+itself:
 
 | Reason | Kind | Source |
 | --- | --- | --- |

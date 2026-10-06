@@ -991,15 +991,108 @@ describe("a hosted Sidekick", () => {
       instance.sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "pause-run-0002" })))
       .rejects.toThrow("Only an active Sidekick can run");
 
+    // What a long pause leaves: the schedule's stored instant is in the past.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE sidekick_schedules SET next_due_at = 1 WHERE sidekick_id = ?`, AUTOMATION_ID);
+    });
+
     await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
 
     expect(await automationRow()).toMatchObject({ lifecycle: "active", paused_by: null });
     const rearmed = (await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND);
     expect(rearmed).toHaveLength(1);
     expect(rearmed[0]!.due_at).toBeGreaterThan(Date.now());
+    // The schedule row moves with its entry, and the Sidekick's next run with it.
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ next_due_at: number }>(
+      `SELECT next_due_at FROM sidekick_schedules WHERE sidekick_id = ?`, AUTOMATION_ID,
+    ).one().next_due_at)).toBe(rearmed[0]!.due_at);
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ next_run_at: number }>(
+      `SELECT next_run_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
+    ).one().next_run_at)).toBe(rearmed[0]!.due_at);
     // A stopped run stays stopped: resuming re-arms the future, not the past.
     expect(await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId }))
       .toMatchObject({ state: "stopped", lifecycle: "active" });
+  });
+
+  it("rebinds a plugin on a principal claim when the claimant cannot use its connection", async () => {
+    await activeAutomation();
+    await seedSlackConnection();
+    // Bound to a connection that is gone; the plugin's live one is the Organization's.
+    const foreign = "00000000-0000-7000-8000-00000000ad41";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE automation_directory SET connector_bindings_json = ? WHERE automation_id = ?`,
+        JSON.stringify({ plugin_slack: foreign }), AUTOMATION_ID,
+      );
+    });
+
+    const claim = await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() });
+
+    expect(claim).toMatchObject({ reboundPluginIds: ["plugin_slack"], unboundProviders: [], changed: true });
+    expect(JSON.parse((await automationRow()).connector_bindings_json!)).toEqual({ plugin_slack: SLACK_CONNECTION_ID });
+  });
+
+  it("unbinds a plugin on a principal claim when its one connection is somebody else's personal one", async () => {
+    await activeAutomation();
+    // The plugin's only connection is another member's personal one, which
+    // the claimant may neither use nor be handed as a replacement.
+    const theirs = "00000000-0000-7000-8000-00000000ad42";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, status, cursor_json, config_json,
+            created_at, updated_at, model_plugin_id)
+         VALUES (?, ?, 'slack', 'personal', ?, 'T0THEIRS', 'Theirs', '[]', 'healthy', '{}', '{}', ?, ?, 'plugin_slack')`,
+        theirs, WORKSPACE_ID, OUTSIDER_ID, NOW, NOW,
+      );
+      state.storage.sql.exec(
+        `UPDATE automation_directory SET connector_bindings_json = ? WHERE automation_id = ?`,
+        JSON.stringify({ plugin_slack: theirs }), AUTOMATION_ID,
+      );
+    });
+
+    const claim = await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() });
+
+    expect(claim).toMatchObject({ reboundPluginIds: [], unboundProviders: ["plugin_slack"] });
+    expect(JSON.parse((await automationRow()).connector_bindings_json!)).toEqual({ plugin_slack: theirs });
+  });
+
+  it("admits one run when its schedule's entry fires, and none while it is paused", async () => {
+    await activeAutomation({
+      ...DEFINITION,
+      triggers: [{ type: "manual" }, { type: "interval", intervalSeconds: 3_600, summary: "Every hour" }],
+    });
+    // Bring the schedule and its entry due now, as the passing hour would.
+    const due = async () => runInDurableObject(workspaceStub(), (_instance, state) => {
+      const now = Date.now();
+      state.storage.sql.exec(`UPDATE sidekick_schedules SET next_due_at = ? WHERE sidekick_id = ?`, now - 1, AUTOMATION_ID);
+      state.storage.sql.exec(
+        `UPDATE _internal_durable_alarms SET due_at = ?, retry_at = 0 WHERE kind = ? AND substr(alarm_key, 1, ?) = ?`,
+        now - 1, AUTOMATION_SCHEDULE_ALARM_KIND, `${AUTOMATION_ID}:`.length, `${AUTOMATION_ID}:`,
+      );
+    });
+    const scheduledRuns = async () => runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM sidekick_runs WHERE sidekick_id = ? AND json_extract(trigger_json, '$.kind') = 'schedule'`,
+      AUTOMATION_ID,
+    ).one().count);
+
+    await due();
+    await runDurableObjectAlarm(workspaceStub());
+    expect(await scheduledRuns()).toBe(1);
+
+    // A paused Sidekick's schedule row is still there, but it fires nothing.
+    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO _internal_durable_alarms (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
+         SELECT ?, ? || ':' || schedule_id, ?, NULL, 0, 0, NULL, ?, ? FROM sidekick_schedules WHERE sidekick_id = ?`,
+        AUTOMATION_SCHEDULE_ALARM_KIND, AUTOMATION_ID, Date.now() - 1, Date.now(), Date.now(), AUTOMATION_ID,
+      );
+    });
+    await due();
+    await runDurableObjectAlarm(workspaceStub());
+    expect(await scheduledRuns()).toBe(1);
   });
 
   it("removes: tombstones the row, reports archived, and is gone from the sidebar", async () => {
@@ -1594,9 +1687,23 @@ describe("a hosted Sidekick", () => {
     expect(await consumeEffectBodies(TEST_ENV, [regression])).toEqual({ acked: 1, retried: 0 });
     expect(await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId }))
       .toMatchObject({ state: "completed", lifecycle: "active" });
+
+    // A message already received is answered by its receipt: the same bytes
+    // again are accepted, different bytes under its id are refused.
+    const changed = { ...latestEffect, preview: "Different bytes under the same message id" };
+    const conflicting = ConversationEffectEnvelopeSchema.parse({
+      ...latest, effect: changed, payloadHash: conversationEffectHash(changed),
+    });
+    // Asked inside the object: a rejection over the stub is reported a second
+    // time as unhandled, which fails the run even when the assertion held.
+    await runInDurableObject(workspaceStub(), async (instance: WorkspaceDO) => {
+      await expect(instance.receiveChildEffects({ substreamId: started.runId, envelopes: [latest] }))
+        .resolves.toEqual({ accepted: [{ messageId: latest.messageId, payloadHash: latest.payloadHash }] });
+      await expect(instance.receiveChildEffects({ substreamId: started.runId, envelopes: [conflicting] }))
+        .rejects.toThrow("substream_effect_idempotency_conflict");
+    });
   });
 });
-
 
 it("requires an explicit workspace role for unrelated workspace Sidekick viewers", async () => {
   await createDraft();
