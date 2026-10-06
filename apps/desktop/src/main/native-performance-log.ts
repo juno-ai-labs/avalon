@@ -1,6 +1,7 @@
 import { join, resolve } from 'node:path';
 
 import type { DesktopTelemetryRendererPerfFlowIntent } from '../common/desktop';
+import type { NetworkRecoveryDiagnostic } from '../common/network-recovery';
 
 export interface NativeUnifiedLogBinding {
   writePerformance: (encoded: string) => void;
@@ -33,6 +34,14 @@ export class NativePerformanceLog {
   ) {}
 
   write(intent: DesktopTelemetryRendererPerfFlowIntent): void {
+    this.writeRecord(intent);
+  }
+
+  writeNetworkRecovery(diagnostic: NetworkRecoveryDiagnostic): void {
+    this.writeRecord(diagnostic);
+  }
+
+  private writeRecord(intent: DesktopTelemetryRendererPerfFlowIntent | NetworkRecoveryDiagnostic): void {
     if (this.unavailable) return;
     try {
       this.binding ??= this.loadBinding();
