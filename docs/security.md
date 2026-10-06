@@ -321,6 +321,11 @@ immutable versioned objects and promotes only validated mutable channel feeds.
 [Email sign-in](email-login.md) owns the configured passwordless challenge and
 resumable identity-session protocol. It does not itself grant workspace access.
 
+[API tokens](api-tokens.md) are operator-minted, hashed at rest and traded at
+`POST /auth/token/exchange` for an identity-only session; no HTTP route mints
+one. The desktop accepts one at launch through `RALLY_API_TOKEN` and deletes it
+from its environment before starting any child process.
+
 [Browser sessions](browser-sessions.md) place an opaque HttpOnly, host-only cookie
 in front of the same session authority. Only `/browser` accepts that cookie;
 mutations require the exact configured Origin. Workspace selection addresses a

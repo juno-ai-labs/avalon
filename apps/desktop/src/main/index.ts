@@ -89,6 +89,7 @@ import type {
 import { generatedArtifactWindowDocument } from '../common/generated-artifact-window';
 import { readArtifactWindows, writeArtifactWindows, type ArtifactWindowState } from './artifact-window-state';
 import { logError, logWarn } from '../common/logger';
+import { takeLaunchApiToken } from './launch-api-token';
 import { AccountSessionFailure } from './account-session-failure';
 import {
   defaultDesktopReleaseChannel,
@@ -787,6 +788,15 @@ protocol.registerSchemesAsPrivileged([{
 // sign in once more. There is no Electron API that names the keychain entry
 // independently of the app, so this is a consequence of the rename rather than
 // a choice made here.
+// Taken before anything can start a child process, so none inherits it. The
+// exchange itself waits for the session encryption mode; see
+// `signInWithLaunchApiToken` and docs/api-tokens.md.
+let launchApiToken: string | null = null;
+try {
+  launchApiToken = takeLaunchApiToken(process.env);
+} catch (error) {
+  logError('rally', 'could not read the launch API token', error);
+}
 app.setName(app.isPackaged ? 'Rally' : 'Rally Development');
 const appDataDirectory = app.getPath('appData');
 app.setPath(
@@ -2090,6 +2100,22 @@ async function requestSession(
     throw new UnusableCredentialError('The regional service returned a mismatched endpoint');
   }
   return { ...parsed.data, apiBaseUrl: returnedApiBaseUrl };
+}
+
+/**
+ * Sign in with an API token handed to this launch, replacing whatever account
+ * the device held. The API answers with the same identity-only Global session
+ * Google sign-in produces, so the window opens on organization discovery and
+ * activation exactly as it would after a browser sign-in.
+ */
+async function signInWithLaunchApiToken(token: string): Promise<void> {
+  const session = await requestSession(configuredApiBase('global'), '/auth/token/exchange', { token });
+  if (session.workspace) throw new Error('Rally API token sign-in returned an organization before platform discovery');
+  await withSessionMutation(async () => {
+    await clearStoredSessionUnlocked();
+    desktopAuthAttempts.clear();
+    await persistSessionUnlocked(session);
+  });
 }
 
 async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
@@ -5039,6 +5065,16 @@ if (!singleInstanceLock) {
       desktopReleaseChannel = applicationSettings.releaseChannel;
     } catch (error) {
       logWarn('rally', 'could not read the stored window theme', error);
+    }
+    if (launchApiToken) {
+      // After Lockdown mode settles the encryption, and before the stored
+      // credential is read, so every launch consumer sees this account.
+      try {
+        await signInWithLaunchApiToken(launchApiToken);
+      } catch (error) {
+        logError('rally', 'could not sign in with the launch API token', error);
+      }
+      launchApiToken = null;
     }
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.

@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { authBodyLimit } from "../middleware/auth-body-limit";
 import { zValidator } from "../middleware/validation";
 import {
+  ApiTokenExchangeRequestSchema,
   DesktopExchangeRequestSchema,
   RefreshRequestSchema,
   RefreshTokenSchema,
@@ -133,6 +134,13 @@ authRoutes.get("/google/callback", zValidator("query", callbackQuery), async (c)
 authRoutes.post("/desktop/exchange", zValidator("json", DesktopExchangeRequestSchema), async (c) => {
   const body = c.req.valid("json");
   return c.json(SessionSchema.parse(await new AuthService(c.env).exchangeDesktopTicket(body)));
+});
+
+// Operator-minted API tokens; see docs/api-tokens.md. The response is the same
+// identity-only session an email sign-in returns.
+authRoutes.post("/token/exchange", authBodyLimit, zValidator("json", ApiTokenExchangeRequestSchema), async (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(SessionSchema.parse(await new AuthService(c.env).exchangeApiToken(c.req.valid("json").token)));
 });
 
 authRoutes.post("/refresh", authBodyLimit, zValidator("json", RefreshRequestSchema), async (c) => {

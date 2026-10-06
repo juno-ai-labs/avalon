@@ -1784,6 +1784,13 @@ export const ConnectorOAuthAttemptSchema = z.object({
   errorCode: z.string().regex(/^[a-z0-9_-]{1,100}$/u).nullable(),
   expiresAt: TimestampSchema,
 });
+/**
+ * An operator-minted API token: a fixed prefix, so a leaked one is recognisable
+ * in a log or a secret scan, then 32 random bytes in base64url. See
+ * docs/api-tokens.md.
+ */
+export const ApiTokenSchema = z.string().regex(/^rally_at_[A-Za-z0-9_-]{43}$/u);
+export const ApiTokenExchangeRequestSchema = z.strictObject({ token: ApiTokenSchema });
 export const RefreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u);
 export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema });
 export const UpdateUserTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });

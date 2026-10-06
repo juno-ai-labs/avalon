@@ -733,6 +733,28 @@ export class AuthService {
     });
   }
 
+  /**
+   * Trade an operator-minted API token for an ordinary identity-only session.
+   *
+   * The token proves identity and nothing more, the same as a consumed email
+   * challenge: the caller selects a workspace through `/auth/workspace/select`
+   * like every other client, so membership stays the platform's decision. One
+   * conditional update both checks the token and stamps its use, so a revoked
+   * or expired token never mints a session. See docs/api-tokens.md.
+   */
+  async exchangeApiToken(token: string): Promise<Session> {
+    const at = nowIso();
+    const row = await this.env.DB.prepare(
+      `UPDATE api_tokens SET last_used_at = ?
+       WHERE token_hash = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+       RETURNING user_id`,
+    )
+      .bind(at, await sha256(token), at)
+      .first<{ user_id: string }>();
+    if (!row) throw new ApiError(401, "invalid_api_token", "The API token is invalid, expired, or revoked");
+    return this.createSession(await this.loadIdentity(row.user_id, null));
+  }
+
   private async createSession(identity: IdentityRow, prepared?: { sessionId:string;refreshToken:string;createdAt:string }): Promise<Session> {
     const sessionId = prepared?.sessionId ?? newId();
     const refreshToken = prepared?.refreshToken ?? randomToken(48);
