@@ -11,6 +11,7 @@ import {
   IconPencil,
   IconPin,
   IconShare2,
+  IconUserMinus,
   IconUserPlus,
   IconUsers,
   IconWorld,
@@ -65,6 +66,37 @@ export interface TitleMenuPeople {
   adding: boolean;
   error?: string | undefined;
   currentUserId?: string | undefined;
+  /**
+   * Taking someone out, the reader included. The host confirms before it
+   * removes; absent where the host cannot remove people.
+   */
+  onRemove?: ((member: WorkspaceMember) => void) | undefined;
+}
+
+/**
+ * A participant's own actions, behind a dots button on their row. The last
+ * participant cannot leave: a room needs someone in it.
+ */
+function PersonActions({ member, noun, onRemove, self, sole }: {
+  member: WorkspaceMember;
+  noun: 'channel' | 'breakout';
+  onRemove: (member: WorkspaceMember) => void;
+  self: boolean;
+  sole: boolean;
+}): React.JSX.Element {
+  return <DropdownMenu.Root modal={false}>
+    <DropdownMenu.Trigger aria-label={`${member.name} actions`} className="title-menu-person-actions">
+      <IconDots aria-hidden="true" size={16} stroke={1.8} />
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content align="end" className="menu-content" sideOffset={4}>
+        <DropdownMenu.Item className="menu-item menu-item-danger" disabled={sole} onSelect={() => onRemove(member)}>
+          <IconUserMinus aria-hidden="true" size={16} stroke={1.8} />
+          {self ? `Leave the ${noun}` : `Remove from ${noun}`}
+        </DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Root>;
 }
 
 /** A row of square actions under the menu's header, the most used things done to it. */
@@ -143,6 +175,7 @@ function PeopleView({ manage, members, noun, people, presentUserIds, scope }: {
         <span className="title-menu-person-detail">{member.id === people?.currentUserId ? 'You' : member.email}</span>
       </span>
       <span className="title-menu-person-role">{member.role === 'admin' ? 'Admin' : member.accessClass === 'guest' ? 'Guest' : 'Member'}</span>
+      {people?.onRemove && <PersonActions member={member} noun={noun} onRemove={people.onRemove} self={member.id === people.currentUserId} sole={members.length <= 1} />}
     </div>)}
     {people && suggestions.length > 0 && <>
       <div className="title-menu-section-heading">{needle ? 'Add to this ' + noun : 'Suggested'}</div>
