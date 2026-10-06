@@ -371,7 +371,20 @@ stub and call it directly. Three rules keep it fast:
   `sidekickReadSkillSummaries`, `sidekickReadSkillSources` and
   `sidekickReadDetails` take a list of ids, a Channel (whose recommended and
   owned Sidekicks are read here), or every loadable Sidekick, and answer from
-  local rows. Resolving a run's skills is one call on the common path.
+  local rows. Resolving a run's skills is one call on the common path, and the
+  summaries and sources are one statement inside it: `selectSidekickRows`
+  picks and orders the Sidekicks and joins each one's accepted revision, and
+  the pure `skillSummary` and `skillSource` decide each row.
+- **One read per question, one statement per change where SQL can say it.**
+  `HostedSidekick` reads the Organization's rows directly, never through the
+  runtime database adapter, which would re-enter this object as an RPC. A run
+  read (`readRunState`, `continueRun`, `readRunDefinition`, provisioning) is
+  one join of the Sidekick, the run and, when needed, the revision. The
+  directory row's derived columns (`source_version`, `next_run_at`, the
+  registrations' cutoff) are one `UPDATE ... RETURNING` per change. A child
+  effect's receipt is its insert's returned witness, and a run's state moves
+  in one conditional `UPDATE`. A Sidekick's alarm entries are cancelled by
+  key prefix in one statement.
 - **A check rides the write it guards.** A Channel or Space recommendation
   checks the Sidekick's scope inside `setSidekickRecommendation` and
   `addSpaceDefault`; an external event is admitted in one call, whose unjudged
@@ -580,6 +593,43 @@ Space in an Organization now shares one SQLite database and one socket set.
   deleting those objects is its own decision.
 
 ## Changelog
+
+### 2026-10-06 — Hosted Sidekick SQL reads and writes as one object
+
+**What changed:** `HostedSidekick` and the `WorkspaceDO` Sidekick facade stop
+doing per-row and per-step work that only made sense across objects:
+- Hot reads join the Sidekick, the run and the revision in one statement.
+- Each change writes the directory row's derived columns in one `UPDATE ...
+  RETURNING`, and a pause or remove writes the row twice instead of four times.
+- Occurrence admission, child-effect receipts and the run-state move are
+  single statements with returned witnesses.
+- Batch skill reads select every Sidekick in one statement, and the library
+  listing joins the Channel participant check instead of awaiting it per row.
+- Connector and resource reads go straight to SQLite, not through the runtime
+  database adapter, and a principal claim reads and rebinds in one transaction.
+- `ScheduledAlarmStore.cancelByKeyPrefix` replaces listing every entry of a
+  kind and deleting matches one by one.
+- A Channel archive refreshes the schedule kinds once, not once per Sidekick.
+
+**Why:** The move kept `SidekickDO`'s method shapes, which read the row again
+in every helper and reached the Organization's tables through an adapter
+because they used to be another object's. In one object each of those is a
+statement or an RPC-shaped hop that buys nothing, and every Sidekick in an
+Organization queues behind them. Reading the bindings and the connections in
+the claim's own transaction also closes a gap where a connection could move
+between the read and the rebind.
+
+**Considered and rejected:** One transaction for every Sidekick a Channel
+archive moves. A failure would roll back the others' pauses; each keeps its
+own, and only the Organization-wide refresh is shared. Folding the child
+projection's version check into its upsert: the reuse warning needs the old
+version, which an upsert's `RETURNING` does not give.
+
+**Consequences:** A new Sidekick read that needs several rows joins them; a
+helper that re-reads the row inside a method that already has it is the
+pattern this removed. A principal claim with two usable replacements for one
+plugin now picks the newest connection rather than whichever the scan saw
+last.
 
 ### 2026-10-06 — `SidekickDO` and the Sidekick import are deleted
 
