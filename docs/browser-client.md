@@ -149,7 +149,10 @@ whose Main is theirs (`mainReachable`).
 
 ### Google sign-in
 
-The entry offers **Continue with Google** under the email form.
+The signed-out entry leads with **Continue with Google** as the primary button,
+with **Continue with email** under it. Choosing email swaps both buttons for the
+email form, whose **Other sign-in options** link swaps them back. An invitation
+page opens straight on the email form.
 `POST /browser/google/start` stores a `browser_identity` OAuth state with a
 return path on the browser host and sets an HttpOnly session cookie
 `<cookie>-google-<state>` holding the same state. The callback checks that
@@ -551,6 +554,32 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-06 — Lead sign-in with Google
+
+**What changed:** The signed-out entry shows **Continue with Google** as the
+primary button and **Continue with email** under it, instead of the email form
+with Google below. Choosing email reveals the form in place; **Other sign-in
+options** returns to the two buttons. Invitation pages still open on the email
+form, since Google stays hidden there.
+
+**Why:** Product asked for Google as the main path into the browser client,
+with email kept as a second choice that does not crowd the first screen. The
+Mac and iPhone apps already sign in with Google only, so leading with it puts
+the browser on the same path. Any reasoning beyond that request was not
+recorded.
+
+**Considered and rejected:** Keeping the email form visible under a primary
+Google button. It leaves the first screen as crowded as before and still reads
+as two equal paths.
+
+**Consequences:** The choice is page state only, and it resets once a session
+exists, so every later signed-out screen in the tab starts from Google again. A
+returned Google failure stays on screen through the switch to email and clears
+when an email sign-in starts, as before. Invitation pages skip the choice and
+open on the email form, because Google stays hidden there.
+
+Shipped in #1125.
 
 ### 2026-10-06 — A signed-in link opens behind the boot screen
 
