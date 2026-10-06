@@ -97,9 +97,12 @@ export async function writeSidekickRegistrations(
   await runInDurableObject(sidekickWorkspace(env, workspaceId, region), (instance, state) => {
     const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
     const sidekick = new HostedSidekick(host, automationId) as unknown as {
-      writeRegistrations: (evaluators: readonly unknown[], now: number) => void;
+      writeRegistrations: (evaluators: readonly unknown[]) => number;
+      touchDirectory: (now: number, effectiveAfterEventSequence?: number) => void;
     };
-    state.storage.transactionSync(() => sidekick.writeRegistrations(evaluators, Date.now()));
+    // The same two steps an apply takes: replace the registrations, then
+    // record the sequence they take effect after on the Sidekick's row.
+    state.storage.transactionSync(() => sidekick.touchDirectory(Date.now(), sidekick.writeRegistrations(evaluators)));
   });
 }
 

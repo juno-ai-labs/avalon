@@ -1032,6 +1032,69 @@ describe("a hosted Sidekick", () => {
     expect(JSON.parse((await automationRow()).connector_bindings_json!)).toEqual({ plugin_slack: SLACK_CONNECTION_ID });
   });
 
+  it("unbinds a plugin on a principal claim when its one connection is somebody else's personal one", async () => {
+    await activeAutomation();
+    // The plugin's only connection is another member's personal one, which
+    // the claimant may neither use nor be handed as a replacement.
+    const theirs = "00000000-0000-7000-8000-00000000ad42";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, status, cursor_json, config_json,
+            created_at, updated_at, model_plugin_id)
+         VALUES (?, ?, 'slack', 'personal', ?, 'T0THEIRS', 'Theirs', '[]', 'healthy', '{}', '{}', ?, ?, 'plugin_slack')`,
+        theirs, WORKSPACE_ID, OUTSIDER_ID, NOW, NOW,
+      );
+      state.storage.sql.exec(
+        `UPDATE automation_directory SET connector_bindings_json = ? WHERE automation_id = ?`,
+        JSON.stringify({ plugin_slack: theirs }), AUTOMATION_ID,
+      );
+    });
+
+    const claim = await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() });
+
+    expect(claim).toMatchObject({ reboundPluginIds: [], unboundProviders: ["plugin_slack"] });
+    expect(JSON.parse((await automationRow()).connector_bindings_json!)).toEqual({ plugin_slack: theirs });
+  });
+
+  it("admits one run when its schedule's entry fires, and none while it is paused", async () => {
+    await activeAutomation({
+      ...DEFINITION,
+      triggers: [{ type: "manual" }, { type: "interval", intervalSeconds: 3_600, summary: "Every hour" }],
+    });
+    // Bring the schedule and its entry due now, as the passing hour would.
+    const due = async () => runInDurableObject(workspaceStub(), (_instance, state) => {
+      const now = Date.now();
+      state.storage.sql.exec(`UPDATE sidekick_schedules SET next_due_at = ? WHERE sidekick_id = ?`, now - 1, AUTOMATION_ID);
+      state.storage.sql.exec(
+        `UPDATE _internal_durable_alarms SET due_at = ?, retry_at = 0 WHERE kind = ? AND substr(alarm_key, 1, ?) = ?`,
+        now - 1, AUTOMATION_SCHEDULE_ALARM_KIND, `${AUTOMATION_ID}:`.length, `${AUTOMATION_ID}:`,
+      );
+    });
+    const scheduledRuns = async () => runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM sidekick_runs WHERE sidekick_id = ? AND json_extract(trigger_json, '$.kind') = 'schedule'`,
+      AUTOMATION_ID,
+    ).one().count);
+
+    await due();
+    await runDurableObjectAlarm(workspaceStub());
+    expect(await scheduledRuns()).toBe(1);
+
+    // A paused Sidekick's schedule row is still there, but it fires nothing.
+    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO _internal_durable_alarms (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
+         SELECT ?, ? || ':' || schedule_id, ?, NULL, 0, 0, NULL, ?, ? FROM sidekick_schedules WHERE sidekick_id = ?`,
+        AUTOMATION_SCHEDULE_ALARM_KIND, AUTOMATION_ID, Date.now() - 1, Date.now(), Date.now(), AUTOMATION_ID,
+      );
+    });
+    await due();
+    await runDurableObjectAlarm(workspaceStub());
+    expect(await scheduledRuns()).toBe(1);
+  });
+
   it("removes: tombstones the row, reports archived, and is gone from the sidebar", async () => {
     await activeAutomation();
     expect((await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
@@ -1641,7 +1704,6 @@ describe("a hosted Sidekick", () => {
     });
   });
 });
-
 
 it("requires an explicit workspace role for unrelated workspace Sidekick viewers", async () => {
   await createDraft();

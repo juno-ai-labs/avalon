@@ -209,12 +209,6 @@ lets a wake-up scheduled *before* the armed alarm pull the alarm in, and a
 cancelled schedule push it back out, without every writer knowing about
 `_internal_durable_alarms`.
 
-`cancelByKeyPrefix(kinds, prefix)` deletes every entry of those kinds whose key
-starts with `prefix`, in one statement. It is for an owner whose entries share a
-key prefix, such as a hosted Sidekick's `<sidekickId>:`. The prefix is compared
-as text, not as a `LIKE` pattern, so an id containing `%` or `_` matches only
-itself.
-
 Two objects do this: `WorkspaceDO.refreshSchedule` (from
 `workspaceScheduleTargets`) and `SubstreamAgent.syncAgentTimerAlarms` (from its
 own pending wake-ups).
@@ -250,7 +244,10 @@ derived source has no way to carry that distinction.
 ### An automation's wake reasons
 
 A Sidekick's entries are `WorkspaceDO`'s, keyed `<sidekickId>:<key>` so each
-Sidekick can cancel its own by prefix:
+Sidekick can cancel its own by prefix. `cancelByKeyPrefix(kinds, prefix)` does
+that in one statement, only in the kinds named, and compares the prefix as text
+rather than as a `LIKE` pattern, so an id containing `%` or `_` matches only
+itself:
 
 | Reason | Kind | Source |
 | --- | --- | --- |
