@@ -205,11 +205,12 @@ describe('public Rally site', () => {
     expect(renderLlmsTxt()).toContain('- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with other humans\n');
   });
 
-  it('lists the section links and the download button in the shared header, without Blog', () => {
+  it('lists the section links, the download button and the mobile sign-in in the shared header, without Blog', () => {
     const nav = renderSiteChrome('<!-- rally:site-nav -->');
     expect([...nav.matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/gu)].map(([, href, label]) => `${label} ${href}`)).toEqual([
       'Features /#features', 'Pricing /#pricing', 'Compare /#compare',
       'Download for Mac https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
+      'Sign in to Rally https://app.rallywith.ai',
     ]);
   });
 
