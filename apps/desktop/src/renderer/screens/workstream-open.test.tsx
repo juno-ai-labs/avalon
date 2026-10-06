@@ -958,6 +958,41 @@ describe('socket-first channel open', () => {
     expect(api.removeParticipant).not.toHaveBeenCalled();
   });
 
+  it('removes someone from a breakout through its People dots menu only once confirmed', async () => {
+    const childId = '00000000-0000-7000-8000-000000000665';
+    const creator = { id: '00000000-0000-7000-8000-000000000661', name: 'Creator', email: 'creator@example.test', timezone: 'UTC' };
+    const newcomer = { ...creator, id: '00000000-0000-7000-8000-000000000662', name: 'New member' };
+    const parent = recoveryBoot({ participants: [creator, newcomer] });
+    const child = recoveryBoot({ title: 'Private child', participants: [creator, newcomer] });
+    api.getWorkspaceMembers.mockResolvedValue([creator, newcomer]);
+    api.removeSubstreamParticipant.mockResolvedValue(undefined);
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+
+    const openRemove = async (): Promise<void> => {
+      fireEvent.pointerDown(await screen.findByRole('button', { name: 'Breakout menu: Private child' }), { button: 0, ctrlKey: false });
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+      fireEvent.pointerDown(await screen.findByRole('button', { name: 'New member actions' }), { button: 0, ctrlKey: false });
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from breakout' }));
+    };
+
+    await openRemove();
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(api.removeSubstreamParticipant).not.toHaveBeenCalled();
+
+    await openRemove();
+    expect(await screen.findByRole('dialog', { name: 'Remove New member from the breakout?' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(api.removeSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(api.removeParticipant).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])('admits a mentioned person through child membership before sending (refused=%s)', async (refused) => {
     const childId = '00000000-0000-7000-8000-000000000660';
     const creator = { id: '00000000-0000-7000-8000-000000000661', name: 'Creator', email: 'creator@example.test', timezone: 'UTC' };
