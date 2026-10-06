@@ -95,6 +95,14 @@ export type SpaceScope = z.infer<typeof SpaceScopeSchema>;
 export const SpaceRequestScopeSchema = z.literal("workspace");
 
 /**
+ * A creation's scope. A desktop released before migration 93 sends
+ * `personal` for every Space its sidebar makes, and nothing refuses a client by
+ * version, so the old value is read as the only one there is rather than
+ * failing every creation from a build that has not updated.
+ */
+const SpaceCreationScopeSchema = z.enum(["personal", "workspace"]).transform((): "workspace" => "workspace");
+
+/**
  * A Space is active or archived, with nothing in between.
  *
  * Deliberately narrower than `ProjectStatus`, which carries four transitional
@@ -282,7 +290,7 @@ export const CreateSpaceRequestSchema = z.strictObject({
    */
   iconKey: SpaceIconKeySchema.optional(),
   colorKey: SpaceColorKeySchema,
-  scope: SpaceRequestScopeSchema,
+  scope: SpaceCreationScopeSchema,
 });
 export type CreateSpaceRequest = z.infer<typeof CreateSpaceRequestSchema>;
 

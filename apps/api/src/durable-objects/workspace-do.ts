@@ -9288,7 +9288,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Record who edits a Space. Every Space is Organization-wide and grants no
+   * Record a Space's participants. Every Space is Organization-wide and grants no
    * reader to its Channels, so this is the whole change: no intent, no walk.
    */
   async noteSpaceAudience(input: WorkspaceSpaceAudienceNoteRequest): Promise<WorkspaceSpaceMutationResult> {
