@@ -18,6 +18,7 @@ import { MacDownloadLink } from './mac-download-link';
 import type { RallyApi } from '../lib/api';
 import { workstreamRecencyAt } from '../lib/format';
 import { useAttentionItems } from '../lib/attention-items';
+import { useDockBadge } from '../lib/dock-badge';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { openLink } from '../lib/browser-rail-links';
 import { conversationDirectoryQueryKey, mainOmitted } from '../lib/conversation-directory';
@@ -574,6 +575,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // has finished, no page is left unread, and the walk did not fail.
   const attentionComplete = workstreams.data !== undefined && !workstreams.hasMore
     && !workstreams.isFetching && !workstreams.isError;
+  useDockBadge(attentionItems.length, attentionComplete);
   const visibleSpaces = spaces.data?.items ?? [];
   // While search is open, a Breakout list the socket writes re-reads the
   // places, so a Breakout created or renamed meanwhile shows at once.

@@ -183,8 +183,8 @@ The renderer mounts one WorkspaceDO socket for the active workspace. Background
 workspaces get no sockets and expose no items across the boundary. Their stored
 credential may call `GET /workspace/attention`, which returns an addressed
 count, its highest-priority reason, an unread-activity boolean, and
-`unreadAndNeedsInputCount` (unread or participant-needs-input streams; Apple
-push uses that number as `aps.badge`). Focus and account-menu opening refresh
+`attentionCount` (each Main and Breakout that is unread, unseen or mentions the
+reader: the sidebar attention menu's count; Apple push uses it as `aps.badge`). Focus and account-menu opening refresh
 the projection. The fixed periodic cadence and any
 device workspace cap remain `LIMIT UNSET`; do not invent either number. There is
 currently no periodic refresh: focus and menu opening are the only refresh

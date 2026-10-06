@@ -394,6 +394,11 @@ export interface RallyDesktopBridge {
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setPushNotificationsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   openNotificationSettings: () => Promise<void>;
+  /**
+   * The dock icon's badge: the sidebar attention menu's count, `0` to clear.
+   * macOS shows it only while notifications, with badges, are allowed.
+   */
+  setDockBadgeCount: (count: number) => Promise<void>;
   setMenuBarEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setLaunchAtLogin: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setProductAnalyticsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
