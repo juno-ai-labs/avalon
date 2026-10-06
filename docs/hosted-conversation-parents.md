@@ -627,7 +627,10 @@ version, which an upsert's `RETURNING` does not give.
 
 **Consequences:** A new Sidekick read that needs several rows joins them; a
 helper that re-reads the row inside a method that already has it is the
-pattern this removed.
+pattern this removed. A read that comes after an `await` is the exception: it
+must read again, because another call may have changed the row meanwhile.
+
+Shipped in [#1111](https://github.com/juno-ai-labs/avalon/pull/1111).
 
 ### 2026-10-06 — `SidekickDO` and the Sidekick import are deleted
 
