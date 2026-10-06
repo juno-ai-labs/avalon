@@ -1,6 +1,6 @@
 /** Approved landing copy. */
 export const accessCopy = {
-  title: 'Rally: one place for you, your human coworkers, and AI',
+  title: 'Shared chat between multiple humans and AI',
   headline: 'Two Humans and AI in a single shared chat',
   description: 'Rally is an AI platform that allows for multiple humans to work with an AI agent in shared chats. Start a channel for multiple coworkers and work together on research, writing code, crafting documents, and answering questions.',
 };
