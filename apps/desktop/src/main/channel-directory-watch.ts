@@ -138,6 +138,8 @@ export class ChannelDirectoryWatch {
   private readonly pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private readonly walkedSpaces = new Set<string>();
   private complete = false;
+  /** Walks of Spaces a snapshot named after the full walk; the list is not whole until they land. */
+  private spaceWalksPending = 0;
   /** Channels a push named while the walk ran; see `subscribed`. */
   private pushedDuringWalk: Set<string> | null = null;
   private connection: WorkspaceSocketConnection | null = null;
@@ -171,6 +173,7 @@ export class ChannelDirectoryWatch {
     this.breakoutLists.clear();
     this.walkedSpaces.clear();
     this.complete = false;
+    this.spaceWalksPending = 0;
     this.changed();
   }
 
@@ -190,7 +193,7 @@ export class ChannelDirectoryWatch {
         hasUnread: hasUnread(row),
       })),
       breakouts,
-      complete: this.complete,
+      complete: this.complete && this.spaceWalksPending === 0,
     };
     return this.cached;
   }
@@ -221,6 +224,7 @@ export class ChannelDirectoryWatch {
     // Loading again, as the sidebar says while it refetches: the rows held
     // stay on screen, but "nothing waiting" waits for this walk to finish.
     this.complete = false;
+    this.spaceWalksPending = 0;
     this.changed();
     const before = new Set(this.rows.keys());
     const pushed = new Set<string>();
@@ -366,7 +370,16 @@ export class ChannelDirectoryWatch {
         .map((space) => space.id)
         .filter((spaceId) => !this.walkedSpaces.has(spaceId));
       if (unwalked.length === 0) return;
-      void this.walkSpaces(connection, unwalked, new Set()).catch((error: unknown) => {
+      // Its Channels may be waiting for the reader, so the list is not whole
+      // until they are read.
+      this.spaceWalksPending += 1;
+      this.changed();
+      void this.walkSpaces(connection, unwalked, new Set()).then(() => {
+        if (this.connection !== connection) return;
+        this.spaceWalksPending -= 1;
+        this.changed();
+      }, (error: unknown) => {
+        // Stays incomplete: the reconnect that follows walks everything again.
         if (this.connection === connection) this.dependencies.logWarning('could not read a new space for the menu bar', error);
       });
     }
