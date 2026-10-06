@@ -386,6 +386,29 @@ describe("POST /spaces", () => {
   });
 });
 
+describe("POST /workstreams", () => {
+  useSelectedModel();
+  useOpenRouterDouble(async () => ({ say: "On it." }));
+
+  // A Space grants no reader, so the route is what makes a Channel a person
+  // starts in Rally public; without it every new Channel would be private.
+  it("creates a Channel a person starts in a Space as Organization-wide", async () => {
+    const space = await createSpace("Launch");
+    const created = await request("/workstreams", OWNER_AUTH, {
+      openingMessage: "Plan the launch",
+      clientMessageId: "route-default-scope",
+      participantUserIds: [],
+      attachmentIds: [],
+      spaceIds: [space.id],
+    });
+
+    expect(created.status).toBe(201);
+    const { workstream } = created.body as { workstream: { id: WorkstreamId; scope: string } };
+    expect(workstream.scope).toBe("workspace");
+    expect(await channelAudience(workstream.id)).toEqual({ scope: "workspace", participantUserIds: [OWNER] });
+  });
+});
+
 describe("a Space created without an icon", () => {
   // Opened by the gate when a case wants a person's edit to land first.
   let gate: Promise<void> = Promise.resolve();

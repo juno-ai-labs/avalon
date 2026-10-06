@@ -98,7 +98,7 @@ describe('Manage access', () => {
     expect(screen.getByText('Hiring')).toBeVisible();
     expect(screen.getByText('General')).toBeVisible();
     // An Organization-wide Space beside it does not make it public.
-    expect(screen.getAllByText('The channel is placed here. A space doesn’t change who can read it.')).toHaveLength(2);
+    expect(screen.getAllByText('Placed in this space.')).toHaveLength(2);
     expect(screen.queryByText(/Everyone in the organization/u)).not.toBeInTheDocument();
   });
 

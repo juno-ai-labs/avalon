@@ -3,20 +3,14 @@ import {
   asWorkspaceId,
   type ChannelAccessSources,
   type SpaceErrorCode,
-  type SpaceScope,
   type WorkstreamDetail,
 } from "@rally/contracts";
 
 import { workspaceDOName } from "../durable-objects/names";
-import type {
-  ObservedChannel,
-  SetChannelDirectScopeResult,
-} from "../durable-objects/workstream-access-protocol";
+import type { ObservedChannel } from "../durable-objects/workstream-access-protocol";
 import type { AuthContext, Env } from "../env";
 import { ApiError, asApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { uuidV7 } from "../lib/uuid-v7";
-import { logWarn } from "../observability/logger";
 import {
   publishChannelNarrowing,
 } from "./space-source-operations";
@@ -108,100 +102,51 @@ export class ChannelAccessService {
     return (await this.observation(workstreamId)).title;
   }
 
-  /**
-   * Every source that currently grants a reader access to this Channel.
-   *
-   * Gated on management access, which is the authority a direct audience change
-   * already requires: somebody who cannot change the audience has no reason to
-   * be shown which Space supplies which reader. The refusal is a 404 rather
-   * than a 403 because the Channel's own read decision has already been made by
-   * `get`, and saying "you may read this but not that" about a Channel is a
-   * disclosure the rest of this surface does not make.
-   */
+  /** Who may read this Channel, for a caller who may manage it. */
   async readSources(workstreamId: string): Promise<ChannelAccessSources> {
-    const room = await this.room();
-    const management = await room.readManagementAccess({
-      ...this.address(workstreamId),
-      userId: asUserId(this.auth.userId),
-    });
-    if (!management.allowed) {
-      throw new ApiError(404, "workstream_not_found", "Work stream not found");
-    }
-    const observed = await this.observation(workstreamId);
-    return room.readAccessSources({
-      ...this.address(workstreamId),
-      channel: observed.channel,
-    });
+    await this.assertManages(workstreamId);
+    // A Space supplies no reader, so the Channel's own observation is the whole
+    // answer and the parent has nothing to add.
+    const { channel } = await this.observation(workstreamId);
+    return {
+      direct: { scope: channel.readers.scope, participantUserIds: channel.participantUserIds },
+      spaces: [],
+    };
   }
 
   /**
    * Take one reader out of the Channel. A Space supplies no reader, so the
    * canonical removal is the whole change; the boolean says whether access
    * was actually lost, which it is not on an Organization-wide Channel.
+   *
+   * Gated on management access first: the conversation's own `authorize`
+   * checks only that the caller may read and collaborate, and a member's
+   * access does not include changing who else is in the Channel.
    */
   async removeDirectReader(workstreamId: string, userId: string): Promise<boolean> {
+    await this.assertManages(workstreamId);
     const { channel } = await this.observation(workstreamId);
     await this.client(workstreamId).removeParticipant(userId);
     return channel.readers.scope !== "workspace";
   }
 
   /**
-   * Record the Channel's own audience.
-   *
-   * Returns the scope that was recorded before, so a caller whose canonical
-   * update then fails can put the record back rather than leave it claiming an
-   * audience the Channel never took.
+   * Refuse a caller who may not manage this Channel's audience, as a 404: the
+   * Channel's own read decision was already made, and saying "you may read this
+   * but not that" about it is a disclosure the rest of this surface does not
+   * make.
    */
-  async recordDirectScope(
-    workstreamId: string,
-    scope: SpaceScope,
-    observed = true,
-  ): Promise<SetChannelDirectScopeResult> {
-    return (await this.room()).setDirectScope({
+  private async assertManages(workstreamId: string): Promise<void> {
+    const management = await (await this.room()).readManagementAccess({
       ...this.address(workstreamId),
-      scope,
-      observed,
-      operationId: uuidV7(),
+      userId: asUserId(this.auth.userId),
     });
-  }
-
-  /**
-   * Put the recorded direct scope back after a canonical update did not take.
-   *
-   * Both halves of the record, not just the scope. A Channel whose row was
-   * still the migration's guess has to go back to being a guess: restoring the
-   * scope alone would tell the first Space to reach it that somebody decided
-   * this audience, and stop it seeding the value it can still derive exactly
-   * from the readers it is handed.
-   *
-   * Best effort and never throws: the refusal the caller is about to see is the
-   * useful one, and a restore that is itself refused leaves a record that is
-   * named here.
-   */
-  async restoreDirectScope(workstreamId: string, scope: SpaceScope, observed: boolean): Promise<void> {
-    try {
-      const restored = await this.recordDirectScope(workstreamId, scope, observed);
-      if (restored.ok) return;
-      logWarn(this.env, "channel_direct_scope_restore_refused", {
-        workstream_id: workstreamId, scope, observed, code: restored.code,
-      });
-    } catch (error) {
-      logWarn(this.env, "channel_direct_scope_restore_failed", {
-        workstream_id: workstreamId,
-        scope,
-        observed,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    if (!management.allowed) {
+      throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
   }
 
-  /** A direct add makes this reader the Channel's own, whichever Space seated them. */
-  async noteDirectReader(workstreamId: string, userId: string): Promise<void> {
-    await (await this.room()).noteDirectReader({
-      ...this.address(workstreamId),
-      userId: asUserId(userId),
-    });
-  }
+
 }
 
 /** One refusal per closed code, each naming the Channel it is about. */

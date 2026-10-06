@@ -371,7 +371,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     // The sidebar lists the Channel on the same keystroke, under the id the
     // server will create it with, so its row there is already the real one
     // and the server's answer only fills it in. Placed in exactly the Space
-    // the request names; the directory supplies only the audience.
+    // the request names, and Organization-wide, as the route creates it.
     const workstreamId = uuidV7();
     addPendingWorkstream(queryClient, {
       id: workstreamId,

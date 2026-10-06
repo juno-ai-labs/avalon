@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Globe2, Lock } from 'lucide-react';
+import { Globe2, Layers, Lock } from 'lucide-react';
 import { useState } from 'react';
 import type { ChannelAccess, SpaceSummary } from '@rally/contracts';
 import { SpaceIcon } from '@rally/ui/components/space-icon';
@@ -129,10 +129,11 @@ export function ManageAccessDialog({
                     ? <Button disabled={saving !== null} onClick={() => void run(spaceId, () => onRemoveFromSpace(spaceId))}>Remove from space</Button>
                     : undefined}
                   failure={failures[spaceId]}
-                  icon={space ? <SpaceIcon space={space} /> : <Globe2 aria-hidden="true" size={15} />}
+                  // Not the globe: in this dialog that means "everyone in the organization".
+                  icon={space ? <SpaceIcon space={space} /> : <Layers aria-hidden="true" size={15} />}
                   key={spaceId}
                   name={space?.name ?? 'A space you can’t see'}
-                  sentence="The channel is placed here. A space doesn’t change who can read it."
+                  sentence="Placed in this space."
                 />
               );
             })}

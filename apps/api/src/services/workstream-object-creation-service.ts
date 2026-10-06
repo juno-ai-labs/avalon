@@ -280,7 +280,7 @@ export class WorkstreamObjectCreationService {
     // In the hash, that mismatch is the 409 the receipt exists to raise.
     const requestedScope = input.scope ?? "personal";
     const { mentions: requestMentions, workstreamId: namedId, ...hashBody } = body;
-    const hashOf = (id: typeof namedId) => workstreamImportHash({
+    const hashOf = (id: typeof namedId, scope: Scope = requestedScope) => workstreamImportHash({
       ...hashBody,
       ...(id ? { workstreamId: id } : {}),
       ...((options.initialization?.kind === "history") ? { initialization: options.initialization?.kind === "history" && options.initialization.identityHash
@@ -290,7 +290,7 @@ export class WorkstreamObjectCreationService {
       // message and therefore remain part of the idempotency identity.
       ...(requestMentions.length > 0 ? { mentions: requestMentions } : {}),
       descriptionSource: input.descriptionSource ?? "derived",
-      scope: requestedScope,
+      scope,
     });
     const requestHash = hashOf(namedId);
     // A Worker from before `workstreamId` strips the field, so a receipt it
@@ -299,6 +299,13 @@ export class WorkstreamObjectCreationService {
     // receipt (under the id that Worker minted) rather than reading as a
     // conflict. The same rolling-deploy rule the empty mentions above follow.
     const legacyRequestHash = namedId ? hashOf(undefined) : requestHash;
+    // `POST /workstreams` named no scope before every Space was
+    // Organization-wide, so a create that Worker reserved hashed `personal`.
+    // Its retry now asks for `workspace` and is still the same request. Only in
+    // that direction: a private request never replays a public receipt.
+    const legacyScopeHashes = requestedScope === "workspace"
+      ? [hashOf(namedId, "personal"), hashOf(undefined, "personal")]
+      : [];
     const at = new Date().toISOString();
     // A caller that listed the Channel before sending names the id it listed
     // it under. The reservation is where that id is claimed, and it is claimed
@@ -328,7 +335,8 @@ export class WorkstreamObjectCreationService {
     if (!receipt && body.workstreamId) {
       throw new ApiError(409, "workstream_id_unavailable", "This workstream id is already in use");
     }
-    if (!receipt || (receipt.request_hash !== requestHash && receipt.request_hash !== legacyRequestHash)) {
+    if (!receipt || (receipt.request_hash !== requestHash && receipt.request_hash !== legacyRequestHash
+      && !legacyScopeHashes.includes(receipt.request_hash))) {
       throw new ApiError(409, "workstream_create_idempotency_conflict", "This create key was already used");
     }
     if (receipt.generation !== control.generation) {

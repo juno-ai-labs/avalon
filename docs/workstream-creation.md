@@ -229,9 +229,9 @@ was already deferred before this module existed.
 anchor. In one SQLite transaction it resolves General when the request named no
 Space, writes each membership `active`, stages the defaults each Space hands a
 new member, reserves the main conversation with its provisional directory row,
-and records which Space supplied which reader on the Channel's own authority
-(`applySpaceAccessSource` with `commitWithPlan`, called inside the object rather
-than over RPC). It answers with the Spaces it read, and the
+and records each Space's source on the Channel's own authority, which seats
+nobody (`applySpaceAccessSource` with `commitWithPlan`, called inside the object
+rather than over RPC). It answers with the Spaces it read, and the
 coordinator derives the opening audience from them with the same
 `resolveSpaceWorkstreamStart` the object used for the directory row's scope.
 A creation started from a provider thread passes `externalBinding`, and the
@@ -414,15 +414,15 @@ than whichever rejection landed first.
   Space defaults, the parent reservation with its provisional directory row, and
   the Space sources commit in `reserveChannelInSpaces` or not at all; creation
   never stages a `joining` row or an `add` intent.
-- **A create that names no audience writes a private work stream.** `POST
-  /workstreams` carries no scope — a request on the wire cannot claim one — so
-  the creator is seated beside whoever they named, those active participant rows
-  are the room's complete reader authority, and the scope reaches the
-  object as an argument rather than a hardcoded `'workspace'`. A create path
-  added later inherits that: omitting the scope is a decision for private, and
-  only a caller that *knows* the audience is wider — an ingress reading a public
-  channel — says `workspace`. See
-  [`data-model.md`](data-model.md#2026-08-21--a-work-stream-is-born-private).
+- **A create that names no audience writes a private work stream.** The scope
+  reaches the object as an argument rather than a hardcoded `'workspace'`, and
+  an internal create path that omits it gets `personal`. The request body
+  carries no scope; `POST /workstreams` itself passes `workspace`, because [a
+  Space grants no reader](spaces.md#every-space-is-organization-wide) and a
+  Channel a person starts in Rally is public. A create receipt the previous
+  Worker hashed as `personal` is replayed by that `workspace` retry, never the
+  other way round. An ingress reading a Slack room passes the room's privacy.
+  See [`data-model.md`](data-model.md#2026-08-21--a-work-stream-is-born-private).
 - **Whether the people named are told is the caller's to say, not the object's.**
   `POST /workstreams` passes `notifyParticipants`, because its
   `participantUserIds` is people somebody picked in "Add people"; each of them

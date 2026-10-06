@@ -369,9 +369,9 @@ SQL joins.
   storing, reading, or resolving a card; a legacy row with no auditable audience
   is not visible.
 - **A work stream is born `personal`, and every path that means otherwise says
-  so.** `POST /workstreams` carries no scope — a request on the wire cannot claim
-  an audience — so the creator is seated beside whoever they named in
-  `participantUserIds`, and those active participants are the room. The bootstrap row
+  so.** The request body carries no scope, so a client cannot claim an
+  audience; `POST /workstreams` itself says `workspace`, because a Channel a
+  person starts in Rally is public. The bootstrap row
   the object is created with is `personal` too, which matters because the runtime
   compatibility insert writes `COALESCE(NEW.scope, scope)`: a path that names no
   scope inherits that row's, so the default has to be the narrow one for the
@@ -1257,10 +1257,10 @@ These tables now live in WorkspaceDO as `parent_direct_audience`,
 ([table map](hosted-conversation-parents.md#table-map)). A Space's parent uses
 the same tables as a Channel's. No regional D1 table is involved: the provenance is
 Channel-local, and the audience it plans is still written by the main
-conversation's scope and participant rows or by the grant ledger. See
-[workstream authority](workstream-durable-object.md) for the union rule and
-[authorization](authorization.md) for what a Space-derived grant does and does
-not reach.
+conversation's scope and participant rows or by the grant ledger. Since
+WorkspaceDO migration 93 a Space seats nobody; see
+[authorization](authorization.md#space-derived-access) for what is left of
+Space-derived grants.
 
 ## Usage metering
 
