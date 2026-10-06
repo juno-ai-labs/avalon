@@ -1,7 +1,7 @@
 import { attentionItems, type BreakoutLists } from '../common/attention-items';
 import { compareRecentChannels } from '../common/recency-groups';
 import type { ChannelDirectorySnapshot } from './channel-directory-watch';
-import type { MenuBarContent } from './menu-bar-menu';
+import type { MenuBarContent, MenuBarWorkstream } from './menu-bar-menu';
 
 /** Shown for a Channel Rally has not finished naming. The renderer draws a
  * skeleton in that state; a menu row cannot, and the placeholder title on the
@@ -20,7 +20,10 @@ const UNNAMED_WORKSTREAM_LABEL = 'Untitled channel';
  *   counts a Breakout needing the reader, exactly as `useAttentionItems` reads
  *   them, so a Breakout the sidebar would not list is not counted here either.
  * - **Most recent** is every listed Channel in the sidebar's Recent order,
- *   unfiltered by Space and ignoring pins, which belong to one Space.
+ *   unfiltered by Space and ignoring pins, which belong to one Space. A Channel
+ *   listed to the reader only through a Breakout (`mainWithheld`) opens that
+ *   Breakout, as its sidebar row does, since Main is not theirs to open; one
+ *   whose Breakout list has not arrived is left out rather than opening Main.
  */
 export function menuBarContentFromDirectory(directory: ChannelDirectorySnapshot): MenuBarContent {
   const breakouts: Record<string, BreakoutLists[string]> = {};
@@ -45,6 +48,10 @@ export function menuBarContentFromDirectory(directory: ChannelDirectorySnapshot)
     recents: named
       .filter((channel) => !channel.archivedAt && !channel.systemKind)
       .sort(compareRecentChannels)
-      .map((channel) => ({ id: channel.id, title: channel.title })),
+      .flatMap((channel): MenuBarWorkstream[] => {
+        if (channel.mainWithheld !== true) return [{ id: channel.id, title: channel.title, substreamId: null }];
+        const entry = directory.breakouts[channel.id]?.[0];
+        return entry ? [{ id: channel.id, title: channel.title, substreamId: entry.substreamId }] : [];
+      }),
   };
 }

@@ -5,6 +5,8 @@ import type { ReaderMarkerStatus } from '../common/attention-items';
 export interface MenuBarWorkstream {
   readonly id: string;
   readonly title: string;
+  /** The Breakout the row opens, for a Channel listed to this reader only through one; null opens Main. */
+  readonly substreamId: string | null;
 }
 
 /** One conversation waiting for the reader: a Channel's Main, or a Breakout in it. */
@@ -206,7 +208,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
 
     const recents = content.recents.slice(0, MENU_BAR_SECTION_LIMIT).map((workstream): MenuItemConstructorOptions => ({
       label: menuBarLabel(workstream.title),
-      click: tracked('recent_workstream', () => actions.openConversation(workstream.id, null)),
+      click: tracked('recent_workstream', () => actions.openConversation(workstream.id, workstream.substreamId)),
     }));
     pushSection(RECENT_HEADER, recents, recents.length === 0 ? 'No recent channels' : null);
   }

@@ -227,7 +227,7 @@ describe('menu bar controller', () => {
 
   it('rebuilds the drop-down from whatever is currently held', async () => {
     const subject = harness({
-      content: { attention: [], attentionComplete: true, recents: [{ id: 'a', title: 'Acme renewal' }] },
+      content: { attention: [], attentionComplete: true, recents: [{ id: 'a', title: 'Acme renewal', substreamId: null }] },
     });
     await subject.controller.initialize();
     subject.controller.refresh();
