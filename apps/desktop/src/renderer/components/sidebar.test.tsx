@@ -255,6 +255,32 @@ describe('Sidebar channel markers', () => {
     expect(screen.queryByRole('link', { name: /New channel/u })).not.toBeInTheDocument();
   });
 
+  it('opens the phone sheet from the menu button and closes it on Escape or on opening a Channel', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[general()]}
+      workspace={workspace}
+      workstreams={[workstream('ws-a', 'Alpha', 'completed'), workstream('ws-b', 'Beta', 'completed')]} /></Tooltip.Provider></MemoryRouter>);
+    const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+    const toggle = screen.getByRole('button', { name: 'Open navigation' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(navigation).not.toHaveClass('is-mobile-open');
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAccessibleName('Close navigation');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(navigation).toHaveClass('is-mobile-open');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(navigation).not.toHaveClass('is-mobile-open');
+
+    fireEvent.click(toggle);
+    // Re-sorting the list is not leaving it.
+    fireEvent.click(screen.getByRole('button', { name: /^Sorted /u }));
+    expect(navigation).toHaveClass('is-mobile-open');
+    fireEvent.click(screen.getByRole('link', { name: /Beta/u }));
+    expect(navigation).not.toHaveClass('is-mobile-open');
+    expect(toggle).toHaveAccessibleName('Open navigation');
+  });
+
   it('marks sidebar creation telemetry only when the Channel setup is submitted', async () => {
     const onCreateChannel = vi.fn(async () => undefined);
     render(<MemoryRouter><Tooltip.Provider>
