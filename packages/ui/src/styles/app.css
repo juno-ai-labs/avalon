@@ -7961,11 +7961,11 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-menu-scope-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .title-menu-scope-title { color: var(--av-sys-color-text-default); font-size: 14.5px; }
 .title-menu-scope-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; }
-/* Too narrow to put the copy and Change beside the icon: stack all three. */
+/* Too narrow for Change beside the copy: the icon stays beside the title, and
+   Change moves under the copy. */
 @media (max-width: 480px) {
-  .title-menu-scope { align-items: flex-start; flex-direction: column; gap: 8px; }
-  .title-menu-scope > svg { margin-top: 0; }
-  .title-menu-scope .title-menu-link { margin-left: -4px; }
+  .title-menu-scope { align-items: start; column-gap: 12px; display: grid; grid-template-columns: auto minmax(0, 1fr); row-gap: 8px; }
+  .title-menu-scope .title-menu-link { grid-column: 2; justify-self: start; margin-left: -4px; }
 }
 .title-menu-view:has(> .title-menu-scope) .title-menu-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
 .title-menu-person { align-items: center; display: flex; gap: 12px; min-height: 52px; padding: 4px 8px; }
