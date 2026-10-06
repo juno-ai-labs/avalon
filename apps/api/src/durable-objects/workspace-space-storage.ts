@@ -394,6 +394,76 @@ export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
 ];
 
 /**
+ * Migration 93: every private Space becomes Organization-wide.
+ *
+ * Spaces are public by default, and the ones made private before that changed
+ * are widened here. The migration writes only what `noteSpaceAudience` writes:
+ * the scope with a revision step, and an `audience` intent at the new
+ * revision, due at once. The alarm then walks each member Channel through the
+ * canonical operations exactly as it resumes an interrupted request, so no
+ * Channel's audience is written from SQL and the content fence still runs per
+ * Channel; a fenced one names its reason on the intent row.
+ *
+ * The intent runs as somebody, and the walk needs a member who can edit the
+ * Space, which once it is Organization-wide is any active member. An active
+ * participant is preferred, the creator first, so the change is attributed to
+ * somebody who owned the private Space; a Space none of them is left in runs
+ * as the first active member. SQLite cannot order a subquery by an outer
+ * column, so each preference is its own subquery. An archived Space only has its scope
+ * changed: nothing reaches its Channels until a restore, which applies the
+ * scope it has then.
+ *
+ * The id each intent needs is drawn into a scratch table first, so each Space
+ * gets one random UUID however SQLite plans the insert that reads it.
+ */
+export const SPACE_PUBLIC_BY_DEFAULT_MIGRATION: readonly string[] = [
+  `CREATE TABLE _space_public_v93 (
+    space_id TEXT PRIMARY KEY,
+    operation_hex TEXT NOT NULL,
+    requested_by_user_id TEXT
+  ) STRICT`,
+  `INSERT INTO _space_public_v93 (space_id, operation_hex, requested_by_user_id)
+     SELECT s.space_id, lower(hex(randomblob(16))), COALESCE(
+       (SELECT v.user_id FROM space_viewers v
+          JOIN workspace_member_status m ON m.user_id = v.user_id
+         WHERE v.space_id = s.space_id AND v.is_participant = 1 AND v.user_id = s.created_by_user_id
+           AND m.active = 1 AND json_extract(m.relationship_json, '$.accessClass') = 'member'),
+       (SELECT v.user_id FROM space_viewers v
+          JOIN workspace_member_status m ON m.user_id = v.user_id
+         WHERE v.space_id = s.space_id AND v.is_participant = 1
+           AND m.active = 1 AND json_extract(m.relationship_json, '$.accessClass') = 'member'
+         ORDER BY v.user_id LIMIT 1),
+       (SELECT m.user_id FROM workspace_member_status m
+         WHERE m.active = 1 AND json_extract(m.relationship_json, '$.accessClass') = 'member'
+         ORDER BY m.user_id LIMIT 1),
+       s.created_by_user_id)
+       FROM spaces s
+      WHERE s.scope = 'personal' AND s.archived_at IS NULL`,
+  `UPDATE spaces
+      SET scope = 'workspace', revision = revision + 1,
+          updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    WHERE scope = 'personal'`,
+  `INSERT INTO space_intents (
+     operation_id, kind, space_id, workstream_id, space_revision,
+     membership_generation, source_space_id, source_space_revision,
+     source_membership_generation, delivery_generation, state, receipts_json,
+     requested_by_user_id, not_before, attempts, created_at, updated_at
+   )
+   SELECT substr(p.operation_hex, 1, 8) || '-' || substr(p.operation_hex, 9, 4) || '-4'
+            || substr(p.operation_hex, 14, 3) || '-8' || substr(p.operation_hex, 18, 3) || '-'
+            || substr(p.operation_hex, 21, 12),
+          'audience', s.space_id, NULL, s.revision, NULL, NULL, NULL, NULL, NULL, 'pending', '[]',
+          p.requested_by_user_id, 0, 0,
+          CAST(unixepoch('subsec') * 1000 AS INTEGER), CAST(unixepoch('subsec') * 1000 AS INTEGER)
+     FROM _space_public_v93 p JOIN spaces s ON s.space_id = p.space_id
+    WHERE p.requested_by_user_id IS NOT NULL`,
+  `UPDATE workspace_space_state
+      SET waterline = waterline + 1, updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    WHERE id = 1 AND EXISTS (SELECT 1 FROM _space_public_v93)`,
+  `DROP TABLE _space_public_v93`,
+];
+
+/**
  * The run states a conversation is live in on its own account.
  *
  * The `exact_state` vocabulary rather than the wire's, because this predicate

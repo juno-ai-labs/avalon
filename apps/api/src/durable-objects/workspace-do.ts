@@ -741,6 +741,7 @@ import {
   SPACE_BOOTSTRAP_PAGE_SIZE,
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WORKSPACE_PINNED_ORDER_MIGRATION,
+  SPACE_PUBLIC_BY_DEFAULT_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
@@ -4199,6 +4200,13 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHERE json_extract(summary_json, '$.status') = 'pending'
       GROUP BY parent_id
      ON CONFLICT(kind, alarm_key) DO NOTHING`],
+}, {
+  version: 94,
+  description: "make every private Space Organization-wide",
+  // Spaces are public by default. Each private Space is widened and gets the
+  // `audience` intent a request would stage, so the alarm carries the new
+  // audience to its Channels; see docs/spaces.md#public-by-default.
+  statements: SPACE_PUBLIC_BY_DEFAULT_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {

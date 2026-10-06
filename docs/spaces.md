@@ -152,6 +152,28 @@ not, and skips the icon in its "same Space?" comparison, because the first
 attempt's pass may already have written one. The desktop sidebar's **New
 space** sends no icon; a caller that sends one keeps it.
 
+### Public by default
+
+A new Space is Organization-wide. The desktop sidebar's **New space** asks for
+`scope: "workspace"`, and **Space participants** is where somebody makes one
+private afterwards. A Slack room still creates a private Space for a private
+room, because there the scope mirrors the room rather than choosing a default.
+
+Spaces made private before this changed were widened by WorkspaceDO migration
+93 (`SPACE_PUBLIC_BY_DEFAULT_MIGRATION`). It writes only what
+`noteSpaceAudience` writes: `scope = 'workspace'` with a revision step, and an
+`audience` intent at that revision, due at once. The alarm then resumes that
+intent like any interrupted audience change (see
+[Resuming an interrupted operation](#resuming-an-interrupted-operation)), so
+each member Channel takes the wider audience through its canonical operations,
+content fence included, and a fenced Channel names its reason on the intent
+row. The intent runs as an active participant, the creator first, else the
+first active member; once the Space is Organization-wide any member can edit
+it. An archived private Space only has its scope changed, and a restore applies
+it. **Widening every member Channel is the point and cannot be undone:** a
+private Channel whose only reach was its private Space becomes readable to
+every member.
+
 ### The retired hidden conversation
 
 A Space created before 2026-09-26 also has a main conversation object, which
@@ -2105,6 +2127,27 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-10-06 — Spaces are public by default
+
+**What changed:** The sidebar creates Spaces Organization-wide rather than
+private. WorkspaceDO migration 93 widens every existing private Space and
+stages the `audience` intent that carries the change to its Channels.
+
+**Why:** Asked for as a product decision: Spaces exist to group an
+Organization's work, and private ones hid Channels from the people they were
+grouped for.
+
+**Considered and rejected:** Walking each Space from a one-off operator route
+or the cutover queue, which would be a second path for an audience change.
+Writing each Channel's audience from the migration's SQL, which would skip the
+canonical operations and their content fence. The migration stages the same
+intent a request stages and lets the existing resume walk it.
+
+**Consequences:** Channels whose only reach was a private Space become readable
+to every member once the alarm walks them. Archived private Spaces become
+Organization-wide on restore. A Slack private room still makes a private Space,
+so private Spaces can reappear from that path and from **Space participants**.
 
 ### 2026-10-05 — Rally chooses a new Space's icon from its name
 
