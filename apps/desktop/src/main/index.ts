@@ -32,6 +32,7 @@ import {
   DESKTOP_DEEP_LINK_PROTOCOLS,
 } from '@rally/contracts/desktop-deep-link';
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { APNS_TOPICS } from '@rally/contracts/push-notifications';
 import type { Region } from "@rally/contracts/regions";
 import { regions } from "@rally/contracts/regions";
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
@@ -1467,6 +1468,13 @@ const desktopPush = new DesktopPushNotifications({
   changed: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
   warn: () => logWarn('rally', 'Push notifications could not register on this Mac'),
 });
+
+/**
+ * The active Organization's attention count, as the main window last sent it.
+ * An APNs alert from another Organization can replace the dock badge while
+ * Rally is in the background; focusing Rally puts this one back.
+ */
+let dockBadgeCount: number | null = null;
 
 // Install the response delegate before ready so a notification cold launch is retained.
 desktopPush.installNativeBridge();
@@ -3587,9 +3595,16 @@ function registerIpc(): void {
     await desktopPush.set(enabled);
     return desktopApplicationSettings();
   });
+  ipcMain.handle('dock-badge:set', (event, count: unknown) => {
+    assertTrustedIpcSender(event);
+    if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) throw new Error('Invalid dock badge count');
+    dockBadgeCount = count;
+    if (process.platform === 'darwin') app.setBadgeCount(count);
+  });
   ipcMain.handle('application-settings:open-notifications', async (event) => {
     assertTrustedIpcSender(event);
-    await shell.openExternal('x-apple.systempreferences:com.apple.Notifications-Settings.extension');
+    // `id` opens Rally's own entry rather than the list of apps.
+    await shell.openExternal(`x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=${APNS_TOPICS.macos}`);
   });
   ipcMain.handle('update:get-status', (event) => {
     assertTrustedIpcSender(event);
@@ -5243,7 +5258,10 @@ if (!singleInstanceLock) {
 
     if (initialDeepLink) emitDeepLink(initialDeepLink);
 
-    app.on('browser-window-focus', () => desktopPush.refreshPermission());
+    app.on('browser-window-focus', () => {
+      desktopPush.refreshPermission();
+      if (process.platform === 'darwin' && dockBadgeCount !== null) app.setBadgeCount(dockBadgeCount);
+    });
 
     app.on('activate', () => {
       applicationOpenObserver.activated();

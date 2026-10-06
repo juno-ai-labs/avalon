@@ -1,6 +1,10 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { renderHook } from '@testing-library/react';
+import { createElement, type ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
 
-import { attentionItemPath, attentionItems, type BreakoutLists } from './attention-items';
+import { attentionItemPath, attentionItems, useAttentionItems, type BreakoutLists } from './attention-items';
+import { workstreamChildrenQueryKey } from './channel-viewer-state';
 import type { WorkstreamSummary } from './types';
 
 function channel(id: string, title: string, overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary {
@@ -102,5 +106,22 @@ describe('attentionItemPath', () => {
   it('opens Main at the Channel and a Breakout through its substream', () => {
     expect(attentionItemPath({ workstreamId: 'a b', substreamId: null })).toBe('/workstreams/a%20b');
     expect(attentionItemPath({ workstreamId: 'a', substreamId: '11' })).toBe('/workstreams/a?substream=11');
+  });
+});
+
+describe('useAttentionItems', () => {
+  it('says the Breakout lists are not loaded until every Channel waiting on one has it', () => {
+    const queryClient = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client: queryClient }, children);
+    const rows = [channel('c1', 'Plans', { breakoutAttentionCount: 1 }), channel('c2', 'Ops')];
+    const { result, rerender } = renderHook(() => useAttentionItems(rows), { wrapper });
+    expect(result.current.breakoutListsLoaded).toBe(false);
+
+    queryClient.setQueryData(workstreamChildrenQueryKey('c1'), {
+      privateChildren: [breakout('b1', 'Launch', { unreadCount: 2 })],
+    });
+    rerender();
+    expect(result.current.breakoutListsLoaded).toBe(true);
+    expect(result.current.items.map((item) => item.key)).toEqual(['c1:b1']);
   });
 });

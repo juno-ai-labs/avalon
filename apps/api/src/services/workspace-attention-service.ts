@@ -27,5 +27,6 @@ export async function workspaceAttention(
   return WorkspaceAttentionSchema.parse(await workspace.attention({
     workspaceId: auth.workspaceId,
     userId: auth.userId,
+    accessClass: auth.accessClass ?? "member",
   }));
 }

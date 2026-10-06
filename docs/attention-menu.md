@@ -76,6 +76,11 @@ first-open paths that clear the sidebar dot remove the row and lower the count.
 - **Opening the menu fetches nothing.** The Breakout queries are disabled
   observers; letting one fetch adds a request per waiting Channel to every
   shell render. Guard: none automated.
+- **The dock badge is this count.** `useDockBadge` sends `items.length`, and
+  `readerAttentionCount` in `workspace-space-storage.ts` counts the APNs badge
+  with the same three states over Mains and Breakouts. A new reader-owned
+  state goes in both. Guard: `workspace-attention.test.ts` for the server side
+  only.
 - **Count and list are one array.** The trigger shows `items.length`, so the
   number can never disagree with the rows under it. Guard:
   `attention-menu.test.tsx`.
