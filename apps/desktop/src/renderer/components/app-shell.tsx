@@ -17,6 +17,7 @@ import { useShellCapabilities } from '../lib/collaboration-session';
 import { MacDownloadLink } from './mac-download-link';
 import type { RallyApi } from '../lib/api';
 import { workstreamRecencyAt } from '../lib/format';
+import { useAttentionItems } from '../lib/attention-items';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { openLink } from '../lib/browser-rail-links';
 import { conversationDirectoryQueryKey, mainOmitted } from '../lib/conversation-directory';
@@ -568,6 +569,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     () => associativeWorkstreamsForSidebar(associativeNavigation.data, workstreams.data),
     [associativeNavigation.data, workstreams.data],
   );
+  const attentionItems = useAttentionItems(sidebarWorkstreams);
+  // The menu only says "nothing" once every Channel is loaded: the Space walk
+  // has finished, no page is left unread, and the walk did not fail.
+  const attentionComplete = workstreams.data !== undefined && !workstreams.hasMore
+    && !workstreams.isFetching && !workstreams.isError;
   const visibleSpaces = spaces.data?.items ?? [];
   // While search is open, a Breakout list the socket writes re-reads the
   // places, so a Breakout created or renamed meanwhile shows at once.
@@ -986,6 +992,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         loadedSpaceIds={sidebarConnect?.channelsBySpace && !workstreams.isError ? loadedSpaceIds : undefined}
         onViewSpace={prioritizeSpace}
         workspace={workspace}
+        attentionItems={attentionItems}
+        attentionComplete={attentionComplete}
         workstreams={sidebarWorkstreams}
       />
         <span aria-live="polite" className="sr-only">

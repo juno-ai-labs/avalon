@@ -225,7 +225,7 @@ describe('Sidebar channel markers', () => {
     workstreamSocketOpenContext.mockReset().mockReturnValue({ state: 'cold' });
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
-    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 320, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
       unobserve(): void {}
@@ -319,14 +319,14 @@ describe('Sidebar channel markers', () => {
     );
 
     const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+    expect(resizer).toHaveAttribute('aria-valuenow', '320');
 
     fireEvent.keyDown(resizer, { key: 'ArrowRight' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '316');
-    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('316');
+    expect(resizer).toHaveAttribute('aria-valuenow', '336');
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('336');
 
     fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+    expect(resizer).toHaveAttribute('aria-valuenow', '320');
   });
 
   // Same as the work-stream divider: the press must not open what the hover
@@ -343,7 +343,7 @@ describe('Sidebar channel markers', () => {
     const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
     resizer.setPointerCapture = vi.fn();
     vi.spyOn(screen.getByRole('complementary', { name: 'Rally navigation' }), 'getBoundingClientRect')
-      .mockReturnValue({ bottom: 900, height: 900, left: 0, right: 300, toJSON: () => ({}), top: 0, width: 300, x: 0, y: 0 });
+      .mockReturnValue({ bottom: 900, height: 900, left: 0, right: 320, toJSON: () => ({}), top: 0, width: 320, x: 0, y: 0 });
 
     fireEvent.focus(resizer);
     expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
@@ -352,16 +352,16 @@ describe('Sidebar channel markers', () => {
 
     fireEvent.doubleClick(resizer);
     fireEvent.keyDown(resizer, { key: 'Enter' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '300');
-    expect(resizer).toHaveAttribute('aria-valuemin', '240');
+    expect(resizer).toHaveAttribute('aria-valuenow', '320');
+    expect(resizer).toHaveAttribute('aria-valuemin', '306');
 
-    fireEvent.pointerDown(resizer, { button: 0, clientX: 300, pointerId: 5 });
+    fireEvent.pointerDown(resizer, { button: 0, clientX: 320, pointerId: 5 });
     fireEvent.pointerMove(window, { clientX: 60, pointerId: 5 });
     fireEvent.pointerUp(window, { pointerId: 5 });
-    expect(resizer).toHaveAttribute('aria-valuenow', '240');
+    expect(resizer).toHaveAttribute('aria-valuenow', '306');
 
     for (let step = 0; step < 4; step += 1) fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '240');
+    expect(resizer).toHaveAttribute('aria-valuenow', '306');
     expect(screen.queryByRole('button', { name: /Expand|Collapse/u })).not.toBeInTheDocument();
   });
 
@@ -745,13 +745,13 @@ describe('Sidebar channel markers', () => {
     const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
     expect(resizer).not.toHaveClass('is-near');
 
-    fireEvent.pointerMove(window, { clientX: 316, clientY: 780 });
+    fireEvent.pointerMove(window, { clientX: 336, clientY: 780 });
     expect(resizer).toHaveClass('is-near');
 
-    fireEvent.pointerMove(window, { clientX: 316, clientY: 90 });
+    fireEvent.pointerMove(window, { clientX: 336, clientY: 90 });
     expect(resizer).toHaveClass('is-near');
 
-    fireEvent.pointerMove(window, { clientX: 340, clientY: 400 });
+    fireEvent.pointerMove(window, { clientX: 360, clientY: 400 });
     expect(resizer).not.toHaveClass('is-near');
   });
 
@@ -777,21 +777,21 @@ describe('Sidebar channel markers', () => {
 
     const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
     resizer.setPointerCapture = vi.fn();
-    layOutPanelAt(300);
+    layOutPanelAt(320);
 
-    fireEvent.pointerDown(resizer, { clientX: 318, pointerId: 3 });
+    fireEvent.pointerDown(resizer, { clientX: 338, pointerId: 3 });
     expect(resizer).toHaveFocus();
-    fireEvent.pointerMove(window, { clientX: 318, pointerId: 3 });
+    fireEvent.pointerMove(window, { clientX: 338, pointerId: 3 });
     expect(document.querySelector('.sidebar-drag-guide')).not.toBeNull();
-    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+    expect(resizer).toHaveAttribute('aria-valuenow', '320');
 
-    fireEvent.pointerMove(window, { clientX: 358, pointerId: 3 });
-    expect(resizer).toHaveAttribute('aria-valuenow', '340');
+    fireEvent.pointerMove(window, { clientX: 378, pointerId: 3 });
+    expect(resizer).toHaveAttribute('aria-valuenow', '360');
 
     fireEvent.pointerUp(window, { pointerId: 3 });
     expect(document.querySelector('.sidebar-drag-guide')).toBeNull();
     fireEvent.pointerMove(window, { clientX: 400, pointerId: 3 });
-    expect(resizer).toHaveAttribute('aria-valuenow', '340');
+    expect(resizer).toHaveAttribute('aria-valuenow', '360');
   });
 
   // OnboardingChecklist is disabled (demo-only, local-state-only, and had no
