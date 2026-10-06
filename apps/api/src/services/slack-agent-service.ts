@@ -2355,7 +2355,6 @@ export class SlackAgentService {
           reactionAnchor: {
             channelId: reactionSource.channelId,
             messageTs: reactionSource.timestamp,
-            reaction: placedReaction,
           },
         }
       : originContext;
@@ -3813,15 +3812,17 @@ export class SlackAgentService {
       // admitted before the anchor was carried falls back to the slot.
       const target = ownAnchor
         ?? (current.reaction_channel_id && current.reaction_message_ts
-          ? { channelId: current.reaction_channel_id, messageTs: current.reaction_message_ts, reaction: current.reaction_current }
+          ? { channelId: current.reaction_channel_id, messageTs: current.reaction_message_ts }
           : null);
       if (!target) return;
       const anchored = current.reaction_channel_id === target.channelId
         && current.reaction_message_ts === target.messageTs;
-      // Once the slot has moved on, what sits on this run's message is what
-      // admission placed there; nothing since has been recorded for it.
-      const placed = anchored ? current.reaction_current : target.reaction;
       const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
+      // Once the slot has moved on, nothing records this run's message any
+      // more, and the only Rally emoji admission puts there is the
+      // acknowledgement. If that never landed, removing it answers
+      // `no_reaction`, which the adapter treats as success.
+      const placed = anchored ? current.reaction_current : reactions.acknowledgement;
       const result = await this.executeSlackReaction(connection, token, {
         kind: "reaction",
         channelId: target.channelId,
@@ -4297,7 +4298,7 @@ async function stableUuid(value: string): Promise<string> {
 /** What a run with no text response says, rather than posting nothing at all. */
 const SLACK_EMPTY_RESULT_TEXT = "Rally completed the task without a text response.";
 
-/** The message a run's status reaction sits on, and the emoji admission placed there. */
+/** The message a run's status reaction sits on. */
 type SlackReactionAnchor = NonNullable<SlackOriginContext["reactionAnchor"]>;
 
 /**
