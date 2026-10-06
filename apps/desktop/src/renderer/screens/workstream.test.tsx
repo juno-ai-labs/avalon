@@ -670,6 +670,7 @@ describe('RemoveParticipantDialog', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Remove Jordan from the breakout?' })).toBeTruthy();
+    expect(screen.getByText('Jordan will be taken off this breakout. They keep access only if it’s public.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onCancel).toHaveBeenCalled();
     expect(onContinue).not.toHaveBeenCalled();
@@ -685,6 +686,7 @@ describe('RemoveParticipantDialog', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Leave the channel?' })).toBeTruthy();
+    expect(screen.getByText('You will be taken off this channel. You keep access only if it’s public or a space you’re in includes it.')).toBeTruthy();
     expect(screen.getByText('You are the last participant.')).toBeTruthy();
   });
 
