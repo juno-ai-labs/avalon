@@ -3,15 +3,13 @@ import { listSharedDirectory, listSharedNavigationDirectory } from "../services/
 import { Hono } from "hono";
 import { z } from "zod";
 import { IdSchema } from "@rally/contracts";
-import { claimLegacyInvitationLink, parentStub } from "../services/scope-invitation-claims";
-import { ClaimInvitationLinkSchema, ClaimedInvitationLinkSchema, ScopeSharingOptionsSchema, ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, RevokeScopeInvitationSchema,
+import { parentStub, publishJoined } from "../services/scope-invitation-claims";
+import { ScopeSharingOptionsSchema, ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, RevokeScopeInvitationSchema,
   SharedDirectorySchema, SharedNavigationDirectorySchema, ScopeInvitationResultSchema, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
 import type { HonoAppEnv } from "../env";
-import { getIdentityAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
+import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { ApiError } from "../lib/api-error";
-import { diagnosticErrorCode, logWarn } from "../observability/logger";
-import { dispatchWorkspaceRelationshipChanges } from "../services/workspace-relationship-delivery";
 
 const CreateRequestSchema = z.strictObject({
   operationId: CreateScopeInvitationsSchema.shape.operationId,
@@ -50,7 +48,7 @@ function channelScopeNotFound(error: unknown): never {
   throw error;
 }
 
-/** Mounted below identity auth; every route but the old-link claim needs an existing relationship. */
+/** Mounted below identity auth; every route here needs an existing relationship. */
 export const sharingRoutes = new Hono<HonoAppEnv>();
 sharingRoutes.get("/directory", requireWorkspaceAuth, async (c) => {
   const auth = getWorkspaceAuth(c);
@@ -107,30 +105,15 @@ sharingRoutes.post("/", requireWorkspaceAuth, zValidator("json", CreateRequestSc
     throw new ApiError(400, "scope_address_mismatch", "Choose targets in this workstream");
   }
   const request = CreateScopeInvitationsSchema.parse({ ...body, workspaceId: auth.workspaceId, actorUserId: auth.userId });
-  const result = ScopeInvitationResultSchema.parse(sharingResult(
-    await (await parentStub(c.env, request.workspaceId)).createScopeInvitations(request).catch(channelScopeNotFound)));
-  // A recipient who already had an account was claimed as the share was made,
-  // which may have created their guest relationship. Publish it now rather
-  // than on the next cron sweep. After the response: the claim already
-  // recorded it where it checks.
-  const joined = result.status === "created"
-    ? [...new Set(result.invitations.flatMap((invitation) => invitation.acceptedByUserId ? [invitation.acceptedByUserId] : []))] : [];
-  const delivery = Promise.all(joined.map((userId) => dispatchWorkspaceRelationshipChanges(c.env, { workspaceId: request.workspaceId, userId })
-    .catch((error: unknown) => {
-      logWarn(c.env, "workspace_relationship_dispatch_failed", {
-        workspace_id: request.workspaceId, error: diagnosticErrorCode(error, "workspace_relationship_dispatch_failed"),
-      });
-    })));
+  const result = sharingResult(
+    await (await parentStub(c.env, request.workspaceId)).createScopeInvitations(request).catch(channelScopeNotFound));
+  // A recipient who already had an account was claimed as the share was made.
+  // Publish any guest relationship that created after the response.
+  const delivery = publishJoined(c.env, request.workspaceId, result.status === "created"
+    ? result.invitations.flatMap((invitation) => invitation.acceptedByUserId ? [invitation.acceptedByUserId] : []) : []);
   try { c.executionCtx.waitUntil(delivery); } catch { void delivery; }
   c.header("Cache-Control", "no-store");
   return c.json(ScopeInvitationResultSchema.parse(result), 201);
-});
-// Compatibility for invitation emails sent before shares were claimed at
-// sign-in: their token is the only record of which Channel they name.
-sharingRoutes.post("/claim-link", zValidator("json", ClaimInvitationLinkSchema), async (c) => {
-  const claimed = await claimLegacyInvitationLink(c.env, getIdentityAuth(c).userId, c.req.valid("json").link);
-  c.header("Cache-Control", "no-store");
-  return c.json(ClaimedInvitationLinkSchema.parse({ targets: claimed.flatMap((invitation) => invitation.targets.slice(0, 1)) }));
 });
 sharingRoutes.delete("/:parentId/:invitationId", requireWorkspaceAuth,
   zValidator("param", InvitationParamSchema), zValidator("json", RevokeRequestSchema), async (c) => {

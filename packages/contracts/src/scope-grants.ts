@@ -129,28 +129,11 @@ export const ScopeInvitationSummarySchema = z.strictObject({
 });
 export type ScopeInvitationSummary = z.infer<typeof ScopeInvitationSummarySchema>;
 
-/**
- * Claims what was shared with a person's verified mailboxes in one Channel.
- *
- * Server-internal: the caller has already established that every address in
- * `emails` is verified for `userId`. There is no acceptance step and no link
- * secret; a share is addressed to a mailbox, and signing in as that mailbox is
- * the whole of the proof.
- */
+/** Server-internal: every address in `emails` is already verified for `userId`. */
 export const ClaimScopeInvitationsSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, userId: UserIdSchema,
   emails: z.array(z.string().trim().email().transform((email) => email.toLowerCase())).min(1),
 });
-export type ClaimScopeInvitations = z.infer<typeof ClaimScopeInvitationsSchema>;
-
-/**
- * An invitation email sent before claiming existed carries an `inv_` token in
- * its link. Presenting it after sign-in only says which Channel to ask; the
- * claim still requires one of the caller's verified addresses.
- */
-export const ClaimInvitationLinkSchema = z.strictObject({ link: z.string().min(1) });
-/** The first target of each share the link led to, for the page to open; empty when nothing was claimed. */
-export const ClaimedInvitationLinkSchema = z.strictObject({ targets: z.array(ScopeGrantTargetSchema) });
 
 export const RevokeScopeInvitationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema,

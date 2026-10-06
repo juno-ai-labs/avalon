@@ -25,9 +25,7 @@ export class BrowserSessionService {
       JSON.stringify(["browser-session",claims.sessionId,session.refreshToken]));
     await this.env.DB.prepare("INSERT INTO browser_sessions(session_id,credential_hash) VALUES (?,?) ON CONFLICT(session_id) DO NOTHING")
       .bind(claims.sessionId,await sha256(credential)).run();
-    // Signing in is how a share addressed to this mailbox is taken up; there
-    // is no separate acceptance. Before the description below, so the
-    // workspaces it lists already include any it just joined.
+    // Before the description below, so it lists any Organization this joined.
     await claimScopeInvitations(this.env,claims.userId);
     const auth = await this.read(credential);
     const description = await this.describe(auth);

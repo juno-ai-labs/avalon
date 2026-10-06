@@ -77,10 +77,9 @@ entry asks the person to sign in with the address the link was sent to; signed
 in, it opens the Organization and the conversation. Signing in is what claims
 the share ([scoped invitations](scope-invitations.md#claiming)), on the server,
 before the session is described, so there is no acceptance screen, button or
-request after it. An old `/invite#inv_…` link from before this is a sign-in
-page: the client drops the token from history, keeps it in page memory, and
-once signed in posts it to `/sharing/claim-link` so a share made before claiming
-existed still reaches its recipient, then opens what it claimed.
+request after it. An old `/invite#…` link from before this is a plain sign-in
+page: the client drops the fragment from history. The server indexed those
+older shares itself, so signing in claims them like any other.
 
 For an unaddressed entry, the client lists the user's regional workspaces and can sign
 out through the ordinary browser-session logout. Workspace roots mount the shell,
@@ -538,17 +537,20 @@ handling, the mailbox prefill from `/browser/invitation`, the Accept invitation
 button and the accepted-destination list are gone, along with
 `apps/browser/src/invitation.ts`. An invitation email links to the conversation's
 addressed path, which signs in and opens like any canonical link; Continue with
-Google is offered there too. An old `/invite#inv_…` link is a sign-in page whose
-token is presented once after sign-in, for shares that predate claiming.
+Google is offered there too. An old `/invite#…` link is a plain sign-in page.
 
 **Why:** The server now claims a share when its address signs in
 ([scoped invitations](scope-invitations.md)), so the screen between sign-in and
 the conversation had nothing left to do.
 
+**Considered and rejected:** Keeping the old token in page memory and posting it
+after sign-in so shares made before claiming still reach their recipient. The
+server indexes those shares itself instead, so the browser carries no protocol.
+
 **Consequences:** The sign-in form no longer fills in the invited address; the
-email names it, and the page says to use the address the link was sent to. A
-signed-in person with nothing shared sees that said plainly rather than a prompt
-to open an invitation.
+email names it, and the page says to use the address the link was sent to. The
+organization list shows a loading line until it has loaded, so a fresh sign-in
+never says nothing was shared before the server answers.
 
 PR: [#1120](https://github.com/juno-ai-labs/avalon/pull/1120).
 

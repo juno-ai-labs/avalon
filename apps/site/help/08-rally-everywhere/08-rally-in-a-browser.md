@@ -18,29 +18,22 @@ sees.
 covers the other side of this: how you invite someone, and how you take that
 access back.
 
-## Accepting an invitation
+## Opening something shared with you
 
 When someone shares a conversation with you, you get an email with a link.
 
-1. Click the link. The browser version opens with your email address already
-   filled in, and asks you to sign in with the address that received the
-   invitation.
-2. Sign in (see the next section).
-3. Click **Accept invitation**. It shows **Joining…** for a moment.
-4. You see **You're ready to collaborate**, with a link for each thing shared
-   with you, such as **Open channel**, **Open main conversation** or **Open
-   shared breakout**. If only one thing was shared, it opens straight away.
+1. Click the link. The browser version asks you to sign in.
+2. Sign in with the email address the invitation was sent to (see the next
+   section).
+3. The shared conversation opens. There is nothing to accept: signing in with
+   that address is all it takes.
 
-Nothing happens until you click. Opening the link, or switching tabs, does not
-sign you in or accept anything on your behalf, so you always know who you are
-joining as.
-
-- If the invitation has been withdrawn or has expired, the page says the
-  invitation is unavailable. Ask the person who sent it for a new one.
-- After you open the link, Rally removes the secret part from the address bar.
-  If you reload the page after that, open the link from the email again.
-- If you finish signing in from the email in another tab, go back to the
-  invitation tab. It notices that you are signed in and carries on.
+- Signing in with a different address opens nothing. The share belongs to the
+  address it was sent to, so a forwarded email is no use to anyone else.
+- If the invitation has been withdrawn or has expired, signing in shows no new
+  conversation. Ask the person who sent it for a new one.
+- If you already use Rally with that address, the shared conversation is
+  already in your list. You get the email so you know it is there.
 
 > [!NOTE]
 > An invitation to a shared conversation is different from an invitation to
@@ -128,8 +121,10 @@ title pill and choose **Share**. Type
 one or more email addresses, separated by spaces, commas or semicolons, and
 send. Each person gets an invitation like the one you received.
 
-- The dialog only takes email addresses. There is no choice of access level and
-  no list of who has already been invited.
+- The dialog only takes email addresses. There is no choice of access level.
+- People who have not signed in yet are listed under the form as **Guest**, and
+  you can remove them there. Someone who already uses Rally with that address
+  joins straight away and appears among the participants instead.
 - Sharing **Main** shares only **Main**, not the Breakouts. Sharing one Breakout
   does not reveal **Main** or the other Breakouts.
 - Whether you may share at all depends on your role in the Organization; see

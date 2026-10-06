@@ -5,7 +5,7 @@ import { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
 import { CreateScopeInvitationsSchema, type ScopeGrantTarget } from '@rally/contracts/scope-grants';
-import type { RallyApi } from '../lib/api';
+import { ApiError, type RallyApi } from '../lib/api';
 import { InlineError, Modal } from './primitives';
 
 export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onShared }: {
@@ -16,15 +16,13 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
   onShared?: () => void;
 }): React.JSX.Element {
   const [emails, setEmails] = useState('');
-  const [failure, setFailure] = useState<'invalid_emails' | 'share' | 'remove' | null>(null);
+  const [failure, setFailure] = useState<'invalid_emails' | 'share' | 'remove' | 'joined' | null>(null);
   const operation = useRef<{ key: string; id: string } | null>(null);
   // Main is conversation 0: a workstream grant would also include inheriting children.
   const target: ScopeGrantTarget = { kind: 'conversation', workspaceId: asWorkspaceId(workspaceId),
     parentId: asWorkstreamId(parentId), substreamId: asSubstreamId(substreamId) };
-  // People this was shared with who have not signed in yet. They are Guests
-  // already: the first time they sign in with that address, they are in. A
-  // recipient who already has an account is claimed as the share is made, and
-  // appears among the participants instead.
+  // Shares nobody has claimed yet. Someone who already has an account is
+  // claimed as the share is made and appears among the participants instead.
   const pending = useQuery({
     queryKey: ['scope-invitations', parentId, substreamId],
     queryFn: async ({ signal }) => {
@@ -80,19 +78,23 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
     </form>
     {failure ? <InlineError>{failure === 'invalid_emails'
       ? 'Enter valid email addresses, separated by spaces, commas, or semicolons.'
+      : failure === 'joined' ? 'They have already joined. Remove them from the participants instead.'
       : failure === 'remove' ? 'That guest couldn’t be removed. Try again.'
         : 'The conversation couldn’t be shared. Try again.'}</InlineError> : null}
     {pending.isError ? <div className="scope-sharing-guests-failed">
       <InlineError>Guests waiting to sign in couldn’t be loaded.</InlineError>
       <Button disabled={pending.isFetching} onClick={() => void pending.refetch()}>Try again</Button>
     </div> : null}
-    {pending.data?.length ? <div className="member-action-list" aria-label="Guests who have not signed in yet">
+    {pending.data?.length ? <div className="member-action-list" role="group" aria-label="Guests who have not signed in yet">
       {pending.data.map((guest) => <div className="member-action-row" key={guest.email}>
         <Avatar member={{ id: guest.email, name: guest.email, email: guest.email, timezone: 'UTC' }} size="medium" />
         <span><strong>{guest.email}</strong><small>Joins when they sign in with this address</small></span>
         <Badge className="role-badge">Guest</Badge>
         <IconButton label={`Remove ${guest.email}`} disabled={remove.isPending}
-          onClick={() => { setFailure(null); remove.mutate(guest, { onError: () => setFailure('remove') }); }}>
+          onClick={() => { setFailure(null); remove.mutate(guest, { onError: (error) => setFailure(
+            // They signed in between the list loading and this click: the
+            // share is claimed, and the person is a participant now.
+            error instanceof ApiError && error.code === 'scope_revision_conflict' ? 'joined' : 'remove') }); }}>
           <X aria-hidden="true" size={15} />
         </IconButton>
       </div>)}

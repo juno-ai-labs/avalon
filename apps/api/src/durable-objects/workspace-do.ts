@@ -787,7 +787,7 @@ import {
   PARTICIPANT_MIGRATION_ALARM,
   PARTICIPANT_PROJECTION_ALARM,
 } from "./scope-grant-storage";
-import { SCOPE_INVITATION_DELIVERY_ALARM } from "./scope-invitation-storage";
+import { SCOPE_INVITATION_DELIVERY_ALARM, SCOPE_INVITATION_INDEX_ALARM } from "./scope-invitation-storage";
 import {
   applyWorkstreamRegionalEnvelope,
   insertWorkstreamEffectReceipt,
@@ -4185,6 +4185,20 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // Every Sidekick outside a retired Organization was imported before the
   // legacy class was deleted, so the ledger has nothing left to record.
   statements: [`DROP TABLE sidekick_imports`],
+}, {
+  version: 93,
+  description: "index shares that were pending before shares were claimed at sign-in",
+  // Signing in finds a share through D1's scope_share_recipients, which only
+  // shares made after it existed have rows in. One alarm per parent with a
+  // pending share writes its rows, once, with the alarm system's retries.
+  statements: [`INSERT INTO _internal_durable_alarms
+       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
+     SELECT 'parent_invitation_index', parent_id, unixepoch() * 1000, NULL, 0, 0, NULL,
+            unixepoch() * 1000, unixepoch() * 1000
+       FROM parent_invitations
+      WHERE json_extract(summary_json, '$.status') = 'pending'
+      GROUP BY parent_id
+     ON CONFLICT(kind, alarm_key) DO NOTHING`],
 }];
 
 function conversationToolEntry(conversation: {
@@ -5629,6 +5643,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const [parentId, substreamId] = alarm.key.split(":");
       if (!parentId || !substreamId) throw new Error("parent_participant_migration_key_invalid");
       await this.parentWrite(async () => (await this.hostedParent(parentId)).runParticipantMigration(asSubstreamId(substreamId)));
+      return true;
+    }
+    if (alarm.kind === SCOPE_INVITATION_INDEX_ALARM) {
+      await (await this.hostedParent(alarm.key)).indexPendingInvitations();
       return true;
     }
     if (alarm.kind === SCOPE_INVITATION_DELIVERY_ALARM) {

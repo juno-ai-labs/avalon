@@ -1,4 +1,3 @@
-import { purgeExpiredLinkPayloads } from "@rally/db/link-payloads";
 import { purgeExpiredEmailLoginChallenges } from "./services/auth-service";
 import { recoverEmailLoginDeliveries } from "./services/email-login-service";
 import { consumePushDeliveryQueue } from "./queues/push-delivery-consumer";
@@ -201,7 +200,6 @@ export default {
         dispatchWorkspaceRelationshipChanges(env),
         recoverEmailLoginDeliveries(env),
         purgeExpiredEmailLoginChallenges(env),
-        purgeExpiredLinkPayloads(env.DB),
         pruneUsageEvents(env, Date.now()),
         processTelemetry(env),
       ]);

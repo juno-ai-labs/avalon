@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
 import type { ScopeInvitationSummary } from '@rally/contracts/scope-grants';
-import { RallyApi } from '../lib/api';
+import { ApiError, RallyApi } from '../lib/api';
 import { ScopeSharingPanel, ShareConversationDialog } from './scope-sharing-panel';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
@@ -181,5 +181,21 @@ it('says when the Guests waiting to sign in could not be loaded, and retries', a
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   await waitFor(() => expect(screen.queryByText('Guests waiting to sign in couldn’t be loaded.')).toBeNull());
   expect(list).toHaveBeenCalledTimes(2);
+  client.clear();
+});
+
+it('says the person already joined when they signed in before Remove was clicked', async () => {
+  const api = new RallyApi('https://api.test', null);
+  const target = { kind: 'conversation' as const, workspaceId: asWorkspaceId(workspaceId), parentId, substreamId: asSubstreamId('0') };
+  const waiting: ScopeInvitationSummary = { id: '00000000-0000-4000-8000-000000000010', email: 'new@example.test', targets: [target],
+    expiresAt: null, status: 'pending', revision: 1, acceptedByUserId: null };
+  vi.spyOn(api, 'listScopeInvitations').mockResolvedValue({ status: 'ready', invitations: [waiting] });
+  vi.spyOn(api, 'revokeScopeInvitation').mockRejectedValue(
+    new ApiError('Sharing changed. Refresh the available scopes and try again.', 409, 'scope_revision_conflict'));
+  const client = new QueryClient();
+  render(<QueryClientProvider client={client}><Tooltip.Provider><ScopeSharingPanel api={api}
+    workspaceId={workspaceId} parentId={parentId} substreamId="0" /></Tooltip.Provider></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Remove new@example.test' }));
+  expect(await screen.findByText('They have already joined. Remove them from the participants instead.')).toBeVisible();
   client.clear();
 });

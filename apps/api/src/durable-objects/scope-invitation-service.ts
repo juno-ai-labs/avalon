@@ -92,39 +92,23 @@ export class ScopeInvitationService {
     // scope, so they are told the same thing about it.
     const [introduction, offered] = await Promise.all([this.introduction(request), this.offered(request.targets)]);
     const emails = [...new Set(request.emails)];
-    // The link is the conversation's own address. It carries no secret: the
-    // share belongs to the mailbox, so a forwarded link opens nothing for
-    // anyone who cannot sign in as it.
     const link = this.destination(origin, request.targets);
     const prepared = await Promise.all(emails.map(async (email) => {
       const id = uuidV7();
       const delivery = { recipientEmail: email, ...scopeInvitationEmailParts({
         ...introduction, ...offered, recipientEmail: email, link }) };
-      // `token_hash` is a retired column that is still NOT NULL UNIQUE; the
-      // invitation's own id satisfies both and means nothing.
-      return { id, email, grantOperationIds: request.targets.map(() => uuidV7()), tokenHash: id,
+      return { id, email, grantOperationIds: request.targets.map(() => uuidV7()),
         deliveryEncrypted: JSON.stringify(await encryptString(JSON.stringify(delivery), this.env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) };
     }));
-    // Before the transaction, with every other external await. A share that is
-    // then denied or replayed leaves rows pointing here at nothing pending,
-    // which the next claim by that address removes.
-    await this.noteRecipients(request.workspaceId, emails);
     const actor = await this.readRelationship(request.workspaceId, request.actorUserId);
     const result = this.record(request, actor, prepared);
     if (result.status !== "created") return result;
-    // Again now the share is recorded: a claim for one of these addresses that
-    // settled while this creation was waiting on D1 may have deleted the row
-    // written above, before this share was there to keep it. The share is
-    // committed, so a failure here is logged rather than reported as one.
-    await this.noteRecipients(request.workspaceId, emails).catch((error: unknown) => {
-      logStructuredEvent(this.env, "warn", "scope_share_recipient_note_failed", {
-        workspace_id: request.workspaceId, workstream_id: this.parentId,
-        error: diagnosticErrorCode(error, "scope_share_recipient_note_failed"),
-      });
-    });
-    // Someone who already signs in with one of these addresses holds the share
-    // now rather than at their next sign-in: there is nothing for them to accept.
-    // Committed already; a failure here leaves the share pending for their next sign-in.
+    // Only once the share is recorded, so a refused caller writes no rows. If
+    // this fails the request fails, and the sharer's retry replays the same
+    // operation to this line. A cleanup racing it is re-checked there.
+    await this.noteRecipients(request.workspaceId, emails);
+    // An existing account holds the share now. Committed already, so a failure
+    // here leaves it pending for their next sign-in.
     await this.claimForKnownRecipients(request.workspaceId, emails).catch((error: unknown) => {
       logStructuredEvent(this.env, "warn", "scope_invitation_claim_failed", {
         workspace_id: request.workspaceId, workstream_id: this.parentId,
@@ -188,6 +172,10 @@ export class ScopeInvitationService {
       if (summary.status !== "pending" || !emails.has(summary.email)) continue;
       const result = await this.claimOne(summary.id, request.workspaceId, request.userId);
       if (result.status === "accepted") claimed.push(result.invitation);
+      // A share left pending says why, or it looks the same as one nobody tried.
+      else logStructuredEvent(this.env, "warn", "scope_invitation_claim_refused", {
+        workspace_id: request.workspaceId, workstream_id: this.parentId, reason: result.reason,
+      });
     }
     await this.forgetSettled(request.workspaceId, [...emails]);
     return claimed;
@@ -197,6 +185,14 @@ export class ScopeInvitationService {
     : Promise<{ status: "accepted"; invitation: ScopeInvitationSummary } | Extract<ScopeInvitationResult, { status: "denied" }>> {
     const initial = this.invitations.read(invitationId);
     if (!initial || initial.summary.status !== "pending" || !this.usable(initial)) return { status: "denied", reason: "invitation_unavailable" };
+    // A sharer whose membership was replaced can never authorize this share
+    // again (rejoining restores nothing), so retire it rather than leave it
+    // pending: its lookup row then clears instead of costing every sign-in.
+    const sharer = await this.readRelationship(workspaceId, initial.actorUserId);
+    if (sharer?.incarnation !== initial.actorIncarnation) {
+      this.invitations.revoke(invitationId, initial.summary.revision);
+      return { status: "denied", reason: "sharing_required" };
+    }
     const blocked = await this.unofferable(initial);
     if (blocked) return { status: "denied", reason: blocked };
     // Cross-authority saga: an interruption may leave a relationship without a
@@ -222,6 +218,12 @@ export class ScopeInvitationService {
       }
       return { status: "accepted" as const, invitation: this.invitations.claim(invitationId, userId, recipient.incarnation) };
     });
+  }
+
+  /** Writes lookup rows for every address with a share here still waiting to be claimed. */
+  async indexPending(workspaceId: string): Promise<void> {
+    const emails = [...this.waiting()];
+    if (emails.length > 0) await this.noteRecipients(workspaceId, emails);
   }
 
   /**
