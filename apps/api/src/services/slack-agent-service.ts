@@ -15,7 +15,6 @@ import {
   slackAgentReactionSource,
   slackDefaultReactionFor,
   slackMarkdownMessages,
-  slackWorkingReaction,
   SLACK_DEFAULT_REACTIONS,
   type ConnectorConnectionContext,
   type SlackAgentReactionCommand,
@@ -1397,12 +1396,6 @@ export class SlackAgentService {
       } catch (error) {
         logWarn(this.env, "slack_thread_status_cleanup_failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
       }
-      // Stopped before the swap, so a tick in flight cannot land a working
-      // reaction on top of the outcome and leave the message reading as busy.
-      await this.signalReactionTicker(session, "stop");
-      // Delivery is the authority on the outcome reaction, not the rotation:
-      // this runs on every terminal status, so the message ends up correct even
-      // when the ticker never started or was lost mid-run.
       await this.applyOutcomeReaction(session, connection, token, outcomeStatus);
       if (session.slack_stream_ts) {
         await (await this.workspaceDirectory(workspaceId)).setSlackSessionStream({
@@ -2440,8 +2433,6 @@ export class SlackAgentService {
     if (session) {
       await this.clearPendingPrompt(connection.workspace_id, connection.id, channel, thread, slackUserId);
       // Each prompt in a thread moves the status onto the message that made it.
-      // The rotation restarts with it, so a continuation does not resume the
-      // previous run's position and appear to have skipped a step.
       if (reactionSource) {
         await (await this.workspaceDirectory(connection.workspace_id)).anchorSlackSessionReaction({
           workspaceId: connection.workspace_id,
@@ -2451,12 +2442,7 @@ export class SlackAgentService {
           reaction: placedReaction,
           at: nowIso(),
         });
-        session = { ...session, reaction_channel_id: reactionSource.channelId, reaction_message_ts: reactionSource.timestamp, reaction_current: placedReaction, reaction_cursor: 0 };
-        await this.signalReactionTicker(
-          session,
-          "start",
-          resolveSlackReactions(slackConnectionReactionOverride(connection)).workingIntervalMs,
-        );
+        session = { ...session, reaction_channel_id: reactionSource.channelId, reaction_message_ts: reactionSource.timestamp, reaction_current: placedReaction };
       }
     }
     if (session && session.workstream_id) {
@@ -3790,12 +3776,12 @@ export class SlackAgentService {
     try {
       // Re-read rather than trusting the snapshot `deliverWorkstreamOutcome`
       // took at the top. Between that read and this call a legacy stream close,
-      // the complete saved-turn post, the needs-input DMs,
-      // and the status clear have all run on 5-10s timeouts, and the ticker has
-      // been rewriting `reaction_current` every six seconds throughout. Removing
-      // the stale emoji answers `no_reaction`, which is swallowed as success —
-      // leaving the working reaction *and* the outcome on the message, which is
-      // the one invariant this feature has.
+      // the complete saved-turn post, the needs-input DMs, and the status clear
+      // have all run on 5-10s timeouts, and a follow-up prompt in the same
+      // thread may have re-anchored the reaction meanwhile. Removing a stale
+      // emoji answers `no_reaction`, which is swallowed as success — leaving two
+      // Rally reactions on the message, which is the one invariant this
+      // feature has.
       const workspace = await this.workspaceDirectory(session.workspace_id);
       const placed = WorkspaceSlackSessionResultSchema.parse(
         await workspace.slackSessionById({
@@ -3812,7 +3798,7 @@ export class SlackAgentService {
         remove: placed,
         fallback: slackDefaultReactionFor(outcome),
       });
-      // Conditional on the value this transition actually removed, so a tick
+      // Conditional on the value this transition actually removed, so a write
       // that slipped in behind the read is detected rather than overwritten.
       // `IS` rather than `=` because the column is nullable and NULL is a real
       // state here: it means Avalon has placed nothing.
@@ -3840,121 +3826,6 @@ export class SlackAgentService {
         session_id: session.id,
         connection_id: connection.id,
         outcome,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-    }
-  }
-
-  /**
-   * Advances the rotating working reaction one step.
-   *
-   * Returns whether the run is still live and worth another tick. It does not
-   * throw: the caller is an alarm, and a thrown alarm is retried by the runtime,
-   * which would spend Slack's rate limit redrawing an emoji. A Slack refusal —
-   * a rate limit above all — keeps the rotation alive and simply leaves the
-   * current reaction in place until the next tick.
-   */
-  async advanceSessionReaction(input: {
-    workspaceId: string;
-    sessionId: string;
-    deliveryKey: string;
-  }): Promise<boolean> {
-    try {
-      // The session read is a typed method now, so it needs no scoped env of its
-      // own. The scoping stays because the rest of this path — the connection
-      // lookup behind `connectionById` — is still routed SQL.
-      this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
-      const workspace = await this.workspaceDirectory(input.workspaceId);
-      const session = WorkspaceSlackSessionResultSchema.parse(
-        await workspace.slackSessionById({
-          workspaceId: input.workspaceId,
-          sessionId: input.sessionId,
-        }),
-      ).session;
-      if (!session?.reaction_channel_id || !session.reaction_message_ts) return false;
-      // Liveness comes from the run, not the ticker's own bookkeeping: delivery
-      // stamps a new key, so a key that has moved means this run is over even if
-      // the explicit stop never arrived. Comparing against the baseline rather
-      // than against "has ever delivered" is what keeps a follow-up prompt in an
-      // existing thread rotating — it inherits the previous run's key.
-      if ((session.last_delivery_key ?? "") !== input.deliveryKey) return false;
-      const connection = await this.connectionById(session.connection_id);
-      const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
-      // The cursor names the reaction this tick places, and the *next* position
-      // is what gets persisted. Pre-incrementing skipped the first emoji
-      // entirely: admission resets the cursor to 0, so the first tick showed
-      // `working[1]` and the documented order never started where it says it
-      // does — most runs finished before it wrapped around to the first.
-      const cursor = session.reaction_cursor;
-      try {
-        const result = await this.executeSlackReaction(connection, await this.botToken(connection), {
-          kind: "reaction",
-          channelId: session.reaction_channel_id,
-          timestamp: session.reaction_message_ts,
-          add: slackWorkingReaction(reactions, cursor),
-          remove: session.reaction_current,
-          fallback: slackDefaultReactionFor("working", cursor),
-        });
-        // Conditional on the emoji this tick removed, so a terminal transition
-        // that landed in between is not overwritten by a working reaction.
-        await workspace.settleSlackSessionReaction({
-          workspaceId: input.workspaceId,
-          sessionId: session.id,
-          expected: session.reaction_current,
-          reaction: result.reaction,
-          cursor: cursor + 1,
-          at: nowIso(),
-        });
-      } catch (error) {
-        // A rate limit above all: keep the rotation alive and leave the current
-        // reaction until the next tick rather than ending it on one refusal.
-        logWarn(this.env, "slack_working_reaction_failed", {
-          session_id: session.id,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-      }
-      return true;
-    } catch (error) {
-      logWarn(this.env, "slack_reaction_tick_abandoned", {
-        session_id: input.sessionId,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-      return false;
-    }
-  }
-
-  /** Starts or stops the rotation for a session, never failing the run for it. */
-  private async signalReactionTicker(
-    session: WorkspaceSlackSession,
-    action: "start" | "stop",
-    intervalMs = SLACK_DEFAULT_REACTIONS.workingIntervalMs,
-  ): Promise<void> {
-    try {
-      // Workspace-scoped rather than a regional singleton: the ticker belongs to
-      // one Slack session inside one workspace, so it takes that workspace's
-      // placement affinity like every other product object.
-      const ticker = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.SLACK_REACTION_TICKERS,
-        session.workspace_id,
-        `${this.env.AVALON_REGION}:slack-reaction:${session.id}`,
-      );
-      await ticker.fetch(`https://slack-reaction-ticker.internal/${action}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(action === "start"
-          ? {
-              workspaceId: session.workspace_id,
-              sessionId: session.id,
-              deliveryKey: session.last_delivery_key ?? "",
-              intervalMs,
-            }
-          : {}),
-      });
-    } catch (error) {
-      logWarn(this.env, "slack_reaction_ticker_signal_failed", {
-        session_id: session.id,
-        action,
         reason: error instanceof Error ? error.message : "unknown",
       });
     }
