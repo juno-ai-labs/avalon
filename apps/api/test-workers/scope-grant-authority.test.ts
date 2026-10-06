@@ -12,7 +12,7 @@ import { pendingParentEffects } from "./helpers/conversation-effects";
 import { conversationObjectName } from "../src/durable-objects/names";
 import { countingEnv } from "./helpers/counting-namespace";
 import { hostedParentStub, insertChannelRow, readSharedWorkstream, withHostedParent } from "./helpers/hosted-parent";
-import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-000000000071");
@@ -83,7 +83,7 @@ async function parkEffectQueue(stub: ReturnType<typeof room>) {
 beforeEach(async () => {
   await reset();
   await env.DB.batch([
-    env.DB.prepare(LINK_PAYLOADS_TABLE),
+    ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT)"),
     ...[actorId, recipientId].map((id) => env.DB.prepare("INSERT INTO users VALUES (?, 'Person', 'person@example.test', NULL, 'UTC', '2026-09-18T00:00:00.000Z')").bind(id)),
     env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, abandoned_at TEXT, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam')"),

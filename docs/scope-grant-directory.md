@@ -22,7 +22,7 @@ The lite browser consumes a canonical directory endpoint for shared navigation.
 ## How it works
 
 Every *direct* grant mutation invokes the parent's existing projection writer
-within its SQLite transaction, including invitation acceptance. A grant a Space
+within its SQLite transaction, including a claimed invitation. A grant a Space
 seats does not: it carries `scope_grants.source_kind = 'space'` and the writer
 is suppressed for it, because that reader discovers the Channel through the
 Organization's Space directory instead. See
@@ -89,8 +89,8 @@ each the guest holds, and so where a Breakout-only Channel opens.
 
 This module owns discovery delivery and candidate indexing. Identity and active
 relationships belong to D1; canonical grants belong to the Channel's parent in
-`WorkspaceDO`. Invitation
-redemption is described in [scope invitations](scope-invitations.md). Browser
+`WorkspaceDO`. Claiming an
+invitation is described in [scope invitations](scope-invitations.md). Browser
 entry and its limited collaboration surface belong to
 [browser client](browser-client.md). There is no new Queue or socket multiplexer.
 

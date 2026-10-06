@@ -16,22 +16,22 @@ const preview = (turns: Array<{ author: string; text: string; truncated?: boolea
 
 it("leads with who is asking and into what, and closes with what Rally is", () => {
   const { text: body } = scopeInvitationEmailParts({
-    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    recipientEmail: "dana@example.test", link: "https://app.test/app/workspaces/global/w/workstreams/c",
     inviterName: "Morgan Ellis", workspaceName: "Juno Labs", conversationTitle: "Pricing revamp",
     preview: preview([{ author: "Morgan Ellis", text: "Draft is up." }]),
   });
   expect(body.split("\n")[0]).toBe("Morgan Ellis invited you to Juno Labs on Rally.");
-  expect(body).toContain("Sign in with dana@example.test and accept:\nhttps://app.test/invite#inv_token");
-  expect(body).toContain("This invitation does not grant access until you sign in and accept it.");
+  expect(body).toContain("Sign in with dana@example.test to open it:\nhttps://app.test/app/workspaces/global/w/workstreams/c");
+  expect(body).toContain("Only someone signed in with this email address can open it.");
   expect(body.trimEnd().endsWith("work it through together.")).toBe(true);
   // The link is above anything a workspace member wrote, and their words are
   // quoted, so a message ending in its own sign-in sentence cannot pass for ours.
-  expect(body.indexOf("https://app.test/invite#inv_token")).toBeLessThan(body.indexOf("Draft is up."));
+  expect(body.indexOf("https://app.test/app/workspaces/global/w/workstreams/c")).toBeLessThan(body.indexOf("Draft is up."));
   expect(body).toContain("> Morgan Ellis: Draft is up.");
 });
 
 it("falls back to the sentence it carried before, one missing name at a time", () => {
-  const content = { recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+  const content = { recipientEmail: "dana@example.test", link: "https://app.test/app/workspaces/global/w/workstreams/c",
     conversationTitle: null, preview: null };
   const heading = (inviterName: string | null, workspaceName: string | null) =>
     scopeInvitationEmailParts({ ...content, inviterName, workspaceName }).text.split("\n")[0];
@@ -46,7 +46,7 @@ it("falls back to the sentence it carried before, one missing name at a time", (
 
 it("says how much of the conversation it is not showing", () => {
   const body = (earlier: number) => scopeInvitationEmailParts({
-    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    recipientEmail: "dana@example.test", link: "https://app.test/app/workspaces/global/w/workstreams/c",
     inviterName: "Morgan Ellis", workspaceName: "Juno Labs", conversationTitle: "Pricing revamp",
     preview: preview([{ author: "Priya", text: "Shipping Friday.", truncated: true }], earlier),
   }).text;
@@ -59,7 +59,7 @@ it("says how much of the conversation it is not showing", () => {
 
 it("styles the same message with only what every client renders", () => {
   const { html, text } = scopeInvitationEmailParts({
-    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    recipientEmail: "dana@example.test", link: "https://app.test/app/workspaces/global/w/workstreams/c",
     inviterName: "Morgan Ellis", workspaceName: "Juno Labs", conversationTitle: "Pricing revamp",
     preview: preview([{ author: "Priya Shah", text: "Shipping Friday." }], 14),
   });
@@ -77,21 +77,21 @@ it("styles the same message with only what every client renders", () => {
   // Everything the text part says, said again.
   expect(html).toContain("Morgan Ellis");
   expect(html).toContain("Juno Labs");
-  expect(html).toContain('href="https://app.test/invite#inv_token"');
+  expect(html).toContain('href="https://app.test/app/workspaces/global/w/workstreams/c"');
   expect(html).toContain("Pricing revamp");
   expect(html).toContain("14 earlier messages");
   expect(html).toContain("Priya Shah");
   expect(html).toContain("Shipping Friday.");
   expect(html).toContain(text.trimEnd().split("\n").at(-1)!);
   // The button is above anything a member wrote, in both parts.
-  expect(html.indexOf("Accept invitation")).toBeLessThan(html.indexOf("Shipping Friday."));
+  expect(html.indexOf("Open in Rally")).toBeLessThan(html.indexOf("Shipping Friday."));
   // Gmail clips a message past 102 KiB, which would cut the footer off.
   expect(html.length).toBeLessThan(102 * 1024);
 });
 
 it("renders member-written turns as text, never as markup", () => {
   const { html } = scopeInvitationEmailParts({
-    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    recipientEmail: "dana@example.test", link: "https://app.test/app/workspaces/global/w/workstreams/c",
     inviterName: "<script>alert(1)</script>", workspaceName: "Juno & Co",
     conversationTitle: "Pricing <b>revamp</b>",
     preview: preview([{ author: "Priya \"PS\" Shah", text: "Ship it <img src=x onerror=alert(1)>" }]),
@@ -107,7 +107,7 @@ it("renders member-written turns as text, never as markup", () => {
 
 it("has no preview block when there is nothing to quote", () => {
   const { html } = scopeInvitationEmailParts({
-    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    recipientEmail: "dana@example.test", link: "https://app.test/app/workspaces/global/w/workstreams/c",
     inviterName: null, workspaceName: null, conversationTitle: null, preview: null,
   });
   expect(html).toContain("Join the conversation");
@@ -142,7 +142,7 @@ it("stays under Gmail's clipping ceiling on the worst input the preview can carr
   // is the case the byte ceiling is derived from.
   const maximal = truncateTurn('"'.repeat(PREVIEW_BYTES * 2), PREVIEW_WORDS, PREVIEW_BYTES);
   const { html, text } = scopeInvitationEmailParts({
-    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    recipientEmail: "dana@example.test", link: "https://app.test/app/workspaces/global/w/workstreams/c",
     inviterName: "Morgan Ellis", workspaceName: "Juno Labs", conversationTitle: "Pricing revamp",
     preview: { earlier: 14, turns: Array.from({ length: PREVIEW_TURNS }, () => ({ author: "Priya Shah", ...maximal })) },
   });
@@ -187,7 +187,7 @@ it("renders transcript Markdown as plain text in both email parts", async () => 
     workspaceId, parentId: workstreamId, substreamId: "0", turns: 5, words: 100, bytes: PREVIEW_BYTES,
   });
   const { html, text } = scopeInvitationEmailParts({
-    recipientEmail: "dana@example.test", link: "https://app.test/invite#inv_token",
+    recipientEmail: "dana@example.test", link: "https://app.test/app/workspaces/global/w/workstreams/c",
     inviterName: "Morgan Ellis", workspaceName: "Juno Labs", conversationTitle: "Pricing revamp",
     preview: conversation,
   });
@@ -261,7 +261,7 @@ it("names the conversation in both parts, or in neither", () => {
   // two parts used to disagree about: the styled part put the title in its
   // heading and the plain one dropped it with the quotes it never got.
   const { text, html } = scopeInvitationEmailParts({
-    recipientEmail: "guest@example.test", link: "https://app.test/invite#inv_token",
+    recipientEmail: "guest@example.test", link: "https://app.test/app/workspaces/global/w/workstreams/c",
     inviterName: "Adam Owner", workspaceName: "Juno Labs",
     conversationTitle: "Pricing for the Q4 launch", preview: null,
   });
