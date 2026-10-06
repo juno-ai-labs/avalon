@@ -426,6 +426,8 @@ the invitation id. Shares made before this change keep reaching their
 recipient through the token in their old email, via `POST /sharing/claim-link`,
 until none is left pending.
 
+PR: [#1120](https://github.com/juno-ai-labs/avalon/pull/1120). PRD: [guest sharing](PRDs/2026-09-16_guest-sharing-browser/prd.md).
+
 ### 2026-09-21 — Make outside-product conversation previews plain text before sizing
 
 **What changed.** Conversation previews now reduce each complete stored turn to

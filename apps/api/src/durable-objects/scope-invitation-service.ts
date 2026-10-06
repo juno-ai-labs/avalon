@@ -11,7 +11,7 @@ import { sendResendEmail } from "../services/resend";
 import { readConversationPreview } from "../services/conversation-preview";
 import { PREVIEW_BYTES, PREVIEW_TURNS, PREVIEW_WORDS, scopeInvitationEmailParts } from "../services/scope-invitation-email";
 import { ObjectPortError } from "../runtime/object-port";
-import { logStructuredEvent } from "../observability/logger";
+import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
 import { ScopeInvitationStorage, ScopeInvitationOperationConflict, type ScopeInvitationRecord } from "./scope-invitation-storage";
 import { ScopeGrantStorage } from "./scope-grant-storage";
 
@@ -114,11 +114,23 @@ export class ScopeInvitationService {
     if (result.status !== "created") return result;
     // Again now the share is recorded: a claim for one of these addresses that
     // settled while this creation was waiting on D1 may have deleted the row
-    // written above, before this share was there to keep it.
-    await this.noteRecipients(request.workspaceId, emails);
+    // written above, before this share was there to keep it. The share is
+    // committed, so a failure here is logged rather than reported as one.
+    await this.noteRecipients(request.workspaceId, emails).catch((error: unknown) => {
+      logStructuredEvent(this.env, "warn", "scope_share_recipient_note_failed", {
+        workspace_id: request.workspaceId, workstream_id: this.parentId,
+        error: diagnosticErrorCode(error, "scope_share_recipient_note_failed"),
+      });
+    });
     // Someone who already signs in with one of these addresses holds the share
     // now rather than at their next sign-in: there is nothing for them to accept.
-    await this.claimForKnownRecipients(request.workspaceId, emails);
+    // Committed already; a failure here leaves the share pending for their next sign-in.
+    await this.claimForKnownRecipients(request.workspaceId, emails).catch((error: unknown) => {
+      logStructuredEvent(this.env, "warn", "scope_invitation_claim_failed", {
+        workspace_id: request.workspaceId, workstream_id: this.parentId,
+        error: diagnosticErrorCode(error, "scope_invitation_claim_failed"),
+      });
+    });
     return { status: "created", invitations: this.invitations.operation(request) ?? result.invitations };
   }
 
@@ -217,6 +229,17 @@ export class ScopeInvitationService {
    * still pending keeps its row, so the next sign-in tries it again.
    */
   private async forgetSettled(workspaceId: string, emails: string[]): Promise<void> {
+    // Housekeeping after a committed claim or revocation: a failure leaves a
+    // harmless row for a later claim to remove, never a failed operation.
+    try { await this.forgetSettledRows(workspaceId, emails); } catch (error) {
+      logStructuredEvent(this.env, "warn", "scope_share_recipient_cleanup_failed", {
+        workspace_id: workspaceId, workstream_id: this.parentId,
+        error: diagnosticErrorCode(error, "scope_share_recipient_cleanup_failed"),
+      });
+    }
+  }
+
+  private async forgetSettledRows(workspaceId: string, emails: string[]): Promise<void> {
     const settled = emails.filter((email) => !this.waiting().has(email));
     if (settled.length === 0) return;
     await this.env.DB.batch(settled.map((email) => this.env.DB.prepare(

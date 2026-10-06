@@ -550,6 +550,8 @@ email names it, and the page says to use the address the link was sent to. A
 signed-in person with nothing shared sees that said plainly rather than a prompt
 to open an invitation.
 
+PR: [#1120](https://github.com/juno-ai-labs/avalon/pull/1120).
+
 ### 2026-10-03 — Guests get the desktop shell too
 
 **What changed:** The browser's guest shell (`conversation.tsx`, about 600
