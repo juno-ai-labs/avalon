@@ -7884,8 +7884,16 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   overflow: hidden;
   transition: height 320ms cubic-bezier(.32, .72, 0, 1), width 320ms cubic-bezier(.32, .72, 0, 1);
 }
-.title-menu-view { display: flex; flex-direction: column; gap: 2px; width: 404px; }
-.title-menu-view:has(> .title-menu-scope) { width: 420px; }
+/* Each level's width, capped to what the viewport leaves once the frame's own
+   14px padding is taken off, so a phone-width window fits the menu whole. */
+.title-menu-view {
+  --title-menu-room: calc(var(--radix-dropdown-menu-content-available-width, 100vw) - 28px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: min(404px, var(--title-menu-room));
+}
+.title-menu-view:has(> .title-menu-scope) { width: min(420px, var(--title-menu-room)); }
 /* The breadcrumb already names the level, so its section heading would say it twice. */
 .title-menu-view > .title-menu-sidekicks .workstream-context-section h2 { display: none; }
 .title-menu-view > * { animation: title-menu-enter 300ms cubic-bezier(.2, .8, .2, 1) both; }
@@ -7929,10 +7937,11 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   flex-direction: column;
   font-size: 12.5px;
   gap: 6px;
-  justify-content: center;
+  /* Icons sit on one line across the row even when a label wraps to two. */
+  justify-content: flex-start;
   min-height: 70px;
   outline: 0;
-  padding: 8px 4px;
+  padding: 14px 4px 8px;
   text-align: center;
   transition: background-color 120ms ease;
   user-select: none;
@@ -7940,6 +7949,11 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-menu-tile > svg { color: var(--av-sys-color-text-default); }
 .title-menu-tile[data-highlighted] { background: color-mix(in srgb, var(--av-sys-color-surface-sunken) 88%, var(--av-sys-color-text-disabled)); color: var(--av-sys-color-text-default); }
 .title-menu-tile[data-disabled] { opacity: .42; }
+/* Too narrow for five labels on one line each: let a label take two. */
+@media (max-width: 480px) {
+  .title-menu-tiles { gap: 6px; }
+  .title-menu-tile { line-height: 1.2; white-space: normal; }
+}
 
 /* A row that opens a level: what it is, how much of it there is, and a chevron. */
 .title-pill-menu .menu-item.title-menu-level-row { font-size: 15px; gap: 12px; min-height: 46px; padding: 0 10px; }
@@ -7958,9 +7972,17 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   margin-bottom: 8px;
   padding: 12px 14px;
 }
+/* The icon stays level with the title when the detail wraps. */
+.title-menu-scope > svg { align-self: flex-start; flex: none; margin-top: 2px; }
 .title-menu-scope-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .title-menu-scope-title { color: var(--av-sys-color-text-default); font-size: 14.5px; }
 .title-menu-scope-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; }
+/* Too narrow for Change beside the copy: the icon stays beside the title, and
+   Change moves under the copy. */
+@media (max-width: 480px) {
+  .title-menu-scope { align-items: start; column-gap: 12px; display: grid; grid-template-columns: auto minmax(0, 1fr); row-gap: 8px; }
+  .title-menu-scope .title-menu-link { grid-column: 2; justify-self: start; margin-left: -4px; }
+}
 .title-menu-view:has(> .title-menu-scope) .title-menu-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
 .title-menu-person { align-items: center; display: flex; gap: 12px; min-height: 52px; padding: 4px 8px; }
 .title-menu-person .avatar { height: 34px; width: 34px; }
