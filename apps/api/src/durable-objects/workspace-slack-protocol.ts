@@ -425,13 +425,8 @@ export const WorkspaceSlackSessionStreamRequestSchema = deferredZodSchema(() => 
 
 /**
  * Settle the status reaction, conditional on the anchor it acted on and the
- * emoji this transition removed.
- *
- * The anchor is part of the predicate because a follow-up prompt admitted while
- * an earlier run is live moves the session's one slot to its own message,
- * usually with the same emoji. Compared on the emoji alone, the earlier run's
- * settle would overwrite the follow-up's slot with an outcome that sits on a
- * different message.
+ * emoji this transition removed. The anchor is in the predicate because a
+ * follow-up moves the slot, usually with the same emoji.
  *
  * The compare-and-set spans a Slack API call — the caller reads what is placed,
  * asks Slack to swap it, then records the result — so it cannot be one

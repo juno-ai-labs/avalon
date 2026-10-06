@@ -12,6 +12,7 @@ import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
 import { conversationParentStub } from "../services/conversation-parent-client";
 import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
+import { SlackOriginContextSchema } from "@rally/contracts";
 import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-skills";
 import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from './authorization-projection';
 import { searchIndexingConfigured } from '../services/search-embedding';
@@ -513,7 +514,8 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("answer_elicitation"),
-    elicitationId: IdSchema, input: AnswerElicitationRequestSchema }),
+    elicitationId: IdSchema, input: AnswerElicitationRequestSchema,
+    slackOrigin: SlackOriginContextSchema.optional() }),
 ]);
 /**
  * The flow a product operation belongs to. An operation outside the three
@@ -3624,6 +3626,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           current,
           request.elicitationId,
           request.input,
+          request.slackOrigin,
         );
         if (result.activationRequest) {
           try {
@@ -5661,6 +5664,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // a needs-input connect prompt belongs to whoever asked.
         triggeringSlackUserId: input.slackOrigin?.actorSlackUserId ?? null,
         reactionAnchor: input.slackOrigin?.reactionAnchor ?? null,
+        // Follow-ups steered into this run have no run of their own; this one
+        // answered them, so it settles their messages too.
+        absorbedReactionAnchors: this.transcript.absorbedSlackOrigins(input.harnessRunId)
+          .flatMap((origin) => SlackOriginContextSchema.safeParse(origin).data?.reactionAnchor ?? []),
       },
     );
     return settlementDiagnosticCode;

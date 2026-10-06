@@ -572,7 +572,7 @@ describe("a room Sidekick's run and the room's agents", () => {
     ).one().n)).toBe(1);
   });
 
-  it("hands a Channel run's Slack outcome the member who triggered it and the message it reacted on", async () => {
+  it("hands a Channel run's Slack outcome the member who triggered it and every message it answered", async () => {
     const deliveries = vi.spyOn(SlackAgentService.prototype, "deliverWorkstreamOutcome").mockResolvedValue(undefined);
     try {
       const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
@@ -584,7 +584,16 @@ describe("a room Sidekick's run and the room's agents", () => {
           threadTs: "1.0", invocationType: "app_mention", channelType: "public", matchedAvalonUserId: null,
           nearbyMessagesStatus: "not_applicable", nearbyMessages: [], attachments: [],
           reactionAnchor: { channelId: "C1", messageTs: "9.0" } } });
-      await runInDurableObject(roomConversation(), async (instance) => {
+      await runInDurableObject(roomConversation(), async (instance, state) => {
+        // A third member's follow-up was steered into this run at a step boundary.
+        state.storage.sql.exec(
+          `INSERT INTO run_absorbed_slack_origins (input_id, run_id, slack_origin_json, created_at)
+           VALUES (?, ?, ?, 0)`,
+          crypto.randomUUID(),
+          input.harnessRunId,
+          JSON.stringify({ ...input.slackOrigin, actorSlackUserId: "U_STEER",
+            reactionAnchor: { channelId: "C1", messageTs: "11.0" } }),
+        );
         const target = instance as unknown as {
           deliverAgentRunResult: (input: WorkstreamWorkflowInput, outcome: { status: "needs_input" }) => Promise<string | null>;
         };
@@ -593,7 +602,11 @@ describe("a room Sidekick's run and the room's agents", () => {
       expect(deliveries.mock.calls.map((args) => args.slice(3))).toEqual([[
         `${input.harnessRunId}:needs_input`,
         "needs_input",
-        { triggeringSlackUserId: "U_FOLLOW_UP", reactionAnchor: { channelId: "C1", messageTs: "9.0" } },
+        {
+          triggeringSlackUserId: "U_FOLLOW_UP",
+          reactionAnchor: { channelId: "C1", messageTs: "9.0" },
+          absorbedReactionAnchors: [{ channelId: "C1", messageTs: "11.0" }],
+        },
       ]]);
     } finally {
       deliveries.mockRestore();
