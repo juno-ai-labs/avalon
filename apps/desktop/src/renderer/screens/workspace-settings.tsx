@@ -1437,7 +1437,8 @@ export function WorkspaceSettingsScreen({
                   disabled={!applicationSettings || applicationSettings.pushNotificationStatus === 'unavailable' || updatePushNotifications.isPending}
                   onChange={(event) => updatePushNotifications.mutate(event.currentTarget.checked)} />
                 {applicationSettings?.pushNotificationStatus === 'unavailable' && <p className="settings-section-copy">Notifications need an installed release build of Rally.</p>}
-                {applicationSettings?.pushNotificationStatus === 'denied' && <p className="settings-section-copy">Notifications are turned off in macOS. <button className="button-secondary" onClick={() => void bridge.openNotificationSettings()}>Open System Settings</button></p>}
+                {applicationSettings?.pushNotificationStatus === 'denied' && <p className="settings-section-copy">Notifications for Rally are turned off in macOS, so you get no alerts and no Dock badge. <button className="button-secondary" onClick={() => void bridge.openNotificationSettings()}>Open System Settings</button></p>}
+                {applicationSettings?.pushNotificationStatus === 'enabled' && applicationSettings.notificationBadgeStatus === 'disabled' && <p className="settings-section-copy">Badges for Rally are turned off in macOS, so the Dock icon does not show what needs your attention. <button className="button-secondary" onClick={() => void bridge.openNotificationSettings()}>Open System Settings</button></p>}
                 {updatePushNotifications.error && <InlineError>{updatePushNotifications.error.message}</InlineError>}
               </section>
             )}

@@ -55,6 +55,7 @@ const openExternal = vi.hoisted(() => vi.fn());
 const getApplicationIcon = vi.hoisted(() => vi.fn());
 const setApplicationIcon = vi.hoisted(() => vi.fn());
 const resetApplicationIcon = vi.hoisted(() => vi.fn());
+const openNotificationSettings = vi.hoisted(() => vi.fn(async () => undefined));
 const getApplicationSettings = vi.hoisted(() => vi.fn());
 const setLockdownMode = vi.hoisted(() => vi.fn());
 const setDebugEnabled = vi.hoisted(() => vi.fn());
@@ -112,6 +113,7 @@ vi.mock('../lib/platform', () => ({
     getApplicationIcon,
     setApplicationIcon,
     resetApplicationIcon,
+    openNotificationSettings,
     onApplicationIconChanged: () => () => undefined,
     openExternal,
     onSettingsSectionRequested: (listener: (section: string) => void) => {
@@ -245,7 +247,7 @@ function applicationSettings(
     lockdownAvailable: true,
     debugEnabled: false,
     developerSettingsAvailable: true,
-    pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+    pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
     menuBarAvailable: true,
     menuBarPresent: true,
     launchAtLogin: true,
@@ -2302,6 +2304,36 @@ describe('Organization settings', () => {
     expect(screen.getByRole('switch', { name: /Notify me about mentions and additions/ })).toBeDisabled();
   });
 
+  it.each([
+    ['denied', 'unknown', 'Notifications for Rally are turned off in macOS, so you get no alerts and no Dock badge.'],
+    ['enabled', 'disabled', 'Badges for Rally are turned off in macOS, so the Dock icon does not show what needs your attention.'],
+  ] as const)('sends a Mac with notifications %s and badges %s to System Settings', async (status, badge, copy) => {
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
+    getApplicationSettings.mockResolvedValue(applicationSettings({
+      pushNotificationStatus: status, notificationBadgeStatus: badge,
+    }));
+    renderSettings();
+    fireEvent.click(await within(screen.getByRole('navigation', { name: 'Settings sections' }))
+      .findByRole('button', { name: 'Notifications' }));
+
+    const notice = (await screen.findByText(copy)).closest('p') as HTMLElement;
+    fireEvent.click(within(notice).getByRole('button', { name: 'Open System Settings' }));
+    expect(openNotificationSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('says nothing about badges while macOS allows them', async () => {
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
+    getApplicationSettings.mockResolvedValue(applicationSettings({
+      pushNotificationStatus: 'enabled', notificationBadgeStatus: 'enabled',
+    }));
+    renderSettings();
+    fireEvent.click(await within(screen.getByRole('navigation', { name: 'Settings sections' }))
+      .findByRole('button', { name: 'Notifications' }));
+
+    expect(await screen.findByRole('heading', { name: 'On this Mac' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Open System Settings' })).toBeNull();
+  });
+
   it('offers only appearance in a browser and names the Mac app for the rest', async () => {
     sessionHost.current = 'browser';
     renderSettings();
@@ -2350,7 +2382,7 @@ describe('Organization settings', () => {
       lockdownAvailable: false,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2376,7 +2408,7 @@ describe('Organization settings', () => {
       lockdownAvailable: false,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2501,7 +2533,7 @@ describe('Organization settings', () => {
       lockdownAvailable: false,
       debugEnabled: false,
       developerSettingsAvailable: false,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: false,
       menuBarPresent: false,
       launchAtLogin: false,
@@ -2528,7 +2560,7 @@ describe('Organization settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: false,
@@ -2550,7 +2582,7 @@ describe('Organization settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: false,
@@ -2569,7 +2601,7 @@ describe('Organization settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: true,
       // The write succeeded; creating the item did not.
       menuBarPresent: false,
@@ -2593,7 +2625,7 @@ describe('Organization settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: false,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: false,
       menuBarAvailable: true,
       menuBarPresent: false,
       launchAtLogin: true,
@@ -2612,7 +2644,7 @@ describe('Organization settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: false,
       menuBarPresent: false,
       launchAtLogin: true,
@@ -2651,7 +2683,7 @@ describe('Organization settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: false,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2686,7 +2718,7 @@ describe('Organization settings', () => {
       // reports the effective value, so this reads off however the file reads.
       debugEnabled: false,
       developerSettingsAvailable: false,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2707,7 +2739,7 @@ describe('Organization settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: false,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2725,7 +2757,7 @@ describe('Organization settings', () => {
       lockdownAvailable: true,
       debugEnabled: true,
       developerSettingsAvailable: true,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2746,7 +2778,7 @@ describe('Organization settings', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: false,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,
@@ -2928,7 +2960,7 @@ describe('Closing the settings window with Escape', () => {
       lockdownAvailable: true,
       debugEnabled: false,
       developerSettingsAvailable: true,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
       menuBarAvailable: true,
       menuBarPresent: true,
       launchAtLogin: true,

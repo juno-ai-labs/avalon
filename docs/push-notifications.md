@@ -67,7 +67,14 @@ once the Channel directory has loaded, so reading a conversation lowers the
 badge at once; APNs only sets it when an alert arrives. Unmounting the shell
 (sign-out, switching Organization) clears it. The local badge needs no APNs
 registration, but macOS shows a badge only while notifications, with badges,
-are allowed for Rally, so a user who denied notifications sees neither. While
+are allowed for Rally, so a user who denied notifications sees neither. The
+authorization request includes `UNAuthorizationOptionBadge`, and every
+permission read also reports the "Badge application icon" switch
+(`badgeSetting`) as `notificationBadgeStatus`. Settings → Notifications says
+when notifications or badges are off, with **Open System Settings**, which
+opens Rally's own entry (`com.apple.Notifications-Settings.extension?id=` the
+bundle id). Permission is re-read when a Rally window gains focus, so the
+notice clears on return from System Settings. While
 running, the local count is for the active Organization; an alert from another
 Organization carries that Organization's count.
 APNs retains undelivered alerts for
@@ -258,13 +265,18 @@ signed-Mac APNs/universal-link acceptance is claimed.
 are unread, unseen or mention the reader, the attention menu's number. It
 replaces `unreadAndNeedsInputCount`, which counted Channels only and included
 read `needs_input` runs. The Mac app also sets the dock badge itself from the
-menu's count while it runs.
+menu's count while it runs. macOS authorization now asks for badges, the
+permission read reports the badge switch, and Settings sends the user to
+Rally's entry in System Settings when notifications or badges are off.
 
 **Why:** The badge should match the count in the sidebar. The old number
 counted different things (no Breakouts, plus needs-input runs), so the two
 disagreed. APNs alone only moves the badge when an alert arrives, so reading a
 conversation never lowered it; the app setting it locally fixes that, and APNs
-still covers the time Rally is not running.
+still covers the time Rally is not running. Rally had never asked for badge
+permission (only alerts and sound), so the badge could be off with no way for
+the user to tell; existing installs keep that answer, since macOS does not ask
+again, which is why the badge switch is read and surfaced rather than assumed.
 
 **Considered and rejected:** A silent badge-only push on every read: a new
 producer for each read, when the running app already holds the number. Summing
