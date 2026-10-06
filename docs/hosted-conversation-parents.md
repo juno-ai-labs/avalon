@@ -16,7 +16,8 @@ moved](#how-the-parents-moved) records how their rows got here.
 
 A Sidekick's parent, its definition, revisions, schedules and runs, moved in
 beside them ([A Sidekick is hosted beside them](#a-sidekick-is-hosted-beside-them)).
-Its legacy `SidekickDO` was deleted once every Sidekick had been imported.
+Its legacy `SidekickDO` was deleted once every Sidekick outside a retired
+Organization had been imported.
 
 The conversations themselves do not move. Every Channel main conversation, every
 breakout and every Sidekick run is still a `SubstreamAgent`: a transcript and an agent loop are a real concurrency and size

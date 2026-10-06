@@ -1081,13 +1081,11 @@ where to look when one misbehaves.
   own `personal` ones, never a room's. A room's automation is in that room's
   rail. `GET /automations/:id` reads the object and answers 404 for a deleted
   one or a viewer the object refuses.
-- **The sidebar row is stale.** The row travels the automation's outbox, the
-  regional activities Queue, and `WorkspaceDO.applyAutomationDirectory`. Read
-  the object's `durable_outbox` (a row there has not been accepted by the
-  Queue yet; `parent_effect_enqueue_failed` says why) and the regional
-  activities dead-letter queue (`conversation_effect_processing_failed` names
-  the message that kept throwing). A `sidekick_directory_version_conflict`
-  is a producer bug: the same `source_version` carrying two hashes.
+- **The sidebar row is stale.** The row is written in the Sidekick's own
+  change, in `WorkspaceDO`, and the same call bumps the `automations` sidebar
+  waterline and republishes the list. Read the row with `run_workspace_sql`;
+  if it is right and the client still shows the old one, the client missed
+  the push and a reconnect or reopen will fetch the list again.
 - **Apply refuses.** The code is the answer: `sidekick_definition_not_ready`
   (the chat has not submitted a ready draft), `sidekick_plugin_unavailable`
   and its binding siblings (the workspace no longer has the connection the draft
@@ -1124,7 +1122,7 @@ where to look when one misbehaves.
 
 Inspect the object through the engineering MCP's raw SQL per
 [`engineering-mcp.md`](engineering-mcp.md); the automation's tables are listed
-in [`workstream-durable-object.md`](workstream-durable-object.md#automationdo).
+in [`workstream-durable-object.md`](workstream-durable-object.md#hosted-sidekicks).
 Keep retrieved user content out of tickets and logs.
 
 The symbolicator image is the one expensive thing either workflow builds, in the single `crash-symbolicator-container` lane each of them runs it from. Its builder stage compiles `minidump-stackwalk` from source — about three and a half minutes, depending on nothing in this repository — so both workflows run a **Warm the symbolicator image cache** step against a `docker-container` builder before anything builds the image for real. That step is the only one that reads or writes the shared `crash-symbolicator` cache scope; the builds that follow it — the integration lane's own `docker build`, and Wrangler's during a regional deploy — resolve every layer from the warmed builder without naming a cache at all. It warms that builder by **materializing the image** (`load: true`), not by importing cache records alone. A remote cache import is lazy — it resolves the keys without fetching the layers behind them, and BuildKit keeps that only for the solve that imported it — so a cache-only warm-up hands a later, separate `docker build` nothing. That arrangement shipped first and was measured: the warm-up reported every vertex `CACHED` in 2.4s and the lane recompiled the crate from scratch immediately afterwards. Do not revert it to `type=cacheonly` on the reasoning that the image is unused; the image is the point, and its tag is the side effect. `install: true` on `docker/setup-buildx-action` is what points their plain `docker build` at that builder, and it must stay. Buildx now warns that the `docker buildx install` alias it sets is deprecated and names `BUILDX_BUILDER` as the successor; when that alias is finally removed, replace `install: true` with `BUILDX_BUILDER` set to the builder name the setup step outputs, in the same job env the later builds read. Do not simply drop it — a build that silently resolves to the default builder still succeeds, just cold, which is the failure this arrangement exists to make impossible. The warm-up must also stay a JavaScript action rather than a `docker buildx build` line: `type=gha` authenticates with `ACTIONS_RUNTIME_TOKEN`, which the runner injects into actions and never into a `run:` step, so a shell-driven cache silently transfers nothing.
