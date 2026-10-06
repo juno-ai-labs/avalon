@@ -83,9 +83,9 @@ describe('menu bar content', () => {
     });
 
     expect(content.recents).toEqual([
-      { id: 'c', title: 'Newest' },
-      { id: 'b', title: 'Alpha' },
-      { id: 'a', title: 'Beta' },
+      { id: 'c', title: 'Newest', substreamId: null },
+      { id: 'b', title: 'Alpha', substreamId: null },
+      { id: 'a', title: 'Beta', substreamId: null },
     ]);
   });
 
@@ -98,5 +98,13 @@ describe('menu bar content', () => {
 
     expect(content.recents[0]?.title).toBe('Untitled channel');
     expect(content.attention[0]?.title).toBe('Untitled channel');
+  });
+
+  it('opens the Breakout for a Channel listed only through one, and leaves it out until its list arrives', () => {
+    const withheld = channel('a', 'Pricing', { mainWithheld: true });
+    expect(menuBarContentFromDirectory({ complete: true, channels: [withheld], breakouts: { a: [breakout] } }).recents)
+      .toEqual([{ id: 'a', title: 'Pricing', substreamId: breakout.substreamId }]);
+    // Main is not this reader's, so a row with no Breakout to open would lead nowhere.
+    expect(menuBarContentFromDirectory({ complete: true, channels: [withheld], breakouts: {} }).recents).toEqual([]);
   });
 });
