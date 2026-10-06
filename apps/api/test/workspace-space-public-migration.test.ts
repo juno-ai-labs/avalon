@@ -55,6 +55,13 @@ function seedSpace(database: DatabaseSync, input: {
   }
 }
 
+function seedDefault(database: DatabaseSync, spaceId: string, kind: "resource" | "sidekick", targetId: string): void {
+  database.prepare(
+    `INSERT INTO space_defaults (space_id, kind, target_id, state, generation, created_at, updated_at, removed_at)
+     VALUES (?, ?, ?, 'active', 2, 1, 1, NULL)`,
+  ).run(spaceId, kind, targetId);
+}
+
 function waterline(database: DatabaseSync): number {
   return (database.prepare("SELECT waterline FROM workspace_space_state").get() as { waterline: number }).waterline;
 }
@@ -89,6 +96,46 @@ describe("WorkspaceDO migration 93", () => {
     ]);
     expect(database.prepare("SELECT COUNT(*) AS intents FROM space_intents").get()).toEqual({ intents: 0 });
     expect(waterline(database)).toBe(before + 1);
+  });
+
+  it("retires a private Space's resource defaults and keeps every other default", () => {
+    const database = openDatabase();
+    apply(database, PUBLIC_MIGRATION_VERSION - 1);
+    seedSpace(database, { spaceId: GENERAL, scope: "workspace", systemRole: "general" });
+    seedSpace(database, { spaceId: PRIVATE, scope: "personal", participants: [CREATOR] });
+    seedDefault(database, PRIVATE, "resource", "private-resource");
+    seedDefault(database, PRIVATE, "sidekick", "workspace-sidekick");
+    seedDefault(database, GENERAL, "resource", "general-resource");
+
+    apply(database, PUBLIC_MIGRATION_VERSION, PUBLIC_MIGRATION_VERSION - 1);
+
+    expect(database.prepare(
+      "SELECT space_id, target_id, state, generation FROM space_defaults ORDER BY target_id",
+    ).all()).toEqual([
+      { space_id: GENERAL, target_id: "general-resource", state: "active", generation: 2 },
+      { space_id: PRIVATE, target_id: "private-resource", state: "removed", generation: 3 },
+      { space_id: PRIVATE, target_id: "workspace-sidekick", state: "active", generation: 2 },
+    ]);
+  });
+
+  it("drops the stored plans a Space source step would replay, and keeps every other receipt", () => {
+    const database = openDatabase();
+    apply(database, PUBLIC_MIGRATION_VERSION - 1);
+    const receipt = database.prepare(
+      `INSERT INTO parent_access_operations (parent_id, operation_id, request_json, result_json, created_at)
+       VALUES ('channel', ?, ?, ?, 1)`,
+    );
+    receipt.run("retract", JSON.stringify({ kind: "retract_space_source", spaceId: PRIVATE }),
+      JSON.stringify({ ok: true, plan: { narrowScope: true, seatUserIds: [], removeUserIds: [PARTICIPANT] } }));
+    receipt.run("apply", JSON.stringify({ kind: "apply_space_source", spaceId: PRIVATE }),
+      JSON.stringify({ ok: true, plan: { widenScope: true, seatUserIds: [] } }));
+    receipt.run("direct", JSON.stringify({ kind: "set_direct_scope", scope: "personal" }),
+      JSON.stringify({ ok: true, previousScope: "workspace", previousObserved: true }));
+
+    apply(database, PUBLIC_MIGRATION_VERSION, PUBLIC_MIGRATION_VERSION - 1);
+
+    expect(database.prepare("SELECT operation_id FROM parent_access_operations ORDER BY operation_id").all())
+      .toEqual([{ operation_id: "direct" }]);
   });
 
   it("leaves an Organization with no private Space exactly as it was", () => {
