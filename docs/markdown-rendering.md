@@ -109,6 +109,13 @@ counts the header row's cells and publishes the count as
 `--markdown-table-columns`, which the stylesheet uses to give the table a minimum
 width proportional to how many columns it actually has.
 
+Columns size to their content (automatic table layout), so a short label or
+score column stays narrow and the prose column takes the room. Rows are
+separated by a rule; cells are not filled. A table is only as wide as its
+content needs. In an agent reply, a message holding a table may grow past the
+turn cap to the feed's full width, while every other block in it keeps the turn
+cap's line length.
+
 A GFM table cell cannot contain a real newline — that ends the row — so models
 write `<br/>` inside one. Ordinary paragraphs pick up the same habit. Because
 this renderer does not parse HTML, a remark pass after `remark-gfm` turns a
@@ -911,6 +918,24 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-10-06 — Table columns fit their content, and a table can use the feed's width
+
+**Changed:** Markdown tables use automatic layout instead of `table-layout:
+fixed`, drop the filled cells and 2px gaps for a rule between rows, and use
+1.5 line height instead of 1.7. An agent reply holding a table may widen to
+the feed's full width; its other blocks stay at the turn cap.
+
+**Why:** Fixed layout split every table into equal columns, so a one-word score
+column took a third of a 640px reply and the evidence column wrapped into a tall
+strip. Side by side with ChatGPT the same table was roughly twice as tall. The
+filled cells added clutter at prose size.
+
+**Considered and rejected:** Widening the whole turn cap, which would lengthen
+prose lines in every reply; and stretching every table to full width, which
+spread a two-column table of short values across the reply. What a future change
+has to respect: the widening is keyed on the reply holding a table, and the
+table itself is never wider than its content.
 
 ### 2026-10-05 — A person's typed `@Rally` draws as a chip
 

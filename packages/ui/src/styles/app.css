@@ -3921,12 +3921,22 @@ pre {
    either name, so they painted nothing — while reading exactly like the
    declaration that did, which is how a review of this change came to look for
    the thumb's colour in them. */
-.markdown-table-scroll { margin: var(--space-4) -2px; overflow-x: auto; }
+.markdown-table-scroll { overflow-x: auto; }
 .markdown-table-scroll::-webkit-scrollbar-thumb { background: var(--markdown-scrollbar-thumb); }
-.markdown-body table { border-collapse: separate; border-spacing: 2px; line-height: var(--av-cmp-markdown-table-leading); margin: 0; min-width: max(100%, calc(var(--markdown-table-columns, 1) * 140px)); table-layout: fixed; width: calc(100% - 1px); }
+/* Columns size to their content, so a one-word score column stays narrow and
+   the prose column gets the room. `table-layout: fixed` split every table into
+   equal columns, which wrapped the longest column into a tall strip beside
+   mostly empty ones. Rows are separated by a rule rather than drawn as filled
+   cells: the boxes and the gaps between them read as clutter at prose size. A table
+   is as wide as its content needs and no wider, so a two-column table of short
+   values does not stretch across a wide reply. */
+.markdown-table-scroll { margin: var(--space-4) 0; }
+.markdown-body table { border-collapse: collapse; line-height: var(--av-cmp-markdown-table-leading); margin: 0; min-width: calc(var(--markdown-table-columns, 1) * 140px); }
 .markdown-body th,
-.markdown-body td { background: var(--markdown-surface); border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; }
-.markdown-body th { background: var(--markdown-wash); color: var(--markdown-ink); font-weight: var(--av-cmp-markdown-strong-weight); }
+.markdown-body td { border-bottom: 1px solid var(--markdown-border); min-width: 120px; padding: var(--space-2) var(--space-5) var(--space-2) 0; text-align: left; vertical-align: top; }
+.markdown-body :is(th, td):last-child { padding-right: 0; }
+.markdown-body tbody tr:last-child td { border-bottom: 0; }
+.markdown-body th { border-bottom-color: var(--markdown-rule); color: var(--markdown-ink); font-weight: var(--av-cmp-markdown-strong-weight); padding-top: 0; }
 .markdown-body del { color: var(--markdown-ink-muted); text-decoration-color: var(--markdown-ink-faint); }
 .markdown-body img { border-radius: var(--av-sys-size-radius-md); display: block; height: auto; margin: var(--space-4) 0; max-width: 100%; }
 .agent-message-actions { align-items: center; display: flex; gap: var(--space-2); opacity: 0; transition: opacity 120ms; }
@@ -5422,6 +5432,13 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   min-width: 0;
   width: fit-content;
 }
+
+/* A reply holding a table may take the feed's full width, so the table's prose
+   column is not wrapped at the turn cap. The message is `fit-content`, so a
+   narrow table still leaves it narrow, and everything but the table keeps the
+   turn cap's line length. */
+.agent-message:has(.markdown-table-scroll) { max-width: 100%; }
+.agent-message:has(.markdown-table-scroll) .markdown-body > :not(.markdown-table-scroll) { max-width: var(--turn-width-cap); }
 
 .agent-message .markdown-body {
   font-size: 14.5px;

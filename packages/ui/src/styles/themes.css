@@ -507,7 +507,7 @@
   --av-cmp-markdown-heading-leading: 1.35;
   --av-cmp-markdown-strong-weight: 560;
   --av-cmp-markdown-list-indent: calc(var(--av-ref-space-unit) * 6);
-  --av-cmp-markdown-table-leading: 1.7;
+  --av-cmp-markdown-table-leading: 1.5;
 
   /* A surface that deliberately opposes the theme: light on a dark theme and
    * dark on a light one. Name a token, never a literal — the ramp inverts with
@@ -876,7 +876,7 @@
   --av-cmp-markdown-heading-leading: 1.35;
   --av-cmp-markdown-strong-weight: 560;
   --av-cmp-markdown-list-indent: calc(var(--av-ref-space-unit) * 6);
-  --av-cmp-markdown-table-leading: 1.7;
+  --av-cmp-markdown-table-leading: 1.5;
 
   --av-cmp-tooltip-background: var(--av-ref-color-neutral-13);
   --av-cmp-tooltip-foreground: var(--av-sys-color-text-on-inverse);
