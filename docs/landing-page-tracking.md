@@ -29,12 +29,15 @@ Tagged links on the landing page, by `data-site-action` id:
 | `founder-contact` | Founder photos and names | founder_contact · team |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
 
+`web-app-hero` reports `secondary_cta · hero` on every device, including
+phones where it is the only hero button, so its clicks cannot be split by device.
+
 Not tracked: scrolling, section views, header nav clicks, and the founders'
 LinkedIn, GitHub and Hugging Face links.
 
 The footer is rendered from `apps/site/src/site-chrome.ts`, so its help@ link and
 its id live there, not in `index.html`. The `/compare/` pages share the header
-(`download-header`) and the footer, and count as page class `landing` with
+(`download-header` / `sign-in-header`) and the footer, and count as page class `landing` with
 their own `$pathname`; see [`landing-comparisons.md`](landing-comparisons.md).
 
 ## Don't lose on a redesign
