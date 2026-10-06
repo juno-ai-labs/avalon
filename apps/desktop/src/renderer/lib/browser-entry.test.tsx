@@ -439,7 +439,8 @@ it('shows the opening mark, not an empty organization list, while a sign-in open
   history.replaceState(null, '', `/app/workspaces/global/${workspace.id}`);
   const view = render(<BrowserEntry renderCollaboration={(_region, session) => <output>{session.workspace?.name}</output>} />);
   try {
-    fireEvent.change(await screen.findByRole('textbox', { name: 'Email' }), { target: { value: user.email } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with email' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: user.email } });
     fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
     fireEvent.change(await screen.findByRole('textbox', { name: 'Sign-in code' }), { target: { value: '1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
@@ -468,7 +469,8 @@ it('shows the opening mark while a sign-in activates a linked organization in an
   history.replaceState(null, '', `/app/workspaces/enterprise/${enterprise.id}`);
   const view = render(<BrowserEntry renderCollaboration={(_region, session) => <output>{session.workspace?.name}</output>} />);
   try {
-    fireEvent.change(await screen.findByRole('textbox', { name: 'Email' }), { target: { value: user.email } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with email' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: user.email } });
     fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
     fireEvent.change(await screen.findByRole('textbox', { name: 'Sign-in code' }), { target: { value: '1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));

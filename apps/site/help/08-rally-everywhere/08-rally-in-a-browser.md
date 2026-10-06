@@ -48,7 +48,7 @@ joining as.
 > opens the Mac app instead (see [Create or join an
 > Organization](../01-getting-started/02-create-or-join-an-organization.md)).
 
-## Signing in by email
+## Signing in
 
 The browser version signs you in with Google or with your email address, no
 password needed. Click **Continue with Google** to use your Google account. To
