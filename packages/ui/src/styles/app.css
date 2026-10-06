@@ -3998,17 +3998,17 @@ pre {
 .message-export-menu { min-width: 180px; }
 .message-export-menu .menu-item > span:first-of-type { flex: 1; }
 .message-export-menu-extension { color: var(--av-sys-color-text-muted); font-size: 12px; }
-/* Where the feed is too narrow to put the bar beside the text, it sits on the
-   turn's top edge instead — Rally's at the right end, a person's at the left —
-   overlapping the gap above the turn the way a chat app's message toolbar does.
-   Upright in the side gap was tried: it ran into the next turn's words. */
+/* Where the feed is too narrow to put Rally's bar beside its text, it sits on
+   the turn's top-right edge instead, the way a chat app's message toolbar does.
+   Upright in the side gap was tried: it ran into the next turn's words. A
+   person's bar stays beside the bubble at every width: on the top edge it
+   covered the bubble above it in a run of grouped messages. */
 .virtual-transcript { container-name: feed; container-type: inline-size; }
 @container feed (max-width: 822px) {
   .agent-message .message-actions-rail { bottom: auto; left: auto; right: 0; top: -20px; }
-  .human-message { position: relative; }
-  .human-message-bubble-anchor { position: static; }
-  .human-message .message-actions-rail { bottom: auto; left: 0; right: auto; top: -20px; }
-  :is(.agent-message-actions, .human-message-actions)::before { display: none; }
+  .agent-message-actions::before { display: none; }
+  /* Leaves a person's bar its width beside even the widest bubble. */
+  .virtual-transcript .human-message { max-width: min(88%, var(--turn-width-cap), calc(100% - 136px)); }
 }
 .streaming-caret { animation: active-pulse 0.9s infinite; background: var(--av-sys-color-brand-ink); display: inline-block; height: 13px; margin-left: 2px; vertical-align: text-bottom; width: 2px; }
 .transcript-event { margin: 0; }
