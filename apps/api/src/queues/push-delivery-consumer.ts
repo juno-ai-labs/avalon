@@ -46,7 +46,7 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
     logInfo(env, "push_delivery_skipped", { intent_id: row.intentId, reason: context.reason });
     return true;
   }
-  const { effect, childId, identity } = context;
+  const { effect, childId } = context;
   const title = effect.kind === "mention_notification"
     ? `${effect.authorNameSnapshot} mentioned you in ${effect.workstreamTitleSnapshot}`
     : `${effect.actorNameSnapshot} added you to ${effect.workstreamTitleSnapshot}`;
@@ -54,8 +54,11 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
     effect.kind === "mention_notification" ? effect.messageText : effect.workstreamObjectiveSnapshot ?? "",
     { sources: "none" },
   );
+  // The badge counts what this person's sidebar lists, and a guest's lists less.
+  const member = await workspaceRegionalDatabase(env).prepare(`SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
+    .bind(row.workspaceId, row.recipientUserId).first<{ access_class: "member" | "guest" }>();
   const attention = WorkspaceAttentionSchema.parse(await workspace.attention({
-    workspaceId: id, userId: row.recipientUserId, accessClass: identity.access_class,
+    workspaceId: id, userId: row.recipientUserId, accessClass: member?.access_class ?? "member",
   }));
   const url = await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
     workstreamId: row.workstreamId, ...(childId ? { substreamId: childId } : {}) });
