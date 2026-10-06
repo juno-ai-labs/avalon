@@ -48,6 +48,9 @@ export default tseslint.config(
       "**/.playwright-cli/**",
       "**/output/**",
       "**/coverage/**",
+      // Classic browser scripts for the motion-film skill share globals across
+      // files by design (file:// pages cannot load ES modules); not app code.
+      ".agents/skills/rally-motion/**",
     ],
   },
   eslint.configs.recommended,
