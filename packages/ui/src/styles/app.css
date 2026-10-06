@@ -4428,6 +4428,11 @@ pre {
 .attachment-lightbox-a11y-title { clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
 .attachment-lightbox.is-media-viewer { background: transparent; display: block; }
 .attachment-lightbox.is-document-viewer { background: var(--av-sys-color-surface-default); border: .5px solid var(--av-ref-color-line-4); border-radius: 16px; box-shadow: var(--av-sys-elevation-shadow-lg); display: grid; grid-template-rows: 62px minmax(0, 1fr); inset: 6vh 7.5vw; overflow: hidden; }
+/* At tablet and phone width (the 920 where the sidebar collapses) the inset is
+   space the document cannot spare, so the viewer fills the window. */
+@media (max-width: 920px) {
+  .attachment-lightbox.is-document-viewer { border: 0; border-radius: 0; box-shadow: none; inset: 0; }
+}
 .attachment-lightbox-header { align-items: center; border-bottom: .5px solid var(--av-ref-color-line-3); display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto auto auto; padding: 0 14px 0 24px; }
 .attachment-lightbox-header h2 { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 560; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-lightbox-header { display: flex; }
