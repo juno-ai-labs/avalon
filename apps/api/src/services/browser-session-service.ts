@@ -4,6 +4,7 @@ import { ApiError } from "../lib/api-error";
 import { hmacSha256, sha256 } from "../lib/crypto";
 import { authenticateSession } from "./session-authentication";
 import { AuthService, verifyAccessToken, sessionRenewalPolicy } from "./auth-service";
+import { claimScopeInvitations } from "./scope-invitation-claims";
 
 import { BrowserSessionSchema, type BrowserSession } from "@rally/contracts/browser-session";
 export { BrowserSessionSchema, BrowserWorkspacesSchema } from "@rally/contracts/browser-session";
@@ -24,6 +25,10 @@ export class BrowserSessionService {
       JSON.stringify(["browser-session",claims.sessionId,session.refreshToken]));
     await this.env.DB.prepare("INSERT INTO browser_sessions(session_id,credential_hash) VALUES (?,?) ON CONFLICT(session_id) DO NOTHING")
       .bind(claims.sessionId,await sha256(credential)).run();
+    // Signing in is how a share addressed to this mailbox is taken up; there
+    // is no separate acceptance. Before the description below, so the
+    // workspaces it lists already include any it just joined.
+    await claimScopeInvitations(this.env,claims.userId);
     const auth = await this.read(credential);
     const description = await this.describe(auth);
     return { credential, expiresAt: description.expiresAt, session: description };

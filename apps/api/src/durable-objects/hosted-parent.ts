@@ -1,9 +1,8 @@
 import type { ScopeGrant } from "@rally/contracts/scope-grants";
 import {
-  AcceptScopeInvitationSchema,
+  ClaimScopeInvitationsSchema,
   ConnectorParticipantAdmissionSchema,
   CreateScopeInvitationsSchema,
-  DescribeScopeInvitationSchema,
   ListScopeInvitationsSchema,
   ManagedScopeGrantsSchema,
   ParticipantGrantMutationSchema,
@@ -13,7 +12,6 @@ import {
   ScopeGrantManagementRequestSchema,
   ScopeGrantMutationResultSchema,
   ScopeGrantMutationSchema,
-  ScopeInvitationDescriptionSchema,
   ScopeInvitationResultSchema,
   ScopeSharingOptionsRequestSchema,
   ScopeSharingOptionsSchema,
@@ -25,8 +23,8 @@ import {
   type ScopeGrantMutation,
   type ScopeGrantMutationResult,
   type ScopeGrantTarget,
-  type ScopeInvitationDescription,
   type ScopeInvitationResult,
+  type ScopeInvitationSummary,
 } from "@rally/contracts/scope-grants";
 import {
   ChannelAccessSourcesSchema,
@@ -2422,16 +2420,11 @@ export class HostedParent {
     return ScopeInvitationResultSchema.parse(await this.scopeInvitations().create(request));
   }
 
-  async acceptScopeInvitation(input: z.infer<typeof AcceptScopeInvitationSchema>): Promise<ScopeInvitationResult> {
-    const request = parseRpcInput(AcceptScopeInvitationSchema, input, "accept_scope_invitation");
+  /** Shares pending for these verified addresses become this user's grants; returns those claimed. */
+  async claimScopeInvitations(input: z.infer<typeof ClaimScopeInvitationsSchema>): Promise<ScopeInvitationSummary[]> {
+    const request = parseRpcInput(ClaimScopeInvitationsSchema, input, "claim_scope_invitations");
     this.assertParent(request.workspaceId, request.parentId);
-    return ScopeInvitationResultSchema.parse(await this.scopeInvitations().accept(request));
-  }
-
-  async describeScopeInvitation(input: z.infer<typeof DescribeScopeInvitationSchema>): Promise<ScopeInvitationDescription> {
-    const request = parseRpcInput(DescribeScopeInvitationSchema, input, "describe_scope_invitation");
-    this.assertParent(request.workspaceId, request.parentId);
-    return ScopeInvitationDescriptionSchema.parse(await this.scopeInvitations().describe(request));
+    return this.scopeInvitations().claim(request);
   }
 
   async revokeScopeInvitation(input: z.infer<typeof RevokeScopeInvitationSchema>): Promise<ScopeInvitationResult> {

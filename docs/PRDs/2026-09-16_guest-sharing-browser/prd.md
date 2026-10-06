@@ -72,6 +72,12 @@ invitations, sessions and socket tickets have separate lifecycles.
 
 ## Decision log
 
+- 2026-10-06: User removed the explicit acceptance step. The email one-time code
+  is the safeguard: signing in with the shared-with address claims the share,
+  with no link token and no Accept screen. Pending recipients show as Guest.
+  Supersedes design.md §4 steps 3 and 5's single-use acceptance credential; see
+  [scoped invitations](../../scope-invitations.md).
+
 - 2026-09-17: Preserve existing substream history and saved-context behavior when
   sharing. Add no context review, selection or fresh-substream option to sharing.
   Keep grants in the parent and retain coordination for actual participant

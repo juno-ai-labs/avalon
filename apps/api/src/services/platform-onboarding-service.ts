@@ -39,6 +39,7 @@ import {
   withheldDemoWorkspaceIds,
 } from "./demo-workspace-visibility";
 import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
+import { claimScopeInvitations } from "./scope-invitation-claims";
 import {
   PreferenceProjectionSchema,
   applyRegionalPreferenceProjection,
@@ -291,6 +292,11 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   async discover(rawIdentity: PlatformIdentity): Promise<RegionalDiscovery> {
     const identity = platformIdentitySchema.parse(rawIdentity);
     const user = await this.ensureRegionalUser(identity);
+    // A share addressed to this person's mailbox is theirs on sight: claim it
+    // before listing, so the Organization it joined them to is listed below.
+    // The identity's address is Global's verified one, which this deployment
+    // may not have recorded for a user it only knows through the platform link.
+    await claimScopeInvitations(this.env, user.id, [identity.email]);
     const [workspaceResult, invitationResult] = await Promise.all([
       this.env.DB.prepare(
         `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at,

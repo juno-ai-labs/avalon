@@ -1,7 +1,8 @@
 import { IconShare2 } from '@tabler/icons-react';
-import { Button, IconButton } from '@rally/ui/components/primitives';
+import { Avatar, Badge, Button, IconButton } from '@rally/ui/components/primitives';
+import { X } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
 import { CreateScopeInvitationsSchema, type ScopeGrantTarget } from '@rally/contracts/scope-grants';
 import type { RallyApi } from '../lib/api';
@@ -15,11 +16,30 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
   onShared?: () => void;
 }): React.JSX.Element {
   const [emails, setEmails] = useState('');
-  const [failure, setFailure] = useState<'invalid_emails' | 'share' | null>(null);
+  const [failure, setFailure] = useState<'invalid_emails' | 'share' | 'remove' | null>(null);
   const operation = useRef<{ key: string; id: string } | null>(null);
   // Main is conversation 0: a workstream grant would also include inheriting children.
   const target: ScopeGrantTarget = { kind: 'conversation', workspaceId: asWorkspaceId(workspaceId),
     parentId: asWorkstreamId(parentId), substreamId: asSubstreamId(substreamId) };
+  // People this was shared with who have not signed in yet. They are Guests
+  // already: the first time they sign in with that address, they are in. A
+  // recipient who already has an account is claimed as the share is made, and
+  // appears among the participants instead.
+  const pending = useQuery({
+    queryKey: ['scope-invitations', parentId, substreamId],
+    queryFn: async ({ signal }) => {
+      const result = await api.listScopeInvitations(target, signal);
+      return result.status === 'ready' ? result.invitations.filter((invitation) => invitation.status === 'pending'
+        && (invitation.expiresAt === null || invitation.expiresAt > Date.now())) : [];
+    },
+  });
+  const remove = useMutation({
+    mutationFn: async (invitation: { id: string; revision: number }) => {
+      const result = await api.revokeScopeInvitation(parentId, invitation.id, invitation.revision);
+      if (result.status !== 'revoked') throw new Error('scope invitation was not revoked');
+    },
+    onSettled: () => { void pending.refetch(); },
+  });
   const invite = useMutation({ mutationFn: async (recipients: string[]) => {
     const targets = [target];
     const key = JSON.stringify({ recipients, targets });
@@ -40,7 +60,7 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
       // runs regardless, and would close whichever dialog was opened in its
       // place, taking the newly typed addresses with it.
       invite.mutate([...new Set(parsed.data)].sort(), {
-        onSuccess: () => { setEmails(''); setFailure(null); operation.current = null; onShared?.(); },
+        onSuccess: () => { setEmails(''); setFailure(null); operation.current = null; void pending.refetch(); onShared?.(); },
         onError: () => { setFailure('share'); },
       });
     }}>
@@ -51,7 +71,19 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
     </form>
     {failure ? <InlineError>{failure === 'invalid_emails'
       ? 'Enter valid email addresses, separated by spaces, commas, or semicolons.'
-      : 'The conversation couldn’t be shared. Try again.'}</InlineError> : null}
+      : failure === 'remove' ? 'That guest couldn’t be removed. Try again.'
+        : 'The conversation couldn’t be shared. Try again.'}</InlineError> : null}
+    {pending.data?.length ? <div className="member-action-list" aria-label="Guests who have not signed in yet">
+      {pending.data.map((invitation) => <div className="member-action-row" key={invitation.id}>
+        <Avatar member={{ id: invitation.id, name: invitation.email, email: invitation.email, timezone: 'UTC' }} size="medium" />
+        <span><strong>{invitation.email}</strong><small>Joins when they sign in with this address</small></span>
+        <Badge className="role-badge">Guest</Badge>
+        <IconButton label={`Remove ${invitation.email}`} disabled={remove.isPending}
+          onClick={() => { setFailure(null); remove.mutate(invitation, { onError: () => setFailure('remove') }); }}>
+          <X aria-hidden="true" size={15} />
+        </IconButton>
+      </div>)}
+    </div> : null}
   </section>;
 }
 
