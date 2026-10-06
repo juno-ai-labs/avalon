@@ -658,22 +658,22 @@ a conversation parent like a Channel's, whose rows (`automation_directory` and
 the `sidekick_*` tables) hold its definition revisions, lifecycle, schedules,
 runs (each a child substream under it), and inbound-email receipts.
 [`automation-lifecycle.md`](automation-lifecycle.md) is that schema's map and
-[`workstream-durable-object.md`](workstream-durable-object.md#automationdo) its
+[`workstream-durable-object.md`](workstream-durable-object.md#hosted-sidekicks) its
 column catalog; what follows is only what WorkspaceDO still holds.
 
-- `automation_directory` is the content-free projection the sidebar, the
-  connector fan-out, and access revocation find an automation by: id,
+- `automation_directory` is the Sidekick's definition row, which the sidebar,
+  the connector fan-out, and access revocation find a Sidekick by: id,
   workspace, author, `source_version`, payload hash, lifecycle (`draft`,
   `active`, `paused`, `deleted`), scope (`personal`, `workspace`,
   `workstream`), the owning work stream a `workstream` scope must name, title,
   description, next run time, the chosen icon and colour (null until somebody
-  picks one), and when it was projected. It holds no
-  definition, no instructions, and no run content, and a row can locate an
-  automation but never authorize a read of one. The object publishes it as a
-  `directory_automation` effect through the same parent outbox its children's
-  aggregates use; `applyAutomationDirectory` accepts a strictly newer
-  `source_version`, ignores an older one, and refuses an equal one carrying a
-  different hash.
+  picks one), and when it was projected. Migration 91 added the definition
+  columns (accepted revision, bindings, run-as user, pause reason and the rest);
+  the revisions, schedules and runs are the `sidekick_*` tables.
+  `HostedSidekick` writes the row in place inside the change's own
+  transaction, so nothing publishes it over the Queue; a late
+  `directory_automation` message from the deleted `SidekickDO` is acknowledged
+  and ignored.
 - `workspace_external_event_registrations` holds one row per active trigger
   route, an automation's typed evaluator document or a work stream's watched
   resource, indexed on `(connection, event type, resource, state)` for
