@@ -11,10 +11,9 @@ a { color: inherit; }
 .entry.onboarding-shell > * { margin-block: auto; }
 .entry .entry-mark { display: block; width: fit-content; margin: 0 auto; color: var(--av-sys-color-text-default); }
 .entry .entry-mark:focus-visible, .signin-choice:focus-visible { outline: 2px solid var(--av-sys-color-accent-base); outline-offset: 3px; }
-/* The Google button follows the form, not another button, so the shared
-   `.signin-button + .signin-button` spacing never matches it. */
-.entry form + .signin-button { margin-top: 10px; }
 .entry .signin-card > p.entry-lead { margin-top: 28px; }
+/* The sign-in choices sit where the email field would, at the field's offset. */
+.entry .signin-card > p + .signin-button { margin-top: 32px; }
 
 .browser-shell { height: 100dvh; display: flex; flex-direction: column; }
 /* A failure to reopen the organization, above a shell that stays mounted so

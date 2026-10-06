@@ -263,6 +263,21 @@ it('returns to email entry on a non-JSON unauthorized response', async () => {
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
+it('leads with Google and opens the email form only when asked', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 })));
+  render(<BrowserEntry />);
+  const google = await screen.findByRole('button', { name: 'Continue with Google' });
+  expect(google).toHaveClass('button-primary');
+  expect(screen.queryByRole('textbox', { name: 'Email' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Continue with email' }));
+  expect(screen.getByRole('textbox', { name: 'Email' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Email me a sign-in link' })).toHaveClass('button-primary');
+  expect(screen.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Other sign-in options' }));
+  expect(screen.getByRole('button', { name: 'Continue with Google' })).toBeInTheDocument();
+  expect(screen.queryByRole('textbox', { name: 'Email' })).toBeNull();
+});
+
 it('preserves renewal requested while a focus restore is in flight', async () => {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
   const now = Date.parse('2026-09-17T00:00:00.000Z'); vi.setSystemTime(now);
@@ -374,6 +389,7 @@ it('drops a returned Google failure once an email sign-in starts', async () => {
   history.replaceState(null, '', '/#google_error=google_oauth_failed');
   render(<BrowserEntry />);
   expect(await screen.findByRole('alert')).toHaveTextContent('Google sign-in did not complete. Try again or use your email.');
+  fireEvent.click(screen.getByRole('button', { name: 'Continue with email' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: 'person@example.test' } });
   fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
   expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
