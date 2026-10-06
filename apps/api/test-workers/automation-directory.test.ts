@@ -200,8 +200,8 @@ describe("automation directory", () => {
   });
 
   it("lists a Channel's Sidekick to the Channel's participants, not only its author, and not to anyone else", async () => {
-    // Somebody else's Sidekick in the room, so the room's participant is
-    // listed it only through the Channel's own participant rows.
+    // Somebody else's Sidekick in the room, so the room's participant sees
+    // it only through the Channel's own participant rows.
     const automationId = nextAutomationId();
     await writeSidekickDirectoryRow(env, {
       automationId, workspaceId: WORKSPACE_ID, authorUserId: "00000000-0000-7000-8000-00000000ad2f",
