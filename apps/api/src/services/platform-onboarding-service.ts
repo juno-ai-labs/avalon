@@ -22,6 +22,8 @@ import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
+import { workspaceSlug } from "../lib/workspace-slug";
+import { diagnosticErrorCode } from "../observability/logger";
 import { sha256 } from "../lib/crypto";
 import {
   deriveWorkspacePlacementAffinity,
@@ -457,8 +459,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     input: OperationReference & { name: string; placementAffinity: WorkspacePlacementAffinity },
   ): Promise<void> {
     const at = nowIso();
-    const slugBase = input.name.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "workspace";
-    const slug = `${slugBase}-${input.workspaceId.slice(0, 8)}`;
+    const slug = workspaceSlug(input.name, input.workspaceId);
     await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO workspaces
@@ -1191,6 +1192,14 @@ export class PlatformOnboardingService {
     requestLocation?: unknown,
     requestedOperationId?: string,
   ): Promise<Session> {
+    // Someone creating their first organization sets it up as its creator, as
+    // a new Mac account does. An email sign-in starts ineligible, since most
+    // arrive as guests; being a guest elsewhere does not exempt them. Anyone
+    // already a member of an organization keeps the exemption they have.
+    await this.env.DB.prepare(
+      `UPDATE users SET onboarding_eligible = 1 WHERE id = ? AND onboarding_eligible = 0
+         AND NOT EXISTS (SELECT 1 FROM workspace_members WHERE user_id = users.id AND access_class = 'member' AND status = 'active')`,
+    ).bind(this.auth.userId).run();
     const identity = await this.loadPlatformIdentity();
     const requestFingerprint = await sha256(JSON.stringify(["create", region, name]));
     let operationId: string;
@@ -1545,7 +1554,9 @@ export class PlatformOnboardingService {
       // A later discovery reconciles it if the regional membership committed.
     }
     if (originalError instanceof ApiError) throw originalError;
-    throw new ApiError(503, "regional_onboarding_unavailable", "The regional onboarding action could not be confirmed");
+    // The log names what went wrong; the caller still learns only that it is unconfirmed.
+    throw new ApiError(503, "regional_onboarding_unavailable", "The regional onboarding action could not be confirmed",
+      undefined, diagnosticErrorCode(originalError, "regional_action_failed"));
   }
 
   private assertRegionalSession(session: Session, region: Region, workspaceId: string): void {
