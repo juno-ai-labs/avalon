@@ -10,7 +10,6 @@ import {
 
 import type { Env } from "../env";
 import { asApiError } from "../lib/api-error";
-import { effectiveChannelAudience } from "../lib/channel-audience";
 import { settledBatches } from "../lib/settled-batches";
 import { stableUuidSync } from "../lib/stable-uuid";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -874,12 +873,8 @@ export class SpaceChannelAccess {
       const current = parent.readAccessSources({
         workspaceId: actor.workspaceId, parentId: workstreamId, channel: observed.channel,
       });
-      const retained = new Set<string>(effectiveChannelAudience({
-        direct: current.direct,
-        sources: current.spaces.map((space) => ({
-          sourceId: space.spaceId, scope: space.scope, participantUserIds: space.participantUserIds,
-        })),
-      }).participantUserIds);
+      // A Space supplies no reader, so the Channel's own roster is all that is kept.
+      const retained = new Set<string>(current.direct.participantUserIds);
       for (const userId of seated) {
         if (retained.has(userId)) continue;
         await client.removeParticipant(userId, { spaceSourceId: spaceId });

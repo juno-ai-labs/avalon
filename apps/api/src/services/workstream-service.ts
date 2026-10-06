@@ -848,20 +848,12 @@ export class WorkstreamService {
    * Change the Channel, recording an audience change as the Channel's *own*.
    *
    * A scope change goes through here rather than straight to the object client
-   * because `workstream_metadata.scope` stops being able to answer "what is
-   * this Channel's audience on its own account" the moment a Space widens it.
+   * so the Channel's hosted parent records it as the Channel's own decision.
    * Recording first and restoring on a refused update keeps the record from
    * claiming an audience the Channel never took.
    *
-   * The refusal it can raise replaces the Project one: a Channel that is
-   * Organization-wide through a Space cannot be made private, because the
-   * effective audience would stay Organization-wide and the record would then
-   * disagree with the Channel.
-   *
-   * A narrowing seats first, for the reason a retraction does. A personal
-   * Space applied while the Channel was Organization-wide seated nobody, so
-   * the readers it supplies exist only as its roster; narrowing without
-   * seating them revokes access a Space that has not changed still provides.
+   * No Space can refuse it: a Space grants no reader, so the Channel's scope
+   * is its own to widen or narrow.
    */
   async update(id: string, input: UpdateWorkstreamInput) {
     const client = await this.authoritativeClient(id);
@@ -875,7 +867,6 @@ export class WorkstreamService {
     // is what the refusals below need anyway.
     const access = new ChannelAccessService(this.env, this.auth);
     const title = await access.channelTitle(id);
-    if (input.scope === "personal") await access.narrowDirectScope(id);
     const recorded = await access.recordDirectScope(id, input.scope);
     if (!recorded.ok) throw spaceAccessError(recorded.code, title);
     let result;
@@ -946,9 +937,8 @@ export class WorkstreamService {
    *
    * The `projectEffect` flag this used to take is gone with the rule it
    * selected: a Project owned its member work streams' audiences and had to
-   * exempt its own fan-out from them. A Space does not own a Channel's
-   * audience, it supplies one source of it, so a removal here is simply the
-   * direct source losing a reader.
+   * exempt its own fan-out from them. A Space supplies no reader, so a removal
+   * here is simply the Channel losing one.
    */
   async removeParticipant(id: string, userId: string): Promise<void> {
     const accessLost = await new ChannelAccessService(this.env, this.auth)

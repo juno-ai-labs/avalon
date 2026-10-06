@@ -25,7 +25,8 @@ import {
  * `initialize`, which hardcoded `'workspace'` — every work stream summoned from
  * a private conversation by a linked member was created readable by the whole
  * workspace. The scope is now an explicit argument, and the case nobody names
- * is `personal` rather than `workspace`.
+ * is `personal` rather than `workspace`; the desktop's create route names
+ * `workspace` itself.
  */
 
 vi.mock("../src/services/integrations", () => ({
@@ -217,13 +218,11 @@ describe("the audience a new work stream is created with", () => {
     // be asserting on the double's own configuration; the row it really writes
     // is proved on workerd in `durable-object-runtime.test.ts`.
     //
-    // `workspace`, and that is the cutover's doing rather than a caller's: a
-    // create that names no Space lands in General, and General is the
-    // Organization's own Space. The *direct* scope is still what the caller
-    // asked for, which `test-workers/space-creation.test.ts` reads off the
-    // Channel's access sources; what reaches the object is the union.
+    // `personal`, the fail-closed default. The create lands in General, which
+    // is Organization-wide, but a Space grants no reader to its Channels, so
+    // nothing widens it.
     expect(initializeInputs).toHaveLength(1);
-    expect(initializeInputs[0]).toMatchObject({ scope: "workspace" });
+    expect(initializeInputs[0]).toMatchObject({ scope: "personal" });
   });
 
   it("carries the audience a connector ingress resolved through to the object", async () => {
@@ -273,12 +272,9 @@ describe("the audience a new work stream is created with", () => {
       audienceScope: "personal",
     });
 
-    // Both open Organization-wide, because neither names a Space and the
-    // fallback is General. What the suggestion's own audience still decides is
-    // the Channel's *direct* source — the half a later narrowing or a Space
-    // leaving is computed against — so that is what this reads. Asserting on
-    // `initialize` here would pass with the audience plumbing deleted.
-    expect(initializeInputs.map((input) => input.scope)).toEqual(["workspace", "workspace"]);
+    // Each opens with the audience it was shown to. Both land in General, which
+    // grants no reader, so the private one stays private.
+    expect(initializeInputs.map((input) => input.scope)).toEqual(["workspace", "personal"]);
     expect(directScopes()).toEqual(["workspace", "personal"]);
   });
 

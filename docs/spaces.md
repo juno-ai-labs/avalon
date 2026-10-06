@@ -1,7 +1,7 @@
 # Spaces
 
 A **Space** is how an Organization groups its Channels. It carries a name, an
-icon and colour, a personal or Organization-wide audience, resources and
+icon and colour, an Organization-wide audience, participants who edit it, resources and
 Sidekick recommendations, and every Channel in the Organization belongs to at
 least one. A Channel may belong to several at once; each is a *placement* of the
 same Channel rather than a copy, so opening any of them opens the same
@@ -75,14 +75,13 @@ A Sidekick default also writes the recommendation on the Space's hosted parent,
 the list a Channel created in the Space reads, in the same call. Nothing outside
 WorkspaceDO holds a copy.
 
-**Each Channel's parent owns its own audience.** A Space never writes one. Every
-membership, audience change, archive and restore asks the Channel's own
-authority for the delta its provenance implies and applies it through the
-Channel's canonical scope and participant operations, where the
-retained-content containment preflight and its SQL triggers already run.
-WorkspaceDO drives that sequence itself for every one of them, the cutover's
-placements included (`SpaceChannelAccess`, over the canonical-operation
-sequence in `space-source-operations.ts`).
+**Each Channel owns its own audience.** A Space grants none (see
+[Every Space is Organization-wide](#every-space-is-organization-wide)). A
+membership, archive and restore still record or withdraw the Space's source on
+the Channel's hosted parent as placement provenance, through `SpaceChannelAccess`
+over the canonical-operation sequence in `space-source-operations.ts`, but the
+plans they run (`lib/channel-audience.ts`) widen, seat, narrow and remove
+nobody.
 
 ### Opening a Channel deep link
 
@@ -152,27 +151,28 @@ not, and skips the icon in its "same Space?" comparison, because the first
 attempt's pass may already have written one. The desktop sidebar's **New
 space** sends no icon; a caller that sends one keeps it.
 
-### Public by default
+### Every Space is Organization-wide
 
-A new Space is Organization-wide. The desktop sidebar's **New space** asks for
-`scope: "workspace"`, and **Space participants** is where somebody makes one
-private afterwards. A Slack room still creates a private Space for a private
-room, because there the scope mirrors the room rather than choosing a default.
+A product decision: a Space can only be Organization-wide, and it grants no
+reader to the Channels in it. A Channel's audience is its own scope and
+participants, so a private Channel can sit in any Space, and **Make private**
+works on a Channel in General. The Space's participants are the people who edit
+it, not who reads its Channels.
 
-Spaces made private before this changed were widened by WorkspaceDO migration
-93 (`SPACE_PUBLIC_BY_DEFAULT_MIGRATION`). It writes only what
-`noteSpaceAudience` writes: `scope = 'workspace'` with a revision step, and an
-`audience` intent at that revision, due at once. The alarm then resumes that
-intent like any interrupted audience change (see
-[Resuming an interrupted operation](#resuming-an-interrupted-operation)), so
-each member Channel takes the wider audience through its canonical operations,
-content fence included, and a fenced Channel names its reason on the intent
-row. The intent runs as an active participant, the creator first, else the
-first active member; once the Space is Organization-wide any member can edit
-it. An archived private Space only has its scope changed, and a restore applies
-it. **Widening every member Channel is the point and cannot be undone:** a
-private Channel whose only reach was its private Space becomes readable to
-every member.
+The contract enforces it: `CreateSpaceRequest.scope` and
+`UpdateSpaceAudienceRequest.scope` accept only `workspace`
+(`SpaceRequestScopeSchema`). `SpaceScopeSchema` still reads `personal` for rows
+written before WorkspaceDO migration 93 (`SPACE_PUBLIC_ONLY_MIGRATION`), which
+widened every Space, archived ones included, and touched no Channel: a Channel
+that was private through a private Space keeps its seated participants and stays
+private.
+
+Because a Space supplies no audience, a create that names none is born with the
+scope its caller asked for. `POST /workstreams` asks for `workspace`, so a
+Channel somebody starts in Rally is public; an internal caller that names
+nothing gets the fail-closed `personal`. A Slack room's Channel takes the room's
+privacy, and a private room past the member-count promotion becomes
+Organization-wide (see [`external-conversation-bindings.md`](external-conversation-bindings.md#rooms)).
 
 ### The retired hidden conversation
 
@@ -280,62 +280,18 @@ at. Both halves of the fence are the caller's to supply and the Channel's to
 re-read, and a constant in that position is a fence against a generation the row
 may have left behind.
 
-### Audience
+### Participants
 
-Changing a Space's audience is preflight, accept, converge.
-
-**A person cannot narrow themselves out of a Space.** A `personal` audience
-admits its participants and nobody else, so a request that makes a Space
-personal without its own caller on the list hands them a Space they can no
-longer change — and, unless a Channel in it is one they can read, no longer
-see. There is no undo: the Space's own authority accepts, the walk carries it
-to every member Channel, and the one person who would ask for it back is the
-one who cannot. **Space participants** is where a person does it, and that
-dialog stays open on the refusal — the sentence for it is drawn inside the
-dialog, so one that closed would close over the only place it would be read.
-It is refused `space_audience_self_excluded` at two depths —
-`SpaceService.updateAudience` before the containment preflight walks anything,
-and `applyAudience` before the write, which is the fence for any other caller
-of the RPC. Removing *somebody else* is a different decision under a different
-rule: an Organization owner or admin may, and `participant_removal_denied`
-refuses anybody else.
-
-Every member Channel is asked first, through the read-only
-`previewAudienceContainment` RPC, whether its retained content would still be
-contained. That RPC is a tri-state and only `true` admits: `false` is the
-content fence, and `null` is the object saying it is not that Channel's main
-conversation — which means the question was never asked. The request path
-refuses a `null` with `space_conversation_unreachable` and the cutover with
-`space_bootstrap_conversation_unreachable`: one reading, two names, because the
-cutover records a blocker on a row and the request answers a person. Widening cannot be undone — somebody may have read — so discovering a
-fence on the fourth Channel after three are already wider is not a failure
-anybody can recover from. The preflight is an early-out and not the fence: the
-fence is the canonical operations, which run the same predicate inside the
-transaction that changes the audience.
-
-The Space's own authority then accepts the change, which advances the revision
-every staged membership is fenced on and stages an `audience` intent.
-
-Each member Channel then converges by **retract-then-apply**.
-`audienceSourceApplicationPlan` only widens and seats — by construction, because
-a source that could narrow would be able to revoke access another source still
-supplies — so re-applying a shrunken roster would leave the readers it no longer
-names seated with nothing accounting for them. Withdrawing the source first is
-what takes them out, and the retraction plan seats every surviving reader before
-it narrows anything.
-
-The retraction carries the Space revision too, and that is not symmetry. It is
-the step that *deletes* the source row the application and its confirmation
-fence on, so an older audience change interleaved behind a newer one would
-otherwise find nothing to lose to and install its stale roster unfenced. A
-removal and an archive withdraw a source rather than replace it and pass no
-revision: there is no newer application for them to race. The walk also re-reads
-the Space's revision between Channels and abandons when it moves, because the
-change that overtook it walks every member itself.
+Changing who edits a Space is one WorkspaceDO write (`noteSpaceAudience`): the
+scope is always `workspace`, and no Channel is asked or walked, because the
+Space grants none of them a reader. Removing *somebody else* is an Organization
+owner's or admin's to do, and `participant_removal_denied` refuses anybody
+else. The revision still advances, so a staged membership fenced on the old one
+re-reads the Space.
 
 **The walk runs in WorkspaceDO, a page per call, and the page is recorded on
-the intent.** An audience change, an archive and a restore all walk every member
-Channel. `SpaceService` calls `walkSpaceMembers` once per page of
+the intent.** An archive and a restore walk every member Channel, as does an
+`audience` intent staged before Spaces became Organization-wide-only. `SpaceService` calls `walkSpaceMembers` once per page of
 `SPACE_BOOTSTRAP_PAGE_SIZE` members; WorkspaceDO reads the page, runs each
 member Channel's step through `SpaceChannelAccess` (a retract-then-apply for an
 audience change is one plan transaction, the conversation's operations, and one
@@ -672,13 +628,11 @@ first, made a blocked Organization permanent: nothing else takes a Channel off
 `blocked_json`, so `spacesReady` stayed false and the opening card stayed up
 however the Channel was remediated.
 
-**What remediating a fence actually means.** The fence is immutable and General
-is Organization-wide, so a fenced Channel can never enter General — adding it
-to an Organization-wide Space is the same widening and is refused by the same
-fence. What clears the blocker is giving the Channel a home whose audience the
-fence already admits (a personal Space whose participants it allows) or
-deleting the Channel: the invariant the cutover closes on is that every Channel
-has *a* Space, not that every Channel is in General.
+**What can still block a placement.** Placing a Channel in General no longer
+widens it, because a Space grants no reader, so the content fence no longer
+applies to the cutover. The one blocker left is a private Channel with no
+active participant to act as (`space_bootstrap_no_active_actor`); giving it a
+participant, or deleting it, clears it.
 [`runbook.md`](runbook.md) holds the operator's version.
 
 Two paths place a Channel outside a page, and both are the same step a page
@@ -1412,12 +1366,10 @@ only that the people in that Space reach the Channel through it. A Space the
 viewer's directory does not hold at all — a race, or one archived since — is
 the same answer for the stronger reason.
 
-The dialog offers **Make private** only while no Space source is
-Organization-wide. The server refuses that narrowing with
-`channel_scope_locked_by_space` in exactly that state, and the sources saying so
-are the ones on screen; the sentence beside the missing control names the Space
-to change first. The refusal copy stays for the race where a Space widened after
-the read answered.
+The Channel row is the whole answer to who can read it, with **Make private**
+or **Make public to organization** beside it; no Space can refuse either. Each
+Space row says only that the Channel is placed there, because a Space grants no
+reader.
 
 Every Space refusal on every one of these surfaces goes through one copy table,
 `lib/space-failure-copy.ts`, exhaustive over the closed `SpaceErrorCode` plus an
@@ -1544,10 +1496,10 @@ An ordinary Channel can still be dragged onto a Space pill to move its placement
   scope change goes through them from the Worker, which is where the retained-content
   containment preflight and its SQL triggers run. A writer that skipped them
   would be a second place an audience could widen without the fence.
-- **A source only ever widens.** The effective audience is the union of the
-  Channel's direct source and every active Space source, so one Space cannot
-  revoke what another supplies. Narrowing is expressed as a *retraction* of one
-  source, never as a smaller application of it.
+- **A Space grants no reader.** Every Space is Organization-wide, and its
+  source on a Channel is placement provenance only: joining, leaving, archiving
+  and restoring change nobody's access to the Channel. The Channel's own scope
+  and participants are its whole audience.
 - **Every live Channel has at least one active Space.** Removal from the
   last one, and an archive that would produce one, are refused. An archived
   Channel keeps its membership so restoring the Space returns it, but no list
@@ -1557,8 +1509,8 @@ An ordinary Channel can still be dragged onto a Space pill to move its placement
 - **A reader who keeps access must keep a way to find it.** After a retraction,
   every remaining reader has to be able to discover one of the Spaces the
   Channel stays in — an Organization-wide Space is discoverable by any active
-  member, a personal Space by its participants.
-- **General is one per Organization and cannot be archived or made personal.**
+  member, and every Space is Organization-wide.
+- **General is one per Organization and cannot be archived.**
   The unique partial index on `system_role` is what makes a race between two
   idempotent creators produce one Space rather than two fallbacks. Its name may
   be edited; its identity, lifecycle and audience may not.
@@ -1725,8 +1677,8 @@ Space write in the Organization. So a publication costs
 plus two indexed lookups per row scanned. A Space the viewer *can* reach costs
 almost nothing: `EXISTS` stops at the first visible member. The whole of the
 cost is the Spaces they cannot reach, because proving a negative means looking
-at every member — and a personal Space somebody else owns is exactly that case,
-on every socket but its participants'.
+at every member. Every Space is Organization-wide now, so that is a guest's
+view of the Spaces that hold none of their Channels.
 
 **What bounds it is the index, and only as far as one Space.**
 `space_channel_memberships_space_state_idx` on `(space_id, state,
@@ -2128,26 +2080,40 @@ default target.
 
 ## Changelog
 
-### 2026-10-06 — Spaces are public by default
+### 2026-10-06 — Every Space is Organization-wide and grants no reader
 
-**What changed:** The sidebar creates Spaces Organization-wide rather than
-private. WorkspaceDO migration 93 widens every existing private Space and
-stages the `audience` intent that carries the change to its Channels.
+**What changed:** A Space can only be Organization-wide: the create and
+participants requests accept only `workspace`, and WorkspaceDO migration 93
+widened every existing Space. A Space no longer grants its audience to its
+Channels: the source plans in `lib/channel-audience.ts` widen, seat, narrow and
+remove nobody, `channel_scope_locked_by_space` is no longer raised, a
+participants change is one write with no preflight or walk, and the cutover no
+longer asks containment before placing a private Channel in General.
+`POST /workstreams` asks for `workspace` itself, since General no longer makes
+new Channels public. Slack rooms all get Organization-wide Spaces, and a room's
+Channel takes the room's own privacy.
 
-**Why:** Asked for as a product decision: Spaces exist to group an
-Organization's work, and private ones hid Channels from the people they were
-grouped for.
+**Why:** A product decision that Spaces are public and only public. Under the
+old rule a public Space made every Channel in it public and a Channel inside one
+could not be made private, so "Spaces are public" would have meant "every
+Channel is public". Private work belongs to the Channel, including a private
+Slack room's.
 
-**Considered and rejected:** Walking each Space from a one-off operator route
-or the cutover queue, which would be a second path for an audience change.
-Writing each Channel's audience from the migration's SQL, which would skip the
-canonical operations and their content fence. The migration stages the same
-intent a request stages and lets the existing resume walk it.
+**Considered and rejected:** Making new Spaces public by default and widening
+existing ones through the audience walk (the first version of this change). It
+kept Spaces granting access, so it would have opened every private Channel in a
+formerly private Space to the whole Organization. Deleting the Space-source
+provenance and its walks outright: the archive, restore and membership fences
+still run on it, so the rule was put where the plans are computed and the
+plumbing left for a follow-up.
 
-**Consequences:** Channels whose only reach was a private Space become readable
-to every member once the alarm walks them. Archived private Spaces become
-Organization-wide on restore. A Slack private room still makes a private Space,
-so private Spaces can reappear from that path and from **Space participants**.
+**Consequences:** A Channel's own scope is its whole audience. Readers a private
+Space seated before migration 93 stay seated as the Channel's own, and nothing
+withdraws them when the Channel leaves that Space. Internal creators that name
+`personal` (digests, imports, a Sidekick's suggestions shown to one person) now
+get private Channels where General used to make them public. `SpaceScopeSchema`
+still reads `personal` for old rows, and the desktop keeps the copy for the
+three retired refusal codes for an older server during a rolling deploy.
 
 ### 2026-10-05 — Rally chooses a new Space's icon from its name
 

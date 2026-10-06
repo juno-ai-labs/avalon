@@ -85,6 +85,16 @@ export const SpaceScopeSchema = z.enum(["personal", "workspace"]);
 export type SpaceScope = z.infer<typeof SpaceScopeSchema>;
 
 /**
+ * The only audience a Space may be given: every Space is Organization-wide.
+ *
+ * A product decision, not a default. `SpaceScopeSchema` still reads
+ * `personal` because rows written before WorkspaceDO migration 93 said so;
+ * nothing may write it again. A Space's audience also grants nothing to the
+ * Channels in it: each Channel owns its own (see `docs/spaces.md#every-space-is-organization-wide`).
+ */
+export const SpaceRequestScopeSchema = z.literal("workspace");
+
+/**
  * A Space is active or archived, with nothing in between.
  *
  * Deliberately narrower than `ProjectStatus`, which carries four transitional
@@ -272,7 +282,7 @@ export const CreateSpaceRequestSchema = z.strictObject({
    */
   iconKey: SpaceIconKeySchema.optional(),
   colorKey: SpaceColorKeySchema,
-  scope: SpaceScopeSchema,
+  scope: SpaceRequestScopeSchema,
 });
 export type CreateSpaceRequest = z.infer<typeof CreateSpaceRequestSchema>;
 
@@ -284,7 +294,7 @@ export const UpdateSpacePresentationRequestSchema = z.strictObject({
 export type UpdateSpacePresentationRequest = z.infer<typeof UpdateSpacePresentationRequestSchema>;
 
 export const UpdateSpaceAudienceRequestSchema = z.strictObject({
-  scope: SpaceScopeSchema,
+  scope: SpaceRequestScopeSchema,
   /**
    * The whole participant set, never a delta.
    *

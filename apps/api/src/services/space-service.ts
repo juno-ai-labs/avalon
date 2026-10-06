@@ -385,23 +385,12 @@ export class SpaceService {
   }
 
   /**
-   * Change who a Space is for, and carry that to every Channel it reaches.
+   * Change who edits a Space: one WorkspaceDO write.
    *
-   * Three things in order, and the order is the whole design. Every member
-   * Channel is asked first whether it *could* take the wider audience, because
-   * widening cannot be undone — somebody may have read — and discovering a
-   * retained-content fence on the fourth Channel after three are already wider
-   * is not a failure anybody can recover from. Then WorkspaceDO accepts the
-   * change, which advances the revision every staged membership is fenced on.
-   * Only then does each member Channel converge.
-   *
-   * Convergence is retract-then-apply rather than a second application.
-   * `audienceSourceApplicationPlan` only ever widens and seats — by
-   * construction, because a source that could narrow would be able to revoke
-   * access another source still supplies — so re-applying a shrunken roster
-   * would leave the readers it no longer names seated, with nothing accounting
-   * for them. Withdrawing the source first is what takes them out, and the
-   * retraction plan seats every surviving reader before it narrows anything.
+   * Every Space is Organization-wide, so the request only names its
+   * participants, and a Space grants no reader to its Channels
+   * (`lib/channel-audience.ts`): there is nothing to preflight and no member
+   * Channel to walk.
    */
   async updateAudience(spaceId: SpaceId, input: UpdateSpaceAudienceRequest): Promise<SpaceSummary> {
     const current = await this.editable(spaceId);
@@ -413,36 +402,12 @@ export class SpaceService {
       throw new ApiError(403, "participant_removal_denied",
         "Only an Organization owner or admin can remove another Space participant");
     }
-    // A person cannot narrow themselves out of a Space. `personal` admits its
-    // participants and nobody else, so this request would leave its own caller
-    // holding a Space they can no longer edit, and — unless a Channel in it is
-    // one they can read — no longer see. There is no undo: the Space's own
-    // authority accepts, the walk carries it to every member Channel, and the
-    // one person who would ask for it back is the one who cannot. Removing
-    // somebody else is the rule above, and stays theirs to make.
-    if (input.scope === "personal" && !requested.has(this.auth.userId)) {
-      throw spaceRefusal("space_audience_self_excluded", current.name);
-    }
-    if (current.systemRole === "general" && input.scope === "personal") {
-      throw spaceRefusal("space_protected", current.name);
-    }
-    await this.preflightContainment(spaceId, input);
-
-    const operationId = uuidV7();
-    const updated = this.settled(await (await this.workspace()).noteSpaceAudience({
+    return this.settled(await (await this.workspace()).noteSpaceAudience({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
-      operationId,
       audience: input,
     }), current.name);
-
-    // Each member Channel converges by retract-then-apply in WorkspaceDO. The
-    // walk abandons if a later audience change overtakes it, because that
-    // change walks every member itself.
-    return this.walkMembers({
-      spaceId, operationId, kind: "audience", cursor: null, expectedSpaceRevision: updated.revision,
-    });
   }
 
   /**
@@ -700,75 +665,6 @@ export class SpaceService {
       if (!resumed.ok) throw channelChangeRefusal(resumed.refusal);
       if (resumed.outcome === "abandoned") return { outcome: "abandoned", reason: resumed.reason };
       if (resumed.outcome === "settled") return { outcome: "settled" };
-    }
-  }
-
-  /**
-   * Ask every member Channel whether the proposed audience still contains its
-   * retained content, before any of them is changed.
-   *
-   * An early-out rather than the fence. The fence is the canonical scope and
-   * participant operations, which run the same predicate inside the transaction
-   * that changes the audience; this exists because those operations run one
-   * Channel at a time and the first failure would leave the earlier Channels
-   * already wider.
-   *
-   * It reads pages but carries no cursor, and that is not the oversight it
-   * looks like. There is no intent yet — this runs in front of the write that
-   * stages one — and there is nothing to resume: the pass writes nothing, so a
-   * failure part way through refuses the request and the next attempt asks
-   * every Channel again.
-   */
-  private async preflightContainment(
-    spaceId: SpaceId,
-    audience: UpdateSpaceAudienceRequest,
-  ): Promise<void> {
-    const proposed = audience.scope === "workspace"
-      ? { scope: "workspace" as const }
-      : { scope: "personal" as const, userIds: [...audience.participantUserIds] };
-    let cursor: string | null = null;
-    do {
-      const page = await this.memberPage(spaceId, "active", cursor);
-      for (const { workstreamId } of page.members) {
-        // Tri-state: `true` admits, `false` is the content fence, and `null` is
-        // the object saying it is not that Channel's main conversation — so the
-        // question was never asked. Only `true` may pass, which is the reading
-        // `SpaceBootstrapService.admit` has always taken; treating `null` as
-        // consent let a Channel nobody could ask be widened on the strength of
-        // a non-answer.
-        // A throw is the same answer as a `null` and gets the same name: the
-        // question was never asked. Reported rather than propagated raw,
-        // because a rejection that crosses the RPC hop has no code on it and
-        // reached the route as `internal_error`.
-        const contains = await this.askContainment(workstreamId, proposed);
-        if (contains !== true) {
-          throw spaceRefusal(
-            contains === false ? "space_membership_content_fence" : "space_conversation_unreachable",
-            "",
-          );
-        }
-      }
-      cursor = page.nextCursor;
-    } while (cursor !== null);
-  }
-
-  private async askContainment(
-    workstreamId: WorkstreamId,
-    audience: { scope: "workspace" } | { scope: "personal"; userIds: string[] },
-  ): Promise<boolean | null> {
-    try {
-      return await (await this.conversationStub(workstreamId)).previewAudienceContainment({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        workstreamId,
-        audience,
-      });
-    } catch (error) {
-      logWarn(this.env, "space_conversation_unreachable", {
-        workspace_id: this.auth.workspaceId,
-        workstream_id: workstreamId,
-        reason: diagnosticErrorCode(error, "space_conversation_unreachable"),
-      });
-      return null;
     }
   }
 

@@ -188,7 +188,7 @@ import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { judgeUnheardSockets, nextFirstFrameDeadline, type UnheardSocket } from "./socket-first-frame-watch";
 import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
-import { observedAfterBirthSource, resolveSpaceWorkstreamStart, type ObservedBirthChannel } from "../lib/channel-audience";
+import { resolveSpaceWorkstreamStart } from "../lib/channel-audience";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import {
   descendantRevocation,
@@ -741,7 +741,7 @@ import {
   SPACE_BOOTSTRAP_PAGE_SIZE,
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WORKSPACE_PINNED_ORDER_MIGRATION,
-  SPACE_PUBLIC_BY_DEFAULT_MIGRATION,
+  SPACE_PUBLIC_ONLY_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
@@ -4203,10 +4203,9 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 94,
   description: "make every private Space Organization-wide",
-  // Spaces are public by default. Each private Space is widened and gets the
-  // `audience` intent a request would stage, so the alarm carries the new
-  // audience to its Channels; see docs/spaces.md#public-by-default.
-  statements: SPACE_PUBLIC_BY_DEFAULT_MIGRATION,
+  // Every Space is Organization-wide. A Space grants no reader to its
+  // Channels, so no Channel changes; see docs/spaces.md#every-space-is-organization-wide.
+  statements: SPACE_PUBLIC_ONLY_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -9289,12 +9288,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Record the scope and participants the Space's own authority accepted, and
-   * advance the revision every staged membership is fenced on.
-   *
-   * General is refused a personal audience here rather than at the Space's own
-   * object: the Organization is what depends on General being reachable by
-   * everybody, and this is the object that knows it is General.
+   * Record who edits a Space. Every Space is Organization-wide and grants no
+   * reader to its Channels, so this is the whole change: no intent, no walk.
    */
   async noteSpaceAudience(input: WorkspaceSpaceAudienceNoteRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
@@ -9302,43 +9297,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const storage = this.spaceStorage();
-    if (request.audience.scope === "personal" && storage.generalSpaceId() === request.spaceId) {
-      return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
     const activeMembers = await Promise.all(request.audience.participantUserIds.map((userId) => (
       this.activeSpaceMember(request.workspaceId, userId)
     )));
     if (activeMembers.some((active) => !active)) {
       return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
-    const space = storage.applyAudience(request);
-    if (space === "self_excluded") {
-      return {
-        ok: false,
-        code: "space_audience_self_excluded",
-        unreachableUserIds: [],
-        blockedWorkstreamIds: [],
-      };
-    }
+    const space = this.spaceStorage().applyAudience(request);
     if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    // Staged before the member Channels are touched. The service walks them
-    // next, and a request that dies half way through leaves this pending for
-    // the alarm to republish rather than leaving some Channels on the old
-    // audience with nothing left to notice.
-    storage.recordIntent({
-      operationId: request.operationId,
-      kind: "audience",
-      spaceId: request.spaceId,
-      workstreamId: null,
-      spaceRevision: space.revision,
-      membershipGeneration: null,
-      deliveryGeneration: null,
-      requestedByUserId: request.userId,
-      notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
-    });
     this.publishSpaceSnapshot();
-    await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
@@ -9468,21 +9435,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           authorityGeneration: request.authorityGeneration,
           directory: { ...request.directory, scope: start.scope, systemKind: null },
         });
+        // Each Space's source is recorded as the Channel's placement
+        // provenance. It grants nothing, so the Channel is observed as it was
+        // requested for every one of them.
         const participantUserIds = [...new Set(request.requestedParticipantUserIds)];
-        let born: ObservedBirthChannel = {
+        const born = {
           readers: request.requestedScope === "workspace"
-            ? { scope: "workspace" }
-            : { scope: "personal", userIds: participantUserIds },
+            ? { scope: "workspace" as const }
+            : { scope: "personal" as const, userIds: participantUserIds },
           participantUserIds,
         };
         for (const entry of placed) {
-          const participants = entry.space.participants.map((participant) => participant.userId);
           const applied = parent.applySpaceAccessSource({
             workspaceId: request.workspaceId,
             parentId: workstreamId,
             spaceId: entry.space.id,
             scope: entry.space.scope,
-            participantUserIds: participants,
+            participantUserIds: entry.space.participants.map((participant) => participant.userId),
             spaceRevision: entry.space.revision,
             membershipGeneration: entry.membershipGeneration,
             operationId: uuidV7(),
@@ -9490,9 +9459,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             commitWithPlan: true,
           });
           if (!applied.ok) throw new ChannelReservationRefused(applied.code, entry.space.id);
-          born = observedAfterBirthSource(born, {
-            sourceId: entry.space.id, scope: entry.space.scope, participantUserIds: participants,
-          }, applied.plan.seatUserIds);
         }
         if (request.externalBinding) {
           const claimed = this.externalBindings().claim(request.externalBinding, {
@@ -13808,9 +13774,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId: asWorkspaceId(request.workspaceId),
       userId: asUserId(request.userId),
       spaceId: asSpaceId(spaceId),
-      space: { name: request.space.name, iconKey: "users", colorKey: "blue", scope: request.space.scope },
+      space: { name: request.space.name, iconKey: "users", colorKey: "blue", scope: "workspace" },
     };
-    const participants = [...new Set([request.userId, ...request.participantUserIds])];
     const linked = await this.withMembersLearned(() => this.state.storage.transactionSync(() => (
       bindings.linkRoom(request.installationId, request.path, request.at, () => {
         // The awaits above let a Space edit or a departure in; the match, and
@@ -13825,16 +13790,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         const reserved = storage.reserveForCreation(reservation, spaceId);
         if (!reserved.space) return null;
         if (reserved.created) parent.reserve(request.userId, reserved.space);
-        if (request.space.scope === "personal" && participants.length > 1) {
-          const seated = storage.applyAudience({
-            workspaceId: asWorkspaceId(request.workspaceId),
-            userId: asUserId(request.userId),
-            spaceId: asSpaceId(spaceId),
-            operationId: uuidV7(),
-            audience: { scope: "personal", participantUserIds: participants.map(asUserId) },
-          });
-          if (seated === false || seated === "self_excluded") throw new Error("external_room_audience_refused");
-        }
         return { spaceId, matched: match?.usable != null };
       })
     )));
