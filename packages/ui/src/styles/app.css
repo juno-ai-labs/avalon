@@ -7697,22 +7697,16 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .single-sidebar .account-trigger .avatar { height: 28px; width: 28px; }
 .single-sidebar .account-trigger { font-weight: 500; }
 
-/* Phone width: the sidebar becomes a top bar, the menu button at its start and
-   the round actions at its end, and everything under the bar is a sheet the
-   button drops open over the conversation. The aside stays one element, full
-   screen and fixed, and a clip shows only its bar until it opens: moving the
-   bar out of the aside would split the actions from the sheet they belong to,
-   and a transformed aside would carry the bar off screen with it. The clip
-   also clips hits, so the closed sheet takes no taps; `visibility` keeps it out
-   of the tab order, and waits for the close to finish before it hides.
-   Electron's window cannot get this narrow (860px minimum), so this is the
-   browser's alone. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx` is this 640. */
+/* Phone width: the sidebar is a top bar over a sheet the menu button drops in.
+   Why it is clipped rather than moved: `docs/desktop-shell.md#at-phone-width`.
+   `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx` is this 640. */
 .sidebar-menu-toggle { display: none; }
 @media (max-width: 640px) {
   .app-shell {
     --av-cmp-sidebar-width: 0px !important;
     --phone-top-bar-height: 56px;
-    --phone-sheet-motion: 260ms cubic-bezier(.22, 1, .36, 1);
+    --phone-sheet-duration: 260ms;
+    --phone-sheet-motion: var(--phone-sheet-duration) cubic-bezier(.22, 1, .36, 1);
   }
   .app-shell .single-sidebar {
     background: var(--av-cmp-sidebar-background-solid);
@@ -7733,7 +7727,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   .app-shell .single-sidebar > :not(.sidebar-top-bar) {
     opacity: 0;
     transform: translateY(-12px);
-    transition: opacity var(--phone-sheet-motion), transform var(--phone-sheet-motion), visibility 0s linear 260ms;
+    transition: opacity var(--phone-sheet-motion), transform var(--phone-sheet-motion), visibility 0s linear var(--phone-sheet-duration);
     visibility: hidden;
   }
   .app-shell .single-sidebar.is-mobile-open > :not(.sidebar-top-bar) {

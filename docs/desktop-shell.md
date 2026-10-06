@@ -121,13 +121,12 @@ Escape is heard in the capture phase and stands down while a menu or dialog
 is open, so it closes that first; a tooltip does not count, though Radix marks
 its Escape handled.
 
-It is CSS on the same `<aside>`, not a second component. The bar stays inside
-the aside so the actions keep one mount, and the aside is clipped rather than
-moved, since a transform would carry the bar off screen with the sheet. The
-clip also stops taps on the closed sheet, and `visibility` keeps it out of the
-tab order. `SidebarTopActions` takes the button through its `leading` slot.
-Electron's window has an 860px minimum, so only the browser reaches this
-width. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx` repeats the CSS's 640.
+It is CSS on the same `<aside>`: a `clip-path` hides all but the bar, and
+also stops taps on the closed sheet; `visibility` keeps the sheet out of the
+tab order once the close finishes. `SidebarTopActions` takes the button
+through its `leading` slot. Electron's window has an 860px minimum, so only
+the browser reaches this width. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx`
+repeats the CSS's 640.
 
 ### Pins under All
 
@@ -321,8 +320,12 @@ the web app had no way to reach a phone-sized layout.
 actions. Two attention menus and two New channel dialogs would need keeping
 in step, so the bar stays the sidebar's own and CSS changes its shape. A
 slide-in drawer from the left was also rejected: the aside holds the bar, so a
-transform would move the bar too. A future change that moves the top actions
-out of the aside has to bring the sheet's open state with them.
+transform would move the bar too.
+
+**Consequences:** A future change that moves the top actions out of the aside
+has to bring the sheet's open state with them. `sidebarOpen` now means "the
+pane is inert", so anything that sets it has to be at phone width; the sheet
+closes itself on widening and on every route change to keep that true.
 
 ### 2026-10-05 — The Space strip has no Refresh
 
