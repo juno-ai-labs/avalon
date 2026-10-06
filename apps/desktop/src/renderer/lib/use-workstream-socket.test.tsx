@@ -394,6 +394,31 @@ afterEach(() => {
 });
 
 describe('useWorkstreamSocket', () => {
+  it('confirms network recovery only after the ticket yields a usable live snapshot', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000731';
+    const ticket = { url: `wss://api.rally.test/workstreams/${workstreamId}`, ticket: 'feed-ticket',
+      protocols: socketTicketProtocols('feed-ticket') };
+    const confirmSocketTicket = vi.fn();
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ticket), confirmSocketTicket });
+    const owner = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    expect(confirmSocketTicket).not.toHaveBeenCalled();
+    act(() => socket.message({ type: 'snapshot', malformed: true }));
+    expect(confirmSocketTicket).not.toHaveBeenCalled();
+    act(() => socket.message(snapshotFrame({ sequence: 1, workstream: { id: workstreamId, title: 'Live recovery' } })));
+    expect(queryClient.getQueryData(['workstream', workstreamId])).toMatchObject({ title: 'Live recovery' });
+    expect(confirmSocketTicket).toHaveBeenCalledExactlyOnceWith(ticket);
+    owner.unmount();
+    queryClient.clear();
+  });
+
   it('keeps the canonical feed resident without a screen while the socket owner is retained', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('WebSocket', FakeWebSocket);
