@@ -379,6 +379,29 @@ it('hides Continue with Google on an invitation page, whose link lives only in p
   expect(screen.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
 });
 
+it('returns to the Google-first choice after an email sign-in signs out', async () => {
+  let signedIn = false;
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session' || path === '/email/redeem') return signedIn
+      ? Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() })
+      : Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/email/start') { signedIn = true; return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: Date.now() + 600_000 }, { status: 202 }); }
+    if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
+    if (path === '/logout') { signedIn = false; return new Response(null, { status: 204 }); }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue with email' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: 'person@example.test' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Sign-in code' }), { target: { value: '123456' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+  expect(await screen.findByRole('button', { name: 'Continue with Google' })).toBeInTheDocument();
+  expect(screen.queryByRole('textbox', { name: 'Email' })).toBeNull();
+});
+
 it('drops a returned Google failure once an email sign-in starts', async () => {
   vi.stubGlobal('fetch', vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
