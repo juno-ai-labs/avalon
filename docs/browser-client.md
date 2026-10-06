@@ -383,8 +383,9 @@ allows HTTPS remote images for existing avatars and Markdown images. Socket
 routing still relies on the existing ticket and source-object admission; there
 is no separate browser permission model or arbitrary forwarding destination.
 
-The mobile navigation uses the existing Radix dialog primitive for focus trapping,
-Escape and outside dismissal, including landing and archived states. Archive and
+At phone width the shared sidebar becomes a top bar with a menu button that
+drops the navigation in as a sheet
+([`desktop-shell.md`](desktop-shell.md#at-phone-width)). Archive and
 guest promotion use the shared confirmation modal. Sharing fixes its target to
 the clicked conversation and shows only email input and submission feedback.
 

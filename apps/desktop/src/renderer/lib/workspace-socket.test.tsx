@@ -1378,10 +1378,11 @@ describe('WorkspaceSocketProvider', () => {
       ticket: 'workspace-ticket',
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
+    const confirmSocketTicket = vi.fn();
     render(
       <QueryClientProvider client={queryClient}>
         <WorkspaceSocketProvider region="global"
-          api={{ getWorkspaceSocketTicket }}
+          api={{ getWorkspaceSocketTicket, confirmSocketTicket }}
           workspaceId="00000000-0000-7000-8000-000000000001"
         >
           <div />
@@ -1391,6 +1392,7 @@ describe('WorkspaceSocketProvider', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    expect(confirmSocketTicket).not.toHaveBeenCalled();
     invalidations.mockClear();
 
     // `initial` names every topic, the directory among them — and carries the
@@ -1415,6 +1417,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(roots).not.toContain(JSON.stringify(['workstreams']));
     // Every other topic on the same event is untouched by this.
     expect(roots).toContain(JSON.stringify(['workspace']));
+    expect(confirmSocketTicket).toHaveBeenCalledExactlyOnceWith(await getWorkspaceSocketTicket.mock.results[0]!.value);
   });
 
   it('asks for the directory when the payload leaves a resident row unaccounted for', async () => {

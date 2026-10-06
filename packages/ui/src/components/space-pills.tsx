@@ -50,9 +50,14 @@ export function SpacePillAddButton({ label = 'New space', ...props }: ComponentP
 /**
  * The round icon buttons beside the window controls. A host passes only the
  * actions it has; an empty row still holds the titlebar's height and drag area.
+ * `leading` sits at the bar's start, ahead of the right-aligned actions: the
+ * phone-width menu button is the one thing that goes there today.
  */
-export function SidebarTopActions({ children, className, ...props }: ComponentPropsWithRef<'div'>): React.JSX.Element {
+export function SidebarTopActions({ children, className, leading, ...props }: ComponentPropsWithRef<'div'> & {
+  leading?: ReactNode;
+}): React.JSX.Element {
   return <div className={clsx('sidebar-top-bar window-drag', className)} {...props}>
+    {leading}
     <div className="sidebar-top-actions window-no-drag">{children}</div>
   </div>;
 }

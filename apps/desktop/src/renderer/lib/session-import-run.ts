@@ -75,7 +75,8 @@ export function assemblePreview(
 
 export type SessionImportApi = Pick<RallyApi,
   'startSessionImport' | 'startSessionImportUpdate' | 'completeSessionImport' | 'discardSessionImport'
-  | 'updateImportedSession' | 'importedSessionSource' | 'getSocketTicket'>;
+  | 'updateImportedSession' | 'importedSessionSource' | 'getSocketTicket'>
+  & Partial<Pick<RallyApi, 'confirmSocketTicket'>>;
 
 export type SessionImportMode =
   | { kind: 'create'; title: string; spaceIds: string[]; clientMessageId: string }
@@ -264,13 +265,14 @@ export function startSessionImportRun(input: {
     }
   };
   let queue = Promise.resolve();
-  const onFrame = (raw: string) => {
+  const onFrame = (raw: string, confirmLive?: () => void) => {
     let decoded: unknown;
     try { decoded = JSON.parse(raw); } catch { return; }
     // A frame this window cannot read is one it has no part in.
     const parsed = safeParseSocketEvent(ServerSocketEventSchema, decoded);
     if (!parsed.success) return;
     const frame = parsed.data;
+    if ('sequence' in frame) confirmLive?.();
     if (frame.type === 'desktop_action_requested') {
       const request = frame.request;
       if (finished || cancelled || runEnded) return;
@@ -344,7 +346,11 @@ export function startSessionImportRun(input: {
     const next = createRealtimeSocket('substream_feed', ticket.url, ticket.protocols);
     socket = next;
     next.addEventListener('open', () => next.send(JSON.stringify({ type: 'subscribe', afterSequence: 0, publishPresence: false })));
-    next.addEventListener('message', (event) => onFrame(event.data));
+    next.addEventListener('message', (event) => {
+      if (socket !== next || finished || cancelled) return;
+      // Sequenced server data proves this import feed is usable.
+      onFrame(event.data, () => input.api.confirmSocketTicket?.(ticket));
+    });
     next.addEventListener('close', () => {
       if (socket !== next || finished || cancelled) return;
       // A dropped socket loses nothing: unanswered actions are offered again
