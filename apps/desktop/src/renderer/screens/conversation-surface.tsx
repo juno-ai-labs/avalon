@@ -675,11 +675,14 @@ export function RemoveParticipantDialog({ failure, member, noun, onCancel, onCon
   pending: boolean;
   self: boolean;
 }): React.JSX.Element {
+  // A Space that includes the Channel keeps its members in, so leaving the
+  // Channel's own list ends access only when nothing else grants it.
+  const who = self ? 'You' : member?.name ?? 'They';
+  const keeps = self ? 'You keep' : 'They keep';
+  const viaSpace = noun === 'channel' ? ` or a space ${self ? 'you’re' : 'they’re'} in includes it` : '';
   return (
     <Modal
-      description={self
-        ? `You’ll no longer be a participant. If the ${noun} is private, someone will need to add you back.`
-        : `${member?.name ?? 'They'} will no longer be a participant. If the ${noun} is private, they lose access until added back.`}
+      description={`${who} will be taken off this ${noun}. ${keeps} access only if it’s public${viaSpace}.`}
       footer={<>
         <Button disabled={pending} onClick={onCancel}>Cancel</Button>
         <Button className="button-danger" disabled={pending} onClick={onContinue}>Continue</Button>
@@ -1183,7 +1186,11 @@ export function ConversationSurface({
   const [positionedConversation, setPositionedConversation] = useState<string | null>(null);
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false);
   /** The participant the title menu asked to take out, held until the reader confirms. */
-  const [removeConfirm, setRemoveConfirm] = useState<{ member: WorkspaceMember; target: string } | null>(null);
+  const [removeConfirmRequest, setRemoveConfirm] = useState<{ member: WorkspaceMember; parentId: string; target: string } | null>(null);
+  // The surface outlives a route change, so a request asked in another
+  // conversation is not this one's to confirm.
+  const removeConfirm = removeConfirmRequest?.parentId === id && removeConfirmRequest.target === substreamId ? removeConfirmRequest : null;
+  useEffect(() => { setRemoveConfirm(null); }, [id, substreamId]);
   const [participantDialogSubstreamId, setParticipantDialogSubstreamId] = useState(substreamId);
   const [resourceDialogOpen, setResourceDialogOpen] = useState(false);
   const [resourceSearch, setResourceSearch] = useState('');
@@ -2832,7 +2839,7 @@ export function ConversationSurface({
           onRemove: (member) => {
             addParticipant.reset();
             removeParticipant.reset();
-            setRemoveConfirm({ member, target: substreamId });
+            setRemoveConfirm({ member, parentId: id, target: substreamId });
           },
         } : undefined,
         origin: origin ? {
@@ -3158,7 +3165,7 @@ export function ConversationSurface({
         onCancel={() => { setRemoveConfirm(null); removeParticipant.reset(); }}
         onContinue={() => {
           if (!removeConfirm) return;
-          removeParticipant.mutate(removeConfirm, { onSuccess: () => setRemoveConfirm(null) });
+          removeParticipant.mutate({ member: removeConfirm.member, target: removeConfirm.target }, { onSuccess: () => setRemoveConfirm(null) });
         }}
         pending={removeParticipant.isPending}
         member={removeConfirm?.member}
