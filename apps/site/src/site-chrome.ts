@@ -32,7 +32,7 @@ export function renderSiteNav(): string {
   return '<nav aria-label="Primary"><a class="header-link" href="/#features">Features</a><a class="header-link" href="/#pricing">Pricing</a>'
     + '<a class="header-link" href="/#compare">Compare</a>'
     + `<a class="button button-small header-download" data-site-action="download-header" href="${DOWNLOAD}" download>Download for Mac</a>`
-    // Shown instead of the download on iOS and Android, which cannot run the Mac app; site-entry sets the flag.
+    // Shown instead of the download on touch-only devices, which cannot run the Mac app (landing.css).
     + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai">Sign in to Rally</a></nav>';
 }
 
