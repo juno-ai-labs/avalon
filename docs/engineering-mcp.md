@@ -194,10 +194,7 @@ or writes it.
 A stateful artifact's facet database is outside this MCP for the reason above:
 its contents are reachable only through the product's admitted read path.
 
-`SlackReactionTicker` is the one remaining object holding SQLite that no tool
-reaches. It is neither a scheduled authority nor migratable through the shared
-base, so routing it is a change to its class rather than a tool registration,
-and nobody has asked. `MigrationProbeDO` holds no product state by design.
+`MigrationProbeDO` holds no product state by design.
 
 The Worker does not retain query history, cache results, copy databases, or
 provide a D1 fallback. It also does not turn Access identity into Rally product

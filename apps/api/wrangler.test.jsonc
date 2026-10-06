@@ -73,7 +73,6 @@
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
-      { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" },
       { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" },
       { "name": "MIGRATION_PROBE_DO", "class_name": "MigrationProbeDO" }
     ]
@@ -84,7 +83,6 @@
       "new_sqlite_classes": [
         "SubstreamAgent",
         "WorkspaceDO",
-        "SlackReactionTicker",
         "ArtifactHostDO",
         "MigrationProbeDO"
       ]
