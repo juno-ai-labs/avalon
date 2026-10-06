@@ -4510,7 +4510,13 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .attachment-gallery-arrow,
 .attachment-gallery-caption { background: var(--av-sys-color-surface-default); border: .5px solid var(--av-sys-color-border-highlight); }
 .workstream-composer textarea { background: transparent; border: 0; display: block; min-height: 51px; outline: 0; resize: none; width: 100%; }
-.workstream-composer textarea::placeholder { color: var(--av-ref-color-neutral-8); }
+/* The placeholder names the Channel or Breakout; a long name ends in an
+   ellipsis rather than wrapping the empty field onto a second line. Chromium
+   draws that ellipsis only when the empty textarea itself also carries it and
+   does not wrap; the rules on `::placeholder` alone cut the text without one.
+   Typed text clears `:placeholder-shown` and wraps as usual. */
+.workstream-composer textarea::placeholder { color: var(--av-ref-color-neutral-8); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workstream-composer textarea:placeholder-shown { text-overflow: ellipsis; white-space: nowrap; }
 .composer-input-shell { position: relative; }
 
 /*
@@ -8203,6 +8209,3 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 }
 .title-pill-menu-trigger:hover > .title-pill-menu-trigger-body { background: var(--av-sys-color-state-hover); }
 .title-pill-menu-trigger[data-state='open'] > .title-pill-menu-trigger-body { background: transparent; }
-/* A Breakout's composer names it; a long name ends in an ellipsis rather than
-   wrapping the empty field onto a second line. */
-.split-conversation-pane.is-breakout .workstream-composer textarea::placeholder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
