@@ -7706,7 +7706,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    also clips hits, so the closed sheet takes no taps; `visibility` keeps it out
    of the tab order, and waits for the close to finish before it hides.
    Electron's window cannot get this narrow (860px minimum), so this is the
-   browser's alone. */
+   browser's alone. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx` is this 640. */
 .sidebar-menu-toggle { display: none; }
 @media (max-width: 640px) {
   .app-shell {

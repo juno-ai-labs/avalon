@@ -111,9 +111,15 @@ conversation: the **menu button** (tabler `menu-2`) at its left, the round top
 actions at its right. Everything else in the sidebar (pills, list, footer
 items, account) is a full-screen sheet under the bar. The menu button toggles
 `useUiStore.sidebarOpen`; the sheet drops in and out with a clip over 260ms,
-and reduced motion cuts it. Opening a Channel from the list, Escape, or the
-button closes it. Picking a pill or re-sorting does not, since the reader is
-still choosing.
+and reduced motion cuts it. Any route change closes it, whoever navigated (a
+row, a search result, the New channel form, a pill that had to leave the open
+Channel), as do Escape, the button, and widening past 640px. Picking a pill
+that only filters, or re-sorting, does not, since the reader is still
+choosing. While it is open, `AppShell` makes `.main-pane` `inert`, so Tab and
+a screen reader stay in the sheet, and Escape hands focus back to the button.
+Escape is heard in the capture phase and stands down while a menu or dialog
+is open, so it closes that first; a tooltip does not count, though Radix marks
+its Escape handled.
 
 It is CSS on the same `<aside>`, not a second component. The bar stays inside
 the aside so the actions keep one mount, and the aside is clipped rather than
@@ -121,7 +127,7 @@ moved, since a transform would carry the bar off screen with the sheet. The
 clip also stops taps on the closed sheet, and `visibility` keeps it out of the
 tab order. `SidebarTopActions` takes the button through its `leading` slot.
 Electron's window has an 860px minimum, so only the browser reaches this
-width. Above it the button is hidden and `sidebarOpen` does nothing.
+width. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx` repeats the CSS's 640.
 
 ### Pins under All
 

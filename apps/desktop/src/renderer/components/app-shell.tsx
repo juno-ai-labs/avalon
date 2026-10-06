@@ -512,6 +512,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railWidth = useUiStore((state) => state.railWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
+  // Only true at phone width, where the navigation sheet covers the pane.
+  const navigationSheetOpen = useUiStore((state) => state.sidebarOpen);
   const spacesEnabled = spacesEnabledForSession(session);
   // The main pane keeps room for a sidebar that is still fading out.
   const showShellRail = railOpen || railLeaving;
@@ -999,7 +1001,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         <span aria-live="polite" className="sr-only">
           {switchingWorkspace ? `Opening ${switchingWorkspace.name}…` : ''}
         </span>
-        <main className="main-pane">
+        <main className="main-pane" inert={navigationSheetOpen}>
           {children}
         </main>
       </div>
