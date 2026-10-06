@@ -25,6 +25,8 @@ type LocalOnlyTranscriptOperation =
   | "commitRecoveredToolResult"
   | "commitActivationInputs"
   | "settlePendingSteersAtStep"
+  // Read by the object's own settlement, for the run it just finished.
+  | "absorbedSlackOrigins"
   | "activatePendingInput"
   // Reads the queue against the live Bind projection to say which input can
   // start the next cycle; only the object holding the loop can act on it.
