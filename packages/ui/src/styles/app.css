@@ -8201,12 +8201,9 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .breakout-tick-card-news { color: var(--av-sys-color-workstream-news); font-weight: 600; }
 /* The transcript makes room for the ticks only when there are ticks. */
 .workstream-screen:has(> .breakout-tick-bar) .transcript-column { padding-left: max(var(--space-8), 48px); }
-/* At phone width the ticks would sit on the text, so they go and the column
-   keeps the narrow rule's even padding; chips and the Channel menu still reach
-   every Breakout. Rally's turns fill the column there, since 88% of a phone
-   leaves a ragged right edge with nothing beside it; their opening
-   placeholder does too, so the snapshot lands without the turn widening. This sits after the rule
-   above because both are three classes deep and source order decides. */
+/* Phone: the ticks would cover text (chips and the Channel menu still reach
+   Breakouts), and Rally's turns and their placeholder fill the column. Must
+   follow the rule above, which has the same weight. */
 @media (max-width: 640px) {
   .workstream-screen > .breakout-tick-bar { display: none; }
   .workstream-screen:has(> .breakout-tick-bar) .transcript-column { padding-left: var(--space-6); }
