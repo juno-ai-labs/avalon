@@ -506,3 +506,27 @@ it('shows the opening mark while a sign-in activates a linked organization in an
     expect(await screen.findByText('Enterprise team')).toBeInTheDocument();
   } finally { view.unmount(); }
 });
+
+it('creates an organization from the empty shared-work screen through the cookie route', async () => {
+  const created: unknown[] = [];
+  const createdId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
+    if (input === '/regional/global/browser/workspace/create') {
+      created.push(JSON.parse(String(init?.body)));
+      return Response.json({ region: 'global', workspaceId: createdId }, { status: 201 });
+    }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry />);
+  try {
+    await screen.findByText('Nothing has been shared with guest@example.test yet.');
+    fireEvent.click(screen.getByRole('button', { name: 'Create an organization' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: ' Acme Research ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await waitFor(() => expect(created).toEqual([{ name: 'Acme Research', operationId: expect.stringMatching(/^[0-9a-f-]{14}7/u) }]));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await screen.findByRole('heading', { name: 'Your shared work' });
+  } finally { view.unmount(); }
+});

@@ -241,3 +241,30 @@ export function testWorkspaceObjectBinding(
   });
   return binding;
 }
+
+/**
+ * A WORKSPACE_DOS binding for a path that creates the Organization, so its id
+ * is not known until the create mints it: a real `WorkspaceDO` is built for
+ * each id an `initializeWorkspace` names. Close the returned databases.
+ */
+export function creatingWorkspaceObjectBinding(regionalDatabase: DatabaseSync): {
+  binding: Env["WORKSPACE_DOS"];
+  databases: DatabaseSync[];
+} {
+  const databases: DatabaseSync[] = [];
+  const instances = new Map<string, WorkspaceDO>();
+  const stub = {
+    initializeWorkspace: async (workspaceId: string, placementAffinity: Parameters<WorkspaceDO["initializeWorkspace"]>[1]) => {
+      const instance = instances.get(workspaceId)
+        ?? createTestWorkspaceDO({ workspaceId, regionalDatabase, register: (database) => databases.push(database) }).instance;
+      instances.set(workspaceId, instance);
+      await instance.initializeWorkspace(workspaceId, placementAffinity);
+    },
+  };
+  const binding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+    idFromName: (name: string) => createTestDurableObjectId(name),
+    get: () => stub,
+    jurisdiction: (): Env["WORKSPACE_DOS"] => binding,
+  });
+  return { binding, databases };
+}

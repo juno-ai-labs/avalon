@@ -1,6 +1,6 @@
 import { clearAllDrafts as clearAllDraftsOnly } from '../../desktop/src/renderer/lib/draft-cache';
 import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
-import { uuidV7 } from '../../desktop/src/renderer/lib/telemetry';
+import { CreateOrganizationCard } from '../../desktop/src/renderer/screens/create-organization';
 import { Building2, ChevronRight, KeyRound, LoaderCircle, Mail } from "lucide-react";
 import { Button, ConnectorMark, InlineError, RallyMark } from "@rally/ui/components/primitives";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
@@ -75,10 +75,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [error, setError] = useState<string | null>(null);
   // Kept apart from `error`, which the session read clears when it finds no session.
   const [googleNotice, setGoogleNotice] = useState<string | null>(null);
-  // Null until the person asks to create an organization from the empty list.
-  const [organizationName, setOrganizationName] = useState<string | null>(null);
-  // One id per name, so a retry after a lost response returns the same organization.
-  const createOperation = useRef<{ name: string; id: string } | null>(null);
+  // Whether the person asked to create an organization from the empty list.
+  const [creating, setCreating] = useState(false);
   const issuance = useRef<{ email: string; id: string; redemptionId: string } | null>(null);
   const sessionRead = useRef(0);
   const sessionUser = useRef<string | null>(null);
@@ -273,21 +271,13 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     finally { setBusy(false); }
   }
 
-  async function createOrganization(event: FormEvent) {
-    event.preventDefault();
-    const name = organizationName?.trim() ?? "";
-    if (busy || name.length < 2) return;
-    setBusy(true); setError(null);
-    try {
-      const operation = createOperation.current?.name === name ? createOperation.current : { name, id: uuidV7() };
-      createOperation.current = operation;
-      const created = await browserRequest(IDENTITY_REGION, "/workspace/create", BrowserWorkspaceCreatedSchema, { name, operationId: operation.id });
-      // The new organization opens as any other does, so setup continues inside it.
-      location.assign(`/app/workspaces/${created.region}/${created.workspaceId}`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Rally could not create this organization.");
-      setBusy(false);
-    }
+  /** The card owns the operation id, so a retry of the same name returns the same organization. */
+  async function createOrganization(name: string, operationId: string): Promise<void> {
+    const created = await browserRequest(IDENTITY_REGION, "/workspace/create", BrowserWorkspaceCreatedSchema, { name: name.trim(), operationId });
+    // The new organization opens as any other does, and its setup continues
+    // there. Stay pending until the page leaves, so the card keeps its spinner.
+    location.assign(`/app/workspaces/${created.region}/${created.workspaceId}`);
+    await new Promise<never>(() => undefined);
   }
 
   async function continueWithGoogle() {
@@ -315,7 +305,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       await clearAllDrafts();
       if (read !== sessionRead.current) return;
       sessionUser.current = null;
-      setSession(null); setWorkspaces(null); setOrganizationName(null); setChallenge(null); setCode(""); issuance.current = null;
+      setSession(null); setWorkspaces(null); setCreating(false); setChallenge(null); setCode(""); issuance.current = null;
       sessionChannel.current?.postMessage("session-changed");
       if (unreached) setError("Signed out here, but a Rally deployment did not respond. Sign out again to finish.");
     } catch { setError("Unable to sign out. Please try again."); }
@@ -343,25 +333,29 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   // workspace session for another user is the old account's, still pending.
   if (!proof && destination && session && workspaceSession?.user.id !== session.user.id && !error && !busy && renderCollaboration) return <BrowserBoot />;
 
+  if (creating && session && !proof) {
+    return <main className="onboarding-shell workspace-setup-shell entry">
+      <CreateOrganizationCard onCreate={createOrganization}>
+        <p className="signed-in-identity">Signed in as {session.user.email}</p>
+        <button className="text-button onboarding-signout" type="button" onClick={() => setCreating(false)}>Back</button>
+      </CreateOrganizationCard>
+    </main>;
+  }
+
   const failure = error ?? (!session && !proof && !challenge ? googleNotice : null);
   return <main className="onboarding-shell signin-shell entry">
     <section className="signin-card entry-card" aria-busy={busy || checking}>
       <a className="entry-mark" href="/" aria-label="Rally"><RallyMark className="signin-mark" /></a>
       {session && !proof ? <>
-        <h1>{organizationName === null ? "Your shared work" : "Create your organization"}</h1>
+        <h1>Your shared work</h1>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
         {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the conversation…" : "Loading your shared work…"}</p>
           : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) =>
           <a className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ChevronRight aria-hidden="true" size={16} /></a>)}</nav>
-          : organizationName === null ? <>
+          : <>
             <p className="entry-lead">Nothing has been shared with {session.user.email} yet.</p>
-            <Button className="button-primary signin-button" type="button" disabled={busy} onClick={() => { setError(null); setOrganizationName(""); }}><Building2 aria-hidden="true" size={16} />Create an organization</Button>
-          </> : <form onSubmit={(event) => { void createOrganization(event); }}>
-            <p className="entry-lead">A shared home for your team and Rally.</p>
-            <label className="onboarding-field"><span>Organization name</span><span className="onboarding-input-wrap"><Building2 aria-hidden="true" size={16} /><input autoComplete="organization" autoFocus maxLength={120} placeholder="Acme" required value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} /></span></label>
-            <Button className="button-primary signin-button" disabled={busy || organizationName.trim().length < 2} type="submit">{busy && <LoaderCircle aria-hidden="true" className="spin" size={16} />}{busy ? "Creating…" : "Create organization"}</Button>
-            <button className="text-button onboarding-signout" type="button" disabled={busy} onClick={() => { setOrganizationName(null); setError(null); }}>Back</button>
-          </form>}
+            <Button className="button-primary signin-button" type="button" disabled={busy} onClick={() => { setError(null); setCreating(true); }}><Building2 aria-hidden="true" size={16} />Create an organization</Button>
+          </>}
         <button className="text-button onboarding-signout" disabled={busy} onClick={() => { void signOut(); }} type="button">Sign out</button>
       </> : <>
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
