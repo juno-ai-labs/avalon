@@ -1391,6 +1391,13 @@ const desktopPush = new DesktopPushNotifications({
   warn: () => logWarn('rally', 'Push notifications could not register on this Mac'),
 });
 
+/**
+ * The active Organization's attention count, as the main window last sent it.
+ * An APNs alert from another Organization can replace the dock badge while
+ * Rally is in the background; focusing Rally puts this one back.
+ */
+let dockBadgeCount: number | null = null;
+
 // Install the response delegate before ready so a notification cold launch is retained.
 desktopPush.installNativeBridge();
 
@@ -3499,6 +3506,7 @@ function registerIpc(): void {
   ipcMain.handle('dock-badge:set', (event, count: unknown) => {
     assertTrustedIpcSender(event);
     if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) throw new Error('Invalid dock badge count');
+    dockBadgeCount = count;
     if (process.platform === 'darwin') app.setBadgeCount(count);
   });
   ipcMain.handle('application-settings:open-notifications', async (event) => {
@@ -5171,7 +5179,10 @@ if (!singleInstanceLock) {
 
     if (initialDeepLink) emitDeepLink(initialDeepLink);
 
-    app.on('browser-window-focus', () => desktopPush.refreshPermission());
+    app.on('browser-window-focus', () => {
+      desktopPush.refreshPermission();
+      if (process.platform === 'darwin' && dockBadgeCount !== null) app.setBadgeCount(dockBadgeCount);
+    });
 
     app.on('activate', () => {
       applicationOpenObserver.activated();
