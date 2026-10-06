@@ -4,7 +4,7 @@ import {
   type WorkstreamId,
 } from "@rally/contracts";
 
-import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceSpaceBootstrapFinalizeResultSchema,
   WorkspaceSpaceBootstrapPageSchema,
@@ -91,9 +91,8 @@ export class SpaceBootstrapService {
     const cleared: WorkstreamId[] = [];
     const blocked: Array<{ workstreamId: WorkstreamId; code: string }> = [];
     for (const channel of page.items) {
-      // A Channel some Space already holds is not about to be widened by this
-      // cutover, so there is nothing to preflight and nothing to refuse.
-      const admission = channel.placed ? { actor: this.driver } : await this.admit(channel, actors);
+      // A Channel some Space already holds needs no actor of its own.
+      const admission = channel.placed ? { actor: this.driver } : this.admit(channel, actors);
       if ("actor" in admission) cleared.push(channel.workstreamId);
       else blocked.push({ workstreamId: channel.workstreamId, code: admission.code });
     }
@@ -225,42 +224,16 @@ export class SpaceBootstrapService {
   }
 
   /**
-   * Whether the cutover may widen this Channel, and as whom.
-   *
-   * Everything a placement can refuse *before* it writes anything, in one
-   * place, because two passes ask it: `preflight` to find every blocker in an
-   * Organization before the first Channel is widened, and `place` again at the
-   * moment of the mutation. The second ask is not redundant — the fence is a
-   * trigger inside the conversation and content can arrive between the two —
-   * but by then a refusal is a rarity rather than the normal way a blocker is
-   * discovered.
-   *
-   * Only a Channel that is about to be widened is asked about containment. An
-   * Organization-wide one is already readable by everybody General admits, so
-   * there is nothing for a containment fence to be about and nothing to ask a
-   * second object.
+   * As whom the cutover may place this Channel. Placement in General no
+   * longer widens anything (a Space grants no reader), so the only thing that
+   * can refuse before the write is the absence of somebody to act as.
    */
-  private async admit(
+  private admit(
     channel: SpaceBootstrapChannel,
     actors: ReadonlyMap<string, AuthContext>,
-  ): Promise<{ actor: AuthContext } | { code: string }> {
+  ): { actor: AuthContext } | { code: string } {
     const actor = this.actorFor(channel, actors);
-    if (!actor) return { code: "space_bootstrap_no_active_actor" };
-    if (channel.scope === "personal") {
-      const contains = await (await this.conversation(channel.workstreamId)).previewAudienceContainment({
-        workspaceId: asWorkspaceId(this.driver.workspaceId),
-        workstreamId: channel.workstreamId,
-        audience: { scope: "workspace" },
-      });
-      if (contains !== true) {
-        return {
-          code: contains === false
-            ? "space_membership_content_fence"
-            : "space_bootstrap_conversation_unreachable",
-        };
-      }
-    }
-    return { actor };
+    return actor ? { actor } : { code: "space_bootstrap_no_active_actor" };
   }
 
   /**
@@ -275,7 +248,7 @@ export class SpaceBootstrapService {
     channel: SpaceBootstrapChannel,
     actors: ReadonlyMap<string, AuthContext>,
   ): Promise<string | null> {
-    const admission = await this.admit(channel, actors);
+    const admission = this.admit(channel, actors);
     if (!("actor" in admission)) return admission.code;
     const { actor } = admission;
     const placed = WorkspaceSpaceChannelChangeResultSchema.parse(await (await this.workspace()).placeChannelInGeneral({
@@ -335,17 +308,6 @@ export class SpaceBootstrapService {
       workspaceId: asWorkspaceId(this.driver.workspaceId),
       ...input,
     });
-  }
-
-  private conversation(workstreamId: string) {
-    return durableObjectStubForWorkspace(
-      this.env,
-      this.env.SUBSTREAM_AGENTS,
-      this.driver.workspaceId,
-      conversationObjectName(
-        this.env.AVALON_REGION, asWorkspaceId(this.driver.workspaceId), workstreamId,
-      ),
-    );
   }
 
   private workspace() {

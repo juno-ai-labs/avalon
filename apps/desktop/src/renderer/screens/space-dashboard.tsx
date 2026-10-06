@@ -54,8 +54,7 @@ type FailureSlot =
   | 'restore'
   | 'name'
   | 'archive'
-  | 'participants'
-  | 'audience';
+  | 'participants';
 
 /**
  * A Space's own screen: what it is, who it is for, and what is in it.
@@ -95,7 +94,6 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   } | null>(null);
   const [participantsOpen, setParticipantsOpen] = useState(false);
   const [editParticipants, setEditParticipants] = useState<Set<string>>(new Set());
-  const [pendingScope, setPendingScope] = useState<'personal' | 'workspace' | null>(null);
   // A Space has no socket of its own: what it paints is the Organization's
   // directory, and the directory the local cache seeded is what is showing
   // until the workspace socket's first subscribe answer replaces it.
@@ -285,16 +283,6 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               'The space could not be restored.',
             )}><RotateCcw aria-hidden="true" size={15} /> Restore space</Button>}
           appearance={space}
-          {...(isGeneral || !writable ? {} : {
-            audience: {
-              scope: space.scope,
-              onChange: (scope: 'personal' | 'workspace') => {
-                if (scope === space.scope) return;
-                report('audience', null);
-                setPendingScope(scope);
-              },
-            },
-          })}
           editable={editable}
           key={space.id}
           name={space.name}
@@ -442,12 +430,10 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
         <Modal
           description="Choose the organization members who participate in this space."
           footer={<><Button disabled={saving} onClick={() => setParticipantsOpen(false)}>Cancel</Button><Button className="button-primary" disabled={saving || editParticipants.size === 0} onClick={() => {
-            // Only on success: this roster has a refusal of its own now — a
-            // personal Space cannot be narrowed to a list its own editor is
-            // not on — and the sentence for it is drawn inside this dialog.
+            // Only on success: a refusal's sentence is drawn inside this dialog.
             void save(
               'participants',
-              () => api!.updateSpaceAudience(space.id, { scope: space.scope, participantUserIds: [...editParticipants] }),
+              () => api!.updateSpaceAudience(space.id, { scope: 'workspace', participantUserIds: [...editParticipants] }),
               'Space participants could not be saved.',
             ).then((saved) => { if (saved) setParticipantsOpen(false); });
           }}>Save</Button></>}
@@ -485,27 +471,6 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           {failures.participants && <InlineError>{failures.participants}</InlineError>}
         </Modal>
 
-        <Modal
-          footer={<><Button disabled={saving} onClick={() => setPendingScope(null)}>Cancel</Button><Button className="button-primary" disabled={saving} onClick={() => {
-            if (pendingScope === null) return;
-            void save(
-              'audience',
-              () => api!.updateSpaceAudience(space.id, {
-                scope: pendingScope,
-                participantUserIds: [...participantIds],
-              }),
-              'The space audience could not be changed.',
-            ).then(() => setPendingScope(null));
-          }}>Continue</Button></>}
-          onOpenChange={(open) => { if (!open && !saving) setPendingScope(null); }}
-          open={pendingScope !== null}
-          title="Change who can see this space?"
-        >
-          <p>{pendingScope === 'workspace'
-            ? 'Everyone in the organization will be able to see this space and every channel in it. Current participants stay participants.'
-            : 'Only this space’s participants will be able to see it. Channels stay public if another source still says so.'}</p>
-          {failures.audience && <InlineError>{failures.audience}</InlineError>}
-        </Modal>
 
       </div>
     </div>

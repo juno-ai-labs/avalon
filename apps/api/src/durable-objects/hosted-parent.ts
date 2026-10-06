@@ -1703,25 +1703,26 @@ export class HostedParent {
     return new WorkstreamAccessStorage(this.storage, this.parentId);
   }
 
-  private directSource(access: WorkstreamAccessStorage, channel: ObservedChannel): AudienceSource {
-    const supplied = new Set(access.sources().flatMap((source) => access.suppliedReaders(source.sourceId)));
-    const recorded = access.directAudience();
-    return {
-      scope: recorded.observed ? recorded.scope : channel.readers.scope,
-      participantUserIds: channel.participantUserIds.filter((userId) => !supplied.has(userId)),
-    };
+  /**
+   * The Channel's audience, which is its own: a Space supplies no reader
+   * (`lib/channel-audience.ts`), so this is the observed scope and roster.
+   */
+  private directSource(channel: ObservedChannel): AudienceSource {
+    return { scope: channel.readers.scope, participantUserIds: channel.participantUserIds };
   }
 
+  /**
+   * Who may read the Channel and why. Spaces are listed as placements, each
+   * Organization-wide and granting nothing, so **Manage access** can say where
+   * the Channel sits without implying any Space opens it.
+   */
   readAccessSources(input: z.infer<typeof ReadChannelAccessSourcesRequestSchema>): ChannelAccessSources {
     const request = parseRpcInput(ReadChannelAccessSourcesRequestSchema, input, "channel_access_sources");
     this.assertParent(request.workspaceId, request.parentId);
-    const access = this.channelAccess();
-    const direct = this.directSource(access, request.channel);
+    const direct = this.directSource(request.channel);
     return ChannelAccessSourcesSchema.parse({
       direct: { scope: direct.scope, participantUserIds: direct.participantUserIds },
-      spaces: access.sources().map((source) => ({
-        spaceId: source.sourceId, scope: source.scope, participantUserIds: source.participantUserIds,
-      })),
+      spaces: [],
     });
   }
 
@@ -1763,10 +1764,8 @@ export class HostedParent {
       resultSchema: SetChannelDirectScopeResultSchema,
       now,
       body: () => {
+        // No Space can hold a Channel open: its scope is its own to narrow.
         const previous = access.directAudience();
-        if (request.scope === "personal" && access.sources().some((source) => source.scope === "workspace")) {
-          return { ok: false as const, code: "channel_scope_locked_by_space" as const };
-        }
         access.recordDirectScope(request.scope, now, request.observed ?? true);
         return { ok: true as const, previousScope: previous.scope, previousObserved: previous.observed };
       },
@@ -1799,10 +1798,7 @@ export class HostedParent {
         if (spaceAccessSourceSuperseded(access.source(request.spaceId), request)) {
           return { ok: false as const, code: "space_revision_conflict" as const };
         }
-        const plan = audienceSourceApplicationPlan({
-          current: request.channel.readers,
-          source: { scope: request.scope, participantUserIds: request.participantUserIds },
-        });
+        const plan = audienceSourceApplicationPlan();
         if (!commitWithPlan) return { ok: true as const, plan };
         const committed = this.commitSpaceAccessSource(access, {
           spaceId: request.spaceId,
@@ -1943,14 +1939,7 @@ export class HostedParent {
           && existing.spaceRevision > request.expectedSpaceRevision) {
           return { ok: false as const, code: "space_revision_conflict" as const };
         }
-        const suppliedByDeparting = access.suppliedReaders(request.spaceId);
-        const remainingSources = access.sources().filter((source) => source.sourceId !== request.spaceId);
-        const plan = audienceSourceRetractionPlan({
-          direct: this.directSource(access, request.channel),
-          remainingSources,
-          currentReaders: request.channel.readers,
-          suppliedByDeparting,
-        });
+        const plan = audienceSourceRetractionPlan();
         access.deleteSource(request.spaceId);
         return { ok: true as const, plan };
       },

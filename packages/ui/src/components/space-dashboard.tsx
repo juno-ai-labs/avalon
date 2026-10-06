@@ -5,7 +5,7 @@ import { useState, type ReactNode } from 'react';
 import { isComposingKeyEvent } from '../lib/ime';
 import type { WorkspaceMember } from '../lib/types';
 import { AppearancePicker } from './appearance-picker';
-import { AvatarStack, DropdownSelect, InlineError } from './primitives';
+import { AvatarStack, InlineError } from './primitives';
 import { SpaceIcon, type SpaceAppearance } from './space-icon';
 
 /**
@@ -18,14 +18,9 @@ import { SpaceIcon, type SpaceAppearance } from './space-icon';
  * one of them).
  */
 
-/** The two words a Space's audience is said in, everywhere it is chosen. */
-export const SPACE_SCOPE_OPTIONS = [
-  { label: 'Space participants', value: 'personal' },
-  { label: 'Everyone in the organization', value: 'workspace' },
-] as const;
-
 /**
- * The header: mark, name, audience and participants.
+ * The header: mark, name and participants. Every Space is Organization-wide,
+ * so there is no audience to choose.
  *
  * The rename interaction lives here rather than in the host because it is
  * presentation — a double-click, F2, Enter to commit, Escape to abandon, blur
@@ -36,7 +31,6 @@ export const SPACE_SCOPE_OPTIONS = [
 export function SpaceDashboardHeader({
   actions,
   appearance,
-  audience,
   editable,
   name,
   nameError,
@@ -48,12 +42,6 @@ export function SpaceDashboardHeader({
   /** Archive, restore — whatever the lifecycle allows this Space. */
   actions?: ReactNode;
   appearance: SpaceAppearance;
-  /**
-   * The audience control, or omitted for a Space whose audience is not the
-   * reader's to change. General is the only one today; its Organization-wide
-   * audience is immutable, so it is drawn without the question.
-   */
-  audience?: { scope: 'personal' | 'workspace'; onChange: (scope: 'personal' | 'workspace') => void } | undefined;
   editable: boolean;
   name: string;
   nameError?: string | null | undefined;
@@ -137,20 +125,6 @@ export function SpaceDashboardHeader({
               size={Math.max(6, Math.min(40, draft.length + 1))}
               value={draft}
             />}
-        {audience && (
-          <p className="space-dashboard-audience">
-            <span className="window-no-drag">
-              <DropdownSelect
-                ariaLabel="Space audience"
-                disabled={!editable}
-                onValueChange={(value) => audience.onChange(value as 'personal' | 'workspace')}
-                options={[...SPACE_SCOPE_OPTIONS]}
-                value={audience.scope}
-                variant="secondary"
-              />
-            </span>
-          </p>
-        )}
         {nameError && <InlineError>{nameError}</InlineError>}
       </div>
       <div className="space-dashboard-header-actions window-no-drag">

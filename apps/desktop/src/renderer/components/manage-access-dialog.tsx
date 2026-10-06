@@ -34,20 +34,12 @@ function AccessSource({ action, failure, icon, name, sentence }: {
 }
 
 /**
- * Where a Channel's readers come from, and the two changes a person can make
- * to that from here.
+ * Who can read a Channel, the change a person can make to that, and the
+ * Spaces it sits in.
  *
- * Replaces **Make private**, which could only ever describe the Channel's own
- * scope. A Channel's audience is now the union of its direct source and every
- * active Space that holds it, so a control that narrowed the direct source
- * alone would claim a privacy the Space beside it was still contradicting. The
- * rule this screen is built to keep is in the PRD: Rally never says a Channel
- * is private while an active Organization-wide Space still grants access to it.
- *
- * The two lists the server answers with are rendered as one union on purpose.
- * The Channel's own provenance and the Organization's memberships agree in the
- * steady state and disagree exactly while an operation is in flight or has been
- * interrupted — which is the thing this screen has to be able to show.
+ * A Channel's audience is its own: every Space is Organization-wide and grants
+ * no reader, so the Channel row is the whole answer to "who can read this",
+ * and the Space rows say only where the Channel is placed.
  */
 export function ManageAccessDialog({
   onChangeScope,
@@ -92,20 +84,6 @@ export function ManageAccessDialog({
     }
   };
   const sources = access.data;
-  const bySpace = new Map((sources?.spaces ?? []).map((source) => [source.spaceId as string, source]));
-  const spaceIds = [...new Set([
-    ...(sources?.spaceIds ?? []).map((id) => id as string),
-    ...bySpace.keys(),
-  ])];
-  // Every Organization-wide Space *source*: the Channel's own provenance rather
-  // than the Organization's membership list, because a source is what grants
-  // access now and a membership still being applied grants nothing yet. A Space
-  // this viewer's directory does not hold is named "a space" rather than
-  // dropped — losing it would leave the sentence below saying only the people
-  // in the Channel can read it, which is the one thing this screen may not say.
-  const publicThrough = (sources?.spaces ?? [])
-    .filter((source) => source.scope === 'workspace')
-    .map((source) => spaces.find((space) => space.id === source.spaceId)?.name ?? 'a space');
   const directIsPublic = sources?.direct.scope === 'workspace';
   return (
     <Modal
@@ -127,15 +105,8 @@ export function ManageAccessDialog({
           ? <LoadingState label="Loading access…" />
           : <ul className="manage-access-list">
             <AccessSource
-              // Narrowing the direct source is refused with
-              // `channel_scope_locked_by_space` exactly while an Organization-wide
-              // Space holds this Channel, and those sources are on this screen: a
-              // control that can only fail is worse than one that is not there,
-              // and the sentence beside it names the Space to change first.
               action={directIsPublic
-                ? publicThrough.length > 0
-                  ? undefined
-                  : <Button disabled={saving !== null} onClick={() => void run('direct', () => onChangeScope('personal'))}>Make private</Button>
+                ? <Button disabled={saving !== null} onClick={() => void run('direct', () => onChangeScope('personal'))}>Make private</Button>
                 : <Button disabled={saving !== null} onClick={() => void run('direct', () => onChangeScope('workspace'))}>Make public to organization</Button>}
               failure={failures['direct']}
               icon={directIsPublic
@@ -143,61 +114,25 @@ export function ManageAccessDialog({
                 : <Lock aria-hidden="true" size={15} />}
               key="direct"
               name="This channel"
-              // Never "private": an Organization-wide Space below may still be
-              // granting access, and saying private here would be false.
               sentence={directIsPublic
-                ? publicThrough.length > 0
-                  ? `Everyone in the organization, from the channel itself — and public through ${publicThrough.join(', ')}.`
-                  : 'Everyone in the organization, from the channel itself.'
-                : publicThrough.length > 0
-                  ? `The ${people(sources.direct.participantUserIds.length)} in the channel — and public through ${publicThrough.join(', ')}.`
-                  : `Only the ${people(sources.direct.participantUserIds.length)} in the channel.`}
+                ? 'Everyone in the organization.'
+                : `Only the ${people(sources.direct.participantUserIds.length)} in the channel.`}
             />
-            {spaceIds.map((spaceId) => {
-              const source = bySpace.get(spaceId);
+            {(sources.spaceIds as string[]).map((spaceId) => {
               const space = spaces.find((candidate) => candidate.id === spaceId);
-              const member = (sources.spaceIds as string[]).includes(spaceId);
-              // Whether this row may put a *number* on a Space, which for a
-              // personal one is the size of its participant list. A Space this
-              // viewer is in, or one the whole Organization is in, tells them
-              // nothing they could not already read. A Space they reach only
-              // through this Channel tells them how many people are in a
-              // participants-only Space — the count the summary they were
-              // handed withholds, arriving on the row that now also names it.
-              // A Space their directory does not hold at all is the same
-              // answer for the stronger reason.
-              const countable = space !== undefined && space.reach !== 'through_channel';
               return (
                 <AccessSource
-                  // A membership in a Space this viewer's directory does not
-                  // hold is still listed — it is one of the sources granting
-                  // access — but carries no control: the row cannot name what
-                  // leaving it would change, and the server refuses an edit to
-                  // a Space the caller may not read anyway.
-                  //
-                  // A Space they reach *through this Channel* is the other one
-                  // without a control, and the reason is the opposite: the row
-                  // can name it, because this reader is told its mark and name
-                  // so the Channel has somewhere to be drawn — and taking the
-                  // Channel out of it is still refused by name.
-                  action={member && space !== undefined && space.reach !== 'through_channel'
+                  // A Space this viewer's directory does not hold, or one they
+                  // reach only through this Channel, carries no control: the
+                  // server refuses taking the Channel out of it by name.
+                  action={space !== undefined && space.reach !== 'through_channel'
                     ? <Button disabled={saving !== null} onClick={() => void run(spaceId, () => onRemoveFromSpace(spaceId))}>Remove from space</Button>
                     : undefined}
                   failure={failures[spaceId]}
                   icon={space ? <SpaceIcon space={space} /> : <Globe2 aria-hidden="true" size={15} />}
                   key={spaceId}
                   name={space?.name ?? 'A space you can’t see'}
-                  sentence={!member
-                    // The Organization no longer holds this membership while the
-                    // Channel still records its source: a retraction in flight.
-                    ? 'This channel has left this space; its access is still being withdrawn.'
-                    : source === undefined
-                      ? 'Access from this space is still being applied.'
-                      : source.scope === 'workspace'
-                        ? 'Everyone in the organization, through this space.'
-                        : countable
-                          ? `The ${people(source.participantUserIds.length)} in this space.`
-                          : 'The people in this space reach this channel through it.'}
+                  sentence="The channel is placed here. A space doesn’t change who can read it."
                 />
               );
             })}

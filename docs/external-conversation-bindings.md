@@ -77,9 +77,13 @@ The bot being added to a room is the invitation. `member_joined_channel` for
 the bot's own user calls `linkRoom`, which resolves the room with
 `conversations.info`, asks `admitSpaceCreation` before claiming a parent anchor,
 and calls `linkExternalRoom`. That one WorkspaceDO transaction writes the Space
-and the active room binding together. A public room makes a public Space. A
-private channel or group DM makes a private Space whose audience is the room's
-members that Rally can map, seated through the existing roster rules.
+and the active room binding together. Every room's Space is Organization-wide,
+because every Space is (see [`spaces.md`](spaces.md#every-space-is-organization-wide)),
+and it seats nobody. A room's privacy belongs to the Channels its threads open:
+a public room's thread is Organization-wide, and a private channel's or group
+DM's is private to the room's members Rally can map, until the room passes the
+member-count promotion (`SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD`, 50),
+past which it is Organization-wide, as for an unlinked room.
 
 A public room whose name matches a live Organization-wide Space links to that
 Space instead of making one. Names compare ignoring case, spaces, dashes and
@@ -125,9 +129,8 @@ bot is invited again or mentioned there: Slack delivers either only from a room
 the bot is in. The link step then lifts the room's suspension directly, keeping
 its Space and resolving no actor.
 
-A room linked while public holds an Organization-wide Space. If Slack has since
-made it private, a spawn there is refused with a notice rather than opening a
-Channel the whole Organization could read.
+A room Slack has made private since it linked opens private Channels from then
+on: the room, not its Space, decides each new Channel's audience.
 
 There is no pending state for a room: a Space no longer provisions anything
 asynchronously, so the binding and the Space commit or fail together.
@@ -307,8 +310,9 @@ is provenance only and is never read for routing
   message is retried into the winner.
 - **`channel_id_changed` onto an occupied id.** The move is refused and logged
   `slack_room_id_changed` with `outcome: conflict`; the old bindings stay.
-- **Large private rooms.** Participants past the existing roster threshold are
-  not seated in the Space; they are seated by their own message.
+- **Large private rooms.** A private room past
+  `SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD` members opens Organization-wide
+  Channels, as an unlinked room does.
 
 No new numeric limit is introduced.
 
@@ -343,13 +347,34 @@ Sidekick's bindings.
 ## Security and trust model
 
 Room names, member lists, message text and actor profiles are untrusted. A
-Slack member is not a Rally member: a private Space is seated only with members
-Rally maps, and a Space is never widened to make placement succeed. A reply
+Slack member is not a Rally member: a private room's Channel is seated only
+with members Rally maps, and a Channel is never widened to make placement
+succeed. A reply
 delivered to a run child is framed to the model as evidence from its sender,
 not as a member request. Only a Sidekick's config conversation can add a Slack
 source, so a run cannot widen what the bot joins.
 
 ## Changelog
+
+### 2026-10-06 — A room's privacy belongs to its Channels, not its Space
+
+**What changed:** `linkExternalRoom` takes no scope or participants: every
+room's Space is Organization-wide and seats nobody. A thread's Channel takes the
+room's own audience through `connectorWorkstreamScope`, the same rule an
+unlinked room uses, including the 50-member promotion. The
+`room_narrower_than_space` refusal is gone.
+
+**Why:** Every Space is Organization-wide and grants no reader
+([`spaces.md`](spaces.md)), so a private room could no longer be private
+through its Space. Its Channels carry the privacy instead.
+
+**Considered and rejected:** Keeping private Spaces for private rooms as the
+one exception. It would have left two kinds of Space and a Channel whose
+privacy depended on which one it was born in.
+
+**What a future change must respect:** the room decides each new Channel's
+audience at spawn; a change that reads it from the Space again would open
+private rooms to the Organization.
 
 ### 2026-10-05 — A public room joins the existing Space it is named for
 

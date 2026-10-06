@@ -201,12 +201,11 @@ Space's name, audience and active state. A pack without Space declarations keeps
 the existing General fallback.
 
 **A room is Organization-wide, and the seeder refuses one that is not.** The
-Space declarations describe Organization Spaces only. A Channel without a named
-Space is born in Organization-wide General, so accepting a personal room would
-silently give it a wider audience and leave readiness stuck waiting for the
-promised personal scope. `demo_seed_personal_room_unsupported` refuses that
-mismatch before creation. Supporting a private room requires a personal Space
-and its roster in the pack; naming an Organization Space is not sufficient.
+Space declarations describe Organization Spaces, which every Space now is.
+`demo_seed_personal_room_unsupported` still refuses a `personal` room. The
+reason it was added (General widening a private room) is gone, since a Space
+grants no reader any more, but a private room has not been seeded and checked
+for readiness end to end, so the refusal stays until one is.
 
 **Existing demos do not change when this pack deploys.** Use Ace **New demo** with
 a new operation id; wait for Ready, switch to that Organization, then separately

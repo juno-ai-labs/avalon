@@ -248,43 +248,28 @@ function auth(role: AuthContext["role"] = "owner"): AuthContext {
 }
 
 describe("SpaceService audience changes", () => {
-  it("given a member Channel with a content fence, when the audience widens, then nothing is written", async () => {
+  it("given member Channels, when the participants change, then the authority records it and no Channel is asked or walked", async () => {
     const workspace = workspaceDouble();
-    const env = serviceEnv({
-      workspace,
-      conversation: { previewAudienceContainment: vi.fn(async () => false) },
-    });
+    const previewAudienceContainment = vi.fn(async () => true);
+    const env = serviceEnv({ workspace, conversation: { previewAudienceContainment } });
 
     await expect(new SpaceService(env, auth()).updateAudience(SPACE_ID, {
       scope: "workspace",
       participantUserIds: [OWNER, MEMBER],
-    })).rejects.toMatchObject({ code: "space_membership_content_fence", status: 409 });
+    })).resolves.toMatchObject({ revision: 4 });
 
-    // The whole point of preflighting every member before changing any of them:
-    // widening cannot be taken back, so a fence found on one Channel must stop
-    // the Space's own authority from accepting the change at all.
-    expect(workspace.noteSpaceAudience).not.toHaveBeenCalled();
-  });
-
-  it("given General, when its audience is made personal, then the authority's refusal is surfaced", async () => {
-    const workspace = workspaceDouble({
-      spaceSummary: vi.fn(async () => ({ ok: true, space: summary({ systemRole: "general" }) })),
-      noteSpaceAudience: vi.fn(async () => ({
-        ok: false, code: "space_protected", unreachableUserIds: [],
-      })),
-    });
-
-    await expect(new SpaceService(serviceEnv({ workspace }), auth()).updateAudience(SPACE_ID, {
-      scope: "personal",
-      participantUserIds: [OWNER],
-    })).rejects.toMatchObject({ code: "space_protected", status: 409 });
+    // A Space grants no reader to its Channels, so changing who edits it has
+    // nothing to ask a Channel and nothing to carry to one.
+    expect(workspace.noteSpaceAudience).toHaveBeenCalledTimes(1);
+    expect(previewAudienceContainment).not.toHaveBeenCalled();
+    expect(workspace.walkSpaceMembers).not.toHaveBeenCalled();
   });
 
   it("given an ordinary member, when they remove somebody else, then the role gate refuses it", async () => {
     const workspace = workspaceDouble();
 
     await expect(new SpaceService(serviceEnv({ workspace }), auth("member")).updateAudience(SPACE_ID, {
-      scope: "personal",
+      scope: "workspace",
       participantUserIds: [OWNER],
     })).rejects.toMatchObject({ code: "participant_removal_denied", status: 403 });
     expect(workspace.noteSpaceAudience).not.toHaveBeenCalled();

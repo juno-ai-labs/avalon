@@ -145,76 +145,6 @@ function stubCanonicalOperations(
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("narrowing the Channel's own scope", () => {
-  it("given a Space applied while everybody could read, when the Channel narrows, then its readers are seated and attributed first", async () => {
-    const calls: string[] = [];
-    // Organization-wide with one participant: the Space's readers were never
-    // seated, because everybody could already read.
-    stubCanonicalOperations(calls, { detail: detail("workspace", [OWNER]) });
-    const service = new ChannelAccessService(
-      environment({
-        calls,
-        sources: {
-          direct: { scope: "workspace", participantUserIds: [OWNER] },
-          spaces: [{ spaceId: SPACE, scope: "personal", participantUserIds: [READER, OTHER] }],
-        },
-      }),
-      auth,
-    );
-
-    expect(await service.narrowDirectScope(CHANNEL)).toEqual([READER, OTHER]);
-
-    // Seated through the canonical add, carrying the Space, and attributed to
-    // it in one confirmation — without which the next retraction of that Space
-    // reads them as the Channel's own and leaves them behind.
-    expect(calls).toEqual([
-      "object:sources",
-      `canonical:add(${READER}:${SPACE})`,
-      `canonical:add(${OTHER}:${SPACE})`,
-      `object:confirm(${SPACE}:${READER},${OTHER})`,
-    ]);
-  });
-
-  it("given a Space that is still Organization-wide, when the Channel narrows, then nobody is seated", async () => {
-    const calls: string[] = [];
-    stubCanonicalOperations(calls, { detail: detail("workspace", [OWNER]) });
-    const service = new ChannelAccessService(
-      environment({
-        calls,
-        sources: {
-          direct: { scope: "workspace", participantUserIds: [OWNER] },
-          spaces: [{ spaceId: SPACE, scope: "workspace", participantUserIds: [READER] }],
-        },
-      }),
-      auth,
-    );
-
-    // The audience stays Organization-wide whatever the Channel records, so
-    // seating anybody would claim this source supplied access it did not, and
-    // `recordDirectScope` refuses the narrowing a moment later anyway.
-    expect(await service.narrowDirectScope(CHANNEL)).toEqual([]);
-    expect(calls).toEqual(["object:sources"]);
-  });
-
-  it("given a reader the Channel already seats, when it narrows, then nothing is added for them", async () => {
-    const calls: string[] = [];
-    stubCanonicalOperations(calls, { detail: detail("workspace", [OWNER, READER]) });
-    const service = new ChannelAccessService(
-      environment({
-        calls,
-        sources: {
-          direct: { scope: "workspace", participantUserIds: [OWNER] },
-          spaces: [{ spaceId: SPACE, scope: "personal", participantUserIds: [READER] }],
-        },
-      }),
-      auth,
-    );
-
-    expect(await service.narrowDirectScope(CHANNEL)).toEqual([]);
-    expect(calls).toEqual(["object:sources"]);
-  });
-});
-
 describe("withdrawing a Space source through the canonical operations", () => {
   it("given a narrowing retraction, when it runs, then survivors are seated before the scope changes and removals come last", async () => {
     const calls: string[] = [];
@@ -250,23 +180,21 @@ describe("withdrawing a Space source through the canonical operations", () => {
 });
 
 describe("removing a direct reader", () => {
-  it("given a Space still supplies the reader, then the reader is restored under that source and access survives", async () => {
+  it("given a private Channel whose Space lists the reader, then the reader is removed and access is lost", async () => {
     const calls: string[] = [];
-    stubCanonicalOperations(calls);
-    const service = new ChannelAccessService(environment({
-      calls,
-      sources: {
-        direct: { scope: "personal", participantUserIds: [OWNER, READER] },
-        spaces: [{ spaceId: SPACE, scope: "personal", participantUserIds: [READER] }],
-      },
-    }), auth);
+    stubCanonicalOperations(calls, { detail: detail("personal", [OWNER, READER]) });
+    const service = new ChannelAccessService(environment({ calls }), auth);
+
+    await expect(service.removeDirectReader(CHANNEL, READER)).resolves.toBe(true);
+    expect(calls).toEqual([`canonical:remove(${READER})`]);
+  });
+
+  it("given an Organization-wide Channel, then the reader is removed and can still read", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls, { detail: detail("workspace", [OWNER, READER]) });
+    const service = new ChannelAccessService(environment({ calls }), auth);
 
     await expect(service.removeDirectReader(CHANNEL, READER)).resolves.toBe(false);
-    expect(calls).toEqual([
-      "object:sources",
-      `canonical:remove(${READER})`,
-      `canonical:add(${READER}:${SPACE})`,
-      `object:confirm(${SPACE}:${READER})`,
-    ]);
+    expect(calls).toEqual([`canonical:remove(${READER})`]);
   });
 });

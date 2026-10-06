@@ -4,7 +4,6 @@ import {
   type ChannelAccessSources,
   type SpaceErrorCode,
   type SpaceScope,
-  type UserId,
   type WorkstreamDetail,
 } from "@rally/contracts";
 
@@ -15,7 +14,6 @@ import type {
 } from "../durable-objects/workstream-access-protocol";
 import type { AuthContext, Env } from "../env";
 import { ApiError, asApiError } from "../lib/api-error";
-import { effectiveChannelAudience } from "../lib/channel-audience";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
@@ -137,36 +135,18 @@ export class ChannelAccessService {
   }
 
   /**
-   * Remove the Channel's own claim on one reader without revoking a Space's.
-   *
-   * The canonical participant removal acts on the effective roster. When a
-   * Space still supplies the same person, put that reader back attributed to
-   * every surviving supplier before the caller publishes a revocation. The
-   * boolean says whether access was actually lost.
+   * Take one reader out of the Channel. A Space supplies no reader, so the
+   * canonical removal is the whole change; the boolean says whether access
+   * was actually lost, which it is not on an Organization-wide Channel.
    */
   async removeDirectReader(workstreamId: string, userId: string): Promise<boolean> {
-    const sources = await this.readSources(workstreamId);
-    const reader = asUserId(userId);
-    const suppliers = sources.spaces.filter((space) => space.participantUserIds.includes(reader));
-    const client = this.client(workstreamId);
-    await client.removeParticipant(userId);
-    const room = await this.room();
-    for (const supplier of suppliers) {
-      await client.addParticipant(userId, { spaceSourceId: supplier.spaceId });
-      const confirmed = await room.confirmSpaceAccessSource({
-        ...this.address(workstreamId),
-        spaceId: supplier.spaceId,
-        operationId: uuidV7(),
-        seatedUserIds: [reader],
-      });
-      if (!confirmed.ok) throw spaceAccessError(confirmed.code, "Channel");
-    }
-    return sources.direct.scope !== "workspace" && suppliers.length === 0;
+    const { channel } = await this.observation(workstreamId);
+    await this.client(workstreamId).removeParticipant(userId);
+    return channel.readers.scope !== "workspace";
   }
 
   /**
-   * Record the Channel's own audience, refusing a narrowing a Space would
-   * override.
+   * Record the Channel's own audience.
    *
    * Returns the scope that was recorded before, so a caller whose canonical
    * update then fails can put the record back rather than leave it claiming an
@@ -195,9 +175,8 @@ export class ChannelAccessService {
    * from the readers it is handed.
    *
    * Best effort and never throws: the refusal the caller is about to see is the
-   * useful one, and a restore that is itself refused — the Channel is
-   * Organization-wide through a Space, so it cannot be recorded as private —
-   * leaves a record that is wrong in the safe direction and is named here.
+   * useful one, and a restore that is itself refused leaves a record that is
+   * named here.
    */
   async restoreDirectScope(workstreamId: string, scope: SpaceScope, observed: boolean): Promise<void> {
     try {
@@ -214,75 +193,6 @@ export class ChannelAccessService {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  }
-
-  /**
-   * Seat everybody a Space still supplies, before the Channel's own audience
-   * stops being Organization-wide.
-   *
-   * The same gap `audienceSourceRetractionPlan` closes, on the other path into
-   * it. A personal Space applied while the Channel was Organization-wide seats
-   * nobody — everybody could already read, so a participant row would have
-   * added no access — and its readers therefore exist only as that source's
-   * roster. Narrowing the Channel's *own* scope with that still true revokes
-   * them, although the Space that supplies them has not changed at all.
-   *
-   * Returns the readers it seated, so a caller whose narrowing then fails can
-   * say what it left behind. It does not withdraw them: they are access a
-   * source still provides, and the next retraction of that source is what
-   * takes them out.
-   *
-   * Safe to run when nothing narrows. An audience that is still
-   * Organization-wide through some Space seats nobody here and is refused by
-   * `recordDirectScope` a moment later, which is the authority that decides.
-   */
-  async narrowDirectScope(workstreamId: string): Promise<UserId[]> {
-    const sources = await this.readSources(workstreamId);
-    // The direct source as it will be *after* the narrowing, which is the
-    // whole question: who is left once the Channel stops admitting everybody.
-    const audience = effectiveChannelAudience({
-      direct: { scope: "personal", participantUserIds: sources.direct.participantUserIds },
-      sources: sources.spaces.map((space) => ({
-        sourceId: space.spaceId, scope: space.scope, participantUserIds: space.participantUserIds,
-      })),
-    });
-    if (audience.scope === "workspace") return [];
-    const client = this.client(workstreamId);
-    const seated = new Set<string>((await client.get()).participants.map((participant) => participant.user.id));
-    const newlySeated: UserId[] = [];
-    for (const userId of audience.participantUserIds) {
-      if (seated.has(userId)) continue;
-      // Attributed to the Space that lists them, which is what keeps the grant
-      // out of the shared scope-grant directory and what lets that Space's
-      // departure take them with it. A reader the direct source lists is
-      // already seated, so anybody reached here has a supplier.
-      const supplier = sources.spaces.find((space) => space.participantUserIds.includes(userId));
-      if (!supplier) continue;
-      await client.addParticipant(userId, { spaceSourceId: supplier.spaceId });
-      newlySeated.push(userId);
-    }
-    // Attribute them to the source that supplied them, per Space, or the next
-    // retraction reads them as the Channel's own and leaves them behind.
-    const room = await this.room();
-    for (const space of sources.spaces) {
-      const supplied = newlySeated.filter((userId) => space.participantUserIds.includes(userId));
-      if (supplied.length === 0) continue;
-      const confirmed = await room.confirmSpaceAccessSource({
-        ...this.address(workstreamId),
-        spaceId: space.spaceId,
-        operationId: uuidV7(),
-        seatedUserIds: supplied,
-      });
-      if (!confirmed.ok) {
-        // Named rather than thrown: the readers are seated and can read, and
-        // failing the narrowing over an attribution would leave the Channel
-        // Organization-wide for a reason nobody asked about.
-        logWarn(this.env, "channel_narrowing_attribution_refused", {
-          workstream_id: workstreamId, space_id: space.spaceId, code: confirmed.code,
-        });
-      }
-    }
-    return newlySeated;
   }
 
   /** A direct add makes this reader the Channel's own, whichever Space seated them. */

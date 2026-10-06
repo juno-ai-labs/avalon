@@ -54,12 +54,13 @@ type CreateInput = Omit<ParsedCreateInput, "mentions" | "spaceIds"> & {
   descriptionSource?: "authored" | "derived";
   /**
    * Who may read the work stream from birth, for the callers that know. Omitted
-   * means `personal`, which is what a work stream somebody starts in Avalon is:
-   * the creator and anyone they named, and nobody else until one of them opens
-   * it. Not part of `CreateWorkstreamRequestSchema` and deliberately so — a
-   * request on the wire cannot claim an audience, because an audience is
-   * something an ingress *knows* (the public Slack channel the mention was read
-   * out of), never something a caller asserts about itself.
+   * means `personal`, the fail-closed reading: the creator and anyone they
+   * named. A Space grants no audience, so a caller that means
+   * Organization-wide says so; the desktop's create route does, because a
+   * Channel somebody starts in Rally is public. Not part of
+   * `CreateWorkstreamRequestSchema` and deliberately so: an audience is
+   * something the route or an ingress *knows* (the Slack channel the mention
+   * was read out of), never something a request asserts about itself.
    */
   scope?: Scope;
 };
