@@ -34,8 +34,8 @@ Operator work after phase 1 is deployed. Nothing to build.
 - [x] Every Organization at or past the import migration. All 23 at 91.
 - [x] No `pending` ledger row outside retired Organizations. 46 of 48 imported;
   the two pending are in retired Organizations.
-- [ ] Every `SidekickDO` the migration tracker's sweep lists has a ledger row
-  marked done. Needs a person with tracker access.
+- [x] Every `SidekickDO` the migration tracker's sweep lists has a ledger row
+  marked done. Confirmed by a person with tracker access.
 
 **Gate:** the three checks above, run and recorded by a person.
 
@@ -45,8 +45,8 @@ Irreversible. Starts only after phase 2's gate, and only on a person's word.
 
 - [x] Wrangler tag `v13` deleting `SidekickDO`; `WorkspaceDO` migration 92
   dropping the ledger. The directory stays: it is the definition row.
-- [x] Remove the scaffolding listed in the PRD's rollout step 3. Written and
-  open for review; merged only on a person's word after the tracker check.
+- [x] Remove the scaffolding listed in the PRD's rollout step 3. Merged on a
+  person's word after the tracker check.
 
 **Gate:** the API deploys and typechecks with no `SidekickDO` class or
 `AUTOMATION_DOS` binding.
