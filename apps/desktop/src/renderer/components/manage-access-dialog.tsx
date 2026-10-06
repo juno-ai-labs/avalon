@@ -87,7 +87,7 @@ export function ManageAccessDialog({
   const directIsPublic = sources?.direct.scope === 'workspace';
   return (
     <Modal
-      description={`Everyone listed here can read ${workstreamTitle}.`}
+      description={`Who can read ${workstreamTitle}, and the spaces it is placed in.`}
       footer={<Button onClick={() => onOpenChange(false)}>Done</Button>}
       onOpenChange={onOpenChange}
       open={open}

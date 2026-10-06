@@ -402,11 +402,35 @@ export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
  * Channel stays private with the participants it has. Archived Spaces are
  * widened too, so a restore cannot bring a private one back. The waterline
  * moves only when a row did, so every client refetches its Spaces once.
+ *
+ * A private Space's resource defaults were checked against its participants
+ * only, and once it is Organization-wide any member can start a Channel in it
+ * that picks them up. Whether each resource admits every member is a read per
+ * member through `ResourceService`, which a migration cannot make, so they are
+ * retired the way `removeDefault` retires one: the generation step also fences
+ * every pending delivery. A Sidekick default is already Organization-wide
+ * (`assertRecommendableSidekick`) and stays.
+ *
+ * Each step of a Space source's application or retraction stores its plan in
+ * `parent_access_operations`, and a retry of the same operation id answers the
+ * stored plan before the new, empty one is computed. Those receipts are
+ * dropped, so an operation interrupted before this migration re-plans under
+ * the new rule rather than finishing a widening or a narrowing the old one
+ * decided. Re-planning is safe: both steps are idempotent against the source
+ * rows they write.
  */
 export const SPACE_PUBLIC_ONLY_MIGRATION: readonly string[] = [
   `UPDATE workspace_space_state
       SET waterline = waterline + 1, updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
     WHERE id = 1 AND EXISTS (SELECT 1 FROM spaces WHERE scope = 'personal')`,
+  `UPDATE space_defaults
+      SET state = 'removed', generation = generation + 1,
+          updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER),
+          removed_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    WHERE kind = 'resource' AND state = 'active'
+      AND space_id IN (SELECT space_id FROM spaces WHERE scope = 'personal')`,
+  `DELETE FROM parent_access_operations
+    WHERE json_extract(request_json, '$.kind') IN ('apply_space_source', 'retract_space_source')`,
   `UPDATE spaces
       SET scope = 'workspace', revision = revision + 1,
           updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
