@@ -56,11 +56,6 @@ function environment(workspace: ReturnType<typeof organization>) {
       idFromName: () => createTestDurableObjectId("workspace"),
       get: workspaceGets,
     }),
-    // Every parent is the Organization's; the legacy Sidekick object is never addressed.
-    AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
-      idFromName: () => createTestDurableObjectId("automation"),
-      get: () => { throw new Error("no conversation addresses the legacy SidekickDO"); },
-    }),
   });
   return { env, workspaceGets };
 }

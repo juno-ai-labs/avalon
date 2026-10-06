@@ -2,9 +2,7 @@ import { configuredRegions, regionConfiguration } from "@rally/contracts/regions
 import {
   EngineeringArtifactListLookupSchema,
   EngineeringArtifactTargetLookupSchema,
-  EngineeringSidekickImportLookupSchema,
   EngineeringSidekickListLookupSchema,
-  EngineeringSidekickTargetLookupSchema,
   EngineeringSpaceListLookupSchema,
   EngineeringSqlLookupSchema,
   EngineeringSubstreamListLookupSchema,
@@ -16,7 +14,6 @@ import {
 } from "@rally/contracts/engineering-inspection";
 import {
   ArtifactIdSchema,
-  AutomationIdSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
@@ -291,64 +288,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
         authorityGeneration: resolved.value.authorityGeneration,
         query: { sql, bindings },
       }), `Substream ${substreamId}`);
-    },
-  ));
-
-  server.registerTool("run_sidekick_sql", {
-    description: "Run arbitrary SQLite against a SidekickDO — a Sidekick's own object, not its conversation. The workspace ID is required because it is part of the Durable Object name. Statements may mutate production state.",
-    inputSchema: {
-      workspaceId: WorkspaceIdSchema,
-      sidekickId: AutomationIdSchema,
-      ...sqlInputSchema,
-    },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-  }, ({ workspaceId, sidekickId, sql, bindings = [] }) => tool(
-    principal,
-    "run_sidekick_sql",
-    { workspace_id: workspaceId, sidekick_id: sidekickId },
-    async () => {
-      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveSidekick({ workspaceId, sidekickId })));
-      const resolved = oneRegionalTarget(
-        env,
-        results.map((result) => EngineeringSidekickTargetLookupSchema.parse(result)),
-        `Sidekick ${sidekickId}`,
-      );
-      return executedSql(await resolved.binding.runSidekickSql({
-        workspaceId,
-        sidekickId,
-        authorityGeneration: resolved.value.authorityGeneration,
-        query: { sql, bindings },
-      }), `Sidekick ${sidekickId}`);
-    },
-  ));
-
-  server.registerTool("retry_sidekick_import", {
-    description: "Move a Sidekick from its legacy SidekickDO into its Organization's WorkspaceDO again, after repairing what made the last import fail. Returns `imported`, or `pending` with the code the new attempt failed on. Changes production state and cannot be undone: the export it asks for freezes the legacy object.",
-    inputSchema: {
-      workspaceId: WorkspaceIdSchema,
-      sidekickId: AutomationIdSchema,
-    },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, ({ workspaceId, sidekickId }) => tool(
-    principal,
-    "retry_sidekick_import",
-    { workspace_id: workspaceId, sidekick_id: sidekickId },
-    async () => {
-      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveSidekick({ workspaceId, sidekickId })));
-      const resolved = oneRegionalTarget(
-        env,
-        results.map((result) => EngineeringSidekickTargetLookupSchema.parse(result)),
-        `Sidekick ${sidekickId}`,
-      );
-      const outcome = EngineeringSidekickImportLookupSchema.parse(await resolved.binding.retrySidekickImport({
-        workspaceId,
-        sidekickId,
-        authorityGeneration: resolved.value.authorityGeneration,
-      }));
-      if (!outcome.found) {
-        throw new InspectionRefusal("target_authority_changed", `Sidekick ${sidekickId} authority changed before the retry; refused`);
-      }
-      return outcome.value;
     },
   ));
 

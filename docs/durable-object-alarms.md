@@ -251,7 +251,6 @@ Sidekick can cancel its own by prefix:
 | Fire one calendar or interval occurrence | `automation_schedule` (stored) | the schedule id |
 | Hand one admitted occurrence to provisioning, which opens its child conversation and starts its loop | `automation_run` (stored) | the run id |
 | Materialize the memory tables an accepted revision declares | `sidekick_memory_tables` (stored) | the revision |
-| Import the next Sidekick still in its legacy object | derived | `MIN(not_before)` over pending `sidekick_imports` |
 
 **A handler that wants to run again later moves its own entry.** The drain
 deletes an entry at the instant that ran whatever its handler returned, and

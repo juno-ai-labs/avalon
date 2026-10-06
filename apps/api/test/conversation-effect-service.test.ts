@@ -267,7 +267,6 @@ function workspaceSyncNamespace(listable = true) {
     })),
     directoryChanged: true,
   }));
-  const applyAutomationDirectory = vi.fn(async () => ({ applied: true }));
   const namespace = createCloudflareTestBinding<DurableObjectNamespace>({
     idFromName: () => createTestDurableObjectId("workspace-sync"),
     get: () => ({
@@ -277,7 +276,6 @@ function workspaceSyncNamespace(listable = true) {
       // not a separate scheduler object, to reconcile.
       refreshSchedule,
       applyWorkstreamDirectoryEffects,
-      applyAutomationDirectory,
       applyWorkstreamRegionalEffect: vi.fn(async (input: unknown) =>
         applyWorkstreamRegionalEnvelope(
           storage,
@@ -328,14 +326,13 @@ function workspaceSyncNamespace(listable = true) {
     reapNotificationIntents,
     claimWorkstreamNotificationIntent,
     applyWorkstreamDirectoryEffects,
-    applyAutomationDirectory,
   };
 }
 
 function regionalEnv(
   database: DatabaseSync,
   workspace: ReturnType<typeof workspaceSyncNamespace>,
-  extra: Partial<Pick<Env, "AUTOMATION_DOS">> & {
+  extra: {
     /** The hosted work stream parent's `receiveChildEffects`, answered by WorkspaceDO. */
     workstreamReceive?: (input: unknown) => Promise<void>;
   } = {},
@@ -844,11 +841,6 @@ describe("the activity Queue consumer's effect legs", () => {
     const hostedReceive = vi.fn(async () => undefined);
     const env = regionalEnv(database, workspace, {
       workstreamReceive: hostedReceive,
-      // The legacy Sidekick object is never addressed for a run's effects.
-      AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
-        idFromName: () => { throw new Error("legacy_sidekick_binding_used"); },
-        get: () => { throw new Error("legacy_sidekick_binding_used"); },
-      }),
     });
     const envelope = childMessage(directoryCommon("Run 1"), {
       messageId: `run:${RUN_ID}`,
@@ -959,7 +951,7 @@ describe("the activity Queue consumer's effect legs", () => {
     }
   });
 
-  it("applies an automation's own sidebar row through its own WorkspaceDO method", async () => {
+  it("acknowledges a late Sidekick sidebar row from the deleted SidekickDO without applying it", async () => {
     const database = seedAuthority();
     const workspace = workspaceSyncNamespace();
     const env = regionalEnv(database, workspace);
@@ -981,13 +973,15 @@ describe("the activity Queue consumer's effect legs", () => {
       parentId: AUTOMATION_ID,
     });
     const { batch, ack, retry } = queued(envelope);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
       await consumeActivityQueue(batch, env);
-      expect(workspace.applyAutomationDirectory).toHaveBeenCalledWith({
-        workspaceId: WORKSPACE_ID,
-        envelope,
-      });
       expect(workspace.applyWorkstreamDirectoryEffects).not.toHaveBeenCalled();
+      expect(info).toHaveBeenCalledWith(expect.objectContaining({
+        event: "conversation_effect_terminal",
+        outcome: "ignored",
+        reason: "sidekick_directory_producer_deleted",
+      }));
       expect(ack).toHaveBeenCalledOnce();
       expect(retry).not.toHaveBeenCalled();
     } finally {

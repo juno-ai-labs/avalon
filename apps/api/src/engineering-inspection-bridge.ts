@@ -1,13 +1,11 @@
 import { RegionSchema } from "@rally/contracts/regions";
-import { asArtifactId, asAutomationId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
   ArtifactInspectionInputSchema,
   ArtifactSqlInspectionInputSchema,
   EngineeringArtifactListLookupSchema,
   EngineeringArtifactTargetLookupSchema,
-  EngineeringSidekickImportLookupSchema,
   EngineeringSidekickListLookupSchema,
-  EngineeringSidekickTargetLookupSchema,
   EngineeringSqlLookupSchema,
   EngineeringSubstreamTargetLookupSchema,
   EngineeringSubstreamListLookupSchema,
@@ -15,9 +13,6 @@ import {
   EngineeringWorkstreamListLookupSchema,
   ListEngineeringWorkspacesInputSchema,
   ListEngineeringWorkspacesResultSchema,
-  SidekickImportRetryInputSchema,
-  SidekickInspectionInputSchema,
-  SidekickSqlInspectionInputSchema,
   EngineeringSpaceListLookupSchema,
   SubstreamSqlInspectionInputSchema,
   SubstreamInspectionInputSchema,
@@ -27,9 +22,7 @@ import {
   type EngineeringInspectionRpcBinding,
   type EngineeringArtifactListLookup,
   type EngineeringArtifactTargetLookup,
-  type EngineeringSidekickImportLookup,
   type EngineeringSidekickListLookup,
-  type EngineeringSidekickTargetLookup,
   type EngineeringSpaceListLookup,
   type EngineeringSqlLookup,
   type EngineeringSubstreamListLookup,
@@ -43,7 +36,6 @@ import { z } from "zod";
 
 import {
   artifactHostDOName,
-  automationDOName,
   conversationObjectName,
   workspaceDOName,
 } from "./durable-objects/names";
@@ -141,19 +133,7 @@ async function resolveInspectionSubstreamRoute(
     return route;
   }
   const known = await inspectionSubstreamIds(env, route);
-  if (known.includes(input.substreamId)) return route;
-  // A run conversation of a Sidekick still in its legacy object is registered
-  // there, not in the Organization. Its directory row is checked first, for
-  // the reason `resolveInspectionSidekickRoute` gives: naming a SidekickDO for
-  // a work stream's id would create one that never existed.
-  if (!await resolveInspectionSidekickRoute(env, { workspaceId: input.workspaceId, sidekickId: input.workstreamId })) return null;
-  const sidekick = await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, input.workspaceId,
-    automationDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), asAutomationId(input.workstreamId)));
-  const registered = await sidekick.runInspectionSql({
-    sql: "SELECT 1 AS one FROM conversation_children WHERE substream_id = ?",
-    bindings: [input.substreamId],
-  });
-  return registered.rows.length > 0 ? route : null;
+  return known.includes(input.substreamId) ? route : null;
 }
 
 /**
@@ -173,57 +153,18 @@ async function inspectionSubstreamIds(env: Env, route: InspectionWorkstreamRoute
 }
 
 /**
- * A Sidekick is fenced by its workspace, because that is what owns both halves
- * of its identity: the directory row that proves the object exists, and the
- * workspace id its Durable Object is named by.
- *
- * The directory is consulted for the same reason a child substream's is. A
- * SidekickDO shares the parent-id namespace with every work stream — both are
- * bare UUIDs in `workstream_authority_routes` — so an active route alone cannot
- * tell the two apart, and resolving a work-stream id here would name, and
- * thereby create, an empty SidekickDO that never existed. The directory row is
- * the only thing in reach that distinguishes them.
- *
- * It costs a real object: a Sidekick created since the last projection is
- * refused until its directory row lands. Refusing an object that exists is the
- * recoverable half of that trade; materializing one that does not is not.
- */
-async function resolveInspectionSidekickRoute(
-  env: Env,
-  input: { workspaceId: string; sidekickId: string },
-  expectedGeneration?: number,
-): Promise<InspectionWorkspaceRoute | null> {
-  const route = await resolveInspectionWorkspaceRoute(
-    env,
-    input.workspaceId,
-    expectedGeneration,
-  );
-  if (!route) return null;
-  const workspace = await workspaceStub(env, input.workspaceId);
-  const directory = await workspace.runInspectionSql({
-    sql: `SELECT automation_id FROM automation_directory
-           WHERE automation_id = ? AND workspace_id = ?`,
-    bindings: [input.sidekickId, input.workspaceId],
-  });
-  return directory.rows.length === 0 ? null : route;
-}
-
-/**
- * An artifact is fenced by its workspace for the same reason a Sidekick is, and
- * with more need of it: ArtifactHostDO's name carries no workspace segment at
- * all, so nothing about the name itself proves the caller may reach it, and
- * every artifact UUID in the account is a valid object name.
+ * An artifact is fenced by its workspace: ArtifactHostDO's name carries no
+ * workspace segment at all, so nothing about the name itself proves the caller
+ * may reach it, and every artifact UUID in the account is a valid object name.
  *
  * `artifact_registry` lives in WorkspaceDO beside the resource authority rather
  * than in D1, and it is the only place that says which artifacts a workspace
  * has. An unregistered UUID is refused here rather than materializing an empty
  * supervisor.
  *
- * **Membership is weaker here than it is for a Sidekick, and knowingly so.**
- * `createAutomation` creates the SidekickDO before anything records it, so a
- * directory row there implies the object. The artifact publish path is the
- * other way round: `resource-bridge.ts` writes this registry row and only then
- * calls `pointArtifactAtVersion`, which is what initializes the supervisor —
+ * **Membership here does not imply the object, and knowingly so.**
+ * `resource-bridge.ts` writes this registry row and only then calls
+ * `pointArtifactAtVersion`, which is what initializes the supervisor —
  * deliberately last, so that serving never points at bytes a viewer cannot yet
  * read. Between those two calls, and permanently if the second never returns,
  * a registered artifact has no supervisor, and running SQL against it creates
@@ -491,21 +432,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
-  async resolveSidekick(input: unknown): Promise<EngineeringSidekickTargetLookup> {
-    const request = parseRpcInput(SidekickInspectionInputSchema, input, "resolveSidekick");
-    const route = await resolveInspectionSidekickRoute(this.env, request);
-    if (!route) return { found: false };
-    return EngineeringSidekickTargetLookupSchema.parse({
-      found: true,
-      value: {
-        region: this.env.AVALON_REGION,
-        workspaceId: request.workspaceId,
-        sidekickId: request.sidekickId,
-        authorityGeneration: route.authority_generation,
-      },
-    });
-  }
-
   async resolveArtifact(input: unknown): Promise<EngineeringArtifactTargetLookup> {
     const request = parseRpcInput(ArtifactInspectionInputSchema, input, "resolveArtifact");
     const route = await resolveInspectionArtifactRoute(this.env, request);
@@ -568,61 +494,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workstreamId: request.workstreamId,
         substreamId: request.substreamId,
         result: await substream.runInspectionSql(request.query),
-      },
-    });
-  }
-
-  async runSidekickSql(input: unknown): Promise<EngineeringSqlLookup> {
-    const request = parseRpcInput(SidekickSqlInspectionInputSchema, input, "runSidekickSql");
-    if (!await resolveInspectionSidekickRoute(
-      this.env,
-      request,
-      request.authorityGeneration,
-    )) return { found: false };
-    const sidekick = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_DOS,
-      request.workspaceId,
-      automationDOName(this.env.AVALON_REGION, request.workspaceId, request.sidekickId),
-    );
-    return EngineeringSqlLookupSchema.parse({
-      found: true,
-      value: {
-        region: this.env.AVALON_REGION,
-        workspaceId: request.workspaceId,
-        workstreamId: null,
-        substreamId: null,
-        sidekickId: request.sidekickId,
-        result: await sidekick.runInspectionSql(request.query),
-      },
-    });
-  }
-
-  /**
-   * Import a Sidekick into its Organization object again, after an operator
-   * has repaired whatever made its last attempt fail. The answer is the
-   * ledger's: `imported`, or `pending` with the new attempt's code.
-   */
-  async retrySidekickImport(input: unknown): Promise<EngineeringSidekickImportLookup> {
-    const request = parseRpcInput(SidekickImportRetryInputSchema, input, "retrySidekickImport");
-    if (!await resolveInspectionSidekickRoute(
-      this.env,
-      request,
-      request.authorityGeneration,
-    )) return { found: false };
-    const workspace = await workspaceStub(this.env, request.workspaceId);
-    const outcome = await workspace.retrySidekickImport({
-      workspaceId: request.workspaceId,
-      automationId: request.sidekickId,
-    });
-    return EngineeringSidekickImportLookupSchema.parse({
-      found: true,
-      value: {
-        region: this.env.AVALON_REGION,
-        workspaceId: request.workspaceId,
-        sidekickId: request.sidekickId,
-        state: outcome.state,
-        lastErrorCode: outcome.lastErrorCode,
       },
     });
   }

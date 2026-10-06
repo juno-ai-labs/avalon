@@ -234,16 +234,14 @@ export interface InventoryObject {
  * Keep it in step with the call sites of `withMigrationReport` in `apps/api`. A
  * class missing from here is never swept at all; a class listed here whose
  * objects never wake sits in `unreported` forever. `WorkspaceScheduler`, and
- * later `WorkstreamDO` and `SpaceDO`, were removed when their classes were
- * deleted: their objects can no longer report, so leaving them here would have
- * parked every one of them in `unreported` — the exact count this list exists
- * to keep meaningful.
+ * later `WorkstreamDO`, `SpaceDO` and `SidekickDO` (once `AutomationDO`), were
+ * removed when their classes were deleted: their objects can no longer report,
+ * so leaving them here would have parked every one of them in `unreported` —
+ * the exact count this list exists to keep meaningful.
  */
 export const REPORTING_CLASSES = [
   "SubstreamAgent",
   "WorkspaceDO",
-  "AutomationDO", // Kept for pre-rename inventory and queued commands.
-  "SidekickDO",
 ] as const;
 
 export const MigrationRunRequestSchema = z.object({

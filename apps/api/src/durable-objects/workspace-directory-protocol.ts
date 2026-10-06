@@ -349,32 +349,6 @@ export const WorkspaceDirectoryApplyRequestSchema = deferredZodSchema(() => z.st
   }
 }));
 
-/**
- * An automation's own sidebar row, published by its object through the same
- * Queue leg a work stream's aggregate takes.
- */
-export const WorkspaceAutomationDirectoryApplyRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  envelope: ParentEffectEnvelopeSchema,
-}).superRefine((request, context) => {
-  if (request.envelope.workspaceId !== request.workspaceId) {
-    context.addIssue({
-      code: "custom",
-      path: ["envelope", "workspaceId"],
-      message: "Automation directory effects must target their owning workspace",
-    });
-  }
-  if (request.envelope.parentKind !== "automation"
-    || request.envelope.effect.kind !== "directory_automation"
-    || request.envelope.effect.automationId !== request.envelope.parentId) {
-    context.addIssue({
-      code: "custom",
-      path: ["envelope", "effect", "kind"],
-      message: "Only an automation's own directory effect may use this handoff",
-    });
-  }
-}));
-
 export const WorkspaceDirectoryApplyResultSchema = deferredZodSchema(() => z.strictObject({
   accepted: z.array(z.strictObject({
     messageId: z.string().min(1).max(500),
@@ -448,7 +422,6 @@ export type WorkspaceDirectoryScheduleTargetsResult = z.infer<typeof WorkspaceDi
 export type WorkspaceDirectoryResourceAccessRequest = z.infer<typeof WorkspaceDirectoryResourceAccessRequestSchema>;
 export type WorkspaceDirectoryResourceAccessResult = z.infer<typeof WorkspaceDirectoryResourceAccessResultSchema>;
 export type WorkspaceDirectoryApplyRequest = z.infer<typeof WorkspaceDirectoryApplyRequestSchema>;
-export type WorkspaceAutomationDirectoryApplyRequest = z.infer<typeof WorkspaceAutomationDirectoryApplyRequestSchema>;
 export type WorkspaceDirectoryApplyResult = z.infer<typeof WorkspaceDirectoryApplyResultSchema>;
 export type WorkspaceRegionalEffectApplyRequest = z.infer<typeof WorkspaceRegionalEffectApplyRequestSchema>;
 export type WorkspaceRegionalEffectApplyResult = z.infer<typeof WorkspaceRegionalEffectApplyResultSchema>;

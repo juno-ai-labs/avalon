@@ -170,7 +170,7 @@ export class SessionImportRunService {
 
   /**
    * The agent's child conversation, provisioned under the Channel's parent
-   * and started. Modeled on a Sidekick run (`SidekickDO.provisionRun`): the
+   * and started. Modeled on a Sidekick run (`provisionSidekickRun`): the
    * child is reserved on the parent, so it is in no listing, admits only the
    * person importing, and runs the `session_import` agent profile.
    */
