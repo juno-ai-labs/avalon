@@ -11,13 +11,14 @@ export function clampSidebarWidth(width: number): number {
   return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
 }
 
+/** The saved width, or the fallback; either is clamped, so a default can never sit outside the range. */
 export function loadSidebarWidth(key: string, fallback = DEFAULT_SIDEBAR_WIDTH): number {
-  if (typeof window === 'undefined') return fallback;
+  if (typeof window === 'undefined') return clampSidebarWidth(fallback);
   try {
     const stored = Number.parseFloat(window.localStorage.getItem(key) ?? '');
-    return Number.isFinite(stored) ? clampSidebarWidth(stored) : fallback;
+    return clampSidebarWidth(Number.isFinite(stored) ? stored : fallback);
   } catch {
-    return fallback;
+    return clampSidebarWidth(fallback);
   }
 }
 
