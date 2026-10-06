@@ -499,7 +499,10 @@ socket of their own — Sideline ([`impersonation.md`](impersonation.md)) and th
 lite browser client ([`browser-client.md`](browser-client.md)) — hold one
 through `watchWorkspaceReach` in `@rally/contracts/workspace-reach-watch`, which
 subscribes, discards the sidebar, and reports only this event and subscribe
-answers, with a diagnostic hook the host logs when it cannot connect.
+answers, with a diagnostic hook the host logs when it cannot connect. It is a
+filter over `watchWorkspaceSocket` in the same module, the transport alone,
+which the desktop's main process also uses to hold the Channel directory behind
+the menu bar ([`menu-bar.md`](menu-bar.md)).
 
 With `channelsBySpace`, that page is empty and the directory comes from the
 Space walk above.

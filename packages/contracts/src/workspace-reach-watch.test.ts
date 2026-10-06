@@ -5,7 +5,9 @@ import {
   WORKSPACE_SOCKET_HEARTBEAT_MS,
   WORKSPACE_SOCKET_PONG_TIMEOUT_MS,
   watchWorkspaceReach,
+  watchWorkspaceSocket,
   type ReachSocket,
+  type WorkspaceSocketConnection,
   type ReachWatchDiagnostic,
 } from "./workspace-reach-watch";
 
@@ -221,5 +223,45 @@ describe("watchWorkspaceReach", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets).toHaveLength(1);
     expect(diagnostics).toEqual([]);
+  });
+});
+
+describe("watchWorkspaceSocket", () => {
+  it("hands the host each frame with a connection that stops sending once it has closed", async () => {
+    const sockets: FakeSocket[] = [];
+    const subscribed: unknown[] = [];
+    const messages: unknown[] = [];
+    const closed: WorkspaceSocketConnection[] = [];
+    let connection: WorkspaceSocketConnection | null = null;
+    const stop = watchWorkspaceSocket({
+      ticket: async () => ({ url: "wss://api.example/socket/workspaces/w", ticket: "t" }),
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      onSubscribed: (answer, current) => {
+        subscribed.push(answer);
+        connection = current;
+      },
+      onMessage: (message) => messages.push(message),
+      onClosed: (current) => closed.push(current),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const socket = sockets[0]!;
+    socket.emit("open");
+
+    socket.message(subscribeAnswer);
+    socket.message(broadcast);
+    expect(subscribed).toEqual([subscribeAnswer]);
+    expect(messages).toEqual([broadcast]);
+
+    expect(connection!.send({ type: "space_channels" })).toBe(true);
+    expect(JSON.parse(socket.sent.at(-1)!)).toEqual({ type: "space_channels" });
+
+    socket.emit("close", { code: 1006 });
+    expect(closed).toEqual([connection]);
+    expect(connection!.send({ type: "space_channels" })).toBe(false);
+    stop();
   });
 });
