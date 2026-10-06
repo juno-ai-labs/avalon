@@ -291,11 +291,12 @@ describe("durable run authority revalidation", () => {
       .rejects.toThrow(/no longer running/i);
   });
 
+  // `pending` is not here: provisioning starts a run's loop before it reports
+  // the run running, so a pending row is live (sidekick-run-continuation.test.ts).
   it.each([
     "stopped",
     "completed",
     "failed",
-    "pending",
   ] as const)("stops a run its automation marked %s before a provider write", async (runState) => {
     const database = new AuthorityDatabase(state());
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
