@@ -185,9 +185,7 @@ definition revisions, schedules and run history are in the Organization
 object: `run_workspace_sql` over the `sidekick_*` tables, filtered by
 `sidekick_id`. The same ID passed to `list_substreams` and `run_substream_sql`
 as the `workstreamId` opens its conversation, because a Sidekick is a
-conversation parent like a work stream. `run_sidekick_sql` opens the legacy
-`SidekickDO`, frozen once the Sidekick is imported, and `retry_sidekick_import`
-re-runs an import that failed after a repair.
+conversation parent like a work stream.
 
 A safe first workspace query is:
 
@@ -228,8 +226,6 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Channel's or Space's parent state in the `parent_*` tables. |
 | `run_substream_sql` | `workspaceId`, `workstreamId`, `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SubstreamAgent. |
-| `run_sidekick_sql` | `workspaceId`, `sidekickId`, `sql`, optional `bindings` | Runs arbitrary SQLite in the legacy SidekickDO, frozen once its Sidekick is imported. |
-| `retry_sidekick_import` | `workspaceId`, `sidekickId` | Re-runs a Sidekick's move into its Organization object after a repair; returns `imported`, or `pending` with the new attempt's code. Changes production state. |
 | `run_artifact_sql` | `workspaceId`, `artifactId`, `sql`, optional `bindings` | Runs arbitrary SQLite in ArtifactHostDO — the artifact's supervisor, not its facet. |
 | `list_feature_flags` | None | Lists Ace's managed product flags with their live Flagship definitions. |
 | `update_feature_flag` | `key`, `description`, `enabled`, `default_variation`, `rules` | Replaces a managed product flag's whole definition through Ace and notifies connected clients. |

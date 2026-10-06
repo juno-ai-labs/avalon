@@ -452,12 +452,6 @@ export class HostedSidekick {
         now,
         now,
       );
-      // Hosted from birth: nothing in a legacy object to import.
-      this.sql.exec(
-        `INSERT INTO sidekick_imports (sidekick_id, state, imported_at) VALUES (?, 'imported', ?)
-         ON CONFLICT(sidekick_id) DO UPDATE SET state = 'imported', imported_at = excluded.imported_at`,
-        request.automationId, now,
-      );
       this.registerChild("0", "main", request.authorUserId, now);
       this.host.noteDirectoryChanged(this.sidekickId, false, now);
     });

@@ -4,8 +4,6 @@ Rally's regional stateful hierarchy is `WorkspaceDO -> {hosted Channel, Space
 and Sidekick parents} -> SubstreamAgent`. There is one `WorkspaceDO` per
 workspace, which hosts the parent authority of every Channel, Space and Sidekick
 in it, and one `SubstreamAgent` per independently addressable model context. A
-legacy `SidekickDO` per Sidekick only exports its rows until the class is
-deleted. A
 `SubstreamAgent` has a typed parent, `{kind: "workstream" | "automation" |
 "space", id}`; substream `0` is that parent's primary conversation (a work
 stream's main feed, an automation's own chat, or the idle conversation of a
@@ -32,7 +30,7 @@ by [`automation-lifecycle.md`](automation-lifecycle.md); this document owns the
 hierarchy, its identity, its effect pipeline, and the conversation object.
 
 The Durable Object classes in this subsystem (`WorkspaceDO` and
-`SubstreamAgent`, and the legacy `SidekickDO` until it is deleted) use SQLite-backed namespaces and explicit SQL only.
+`SubstreamAgent`) use SQLite-backed namespaces and explicit SQL only.
 The main conversation's SQLite also owns the imported-session source identity,
 per-message revision checkpoint, and re-import receipts. The append and checkpoint
 commit together; [session import](session-import.md) owns the update semantics.
@@ -300,7 +298,6 @@ Names include region for operator clarity and deterministic routing:
 WorkspaceDO       <region>:<workspace-id>                                in WORKSPACE_DOS
                   (hosts every Channel and Space parent, by parent id)
                   (and every Sidekick parent, by Sidekick id)
-SidekickDO        <region>:<workspace-id>:automation:<automation-id>     in AUTOMATION_DOS (legacy, export only)
 SubstreamAgent 0  <region>:<workspace-id>:<parent-id>                    in SUBSTREAM_AGENTS
 SubstreamAgent N  <region>:<workspace-id>:<parent-id>:<substream-id>
 ```
@@ -1156,11 +1153,10 @@ Organization does with them, which today is one list on one screen.
 A Sidekick
 forwards nothing: an automation's conversation and its runs are not workspace rooms, so
 their directory, activity, and notification effects are receipted, applied to
-the parent's own projections, and dropped. What the workspace hears from an
-automation is the automation's own `directory_automation` row, enqueued by the
-object itself whenever the automation changes, under the projection key
-`automation`, and applied by `WorkspaceDO.applyAutomationDirectory` on a
-strictly newer `sourceVersion` (equal with a different hash is a conflict).
+the parent's own projections, and dropped. A Sidekick's own sidebar row is its
+`automation_directory` row, written in place by `HostedSidekick` in the same
+`WorkspaceDO` transaction as the change; a late `directory_automation` message
+from the deleted `SidekickDO` is acknowledged and ignored.
 
 The directory `Workstream` that WorkspaceDO pushes for the sidebar carries a
 bounded participant preview on personal rows only: at most three user ids,
@@ -1233,7 +1229,6 @@ complete relationship map is:
 | SubstreamAgent (a Sidekick run child) | WorkspaceDO | typed RPC | child `durable_outbox` row on channel `external_conversation_binding_v1`, written in the tool receipt's `complete` transaction when a send reports where its replies arrive; the alarm delivers it with `recordOutboundExternalConversationBinding`, naming the child as the target, and deletes it once WorkspaceDO has it. A row that does not parse is parked `dead`. See [`external-conversation-bindings.md`](external-conversation-bindings.md) |
 | regional Queue Worker | WorkspaceDO (hosted parent) | typed RPC | `receiveChildEffects`: parent receipt, child projection, aggregate, state row, and outbox row in one transaction; a replay is answered from the receipt. A hosted parent's directory rows are applied inside that same transaction, never through `parent_outbox` |
 | WorkspaceDO (hosted parent) | regional Queue | Cloudflare Queue | activity and notification rows of `parent_outbox`, sent with the `parent_effect` envelope inline and deleted when the Queue accepts it |
-| regional Queue Worker | WorkspaceDO | typed RPC | `applyAutomationDirectory`: a legacy Sidekick's sidebar row, fenced on its own `sourceVersion`; it enrols the Sidekick for import and never overwrites an imported one |
 | WorkspaceDO alarm | regional Queue, then WorkspaceDO | Cloudflare Queue, typed RPC | `sidekick_run_provision`: a run's entry hands it to the consumer, which opens its conversation and reports `sidekickRunProvisioned`; the entry sends again, later each time, until the report |
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyWorkstreamRegionalEffect`: first-party activity event, all target edges, and the replay receipt commit atomically; the object-local sequence is the digest/feed cursor |
 | regional Queue Worker | WorkspaceDO | typed RPC | notification intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data |
@@ -1657,7 +1652,7 @@ same-millisecond IDs in random order, so freshness always compares authority
 generation and the relevant common/viewer waterline, never UUID lexical order
 alone.
 
-### Hosted Sidekicks and the legacy `SidekickDO`
+### Hosted Sidekicks
 
 A Sidekick's rows are `WorkspaceDO`'s, keyed by `sidekick_id`:
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them)
@@ -1666,13 +1661,6 @@ they mean. `onChildCommonProjection` maps a run child's accepted conversation
 state onto `sidekick_runs.state`, and only a newer projection with a live state
 reopens a finished run (see
 [continuing a run](automation-lifecycle.md#continuing-a-run)).
-
-The legacy `SidekickDO` keeps its migrations in `sidekick-do.ts` so an object
-not yet imported reaches the schema the export reads: v1 is the automation's
-own tables, then the parent statements `conversation-parent-object.ts` exports,
-then `_internal_durable_alarms`, and v14 the export freeze and its alarm
-snapshot. Its columns are the ones the hosted tables carry under the same
-names.
 
 ### `SubstreamAgent`
 
@@ -1715,7 +1703,7 @@ path.
 
 ### `_internal_durable_alarms`
 
-Present in WorkspaceDO and SubstreamAgent alike (and the legacy SidekickDO),
+Present in WorkspaceDO and SubstreamAgent alike,
 added by each one's own migration history from the statements
 `durable-objects/scheduled-alarms.ts` exports.
 

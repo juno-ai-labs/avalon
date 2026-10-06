@@ -208,8 +208,23 @@ those viewers.
 
 ## Decision log
 
-Decisions made while building step 1 that differ from, or add to, the design
-below. Newest first.
+Decisions made while building steps 1 and 3 that differ from, or add to, the
+design below. Newest first.
+
+- **2026-10-06: Step 3 keeps `automation_directory`, the `automation`
+  revocation hop and the Sidekick retirement node.** The design dropped all
+  three. The directory row became the definition row (decision 3 below, as
+  built), so migration 92 drops only `sidekick_imports`. The revocation hop
+  and the retirement node already address the Organization object rather than
+  `SidekickDO`, and a Sidekick's run conversations still need both, so what
+  step 3 removes is their legacy target, not the kinds.
+- **2026-10-06: Step 2's gate passed with two Sidekicks never imported.**
+  Every Organization was at
+  schema 91, and 46 of 48 Sidekicks were imported. The two left are in retired
+  Organizations (`Morgan Inc.-demo`, `BioPower-demo`), which refuse new work, so
+  they were not retried: nothing can read them. Their rows go with the class.
+  The third check, the migration tracker's `SidekickDO` list against the
+  ledger, was run by a person with tracker access and passed.
 
 - **2026-10-05: "One frame" for an archive means one send, after the pauses.**
   An archived Channel's row on the workspace socket is unlisted, and a
