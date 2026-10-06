@@ -46,7 +46,7 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
     logInfo(env, "push_delivery_skipped", { intent_id: row.intentId, reason: context.reason });
     return true;
   }
-  const { effect, childId } = context;
+  const { effect, childId, identity } = context;
   const title = effect.kind === "mention_notification"
     ? `${effect.authorNameSnapshot} mentioned you in ${effect.workstreamTitleSnapshot}`
     : `${effect.actorNameSnapshot} added you to ${effect.workstreamTitleSnapshot}`;
@@ -55,7 +55,7 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
     { sources: "none" },
   );
   const attention = WorkspaceAttentionSchema.parse(await workspace.attention({
-    workspaceId: id, userId: row.recipientUserId,
+    workspaceId: id, userId: row.recipientUserId, accessClass: identity.access_class,
   }));
   const url = await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
     workstreamId: row.workstreamId, ...(childId ? { substreamId: childId } : {}) });
