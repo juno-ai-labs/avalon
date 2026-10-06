@@ -50,6 +50,7 @@ function labels(items: MenuItemConstructorOptions[]): (string | undefined)[] {
 const workstreams = Array.from({ length: 7 }, (_value, index) => ({
   id: `workstream-${index}`,
   title: `Channel ${index}`,
+  substreamId: null,
 }));
 
 function main(id: string, title: string, reason: MenuBarAttentionRow['reason'] = 'unread'): MenuBarAttentionRow {
@@ -72,7 +73,7 @@ describe('menu bar menu', () => {
           reason: 'unread',
         },
       ],
-      recents: [{ id: 'c', title: 'Hiring loop' }, { id: 'a', title: 'Acme renewal' }],
+      recents: [{ id: 'c', title: 'Hiring loop', substreamId: null }, { id: 'a', title: 'Acme renewal', substreamId: null }],
     });
 
     expect(labels(items)).toEqual([
@@ -188,7 +189,7 @@ describe('menu bar menu', () => {
         attention: [{
           key: 'b:s', workstreamId: 'b', substreamId: 's', title: 'Breakout', channelTitle: 'Pricing', reason: 'unseen',
         }],
-        recents: [{ id: 'workstream-0', title: 'Renewal thread' }],
+        recents: [{ id: 'workstream-0', title: 'Renewal thread', substreamId: null }],
       },
       { actions: menuActions },
     );

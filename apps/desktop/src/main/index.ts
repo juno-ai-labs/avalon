@@ -1314,7 +1314,14 @@ const channelDirectoryWatch = new ChannelDirectoryWatch({
     ticket: async () => SocketTicketSchema.parse(await rallyApiRequest('/workspace/socket')),
     open: (url, ticket) => reachSocketFromRealtimeClient(menuBarSocketFactory(url, socketTicketProtocols(ticket))),
     ...handlers,
-    onDiagnostic: logMenuBarSocketDiagnostic,
+    onDiagnostic: (diagnostic) => {
+      logMenuBarSocketDiagnostic(diagnostic);
+      // The server ended this session's access, or the session itself, and
+      // the socket will not redial. Forget the rows rather than keep showing
+      // titles and a count this account may no longer see; the next session
+      // change finds the watch stopped and opens it again.
+      if (diagnostic.code === 'stopped') channelDirectoryWatch.stop();
+    },
   }),
   onChange: () => menuBarController.refresh(),
   requestId: uuidV7,
@@ -1323,6 +1330,8 @@ const channelDirectoryWatch = new ChannelDirectoryWatch({
 
 /** Which account and Organization the socket serves; a token renewal keeps it. */
 let menuBarDirectoryIdentity: string | null = null;
+/** A guest is signed in but refused the Channel list: nothing will load, so the menu must not say it is loading. */
+let menuBarDirectoryUnavailable = false;
 let menuBarDirectorySync: Promise<void> = Promise.resolve();
 
 /**
@@ -1339,8 +1348,12 @@ function syncMenuBarDirectory(): void {
   menuBarDirectorySync = menuBarDirectorySync.then(async () => {
     const authSet = await loadStoredAuthSet();
     const active = authSet ? activeStoredCredential(authSet) : null;
-    const live = active !== null && active.binding.workspaceId !== null && menuBarItemIsLive()
-      && !activeStoredCredentialIsGuest(authSet, await loadStoredProfileSet());
+    const guest = activeStoredCredentialIsGuest(authSet, await loadStoredProfileSet());
+    const live = active !== null && active.binding.workspaceId !== null && menuBarItemIsLive() && !guest;
+    if (menuBarDirectoryUnavailable !== guest) {
+      menuBarDirectoryUnavailable = guest;
+      menuBarController.refresh();
+    }
     const identity = live
       ? `${active.binding.userId}:${active.binding.region}:${active.binding.workspaceId}`
       : null;
@@ -1404,7 +1417,10 @@ const menuBarController = new MenuBarController({
   supported: process.platform === 'darwin',
   appName: app.name,
   createTray: createMenuBarTray,
-  content: () => menuBarContentFromDirectory(channelDirectoryWatch.snapshot()),
+  content: () => {
+    const snapshot = channelDirectoryWatch.snapshot();
+    return menuBarContentFromDirectory(menuBarDirectoryUnavailable ? { ...snapshot, complete: true } : snapshot);
+  },
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
   signedIn: () => Boolean(inMemoryAuthSet),

@@ -80,8 +80,10 @@ immediately. In order:
    newest `lastActivityAt` first, ties A to Z — over every listed Channel,
    archived and system rows excluded. This is the sidebar's Recent sort under
    All: no Space filter, and no pins, which belong to one Space placement
-   ([`workstream-pinning.md`](workstream-pinning.md)). **No recent channels**
-   when there are none.
+   ([`workstream-pinning.md`](workstream-pinning.md)). A Channel listed to the
+   reader only through a Breakout (`mainWithheld`) opens its first Breakout,
+   since Main is not theirs; until its Breakout list arrives it is left out
+   rather than opening Main. **No recent channels** when there are none.
 3. A separator, then **Open Rally** and **Quit Rally**.
 
 Signed out, both sections collapse to one **Needs attention** header over
@@ -340,8 +342,8 @@ rather than beside either one.
 | --- | --- |
 | The socket drops | `watchWorkspaceSocket` redials with the shared backoff and logs the close. The rows already held stay on screen; the next subscribe walks again and reconciles them. |
 | The socket drops mid-walk | The walk's requests are rejected, the list stays marked incomplete (**Still loading channels**), and the next subscribe walks again. |
-| The server ends the session's access | The watch stops redialling (`stopped`) and logs it; the next session change opens a new one. |
-| The active workspace is a guest's | No socket; the menu has nothing to list. |
+| The server ends the session's access | The watch stops redialling (`stopped`), logs it, and forgets every row, so no title or count outlives the access. The next session change opens it again. |
+| The active workspace is a guest's | No socket. The directory is reported complete and empty, so the menu says **Nothing needs your attention** and **No recent channels** rather than loading forever. |
 | Signed out | One **Needs attention** header over a disabled **Sign in to Rally** row, a rule, and the two trailing controls. No number beside the icon. |
 | A label runs long | Truncated to 60 characters at the last word boundary in the final 20, hard otherwise. |
 | Nothing waiting, or nothing recent | The section's header over one disabled line saying so. |
