@@ -627,9 +627,7 @@ version, which an upsert's `RETURNING` does not give.
 
 **Consequences:** A new Sidekick read that needs several rows joins them; a
 helper that re-reads the row inside a method that already has it is the
-pattern this removed. A principal claim with two usable replacements for one
-plugin now picks the newest connection rather than whichever the scan saw
-last.
+pattern this removed.
 
 ### 2026-10-06 — `SidekickDO` and the Sidekick import are deleted
 
