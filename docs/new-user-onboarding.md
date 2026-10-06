@@ -57,7 +57,11 @@ editable. Onboarding has no teammate discovery API.
 - Appearance is identity-owned; storing it only in a renderer would make devices
   disagree and prevent other members from seeing it.
 - Existing accounts have explicit eligibility false; absence of a journey never
-  forces them through a new flow.
+  forces them through a new flow. Email sign-in also starts an account
+  ineligible, since most arrive as guests. Creating an organization makes an
+  account eligible when it is a member of no organization yet (a guest
+  relationship does not count), so a browser creator gets the creator journey a
+  new Mac account gets.
 - The workspace object owns progress. Generic SQL cannot address its typed-only
   onboarding table.
 - Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt.
