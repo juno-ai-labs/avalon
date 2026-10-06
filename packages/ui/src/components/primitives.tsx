@@ -176,10 +176,8 @@ export function Tip({
         // caller's handler ahead of its own and skips its own on a prevented
         // event — and it is the whole intervention: the trigger keeps every
         // other behaviour, and the next real focus or movement opens the tip as
-        // it always did. See `lib/window-activation.ts`.
-        //
-        // Focus also opens only after a key: focus that code moves after a tap
-        // or a click is nobody tabbing to the control.
+        // it always did. Focus also opens only after a key; see
+        // `focusFollowsKeyboard` in `lib/window-activation.ts`.
         onFocus={(event) => {
           if (!hasUserInputSinceWindowActivation() || !focusFollowsKeyboard()) event.preventDefault();
         }}

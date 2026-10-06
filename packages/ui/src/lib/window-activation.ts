@@ -95,11 +95,7 @@ function observePointerPosition(event: PointerEvent): void {
   awaitingInput = false;
 }
 
-/**
- * Whether the last deliberate input was a pointer press rather than a key.
- * Focus that code moves after a tap or a click (a menu level focusing its first
- * control, a dialog handing focus back) is not a person tabbing to a control.
- */
+/** Whether the last deliberate input was a pointer press rather than a key. */
 let lastInputWasPointer = false;
 
 function observeDeliberateInput(event: Event): void {

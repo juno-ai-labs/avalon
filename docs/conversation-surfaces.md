@@ -696,13 +696,14 @@ below the `App` that installs it.
 has room, which Radix's tooltip does not expose and which would still show a tip
 nobody asked for. Removing this one tip, which leaves every other tip that a
 level or a returning dialog focuses with the same defect. `:focus-visible`,
-for the reason the 2026-09-11 "Coming back to Rally" entry gives, and because Chromium drew it on this
-very focus.
+because Chromium drew it on this very focus.
 
 **Consequences:** Hover is unchanged; only focus asks. A pointer user no longer
 gets a tip on focus that code moves after their click, which was noise on the
-desktop too. The answer is permissive until the tracking is installed, so a
-test mounting one component sees the old behaviour.
+desktop too. A screen reader moves focus without a `keydown`, so after a
+click its focus opens no tip until a key is pressed; triggers carry their
+`aria-label`, so little is lost. The answer is permissive until the tracking is
+installed, so a test mounting one component sees the old behaviour.
 
 ### 2026-09-24 — One composer host on every surface
 
