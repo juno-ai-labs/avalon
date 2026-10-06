@@ -201,6 +201,12 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   and filters by membership incarnation. It never replaces canonical grant
   admission; see [scope grant directory](scope-grant-directory.md).
 
+- `user_login_identities` holds each verified sign-in method as provider and
+  subject. Migration 0120 checks the provider's shape rather than listing
+  `google` and `email`, so a new identity provider needs no schema change. It is
+  also how a deployment links a person to their regional user; see
+  [multiple workspaces](multiple-workspaces.md#authority-and-data-flow).
+
 - `sessions`, `oauth_states`, and `desktop_login_tickets` support revocable
   sessions, PKCE, and single-use Electron deep-link completion. A session that
   simply expires is also marked `revoked_at` by the five-minute reaper, which is

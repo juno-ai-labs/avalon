@@ -43,6 +43,11 @@ loser's session. There is no mutable active-workspace field. Selecting workspace
 A leaves a tab using B unchanged. Child expiry cannot exceed the identity
 session's expiry.
 
+`POST /browser/workspace/create` creates an organization on Global through the
+desktop's create path and revokes the bearer session that path returns, so
+nothing but the new organization's region and id reaches JavaScript; the
+browser then selects it as above.
+
 `GET /browser/session` describes identity; `GET /browser/workspaces` lists its
 current regional relationships. `POST /browser/session/renew` applies the
 ordinary session renewal window, absolute lifetime ceiling, and eligibility

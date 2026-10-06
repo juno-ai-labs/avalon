@@ -220,8 +220,13 @@ it("creates an organization for an email-only account and opens it with the cook
     expect(selected.status).toBe(200);
     expect(await selected.json()).toMatchObject({ workspace:{ id:created.workspaceId,name:"Acme Research",role:"owner" } });
     expect((await create({ name:"Acme Research",operationId:crypto.randomUUID() },null)).status).toBe(401);
-    // A second organization is a fresh operation and a fresh organization.
-    const second = await create({ name:"Second Team",operationId:"01920000-0000-7000-8000-000000000002" });
+    // A new creator sets the organization up; one already a member elsewhere keeps their exemption.
+    expect(db.prepare("SELECT onboarding_eligible FROM users WHERE id=?").get(entry.session.user.id)).toEqual({ onboarding_eligible:1 });
+    db.prepare("UPDATE users SET onboarding_eligible=0 WHERE id=?").run(entry.session.user.id);
+    // A second organization is a fresh operation and a fresh organization, even
+    // under the same name in the same minute.
+    const second = await create({ name:"Acme Research",operationId:"01920000-0000-7000-8000-000000000002" });
     expect(second.status).toBe(201);
+    expect(db.prepare("SELECT onboarding_eligible FROM users WHERE id=?").get(entry.session.user.id)).toEqual({ onboarding_eligible:0 });
   } finally { for (const database of workspaceObject.databases) database.close(); }
 });
