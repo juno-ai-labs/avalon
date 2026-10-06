@@ -328,6 +328,8 @@ menu already cover.
 purpose; both selectors weigh the same, so moving it above that rule silently
 brings the uneven padding back.
 
+Shipped in [#1116](https://github.com/juno-ai-labs/avalon/pull/1116).
+
 ### 2026-10-06 — People can be removed from the title menu
 
 **What changed:** Each participant row in the People level carries a dots
