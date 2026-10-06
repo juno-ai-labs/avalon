@@ -14,9 +14,11 @@ if (!example || !dest || !fs.existsSync(src)) {
   console.error(`usage: new.mjs <example> <dest>\nexamples: ${fs.readdirSync(path.join(kit, '..', 'examples')).join(', ')}`);
   process.exit(2);
 }
+const files = fs.readdirSync(src).filter(f => /\.(html|mjs)$/.test(f)); // renders and previews stay behind
+const taken = files.filter(f => fs.existsSync(path.join(dest, f)));
+if (taken.length) { console.error(`${dest} already has ${taken.join(', ')}; not overwriting a draft. Pick a new folder.`); process.exit(1); }
 fs.mkdirSync(dest, { recursive: true });
-for (const f of fs.readdirSync(src)) {
-  if (!/\.(html|mjs)$/.test(f)) continue; // renders and previews stay behind
+for (const f of files) {
   const body = fs.readFileSync(path.join(src, f), 'utf8').replaceAll('../../kit/', kit + '/');
   fs.writeFileSync(path.join(dest, f), body);
 }

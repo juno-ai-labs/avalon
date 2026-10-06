@@ -32,8 +32,13 @@ function bentoTour(layout, order, { dive, pull, end, move = .42, fill = { w: W *
   keys.push([pull + .8, overview, eio5]);
   return t => {
     const [x, y, s] = kf(t, keys);
-    const cur = order.reduce((a, v) => t >= v[1] ? v : a, null);
-    const drift = cur && t < pull ? 1 + .04 * eo3(prog(t, cur[1] + move, cur[1] + 1.8)) : 1;
+    // A slow push while a tile holds the camera. The push reached by the end
+    // of one hold eases away during the next move, so a move never starts with a jump.
+    const hold = (i, at) => i < 0 ? 0 : eo3(prog(at, order[i][1] + move, order[i][1] + 1.8));
+    let i = -1; order.forEach(([, t0], j) => { if (t >= t0) i = j; });
+    let drift = 1;
+    if (i >= 0 && t < pull) drift = 1 + .04 * (hold(i - 1, order[i][1]) * (1 - eio5(prog(t, order[i][1], order[i][1] + move))) + hold(i, t));
+    else if (i >= 0) drift = 1 + .04 * hold(order.length - 1, pull) * (1 - eio5(prog(t, pull, pull + .8)));
     const settle = 1 + .025 * prog(t, pull + .8, end);
     return { x, y, s: s * drift * settle };
   };
