@@ -7,7 +7,7 @@ import { HostedSidekick, type HostedSidekickHost } from "../../src/durable-objec
 import type { WorkspaceDO } from "../../src/durable-objects/workspace-do";
 import { workspaceDOName } from "../../src/durable-objects/names";
 import type { Env } from "../../src/env";
-import { SidekickRunProvisionQueueMessageSchema } from "../../src/durable-objects/automation-do-protocol";
+import { AUTOMATION_RUN_ALARM_KIND, SidekickRunProvisionQueueMessageSchema } from "../../src/durable-objects/automation-do-protocol";
 import { provisionSidekickRun } from "../../src/services/sidekick-run-provisioning";
 
 /**
@@ -61,9 +61,26 @@ export async function provisionStartedSidekickRuns(env: Env, workspaceId: string
   return started.map((run) => run.run_id);
 }
 
-/** Fire the Organization's alarm, then provision whatever runs it started. */
+/**
+ * Fire the Organization's alarm, then provision whatever runs it started.
+ *
+ * A run is armed for now, so the object's own alarm can already be running it
+ * when this is called, and `runDurableObjectAlarm` then returns without
+ * waiting for it. A run the alarm handled has its entry moved later, so the
+ * wait ends once no run entry is due: every due run has registered its child.
+ */
 export async function runSidekickAlarms(env: Env, workspaceId: string, region = "global"): Promise<string[]> {
-  await runDurableObjectAlarm(sidekickWorkspace(env, workspaceId, region));
+  const stub = sidekickWorkspace(env, workspaceId, region);
+  await runDurableObjectAlarm(stub);
+  for (;;) {
+    const due = await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM _internal_durable_alarms WHERE kind = ? AND due_at <= ?`,
+      AUTOMATION_RUN_ALARM_KIND, Date.now(),
+    ).one().count);
+    if (due === 0) break;
+    await runDurableObjectAlarm(stub);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   return provisionStartedSidekickRuns(env, workspaceId, region);
 }
 
