@@ -88,6 +88,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const renewalAt = useRef(Number.POSITIVE_INFINITY);
   const sessionChannel = useRef<BroadcastChannel | null>(null);
   const refreshSession = useRef<((renew: boolean) => void) | null>(null);
+  // A later signed-out screen starts from the Google-first choice again.
+  useEffect(() => { if (session) setEmailChosen(false); }, [session]);
 
   useEffect(() => {
     let active = true;
