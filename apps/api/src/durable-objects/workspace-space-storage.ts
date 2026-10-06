@@ -392,7 +392,7 @@ export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
 ];
 
 /**
- * Migration 93: every private Space becomes Organization-wide.
+ * Migration 94: every private Space becomes Organization-wide.
  *
  * Spaces can only be Organization-wide, and a Space grants no reader to its
  * Channels (`docs/spaces.md`), so widening a Space here changes who
@@ -1391,7 +1391,7 @@ export class WorkspaceSpaceStorage {
     // A projection never writes `archived_at`: only `finalizeArchive` and
     // `restore` do. Taking the conversation's value, always null, un-archived a
     // Space on its next rename and left it where `restore` refused it.
-    // Every Space is Organization-wide (migration 93). A stale effect that
+    // Every Space is Organization-wide (migration 94). A stale effect that
     // still says `personal` must not bring a private Space back.
     const scope = "workspace";
     const changed = !current
@@ -1991,7 +1991,7 @@ export class WorkspaceSpaceStorage {
    * no reader, so nothing about the Channel moves with it.
    *
    * `moved: false` is the one case left for the caller's add-then-remove path:
-   * a target somebody else already staged as `joining` before migration 93.
+   * a target somebody else already staged as `joining` before migration 94.
    */
   moveMembership(request: WorkspaceSpaceMembershipMoveRequest, now = Date.now()): WorkspaceSpaceMembershipMoveOutcome {
     return this.storage.transactionSync((): WorkspaceSpaceMembershipMoveOutcome => {
@@ -2083,7 +2083,7 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * Finish a `move` intent staged before migration 93, in the caller's
+   * Finish a `move` intent staged before migration 94, in the caller's
    * transaction: switch the memberships if they are still at its fences, else
    * cancel what it staged.
    */
@@ -2526,7 +2526,7 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * Finish one intent staged before migration 93, in one transaction.
+   * Finish one intent staged before migration 94, in one transaction.
    *
    * Nothing stages these any more: each operation is one transaction. An
    * intent still unsettled at the deploy is finished here from its own

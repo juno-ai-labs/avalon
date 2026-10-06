@@ -157,13 +157,13 @@ works on a Channel in General. The Space's participants are its listed members,
 not who reads its Channels: a Space never adds, removes or acts as a Channel
 participant, and every Channel starts with only its creator plus whoever the
 creator adds. Like any Organization-wide Space, any active member
-may edit one, so migration 93 also opened editing of formerly private Spaces to
+may edit one, so migration 94 also opened editing of formerly private Spaces to
 every member.
 
 The contract enforces it: `CreateSpaceRequest.scope` and
 `UpdateSpaceAudienceRequest.scope` accept only `workspace`
 (`SpaceRequestScopeSchema`). `SpaceScopeSchema` still reads `personal` for rows
-written before WorkspaceDO migration 93 (`SPACE_PUBLIC_ONLY_MIGRATION`), which
+written before WorkspaceDO migration 94 (`SPACE_PUBLIC_ONLY_MIGRATION`), which
 widened every Space, archived ones included, and touched no Channel: a Channel
 that was private through a private Space keeps its seated participants and stays
 private. Those seats are ordinary grants now, and removing one revokes it. The
@@ -1533,7 +1533,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses (a D1 anchor failure reserves nothing), that a move, an add, an archive and a restore are each one WorkspaceDO call that reaches no Channel, that each kind of structured refusal is rendered with its own code, that a queued resume calls WorkspaceDO until the intent stops progressing, and that a refused creation anchors and reserves nothing. |
 | `apps/api/test/workspace-space-move-migration.test.ts` | Migration 68 preserving existing intents while adding the move kind and requiring all three source-side fences on every move row. |
-| `apps/api/test/workspace-space-public-migration.test.ts` | Migration 93 against the real ledger: every private Space widened, archived ones too, with nothing staged for their Channels; a private Space's resource defaults retired and every other default kept; the four Space-source tables dropped; an Organization with no private Space left as it was; and a stale directory effect that still says personal not narrowing a Space. |
+| `apps/api/test/workspace-space-public-migration.test.ts` | Migration 94 against the real ledger: every private Space widened, archived ones too, with nothing staged for their Channels; a private Space's resource defaults retired and every other default kept; the four Space-source tables dropped; an Organization with no private Space left as it was; and a stale directory effect that still says personal not narrowing a Space. |
 | `apps/api/test/channel-access-service.test.ts` | Against capability doubles: removing a direct reader is a plain removal gated on management access, and **Make private** publishes the socket narrowing only when the Channel was Organization-wide before the update. |
 | `apps/api/test/space-default-publication.test.ts` | Claim, send, accept — for default targets and for the cutover's page claim — and that a rejected send leaves its rows pending. |
 | `apps/api/test-workers/helpers/space-membership.ts` | Not a suite: the fixture that puts a Channel in a Space's membership through WorkspaceDO's own storage calls and publications, for the suites above whose Channels have no conversation. `space-routes.test.ts` proves the product path. |
@@ -1762,7 +1762,7 @@ Channels' readers will see.
 WorkspaceDO's directory and membership projections are discovery and
 coordination state. **They never authorize Channel content**:
 [a Space grants no reader](#every-space-is-organization-wide). A grant a Space
-seated before migration 93 keeps that provenance and is never published to the
+seated before migration 94 keeps that provenance and is never published to the
 shared scope-grant directory. A direct add of such a reader promotes the grant
 to `direct` and publishes it, and an ordinary removal revokes it.
 
@@ -1873,11 +1873,11 @@ default target.
 ### 2026-10-06 — Every Space is Organization-wide and grants no reader
 
 **What changed:** A Space can only be Organization-wide: the create and
-participants requests accept only `workspace`, and WorkspaceDO migration 93
+participants requests accept only `workspace`, and WorkspaceDO migration 94
 widened every existing Space. A Space no longer grants its audience to its
 Channels, so the code that applied it (`SpaceChannelAccess`, the source plans,
 the hosted parent's source tables, member walks and the containment preview)
-was deleted and migration 93 drops its tables. Add, remove, move, archive and
+was deleted and migration 94 drops its tables. Add, remove, move, archive and
 restore are each one WorkspaceDO transaction; `space_intents` rows staged before
 the deploy are finished by `resumeLegacyIntent`. A default's Queue delivery acts
 as the person who staged it rather than as a Space participant.
@@ -1905,7 +1905,7 @@ old rule. What it taught is in
 **Consequences:** A Channel's own scope is its whole audience. Formerly private
 Spaces lose their resource defaults, which somebody re-adds against the
 Organization-wide audience check. Readers a private
-Space seated before migration 93 stay seated as the Channel's own, and nothing
+Space seated before migration 94 stay seated as the Channel's own, and nothing
 withdraws them when the Channel leaves that Space. Internal creators that name
 `personal` (digests, imports, a Sidekick's suggestions shown to one person) now
 get private Channels where General used to make them public. `SpaceScopeSchema`

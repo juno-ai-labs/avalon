@@ -1258,7 +1258,7 @@ These tables moved to WorkspaceDO as `parent_direct_audience`,
 the same tables as a Channel's. No regional D1 table is involved: the provenance is
 Channel-local, and the audience it plans is still written by the main
 conversation's scope and participant rows or by the grant ledger. Since
-WorkspaceDO migration 93 a Space seats nobody; see
+WorkspaceDO migration 94 a Space seats nobody; see
 [authorization](authorization.md#space-derived-access) for what is left of
 Space-derived grants.
 
