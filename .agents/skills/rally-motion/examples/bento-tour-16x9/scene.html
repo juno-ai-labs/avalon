@@ -1,0 +1,49 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Bento tour (16:9)</title>
+<link rel="stylesheet" href="../../kit/fonts/fonts.css">
+<style>html,body{margin:0;background:#070707;overflow:hidden}canvas{display:block}</style>
+</head><body>
+<script src="../../kit/mark.js"></script>
+<script src="../../kit/engine.js"></script>
+<script src="../../kit/brand.js"></script>
+<script src="../../kit/components.js"></script>
+<script src="../../kit/bento.js"></script>
+<script>
+// Apple-keynote-style feature roundup: a line of copy, then the camera tours a
+// bento grid of every feature and pulls back to hold on the whole grid.
+stage({ w: 1920, h: 1080, outW: 1920, duration: 30 });
+
+// 7x4 grid sized for 16:9: [col, row, wCells, hCells]
+const LAYOUT = bentoLayout({ cols: 7, rows: 4, tiles: {
+  breakouts: [0, 0, 2, 1], multi: [2, 0, 3, 2], live: [5, 0, 2, 2],
+  spaces: [0, 1, 1, 2], claude: [1, 1, 1, 1], chatgpt: [1, 2, 1, 1], computer: [2, 2, 1, 2],
+  artifacts: [3, 2, 2, 1], connectors: [5, 2, 2, 2], sidekicks: [0, 3, 2, 1], triggered: [3, 3, 2, 1],
+} });
+// 133 BPM: a beat is 0.45s, so every tile gets 4 beats (1.8s), the hero gets 6.
+// Order only steps between neighbouring tiles so the camera never jumps across.
+const TOUR = [['multi', 2.7], ['breakouts', 5.4], ['spaces', 7.2], ['claude', 9.0], ['chatgpt', 10.8], ['sidekicks', 12.6],
+  ['computer', 14.4], ['triggered', 16.2], ['artifacts', 18.0], ['live', 19.8], ['connectors', 21.6]];
+const T = { dive: 2.35, pull: 23.4, end: 30 };
+const camAt = bentoTour(LAYOUT, TOUR, { dive: T.dive, pull: T.pull, end: T.end, fill: { w: 1500, h: 860 } });
+
+function intro(ctx, t) {
+  const out = eio5(prog(t, T.dive - .05, T.dive + .3)); if (out >= 1) return;
+  const f = F.disp(800, 168);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 280, W, 480); ctx.clip(); ctx.translate(0, -out * 480);
+  const pop = 1 + .03 * (1 - eo3(prog(t, 0, .5))); ctx.translate(140, 540); ctx.scale(pop, pop); ctx.translate(-140, -540);
+  text(ctx, 'Multiplayer AI,', 140, 500, f, C.paper, 'left', -6.5);
+  const bIn = eoX(prog(t, .45, .95));
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 520, W, 220); ctx.clip(); text(ctx, 'fully loaded.', 140, 670 + (1 - bIn) * 200, f, C.volt, 'left', -6.5); ctx.restore();
+  ctx.restore();
+  brandBug(ctx, 1 - out, 112, 100, 60);
+}
+
+start((ctx, t) => {
+  // the film ends on the whole grid: no end card
+  if (t > T.dive - .05) {
+    ctx.save(); ctx.globalAlpha = clamp((t - T.dive + .05) / .3); drawBento(ctx, t, camAt(t), LAYOUT); ctx.restore();
+  }
+  intro(ctx, t);
+});
+</script>
+</body></html>
