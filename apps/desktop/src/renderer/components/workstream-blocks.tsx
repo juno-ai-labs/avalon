@@ -17,6 +17,7 @@ import {
   type TablerIcon,
 } from '@tabler/icons-react';
 import type { AutomationPluginActivity } from '@rally/contracts';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   Check,
   ChevronDown,
@@ -28,6 +29,7 @@ import {
   ImageDown,
   LoaderCircle,
   Square,
+  Share,
   TerminalSquare,
   Volume2,
   X,
@@ -1614,15 +1616,79 @@ function StartSubstreamButton({ onStart }: { onStart: () => void }): React.JSX.E
   return (
     <MessageAction
       className="message-start-substream"
-      // The visible words have to appear in the accessible name, or a person
-      // driving by voice cannot say what they can see ("click New substream")
-      // and reach it. The name extends the label rather than replacing it,
-      // which is what every button beside it does — Copy is "Copy response",
-      // PDF is "Save response as a PDF" — and the arrow is decorative, so it
-      // stays out of both the name and the announcement.
+      // An icon on the toolbar, so the tip is the only place its words appear
+      // and the accessible name is that sentence, the same as every icon beside it.
       description="New breakout from this message"
       onClick={onStart}
-    ><IconCornerDownRight aria-hidden="true" size={12} stroke={1.9} /> New breakout</MessageAction>
+    ><IconCornerDownRight aria-hidden="true" size={MESSAGE_ACTION_ICON_SIZE} stroke={1.9} /></MessageAction>
+  );
+}
+
+/** The toolbar's one icon size, shared by every button on it and the menu's trigger. */
+const MESSAGE_ACTION_ICON_SIZE = 18;
+
+/**
+ * Copy and Speak for a turn's text: the two actions both toolbars carry, a
+ * person's own message as much as one of Rally's. The speech mutex is the
+ * window's, so starting one stops any other.
+ */
+function useMessageTextActions(text: string, telemetry: MessageCopyTelemetry | undefined, reportCopy: boolean): {
+  copy: () => Promise<void>;
+  speaking: boolean;
+  speech: ReturnType<typeof useSpeechPlayback>;
+  speechId: string;
+} {
+  const fallbackSpeechId = useId();
+  const speech = useSpeechPlayback();
+  const speechId = telemetry?.messageId ?? fallbackSpeechId;
+  const copy = async (): Promise<void> => {
+    await desktopBridge().copyText(text);
+    // Copy telemetry counts responses; a person copying their own words back
+    // is not the product intent it measures.
+    if (telemetry && reportCopy) reportTelemetryProductIntent({
+      kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
+      resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
+    });
+  };
+  return { copy, speaking: speech?.activeMessageId === speechId, speech, speechId };
+}
+
+function CopyAction({ description, onCopy }: { description: string; onCopy: () => Promise<void> }): React.JSX.Element {
+  return <MessageAction description={description} onClick={() => void onCopy().catch(() => undefined)}><Clipboard aria-hidden="true" size={MESSAGE_ACTION_ICON_SIZE} /></MessageAction>;
+}
+
+function SpeakAction({ description, speaking, onToggle }: { description: string; speaking: boolean; onToggle: () => void }): React.JSX.Element {
+  return (
+    <MessageAction description={speaking ? 'Stop speaking' : description} onClick={onToggle}>
+      {speaking ? <Square aria-hidden="true" fill="currentColor" size={MESSAGE_ACTION_ICON_SIZE - 3} /> : <Volume2 aria-hidden="true" size={MESSAGE_ACTION_ICON_SIZE} />}
+    </MessageAction>
+  );
+}
+
+/**
+ * The toolbar beside a person's own message: copy, speech and the branch. It
+ * carries no exports, which are a response's — see `AssistantMessageActions`.
+ */
+function HumanMessageActions({ onStartSubstream, telemetry, text }: {
+  onStartSubstream?: () => void;
+  telemetry?: MessageCopyTelemetry;
+  text: string;
+}): React.JSX.Element | null {
+  const { copy, speaking, speech, speechId } = useMessageTextActions(text, telemetry, false);
+  const hasText = text.length > 0;
+  if (!hasText && !onStartSubstream) return null;
+  return (
+    <TipGroup>
+      <div className="message-actions-rail">
+      <footer className={clsx('human-message-actions', speaking && 'is-speaking')}>
+        {hasText && <CopyAction description="Copy message" onCopy={copy} />}
+        {hasText && speech && (
+          <SpeakAction description="Speak message" onToggle={() => speaking ? speech.stop() : speech.speak(speechId, text)} speaking={speaking} />
+        )}
+        {onStartSubstream && <StartSubstreamButton onStart={onStartSubstream} />}
+      </footer>
+      </div>
+    </TipGroup>
   );
 }
 
@@ -1635,19 +1701,9 @@ function AssistantMessageActions({ citations, mentions, onStartSubstream, teleme
 }): React.JSX.Element {
   const [saving, setSaving] = useState<MessageExportFormat | null>(null);
   const [failed, setFailed] = useState<MessageExportFormat | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const exportsAvailable = desktopServicesAvailable();
-  const fallbackSpeechId = useId();
-  const speech = useSpeechPlayback();
-  const speechId = telemetry?.messageId ?? fallbackSpeechId;
-  const speaking = speech?.activeMessageId === speechId;
-
-  const copyResponse = async (): Promise<void> => {
-    await desktopBridge().copyText(text);
-    if (telemetry) reportTelemetryProductIntent({
-      kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
-      resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
-    });
-  };
+  const { copy, speaking, speech, speechId } = useMessageTextActions(text, telemetry, true);
 
   const save = async (format: MessageExportFormat): Promise<void> => {
     if (saving) return;
@@ -1680,70 +1736,58 @@ function AssistantMessageActions({ citations, mentions, onStartSubstream, teleme
   // A settled turn can carry attachments and no prose, and the cutoff it offers
   // does not depend on there being words to take. Copy, speech and the exports
   // do: each of them acts on the response text, and an empty one gives a person
-  // an empty clipboard, silence, or a blank card. So the row still appears for
-  // the branch alone, with nothing on it that has nothing to work on.
+  // an empty clipboard, silence, or a blank card. So the toolbar still appears
+  // for the branch alone, with nothing on it that has nothing to work on.
   const hasText = text.length > 0;
+  const exportLabel = saving ? `Saving ${saving === 'image' ? 'image' : 'PDF'}` : failed ? `${failed === 'image' ? 'Image' : 'PDF'} failed — export again` : 'Export response';
 
   return (
-    // One group for the row: the first tip waits, and reading along the rest of
-    // the row does not wait again. It also carries the tooltip provider, so the
-    // row explains itself wherever a turn is rendered rather than only under the
-    // app that happens to mount one.
+    // One group for the toolbar: the first tip waits, and reading along the
+    // rest of it does not wait again.
     <TipGroup>
+      <div className="message-actions-rail">
       <footer
-        className={clsx('agent-message-actions', speaking && 'is-speaking')}
-        // The row itself is transient, so the failure on it should be too: it has
-        // been read by the time the pointer leaves, and a stale "Image failed"
-        // sitting under a turn the next day reads as a broken feature rather than
-        // as one attempt that did not work.
-        onPointerLeave={() => setFailed(null)}
+        className={clsx('agent-message-actions', (speaking || exportOpen || saving !== null) && 'is-pinned')}
+        // The toolbar is transient, so the failure on it should be too: it has
+        // been read by the time the pointer leaves, and a stale failure sitting
+        // on a turn the next day reads as a broken feature.
+        onPointerLeave={() => { if (!exportOpen) setFailed(null); }}
       >
-        {hasText && (
-          <MessageAction description="Copy response" onClick={() => void copyResponse().catch(() => undefined)}><Clipboard size={12} /> Copy</MessageAction>
-        )}
+        {hasText && <CopyAction description="Copy response" onCopy={copy} />}
         {hasText && speech && (
-          <MessageAction
-            description={speaking ? 'Stop speaking' : 'Speak response'}
-            onClick={() => speaking ? speech.stop() : speech.speak(speechId, text)}
-          >
-            {speaking ? <Square aria-hidden="true" fill="currentColor" size={11} /> : <Volume2 aria-hidden="true" size={12} />}
-            {speaking ? 'Stop speaking' : 'Speak'}
-          </MessageAction>
+          <SpeakAction description="Speak response" onToggle={() => speaking ? speech.stop() : speech.speak(speechId, text)} speaking={speaking} />
         )}
         {hasText && exportsAvailable && (
           <>
-            <MessageAction
-              aria-busy={saving === 'image' || undefined}
-              description="Save response as an image"
-              disabled={saving !== null}
-              onClick={() => void save('image')}
-            >
-              {saving === 'image' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
-              {saving !== 'image' && failed === 'image' ? <CircleAlert aria-hidden="true" size={12} /> : null}
-              {saving !== 'image' && failed !== 'image' ? <ImageDown aria-hidden="true" size={12} /> : null}
-              {failed === 'image' ? 'Image failed' : 'Image'}
-            </MessageAction>
-            <MessageAction
-              aria-busy={saving === 'pdf' || undefined}
-              description="Save response as a PDF"
-              disabled={saving !== null}
-              onClick={() => void save('pdf')}
-            >
-              {saving === 'pdf' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
-              {saving !== 'pdf' && failed === 'pdf' ? <CircleAlert aria-hidden="true" size={12} /> : null}
-              {saving !== 'pdf' && failed !== 'pdf' ? <FileDown aria-hidden="true" size={12} /> : null}
-              {failed === 'pdf' ? 'PDF failed' : 'PDF'}
-            </MessageAction>
-            {/* Each button keeps a fixed accessible name so it stays findable, which
-                means neither the spinner nor the changed label announces anything on
-                its own. This is where the state is spoken. A disabled button takes no
-                pointer events either, so a save in flight is not a hover away — it is
-                only here. */}
+            <DropdownMenu.Root onOpenChange={setExportOpen} open={exportOpen}>
+              <Tip describesTrigger={false} label={exportLabel}>
+                <DropdownMenu.Trigger asChild disabled={saving !== null}>
+                  <button aria-busy={saving !== null || undefined} aria-label={exportLabel} type="button">
+                    {saving ? <LoaderCircle aria-hidden="true" className="spin" size={MESSAGE_ACTION_ICON_SIZE} />
+                      : failed ? <CircleAlert aria-hidden="true" size={MESSAGE_ACTION_ICON_SIZE} />
+                        : <Share aria-hidden="true" size={MESSAGE_ACTION_ICON_SIZE} />}
+                  </button>
+                </DropdownMenu.Trigger>
+              </Tip>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content align="start" className="menu-content message-export-menu" collisionPadding={8} sideOffset={6}>
+                  <DropdownMenu.Item className="menu-item" onSelect={() => void save('image')}>
+                    <ImageDown aria-hidden="true" size={17} /><span>Image</span><span className="message-export-menu-extension">.jpg</span>
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item className="menu-item" onSelect={() => void save('pdf')}>
+                    <FileDown aria-hidden="true" size={17} /><span>PDF</span><span className="message-export-menu-extension">.pdf</span>
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+            {/* The trigger's name carries the state for a sighted reader; this is
+                where it is spoken, since a changed name announces nothing on its own. */}
             <span className="sr-only" role="status">{exportStatusMessage(saving, failed)}</span>
           </>
         )}
         {onStartSubstream && <StartSubstreamButton onStart={onStartSubstream} />}
       </footer>
+      </div>
     </TipGroup>
   );
 }
@@ -2546,12 +2590,6 @@ export function ElicitationPanel({
 interface MessageBlockProps {
   onStartSubstream?: (throughTurnId: string) => void;
   /**
-   * Whether this is the newest thing Rally said in the feed. Its breakout
-   * action is then a visible line under the message rather than one of the
-   * actions that appear on hover.
-   */
-  latestReply?: boolean;
-  /**
    * How this transcript resolves and opens a citation. Absent on a surface
    * without a work stream behind it, which is exactly when every citation in a
    * message degrades to the label text it already carried.
@@ -2589,7 +2627,6 @@ interface MessageBlockProps {
 
 export function MessageBlock({
   onStartSubstream,
-  latestReply = false,
   citations,
   collapseHeadings = false,
   currentUserId,
@@ -2814,6 +2851,7 @@ export function MessageBlock({
       {human ? (
         <div className="human-message-content">
           {message.text ? (
+            <div className="human-message-bubble-anchor">
             <HumanMessageBubble disclosure={rowDisclosure} messageId={message.id} text={message.text}>
               <MarkdownBody
                 mentions={message.mentions}
@@ -2824,6 +2862,14 @@ export function MessageBlock({
                 verbatim
               >{message.text}</MarkdownBody>
             </HumanMessageBubble>
+            {/* Floats beside the bubble on hover rather than holding a row under
+                it, so it costs the turn no height. */}
+            <HumanMessageActions
+              onStartSubstream={startSubstream}
+              telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+              text={message.text ?? ''}
+            />
+            </div>
           ) : null}
           {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
             <MessageAttachments
@@ -2833,17 +2879,6 @@ export function MessageBlock({
             />
           ) : null}
           {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
-          {/* The slot, whether or not there is a control to put in it. It is
-              laid out always and painted on hover, and the turn after this one
-              sits one unit under it — so it is the slot, not the gap, that
-              keeps the next turn off this bubble. A surface that cannot start
-              a substream (an automation's conversation, a substream other than
-              the main one, the launch provenance) still needs that clearance,
-              and so does a turn that is not yet a cutoff; leaving the slot out
-              there handed the next turn a 4px clearance on the bubble itself. */}
-          <footer className="human-message-actions">
-            {startSubstream && <TipGroup><StartSubstreamButton onStart={startSubstream} /></TipGroup>}
-          </footer>
         </div>
       ) : (
         <>
@@ -2854,16 +2889,11 @@ export function MessageBlock({
             citations={citations}
             collapseHeadings={collapseHeadings}
             mentions={message.mentions}
-            onStartSubstream={latestReply ? undefined : startSubstream}
+            onStartSubstream={startSubstream}
             streaming={message.streaming}
             text={message.text ?? ''}
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
           />
-          {latestReply && startSubstream && (
-            <button className="message-start-breakout-link" onClick={startSubstream} type="button">
-              <IconCornerDownRight aria-hidden="true" size={13} stroke={1.9} /> Start a breakout from this message
-            </button>
-          )}
 
         </>
       )}
