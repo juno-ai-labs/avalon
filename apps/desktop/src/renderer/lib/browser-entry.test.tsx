@@ -383,3 +383,60 @@ it('drops a returned Google failure once an email sign-in starts', async () => {
   expect(await screen.findByRole('heading', { name: 'Welcome to Rally' })).toBeInTheDocument();
   expect(screen.queryByRole('alert')).toBeNull();
 });
+
+it('shows the opening mark, not an empty organization list, while a sign-in opens the linked organization', async () => {
+  let signedIn = false;
+  let openWorkspace!: () => void;
+  const opened = new Promise<void>((resolve) => { openWorkspace = resolve; });
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    const metadata = { user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() };
+    if (path === '/email/start') return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: Date.now() + 600_000 });
+    if (path === '/email/redeem') { signedIn = true; return Response.json(metadata); }
+    if (!signedIn) return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/workspace/select') { await opened; return Response.json({ ...metadata, workspace }); }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}`);
+  const view = render(<BrowserEntry renderCollaboration={(_region, session) => <output>{session.workspace?.name}</output>} />);
+  try {
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Email' }), { target: { value: user.email } });
+    fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Sign-in code' }), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('status', { name: 'Opening Rally' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Your shared work' })).not.toBeInTheDocument();
+    await act(async () => { openWorkspace(); });
+    expect(await screen.findByText('Shared team')).toBeInTheDocument();
+  } finally { view.unmount(); }
+});
+
+it('shows the opening mark while a sign-in activates a linked organization in another deployment', async () => {
+  const enterprise = { ...workspace, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Enterprise team', region: 'enterprise', accessClass: 'member', role: 'member' };
+  let signedIn = false;
+  let activated = false;
+  let openWorkspace!: () => void;
+  const opened = new Promise<void>((resolve) => { openWorkspace = resolve; });
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const metadata = { user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() };
+    if (input === '/regional/global/browser/email/start') return Response.json({ challengeId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', expiresAt: Date.now() + 600_000 });
+    if (input === '/regional/global/browser/email/redeem') { signedIn = true; return Response.json(metadata); }
+    if (input === '/regional/global/browser/workspace/activate' && signedIn) { activated = true; return new Response(null, { status: 204 }); }
+    if (input === '/regional/enterprise/browser/workspace/select' && activated) { await opened; return Response.json({ ...metadata, workspace: enterprise }); }
+    if (input.startsWith('/regional/')) return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  history.replaceState(null, '', `/app/workspaces/enterprise/${enterprise.id}`);
+  const view = render(<BrowserEntry renderCollaboration={(_region, session) => <output>{session.workspace?.name}</output>} />);
+  try {
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Email' }), { target: { value: user.email } });
+    fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Sign-in code' }), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(activated).toBe(true));
+    expect(screen.getByRole('status', { name: 'Opening Rally' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Check your email' })).not.toBeInTheDocument();
+    await act(async () => { openWorkspace(); });
+    expect(await screen.findByText('Enterprise team')).toBeInTheDocument();
+  } finally { view.unmount(); }
+});

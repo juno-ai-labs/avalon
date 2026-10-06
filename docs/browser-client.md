@@ -365,6 +365,10 @@ Its screens draw the desktop's sign-in card and the shared `RallyMark`,
 `Button`, `ConnectorMark` and `InlineError`. A sign-in or picker change belongs
 in `@rally/ui`'s `app.css` so both hosts move together; the browser's
 `styles.css` keeps only what a web page adds.
+Every wait from page load to the shell draws `BrowserBoot`. A signed-in link
+never falls through to the signed-in card while its organization opens, since
+that card's organization list is empty for a link and reads as "no access"; nor,
+when the link names another deployment, to the spent code's card.
 Collaboration code loads after authentication through one explicit lazy boundary;
 this is the browser-only exception to static imports. The browser declares its
 desktop dependency because it consumes the existing collaboration implementation;
@@ -547,6 +551,17 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-06 — A signed-in link opens behind the boot screen
+
+**What changed:** Until a linked organization opens, the entry shows
+`BrowserBoot`. Before, it showed the signed-in card, with an empty organization
+list, or for a link to another deployment the spent code's "Check your email"
+card.
+
+**Why:** Both read as a failure (no access, or a code to enter again) during an
+ordinary wait. Whatever is added between sign-in and the shell has to keep
+this: the organization's open is a wait, not a state of the card.
 
 ### 2026-10-03 — Guests get the desktop shell too
 
