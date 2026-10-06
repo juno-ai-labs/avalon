@@ -172,14 +172,13 @@ operations remain member-gated.
 
 ### Space-derived access
 
-[A Space grants no reader](spaces.md#every-space-is-organization-wide). The
-plans in `apps/api/src/lib/channel-audience.ts` are empty, and a Space source on
-a Channel (`parent_space_sources` in `WorkspaceDO`) is placement provenance
-only. What is left of Space-derived access is the readers a Space seated before
-WorkspaceDO migration 93. Their grants still carry
-`parent_grants.source_kind = 'space'` and stay out of the shared scope-grant
-directory (`ScopeGrantStorage` suppresses the writer for them), and ordinary
-removal revokes one like any other grant. Direct provenance still wins: a
+[A Space grants no reader](spaces.md#every-space-is-organization-wide), and the
+code that once applied a Space's audience to its Channels is gone
+([`space-access-sources.md`](space-access-sources.md)). What is left of
+Space-derived access is the readers a Space seated before WorkspaceDO migration
+93. Their grants still carry `parent_grants.source_kind = 'space'` and stay out
+of the shared scope-grant directory, and ordinary removal revokes one like any
+other grant. Direct provenance still wins: a
 direct add of such a reader promotes the grant to `direct` and publishes it.
 
 **Being able to read a Channel discloses the mark and name of every Space it is

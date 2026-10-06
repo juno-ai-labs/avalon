@@ -76,10 +76,9 @@ export type SpaceColorKey = z.infer<typeof SpaceColorKeySchema>;
  * directory row already uses.
  *
  * `workspace` is the Organization-wide audience. The product word on every
- * visible surface is **Organization**; the wire keeps `workspace` because
- * composing an Organization-wide Space source with a Channel's direct scope is
- * a comparison between two scope values, and two spellings of the same audience
- * would need a translation at every seam that compares them.
+ * visible surface is **Organization**; the wire keeps `workspace` because it is
+ * the same audience a Channel scope names, and two spellings of it would need a
+ * translation at every seam that compares them.
  */
 export const SpaceScopeSchema = z.enum(["personal", "workspace"]);
 export type SpaceScope = z.infer<typeof SpaceScopeSchema>;
@@ -506,14 +505,9 @@ export const SpaceErrorCodeSchema = z.enum([
    * A member Channel's own conversation could not answer, so the question was
    * never asked.
    *
-   * Distinct from `space_membership_content_fence`, which is the same RPC
-   * saying *no*. `previewAudienceContainment` is a tri-state — `true`, `false`,
-   * or `null` when the object it reached is not that Channel's main
-   * conversation — and the two negatives need different remediations: a fence
-   * is a decision about content, an unreachable conversation is a Channel whose
-   * authority is missing or mis-addressed. The cutover has always read them
-   * apart, under `space_bootstrap_conversation_unreachable`; this is the
-   * request path's half of the same reading.
+   * Retired with the containment preview that asked it
+   * (`docs/space-access-sources.md`); kept so a desktop can still read it from
+   * an older server during a rolling deploy.
    */
   "space_conversation_unreachable",
   /**

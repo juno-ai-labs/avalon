@@ -4,29 +4,47 @@ import {
   type ChannelAccessSources,
   type SpaceErrorCode,
   type WorkstreamDetail,
+  type WorkspaceId,
 } from "@rally/contracts";
 
 import { workspaceDOName } from "../durable-objects/names";
-import type { ObservedChannel } from "../durable-objects/workstream-access-protocol";
+import type { ObservedChannel } from "../lib/audience-containment";
 import type { AuthContext, Env } from "../env";
 import { ApiError, asApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import {
-  publishChannelNarrowing,
-} from "./space-source-operations";
+import { publishAccessRevocation } from "./access-revocation";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 
-export { publishChannelNarrowing };
+/**
+ * Announce that a Channel stopped admitting the whole Organization.
+ *
+ * The room closes sockets for somebody it was told about, and nothing tells it
+ * that the audience it just took no longer covers whoever is reading, so the
+ * write that narrows publishes it, in the same request. It names nobody: the
+ * readers a narrowing drops are every member who is not a participant, and the
+ * hop asks the room which of them still has a socket open.
+ *
+ * Returns whether the message went out: `publishAccessRevocation` is not fatal
+ * to its caller, so the flag is the only signal that nothing was sent.
+ */
+export async function publishChannelNarrowing(
+  env: Env,
+  workspaceId: WorkspaceId,
+  workstreamId: string,
+): Promise<boolean> {
+  return publishAccessRevocation(env, {
+    reason: "workstream_participant_removed",
+    workspaceId,
+    userId: null,
+    sessionId: null,
+    target: { scope: "workstream_audience_narrowed", workstreamId },
+  });
+}
 
 /**
- * A Channel's own audience against the Space sources that reach it: reading
- * who supplies whom, and changing the Channel's direct scope and readers
- * without revoking what a Space still supplies.
- *
- * A Space's source itself is applied and withdrawn by WorkspaceDO
- * (`SpaceChannelAccess`), through the same canonical scope and participant
- * operations, which are where the retained-content containment preflight and
- * its SQL triggers run.
+ * Reading and changing who may read a Channel, for a caller who may manage it.
+ * A Space grants no reader, so the Channel's own scope and participants are
+ * the whole answer.
  */
 export class ChannelAccessService {
   constructor(
@@ -39,15 +57,6 @@ export class ChannelAccessService {
   }
 
   /** The Organization object, which hosts every Channel's parent. */
-  private async room() {
-    return durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
-    );
-  }
-
   private async workspace() {
     return durableObjectStubForWorkspace(
       this.env,
@@ -67,10 +76,8 @@ export class ChannelAccessService {
    *
    * Both halves come from one `WorkstreamDetail` rather than from
    * `readWorkstreamRuntimeAudience`, which answers `{ scope: "workspace" }` with
-   * no roster: an Organization-wide Channel still has participants, and they are
-   * what the *direct* source is once the readers a Space seated are taken out.
-   * A plan that could not see them would re-seat the whole audience on every
-   * narrowing or, worse, narrow without seating anyone.
+   * no roster: an Organization-wide Channel still has participants, and the
+   * access dialog lists them.
    */
   private observed(detail: WorkstreamDetail): ObservedChannel {
     const participantUserIds = detail.participants.map((participant) => asUserId(participant.user.id));
@@ -137,7 +144,7 @@ export class ChannelAccessService {
    * make.
    */
   private async assertManages(workstreamId: string): Promise<void> {
-    const management = await (await this.room()).readManagementAccess({
+    const management = await (await this.workspace()).readManagementAccess({
       ...this.address(workstreamId),
       userId: asUserId(this.auth.userId),
     });
@@ -145,8 +152,6 @@ export class ChannelAccessService {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
   }
-
-
 }
 
 /** One refusal per closed code, each naming the Channel it is about. */

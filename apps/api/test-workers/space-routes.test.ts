@@ -593,58 +593,6 @@ describe("POST /spaces/:id/channels/:workstreamId/move", () => {
       bindings: [workstreamId, target.id],
     })).toMatchObject({ rows: [] });
   });
-
-  it("given a Channel whose provenance is behind the source Space, when the one-transaction move is asked, then it writes nothing", async () => {
-    const source = await createSpace("Source");
-    const target = await createSpace("Target");
-    const workstreamId = await createChannel("stale-provenance-move");
-    expect((await request(`/spaces/${source.id}/channels`, OWNER_AUTH, { workstreamId })).status).toBe(200);
-    // The source Space moves past the revision the Channel recorded for it,
-    // which is what an audience change still walking its Channels looks like.
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE spaces SET revision = revision + 1 WHERE space_id = ?", source.id);
-    });
-    const snapshot = async () => ({
-      memberships: (await workspace().runInspectionSql({
-        sql: `SELECT space_id, state, generation FROM space_channel_memberships
-               WHERE workstream_id = ? ORDER BY space_id`,
-        bindings: [workstreamId],
-      })).rows,
-      sources: (await workspace().runInspectionSql({
-        sql: `SELECT space_id, space_revision, membership_generation FROM parent_space_sources
-               WHERE parent_id = ? ORDER BY space_id`,
-        bindings: [workstreamId],
-      })).rows,
-      operations: (await workspace().runInspectionSql({
-        sql: "SELECT COUNT(*) AS count FROM parent_access_operations WHERE parent_id = ?",
-        bindings: [workstreamId],
-      })).rows,
-    });
-    const before = await snapshot();
-
-    const declined = await workspace().moveSpaceMembership({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      sourceSpaceId: source.id,
-      targetSpaceId: target.id,
-      workstreamId,
-    });
-
-    expect(declined).toEqual({ ok: true, moved: false });
-    expect(await snapshot()).toEqual(before);
-
-    // The route takes the add-then-remove path instead, and still moves it.
-    const moved = await request(
-      `/spaces/${target.id}/channels/${workstreamId}/move`,
-      OWNER_AUTH,
-      { sourceSpaceId: source.id },
-    );
-    expect(moved).toMatchObject({
-      status: 200,
-      body: { source: { id: source.id, channelCount: 0 }, target: { id: target.id, channelCount: 1 } },
-    });
-    expect(await channelSpaceIds(workstreamId)).toContain(target.id);
-  });
 });
 
 describe("a Space and its hosted parent", () => {
@@ -843,15 +791,6 @@ async function intentStates(workstreamId: WorkstreamId, kind: string): Promise<u
   return read.rows.map((row) => (row as { state: unknown }).state);
 }
 
-/** The readers the Channel's record says this Space supplied. */
-async function spaceReaders(workstreamId: WorkstreamId, spaceId: string): Promise<unknown[]> {
-  const read = await workspace().runInspectionSql({
-    sql: "SELECT user_id FROM parent_space_readers WHERE parent_id = ? AND space_id = ? ORDER BY user_id",
-    bindings: [workstreamId, spaceId],
-  });
-  return read.rows.map((row) => (row as { user_id: unknown }).user_id);
-}
-
 /** Whether the Channel's own conversation seats this person. */
 async function seated(workstreamId: WorkstreamId, userId: string): Promise<boolean> {
   return runInDurableObject(spaceConversation(workstreamId), (_instance, state) => (
@@ -862,7 +801,7 @@ async function seated(workstreamId: WorkstreamId, userId: string): Promise<boole
 }
 
 describe("a Channel's Space membership, driven from WorkspaceDO", () => {
-  it("given a private Channel, when it is added to a Space that lists another member, then it stays private with its own participants and the membership settles", async () => {
+  it("given a private Channel, when it is added to a Space that lists another member, then it stays private with its own participants and the membership is active in one call", async () => {
     const mine = await spaceWith("Mine", [OWNER]);
     const hiring = await spaceWith("Hiring", [OWNER, MEMBER]);
     const workstreamId = await createChannel("add-existing", [asSpaceId(mine.id)]);
@@ -872,12 +811,11 @@ describe("a Channel's Space membership, driven from WorkspaceDO", () => {
     expect(added).toMatchObject({ status: 200, body: { id: hiring.id, channelCount: 1 } });
     expect(await channelAudience(workstreamId)).toEqual({ scope: "personal", participantUserIds: [OWNER] });
     expect(await seated(workstreamId, MEMBER)).toBe(false);
-    expect(await spaceReaders(workstreamId, hiring.id)).toEqual([]);
     expect(await membershipState(workstreamId, hiring.id)).toBe("active");
-    expect(await intentStates(workstreamId, "add")).toEqual(["settled"]);
+    expect(await intentStates(workstreamId, "add")).toEqual([]);
   });
 
-  it("given a private Channel in two Spaces, when it leaves one, then nobody is withdrawn and the removal settles", async () => {
+  it("given a private Channel in two Spaces, when it leaves one, then nobody is withdrawn and the removal commits in one call", async () => {
     const mine = await spaceWith("Mine", [OWNER]);
     const hiring = await spaceWith("Hiring", [OWNER, MEMBER]);
     const workstreamId = await createChannel("leave-one", [asSpaceId(mine.id), asSpaceId(hiring.id)], {
@@ -892,7 +830,7 @@ describe("a Channel's Space membership, driven from WorkspaceDO", () => {
       .toEqual({ scope: "personal", participantUserIds: [OWNER, MEMBER].sort() });
     expect(await channelSpaceIds(workstreamId)).toEqual([mine.id]);
     expect(await membershipState(workstreamId, hiring.id)).toBe("removed");
-    expect(await intentStates(workstreamId, "remove")).toEqual(["settled"]);
+    expect(await intentStates(workstreamId, "remove")).toEqual([]);
   });
 
   it("given an Organization-wide Channel, when it leaves a Space, then it stays Organization-wide and nothing is revoked", async () => {
@@ -914,6 +852,6 @@ describe("a Channel's Space membership, driven from WorkspaceDO", () => {
     expect(removed).toMatchObject({ status: 200, body: { id: company.id, channelCount: 0 } });
     expect((await channelAudience(workstreamId)).scope).toBe("workspace");
     expect(await membershipState(workstreamId, company.id)).toBe("removed");
-    expect(await intentStates(workstreamId, "remove")).toEqual(["settled"]);
+    expect(await intentStates(workstreamId, "remove")).toEqual([]);
   });
 });

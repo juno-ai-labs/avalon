@@ -676,9 +676,8 @@ async function consumeOne(message: Message<unknown>, env: Env,
         return;
       }
       // Said out loud, and written down. A resume that keeps failing is
-      // republished by the alarm every `SPACE_INTENT_RESUME_DELAY_MS` and
-      // retried here as well, so a silent catch makes a half-applied audience
-      // or a half-finished archive a thing that shows up only as a dead-letter
+      // retried by the alarm and here as well, so a silent catch makes a
+      // half-finished operation a thing that shows up only as a dead-letter
       // message with no reason on it — which is the diagnosis this costs on the
       // way in. The code goes on the intent as well as into the log, the way a
       // default target's does: the row outlives the log line, and whoever finds

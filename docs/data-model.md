@@ -1251,7 +1251,7 @@ every access operation on its exact request, in the shape
 `source_id`; existing rows backfill as `direct` through the defaults, which is
 what they were.
 
-These tables now live in WorkspaceDO as `parent_direct_audience`,
+These tables moved to WorkspaceDO as `parent_direct_audience`,
 `parent_space_sources`, `parent_space_readers`, `parent_access_operations` and
 `parent_grants`, keyed by `parent_id`
 ([table map](hosted-conversation-parents.md#table-map)). A Space's parent uses

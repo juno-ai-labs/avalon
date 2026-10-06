@@ -20,7 +20,7 @@ import {
   SLACK_WORKSPACE_OBJECT_METHODS,
   workspaceObjectRpcs,
 } from "./helpers/workspace-object-rpcs";
-import { spaceCreationRoomRpcs, spaceCreationWorkspaceRpcs } from "./helpers/space-creation-rpcs";
+import { spaceCreationWorkspaceRpcs } from "./helpers/space-creation-rpcs";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import {
@@ -948,7 +948,6 @@ describe("Slack connector principal delivery", () => {
           ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
           ...spaceCreationWorkspaceRpcs(),
           ...parentCreationRpcs(),
-          ...spaceCreationRoomRpcs(),
           admitConnectorParticipants: async () => ({ status: "legacy" }),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
@@ -1628,7 +1627,6 @@ describe("Slack public channel membership", () => {
           ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
           ...spaceCreationWorkspaceRpcs(),
           ...parentCreationRpcs(),
-          ...spaceCreationRoomRpcs(),
           admitConnectorParticipants: async () => ({ status: "legacy" }),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
@@ -3642,7 +3640,6 @@ function slackMembershipEnvironment(
         ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
         ...spaceCreationWorkspaceRpcs(),
         ...parentCreationRpcs(),
-        ...spaceCreationRoomRpcs(),
         admitConnectorParticipants: async () => ({ status: "legacy" }),
         ...workspaceRpcs,
       },

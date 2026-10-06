@@ -28,19 +28,14 @@ import {
   WorkspaceContainerOrderResultSchema,
   WorkspacePinnedOrderResultSchema,
   WorkspaceSpaceGeneralOpenResultSchema,
-  WorkspaceSpaceMembersResultSchema,
   WorkspaceSpaceMembershipMoveOutcomeSchema,
   WorkspaceSpaceMutationResultSchema,
   WorkspaceSpaceReserveResultSchema,
   WorkspaceSpaceChannelChangeResultSchema,
   WorkspaceSpaceIntentResumeResultSchema,
-  WorkspaceSpaceMemberWalkResultSchema,
   type SpaceActorAuth,
   type ParsedSpaceChannelRefusal,
-  type SpaceMemberWalkKind,
   type WorkspaceSpaceChannelChangeResult,
-  type SpaceMember,
-  type MemberWalkReach,
   type WorkspaceSpaceMutationResult,
 } from "../durable-objects/workspace-space-protocol";
 import type { AuthContext, Env } from "../env";
@@ -166,16 +161,10 @@ export type SpaceIntentResumeOutcome =
 /**
  * The regional facade over the Organization's Space authority.
  *
- * Two authorities have to agree for a Space to mean anything, and this is
- * where they are ordered: WorkspaceDO owns what the Space *is* — its name,
- * appearance, scope, participants and defaults — and the relationship, staging
- * every operation behind a fence; each member Channel owns its own audience.
- *
- * Nothing here writes a Channel's audience itself. A membership, an audience
- * change, an archive, a restore and every resume are driven by WorkspaceDO
- * (`SpaceChannelAccess`), which applies the delta through the Channel's
- * canonical scope and participant operations so the retained-content
- * containment preflight and its SQL triggers stay the only fence.
+ * WorkspaceDO owns what the Space *is* (its name, appearance, participants and
+ * defaults) and which Channels it holds; each Channel owns its own audience.
+ * A Space grants no reader, so nothing here or in WorkspaceDO writes a
+ * Channel's audience, and every Space change is one WorkspaceDO transaction.
  */
 export class SpaceService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
@@ -388,9 +377,8 @@ export class SpaceService {
    * Change a Space's participants: one WorkspaceDO write.
    *
    * Every Space is Organization-wide, so the request only names its
-   * participants, and a Space grants no reader to its Channels
-   * (`lib/channel-audience.ts`): there is nothing to preflight and no member
-   * Channel to walk.
+   * participants, and a Space grants no reader to its Channels: there is
+   * nothing to preflight and no member Channel to reach.
    */
   async updateAudience(spaceId: SpaceId, input: UpdateSpaceAudienceRequest): Promise<SpaceSummary> {
     const current = await this.editable(spaceId);
@@ -472,54 +460,22 @@ export class SpaceService {
     return MoveChannelBetweenSpacesResultSchema.parse({ source, target });
   }
 
-  /**
-   * Archive a Space once no member Channel would be stranded by it.
-   *
-   * The fan-out asks for the Channels this Space still *reaches* rather than
-   * its active members, because `prepareSpaceArchive` is what takes them out of
-   * the active set: it flips every membership to `removing` before the first
-   * Channel is asked to withdraw anything. Reading the active set here would
-   * retract from nothing and leave this Space's access source live on every
-   * Channel it had, which is access nothing accounts for any more.
-   */
+  /** Archive a Space once no live member Channel would be stranded by it: one WorkspaceDO write. */
   async archive(spaceId: SpaceId): Promise<SpaceSummary> {
-    const workspace = await this.workspace();
-    // One id, minted here and carried to both halves. The settlement has to
-    // name the intent the preflight staged, and deriving it from the Space
-    // revision — which the archive itself advances — made the two halves agree
-    // by arithmetic over writes in two objects rather than by saying so.
-    const operationId = uuidV7();
-    this.settled(await workspace.prepareSpaceArchive({
+    return this.settled(await (await this.workspace()).archiveSpace({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
-      operationId,
     }), "");
-    // The last page of the walk finalizes the archive and answers with it.
-    return this.walkMembers({ spaceId, operationId, kind: "archive", cursor: null, expectedSpaceRevision: null });
   }
 
-  /**
-   * Bring an archived Space back, and with it the access it used to supply.
-   *
-   * Its memberships return first — the archive is what took them out — and then
-   * each Channel has this Space's source applied again. Re-applying rather than
-   * assuming, because the Channel's own audience has moved on in the meantime
-   * and the plan is a delta against what it is now.
-   */
+  /** Bring an archived Space back with the memberships its archive took out: one WorkspaceDO write. */
   async restore(spaceId: SpaceId): Promise<SpaceSummary> {
-    // One id, minted here and carried to both halves, exactly as an archive's
-    // is: the restore stages an intent and the walk below settles it.
-    const operationId = uuidV7();
-    this.settled(await (await this.workspace()).restoreSpace({
+    return this.settled(await (await this.workspace()).restoreSpace({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
-      operationId,
     }), "");
-    // Each membership the restore put back is re-applied at the generation the
-    // restore advanced it to, read in WorkspaceDO as the walk reaches it.
-    return this.walkMembers({ spaceId, operationId, kind: "restore", cursor: null, expectedSpaceRevision: null });
   }
 
   /**
@@ -584,76 +540,11 @@ export class SpaceService {
   }
 
   /**
-   * One page of the Channels the Space holds, archived ones included.
-   *
-   * `reach` is the difference between the Channels a surface would call members
-   * and the Channels this Space's access source is still on. A retraction
-   * fan-out runs *after* the prepare that staged it, and a prepare is what
-   * flips a membership out of `active` — so an archive that asked for the
-   * default set would walk nothing.
-   */
-  async memberPage(
-    spaceId: SpaceId,
-    reach: MemberWalkReach = "active",
-    cursor: string | null = null,
-  ): Promise<{ members: SpaceMember[]; nextCursor: string | null }> {
-    const result = WorkspaceSpaceMembersResultSchema.parse(await (await this.workspace()).listSpaceMembers({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      spaceId,
-      reach,
-      cursor,
-    }));
-    if (!result.ok) throw spaceRefusal(result.code, "");
-    return { members: result.members, nextCursor: result.nextCursor };
-  }
-
-  /**
-   * Carry one staged operation to every member Channel, a page at a time.
-   *
-   * The one walk an audience change, an archive and a restore all take, and
-   * the one their resume takes. Each page is one WorkspaceDO call: it changes
-   * every member Channel's source there, through the Channel's own
-   * conversation, and writes the cursor the page ended at onto the intent
-   * before it answers. A Space past one invocation's budget fails part way,
-   * the intent stays unsettled with its cursor, and the resume continues from
-   * that page. The last page settles the intent (an archive is finalized) and
-   * answers with the Space.
-   */
-  private async walkMembers(input: {
-    spaceId: SpaceId;
-    operationId: string;
-    kind: SpaceMemberWalkKind;
-    cursor: string | null;
-    expectedSpaceRevision: number | null;
-  }): Promise<SpaceSummary> {
-    const workspace = await this.workspace();
-    let cursor = input.cursor;
-    for (;;) {
-      const page = WorkspaceSpaceMemberWalkResultSchema.parse(await workspace.walkSpaceMembers({
-        auth: this.actor(),
-        spaceId: input.spaceId,
-        operationId: input.operationId,
-        kind: input.kind,
-        cursor,
-        expectedSpaceRevision: input.expectedSpaceRevision,
-      }));
-      if (!page.ok) throw channelChangeRefusal(page.refusal);
-      if (page.outcome !== "page") return page.space;
-      cursor = page.cursor;
-    }
-  }
-
-  /**
    * Finish a staged operation whose request never came back, for a
    * `space_intent_resume` message already on the Queue.
    *
-   * WorkspaceDO resumes the intent from its row, as this person, one step per
-   * call (`SpaceChannelAccess.resume`); this calls it until the intent is no
-   * longer progressing. Every way of giving up is named to the caller rather
-   * than swallowed here, because the consumer is what writes the log line and
-   * an intent that settled without doing its work is the thing nobody would
-   * otherwise notice.
+   * Only intents staged before migration 93 exist; WorkspaceDO finishes each
+   * in one transaction (`resumeLegacyIntent`).
    */
   async resumeIntent(operationId: string): Promise<SpaceIntentResumeOutcome> {
     const workspace = await this.workspace();

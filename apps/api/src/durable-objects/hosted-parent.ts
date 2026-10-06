@@ -27,7 +27,6 @@ import {
   type ScopeInvitationSummary,
 } from "@rally/contracts/scope-grants";
 import {
-  ChannelAccessSourcesSchema,
   IdSchema,
   SubstreamIdSchema,
   UserIdSchema,
@@ -43,8 +42,6 @@ import {
   conversationNeedsViewer,
   isUnknownSocketEvent,
   safeParseSocketEvent,
-  type ChannelAccessSources,
-  type SpaceId,
   type SubstreamId,
   type UserId,
   type WorkspaceId,
@@ -121,11 +118,6 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { parseRpcInput } from "../lib/rpc-input";
 import { stableUuid } from "../lib/stable-uuid";
 import { uuidV7 } from "../lib/uuid-v7";
-import {
-  audienceSourceApplicationPlan,
-  audienceSourceRetractionPlan,
-  type AudienceSource,
-} from "../lib/channel-audience";
 import { logWarn } from "../observability/logger";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import {
@@ -153,29 +145,6 @@ import {
   participantMigrationAlarmKey,
 } from "./scope-grant-storage";
 import { ScopeInvitationService, scopeInvitationOrigin } from "./scope-invitation-service";
-import {
-  ApplySpaceAccessSourceRequestSchema,
-  ApplySpaceAccessSourceResultSchema,
-  ConfirmSpaceAccessSourceRequestSchema,
-  ConfirmSpaceAccessSourceResultSchema,
-  NoteChannelDirectReaderRequestSchema,
-  PersistedSpaceAccessSourcesSchema,
-  ReadChannelAccessSourcesRequestSchema,
-  ReadPersistedSpaceAccessSourcesRequestSchema,
-  ReplaceEquivalentSpaceAccessSourceRequestSchema,
-  ReplaceEquivalentSpaceAccessSourceResultSchema,
-  RetractSpaceAccessSourceRequestSchema,
-  RetractSpaceAccessSourceResultSchema,
-  SetChannelDirectScopeRequestSchema,
-  SetChannelDirectScopeResultSchema,
-  type ApplySpaceAccessSourceResult,
-  type ConfirmSpaceAccessSourceResult,
-  type ConfirmedAccessSource,
-  type ObservedChannel,
-  type RetractSpaceAccessSourceResult,
-  type SetChannelDirectScopeResult,
-} from "./workstream-access-protocol";
-import { WorkstreamAccessStorage } from "./workstream-access-storage";
 
 /**
  * One Channel's or Space's parent authority, hosted inside the Organization's
@@ -450,26 +419,6 @@ function workstreamControlPayload(event: WorkstreamControlSocketEvent): string {
     throw new Error("Work-stream control event exceeds the bounded frame size");
   }
   return payload;
-}
-
-/**
- * Whether the stored Space source is newer than the staged one. One predicate
- * for the plan and the commit, so the two cannot disagree.
- */
-function spaceAccessSourceSuperseded(
-  existing: { spaceRevision: number; membershipGeneration: number } | null,
-  staged: { spaceRevision: number; membershipGeneration: number },
-): boolean {
-  if (!existing) return false;
-  return existing.spaceRevision > staged.spaceRevision
-    || (existing.spaceRevision === staged.spaceRevision
-      && existing.membershipGeneration > staged.membershipGeneration);
-}
-
-function sameUserIds(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) return false;
-  const expected = new Set(left);
-  return expected.size === right.length && right.every((userId) => expected.has(userId));
 }
 
 const ControlSocketIdentitySchema = z.object({
@@ -1695,254 +1644,6 @@ export class HostedParent {
   }
 
   // ---------------------------------------------------------------------------
-  // Space access provenance. This records *why* somebody may read the Channel;
-  // admission is still `resolveScopeAccess` or the main conversation's rows.
-  // ---------------------------------------------------------------------------
-
-  private channelAccess(): WorkstreamAccessStorage {
-    return new WorkstreamAccessStorage(this.storage, this.parentId);
-  }
-
-  /**
-   * The Channel's audience, which is its own: a Space supplies no reader
-   * (`lib/channel-audience.ts`), so this is the observed scope and roster.
-   */
-  private directSource(channel: ObservedChannel): AudienceSource {
-    return { scope: channel.readers.scope, participantUserIds: channel.participantUserIds };
-  }
-
-  /** Who may read the Channel: its own audience. No Space supplies a reader. */
-  readAccessSources(input: z.infer<typeof ReadChannelAccessSourcesRequestSchema>): ChannelAccessSources {
-    const request = parseRpcInput(ReadChannelAccessSourcesRequestSchema, input, "channel_access_sources");
-    this.assertParent(request.workspaceId, request.parentId);
-    const direct = this.directSource(request.channel);
-    return ChannelAccessSourcesSchema.parse({
-      direct: { scope: direct.scope, participantUserIds: direct.participantUserIds },
-      spaces: [],
-    });
-  }
-
-  /** One Space's source as recorded here, with the readers it seated; null when it has none. */
-  recordedSpaceSource(spaceId: string): {
-    scope: "personal" | "workspace"; participantUserIds: UserId[]; spaceRevision: number;
-    membershipGeneration: number; suppliedUserIds: UserId[];
-  } | null {
-    const access = this.channelAccess();
-    const source = access.source(spaceId);
-    if (!source) return null;
-    return {
-      scope: source.scope,
-      participantUserIds: [...source.participantUserIds],
-      spaceRevision: source.spaceRevision,
-      membershipGeneration: source.membershipGeneration,
-      suppliedUserIds: access.suppliedReaders(spaceId),
-    };
-  }
-
-  readPersistedSpaceAccessSources(
-    input: z.infer<typeof ReadPersistedSpaceAccessSourcesRequestSchema>,
-  ): ChannelAccessSources["spaces"] {
-    const request = parseRpcInput(ReadPersistedSpaceAccessSourcesRequestSchema, input, "persisted_space_access_sources");
-    this.assertParent(request.workspaceId, request.parentId);
-    return PersistedSpaceAccessSourcesSchema.parse(this.channelAccess().sources().map((source) => ({
-      spaceId: source.sourceId, scope: source.scope, participantUserIds: source.participantUserIds,
-    })));
-  }
-
-  setDirectScope(input: z.infer<typeof SetChannelDirectScopeRequestSchema>): SetChannelDirectScopeResult {
-    const request = parseRpcInput(SetChannelDirectScopeRequestSchema, input, "channel_direct_scope");
-    this.assertParent(request.workspaceId, request.parentId);
-    const access = this.channelAccess();
-    const now = Date.now();
-    return access.operate({
-      operationId: request.operationId,
-      request: { kind: "set_direct_scope", scope: request.scope, observed: request.observed ?? true },
-      resultSchema: SetChannelDirectScopeResultSchema,
-      now,
-      body: () => {
-        // No Space can hold a Channel open: its scope is its own to narrow.
-        const previous = access.directAudience();
-        access.recordDirectScope(request.scope, now, request.observed ?? true);
-        return { ok: true as const, previousScope: previous.scope, previousObserved: previous.observed };
-      },
-    });
-  }
-
-  noteDirectReader(input: z.infer<typeof NoteChannelDirectReaderRequestSchema>): { ok: true } {
-    const request = parseRpcInput(NoteChannelDirectReaderRequestSchema, input, "channel_direct_reader");
-    this.assertParent(request.workspaceId, request.parentId);
-    this.channelAccess().claimReaderAsDirect(request.userId);
-    return { ok: true };
-  }
-
-  applySpaceAccessSource(input: z.infer<typeof ApplySpaceAccessSourceRequestSchema>): ApplySpaceAccessSourceResult {
-    const request = parseRpcInput(ApplySpaceAccessSourceRequestSchema, input, "space_access_source");
-    this.assertParent(request.workspaceId, request.parentId);
-    const access = this.channelAccess();
-    const now = Date.now();
-    const commitWithPlan = request.commitWithPlan ?? false;
-    return access.operate({
-      operationId: request.operationId,
-      request: {
-        kind: "apply_space_source", spaceId: request.spaceId, scope: request.scope,
-        participantUserIds: request.participantUserIds, spaceRevision: request.spaceRevision,
-        membershipGeneration: request.membershipGeneration, commitWithPlan,
-      },
-      resultSchema: ApplySpaceAccessSourceResultSchema,
-      now,
-      body: () => {
-        if (spaceAccessSourceSuperseded(access.source(request.spaceId), request)) {
-          return { ok: false as const, code: "space_revision_conflict" as const };
-        }
-        const plan = audienceSourceApplicationPlan();
-        if (!commitWithPlan) return { ok: true as const, plan };
-        const committed = this.commitSpaceAccessSource(access, {
-          spaceId: request.spaceId,
-          source: {
-            scope: request.scope, participantUserIds: request.participantUserIds,
-            spaceRevision: request.spaceRevision, membershipGeneration: request.membershipGeneration,
-            channel: request.channel,
-          },
-          seatedUserIds: plan.seatUserIds,
-          operationId: request.operationId,
-          now,
-        });
-        if (!committed.ok) return committed;
-        return { ok: true as const, plan, suppliedUserIds: committed.suppliedUserIds };
-      },
-    });
-  }
-
-  private commitSpaceAccessSource(
-    access: WorkstreamAccessStorage,
-    input: {
-      spaceId: SpaceId; source: ConfirmedAccessSource | null; seatedUserIds: readonly UserId[];
-      operationId: string; now: number;
-    },
-  ): ConfirmSpaceAccessSourceResult {
-    const source = input.source;
-    if (!source) {
-      if (!access.source(input.spaceId)) return { ok: false as const, code: "space_not_found" as const };
-    } else {
-      if (spaceAccessSourceSuperseded(access.source(input.spaceId), source)) {
-        return { ok: false as const, code: "space_revision_conflict" as const };
-      }
-      if (!access.directAudience().observed && access.sources().length === 0) {
-        access.recordDirectScope(source.channel.readers.scope, input.now);
-      }
-      access.upsertSource({
-        spaceId: input.spaceId, scope: source.scope, participantUserIds: source.participantUserIds,
-        spaceRevision: source.spaceRevision, membershipGeneration: source.membershipGeneration,
-        operationId: input.operationId, now: input.now,
-      });
-    }
-    access.recordSuppliedReaders(input.spaceId, input.seatedUserIds);
-    return { ok: true as const, suppliedUserIds: access.suppliedReaders(input.spaceId) };
-  }
-
-  confirmSpaceAccessSource(input: z.infer<typeof ConfirmSpaceAccessSourceRequestSchema>): ConfirmSpaceAccessSourceResult {
-    const request = parseRpcInput(ConfirmSpaceAccessSourceRequestSchema, input, "space_access_confirmation");
-    this.assertParent(request.workspaceId, request.parentId);
-    const access = this.channelAccess();
-    const now = Date.now();
-    return access.operate({
-      operationId: request.operationId,
-      request: {
-        kind: "confirm_space_source", spaceId: request.spaceId, seatedUserIds: request.seatedUserIds,
-        source: request.source
-          ? {
-            scope: request.source.scope, participantUserIds: request.source.participantUserIds,
-            spaceRevision: request.source.spaceRevision, membershipGeneration: request.source.membershipGeneration,
-          }
-          : null,
-      },
-      resultSchema: ConfirmSpaceAccessSourceResultSchema,
-      now,
-      body: () => this.commitSpaceAccessSource(access, {
-        spaceId: request.spaceId, source: request.source ?? null, seatedUserIds: request.seatedUserIds,
-        operationId: request.operationId, now,
-      }),
-    });
-  }
-
-  replaceEquivalentSpaceAccessSource(
-    input: z.infer<typeof ReplaceEquivalentSpaceAccessSourceRequestSchema>,
-  ): z.infer<typeof ReplaceEquivalentSpaceAccessSourceResultSchema> {
-    const request = parseRpcInput(ReplaceEquivalentSpaceAccessSourceRequestSchema, input,
-      "replace_equivalent_space_access_source");
-    this.assertParent(request.workspaceId, request.parentId);
-    const access = this.channelAccess();
-    const now = Date.now();
-    return access.operate({
-      operationId: request.operationId,
-      request: {
-        kind: "replace_equivalent_space_source",
-        sourceSpaceId: request.sourceSpaceId, targetSpaceId: request.targetSpaceId,
-        scope: request.scope, participantUserIds: request.participantUserIds,
-        sourceSpaceRevision: request.sourceSpaceRevision, sourceMembershipGeneration: request.sourceMembershipGeneration,
-        targetSpaceRevision: request.targetSpaceRevision, targetMembershipGeneration: request.targetMembershipGeneration,
-      },
-      resultSchema: ReplaceEquivalentSpaceAccessSourceResultSchema,
-      now,
-      body: () => {
-        const source = access.source(request.sourceSpaceId);
-        const target = access.source(request.targetSpaceId);
-        const audienceMatches = (candidate: typeof source): boolean => candidate !== null
-          && candidate.scope === request.scope
-          && sameUserIds(candidate.participantUserIds, request.participantUserIds);
-        if (!source) {
-          return audienceMatches(target) ? { ok: true as const } : { ok: false as const, code: "space_not_found" as const };
-        }
-        if (source.spaceRevision !== request.sourceSpaceRevision
-          || source.membershipGeneration !== request.sourceMembershipGeneration
-          || !audienceMatches(source)
-          || (target && !audienceMatches(target))) {
-          return { ok: false as const, code: "space_revision_conflict" as const };
-        }
-        if (spaceAccessSourceSuperseded(target, {
-          spaceRevision: request.targetSpaceRevision, membershipGeneration: request.targetMembershipGeneration,
-        })) {
-          return { ok: false as const, code: "space_revision_conflict" as const };
-        }
-        const supplied = [...new Set([
-          ...access.suppliedReaders(request.sourceSpaceId),
-          ...access.suppliedReaders(request.targetSpaceId),
-        ])];
-        access.upsertSource({
-          spaceId: request.targetSpaceId, scope: request.scope, participantUserIds: request.participantUserIds,
-          spaceRevision: request.targetSpaceRevision, membershipGeneration: request.targetMembershipGeneration,
-          operationId: request.operationId, now,
-        });
-        access.recordSuppliedReaders(request.targetSpaceId, supplied);
-        if (request.sourceSpaceId !== request.targetSpaceId) access.deleteSource(request.sourceSpaceId);
-        return { ok: true as const };
-      },
-    });
-  }
-
-  retractSpaceAccessSource(input: z.infer<typeof RetractSpaceAccessSourceRequestSchema>): RetractSpaceAccessSourceResult {
-    const request = parseRpcInput(RetractSpaceAccessSourceRequestSchema, input, "space_access_retraction");
-    this.assertParent(request.workspaceId, request.parentId);
-    const access = this.channelAccess();
-    return access.operate({
-      operationId: request.operationId,
-      request: { kind: "retract_space_source", spaceId: request.spaceId },
-      resultSchema: RetractSpaceAccessSourceResultSchema,
-      now: Date.now(),
-      body: () => {
-        const existing = access.source(request.spaceId);
-        if (request.expectedSpaceRevision !== undefined && existing
-          && existing.spaceRevision > request.expectedSpaceRevision) {
-          return { ok: false as const, code: "space_revision_conflict" as const };
-        }
-        const plan = audienceSourceRetractionPlan();
-        access.deleteSource(request.spaceId);
-        return { ok: true as const, plan };
-      },
-    });
-  }
-
-  // ---------------------------------------------------------------------------
   // Grants and the participant handoff.
   // ---------------------------------------------------------------------------
 
@@ -2630,8 +2331,7 @@ export class HostedParent {
     return ScopeGrantMutationResultSchema.parse(useCurrentRevision
       ? store.mutateCurrent(ParticipantGrantMutationSchema.parse({ operationId: request.operationId,
         actorUserId: request.actorUserId, userId: request.userId, target: request.target, active: request.active,
-        // Provenance travels with the mutation; see the legacy object's comment.
-        ...(request.spaceSourceId ? { spaceSourceId: request.spaceSourceId } : {}) }), recipient?.incarnation ?? null)
+      }), recipient?.incarnation ?? null)
       : store.mutate(request, recipient?.incarnation ?? null));
   }
 
