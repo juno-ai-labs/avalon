@@ -24,12 +24,11 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { RETIREMENT_REFUSAL_CODE } from "../src/durable-objects/object-retirement";
 import { retireWorkspaceGraph } from "../src/services/workspace-retirement-service";
-import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
-import type { SidekickDO } from "../src/durable-objects/sidekick-do";
+import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 
@@ -42,17 +41,6 @@ const COMPLETED_AT = "2026-09-05T13:00:00.000Z";
 const FIRST_ROOM_ID = "00000000-0000-7000-8000-00000000e201";
 const SPACE_ID = "00000000-0000-7000-8000-00000000e401";
 const SIDEKICK_ID = "00000000-0000-7000-8000-00000000e301";
-
-/**
- * The Sidekick parent, still its own object. A Channel's and a Space's parent
- * are hosted by the Organization object and are closed with it, so the Sidekick
- * is the parent the walk tombstones separately.
- */
-function sidekickStub(workspaceId: string): DurableObjectStub<SidekickDO> {
-  return TEST_ENV.AUTOMATION_DOS.get(TEST_ENV.AUTOMATION_DOS.idFromName(
-    automationDOName(TEST_ENV.AVALON_REGION, asWorkspaceId(workspaceId), asAutomationId(SIDEKICK_ID)),
-  )) as DurableObjectStub<SidekickDO>;
-}
 
 let workspaceSequence = 0;
 function freshWorkspaceId() {
@@ -323,11 +311,9 @@ describe("workspace retirement graph", () => {
     await seedDirectory(stub, workspaceId);
     const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" };
     await stub.beginWorkspaceRetirement(tombstone);
-    // The Sidekick, because it is the parent the walk tombstones itself: a
-    // Channel's parent is closed with the Organization object above. Retired
-    // directly, with no `recordRetiredNode`, which is exactly the state an
-    // interrupted pass leaves behind.
-    await sidekickStub(workspaceId).retireObject(tombstone);
+    // Every parent is closed with the Organization object above, and no
+    // `recordRetiredNode` has run, which is exactly the state an interrupted
+    // pass leaves behind.
     expect((await stub.workspaceRetirementProgress()).remaining).toBe(4);
 
     const receipt = await retireWorkspaceGraph(TEST_ENV, { workspaceId, ...tombstone });
@@ -335,61 +321,6 @@ describe("workspace retirement graph", () => {
     expect(receipt.complete).toBe(true);
     expect(receipt.remaining).toBe(0);
     expect(receipt.parents).toBe(4);
-  });
-
-  it("leaves a Sidekick whose import fails unreceipted, and says so", async () => {
-    // The one outcome that is a failure: the retirement read imports a
-    // Sidekick still in its legacy object first, and an import that fails
-    // leaves nothing to close. The walk records the node as failed and the
-    // pass reports incomplete, which is also the only path that produces a
-    // non-empty `failed`, the receipt shape the route and the Ace page render.
-    // Every parent is hosted by the Organization object and keyed by the id
-    // its directory row names, so none can disagree about its own identity;
-    // a legacy object holding another Sidekick's row is what fails here.
-    const workspaceId = freshWorkspaceId();
-    const stub = workspaceStub(workspaceId);
-    await seedDirectory(stub, workspaceId);
-    await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
-      state.storage.sql.exec(`INSERT INTO sidekick_imports (sidekick_id, state) VALUES (?, 'pending')`, SIDEKICK_ID);
-    });
-    const sidekick = sidekickStub(workspaceId);
-    await runInDurableObject(sidekick, (instance: SidekickDO, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO automation
-           (id, automation_id, workspace_id, region, author_user_id, run_as_user_id, lifecycle,
-            paused_by, scope, owning_workstream_id, owning_room_archived_at, title, description,
-            current_definition_revision, accepted_definition_revision, connector_bindings_json,
-            default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
-            model_override, email_address, effective_after_event_sequence, authority_generation,
-            created_at, updated_at)
-         VALUES (1, ?, ?, ?, ?, ?, 'active', NULL, 'workspace', NULL, NULL, 'Someone else', '',
-                 0, NULL, '[]', '[]', '[]', '{}', NULL, NULL, NULL, 1, ?, ?)
-         ON CONFLICT (id) DO NOTHING`,
-        "00000000-0000-7000-8000-00000000e3ff",
-        workspaceId,
-        TEST_ENV.AVALON_REGION,
-        ACTOR_ID,
-        ACTOR_ID,
-        Date.now(),
-        Date.now(),
-      );
-      void instance;
-    });
-
-    const receipt = await retireWorkspaceGraph(TEST_ENV, {
-      workspaceId,
-      retiredAt: Date.now(),
-      operationId: OPERATION_ID,
-      actorUserId: null,
-      reason: "operator_retirement",
-    });
-    expect(receipt.complete).toBe(false);
-    expect(receipt.remaining).toBe(1);
-    expect(receipt.failed).toEqual([
-      { parentKind: "automation", parentId: SIDEKICK_ID, error: "sidekick_export_identity_mismatch" },
-    ]);
-    // Not tombstoned: the mismatched object is left exactly as it was.
-    expect((await sidekick.objectRetirementState()).retired).toBe(false);
   });
 
   it("closes children before parents and reports the pass", async () => {

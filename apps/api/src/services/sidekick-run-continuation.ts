@@ -19,7 +19,7 @@ import { hostedParentStub } from "./conversation-parent-client";
  *
  * A run child is an ordinary conversation with parent kind `automation` and
  * the run id as its substream. Its first activation is the Sidekick's own
- * (`SidekickDO.provisionRun`), which carries the run's context in
+ * (`provisionSidekickRun`), which carries the run's context in
  * `automationRun`; every later one starts from input somebody sent, and asks
  * the Sidekick here whether that input may continue the run and with what.
  * `docs/automation-lifecycle.md` owns the mechanism.

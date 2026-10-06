@@ -845,4 +845,26 @@ describe("the WorkspaceDO hosted-Sidekick migration", () => {
       expect(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 0 });
     }
   });
+
+  it("drops the import ledger once the legacy class is gone, and keeps every Sidekick", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, HOSTED_SIDEKICK_VERSION);
+    seedIdentity(database);
+    database.prepare(
+      `INSERT INTO automation_directory
+         (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
+          owning_workstream_id, title, description, next_run_at, projected_at, region)
+       VALUES (?, ?, ?, 3, 'h', 'active', 'workspace', NULL, 'Morning briefing', '', NULL, 7, 'global')`,
+    ).run("00000000-0000-7000-8000-0000000000c1", WORKSPACE_ID, "00000000-0000-7000-8000-0000000000c3");
+    database.prepare(`INSERT INTO sidekick_imports (sidekick_id, state) VALUES (?, 'imported')`)
+      .run("00000000-0000-7000-8000-0000000000c1");
+
+    apply(database, HOSTED_SIDEKICK_VERSION + 1, HOSTED_SIDEKICK_VERSION);
+
+    expect(database.prepare(`SELECT name FROM sqlite_master WHERE name LIKE 'sidekick_imports%'`).all()).toEqual([]);
+    expect(database.prepare(`SELECT automation_id, title, region FROM automation_directory`).all()).toEqual([
+      { automation_id: "00000000-0000-7000-8000-0000000000c1", title: "Morning briefing", region: "global" },
+    ]);
+  });
 });

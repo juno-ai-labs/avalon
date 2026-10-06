@@ -72,7 +72,6 @@
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
-      { "name": "AUTOMATION_DOS", "class_name": "SidekickDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" },
       { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" },
@@ -84,7 +83,6 @@
       "tag": "v1",
       "new_sqlite_classes": [
         "SubstreamAgent",
-        "SidekickDO",
         "WorkspaceDO",
         "SlackReactionTicker",
         "ArtifactHostDO",
