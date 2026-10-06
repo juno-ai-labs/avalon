@@ -6,7 +6,7 @@ import type { BrowserSession } from "@rally/contracts/browser-session";
 import type { Region } from "@rally/contracts/regions";
 import { cookieClientSession } from "./session";
 import { createRoot } from "react-dom/client";
-import { BrowserEntry } from "./entry";
+import { BrowserBoot, BrowserEntry } from "./entry";
 import { ConnectionComplete } from "./connection-complete";
 import "./styles.css";
 import '@rally/ui/styles/app.css';
@@ -16,7 +16,7 @@ import '@rally/ui/styles/app.css';
 const BrowserShell = lazy(() => import('./shell'));
 function BrowserCollaboration({ region, session, onSignOut, onRevalidate }: { region: string; session: BrowserSession; onSignOut: () => void; onRevalidate: () => void }) {
   const collaborationSession = useMemo(() => cookieClientSession(region, session), [region, session]);
-  return <Suspense fallback={<p role="status">Opening Rally…</p>}><BrowserShell region={region as Region} session={collaborationSession} onSignOut={onSignOut} onRevalidate={onRevalidate} /></Suspense>;
+  return <Suspense fallback={<BrowserBoot />}><BrowserShell region={region as Region} session={collaborationSession} onSignOut={onSignOut} onRevalidate={onRevalidate} /></Suspense>;
 }
 
 installTheme();
