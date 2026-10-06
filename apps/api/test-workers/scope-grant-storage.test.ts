@@ -70,6 +70,19 @@ function grantOperationCount(state: DurableObjectState): number {
     "SELECT COUNT(*) AS total FROM parent_grant_operations WHERE parent_id=?", parentId).one().total;
 }
 
+/**
+ * A grant row as a Space seated it before WorkspaceDO migration 93: written
+ * through the ordinary path, then marked `space` the way that path marked it.
+ * No live code writes `source_kind = 'space'` any more.
+ */
+function seatLegacySpaceGrant(store: ScopeGrantStorage, state: DurableObjectState): void {
+  if (store.mutate(command()).status !== "committed") throw new Error("Expected grant");
+  state.storage.sql.exec(
+    "UPDATE parent_grants SET source_kind = 'space', source_id = ? WHERE parent_id = ? AND user_id = ?",
+    "00000000-0000-4000-8000-000000000005", parentId, userId,
+  );
+}
+
 describe("workstream scope grants in real workerd", () => {
   it("replays revisionless participant commands without reapplying an old addition", async () => {
     await withStorage("scope-grant-participant-retry", (store, state) => {
@@ -85,71 +98,43 @@ describe("workstream scope grants in real workerd", () => {
     });
   });
 
-  it("commits a Space-seated grant without publishing it, and lets a direct share claim it", async () => {
-    const spaceSourceId = "00000000-0000-4000-8000-000000000005";
+  it("given a grant a Space seated before migration 93, when the Channel adds that reader, then the row becomes direct and is published", async () => {
     await withStorage("scope-grant-space-provenance", (store, state) => {
       const target = command().target;
-      expect(store.mutate(command({ spaceSourceId })).status).toBe("committed");
-
-      // It admits the reader like any other grant — `resolveScopedAccess` reads
-      // the same row — and it reaches no candidate index, because a
-      // Space-derived reader finds the Channel through the Space.
-      expect(store.read(userId, target)).toMatchObject({ active: true });
+      seatLegacySpaceGrant(store, state);
       expect(store.sourceKind(userId, target)).toBe("space");
-      expect(deliveries(state)).toEqual([]);
+      const published = deliveries(state).length;
 
-      // A direct share over it is the Channel taking responsibility for this
-      // reader, and it is published from then on: a Space leaving must not take
-      // away access the Channel granted itself.
-      expect(store.mutate(command({ active: true, expectedRevision: 1 })).status).toBe("committed");
+      // Equal admission is not equal provenance: the add is the Channel taking
+      // responsibility for this reader, so it writes and publishes even though
+      // `active` stays true.
+      expect(store.mutate(command({ active: true, expectedRevision: 1 })))
+        .toMatchObject({ status: "committed", grant: { active: true, revision: 2 } });
       expect(store.sourceKind(userId, target)).toBe("direct");
-      expect(deliveries(state)).toHaveLength(1);
-
-      // And the Space cannot take it back: direct provenance is sticky.
-      expect(store.mutate(command({ active: true, expectedRevision: 2, spaceSourceId })).status).toBe("committed");
-      expect(store.sourceKind(userId, target)).toBe("direct");
-      expect(deliveries(state)).toHaveLength(1);
-
-      // Nor can the Space's *departure* take it away. The row is the Channel's
-      // now, and which of the two writes happened to arrive last is queue
-      // ordering nobody controls, so the authority decides rather than the
-      // arrival order. `committed`, not `conflict`: the reader this Space
-      // supplies can read, which is all the retraction was asking for.
-      const withdrawn = store.mutate(command({ active: false, expectedRevision: 2, spaceSourceId }));
-      expect(withdrawn).toMatchObject({ status: "committed", grant: { active: true, revision: 2 } });
-      expect(store.read(userId, target)).toMatchObject({ active: true, revision: 2 });
-      expect(deliveries(state)).toHaveLength(1);
-
-      // The Channel can still withdraw it itself, which is the difference the
-      // provenance is carrying: the same command without a Space behind it.
-      expect(store.mutate(command({ active: false, expectedRevision: 2 })).status).toBe("committed");
-      expect(store.read(userId, target)).toMatchObject({ active: false, revision: 3 });
+      expect(deliveries(state)).toHaveLength(published + 1);
     });
   });
 
   // A Space no longer supplies any reader, so a reader one seated before is
   // the Channel's to remove like any other; nothing else still claims them.
   it("revokes a Space-seated grant on an ordinary removal", async () => {
-    const spaceSourceId = "00000000-0000-4000-8000-000000000007";
-    await withStorage("scope-grant-space-seated-removal", (store) => {
+    await withStorage("scope-grant-space-seated-removal", (store, state) => {
       const target = command().target;
-      expect(store.mutate(command({ spaceSourceId })).status).toBe("committed");
+      seatLegacySpaceGrant(store, state);
       expect(store.sourceKind(userId, target)).toBe("space");
 
       expect(store.mutate(command({ active: false, expectedRevision: 1 })))
         .toMatchObject({ status: "committed", grant: { active: false, revision: 2 } });
       expect(store.read(userId, target)).toMatchObject({ active: false, revision: 2 });
+      expect(store.sourceKind(userId, target)).toBe("direct");
     });
   });
 
-  it("given a migrated Channel, when a Space seats a reader through the participant path, then the grant is the Space's and reaches no directory", async () => {
+  it("given a migrated Channel, when a reader is added through the participant path, then the grant is direct and reaches the candidate index", async () => {
     // The whole authority, not the storage class: `mutateParticipantGrant` is
     // the method `substream-agent.ts` calls for every add on a Channel that
-    // has moved to grant authority, and `authorizedGrantMutation` rebuilds the
-    // mutation field by field on the way through. A rebuild that drops
-    // `spaceSourceId` writes the row `direct` and publishes it, which is the
-    // one thing PRD acceptance 18 forbids.
-    const spaceSourceId = "00000000-0000-4000-8000-000000000006";
+    // has moved to grant authority. A Space grants no reader, so every add is
+    // the Channel's own and is published like a direct share.
     const readerId = asUserId("00000000-0000-4000-8000-000000000007");
     const target = { kind: "conversation" as const, ...address, substreamId: asSubstreamId("0") };
     // The relationship reads this authority makes before it decides. The
@@ -168,30 +153,22 @@ describe("workstream scope grants in real workerd", () => {
     await withHostedParent(stub, parentId, (parent, state) => {
       insertParentMetadata(state);
       state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at,status) VALUES (?,'0','main',0,'ready')", parentId);
-      // The actor's own grant is what gives them sharing authority here, and
-      // it is direct: it is published, which is what the reader's row is
-      // compared against below.
+      // The actor's own grant is what gives them sharing authority here.
       parent['scopeGrants'](address).mutate({ operationId: crypto.randomUUID(), actorUserId: userId,
         userId, target, active: true, expectedRevision: 0 }, userId);
     });
 
     expect(await stub.mutateParticipantGrant({ operationId: crypto.randomUUID(), actorUserId: userId,
-      userId: readerId, target, active: true, spaceSourceId })).toMatchObject({ status: "committed" });
+      userId: readerId, target, active: true })).toMatchObject({ status: "committed" });
 
     await withHostedParent(stub, parentId, (parent, state) => {
       const store: ScopeGrantStorage = parent['scopeGrants'](address);
-      // It admits the reader exactly as a direct share would — the same row,
-      // read by the same `resolveScopedAccess`.
       expect(store.read(readerId, target)).toMatchObject({ active: true });
-      expect(store.sourceKind(readerId, target)).toBe("space");
-      // Only the actor's direct grant was published; the Space's reader was not.
-      expect(deliveries(state).map((item) => item.grant.userId)).toEqual([userId]);
+      expect(store.sourceKind(readerId, target)).toBe("direct");
+      expect(deliveries(state).map((item) => item.grant.userId)).toEqual([userId, readerId]);
     });
-    // And it reaches no candidate index: the actor's direct grant is the only
-    // thing published. A Space-derived reader finds the Channel through the
-    // Organization's Space directory.
     expect(await stub.listScopeGrantCandidates({ workspaceId, userId, membershipIncarnation: userId, accessClass: "guest" })).toEqual([parentId]);
-    expect(await stub.listScopeGrantCandidates({ workspaceId, userId: readerId, membershipIncarnation: readerId, accessClass: "guest" })).toEqual([]);
+    expect(await stub.listScopeGrantCandidates({ workspaceId, userId: readerId, membershipIncarnation: readerId, accessClass: "guest" })).toEqual([parentId]);
   });
 
   it("publishes combined access and does not acknowledge a newer projection with an old receipt", async () => {

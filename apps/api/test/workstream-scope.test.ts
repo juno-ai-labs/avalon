@@ -61,7 +61,6 @@ import { bootstrapWorkstreamRuntimeEnvironment } from "../src/services/workstrea
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   PERSONAL_SPACE_ID,
-  spaceCreationRoomRpcs,
   spaceCreationWorkspaceRpcs,
 } from "./helpers/space-creation-rpcs";
 
@@ -171,7 +170,6 @@ function environment(database: DatabaseSync): {
         ...organization,
         // A replayed create re-places the Channel through `addChannel`, which
         // plans and confirms the source on the Channel's own authority.
-        ...spaceCreationRoomRpcs(),
       },
     }),
   });
