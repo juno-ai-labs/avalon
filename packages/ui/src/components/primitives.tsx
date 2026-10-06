@@ -23,7 +23,7 @@ import { statusDescription, statusLabel, type WorkstreamMarkerStatus } from '../
 import { PLUGIN_BRAND_MARKS, type PluginBrandMark } from '../lib/plugin-marks';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useAppearance } from '../lib/theme';
-import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
+import { focusFollowsKeyboard, hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import type { WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/types';
 
@@ -177,8 +177,11 @@ export function Tip({
         // event — and it is the whole intervention: the trigger keeps every
         // other behaviour, and the next real focus or movement opens the tip as
         // it always did. See `lib/window-activation.ts`.
+        //
+        // Focus also opens only after a key: focus that code moves after a tap
+        // or a click is nobody tabbing to the control.
         onFocus={(event) => {
-          if (!hasUserInputSinceWindowActivation()) event.preventDefault();
+          if (!hasUserInputSinceWindowActivation() || !focusFollowsKeyboard()) event.preventDefault();
         }}
         onPointerMove={(event) => {
           if (!hasUserInputSinceWindowActivation()) event.preventDefault();
