@@ -24,11 +24,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   WorkspaceSocketSyncEventSchema,
-  asSpaceId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
-  type SpaceId,
+  type Scope,
 } from "@rally/contracts";
 import { conversationEffectHash } from "@rally/contracts/conversation-effects";
 
@@ -41,7 +40,6 @@ import {
   placeConnectorChannelInGeneral,
   spaceBootstrapDriver,
 } from "../src/services/space-bootstrap-service";
-import { SpaceService } from "../src/services/space-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { devRoutes } from "../src/routes/dev";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -81,24 +79,14 @@ function developmentEnv(): Env {
   });
 }
 
-async function createChannel(clientMessageId: string, spaceIds: SpaceId[] = []): Promise<string> {
+async function createChannel(clientMessageId: string, scope: Scope = "personal"): Promise<string> {
   const created = await new WorkstreamObjectCreationService(creationEnv(), AUTH).createPrepared({
     title: clientMessageId,
     clientMessageId,
     participantUserIds: [],
-    spaceIds,
+    scope,
   }, { messages: [{ role: "user", text: "A prepared start" }] });
   return created.workstream.id;
-}
-
-async function personalSpace(): Promise<SpaceId> {
-  const reserved = await workspace().reserveSpace({
-    workspaceId: WORKSPACE_ID,
-    userId: USER_ID,
-    space: { name: "Private", iconKey: "briefcase", colorKey: "blue", scope: "personal" },
-  });
-  if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
-  return asSpaceId(reserved.space.id);
 }
 
 /**
@@ -107,7 +95,7 @@ async function personalSpace(): Promise<SpaceId> {
  * The Channels, their conversations and their audiences stay; every trace of a
  * Space goes. That is the state an existing Organization reaches migration 61
  * in, and building it this way rather than by writing directory rows is what
- * gives the containment preflight a real conversation to refuse.
+ * gives each placement a real conversation whose audience it can change.
  */
 async function forgetSpaces(): Promise<void> {
   await runInDurableObject(workspace(), (_instance, state) => {
@@ -438,11 +426,10 @@ beforeEach(async () => {
 
 describe("the Space cutover", () => {
   it("places every Channel in one General, archived ones included, and closes", async () => {
-    const privateSpace = await personalSpace();
-    const active = await createChannel("active-personal", [privateSpace]);
-    const archived = await createChannel("archived-personal", [privateSpace]);
-    const organizationWide = await createChannel("organization-wide");
-    const archivedOrganizationWide = await createChannel("archived-organization-wide");
+    const active = await createChannel("active-personal");
+    const archived = await createChannel("archived-personal");
+    const organizationWide = await createChannel("organization-wide", "workspace");
+    const archivedOrganizationWide = await createChannel("archived-organization-wide", "workspace");
     await archiveInDirectory(archived);
     // Archived on both sides: its conversation refuses the product read, so
     // placing it has to observe it from the directory.
@@ -461,74 +448,27 @@ describe("the Space cutover", () => {
     expect(await membershipRows()).toEqual([active, archived, organizationWide, archivedOrganizationWide]
       .map((workstreamId) => ({ workstream_id: workstreamId, state: "active" }))
       .sort((left, right) => left.workstream_id.localeCompare(right.workstream_id)));
-    // General is Organization-wide, so a formerly personal Channel becomes
-    // Organization-wide with it. That is the PRD's intentional disclosure, and
-    // it happens through the Channel's own scope operation rather than beside
-    // it.
-    expect(await channelScope(active)).toBe("workspace");
+    // General is Organization-wide and grants no reader, so a personal
+    // Channel placed in it stays personal.
+    expect(await channelScope(active)).toBe("personal");
+    expect(await channelScope(organizationWide)).toBe("workspace");
   });
 
-  it("finds the fenced Channel before it widens any Channel, and refuses to close", async () => {
-    const privateSpace = await personalSpace();
-    const safe = await createChannel("safe-personal", [privateSpace]);
-    const fenced = await createChannel("fenced-personal", [privateSpace]);
+  it("places a Channel whose retained content is fenced to one reader, because placement widens nothing", async () => {
+    const fenced = await createChannel("fenced-personal");
     await fenceRetainedContent(fenced);
     await forgetSpaces();
 
     await runWholeCutover();
 
-    // The PRD's Existing Organizations section: an unsafe Channel blocks its
-    // Organization "without partial mutation". The read-only preflight walks
-    // the whole directory before `memberships` may be claimed, so the safe
-    // Channel beside the fenced one is *not* Organization-wide and holds no
-    // membership either — the disclosure did not happen by half.
-    expect(await channelScope(fenced)).toBe("personal");
-    expect(await channelScope(safe)).toBe("personal");
-    expect(await membershipRows()).toEqual([]);
-    const status = await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID });
-    expect(status.ready).toBe(false);
-    expect(status.blockedWorkstreamIds).toEqual([fenced]);
-    // The reason is on the row for whoever reads it with SQL, which is how an
-    // operator tells a content fence from an Organization with nobody left to
-    // act.
-    const blocked = await workspace().runInspectionSql({
-      sql: "SELECT blocked_json FROM space_bootstrap WHERE id = 1",
-      bindings: [],
-    });
-    expect(String((blocked.rows[0] as { blocked_json: string }).blocked_json))
-      .toContain("space_membership_content_fence");
-  });
-
-  it("closes once the blocked Channel has a home the fence admits", async () => {
-    const fenced = await createChannel("fenced-personal", [await personalSpace()]);
-    await fenceRetainedContent(fenced);
-    await forgetSpaces();
-
-    await runWholeCutover();
-    expect((await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID })).blockedWorkstreamIds)
-      .toEqual([fenced]);
-
-    // The remediation an operator has: the fence is immutable and General is
-    // Organization-wide, so the Channel can never enter General — what it can
-    // have is a home whose audience the fence already admits. Once it has one
-    // the hierarchy invariant is true of it, and the walk stops counting it.
-    await new SpaceService(creationEnv(), AUTH)
-      .addChannel(await personalSpace(), asWorkstreamId(fenced));
-
-    await runWholeCutover();
-
-    // The whole point of B1: a blocker used to be permanent, because the only
-    // writer that clears one is a pass that reaches the Channel and a
-    // `finalize` that answered `blocked` never ran another.
+    expect(await membershipRows()).toEqual([{ workstream_id: fenced, state: "active" }]);
     expect(await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
       .toMatchObject({ phase: "complete", ready: true, blockedWorkstreamIds: [] });
-    // Remediated, not bypassed: the Channel is in a Space and still personal.
     expect(await channelScope(fenced)).toBe("personal");
   });
 
   it("is idempotent: a pass interrupted after its placements makes no second General and no second membership", async () => {
-    const privateSpace = await personalSpace();
-    const first = await createChannel("first", [privateSpace]);
+    const first = await createChannel("first");
     const second = await createChannel("second");
     await forgetSpaces();
 
@@ -734,7 +674,7 @@ describe("the local development seed", () => {
     // Built through the real creation path so the directory projection the
     // placement reads — the scope, and the participants who may act on it —
     // is the one an Organization actually holds.
-    const workstreamId = await createChannel("restored-fixture");
+    const workstreamId = await createChannel("restored-fixture", "workspace");
     await forgetMembership(workstreamId);
     expect(await membershipRows()).toEqual([]);
 

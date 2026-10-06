@@ -176,11 +176,11 @@ async function publishChannel(workstreamId: WorkstreamId): Promise<void> {
   });
 }
 
-async function reserve(name: string, scope: "workspace" | "personal" = "workspace"): Promise<SpaceId> {
+async function reserve(name: string): Promise<SpaceId> {
   const result = await workspace().reserveSpace({
     workspaceId: WORKSPACE_ID,
     userId: OWNER,
-    space: { name, iconKey: "briefcase", colorKey: "blue", scope },
+    space: { name, iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
   });
   if (!result.ok) throw new Error(`reserveSpace refused: ${result.code}`);
   return asSpaceId(result.space.id);
@@ -278,17 +278,49 @@ async function operationCounts(workstreamIds: readonly WorkstreamId[]): Promise<
  * source itself in place.
  */
 async function spaceSource(workstreamId: WorkstreamId, spaceId: SpaceId) {
-  const sources = await workspace().readAccessSources({
-    workspaceId: WORKSPACE_ID, parentId: workstreamId, channel: observedChannel,
-  });
-  return sources.spaces.find((source) => source.spaceId === spaceId);
+  const row = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+    scope: string; participants_json: string;
+  }>(
+    "SELECT scope, participants_json FROM parent_space_sources WHERE parent_id = ? AND space_id = ?",
+    workstreamId, spaceId,
+  ).toArray()[0]);
+  return row && { scope: row.scope, participantUserIds: JSON.parse(row.participants_json) as string[] };
 }
 
 async function spaceSourceIds(workstreamId: WorkstreamId): Promise<string[]> {
-  const sources = await workspace().readAccessSources({
-    workspaceId: WORKSPACE_ID, parentId: workstreamId, channel: observedChannel,
+  return runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ space_id: string }>(
+    "SELECT space_id FROM parent_space_sources WHERE parent_id = ? ORDER BY space_id", workstreamId,
+  ).toArray().map((row) => row.space_id));
+}
+
+/**
+ * An `audience` intent at rest, the way a Worker that changed a Space's
+ * audience before every Space became Organization-wide left one. Nothing
+ * stages these any more, but a pending one is still resumed, so the row is
+ * written as that Worker's `noteSpaceAudience` wrote it: at the Space's
+ * current revision, due later.
+ */
+async function storedAudienceIntent(spaceId: SpaceId, requestedByUserId: UserId): Promise<{
+  operationId: string; spaceRevision: number;
+}> {
+  const operationId = crypto.randomUUID();
+  const spaceRevision = await withSpaceStorage(workspace(), (storage) => {
+    const space = storage.readable({ userId: OWNER, accessClass: "member" }, spaceId);
+    if (space === false) throw new Error("audience Space missing");
+    storage.recordIntent({
+      operationId,
+      kind: "audience",
+      spaceId,
+      workstreamId: null,
+      spaceRevision: space.revision,
+      membershipGeneration: null,
+      deliveryGeneration: null,
+      requestedByUserId,
+      notBefore: Date.now() + 60_000,
+    });
+    return space.revision;
   });
-  return sources.spaces.map((source) => source.spaceId);
+  return { operationId, spaceRevision };
 }
 
 /**
@@ -446,7 +478,7 @@ describe("a Space fan-out over more members than one page", () => {
   }, 180_000);
 
   it("given an audience change overtaken by a newer one, when the alarm resumes the older, then its members converge on the Space as it is now", async () => {
-    const spaceId = await reserve("Side work", "personal");
+    const spaceId = await reserve("Side work");
     const channel = CHANNELS[0]!;
     await publishChannel(channel);
     await place(spaceId, channel);
@@ -454,14 +486,9 @@ describe("a Space fan-out over more members than one page", () => {
     await seatSpaceSource(channel, spaceId, { scope: "personal", participantUserIds: [OWNER] });
 
     // Staged, and overtaken before its walk reached the Channel.
-    const operationId = crypto.randomUUID();
-    const staged = await workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId,
-      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
-    });
-    if (!staged.ok) throw new Error(staged.code);
+    const { operationId } = await storedAudienceIntent(spaceId, OWNER);
     const newer = await workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId,
       audience: { scope: "workspace", participantUserIds: [OWNER] },
     });
     if (!newer.ok) throw new Error(newer.code);
@@ -487,15 +514,7 @@ describe("a Space fan-out over more members than one page", () => {
     // Deliberately no objects behind the Channel, so every step of the walk
     // throws — which is what a resume against a broken member looks like.
 
-    const operationId = crypto.randomUUID();
-    const noted = await workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      spaceId,
-      operationId,
-      audience: { scope: "personal", participantUserIds: [OWNER] },
-    });
-    if (!noted.ok) throw new Error(noted.code);
+    const { operationId, spaceRevision } = await storedAudienceIntent(spaceId, OWNER);
 
     const batch = createMessageBatch("avalon-global-activity", [{
       id: crypto.randomUUID(),
@@ -509,7 +528,7 @@ describe("a Space fan-out over more members than one page", () => {
         kind: "audience",
         spaceId,
         workstreamId: null,
-        spaceRevision: noted.space.revision,
+        spaceRevision,
         membershipGeneration: null,
         cursor: null,
         requestedByUserId: OWNER,
@@ -531,103 +550,6 @@ describe("a Space fan-out over more members than one page", () => {
     expect((row.rows[0] as { last_error_code: string | null }).last_error_code).toBeTruthy();
   }, 60_000);
 
-  it("given a requester who has lost their reach, when the intent resumes, then it refuses by name and every member keeps its readers", async () => {
-    const spaceId = await reserve("Side work", "personal");
-    const channel = CHANNELS[0]!;
-    await publishChannel(channel);
-    await place(spaceId, channel);
-    await openMemberChannel(channel);
-
-    // Both people are participants, and both are seated on the member Channel
-    // by the Space. That roster is what the resume below would otherwise
-    // withdraw.
-    const joined = await workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      spaceId,
-      operationId: crypto.randomUUID(),
-      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
-    });
-    if (!joined.ok) throw new Error(joined.code);
-    await seatSpaceSource(channel, spaceId, {
-      scope: "personal", participantUserIds: [OWNER, MEMBER],
-    });
-
-    // The second member stages an audience change of their own, as a
-    // participant may, and its walk never reaches the Channel.
-    const operationId = crypto.randomUUID();
-    const staged = await workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID,
-      userId: MEMBER,
-      spaceId,
-      operationId,
-      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
-    });
-    if (!staged.ok) throw new Error(staged.code);
-
-    // Then they are taken out of the Space. They still reach it — the Channel
-    // in it is Organization-wide and they can read it — so the read the resume
-    // makes no longer refuses them: it answers `through_channel`, whose
-    // participant list is empty by design.
-    const narrowed = await workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      spaceId,
-      operationId: crypto.randomUUID(),
-      audience: { scope: "personal", participantUserIds: [OWNER] },
-    });
-    if (!narrowed.ok) throw new Error(narrowed.code);
-    await expect(workspace().spaceSummary({
-      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId,
-    })).resolves.toMatchObject({ ok: true, space: { reach: "through_channel", participants: [] } });
-
-    const batch = createMessageBatch("avalon-global-activity", [{
-      id: crypto.randomUUID(),
-      timestamp: new Date(),
-      attempts: 1,
-      body: {
-        type: "space_intent_resume",
-        region: "global",
-        workspaceId: WORKSPACE_ID,
-        operationId,
-        kind: "audience",
-        spaceId,
-        workstreamId: null,
-        spaceRevision: staged.space.revision,
-        membershipGeneration: null,
-        cursor: null,
-        requestedByUserId: MEMBER,
-      },
-    }]);
-    await consumeActivityQueue(batch, env);
-
-    // The readers the Space supplies are exactly the ones it supplied before.
-    // The walk this resume would have taken retracts the source and re-applies
-    // it from the requester's own view of the Space, which for this requester
-    // names nobody — so the Channel would keep the source and lose everyone
-    // seated through it, and the operation would report success.
-    expect(await spaceSource(channel, spaceId)).toMatchObject({
-      scope: "personal",
-      participantUserIds: [OWNER, MEMBER],
-    });
-
-    // Terminal, and said on the row: the intent is settled with the reason, so
-    // the alarm has nothing left to republish and the queue has nothing to
-    // retry.
-    const row = await workspace().runInspectionSql({
-      sql: "SELECT state, last_error_code, receipts_json FROM space_intents WHERE operation_id = ?",
-      bindings: [operationId],
-    });
-    expect(row.rows[0]).toMatchObject({
-      state: "settled",
-      last_error_code: "requester_reach_lost",
-    });
-    expect(String((row.rows[0] as { receipts_json: string }).receipts_json))
-      .toContain("requester_reach_lost");
-    const outcome = await getQueueResult(batch, createExecutionContext());
-    expect(outcome.retryMessages).toHaveLength(0);
-  }, 60_000);
-
   it("given a requester who is no longer an active member, when the alarm reaches their intent, then nothing runs as them and the reason is on the row", async () => {
     const spaceId = await reserve("Company");
     const channel = CHANNELS[0]!;
@@ -638,12 +560,7 @@ describe("a Space fan-out over more members than one page", () => {
 
     // The second member stages an audience change and leaves the Organization
     // before its walk reaches the Channel.
-    const operationId = crypto.randomUUID();
-    const staged = await workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId, operationId,
-      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
-    });
-    if (!staged.ok) throw new Error(staged.code);
+    const { operationId } = await storedAudienceIntent(spaceId, MEMBER);
     await changeRelationships(env, WORKSPACE_ID, [MEMBER],
       env.DB.prepare("UPDATE workspace_members SET status = 'suspended' WHERE workspace_id = ? AND user_id = ?")
         .bind(WORKSPACE_ID, MEMBER));
@@ -715,11 +632,11 @@ async function memberships(workstreamId: WorkstreamId) {
 }
 
 describe("a stored move, resumed in place", () => {
-  const ownerOnly = { scope: "personal" as const, participantUserIds: [OWNER] };
+  const ownerOnly = { scope: "workspace" as const, participantUserIds: [OWNER] };
 
   it("given a move whose provenance swap already committed, when the alarm resumes it, then the memberships switch in one step", async () => {
-    const source = await reserve("Source", "personal");
-    const target = await reserve("Target", "personal");
+    const source = await reserve("Source");
+    const target = await reserve("Target");
     const channel = CHANNELS[0]!;
     await publishChannel(channel);
     await place(source, channel);
@@ -745,20 +662,20 @@ describe("a stored move, resumed in place", () => {
     await expect(intentRow(operationId)).resolves.toMatchObject({ rows: [{ state: "settled" }] });
   }, 60_000);
 
-  it("given a move whose Spaces no longer grant the same readers, when the alarm resumes it, then it becomes an add to the target and a removal from the source", async () => {
-    const source = await reserve("Source", "personal");
-    const target = await reserve("Target", "personal");
+  it("given a move whose target Space moved on since it was staged, when the alarm resumes it, then it becomes an add to the target and a removal from the source", async () => {
+    const source = await reserve("Source");
+    const target = await reserve("Target");
     const channel = CHANNELS[0]!;
     await publishChannel(channel);
     await place(source, channel);
     await openMemberChannel(channel);
     await seatSpaceSource(channel, source, ownerOnly);
     const operationId = await storedMove({ sourceSpaceId: source, targetSpaceId: target, workstreamId: channel });
-    // The target's audience moved after the move was staged, so moving the
-    // record across unchanged would grant the wrong readers.
+    // The target's participants changed after the move was staged, so moving
+    // the record across unchanged would record a Space that no longer exists.
     const widened = await workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: target, operationId: crypto.randomUUID(),
-      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: target,
+      audience: { scope: "workspace", participantUserIds: [OWNER, MEMBER] },
     });
     if (!widened.ok) throw new Error(widened.code);
 
@@ -774,9 +691,9 @@ describe("a stored move, resumed in place", () => {
   }, 60_000);
 
   it("given two stored moves from one placement, when the alarm resumes both, then the first wins and the other target never activates", async () => {
-    const source = await reserve("Source", "personal");
-    const winner = await reserve("Winner", "personal");
-    const older = await reserve("Older", "personal");
+    const source = await reserve("Source");
+    const winner = await reserve("Winner");
+    const older = await reserve("Older");
     const channel = CHANNELS[0]!;
     await publishChannel(channel);
     await place(source, channel);
