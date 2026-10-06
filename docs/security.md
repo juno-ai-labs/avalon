@@ -355,8 +355,9 @@ Claiming has two consequences worth knowing. A share to an address that already
 has an account is claimed as it is made, so it adds that person to the
 Organization as a guest without them confirming anything, and the sharer can
 tell from the response and the Guest list whether the address has an account.
-Both follow from the product decision, recorded in the guest-sharing PRD, that
-proving the mailbox at sign-in is the only consent a share needs. See
+Both follow from the product decision, confirmed by the product owner on
+2026-10-06 and recorded in the guest-sharing PRD, that proving the mailbox at
+sign-in is the only consent a share needs. See
 [`scope-invitations.md`](scope-invitations.md). The renderer must enter the target
 through Electron main, verify the returned session names the exact pair, and
 only then use the destination. Main answers a link that names the active
