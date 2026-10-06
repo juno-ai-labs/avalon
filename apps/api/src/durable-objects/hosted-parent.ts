@@ -1711,11 +1711,7 @@ export class HostedParent {
     return { scope: channel.readers.scope, participantUserIds: channel.participantUserIds };
   }
 
-  /**
-   * Who may read the Channel and why. Spaces are listed as placements, each
-   * Organization-wide and granting nothing, so **Manage access** can say where
-   * the Channel sits without implying any Space opens it.
-   */
+  /** Who may read the Channel: its own audience. No Space supplies a reader. */
   readAccessSources(input: z.infer<typeof ReadChannelAccessSourcesRequestSchema>): ChannelAccessSources {
     const request = parseRpcInput(ReadChannelAccessSourcesRequestSchema, input, "channel_access_sources");
     this.assertParent(request.workspaceId, request.parentId);

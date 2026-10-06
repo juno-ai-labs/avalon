@@ -9595,8 +9595,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Place one Channel in General for the cutover, as one of the people who
    * may act on it: `addSpaceChannel` without the sidebar-visibility gate, and
    * able to place an archived Channel, which the cutover has to home too.
-   * The caller has already asked the Channel whether General's audience fits
-   * its retained content; the canonical operations ask again.
+   * Placement grants no reader, so nothing about the Channel's audience moves.
    */
   async placeChannelInGeneral(input: WorkspaceGeneralPlacementRequest): Promise<WorkspaceSpaceChannelChangeResult> {
     await this.initialized;

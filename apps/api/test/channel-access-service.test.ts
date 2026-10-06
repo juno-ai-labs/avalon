@@ -11,6 +11,7 @@ import type { AuthContext, Env } from "../src/env";
 import { ChannelAccessService } from "../src/services/channel-access-service";
 import { runSpaceSourceRetraction } from "../src/services/space-source-operations";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
+import { WorkstreamService } from "../src/services/workstream-service";
 import {
   createCloudflareTestBinding,
   createTestD1Database,
@@ -52,6 +53,7 @@ type RetractResult = { ok: true; plan: { narrowScope: boolean; seatUserIds: stri
 
 function environment(input: {
   calls: string[];
+  manages?: boolean;
   apply?: ApplyResult;
   confirm?: { ok: true; suppliedUserIds: string[] } | { ok: false; code: "space_revision_conflict" };
   retract?: RetractResult;
@@ -67,7 +69,9 @@ function environment(input: {
   };
 }): Env {
   const stub = {
-    readManagementAccess: async () => ({ allowed: true, writable: true, grantIds: [], workspaceMemberAccess: false }),
+    readManagementAccess: async () => ({
+      allowed: input.manages ?? true, writable: true, grantIds: [], workspaceMemberAccess: false,
+    }),
     readAccessSources: async () => {
       input.calls.push("object:sources");
       return input.sources ?? { direct: { scope: "personal", participantUserIds: [] }, spaces: [] };
@@ -196,5 +200,41 @@ describe("removing a direct reader", () => {
 
     await expect(service.removeDirectReader(CHANNEL, READER)).resolves.toBe(false);
     expect(calls).toEqual([`canonical:remove(${READER})`]);
+  });
+
+  // The conversation's own check is read and collaborate; changing who else is
+  // in the Channel is management, and a reader who lacks it is told nothing.
+  it("given a caller who may not manage the channel, then nothing is removed and it answers as not found", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls, { detail: detail("personal", [OWNER, READER]) });
+    const service = new ChannelAccessService(environment({ calls, manages: false }), auth);
+
+    await expect(service.removeDirectReader(CHANNEL, READER)).rejects.toMatchObject({
+      status: 404, code: "workstream_not_found",
+    });
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("making a Channel private", () => {
+  // A Channel born in General before this change recorded `personal` as its
+  // own scope while General made it public. The narrowing is decided from the
+  // audience the Channel actually had, so its non-participants' sockets close.
+  it("given a public channel, when it is made private, then the narrowing is published after the update", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls, { detail: detail("workspace", [OWNER]) });
+
+    await new WorkstreamService(environment({ calls }), auth).update(CHANNEL, { scope: "personal" });
+
+    expect(calls).toEqual(["canonical:update(personal)", "queue:workstream_audience_narrowed"]);
+  });
+
+  it("given a private channel, when it is made private again, then nothing is published", async () => {
+    const calls: string[] = [];
+    stubCanonicalOperations(calls, { detail: detail("personal", [OWNER]) });
+
+    await new WorkstreamService(environment({ calls }), auth).update(CHANNEL, { scope: "personal" });
+
+    expect(calls).toEqual(["canonical:update(personal)"]);
   });
 });

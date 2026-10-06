@@ -401,7 +401,9 @@ export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
  * sees the Space and nothing about who reads any Channel in it: a private
  * Channel stays private with the participants it has. Archived Spaces are
  * widened too, so a restore cannot bring a private one back. The waterline
- * moves only when a row did, so every client refetches its Spaces once.
+ * moves only when a row did, so every client refetches its Spaces once. The
+ * Space revision does not move: a staged add is fenced on it, and an add
+ * interrupted by the deploy would otherwise be cancelled as superseded.
  *
  * A private Space's resource defaults were checked against its participants
  * only, and once it is Organization-wide any member can start a Channel in it
@@ -432,8 +434,7 @@ export const SPACE_PUBLIC_ONLY_MIGRATION: readonly string[] = [
   `DELETE FROM parent_access_operations
     WHERE json_extract(request_json, '$.kind') IN ('apply_space_source', 'retract_space_source')`,
   `UPDATE spaces
-      SET scope = 'workspace', revision = revision + 1,
-          updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
+      SET scope = 'workspace', updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
     WHERE scope = 'personal'`,
 ];
 

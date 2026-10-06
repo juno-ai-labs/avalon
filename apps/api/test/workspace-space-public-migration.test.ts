@@ -83,8 +83,9 @@ describe("WorkspaceDO migration 93", () => {
 
     expect(database.prepare("SELECT space_id, scope, revision FROM spaces ORDER BY space_id").all()).toEqual([
       { space_id: GENERAL, scope: "workspace", revision: 4 },
-      { space_id: PRIVATE, scope: "workspace", revision: 5 },
-      { space_id: ARCHIVED, scope: "workspace", revision: 5 },
+      // The revision stays: a staged add is fenced on it.
+      { space_id: PRIVATE, scope: "workspace", revision: 4 },
+      { space_id: ARCHIVED, scope: "workspace", revision: 4 },
     ]);
     // Participants stay: they are who edits the Space, not who reads its Channels.
     expect(database.prepare(

@@ -289,15 +289,6 @@ export class ScopeGrantStorage {
         // Space supplies can read — so there is nothing for the caller to
         // re-read and retry.
         result = { status: "committed", grant: current };
-      } else if (!request.active && !request.spaceSourceId && current?.active
-        && this.sourceKind(request.userId, request.target) === "space") {
-        // There is no direct claim to withdraw. The participant row is the
-        // effective grant a Space owns, so treating an ordinary Channel
-        // removal as a state change would revoke access the Space still
-        // supplies. The application may re-assert every surviving supplier
-        // after this, but the authority never opens a revocation window while
-        // those external calls interleave.
-        result = { status: "committed", grant: current };
       } else if (current && current.active === request.active
         && current.membershipIncarnation === membershipIncarnation
         // Equal admission is not equal provenance. A direct add over a row a

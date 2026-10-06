@@ -895,27 +895,20 @@ to be signed in.
    The phases run `pending` → `general` → `preflight` → `memberships` →
    `finalize` → `complete`. An Organization sitting in `preflight` or
    `memberships` with a moving `cursor` is working: `preflight` walks the whole
-   directory asking whether each Channel may be widened and writes nothing, and
-   `memberships` is only entered when it found nothing. One sitting in
-   `finalize` is refusing to close, and `blocked_json` says why. A blocker
-   recorded in `preflight` means **no** Channel in that Organization was
-   widened or placed.
+   directory asking whether each Channel has somebody to act as and writes
+   nothing, and `memberships` is only entered when it found nothing. One
+   sitting in `finalize` is refusing to close, and `blocked_json` says why. A
+   blocker recorded in `preflight` means **no** Channel in that Organization was
+   placed.
 
-3. **Remediate blockers.** `space_membership_content_fence` means the Channel
-   holds retained content the Organization may not read, so placing it in
-   General would disclose it. **Adding it to an Organization-wide Space is not
-   the remedy** — that is the same widening, refused by the same fence — and
-   the fence itself is immutable, so it cannot be edited away either. Two paths
-   exist: give the Channel a home whose audience the fence already admits,
-   which is **Add to space** against a *personal* Space whose participants the
-   fence allows; or delete the Channel. Either one takes it out of the walk,
-   because the invariant the cutover is closing on is that every Channel has a
-   Space, not that every Channel is in General.
-
-   `space_bootstrap_no_active_actor` means every participant of a personal
-   Channel has left the Organization; re-activating one member, or deleting the
-   Channel, are the two that move it — leaving it as it is keeps the
-   Organization open.
+3. **Remediate blockers.** Placing a Channel in General changes nobody's access
+   ([a Space grants no reader](spaces.md#every-space-is-organization-wide)), so
+   the one blocker is `space_bootstrap_no_active_actor`: every participant of a
+   private Channel has left the Organization. Re-activating one member, or
+   deleting the Channel, are the two that move it; leaving it as it is keeps the
+   Organization open. A `space_membership_content_fence` left on the row by an
+   earlier Worker needs nothing: the next `preflight` pass finds that Channel
+   clear and takes it off.
 
    A `finalize` that refuses sends the Organization back to `preflight` on the
    alarm's ordinary retry interval, so a remediated Organization re-walks and
