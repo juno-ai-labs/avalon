@@ -139,7 +139,8 @@ the same `operation_id`. Rally does not capture DOM interactions, console
 output, arbitrary network traffic, URLs, request bodies, prompts, messages,
 documents, or session replay.
 
-The macOS status surface emits `menu_bar_opened` once per visible open and
+The macOS status surface emits `menu_bar_opened` once per visible open (with
+`attentionCount`, the number beside the icon) and
 `menu_bar_action_selected` for enabled rows using closed structural properties
 only. `command_shortcuts_revealed` and `command_shortcut_used` are historical
 schemas retained for older clients; the current sidebar emits neither. Suggested-work

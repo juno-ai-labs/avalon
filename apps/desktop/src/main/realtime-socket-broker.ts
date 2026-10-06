@@ -1,5 +1,6 @@
 import { socketUrlWithoutTicket } from "@rally/contracts/socket-tickets";
 import { IdSchema, WORKSTREAM_REALTIME_MAX_FRAME_BYTES } from '@rally/contracts';
+import type { ReachSocket } from '@rally/contracts/workspace-reach-watch';
 import { SOCKET_TICKET_SUBPROTOCOL } from '@rally/contracts/socket-tickets';
 import { connect as netConnect, isIP, type NetConnectOpts, type Socket } from 'node:net';
 import { connect as tlsConnect, getCACertificates } from 'node:tls';
@@ -217,6 +218,7 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
     resolveProxy: RealtimeSocketProxyResolver,
     private readonly createAttempt: RealtimeSocketAttemptFactory,
     onHandshakePhase?: (phase: RealtimeSocketHandshakeTiming) => void,
+    private readonly maxPayload: number = WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   ) {
     if (onHandshakePhase) this.handshakePhaseListeners.add(onHandshakePhase);
     const proxyStartedAt = performance.now();
@@ -286,7 +288,7 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
     try {
       attempt = this.createAttempt({
         ca: this.ca,
-        maxPayload: WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
+        maxPayload: this.maxPayload,
         protocols: this.protocols,
         proxyUrl,
         routeIndex,
@@ -380,6 +382,13 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
 export function createNodeRealtimeSocketFactory(
   resolveProxy: RealtimeSocketProxyResolver,
   createAttempt: RealtimeSocketAttemptFactory = createNodeSocketAttempt,
+  /**
+   * The largest frame accepted, in bytes. Defaults to the feed sockets' shared
+   * ceiling. `0` is `ws`'s "no ceiling", which is what the workspace socket
+   * has in the renderer's Chromium: its subscribe answer is the whole sidebar
+   * and is not sized to the feed frame.
+   */
+  maxPayload: number = WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
 ): RealtimeSocketFactory {
   const ca = [...new Set([
     ...getCACertificates('default'),
@@ -392,7 +401,26 @@ export function createNodeRealtimeSocketFactory(
     resolveProxy,
     createAttempt,
     onHandshakePhase,
+    maxPayload,
   );
+}
+
+/**
+ * The WHATWG-shaped slice `watchWorkspaceSocket` dials through, over a brokered
+ * Node client, so a main-process workspace socket takes the same proxy route,
+ * certificate trust and Rally Origin as every feed socket.
+ */
+export function reachSocketFromRealtimeClient(client: RealtimeSocketClient): ReachSocket {
+  return {
+    send: (data) => client.send(data),
+    close: () => client.close(),
+    addEventListener: ((type: 'open' | 'error' | 'message' | 'close', listener: (event?: unknown) => void) => {
+      if (type === 'open') client.onOpen(() => listener());
+      else if (type === 'error') client.onError(() => listener());
+      else if (type === 'message') client.onMessage((data) => listener({ data: messageText(data) }));
+      else client.onClose((code) => listener({ code }));
+    }) as ReachSocket['addEventListener'],
+  };
 }
 
 function socketOrigin(apiBaseUrl: string): string | null {

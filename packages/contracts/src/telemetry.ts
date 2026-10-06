@@ -185,6 +185,8 @@ export const TELEMETRY_MENU_BAR_ACTIONS = [
   // Retired spellings, from before the product was named Rally.
   "open_avalon", "quit_avalon",
   "recent_workstream", "pinned_workstream", "open_rally", "quit_rally",
+  // A row of the Needs attention section: a Channel's Main or a Breakout.
+  "attention_conversation",
 ] as const;
 
 export type TelemetryMenuBarAction = (typeof TELEMETRY_MENU_BAR_ACTIONS)[number];
@@ -659,12 +661,19 @@ export const TELEMETRY_EVENTS = {
        * smaller count still validates, so the two cohorts stay comparable. */
       recentCount: z.number().int().min(0).max(10),
       pinnedCount: z.number().int().min(0).max(5),
+      /**
+       * The number beside the status item when it opened: every conversation
+       * waiting for the reader, the sidebar's count. Optional because builds
+       * before the Needs attention section do not send it.
+       */
+      attentionCount: z.number().int().min(0).optional(),
     })),
     propertyClassifications: {
       signedIn: "product",
       suggestionCount: "product",
       recentCount: "product",
       pinnedCount: "product",
+      attentionCount: "product",
     },
     priority: "normal",
     regionalRetention: "13-months",

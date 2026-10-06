@@ -74,6 +74,35 @@ export interface ReachWatchDependencies {
 }
 
 /**
+ * One subscribed connection, as a host of {@link watchWorkspaceSocket} sees it.
+ * Each reconnect is a new connection; one that has closed sends nothing.
+ */
+export interface WorkspaceSocketConnection {
+  /**
+   * Writes one client event as JSON. False when this connection is no longer
+   * the open one, so a request made for it can be dropped rather than queued.
+   */
+  send(event: unknown): boolean;
+}
+
+export interface WorkspaceSocketWatchDependencies {
+  /** A fresh workspace socket ticket from `GET /workspace/socket`. */
+  ticket(): Promise<{ url: string; ticket: string }>;
+  open(url: string, ticket: string): ReachSocket;
+  /**
+   * The answer to this connection's `subscribe`: the whole sidebar, sent on
+   * every connect, cold or resuming. Passed as decoded JSON, not parsed, for
+   * the reason {@link isSubscribeAnswer} gives.
+   */
+  onSubscribed(answer: unknown, connection: WorkspaceSocketConnection): void;
+  /** Every other JSON frame, decoded and unparsed. */
+  onMessage?(message: unknown, connection: WorkspaceSocketConnection): void;
+  /** The connection went, whatever the reason. Anything asked of it will not be answered. */
+  onClosed?(connection: WorkspaceSocketConnection): void;
+  onDiagnostic?(diagnostic: ReachWatchDiagnostic): void;
+}
+
+/**
  * The answer to `subscribe`: the one `workspace_sync` that carries `sidebar`.
  *
  * Recognized by shape, not parsed: the answer carries the whole sidebar, and a
@@ -87,22 +116,17 @@ function isSubscribeAnswer(value: unknown): boolean {
 }
 
 /**
- * Hold one workspace socket and report when a list drawn from membership went
- * stale.
+ * Hold one workspace socket outside a renderer and hand its frames to the host.
  *
- * For a host with no workspace socket of its own, Sideline and the lite
- * browser client, that needs only to hear that somebody it shows joined or
- * left a Channel or Breakout. It subscribes, because an unsubscribed socket is
- * how the server marks one it has stopped serving, and then ignores everything
- * but `workspace_reach_changed` and the subscribe answer.
- *
- * Every subscribe answer reports stale, the first included: nothing is
- * replayed across a reconnect, and the host's opening read can finish before
- * the first subscribe does.
+ * The transport alone: ticket, subscribe, heartbeat, reconnect, and the two
+ * close codes that end a session for good. What the frames mean is the
+ * host's. It subscribes, because an unsubscribed socket is how the server
+ * marks one it has stopped serving, and nothing is replayed across a
+ * reconnect: every connection starts again from its own subscribe answer.
  *
  * @returns stop, which closes the socket and cancels any reconnect.
  */
-export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () => void {
+export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependencies): () => void {
   let stopped = false;
   let socket: ReachSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -161,6 +185,13 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
     }
     socket = next;
     let subscribed = false;
+    const connection: WorkspaceSocketConnection = {
+      send: (event) => {
+        if (stopped || socket !== next) return false;
+        next.send(JSON.stringify(event));
+        return true;
+      },
+    };
     next.addEventListener("open", () => {
       if (stopped || socket !== next) return;
       next.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
@@ -182,15 +213,16 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
       if (!subscribed && isSubscribeAnswer(decoded)) {
         subscribed = true;
         attempt = 0;
-        dependencies.onStale();
+        dependencies.onSubscribed(decoded, connection);
         return;
       }
-      if (safeParseSocketEvent(WorkspaceReachChangedEventSchema, decoded).success) dependencies.onStale();
+      dependencies.onMessage?.(decoded, connection);
     });
     next.addEventListener("close", (event) => {
       if (socket !== next) return;
       socket = null;
       clearHeartbeat();
+      dependencies.onClosed?.(connection);
       if (stopped) return;
       // The server ended this session's access or the session itself.
       // Reconnecting would only be refused again; the host decides what next.
@@ -217,4 +249,31 @@ export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () =>
     socket = null;
     current?.close();
   };
+}
+
+/**
+ * Hold one workspace socket and report when a list drawn from membership went
+ * stale.
+ *
+ * For a host with no workspace socket of its own, Sideline and the lite
+ * browser client, that needs only to hear that somebody it shows joined or
+ * left a Channel or Breakout, so it ignores everything but
+ * `workspace_reach_changed` and the subscribe answer.
+ *
+ * Every subscribe answer reports stale, the first included: nothing is
+ * replayed across a reconnect, and the host's opening read can finish before
+ * the first subscribe does.
+ *
+ * @returns stop, which closes the socket and cancels any reconnect.
+ */
+export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () => void {
+  return watchWorkspaceSocket({
+    ticket: () => dependencies.ticket(),
+    open: (url, ticket) => dependencies.open(url, ticket),
+    onSubscribed: () => dependencies.onStale(),
+    onMessage: (message) => {
+      if (safeParseSocketEvent(WorkspaceReachChangedEventSchema, message).success) dependencies.onStale();
+    },
+    ...(dependencies.onDiagnostic ? { onDiagnostic: (diagnostic) => dependencies.onDiagnostic?.(diagnostic) } : {}),
+  });
 }
