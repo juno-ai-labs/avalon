@@ -11,6 +11,7 @@ import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { sha256 } from "../src/lib/crypto";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { creatingWorkspaceObjectBinding } from "./helpers/workspace-object-rpcs";
 
 let db: DatabaseSync;
 const origin = "https://app.example.test";
@@ -193,24 +194,34 @@ it("logs out every workspace session attached to the browser and clears its cook
   expect((await request("logout",entry.cookie,{})).status).toBe(204);
 });
 
-it("creates an organization the browser then opens with its cookie, and keeps no bearer it was never given",async () => {
+it("creates an organization for an email-only account and opens it with the cookie, holding no bearer",async () => {
   const entry = await login();
+  // The real object class: creation initializes the Organization's object before it issues anything.
+  const workspaceObject = creatingWorkspaceObjectBinding(db);
+  const env = { ...bindings(),WORKSPACE_DOS:workspaceObject.binding };
+  const create = (body:unknown, cookie:string | null = entry.cookie) => createApp().request(`${apiOrigin}/browser/workspace/create`,{ method:"POST",
+    headers:{ origin,"content-type":"application/json",...(cookie ? { cookie } : {}) },body:JSON.stringify(body) },env);
   const operationId = "01920000-0000-7000-8000-000000000001";
-  const response = await request("workspace/create",entry.cookie,{ name:"Acme Research",operationId });
-  expect(response.status).toBe(201);
-  const created = await response.json() as { region:string; workspaceId:string };
-  expect(created.region).toBe("global");
-  expect(created).not.toHaveProperty("accessToken");
-  expect(db.prepare("SELECT name FROM workspaces WHERE id=?").get(created.workspaceId)).toEqual({ name:"Acme Research" });
-  // The session the create path minted is revoked; only the browser's identity session stays open.
-  expect(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE revoked_at IS NULL").get()).toEqual({ n:1 });
-  // A retry of the same operation returns the same organization rather than a second.
-  const retry = await request("workspace/create",entry.cookie,{ name:"Acme Research",operationId });
-  expect(retry.status).toBe(201);
-  expect(await retry.json()).toEqual(created);
-  expect(db.prepare("SELECT COUNT(*) AS n FROM workspaces").get()).toEqual({ n:1 });
-  const selected = await request("workspace/select",entry.cookie,{ workspaceId:created.workspaceId });
-  expect(selected.status).toBe(200);
-  expect(await selected.json()).toMatchObject({ workspace:{ id:created.workspaceId,name:"Acme Research",role:"owner" } });
-  expect((await request("workspace/create",undefined,{ name:"Acme Research",operationId:crypto.randomUUID() })).status).toBe(401);
+  try {
+    const response = await create({ name:"Acme Research",operationId });
+    expect(response.status).toBe(201);
+    const created = await response.json() as { region:string; workspaceId:string };
+    expect(Object.keys(created).sort()).toEqual(["region","workspaceId"]);
+    expect(created.region).toBe("global");
+    expect(db.prepare("SELECT name FROM workspaces WHERE id=?").get(created.workspaceId)).toEqual({ name:"Acme Research" });
+    // The session the create path minted is revoked; only the browser's identity session stays open.
+    expect(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE revoked_at IS NULL").get()).toEqual({ n:1 });
+    // A retry of the same operation returns the same organization rather than a second.
+    const retry = await create({ name:"Acme Research",operationId });
+    expect(retry.status).toBe(201);
+    expect(await retry.json()).toEqual(created);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM workspaces").get()).toEqual({ n:1 });
+    const selected = await request("workspace/select",entry.cookie,{ workspaceId:created.workspaceId });
+    expect(selected.status).toBe(200);
+    expect(await selected.json()).toMatchObject({ workspace:{ id:created.workspaceId,name:"Acme Research",role:"owner" } });
+    expect((await create({ name:"Acme Research",operationId:crypto.randomUUID() },null)).status).toBe(401);
+    // A second organization is a fresh operation and a fresh organization.
+    const second = await create({ name:"Second Team",operationId:"01920000-0000-7000-8000-000000000002" });
+    expect(second.status).toBe(201);
+  } finally { for (const database of workspaceObject.databases) database.close(); }
 });

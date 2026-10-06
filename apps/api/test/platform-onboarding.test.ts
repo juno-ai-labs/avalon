@@ -55,7 +55,7 @@ const auth: IdentityAuthContext = {
 const identity: PlatformIdentity = {
   accountOnboarding: { eligible: false, introduced: true, presentation: null, revision: 0 },
   platformUserId,
-  googleSubject: "google-subject-1",
+  loginIdentities: [{ provider: "google", subject: "google-subject-1" }],
   email: "member@example.com",
   name: "Member",
   avatarUrl: null,
@@ -127,7 +127,7 @@ class IdentityDatabase {
           if (record.sql.includes("FROM users WHERE id = ?") && record.sql.includes("google_subject")) {
             return {
               id: platformUserId,
-              google_subject: identity.googleSubject,
+              google_subject: identity.loginIdentities[0]!.subject,
               email: identity.email,
               name: identity.name,
               avatar_url: null,
