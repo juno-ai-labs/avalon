@@ -107,7 +107,7 @@ import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-car
 import { ArtifactSidebar, InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
-import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
+import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import {
@@ -585,6 +585,10 @@ export function AddParticipantDialog({
   onOpenChange: (open: boolean) => void;
 }): React.JSX.Element {
   const currentById = new Map(current.map((member) => [member.id, member]));
+  // A participant read from the conversation may not say how they belong to
+  // the Organization; the roster does.
+  const guestIds = new Set([...members, ...current].filter((member) => member.accessClass === 'guest').map((member) => member.id));
+  const guestBadge = (member: WorkspaceMember) => guestIds.has(member.id) ? <Badge className="role-badge">Guest</Badge> : null;
   const activeMembers = members.filter((member) => (member.status ?? 'active') === 'active');
   const activeMemberIds = new Set(activeMembers.map((member) => member.id));
   // A membership that is not active is one the work-stream endpoint refuses,
@@ -623,6 +627,7 @@ export function AddParticipantDialog({
               >
                 <Avatar member={member} size="medium" />
                 <span><strong>{member.name}</strong><small>{member.email}</small></span>
+                {guestBadge(member)}
                 {pending ? <LoaderCircle className="spin" size={15} /> : <Plus aria-hidden="true" size={15} />}
               </button>
             );
@@ -631,6 +636,7 @@ export function AddParticipantDialog({
             <div className="member-action-row" key={member.id}>
               <Avatar member={member} size="medium" />
               <span><strong>{member.name}</strong><small>{member.email}</small></span>
+              {guestBadge(member)}
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <IconButton

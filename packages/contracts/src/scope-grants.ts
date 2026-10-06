@@ -97,7 +97,7 @@ export type ScopeAccessResult = z.infer<typeof ScopeAccessResultSchema>;
 /** ECMAScript's time-value range, the point past which an instant has no `Date` and no ISO string. */
 const MAX_TIME_VALUE = 8_640_000_000_000_000;
 
-/** An invitation is addressed to a verified mailbox; it is not a read capability. */
+/** A share addressed to a mailbox. Whoever signs in with that verified address holds it; nothing else does. */
 export const CreateScopeInvitationsSchema = z.strictObject({
   operationId: IdSchema,
   workspaceId: WorkspaceIdSchema,
@@ -121,43 +121,19 @@ export const ScopeInvitationSummarySchema = z.strictObject({
   email: z.string().email(),
   targets: z.array(ScopeGrantTargetSchema),
   expiresAt: z.number().int().positive().nullable(),
+  // "accepted" means claimed: the recipient signed in and holds the grants.
+  // The stored value predates automatic claiming and is kept as written.
   status: z.enum(["pending", "accepted", "revoked"]),
   revision: z.number().int().positive(),
   acceptedByUserId: UserIdSchema.nullable(),
 });
 export type ScopeInvitationSummary = z.infer<typeof ScopeInvitationSummarySchema>;
 
-export const AcceptScopeInvitationSchema = z.strictObject({
-  workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema,
-  userId: UserIdSchema, token: z.string().min(1),
+/** Server-internal: every address in `emails` is already verified for `userId`. */
+export const ClaimScopeInvitationsSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema, parentId: IdSchema, userId: UserIdSchema,
+  emails: z.array(z.string().trim().email().transform((email) => email.toLowerCase())).min(1),
 });
-/**
- * What a recipient's invitation link hands back.
- *
- * `link` is the opaque token current invitation emails carry. The workspace,
- * the workstream, the invitation and its secret are a row the issuing
- * deployment holds, so neither the recipient nor the page they open learns
- * which scope they were offered until they accept it. The addressed form is the
- * fragment format those emails used before, kept usable while links sent under
- * it are still in inboxes; nothing mints it any more.
- */
-export const ScopeInvitationLinkCredentialSchema = z.strictObject({ link: z.string().min(1) });
-export const ScopeInvitationCredentialSchema = z.union([
-  ScopeInvitationLinkCredentialSchema,
-  AcceptScopeInvitationSchema.omit({ userId: true }),
-]);
-export type ScopeInvitationCredential = z.infer<typeof ScopeInvitationCredentialSchema>;
-
-/** Opening a link releases the invited mailbox and nothing else: a sign-in form needs it before there is a session to ask. */
-export const ScopeInvitationPreviewSchema = z.strictObject({ email: z.string().email() });
-export type ScopeInvitationPreview = z.infer<typeof ScopeInvitationPreviewSchema>;
-
-export const DescribeScopeInvitationSchema = AcceptScopeInvitationSchema.omit({ userId: true });
-export const ScopeInvitationDescriptionSchema = z.discriminatedUnion("status", [
-  z.strictObject({ status: z.literal("ready"), email: z.string().email() }),
-  z.strictObject({ status: z.literal("denied"), reason: z.literal("invitation_unavailable") }),
-]);
-export type ScopeInvitationDescription = z.infer<typeof ScopeInvitationDescriptionSchema>;
 
 export const RevokeScopeInvitationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema,
@@ -165,11 +141,9 @@ export const RevokeScopeInvitationSchema = z.strictObject({
 });
 export const ScopeInvitationResultSchema = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("created"), invitations: z.array(ScopeInvitationSummarySchema) }),
-  z.strictObject({ status: z.literal("accepted"), invitation: ScopeInvitationSummarySchema }),
   z.strictObject({ status: z.literal("revoked"), invitation: ScopeInvitationSummarySchema }),
   z.strictObject({ status: z.literal("denied"), reason: z.enum([
-    "sharing_required", "invitation_unavailable", "verified_email_required",
-    "relationship_required", "operation_conflict", "revision_conflict", "configuration_required", "migration_pending", "scope_changed",
+    "sharing_required", "invitation_unavailable", "relationship_required", "operation_conflict", "revision_conflict", "configuration_required", "migration_pending", "scope_changed",
   ]) }),
 ]);
 export type ScopeInvitationResult = z.infer<typeof ScopeInvitationResultSchema>;

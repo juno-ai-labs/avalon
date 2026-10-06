@@ -5,8 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./private-access": "./src/private-access.ts",
-    "./link-payloads": "./src/link-payloads.ts"
+    "./private-access": "./src/private-access.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

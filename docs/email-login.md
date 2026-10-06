@@ -2,7 +2,7 @@
 
 Email sign-in proves control of an address and creates an ordinary identity-only
 session. The [browser cookie transport](browser-sessions.md) now adapts that
-session for the browser sign-in page and invitation acceptance UI. The routes
+session for the browser sign-in page. The routes
 require explicit policy and browser-origin configuration before they are usable.
 
 ## Where the code lives
@@ -46,9 +46,9 @@ legacy member sessions can omit `accessClass`. Promotion keeps the user and
 session incarnation, and refresh returns the current member role. General
 member-only discovery and setup routes remain unavailable to guests; shared
 conversation mutations use the existing exact-scope authority.
-Identity-only sessions can accept [scoped invitations](scope-invitations.md) through
-`POST /sharing/accept`; verified mailbox admission and grant receipts live in the
-workstream owner, independently of email sign-in challenge consumption.
+Registering the browser session claims any [scoped invitation](scope-invitations.md#claiming)
+waiting for the verified address; the share and its grant receipts live in the
+Channel's owner, independently of email sign-in challenge consumption.
 
 Local setup copies `EMAIL_LOGIN_POLICY_JSON` and `BROWSER_APP_ORIGIN` from
 `.env.local` to the configured deployment's Worker variables through
@@ -74,7 +74,7 @@ email sign-in disabled. Production values must be chosen explicitly.
 
 This subsystem owns email proof and its resumable session receipt. Existing
 [security](security.md) rules own bearer sessions, refresh and workspace admission;
-[authorization](authorization.md) owns product access. Invitation acceptance,
+[authorization](authorization.md) owns product access. Claiming scoped shares,
 workspace guest grants and client UI belong to their own modules. The original
 API returns the ordinary session contract; [browser sessions](browser-sessions.md)
 adapt the same proof to an HttpOnly cookie and return metadata without tokens.

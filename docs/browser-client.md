@@ -3,8 +3,8 @@
 The browser client provides email and Google sign-in, then mounts the desktop
 shell for everyone: Organization members and guests shared into some of its
 conversations, as described in [The shell](#the-shell). A guest gets no setup or
-onboarding. Sign-in, invitation acceptance and canonical conversation links
-activate the workspace and mount the shell. Local API and
+onboarding. Sign-in, which also claims anything shared with the person's
+address, and canonical conversation links activate the workspace and mount the shell. Local API and
 Chrome journeys cover guest entry, feed, upload/reload, multiple workstreams,
 promotion and membership removal. Production mail delivery and deployed stateful
 artifact serving remain release checks; see the guest-sharing completion audit.
@@ -14,8 +14,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | Path | Responsibility |
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
-| `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, Google sign-in, invitation acceptance, session restore and workspace list. |
-| `apps/browser/src/invitation.ts` | Tokenized and addressed invitation fragments, and exact canonical scope destinations. |
+| `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, Google sign-in, session restore and workspace list. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/shell.tsx` | The signed-in application's one lazy boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
 | `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications and opens their links on this origin. |
@@ -61,9 +60,8 @@ response directly and never accepts a socket or handles a frame.
 The [regional browser adapter](browser-sessions.md) owns authentication and
 Origin validation; the host has no signing key or identity database.
 
-The site’s workspace-invitation `/invite` link and this host’s scoped `/invite` link
-are separate entry points with different proof formats. Scoped invitation email
-links use `BROWSER_APP_ORIGIN`; workspace invitations retain the existing site flow.
+Scoped invitation emails link to the shared conversation's own address under
+`BROWSER_APP_ORIGIN`; workspace invitations retain the existing site flow.
 
 An email request carries a client operation ID. A failed issuance can retry that
 ID; choosing another email or requesting another code starts a new operation.
@@ -73,33 +71,15 @@ the proof in document memory until the person clicks Continue. Merely opening a
 link never redeems it. Reloading after removing the fragment requires reopening
 the email link or requesting another one; no proof is written to local storage.
 
-An invitation fragment is validated and removed from history, with the secret
-kept only in document memory. Current links are one opaque token and nothing
-else, so the whole fragment is that token; a fragment spelling out parameters is
-the addressed format that predates it, and only that one names a region. A token
-is opened against the deployment serving the page, which is the only one this
-host forwards to and the only one holding the row it reads.
-
-Before any session exists the client posts the token to the unauthenticated
-`/invitation` browser route and fills the invited address into the email field,
-which the recipient can still change. The link no longer says who it was sent
-to, and telling someone to "sign in with the address that received this" while
-showing an empty box is asking them to guess which of their mailboxes it was.
-Holding the link is the same authority acceptance checks, and the reply carries
-that one mailbox — never the workspace or work stream behind it. A link that
-cannot be opened, or an invitation since revoked or expired, fills nothing and
-says the invitation is unavailable. The entry tells the recipient to use the
-invited mailbox. If a magic link signs in a different tab, focusing the
-invitation tab restores the new cookie session without losing its invitation.
-Explicit acceptance posts the same token to the identity-only sharing endpoint,
-which resolves it into an address server-side; server authority still
-checks the verified recipient, invitation and current sharer. Failure retains
-the invitation for retry or switching accounts. Success activates the workspace
-its accepted targets name — the first thing the recipient's own link could tell
-them — and opens the exact canonical destination immediately for a single
-accepted scope; invitations with several scopes show their destination links. A
-child-only destination points directly to that child, not through Main. No GET
-or focus event accepts.
+A shared conversation has no entry of its own. Its emailed link is the ordinary
+addressed Channel path, so it opens like any canonical link: signed out, the
+entry asks the person to sign in with the address the link was sent to; signed
+in, it opens the Organization and the conversation. Signing in is what claims
+the share ([scoped invitations](scope-invitations.md#claiming)), on the server,
+before the session is described, so there is no acceptance screen, button or
+request after it. An old `/invite#…` link from before this is a plain sign-in
+page: the client drops the fragment from history. The server indexed those
+older shares itself, so signing in claims them like any other.
 
 For an unaddressed entry, the client lists the user's regional workspaces and can sign
 out through the ordinary browser-session logout. Workspace roots mount the shell,
@@ -161,8 +141,9 @@ uses, registers a browser session, sets the cookie and redirects to the return
 path. A failure returns with `#google_error=<code>`, which the signed-out screen
 shows until the person starts an email sign-in. Four choices shape it:
 
-- **Hidden on invitation pages.** The invitation credential lives only in the
-  page's memory, so leaving for Google would lose it.
+- **Offered on every signed-out page,** including a shared conversation's link:
+  the share belongs to the address, so a Google sign-in with it claims the share
+  like any other sign-in, and returns to the page it started on.
 - **The callback is on the browser host.** Google returns to
   `/regional/<region>/browser/google/callback`, which the Worker forwards like
   any `/browser/*` request. Only a response on that host can set its host-only
@@ -235,7 +216,7 @@ authorizes every call. `GET /workspace` answers guests too, with
 else; the rest of `/workspace` stays member-only.
 
 The desktop shell routes by hash. Before its router mounts, the shell rewrites a
-canonical Channel or Space link, or an invitation's addressed Channel path, into
+canonical Channel or Space link, or an addressed Channel path such as an invitation email's, into
 the workspace path plus the hash the desktop's own deep links set
 (`shellLocation`). Losing access or a 401 asks the entry to re-read the server
 session, which unmounts the shell when the session is gone. The shell keeps
@@ -254,8 +235,7 @@ A member can turn on Web Push for this browser, delivered as described in
 
 ### Other deployments
 
-Sign-in goes to Global, which holds the identity; an invitation's sign-in stays
-in the deployment that issued it. On Global the workspace list covers every
+Sign-in goes to Global, which holds the identity. On Global the workspace list covers every
 deployment, and opening a workspace in another one activates it through Global,
 which sets that deployment's own cookie. The browser host forwards only the
 target deployment's cookies, and sign-out reaches every deployment. The PRD's
@@ -322,8 +302,10 @@ The conversation header opens the shared email invitation panel. It accepts
 multiple email addresses separated by whitespace, commas, or semicolons, and
 sends through the existing scoped invitation API with operation identity retained
 on retry. The selected conversation is the only target: Main uses conversation
-`0`, never a workstream grant, so other substreams gain no access. The panel has
-no access picker, invitation list, direct-share management, or related reads.
+`0`, never a workstream grant, so other substreams gain no access. Below the form
+it lists who that conversation was shared with and has not signed in yet, as
+Guest rows the sharer can remove. It has no access picker or direct-share
+management.
 The server remains responsible for sharing authorization. No setup or onboarding
 capability is required.
 
@@ -443,7 +425,7 @@ succeed; the browser shell can be available before API sign-in is enabled.
 
 Manual browser deployment from the repository root is
 `pnpm exec dotenv -e .env.local -- pnpm --filter @rally/browser run deploy`. After the first deployment, verify in
-Chrome that a real invitation arrives, email sign-in and acceptance work, and the
+Chrome that a real invitation arrives, email sign-in opens the conversation, and the
 shared conversation can send messages and receive realtime updates. The workflow's
 public route checks compare the served shell with the built HTML, including its
 hashed assets; they do not prove mailbox delivery or authenticated collaboration.
@@ -512,9 +494,10 @@ Earlier entry verification used an Electron Chromium window with mocked API
 responses to inspect desktop/mobile layouts, submit OTP, and confirm magic links
 do not redeem before a click. That predated removal of SSR. The static SPA and
 shared-site action were subsequently inspected in headed Google Chrome; the
-fixture-backed journeys verify client rendering and request shape. Invitation checks cover
-restoration after another tab signs in, explicit acceptance, refusal/retry,
-workspace activation and exact child destination links. That verifies presentation
+fixture-backed journeys verify client rendering and request shape. Shared-link
+checks cover a conversation link opening straight into the shell after an email
+sign-in with no acceptance request, and an old token link reading as a plain
+sign-in page. That verifies presentation
 and client request shape, not an end-to-end invitation or email delivery.
 
 The shared renderer suite's `browser-entry.test.tsx` uses a real BroadcastChannel
@@ -554,6 +537,30 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-06 — A shared link opens the conversation after sign-in, with no Accept screen
+
+**What changed:** The entry no longer has an invitation page. Its `/invite`
+handling, the mailbox prefill from `/browser/invitation`, the Accept invitation
+button and the accepted-destination list are gone, along with
+`apps/browser/src/invitation.ts`. An invitation email links to the conversation's
+addressed path, which signs in and opens like any canonical link; Continue with
+Google is offered there too. An old `/invite#…` link is a plain sign-in page.
+
+**Why:** The server now claims a share when its address signs in
+([scoped invitations](scope-invitations.md)), so the screen between sign-in and
+the conversation had nothing left to do.
+
+**Considered and rejected:** Keeping the old token in page memory and posting it
+after sign-in so shares made before claiming still reach their recipient. The
+server indexes those shares itself instead, so the browser carries no protocol.
+
+**Consequences:** The sign-in form no longer fills in the invited address; the
+email names it, and the page says to use the address the link was sent to. The
+organization list shows a loading line until it has loaded, so a fresh sign-in
+never says nothing was shared before the server answers.
+
+PR: [#1120](https://github.com/juno-ai-labs/avalon/pull/1120).
 
 ### 2026-10-06 — Lead sign-in with Google
 

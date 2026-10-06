@@ -7,13 +7,15 @@ import { reset, runInDurableObject, runDurableObjectAlarm } from "cloudflare:tes
 import { beforeEach, expect, it, vi } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { WorkspaceRelationshipSchema, type ScopeGrantTarget } from "@rally/contracts/scope-grants";
-import { ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
+import { SCOPE_INVITATION_INDEX_ALARM, ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
+import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
 import { decryptString } from "../src/lib/crypto";
-import { openScopeInvitationCredential } from "../src/services/scope-invitation-link";
 import { BrowserSessionService } from "../src/services/browser-session-service";
+import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
 import { openEmailLoginSecret } from "../src/services/email-login-service";
+import { claimScopeInvitations } from "../src/services/scope-invitation-claims";
 import { promoteWorkspaceGuest } from "../src/services/workspace-relationship-service";
-import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
 import { hostedParentStub, insertChannelRow, withHostedParent } from "./helpers/hosted-parent";
 import { conversationObjectName } from "../src/durable-objects/names";
@@ -22,28 +24,18 @@ import { boot, seedParticipantMessage, seedOpenWorkstreamAuthority, seedWorkstre
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-000000000091");
 const parentId = asWorkstreamId("00000000-0000-4000-8000-000000000092");
 const actorId = asUserId("00000000-0000-4000-8000-000000000093");
+/** Already signs in with guest@example.test, so a share to that address is theirs as it is made. */
 const recipientId = asUserId("00000000-0000-4000-8000-000000000094");
+/** Someone with no account yet: a share to them waits for their first sign-in. */
+const newcomerId = asUserId("00000000-0000-4000-8000-000000000098");
+const NEWCOMER = "newcomer@example.test";
 const childId = asSubstreamId("00000000-0000-4000-8000-000000000095");
 const child: ScopeGrantTarget = { kind: "conversation", workspaceId, parentId, substreamId: childId };
 const main: ScopeGrantTarget = { ...child, substreamId: asSubstreamId("0") };
 /** The Organization object, which hosts every Channel parent in the workspace. */
 const room = () => hostedParentStub(env, workspaceId);
-const invitation = (targets: ScopeGrantTarget[] = [child]) => ({ operationId: crypto.randomUUID(), workspaceId, parentId,
-  actorUserId: actorId, emails: ["guest@example.test"], targets, expiresAt: null });
-
-/** The URL the recipient receives, read out of the durable encrypted body the sender delivers. */
-async function deliveredLink(id: string, parent = parentId): Promise<URL> {
-  const encrypted = await runInDurableObject(room(), (_instance, state) =>
-    new ScopeInvitationStorage(state.storage, parent).read(id)!.deliveryEncrypted);
-  const sealed = JSON.parse(encrypted) as { ciphertext: string; iv: string };
-  const delivery = JSON.parse(await decryptString(sealed.ciphertext, sealed.iv,
-    env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) as { text: string };
-  const link = delivery.text.split("\n").find((line) => line.startsWith("https://app.test/invite"));
-  if (!link) throw new Error("invitation link missing");
-  return new URL(link);
-}
-
-const credentialFor = async (id: string, parent = parentId) => ({ link: (await deliveredLink(id, parent)).hash.slice(1) });
+const invitation = (targets: ScopeGrantTarget[] = [child], emails = ["guest@example.test"]) => ({ operationId: crypto.randomUUID(),
+  workspaceId, parentId, actorUserId: actorId, emails, targets, expiresAt: null });
 
 async function deliveredParts(id: string, parent = parentId): Promise<{ text: string; html?: string }> {
   const encrypted = await runInDurableObject(room(), (_instance, state) =>
@@ -53,17 +45,29 @@ async function deliveredParts(id: string, parent = parentId): Promise<{ text: st
     env.OAUTH_STATE_ENCRYPTION_KEY, `scope-invitation:${id}`)) as { text: string; html?: string };
 }
 
-async function tokenFor(id: string, parent = parentId): Promise<string> {
-  const address = await openScopeInvitationCredential(env, await credentialFor(id, parent));
-  if (!address) throw new Error("invitation credential unreadable");
-  return address.token;
+/** The URL the recipient receives, read out of the durable encrypted body the sender delivers. */
+async function deliveredLink(id: string, parent = parentId): Promise<URL> {
+  const link = (await deliveredParts(id, parent)).text.split("\n").find((line) => line.startsWith("https://app.test/"));
+  if (!link) throw new Error("invitation link missing");
+  return new URL(link);
 }
 
-async function create(targets: ScopeGrantTarget[] = [child]) {
-  const result = await room().createScopeInvitations(invitation(targets));
+async function create(targets: ScopeGrantTarget[] = [child], emails = ["guest@example.test"]) {
+  const result = await room().createScopeInvitations(invitation(targets, emails));
   if (result.status !== "created" || !result.invitations[0]) throw new Error(JSON.stringify(result));
-  const id = result.invitations[0].id;
-  return { workspaceId, parentId, invitationId: id, userId: recipientId, token: await tokenFor(id) };
+  return result.invitations[0];
+}
+
+/** Where a pending share for an address is looked up from. */
+const routes = async (email: string) => (await env.DB.prepare(
+  "SELECT workspace_id, parent_id FROM scope_share_recipients WHERE email = ?").bind(email).all()).results;
+
+/** The newcomer verifies their mailbox: from here, signing in claims what waits for it. */
+async function verifyNewcomer() {
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO users (id, name) VALUES (?, NULL)").bind(newcomerId),
+    env.DB.prepare("INSERT INTO user_verified_emails VALUES (?, ?)").bind(NEWCOMER, newcomerId),
+  ]);
 }
 
 beforeEach(async () => {
@@ -81,9 +85,7 @@ beforeEach(async () => {
     env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT,
       region TEXT, workspace_incarnation TEXT, revoked_at TEXT, expires_at TEXT)`),
     env.DB.prepare("INSERT INTO sessions VALUES ('actor-session', ?, ?, 'global', 'actor-membership', NULL, '2099-01-01T00:00:00.000Z')").bind(actorId, workspaceId),
-    env.DB.prepare("INSERT INTO sessions VALUES ('recipient-session', ?, NULL, 'global', NULL, NULL, '2099-01-01T00:00:00.000Z')").bind(recipientId),
-    env.DB.prepare("CREATE TABLE user_verified_emails (email TEXT PRIMARY KEY, user_id TEXT)") ,
-    env.DB.prepare(LINK_PAYLOADS_TABLE),
+    ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare("INSERT INTO user_verified_emails VALUES ('guest@example.test',?)").bind(recipientId),
   ]);
   await seedParent(parentId, "Private parent", [main, child]);
@@ -110,7 +112,55 @@ async function seedParent(id: string, title: string, actorTargets: ScopeGrantTar
   });
 }
 
-it("retries one email batch without replacing invitation credentials or its durable delivery", async () => {
+/** The real D1 columns browser email sign-in and the session ledger read, on top of this file's slim fixture. */
+async function prepareBrowserSignIn() {
+  const at = new Date().toISOString();
+  await env.DB.batch([
+    ...["slug TEXT", "timezone TEXT", "created_at TEXT"].map((column) =>
+      env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN ${column}`)),
+    ...["avatar_url TEXT", "timezone TEXT DEFAULT 'UTC'", "created_at TEXT", "updated_at TEXT", "platform_user_id TEXT", "onboarding_eligible INTEGER"].map((column) =>
+      env.DB.prepare(`ALTER TABLE users ADD COLUMN ${column}`)),
+    ...["refresh_token_hash TEXT", "created_at TEXT"].map((column) =>
+      env.DB.prepare(`ALTER TABLE sessions ADD COLUMN ${column}`)),
+    env.DB.prepare("UPDATE workspaces SET name='Shared workspace',slug='shared',timezone='UTC',created_at=?").bind(at),
+    env.DB.prepare("UPDATE users SET name='Guest',email='guest@example.test',timezone='UTC',created_at=? WHERE id=?").bind(at, recipientId),
+    env.DB.prepare(`CREATE TRIGGER bind_session_incarnation AFTER INSERT ON sessions WHEN NEW.workspace_id IS NOT NULL
+      BEGIN UPDATE sessions SET workspace_incarnation=(SELECT incarnation FROM workspace_members
+      WHERE workspace_id=NEW.workspace_id AND user_id=NEW.user_id AND status='active') WHERE id=NEW.id; END`),
+    env.DB.prepare("ALTER TABLE user_verified_emails ADD COLUMN verified_at TEXT"),
+    env.DB.prepare("CREATE TABLE user_login_identities(provider TEXT,subject TEXT,user_id TEXT,verified_at TEXT,PRIMARY KEY(provider,subject))"),
+    env.DB.prepare(`CREATE TABLE email_login_challenges (
+      id TEXT PRIMARY KEY,email TEXT NOT NULL,magic_hash TEXT NOT NULL,otp_hash TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,max_failed_attempts INTEGER,failed_attempts INTEGER NOT NULL DEFAULT 0,
+      delivery_payload_encrypted TEXT NOT NULL,delivery_sent_at INTEGER,created_at INTEGER NOT NULL,
+      redeemed_at INTEGER,redemption_id TEXT,user_id TEXT,session_id TEXT UNIQUE,session_secret_encrypted TEXT)`),
+    env.DB.prepare("CREATE TABLE browser_sessions(session_id TEXT PRIMARY KEY,credential_hash TEXT UNIQUE)"),
+    env.DB.prepare("CREATE TABLE browser_workspace_sessions(browser_session_id TEXT,workspace_id TEXT,session_id TEXT UNIQUE,PRIMARY KEY(browser_session_id,workspace_id))"),
+  ]);
+  return { ...env, RESEND_FROM_EMAIL: "Rally <login@example.test>",
+    EMAIL_LOGIN_POLICY_JSON: JSON.stringify({ otpDigits: 6, ttlSeconds: 600, maxFailedAttempts: 3 }) };
+}
+
+const originHeaders = { origin: "https://app.test", "content-type": "application/json" };
+
+/** A real browser email sign-in by one-time code: what a recipient does after opening their link. */
+async function signInByCode(apiEnv: Env, address: string) {
+  const app = createApp();
+  const challengeId = crypto.randomUUID();
+  const started = await app.request("/browser/email/start", { method: "POST", headers: originHeaders,
+    body: JSON.stringify({ challengeId, email: address }) }, apiEnv);
+  expect(started.status, await started.clone().text()).toBe(202);
+  const challenge = await env.DB.prepare("SELECT delivery_payload_encrypted FROM email_login_challenges WHERE id=?")
+    .bind(challengeId).first<{ delivery_payload_encrypted: string }>();
+  const email = await openEmailLoginSecret(apiEnv, challengeId, challenge!.delivery_payload_encrypted) as { text: string };
+  const otp = /code is (\d+)\./u.exec(email.text)![1]!;
+  const proof = { challengeId, redemptionId: crypto.randomUUID(), method: "otp", credential: otp };
+  const redeem = (request: typeof proof) => app.request("/browser/email/redeem", { method: "POST", headers: originHeaders,
+    body: JSON.stringify(request) }, apiEnv);
+  return { app, proof, redeem };
+}
+
+it("retries one email batch without replacing the share or its durable delivery", async () => {
   const request = invitation();
   const first = await room().createScopeInvitations(request);
   expect(first.status).toBe("created");
@@ -120,77 +170,268 @@ it("retries one email batch without replacing invitation credentials or its dura
   await runDurableObjectAlarm(room());
   await runInDurableObject(room(), (_instance, state) => {
     expect(state.storage.sql.exec("SELECT * FROM parent_invitations WHERE parent_id = ?", parentId).toArray()).toHaveLength(1);
+    // Delivered even though it was claimed as it was made: the email is how
+    // someone who already has an account hears of the share.
     expect(state.storage.sql.exec<{ delivered_at: number }>("SELECT delivered_at FROM parent_invitations WHERE parent_id = ?", parentId).one().delivered_at).toBeGreaterThan(0);
   });
 });
 
-it("accepts only a verified recipient and grants a child without Main", async () => {
-  const request = await create();
-  expect(await room().acceptScopeInvitation({ ...request, token: "wrong" })).toMatchObject({ status: "denied" });
-  expect(await room().acceptScopeInvitation({ ...request, userId: actorId }))
-    .toMatchObject({ status: "denied", reason: "verified_email_required" });
-  expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "accepted" });
+it("gives a share to someone who already signs in with that address as it is made, child without Main", async () => {
+  const share = await create();
+  expect(share).toMatchObject({ status: "accepted", acceptedByUserId: recipientId });
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true, writable: true });
   expect(await room().readScopeAccess({ userId: recipientId, target: main })).toMatchObject({ allowed: false });
   expect(await env.DB.prepare("SELECT access_class,role FROM workspace_members WHERE user_id=?").bind(recipientId).first())
     .toEqual({ access_class: "guest", role: null });
+  // Nothing is left to claim for that address here, so nothing points here for it.
+  expect(await routes("guest@example.test")).toEqual([]);
 });
 
-it("never restores a revoked grant or a removed membership when acceptance is replayed", async () => {
-  const request = await create();
-  const accepted = await room().acceptScopeInvitation(request);
+it("holds a share for an address with no account, and gives it to whoever verifies that address", async () => {
+  const share = await create([child], [NEWCOMER]);
+  expect(share).toMatchObject({ status: "pending", acceptedByUserId: null });
+  expect(await routes(NEWCOMER)).toEqual([{ workspace_id: workspaceId, parent_id: parentId }]);
+  // Someone else signing in claims nothing: the share belongs to the mailbox.
+  // Even when a stray lookup row (from a share later revoked, say) sends their
+  // claim to this very Channel.
+  await env.DB.prepare("INSERT INTO scope_share_recipients VALUES ('guest@example.test', ?, ?, '')").bind(workspaceId, parentId).run();
+  await claimScopeInvitations(env, recipientId);
+  expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: false });
+
+  await verifyNewcomer();
+  await claimScopeInvitations(env, newcomerId);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true, writable: true });
+  expect(await room().readScopeAccess({ userId: newcomerId, target: main })).toMatchObject({ allowed: false });
+  expect(await env.DB.prepare("SELECT access_class FROM workspace_members WHERE user_id=?").bind(newcomerId).first())
+    .toEqual({ access_class: "guest" });
+  expect(await routes(NEWCOMER)).toEqual([]);
+});
+
+it("claims for an address Global verified that this deployment has not recorded", async () => {
+  // Discovery's case: a person known here only through the platform link,
+  // whose verified address arrives with Global's identity.
+  await create([child], [NEWCOMER]);
+  await env.DB.prepare("INSERT INTO users (id, name) VALUES (?, NULL)").bind(newcomerId).run();
+  await claimScopeInvitations(env, newcomerId);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: false });
+  await claimScopeInvitations(env, newcomerId, "Newcomer@Example.test");
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true });
+});
+
+it("claims on a real browser sign-in by code, with no acceptance step after it", async () => {
+  await create([child], [NEWCOMER]);
+  const apiEnv = await prepareBrowserSignIn();
+  const { app, proof, redeem } = await signInByCode(apiEnv, "Newcomer@Example.test");
+  const redeemed = await redeem(proof);
+  expect(redeemed.status, await redeemed.clone().text()).toBe(200);
+  const signedIn = await redeemed.json() as { user: { id: string } };
+  expect(await room().readScopeAccess({ userId: asUserId(signedIn.user.id), target: child }))
+    .toMatchObject({ allowed: true, writable: true });
+  // Straight into the Organization the share named: select needs no other step.
+  const cookie = redeemed.headers.get("set-cookie")!.split(";")[0]!;
+  const selected = await app.request("/browser/workspace/select", { method: "POST",
+    headers: { ...originHeaders, cookie }, body: JSON.stringify({ workspaceId }) }, apiEnv);
+  expect(selected.status, await selected.clone().text()).toBe(200);
+  expect(await selected.json()).toMatchObject({ user: { id: signedIn.user.id }, workspace: { id: workspaceId } });
+});
+
+it("claims during regional discovery, which desktop sign-in and workspace switching use", async () => {
+  await create([child], [NEWCOMER]);
+  const at = new Date().toISOString();
+  await env.DB.batch([
+    ...["slug TEXT", "timezone TEXT", "created_at TEXT"].map((column) => env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN ${column}`)),
+    env.DB.prepare("UPDATE workspaces SET slug='shared', timezone='UTC', created_at=?").bind(at),
+    ...["platform_user_id TEXT", "google_subject TEXT", "avatar_url TEXT", "updated_at TEXT", "presentation_json TEXT"]
+      .map((column) => env.DB.prepare(`ALTER TABLE users ADD COLUMN ${column}`)),
+    // Known here only through the platform link: no verified-address row.
+    env.DB.prepare("INSERT INTO users (id, name, email, platform_user_id, google_subject) VALUES (?, 'Newcomer', ?, ?, 'google-newcomer')")
+      .bind(newcomerId, NEWCOMER, newcomerId),
+    env.DB.prepare(`CREATE TABLE workspace_invitations (id TEXT, workspace_id TEXT, email TEXT, role TEXT,
+      invited_by_user_id TEXT, expires_at TEXT, accepted_at TEXT, revoked_at TEXT, created_at TEXT)`),
+    env.DB.prepare("CREATE TABLE demo_operations (workspace_id TEXT, ready_at TEXT)"),
+  ]);
+  const discovery = await new RegionalOnboardingService(env).discover({ platformUserId: newcomerId,
+    googleSubject: "google-newcomer", email: "Newcomer@Example.test", name: "Newcomer", avatarUrl: null,
+    timezone: "UTC", createdAt: at });
+  expect(discovery.workspaces).toEqual([expect.objectContaining({ id: workspaceId, accessClass: "guest" })]);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true });
+});
+
+it("indexes a share that was pending before lookup rows existed, once, on the object's own schedule", async () => {
+  // Such a share has no lookup row. Migration 93 schedules one alarm per
+  // parent with a pending share; the alarm writes the rows.
+  await create([child], [NEWCOMER]);
+  await env.DB.prepare("DELETE FROM scope_share_recipients").run();
+  await runInDurableObject(room(), (_instance, state) => {
+    new ScheduledAlarmStore(state.storage.sql).schedule({ kind: SCOPE_INVITATION_INDEX_ALARM, key: parentId, dueAt: Date.now() });
+  });
+  await runDurableObjectAlarm(room());
+  expect(await routes(NEWCOMER)).toEqual([{ workspace_id: workspaceId, parent_id: parentId }]);
+  await verifyNewcomer();
+  await claimScopeInvitations(env, newcomerId);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true });
+});
+
+it("signs in without the share, rather than failing, when the claim lookup itself fails", async () => {
+  await create([child], [NEWCOMER]);
+  await verifyNewcomer();
+  const broken = { ...env, DB: new Proxy(env.DB, { get: (database, property, receiver) => property === "batch"
+    ? () => Promise.reject(new Error("D1_ERROR: simulated outage"))
+    : Reflect.get(database, property, receiver) }) } as typeof env;
+  await expect(claimScopeInvitations(broken, newcomerId)).resolves.toBeUndefined();
+  // The lookup row is untouched, so the next sign-in claims it.
+  await claimScopeInvitations(env, newcomerId);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true });
+});
+
+it("keeps the lookup row for a share recorded while a cleanup was deleting it", async () => {
+  // Revoking the address's last share deletes its row. A new share to the same
+  // address, recorded while that delete is in flight, must keep a row.
+  const first = await create([child], [NEWCOMER]);
+  await runInDurableObject(room(), async (instance) => {
+    const target = instance as unknown as { env: Env };
+    const originalEnv = target.env;
+    let raced = false;
+    const database = new Proxy(originalEnv.DB, { get: (current, property) => property === "batch"
+      ? async (statements: D1PreparedStatement[]) => {
+        if (!raced && JSON.stringify(statements.map((statement) => (statement as unknown as { statement?: string }).statement ?? String(statement))).includes("DELETE")) {
+          raced = true;
+          // The new share lands, row and all, before the delete does.
+          target.env = originalEnv;
+          await instance.createScopeInvitations(invitation([child], [NEWCOMER]));
+          target.env = proxied;
+        }
+        return current.batch(statements);
+      }
+      : Reflect.get(current, property) });
+    const proxied = new Proxy(originalEnv, { get: (current, property, receiver) => property === "DB" ? database : Reflect.get(current, property, receiver) });
+    target.env = proxied;
+    try {
+      expect(await instance.revokeScopeInvitation({ workspaceId, parentId, actorUserId: actorId,
+        invitationId: first.id, expectedRevision: 1 })).toMatchObject({ status: "revoked" });
+      expect(raced).toBe(true);
+    } finally { target.env = originalEnv; }
+  });
+  expect(await routes(NEWCOMER)).toEqual([{ workspace_id: workspaceId, parent_id: parentId }]);
+});
+
+it("reports a revocation as done when only its lookup-row cleanup fails", async () => {
+  const share = await create([child], [NEWCOMER]);
+  await runInDurableObject(room(), async (instance) => {
+    const target = instance as unknown as { env: Env };
+    const originalEnv = target.env;
+    const database = new Proxy(originalEnv.DB, { get: (current, property) => property === "batch"
+      ? () => Promise.reject(new Error("D1_ERROR: simulated outage"))
+      : Reflect.get(current, property) });
+    target.env = new Proxy(originalEnv, { get: (current, property, receiver) => property === "DB" ? database : Reflect.get(current, property, receiver) });
+    try {
+      // Committed in the object; the stale row it leaves is harmless and a
+      // later claim removes it. Reporting failure would send the sharer into
+      // a retry that can only answer `revision_conflict`.
+      expect(await instance.revokeScopeInvitation({ workspaceId, parentId, actorUserId: actorId,
+        invitationId: share.id, expectedRevision: 1 })).toMatchObject({ status: "revoked" });
+    } finally { target.env = originalEnv; }
+  });
+  expect(await routes(NEWCOMER)).toHaveLength(1);
+  await verifyNewcomer();
+  await claimScopeInvitations(env, newcomerId);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: false });
+  expect(await routes(NEWCOMER)).toEqual([]);
+});
+
+it("never restores a revoked grant or a removed membership when a claim runs again", async () => {
+  const share = await create();
   await withHostedParent(room(), parentId, (parent) => {
     const grants = parent['scopeGrants'](child);
     grants.mutateCurrent({ operationId: crypto.randomUUID(), actorUserId: actorId, userId: recipientId, target: child, active: false },
       grants.forUser(recipientId)[0]!.membershipIncarnation);
   });
-  expect(await room().acceptScopeInvitation(request)).toEqual(accepted);
+  await claimScopeInvitations(env, recipientId);
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: false });
   await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare("DELETE FROM workspace_members WHERE user_id=?").bind(recipientId));
-  expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "denied", reason: "relationship_required" });
+  await claimScopeInvitations(env, recipientId);
   expect(await env.DB.prepare("SELECT 1 FROM workspace_members WHERE user_id=?").bind(recipientId).first()).toBeNull();
+  expect((await room().listScopeInvitations({ actorUserId: actorId, target: child }))).toMatchObject({
+    status: "ready", invitations: [{ id: share.id, status: "accepted", acceptedByUserId: recipientId }] });
 });
 
-it("a revoked invitation cannot be accepted, even with its original proof", async () => {
-  const request = await create();
+it("never gives a revoked share to the address it was for", async () => {
+  const share = await create([child], [NEWCOMER]);
   expect(await room().revokeScopeInvitation({ workspaceId, parentId, actorUserId: actorId,
-    invitationId: request.invitationId, expectedRevision: 1 })).toMatchObject({ status: "revoked" });
-  expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "denied", reason: "invitation_unavailable" });
-  expect(await env.DB.prepare("SELECT 1 FROM workspace_members WHERE user_id=?").bind(recipientId).first()).toBeNull();
+    invitationId: share.id, expectedRevision: 1 })).toMatchObject({ status: "revoked" });
+  expect(await routes(NEWCOMER)).toEqual([]);
+  await verifyNewcomer();
+  await claimScopeInvitations(env, newcomerId);
+  expect(await env.DB.prepare("SELECT 1 FROM workspace_members WHERE user_id=?").bind(newcomerId).first()).toBeNull();
 });
 
-it("commits all target grants with acceptance, or retries after rolling every grant back", async () => {
-  const request = await create([main, child]);
+it("never gives an expired share to the address it was for", async () => {
+  const created = await room().createScopeInvitations({ ...invitation([child], [NEWCOMER]), expiresAt: Date.now() + 60_000 });
+  if (created.status !== "created") throw new Error(JSON.stringify(created));
+  const invitationId = created.invitations[0]!.id;
+  await runInDurableObject(room(), (_instance, state) => {
+    // The deadline lives in the stored summary, so age it there.
+    const stored = state.storage.sql.exec<{ summary_json: string }>(
+      "SELECT summary_json FROM parent_invitations WHERE parent_id = ? AND id = ?", parentId, invitationId).one();
+    state.storage.sql.exec("UPDATE parent_invitations SET summary_json = ? WHERE parent_id = ? AND id = ?",
+      JSON.stringify({ ...JSON.parse(stored.summary_json), expiresAt: Date.now() - 1_000 }), parentId, invitationId);
+  });
+  await verifyNewcomer();
+  await claimScopeInvitations(env, newcomerId);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: false });
+  expect(await routes(NEWCOMER)).toEqual([]);
+});
+
+it("commits all target grants with the claim, or leaves the share pending after rolling every grant back", async () => {
+  const share = await create([main, child], [NEWCOMER]);
+  await verifyNewcomer();
   await runInDurableObject(room(), (_instance, state) => {
     state.storage.sql.exec(`CREATE TRIGGER reject_child_grant BEFORE INSERT ON parent_grants
-      WHEN NEW.user_id='${recipientId}' AND NEW.substream_id='${childId}'
+      WHEN NEW.user_id='${newcomerId}' AND NEW.substream_id='${childId}'
       BEGIN SELECT RAISE(ABORT,'simulated child write failure'); END`);
   });
   // Catch the deliberate runtime rejection inside the object: the test RPC
   // bridge otherwise reports the same expected rejection as unhandled as well.
-  await expect(runInDurableObject(room(), (instance) => instance.acceptScopeInvitation(request)))
+  const claim = { workspaceId, parentId, userId: newcomerId, emails: [NEWCOMER] };
+  await expect(runInDurableObject(room(), (instance) => instance.claimScopeInvitations(claim)))
     .rejects.toThrow("simulated child write failure");
   await withHostedParent(room(), parentId, (parent, state) => {
-    expect(parent['scopeGrants'](child).forUser(recipientId)).toEqual([]);
-    expect(new ScopeInvitationStorage(state.storage, parentId).read(request.invitationId)?.summary.status).toBe("pending");
+    expect(parent['scopeGrants'](child).forUser(newcomerId)).toEqual([]);
+    expect(parent['scopeGrants'](main).forUser(newcomerId)).toEqual([]);
+    expect(new ScopeInvitationStorage(state.storage, parentId).read(share.id)?.summary.status).toBe("pending");
     state.storage.sql.exec("DROP TRIGGER reject_child_grant");
   });
-  expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "accepted" });
-  expect(await room().readScopeAccess({ userId: recipientId, target: main })).toMatchObject({ allowed: true });
-  expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
+  // The lookup row survived the failure, so the next sign-in tries again.
+  await claimScopeInvitations(env, newcomerId);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: main })).toMatchObject({ allowed: true });
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true });
 });
 
-it("does not use an invitation after the sharer's membership is replaced", async () => {
-  const request = await create();
-  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId: request.invitationId, token: request.token }))
-    .toMatchObject({ status: "ready" });
+it("retires, rather than grants, a share whose sharer's membership was replaced", async () => {
+  const share = await create([child], [NEWCOMER]);
   await changeRelationships(env, workspaceId, [actorId], env.DB.prepare("UPDATE workspace_members SET incarnation='replacement' WHERE user_id=?").bind(actorId));
-  expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "denied", reason: "sharing_required" });
-  // The preview goes with it. It answers what acceptance would answer, or it is
-  // a mailbox oracle: a name for an invitation nobody can accept any more, and
-  // one the holder could not have learned by accepting.
-  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId: request.invitationId, token: request.token }))
-    .toMatchObject({ status: "denied", reason: "invitation_unavailable" });
+  await verifyNewcomer();
+  await claimScopeInvitations(env, newcomerId);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: false });
+  // Rejoining never restores the old share's authority, so it cannot become
+  // claimable: it is retired, and its lookup row stops costing every sign-in.
+  await withHostedParent(room(), parentId, (_parent, state) => {
+    expect(new ScopeInvitationStorage(state.storage, parentId).read(share.id)?.summary.status).toBe("revoked");
+  });
+  expect(await routes(NEWCOMER)).toEqual([]);
+});
+
+it("keeps the lookup row for a share that cannot be claimed yet", async () => {
+  await create([child], [NEWCOMER]);
+  // The sharer loses the share but keeps their membership: that can change back.
+  await withHostedParent(room(), parentId, (parent) => {
+    const grants = parent['scopeGrants'](child);
+    grants.mutateCurrent({ operationId: crypto.randomUUID(), actorUserId: actorId, userId: actorId, target: child, active: false }, "actor-membership");
+  });
+  await verifyNewcomer();
+  await claimScopeInvitations(env, newcomerId);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: false });
+  expect(await routes(NEWCOMER)).toHaveLength(1);
 });
 
 async function bearer(userId: typeof actorId, sessionId: string, workspace: typeof workspaceId | null) {
@@ -216,7 +457,7 @@ it("answers a sharing request for a Space id as a scope that does not exist", as
   expect(await response.json()).toMatchObject({ error: { code: "scope_not_found" } });
 });
 
-it("routes sharing from the authenticated actor and accepts from an identity-only session", async () => {
+it("routes sharing from the authenticated actor, and there is no acceptance route", async () => {
   const app = createApp();
   const actorHeaders = { authorization: `Bearer ${await bearer(actorId, "actor-session", workspaceId)}`, "content-type": "application/json" };
   const body = { operationId: crypto.randomUUID(), parentId, emails: ["guest@example.test"], targets: [child], expiresAt: null };
@@ -224,17 +465,12 @@ it("routes sharing from the authenticated actor and accepts from an identity-onl
     body: JSON.stringify({ ...body, actorUserId: recipientId }) }, env)).status).toBe(400);
   const created = await app.request("/sharing", { method: "POST", headers: actorHeaders, body: JSON.stringify(body) }, env);
   expect(created.status).toBe(201);
-  const result = await created.json() as { invitations: Array<{ id: string }> };
-  const invitationId = result.invitations[0]!.id;
-  const headers = { authorization: `Bearer ${await bearer(recipientId, "recipient-session", null)}`, "content-type": "application/json" };
-  const accepted = await app.request("/sharing/accept", { method: "POST", headers,
-    body: JSON.stringify({ workspaceId, parentId, invitationId, token: await tokenFor(invitationId) }) }, env);
-  expect(accepted.status).toBe(200);
-  expect(await accepted.json()).toMatchObject({ status: "accepted", invitation: { acceptedByUserId: recipientId } });
+  expect(await created.json()).toMatchObject({ status: "created", invitations: [{ acceptedByUserId: recipientId }] });
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
+  expect((await app.request("/sharing/accept", { method: "POST", headers: actorHeaders, body: "{}" }, env)).status).toBe(404);
 });
 
-it("publishes the guest relationship an acceptance created without waiting for the cron", async () => {
+it("publishes the guest relationship a share created without waiting for the cron", async () => {
   // The slice of D1's durable relationship publication this route reads: the
   // intent row the membership trigger writes, as migration 0109 does.
   await env.DB.batch([
@@ -249,11 +485,10 @@ it("publishes the guest relationship an acceptance created without waiting for t
   ]);
   const send = vi.spyOn(env.ACCESS_REVOCATION_QUEUE, "send");
   const app = createApp();
-  const request = await create();
-  const headers = { authorization: `Bearer ${await bearer(recipientId, "recipient-session", null)}`, "content-type": "application/json" };
-  const accepted = await app.request("/sharing/accept", { method: "POST", headers,
-    body: JSON.stringify({ workspaceId, parentId, invitationId: request.invitationId, token: request.token }) }, env);
-  expect(accepted.status).toBe(200);
+  const headers = { authorization: `Bearer ${await bearer(actorId, "actor-session", workspaceId)}`, "content-type": "application/json" };
+  const created = await app.request("/sharing", { method: "POST", headers, body: JSON.stringify({
+    operationId: crypto.randomUUID(), parentId, emails: ["guest@example.test"], targets: [child], expiresAt: null }) }, env);
+  expect(created.status).toBe(201);
   await vi.waitFor(async () => {
     expect(await env.DB.prepare("SELECT dispatched_at FROM workspace_relationship_deliveries WHERE user_id = ?")
       .bind(recipientId).first()).toEqual({ dispatched_at: expect.any(String) as unknown });
@@ -268,18 +503,15 @@ it("names the field when an invitation is asked to expire past the end of time",
   const app = createApp();
   const headers = { authorization: `Bearer ${await bearer(actorId, "actor-session", workspaceId)}`, "content-type": "application/json" };
   // Past the largest instant a `Date` can hold and still a safe integer, which
-  // is the whole band `z.number().int()` lets through: `expiresAt` reached
-  // `new Date(value).toISOString()` in the link store and came back as a bare
-  // `RangeError: Invalid time value`, naming neither the field nor the caller's
-  // value. Anything larger was already refused for not being an integer, which
-  // is why the ceiling has to be the `Date` range rather than that one.
+  // is the whole band `z.number().int()` lets through. Anything larger was
+  // already refused for not being an integer, which is why the ceiling has to
+  // be the `Date` range rather than that one.
   const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   try {
     const response = await app.request("/sharing", { method: "POST", headers, body: JSON.stringify({
-      operationId: crypto.randomUUID(), parentId, emails: ["guest@example.test"], targets: [child],
+      operationId: crypto.randomUUID(), parentId, emails: [NEWCOMER], targets: [child],
       expiresAt: 9_000_000_000_000_000 }) }, { ...env, LOG_LEVEL: "warn" as const });
-    // A rejection, not a 500, and the diagnostic names the field rather than
-    // carrying one run's `RangeError` message.
+    // A rejection, not a 500, and the diagnostic names the field.
     expect(response.status).toBe(400);
     expect(warn.mock.calls.map(([entry]) => entry as { validation_issues?: unknown }).flatMap((entry) =>
       Array.isArray(entry?.validation_issues) ? entry.validation_issues : []))
@@ -287,65 +519,19 @@ it("names the field when an invitation is asked to expire past the end of time",
   } finally {
     warn.mockRestore();
   }
-  expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM link_payloads").first<{ n: number }>()).toMatchObject({ n: 0 });
+  expect(await routes(NEWCOMER)).toEqual([]);
 });
 
-it("emails one opaque credential, fills in the mailbox it was sent to, and accepts by that credential alone", async () => {
-  const created = await room().createScopeInvitations(invitation());
-  if (created.status !== "created") throw new Error(JSON.stringify(created));
-  const invitationId = created.invitations[0]!.id;
-  const link = await deliveredLink(invitationId);
-  const credential = { link: link.hash.slice(1) };
-  // Nothing a recipient can read out of the link says which deployment,
-  // workspace, work stream or invitation it addresses: one typed prefix and
-  // 256 bits, with everything it stands for in this region's own row.
-  expect(link.pathname).toBe("/invite");
-  expect(link.search).toBe("");
-  expect(credential.link).toMatch(/^inv_[A-Za-z0-9_-]{43}$/u);
-  expect(link.toString()).toHaveLength(`${new URL("/invite", link).toString()}#inv_`.length + 43);
-  // The token is the credential, so the link carries it; what it must not carry
-  // is anything that says what the credential addresses.
-  expect(credential.link).toBe(await tokenFor(invitationId));
-  for (const routing of [workspaceId, parentId, invitationId, "region", "global"]) {
-    expect(link.toString()).not.toContain(routing);
-  }
-  // The row holds the digest of the token in the email, never the token, and
-  // no second secret beside the address: a dump of this table cannot be
-  // replayed through the addressed request body that is still accepted.
-  const stored = await env.DB.prepare("SELECT type, payload FROM link_payloads").first<{ type: string; payload: string }>();
-  expect(stored?.type).toBe("inv");
-  expect(JSON.parse(stored!.payload)).toEqual({ workspaceId, parentId, invitationId });
-  expect(stored!.payload).not.toContain(credential.link.slice(4));
-  expect(await env.DB.prepare("SELECT 1 FROM link_payloads WHERE token_hash = ?").bind(credential.link).first()).toBeNull();
-  expect(await room().acceptScopeInvitation({ workspaceId, parentId, invitationId,
-    userId: recipientId, ...JSON.parse(stored!.payload), token: "whatever a dump gives you" }))
-    .toMatchObject({ status: "denied", reason: "invitation_unavailable" });
-
-  const app = createApp();
-  const origin = { origin: "https://app.test", "content-type": "application/json" };
-  const preview = async (body: unknown) => app.request("/browser/invitation",
-    { method: "POST", headers: origin, body: JSON.stringify(body) }, env);
-  // No session: the sign-in form has to fill this in before there is one.
-  const filled = await preview(credential);
-  expect(filled.status, await filled.clone().text()).toBe(200);
-  expect(await filled.json()).toEqual({ email: "guest@example.test" });
-  const edited = `${credential.link.slice(0, -1)}${credential.link.endsWith("A") ? "B" : "A"}`;
-  expect((await preview({ link: edited })).status).toBe(403);
-  // The addressed body is refused here, though acceptance still takes it. On
-  // that branch nothing is looked up, so the caller's own identifiers would
-  // reach a Durable Object stub with no session behind the request at all —
-  // and a link minted in that format never carried a mailbox to prefill.
-  const addressed = { workspaceId, parentId, invitationId, token: await tokenFor(invitationId) };
-  expect((await preview(addressed)).status).toBe(400);
-  expect((await preview({ ...addressed, parentId: crypto.randomUUID() })).status).toBe(400);
-
-  const headers = { authorization: `Bearer ${await bearer(recipientId, "recipient-session", null)}`, "content-type": "application/json" };
-  const acceptance = await app.request("/sharing/accept", { method: "POST", headers, body: JSON.stringify(credential) }, env);
-  expect(acceptance.status, await acceptance.clone().text()).toBe(200);
-  expect(await acceptance.json()).toMatchObject({ status: "accepted", invitation: { acceptedByUserId: recipientId } });
-  expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
-  expect((await app.request("/sharing/accept", { method: "POST", headers, body: JSON.stringify({ link: edited }) }, env)).status).toBe(403);
+it("emails the conversation's own address, carrying no secret", async () => {
+  const share = await create([child], [NEWCOMER]);
+  const link = await deliveredLink(share.id);
+  // A child share opens the child; nothing in the link is a credential, so a
+  // forwarded copy opens nothing for anyone who cannot sign in as the address.
+  expect(link.toString()).toBe(`https://app.test/app/workspaces/global/${workspaceId}/workstreams/${parentId}/substreams/${childId}`);
+  const whole = await create([main], ["main@example.test"]);
+  expect((await deliveredLink(whole.id)).toString()).toBe(`https://app.test/app/workspaces/global/${workspaceId}/workstreams/${parentId}`);
 });
+
 
 /**
  * A real conversation object with a real transcript in it, so a preview reads
@@ -373,6 +559,7 @@ async function seedConversation(substreamId: string, turns: Array<{ text: string
   });
 }
 
+
 it("quotes the conversation being offered and nothing beside it", async () => {
   await seedConversation("0", [{ text: "Main transcript, not shared here." }]);
   await seedConversation(childId, [
@@ -380,7 +567,7 @@ it("quotes the conversation being offered and nothing beside it", async () => {
     { text: "Child transcript, which is what was offered." },
   ]);
 
-  const offered = await room().createScopeInvitations(invitation([child]));
+  const offered = await room().createScopeInvitations(invitation([child], [NEWCOMER]));
   if (offered.status !== "created") throw new Error(JSON.stringify(offered));
   const { text } = await deliveredParts(offered.invitations[0]!.id);
   // The whole point of a scoped invitation: an offer of one conversation must
@@ -391,21 +578,22 @@ it("quotes the conversation being offered and nothing beside it", async () => {
   // conversation and never leave the product this way.
   expect(text).not.toContain("A system notice");
 
-  const whole = await room().createScopeInvitations(invitation([main]));
+  const whole = await room().createScopeInvitations(invitation([main], [NEWCOMER]));
   if (whole.status !== "created") throw new Error(JSON.stringify(whole));
   const mainParts = await deliveredParts(whole.invitations[0]!.id);
   expect(mainParts.text).toContain("Main transcript, not shared here.");
   expect(mainParts.text).not.toContain("Child transcript");
 });
 
+
 it("names the sender and the workspace, and still sends when the conversation cannot be previewed", async () => {
-  const created = await room().createScopeInvitations(invitation());
-  if (created.status !== "created") throw new Error(JSON.stringify(created));
-  const { text, html } = await deliveredParts(created.invitations[0]!.id);
+  const share = await create([child], [NEWCOMER]);
+  const { text, html } = await deliveredParts(share.id);
+  const link = (await deliveredLink(share.id)).toString();
   expect(text.split("\n")[0]).toBe("Adam Owner invited you to Shared workspace on Rally.");
-  expect(text).toContain("Sign in with guest@example.test and accept:");
-  expect(text).toContain((await deliveredLink(created.invitations[0]!.id)).toString());
-  expect(text).toContain("This invitation does not grant access until you sign in and accept it.");
+  expect(text).toContain(`Sign in with ${NEWCOMER} to open it:\n${link}`);
+  expect(text).toContain("Only someone signed in with this email address can open it.");
+  expect(text).not.toContain("accept");
   expect(text.trimEnd().endsWith("work it through together.")).toBe(true);
   // This work stream's conversation object was never provisioned, so the
   // preview cannot be read. An invitation is not a preview: it goes anyway,
@@ -415,32 +603,11 @@ it("names the sender and the workspace, and still sends when the conversation ca
   // sends the message that was composed rather than one rendered again later.
   expect(html).toContain("Adam Owner");
   expect(html).toContain("Shared workspace");
+  expect(html).toContain(`href="${link}"`);
+  expect(html).toContain("Open in Rally");
   // A Main invitation names the Channel from its directory row.
-  const whole = await room().createScopeInvitations({ ...invitation([main]), emails: ["main-title@example.test"] });
-  if (whole.status !== "created") throw new Error(JSON.stringify(whole));
-  const mainParts = await deliveredParts(whole.invitations[0]!.id);
-  expect(mainParts.text).toContain("Private parent");
-  expect(html).toContain(`href="${(await deliveredLink(created.invitations[0]!.id)).toString()}"`);
-});
-
-it("takes back the links it minted for a creation it did not record", async () => {
-  const rows = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM link_payloads").first<{ n: number }>())!.n;
-  const operationId = crypto.randomUUID();
-  const two = { ...invitation(), operationId, emails: ["guest@example.test", "second@example.test"] };
-  expect(await room().createScopeInvitations(two)).toMatchObject({ status: "created" });
-  expect(await rows()).toBe(2);
-
-  // A replay of the same operation reports the first attempt's invitations, so
-  // the links it minted on the way there address nothing. Nothing else can
-  // reach them: the row is keyed by a digest of a token only this call held.
-  expect(await room().createScopeInvitations(two)).toMatchObject({ status: "created" });
-  expect(await rows()).toBe(2);
-
-  // Same for a creation nobody was allowed to make. The invitation is refused
-  // before it is recorded, and its rows go with it.
-  expect(await room().createScopeInvitations({ ...invitation(), actorUserId: recipientId }))
-    .toMatchObject({ status: "denied", reason: "sharing_required" });
-  expect(await rows()).toBe(2);
+  const whole = await create([main], ["main-title@example.test"]);
+  expect((await deliveredParts(whole.id)).text).toContain("Private parent");
 });
 
 /** A warning is written in the object's isolate, so the collector and the level it needs live there too. */
@@ -470,7 +637,7 @@ it("names which authority refused when a preview cannot be read", async () => {
     // asked about, rather than the protocol having drifted or the stub being
     // misrouted. Nothing here can fail an invitation, which makes this entry
     // the only evidence that the preview stopped rendering at all.
-    expect(await room().createScopeInvitations(invitation())).toMatchObject({ status: "created" });
+    expect(await room().createScopeInvitations(invitation([child], [NEWCOMER]))).toMatchObject({ status: "created" });
     const entries = await runInDurableObject(room(), () =>
       structuredClone((globalThis as WarnCaptureScope).__rallyWarnLog ?? [])) as Record<string, unknown>[];
     expect(entries.find((entry) => entry.event === "scope_invitation_preview_failed"))
@@ -483,156 +650,74 @@ it("names which authority refused when a preview cannot be read", async () => {
   }
 });
 
-it("stops describing an invitation past its deadline, accepted or not", async () => {
-  const soon = Date.now() + 60_000;
-  const created = await room().createScopeInvitations({ ...invitation(), expiresAt: soon });
-  if (created.status !== "created") throw new Error(JSON.stringify(created));
-  const invitationId = created.invitations[0]!.id;
-  const token = await tokenFor(invitationId);
-  const request = { workspaceId, parentId, invitationId, userId: recipientId, token };
-  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId, token }))
-    .toMatchObject({ status: "ready", email: "guest@example.test" });
-  expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "accepted" });
 
-  // An accepted invitation stays replayable past its deadline, so that someone
-  // who already holds the grant can retry an interrupted acceptance. Releasing
-  // the mailbox is a disclosure rather than idempotence, and ends at the
-  // deadline either way.
-  await runInDurableObject(room(), (_instance, state) => {
-    // The deadline lives in the stored summary, so age it there.
-    const stored = state.storage.sql.exec<{ summary_json: string }>(
-      "SELECT summary_json FROM parent_invitations WHERE parent_id = ? AND id = ?", parentId, invitationId).one();
-    state.storage.sql.exec("UPDATE parent_invitations SET summary_json = ? WHERE parent_id = ? AND id = ?",
-      JSON.stringify({ ...JSON.parse(stored.summary_json), expiresAt: Date.now() - 1_000 }), parentId, invitationId);
-  });
-  expect(await room().acceptScopeInvitation(request)).toMatchObject({ status: "accepted" });
-  expect(await room().describeScopeInvitation({ workspaceId, parentId, invitationId, token }))
-    .toMatchObject({ status: "denied", reason: "invitation_unavailable" });
-});
-
-it("stops describing an invitation the sender revoked, holding back the mailbox with it", async () => {
-  const request = await create();
-  const credential = await credentialFor(request.invitationId);
-  const app = createApp();
-  const preview = () => app.request("/browser/invitation", { method: "POST",
-    headers: { origin: "https://app.test", "content-type": "application/json" }, body: JSON.stringify(credential) }, env);
-  expect((await preview()).status).toBe(200);
-  expect(await room().revokeScopeInvitation({ workspaceId, parentId, actorUserId: actorId,
-    invitationId: request.invitationId, expectedRevision: 1 })).toMatchObject({ status: "revoked" });
-  expect((await preview()).status).toBe(403);
-});
-
-it("preserves a full member's administrative role when accepting a scope share", async () => {
-  await env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,access_class,role,status) VALUES (?,?,'member','admin','active')")
-    .bind(workspaceId, recipientId).run();
-  const before = await env.DB.prepare("SELECT incarnation FROM workspace_members WHERE user_id=?").bind(recipientId).first();
-  expect(await room().acceptScopeInvitation(await create())).toMatchObject({ status: "accepted" });
-  expect(await env.DB.prepare("SELECT access_class,role,incarnation FROM workspace_members WHERE user_id=?").bind(recipientId).first())
-    .toMatchObject({ ...before, access_class: "member", role: "admin" });
-});
-
-it("preserves browser sessions and independent shares across a second workstream and guest promotion", async () => {
-  const firstInvitation = await create();
-  const at = new Date().toISOString();
-  // Real D1 browser-session columns and the production incarnation binding.
-  await env.DB.batch([
-    ...["slug TEXT", "timezone TEXT", "created_at TEXT"].map((column) =>
-      env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN ${column}`)),
-    ...["avatar_url TEXT", "timezone TEXT", "created_at TEXT", "updated_at TEXT", "platform_user_id TEXT", "onboarding_eligible INTEGER"].map((column) =>
-      env.DB.prepare(`ALTER TABLE users ADD COLUMN ${column}`)),
-    ...["refresh_token_hash TEXT", "created_at TEXT"].map((column) =>
-      env.DB.prepare(`ALTER TABLE sessions ADD COLUMN ${column}`)),
-    env.DB.prepare("UPDATE workspaces SET name='Shared workspace',slug='shared',timezone='UTC',created_at=?").bind(at),
-    env.DB.prepare("UPDATE users SET name='Guest',email='guest@example.test',timezone='UTC',created_at=? WHERE id=?").bind(at,recipientId),
-    env.DB.prepare("UPDATE sessions SET created_at=?").bind(at),
-    env.DB.prepare(`CREATE TRIGGER bind_session_incarnation AFTER INSERT ON sessions WHEN NEW.workspace_id IS NOT NULL
-      BEGIN UPDATE sessions SET workspace_incarnation=(SELECT incarnation FROM workspace_members
-      WHERE workspace_id=NEW.workspace_id AND user_id=NEW.user_id AND status='active') WHERE id=NEW.id; END`),
-    env.DB.prepare("ALTER TABLE user_verified_emails ADD COLUMN verified_at TEXT"),
-    env.DB.prepare("CREATE TABLE user_login_identities(provider TEXT,subject TEXT,user_id TEXT,verified_at TEXT,PRIMARY KEY(provider,subject))"),
-    env.DB.prepare(`CREATE TABLE email_login_challenges (
-      id TEXT PRIMARY KEY,email TEXT NOT NULL,magic_hash TEXT NOT NULL,otp_hash TEXT NOT NULL,
-      expires_at INTEGER NOT NULL,max_failed_attempts INTEGER,failed_attempts INTEGER NOT NULL DEFAULT 0,
-      delivery_payload_encrypted TEXT NOT NULL,delivery_sent_at INTEGER,created_at INTEGER NOT NULL,
-      redeemed_at INTEGER,redemption_id TEXT,user_id TEXT,session_id TEXT UNIQUE,session_secret_encrypted TEXT)`),
-    env.DB.prepare("CREATE TABLE browser_sessions(session_id TEXT PRIMARY KEY,credential_hash TEXT UNIQUE)"),
-    env.DB.prepare("CREATE TABLE browser_workspace_sessions(browser_session_id TEXT,workspace_id TEXT,session_id TEXT UNIQUE,PRIMARY KEY(browser_session_id,workspace_id))"),
-  ]);
-  const apiEnv = { ...env,RESEND_FROM_EMAIL:"Rally <login@example.test>",
-    EMAIL_LOGIN_POLICY_JSON:JSON.stringify({ otpDigits:6,ttlSeconds:600,maxFailedAttempts:3 }) };
+it("preserves full members, browser sessions and independent shares across a second Channel and guest promotion", async () => {
+  await create();
+  const apiEnv = await prepareBrowserSignIn();
   const browser = new BrowserSessionService(apiEnv);
-  const app = createApp();
-  const originHeaders = { origin:"https://app.test","content-type":"application/json" };
-  const challengeId = crypto.randomUUID();
-  const started = await app.request("/browser/email/start",{ method:"POST",headers:originHeaders,
-    body:JSON.stringify({ challengeId,email:"Guest@Example.test" }) },apiEnv);
-  expect(started.status,await started.clone().text()).toBe(202);
-  const challenge = await env.DB.prepare("SELECT delivery_payload_encrypted FROM email_login_challenges WHERE id=?")
-    .bind(challengeId).first<{ delivery_payload_encrypted:string }>();
-  const email = await openEmailLoginSecret(apiEnv,challengeId,challenge!.delivery_payload_encrypted) as { text:string };
-  const otp = /code is (\d+)\./u.exec(email.text)![1]!;
-  const proof = { challengeId,redemptionId:crypto.randomUUID(),method:"otp",credential:otp };
-  expect((await app.request("/browser/email/redeem",{},apiEnv)).status).toBe(405);
-  const wrong = await app.request("/browser/email/redeem",{ method:"POST",headers:originHeaders,
-    body:JSON.stringify({ ...proof,credential:"incorrect" }) },apiEnv);
+  const { app, proof, redeem } = await signInByCode(apiEnv, "Guest@Example.test");
+  expect((await app.request("/browser/email/redeem", {}, apiEnv)).status).toBe(405);
+  const wrong = await redeem({ ...proof, credential: "incorrect" });
   expect(wrong.status).toBe(401);
   expect(wrong.headers.get("set-cookie")).toBeNull();
-  const redeem = (request = proof) => app.request("/browser/email/redeem",{ method:"POST",headers:originHeaders,
-    body:JSON.stringify(request) },apiEnv);
-  const redeemed = await redeem();
-  expect(redeemed.status,await redeemed.clone().text()).toBe(200);
-  expect(await redeemed.json()).toMatchObject({ user:{ id:recipientId,email:"guest@example.test" },workspace:null });
+  const redeemed = await redeem(proof);
+  expect(redeemed.status, await redeemed.clone().text()).toBe(200);
+  expect(await redeemed.json()).toMatchObject({ user: { id: recipientId, email: "guest@example.test" }, workspace: null });
   const cookieHeader = redeemed.headers.get("set-cookie")!;
   expect(cookieHeader).toContain("HttpOnly");
   expect(cookieHeader).toContain("Secure");
   const cookiePair = cookieHeader.split(";")[0]!;
-  const credential = decodeURIComponent(cookiePair.slice(cookiePair.indexOf("=")+1));
-  const retry = await redeem();
+  const credential = decodeURIComponent(cookiePair.slice(cookiePair.indexOf("=") + 1));
+  const retry = await redeem(proof);
   expect(retry.status).toBe(200);
   expect(retry.headers.get("set-cookie")!.split(";")[0]).toBe(cookiePair);
-  expect((await redeem({ ...proof,redemptionId:crypto.randomUUID() })).status).toBe(401);
-  const browserHeaders = { ...originHeaders,cookie:cookiePair };
-  const firstAccepted = await app.request("/browser/api/_/sharing/accept",{ method:"POST",headers:browserHeaders,
-    body:JSON.stringify({ workspaceId,parentId,invitationId:firstInvitation.invitationId,token:firstInvitation.token }),
-  },apiEnv);
-  expect(firstAccepted.status,await firstAccepted.clone().text()).toBe(200);
-  await browser.select(credential,workspaceId);
-  const browserBefore = await browser.read(credential,workspaceId);
-  expect(browserBefore).toMatchObject({ userId:recipientId,accessClass:"guest",role:null });
+  expect((await redeem({ ...proof, redemptionId: crypto.randomUUID() })).status).toBe(401);
+  const browserHeaders = { ...originHeaders, cookie: cookiePair };
+  await browser.select(credential, workspaceId);
+  const browserBefore = await browser.read(credential, workspaceId);
+  expect(browserBefore).toMatchObject({ userId: recipientId, accessClass: "guest", role: null });
   const before = await env.DB.prepare("SELECT incarnation FROM workspace_members WHERE user_id=?").bind(recipientId).first();
   const secondParent = asWorkstreamId("00000000-0000-4000-8000-000000000096");
   const secondChild: ScopeGrantTarget = { ...child, parentId: secondParent };
   await seedParent(secondParent, "Second parent", [secondChild]);
-  const result = await room().createScopeInvitations({ ...invitation([secondChild]), parentId: secondParent });
-  if (result.status !== "created") throw new Error(JSON.stringify(result));
-  const invitationId = result.invitations[0]!.id;
-  const acceptance = await app.request("/browser/api/_/sharing/accept", { method:"POST",headers:browserHeaders,
-    body:JSON.stringify({ workspaceId,parentId:secondParent,invitationId,token:await tokenFor(invitationId,secondParent) }),
-  },env);
-  expect(acceptance.status,await acceptance.clone().text()).toBe(200);
-  expect(await acceptance.json()).toMatchObject({ status:"accepted",invitation:{ acceptedByUserId:recipientId } });
-  expect(await browser.read(credential,workspaceId)).toEqual(browserBefore);
+  const second = await room().createScopeInvitations({ ...invitation([secondChild]), parentId: secondParent });
+  expect(second).toMatchObject({ status: "created", invitations: [{ acceptedByUserId: recipientId }] });
+  expect(await browser.read(credential, workspaceId)).toEqual(browserBefore);
   expect(await env.DB.prepare("SELECT incarnation FROM workspace_members WHERE user_id=?").bind(recipientId).first()).toEqual(before);
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
   expect(await room().readScopeAccess({ userId: recipientId, target: secondChild })).toMatchObject({ allowed: true });
   expect(await room().readScopeAccess({ userId: recipientId, target: { ...main, parentId: secondParent } })).toMatchObject({ allowed: false });
   const relationship = await env.DB.prepare("SELECT incarnation,revision FROM workspace_members WHERE workspace_id=? AND user_id=?")
-    .bind(workspaceId,recipientId).first<{ incarnation:string;revision:number }>();
-  expect(await promoteWorkspaceGuest(env.DB,{ workspaceId,userId:recipientId,actorUserId:actorId,
-    incarnation:relationship!.incarnation,expectedRevision:relationship!.revision })).toMatchObject({ status:"promoted" });
-  const browserAfter = await browser.read(credential,workspaceId);
-  expect(browserAfter).toMatchObject({ sessionId:browserBefore.sessionId,userId:recipientId,accessClass:"member",role:"member" });
-  const selected = await app.request("/browser/workspace/select",{ method:"POST",headers:browserHeaders,
-    body:JSON.stringify({ workspaceId }) },env);
-  expect(selected.status,await selected.clone().text()).toBe(200);
-  expect(await selected.json()).toMatchObject({ user:{ id:recipientId },workspace:{ id:workspaceId,role:"member" } });
-  for (const target of [child,secondChild]) {
-    expect(await room().readScopeAccess({ userId:recipientId,target })).toMatchObject({ allowed:true,writable:true });
-    expect(await room().readScopeAccess({ userId:recipientId,target:{ ...target,substreamId:asSubstreamId("0") } }))
-      .toMatchObject({ allowed:false });
+    .bind(workspaceId, recipientId).first<{ incarnation: string; revision: number }>();
+  expect(await promoteWorkspaceGuest(env.DB, { workspaceId, userId: recipientId, actorUserId: actorId,
+    incarnation: relationship!.incarnation, expectedRevision: relationship!.revision })).toMatchObject({ status: "promoted" });
+  const browserAfter = await browser.read(credential, workspaceId);
+  expect(browserAfter).toMatchObject({ sessionId: browserBefore.sessionId, userId: recipientId, accessClass: "member", role: "member" });
+  const selected = await app.request("/browser/workspace/select", { method: "POST", headers: browserHeaders,
+    body: JSON.stringify({ workspaceId }) }, env);
+  expect(selected.status, await selected.clone().text()).toBe(200);
+  expect(await selected.json()).toMatchObject({ user: { id: recipientId }, workspace: { id: workspaceId, role: "member" } });
+  // A full member stays one when a later share reaches them.
+  const third = await room().createScopeInvitations({ ...invitation([main]) });
+  expect(third).toMatchObject({ status: "created", invitations: [{ acceptedByUserId: recipientId }] });
+  expect(await env.DB.prepare("SELECT access_class,role FROM workspace_members WHERE workspace_id=? AND user_id=?")
+    .bind(workspaceId, recipientId).first()).toEqual({ access_class: "member", role: "member" });
+  for (const target of [child, secondChild]) {
+    expect(await room().readScopeAccess({ userId: recipientId, target })).toMatchObject({ allowed: true, writable: true });
   }
+  expect(await room().readScopeAccess({ userId: recipientId, target: { ...secondChild, substreamId: asSubstreamId("0") } }))
+    .toMatchObject({ allowed: false });
   expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspace_members WHERE workspace_id=? AND user_id=?")
-    .bind(workspaceId,recipientId).first()).toEqual({ n:1 });
+    .bind(workspaceId, recipientId).first()).toEqual({ n: 1 });
+});
+
+it("preserves a full member's administrative role when a share reaches them", async () => {
+  await env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,access_class,role,status) VALUES (?,?,'member','admin','active')")
+    .bind(workspaceId, recipientId).run();
+  const before = await env.DB.prepare("SELECT incarnation FROM workspace_members WHERE user_id=?").bind(recipientId).first();
+  expect(await create()).toMatchObject({ status: "accepted" });
+  expect(await env.DB.prepare("SELECT access_class,role,incarnation FROM workspace_members WHERE user_id=?").bind(recipientId).first())
+    .toMatchObject({ ...before, access_class: "member", role: "admin" });
 });
 
 it("reports missing legacy sharing authority without pretending migration is pending", async () => {
@@ -647,8 +732,8 @@ it("reports missing legacy sharing authority without pretending migration is pen
 
 it("lists invitation summaries only when the actor can share every target", async () => {
   const childOnly = await room().createScopeInvitations(invitation([child]));
-  await room().createScopeInvitations({ ...invitation([main]), emails: ["main@example.test"] });
-  await room().createScopeInvitations({ ...invitation([main, child]), emails: ["both@example.test"] });
+  await room().createScopeInvitations(invitation([main], ["main@example.test"]));
+  await room().createScopeInvitations(invitation([main, child], ["both@example.test"]));
   const request = { actorUserId: actorId, target: child };
   expect(await room().listScopeInvitations(request)).toMatchObject({ status: "ready", invitations: expect.any(Array) });
   const before = await room().listScopeInvitations(request);
@@ -709,7 +794,7 @@ it("offers independent share scopes and refuses incomplete workstream coverage",
 
 
 it("manages accepted grants by exact scope and preserves later shares on retry", async () => {
-  await room().acceptScopeInvitation(await create([child, main]));
+  await create([child, main]);
   await env.DB.prepare("UPDATE users SET name='Guest',email='guest@example.test' WHERE id=?").bind(recipientId).run();
   const app = createApp();
   const headers = { authorization: `Bearer ${await bearer(actorId, "actor-session", workspaceId)}`, "content-type": "application/json" };

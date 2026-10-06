@@ -748,6 +748,28 @@ describe('AddParticipantDialog', () => {
     expect(screen.queryByText('That participant couldn’t be added.')).toBeNull();
   });
 
+  it('labels a guest participant as a Guest, and nobody else', () => {
+    const guest = { ...member('guest-1', 'Gale', 'active'), accessClass: 'guest' as const };
+    const teammate = member('member-1', 'Adam', 'active');
+    render(
+      <Tooltip.Provider>
+        <AddParticipantDialog
+          current={[guest, teammate]}
+          members={[guest, teammate]}
+          onAdd={vi.fn()}
+          onRemove={vi.fn()}
+          onOpenChange={vi.fn()}
+          open
+          pending={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const rows = screen.getAllByText(/@example\.com/u).map((email) => email.closest('.member-action-row')!);
+    expect(rows.find((row) => row.textContent?.includes('Gale'))?.textContent).toContain('Guest');
+    expect(rows.find((row) => row.textContent?.includes('Adam'))?.textContent).not.toContain('Guest');
+  });
+
   it('keeps the generic sentence for a failure the server did not word', () => {
     expect(refusalMessage(new ApiError('Request failed with status 409', 409))).toBeUndefined();
     expect(refusalMessage(new ApiError('Upstream exploded', 502, 'internal_error'))).toBeUndefined();
