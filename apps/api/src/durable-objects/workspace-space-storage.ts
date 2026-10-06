@@ -1392,9 +1392,12 @@ export class WorkspaceSpaceStorage {
     // A projection never writes `archived_at`: only `finalizeArchive` and
     // `restore` do. Taking the conversation's value, always null, un-archived a
     // Space on its next rename and left it where `restore` refused it.
+    // Every Space is Organization-wide (migration 93). A stale effect that
+    // still says `personal` must not bring a private Space back.
+    const scope = "workspace";
     const changed = !current
       || current.title !== projection.title
-      || current.scope !== projection.scope
+      || current.scope !== scope
       || current.appearance_json !== appearanceJson;
     this.storage.sql.exec(
       `INSERT INTO spaces (
@@ -1418,7 +1421,7 @@ export class WorkspaceSpaceStorage {
          source_updated_at = excluded.source_updated_at`,
       projection.spaceId,
       projection.title,
-      projection.scope,
+      scope,
       appearanceJson,
       projection.createdByUserId,
       projection.authorityGeneration,

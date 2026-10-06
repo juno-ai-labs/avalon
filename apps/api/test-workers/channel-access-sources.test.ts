@@ -9,12 +9,12 @@
  * Node suite, and the receipt that makes an operation replay to its first
  * answer is a real `transactionSync`.
  *
- * What these tests are *about* is the union: the plans this object returns have
- * to be a function of every source that still reaches the Channel, not of the
- * one that is leaving. The PRD's negative control for that is skipping the
- * remaining-sources read in `retractSpaceAccessSource`, which leaves a reader
- * the departing Space alone supplied looking like the only reader to remove —
- * and leaves a reader another Space still supplies removed with them.
+ * What these tests are *about* is that a Space is placement provenance and
+ * nothing more: every Space is Organization-wide, and none grants a reader to
+ * the Channels in it, so applying or retracting one plans no change to the
+ * Channel's audience. The provenance rows still matter — they are what a
+ * membership walk fences on — and readers a private Space seated before
+ * WorkspaceDO migration 93 stay the Channel's own when it leaves.
  */
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
@@ -88,16 +88,18 @@ function storedSources() {
 }
 
 /**
- * Apply a source, then commit it with exactly what the plan said to seat.
+ * Apply a source, then commit it with what the plan said to seat.
  *
  * Two calls because the object takes two: the application is a plan and the
  * confirmation is what writes the source. A caller that stops after the first
- * has changed nothing here.
+ * has changed nothing here. `legacySeated` confirms readers the plan did not
+ * name, which is the provenance a private Space left behind when it seated its
+ * roster before WorkspaceDO migration 93; nothing seats anybody now.
  */
-async function seatSource(input: Parameters<typeof applySource>[0]) {
+async function seatSource(input: Parameters<typeof applySource>[0], legacySeated?: UserId[]) {
   const applied = await applySource(input);
   if (!applied.ok) throw new Error(`apply_refused:${applied.code}`);
-  const confirmed = await confirmSource(input, applied.plan.seatUserIds);
+  const confirmed = await confirmSource(input, legacySeated ?? applied.plan.seatUserIds);
   return { applied, confirmed };
 }
 
@@ -150,11 +152,11 @@ beforeEach(async () => {
 });
 
 describe("a Channel's Space access sources", () => {
-  it("moves equivalent Space provenance atomically without changing the effective audience", async () => {
+  it("moves equivalent Space provenance atomically, readers a Space seated before migration 93 included", async () => {
     await seatSource({
       spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
       channel: personal([OWNER]), spaceRevision: 3, membershipGeneration: 4,
-    });
+    }, [READER]);
     const operationId = "00000000-0000-7000-8000-0000000ac507";
     const request = {
       ...address,
@@ -188,11 +190,11 @@ describe("a Channel's Space access sources", () => {
     await seatSource({
       spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
       channel: personal([OWNER]), spaceRevision: 3, membershipGeneration: 4,
-    });
+    }, [READER]);
     await seatSource({
       spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
       channel: personal([OWNER, READER]), spaceRevision: 4, membershipGeneration: 5,
-    });
+    }, [READER]);
 
     expect(await channel().replaceEquivalentSpaceAccessSource({
       ...address,
@@ -216,7 +218,7 @@ describe("a Channel's Space access sources", () => {
     await seatSource({
       spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
       channel: personal([OWNER]),
-    });
+    }, [READER]);
 
     expect(await channel().replaceEquivalentSpaceAccessSource({
       ...address,
@@ -238,47 +240,46 @@ describe("a Channel's Space access sources", () => {
 
   it("reads persisted Space provenance without a mutable Channel observation", async () => {
     await seatSource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      spaceId: SPACE_A, scope: "workspace", participantUserIds: [OWNER, READER],
       channel: personal([OWNER]),
     });
 
     expect(await channel().readPersistedSpaceAccessSources(address)).toEqual([
-      { spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER] },
+      { spaceId: SPACE_A, scope: "workspace", participantUserIds: [OWNER, READER] },
     ]);
   });
 
-  it("given a personal Space, when it is applied, then it plans to seat only readers the Channel lacks", async () => {
+  it.each([
+    { scope: "workspace" as const, observed: personal([OWNER]) },
+    { scope: "personal" as const, observed: personal([OWNER]) },
+    { scope: "workspace" as const, observed: organizationWide([OWNER]) },
+  ])("given a $scope Space, when it is applied to a $observed.readers.scope Channel, then it plans no change and the Channel's audience stays its own", async ({ scope, observed }) => {
     const seated = await seatSource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
-      channel: personal([OWNER]),
+      spaceId: SPACE_A, scope, participantUserIds: [OWNER, READER], channel: observed,
     });
 
-    expect(seated.applied).toEqual({ ok: true, plan: { widenScope: false, seatUserIds: [READER] } });
-    // The Channel's own audience is recorded from what the caller observed, so
-    // a Channel created after migration 18 — whose backfill could only guess —
-    // is exact from the first Space that reaches it. `READER` is out of the
-    // direct source because this Space is what seated them: that is the whole
-    // difference between a reader the Channel holds and one a Space supplies.
-    expect(await channel().readAccessSources({ ...address, channel: personal([OWNER, READER]) }))
-      .toEqual({
-        direct: { scope: "personal", participantUserIds: [OWNER] },
-        spaces: [{ spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER] }],
-      });
+    expect(seated.applied).toEqual({ ok: true, plan: { widenScope: false, seatUserIds: [] } });
+    expect(seated.confirmed).toEqual({ ok: true, suppliedUserIds: [] });
+    // The source is recorded as placement provenance, and supplies nobody.
+    expect(await storedSources()).toEqual({
+      sources: [{ space_id: SPACE_A, participants_json: JSON.stringify([OWNER, READER]) }],
+      supplied: [],
+    });
+    expect(await channel().readAccessSources({ ...address, channel: observed })).toEqual({
+      direct: { scope: observed.readers.scope, participantUserIds: [OWNER] },
+      spaces: [],
+    });
   });
 
   it("given an application nothing confirmed, when the Channel is read, then no source claims it", async () => {
     // The crash window the confirmation closes. A source recorded by the
-    // application would survive a caller that died before seating anybody,
-    // and would then claim a Space reaches this Channel while having supplied
-    // no reader — provenance accounting for access that does not exist, which
-    // the next retraction would act on.
+    // application would survive a caller that died before confirming it, and
+    // would then claim a Space reaches this Channel.
     expect(await applySource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      spaceId: SPACE_A, scope: "workspace", participantUserIds: [OWNER, READER],
       channel: personal([OWNER]),
-    })).toEqual({ ok: true, plan: { widenScope: false, seatUserIds: [READER] } });
+    })).toEqual({ ok: true, plan: { widenScope: false, seatUserIds: [] } });
 
-    expect(await channel().readAccessSources({ ...address, channel: personal([OWNER]) }))
-      .toEqual({ direct: { scope: "personal", participantUserIds: [OWNER] }, spaces: [] });
     await runInDurableObject(channel(), (_instance, state) => {
       expect(state.storage.sql.exec(
         "SELECT space_id FROM parent_space_sources WHERE parent_id = ?", CHANNEL_ID,
@@ -294,222 +295,60 @@ describe("a Channel's Space access sources", () => {
     });
   });
 
-  it("given a Channel born with this source's audience, when it is applied in the birth mode, then one call records the source and the readers it supplied", async () => {
-    // The creation coordinator derived the union of every named Space and
-    // handed it to `initialize`, so the conversation opened with this roster
-    // already written. There is no canonical operation between the plan and
-    // the commit for a crash to land in, which is the whole reason the other
-    // callers take two calls.
+  it("given a Channel born in a Space, when it is applied in the birth mode, then one call records the source and supplies no reader", async () => {
     expect(await applySource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      spaceId: SPACE_A, scope: "workspace", participantUserIds: [OWNER, READER],
       channel: personal([OWNER]), commitWithPlan: true,
     })).toEqual({
       ok: true,
-      plan: { widenScope: false, seatUserIds: [READER] },
-      suppliedUserIds: [READER],
+      plan: { widenScope: false, seatUserIds: [] },
+      suppliedUserIds: [],
     });
 
-    // Everything the confirmation used to be the only writer of: the source
-    // row, and the direct scope seeded from what the caller observed.
-    expect(await channel().readAccessSources({ ...address, channel: personal([OWNER, READER]) }))
-      .toEqual({
-        direct: { scope: "personal", participantUserIds: [OWNER] },
-        spaces: [{ spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER] }],
-      });
-    // And the supplied readers, which are what a retraction acts on. Without
-    // them `READER` reads as the Channel's own and stays behind when the Space
-    // that put them there leaves.
-    expect(await retract(SPACE_A, personal([OWNER, READER]))).toEqual({
-      ok: true,
-      plan: { narrowScope: false, seatUserIds: [], removeUserIds: [READER] },
-    });
-  });
-
-  it("given a birth-mode application that already ran, when it is redelivered, then it answers the first attempt and writes nothing again", async () => {
-    const operationId = crypto.randomUUID();
-    const first = await applySource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
-      channel: personal([OWNER]), operationId, commitWithPlan: true,
-    });
-    expect(first).toEqual({
-      ok: true,
-      plan: { widenScope: false, seatUserIds: [READER] },
-      suppliedUserIds: [READER],
-    });
-
-    // Redelivered against the Channel as it is *now* — which is what a retried
-    // creation observes, because the first attempt already seated `READER`.
-    // Recomputing against that would plan to seat nobody and supply nobody; the
-    // receipt is what makes the second answer the first one.
-    expect(await applySource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
-      channel: personal([OWNER, READER]), operationId, commitWithPlan: true,
-    })).toEqual(first);
     expect(await storedSources()).toEqual({
       sources: [{ space_id: SPACE_A, participants_json: JSON.stringify([OWNER, READER]) }],
-      supplied: [{ space_id: SPACE_A, user_id: READER }],
+      supplied: [],
     });
   });
 
   it("given a source the Channel has moved past, when a birth-mode application arrives behind it, then the fence refuses it and commits nothing", async () => {
     await seatSource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      spaceId: SPACE_A, scope: "workspace", participantUserIds: [OWNER, READER],
       channel: personal([OWNER]), spaceRevision: 2,
     });
 
     // The birth mode writes the source row, so it needs the same fence the
     // confirmation carries: without it a stale creation replay would install
-    // its own roster over a newer one, which is exactly what the split
-    // protected against before this mode existed.
+    // its own roster over a newer one.
     expect(await applySource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, OTHER],
+      spaceId: SPACE_A, scope: "workspace", participantUserIds: [OWNER, OTHER],
       channel: personal([OWNER]), spaceRevision: 1, commitWithPlan: true,
     })).toEqual({ ok: false, code: "space_revision_conflict" });
 
     expect(await storedSources()).toEqual({
       sources: [{ space_id: SPACE_A, participants_json: JSON.stringify([OWNER, READER]) }],
-      supplied: [{ space_id: SPACE_A, user_id: READER }],
+      supplied: [],
     });
   });
 
-  it("given an Organization-wide Space, when it is applied, then it widens the scope and seats nobody", async () => {
-    // Everyone can already read once the Channel is Organization-wide, so a
-    // participant row would add no access and would have to be withdrawn later
-    // as though it had.
-    expect(await applySource({
-      spaceId: SPACE_A, scope: "workspace", participantUserIds: [OWNER, READER],
-      channel: personal([OWNER]),
-    })).toEqual({ ok: true, plan: { widenScope: true, seatUserIds: [] } });
-  });
-
-  it("given a seated reader, when their Space is retracted, then only that reader is withdrawn", async () => {
+  it("given a reader a Space seated before migration 93, when that Space is retracted, then the reader stays and only the provenance goes", async () => {
     await seatSource({
       spaceId: SPACE_A, scope: "personal", participantUserIds: [READER],
       channel: personal([OWNER]),
-    });
-
-    const retracted = await retract(SPACE_A, personal([OWNER, READER]));
-
-    expect(retracted).toEqual({
-      ok: true,
-      plan: { narrowScope: false, seatUserIds: [], removeUserIds: [READER] },
-    });
-    await runInDurableObject(channel(), (_instance, state) => {
-      // The cascade, which is what makes "a source that no longer exists stops
-      // granting" true of the provenance too.
-      expect(state.storage.sql.exec(
-        "SELECT space_id FROM parent_space_sources WHERE parent_id = ?", CHANNEL_ID,
-      ).toArray()).toEqual([]);
-      expect(state.storage.sql.exec(
-        "SELECT user_id FROM parent_space_readers WHERE parent_id = ?", CHANNEL_ID,
-      ).toArray()).toEqual([]);
-    });
-  });
-
-  it("given a reader two Spaces supply, when one is retracted, then the reader stays", async () => {
-    await seatSource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [READER],
-      channel: personal([OWNER]),
-    });
-    // The second Space lists the same reader plus one of its own. It seats only
-    // the one the Channel lacks, which is why the provenance and the source's
-    // roster are different sets.
-    const second = await seatSource({
-      spaceId: SPACE_B, scope: "personal", participantUserIds: [READER, OTHER],
-      channel: personal([OWNER, READER]),
-    });
-    expect(second.applied.ok && second.applied.plan.seatUserIds).toEqual([OTHER]);
-
-    const retracted = await retract(SPACE_A, personal([OWNER, READER, OTHER]));
-
-    // `READER` was seated by Space A and is still listed by Space B, so the
-    // union that survives the retraction keeps them. This is the assertion the
-    // negative control breaks.
-    expect(retracted).toEqual({
-      ok: true,
-      plan: { narrowScope: false, seatUserIds: [], removeUserIds: [] },
-    });
-  });
-
-  it("given a reader the Channel also holds directly, when their Space is retracted, then the reader stays", async () => {
-    await seatSource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [READER],
-      channel: personal([OWNER]),
-    });
-    // A direct add is the Channel taking responsibility for somebody: whichever
-    // Space seated them first, they are here on the Channel's own account now.
-    await channel().noteDirectReader({ ...address, userId: READER });
+    }, [READER]);
 
     expect(await retract(SPACE_A, personal([OWNER, READER]))).toEqual({
       ok: true,
       plan: { narrowScope: false, seatUserIds: [], removeUserIds: [] },
     });
+    // The cascade takes the source's attribution with it; the reader it
+    // seated is the Channel's own from here on.
+    expect(await storedSources()).toEqual({ sources: [], supplied: [] });
   });
 
-  it("given nothing else is Organization-wide, when the wide Space is retracted, then the scope narrows and survivors are seated", async () => {
+  it("given an Organization-wide Channel, when its last Organization-wide Space is retracted, then nothing narrows", async () => {
     await seatSource({
       spaceId: SPACE_A, scope: "workspace", participantUserIds: [READER],
-      channel: personal([OWNER]),
-    });
-    // Applied while everybody could already read, so it seated nobody: the
-    // readers it supplies exist only as its roster until the audience stops
-    // being Organization-wide.
-    await seatSource({
-      spaceId: SPACE_B, scope: "personal", participantUserIds: [OTHER],
-      channel: organizationWide([OWNER]),
-    });
-
-    expect(await retract(SPACE_A, organizationWide([OWNER]))).toEqual({
-      ok: true,
-      plan: { narrowScope: true, seatUserIds: [OWNER, OTHER], removeUserIds: [] },
-    });
-  });
-
-  it("given a survivor a remaining Space supplies, when the wide Space is retracted, then attributing them there is what withdraws them with it", async () => {
-    await seatSource({
-      spaceId: SPACE_A, scope: "workspace", participantUserIds: [READER],
-      channel: personal([OWNER]),
-    });
-    await seatSource({
-      spaceId: SPACE_B, scope: "personal", participantUserIds: [OTHER],
-      channel: organizationWide([OWNER]),
-    });
-
-    expect(await retract(SPACE_A, organizationWide([OWNER]))).toEqual({
-      ok: true,
-      plan: { narrowScope: true, seatUserIds: [OWNER, OTHER], removeUserIds: [] },
-    });
-
-    // The departing Space is not an option for the attribution, and not merely
-    // as a matter of labelling: the retraction above deleted its row, so
-    // naming it here is refused outright and `OTHER` ends up supplied by
-    // nobody.
-    expect(await channel().confirmSpaceAccessSource({
-      ...address, spaceId: SPACE_A, operationId: crypto.randomUUID(), seatedUserIds: [OTHER],
-    })).toEqual({ ok: false, code: "space_not_found" });
-
-    // The Space that does supply them, which is what the service seats them
-    // under.
-    expect(await channel().confirmSpaceAccessSource({
-      ...address, spaceId: SPACE_B, operationId: crypto.randomUUID(), seatedUserIds: [OTHER],
-    })).toEqual({ ok: true, suppliedUserIds: [OTHER] });
-
-    // And that is what the *next* retraction reads. Without it `SPACE_B`
-    // departs with no provenance for `OTHER` and leaves behind a reader the
-    // Channel itself never admitted.
-    expect(await retract(SPACE_B, personal([OWNER, OTHER]))).toEqual({
-      ok: true,
-      plan: { narrowScope: false, seatUserIds: [], removeUserIds: [OTHER] },
-    });
-  });
-
-  it("given a remaining Space that is Organization-wide, when another is retracted, then nothing narrows", async () => {
-    await seatSource({
-      spaceId: SPACE_A, scope: "workspace", participantUserIds: [READER],
-      channel: personal([OWNER]),
-    });
-    await seatSource({
-      spaceId: SPACE_B, scope: "workspace", participantUserIds: [OTHER],
       channel: organizationWide([OWNER]),
     });
 
@@ -521,16 +360,14 @@ describe("a Channel's Space access sources", () => {
 
   it("given a staged application, when a newer one already landed, then the stale revision is refused", async () => {
     const newer = {
-      spaceId: SPACE_A, scope: "personal" as const, participantUserIds: [READER],
+      spaceId: SPACE_A, scope: "workspace" as const, participantUserIds: [READER],
       channel: personal([OWNER]), spaceRevision: 4, membershipGeneration: 2,
     };
     await seatSource(newer);
 
     // Re-read inside the transaction, after every external boundary the caller
     // crossed to get here: a staged application that lost the race must not
-    // overwrite the newer one with the Space it saw. Both halves refuse, the
-    // plan so the caller never runs the canonical operations and the
-    // confirmation because that is where the write would land.
+    // overwrite the newer one with the Space it saw. Both halves refuse.
     const stale = {
       spaceId: SPACE_A, scope: "workspace" as const, participantUserIds: [READER, OTHER],
       channel: personal([OWNER]), spaceRevision: 3, membershipGeneration: 9,
@@ -540,41 +377,21 @@ describe("a Channel's Space access sources", () => {
     expect(await applySource({ ...stale, spaceRevision: 4, membershipGeneration: 1 }))
       .toEqual({ ok: false, code: "space_revision_conflict" });
 
-    expect(await channel().readAccessSources({ ...address, channel: personal([OWNER, READER]) }))
-      .toMatchObject({ spaces: [{ spaceId: SPACE_A, scope: "personal", participantUserIds: [READER] }] });
-  });
-
-  it("given an operation that already ran, when it is replayed, then it returns its first answer without reapplying", async () => {
-    const operationId = crypto.randomUUID();
-    const staged = {
-      spaceId: SPACE_A, scope: "personal" as const, participantUserIds: [READER],
-      channel: personal([OWNER]), operationId,
-    };
-    const first = await applySource(staged);
-    await confirmSource(staged, [READER]);
-
-    // The replay observes a Channel that has moved on — `READER` is seated now
-    // — and still answers what the first attempt did. Recomputing would report
-    // an empty seating plan and the caller would never learn who it owed.
-    const replay = await applySource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [READER],
-      channel: personal([OWNER, READER]), operationId,
+    expect(await storedSources()).toEqual({
+      sources: [{ space_id: SPACE_A, participants_json: JSON.stringify([READER]) }],
+      supplied: [],
     });
-
-    expect(replay).toEqual(first);
-    expect(replay).toEqual({ ok: true, plan: { widenScope: false, seatUserIds: [READER] } });
   });
 
-  it("given a direct narrowing, when a Space is still Organization-wide, then it is refused by name", async () => {
+  it("given an Organization-wide Space, when the Channel's own scope is narrowed, then the narrowing is recorded", async () => {
     await seatSource({
       spaceId: SPACE_A, scope: "workspace", participantUserIds: [READER],
-      channel: personal([OWNER]),
+      channel: organizationWide([OWNER]),
     });
 
-    // The effective audience would stay Organization-wide, so recording the
-    // narrowing would leave the record disagreeing with the Channel.
+    // A Space grants no reader, so nothing holds the Channel open.
     expect(await channel().setDirectScope({ ...address, scope: "personal", operationId: crypto.randomUUID() }))
-      .toEqual({ ok: false, code: "channel_scope_locked_by_space" });
+      .toEqual({ ok: true, previousScope: "workspace", previousObserved: true });
     expect(await channel().setDirectScope({ ...address, scope: "workspace", operationId: crypto.randomUUID() }))
       .toEqual({ ok: true, previousScope: "personal", previousObserved: true });
   });
@@ -591,88 +408,60 @@ describe("a Channel's Space access sources", () => {
 
     // Which is what lets the first Space to reach it seed the real value. A
     // restore that marked the row observed would leave the Channel recorded as
-    // private although it was Organization-wide, and the next retraction would
-    // narrow a Channel that was never private.
+    // private although it was Organization-wide.
     await seatSource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [READER],
+      spaceId: SPACE_A, scope: "workspace", participantUserIds: [READER],
       channel: organizationWide([OWNER]),
     });
-    expect(await channel().readAccessSources({ ...address, channel: organizationWide([OWNER, READER]) }))
-      .toMatchObject({ direct: { scope: "workspace" } });
+    expect(await channel().setDirectScope({ ...address, scope: "workspace", operationId: crypto.randomUUID() }))
+      .toEqual({ ok: true, previousScope: "workspace", previousObserved: true });
   });
 
   it("given an attribution whose source was withdrawn first, when it runs, then it is refused by name", async () => {
     await seatSource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [READER],
+      spaceId: SPACE_A, scope: "workspace", participantUserIds: [READER],
       channel: personal([OWNER]),
     });
-    await retract(SPACE_A, personal([OWNER, READER]));
+    await retract(SPACE_A, personal([OWNER]));
 
-    // A confirmation with no source of its own is attributing readers to a
-    // Space that is supposed to already be here — what a narrowing does when
-    // it seats readers a Space has supplied all along. Silently converging
-    // would leave those readers attributed to nothing, which reads as direct
-    // access nobody granted; the caller has to retract again instead.
+    // A confirmation with no source of its own attributes readers to a Space
+    // that is supposed to already be here. Silently converging would leave
+    // those readers attributed to nothing.
     expect(await channel().confirmSpaceAccessSource({
       ...address, spaceId: SPACE_A, operationId: crypto.randomUUID(), seatedUserIds: [OTHER],
     })).toEqual({ ok: false, code: "space_not_found" });
   });
 
-  it("given a Space already here, when a narrowing attributes the readers it seats, then they become its own", async () => {
-    // The other confirmation: no source, because this Space was committed when
-    // it arrived. It supplied `OTHER` all along and seated nobody, because
-    // everybody could read; the narrowing seats them and says so here, without
-    // which the next retraction reads them as the Channel's own.
+  it("given two changes to one Space interleaved, when the older one converges, then it is refused", async () => {
+    // Two changes on one Space, reaching this Channel out of order. Both
+    // converge by retract-then-apply, and the retraction is what deletes the
+    // row the application and the confirmation fence on — so the older one
+    // has to be refused *here* or it installs its stale roster over the newer.
     await seatSource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [OTHER],
-      channel: organizationWide([OWNER]),
-    });
-    expect(await channel().setDirectScope({ ...address, scope: "personal", operationId: crypto.randomUUID() }))
-      .toEqual({ ok: true, previousScope: "workspace", previousObserved: true });
-
-    expect(await channel().confirmSpaceAccessSource({
-      ...address, spaceId: SPACE_A, operationId: crypto.randomUUID(), seatedUserIds: [OTHER],
-    })).toEqual({ ok: true, suppliedUserIds: [OTHER] });
-
-    // Withdrawn with the Space, which is what the attribution bought. Without
-    // it the retraction finds no provenance for `OTHER` and leaves behind a
-    // reader the Channel never granted anything to.
-    expect(await retract(SPACE_A, personal([OWNER, OTHER]))).toEqual({
-      ok: true,
-      plan: { narrowScope: false, seatUserIds: [], removeUserIds: [OTHER] },
-    });
-  });
-
-  it("given two audience changes interleaved, when the older one converges, then it is refused", async () => {
-    // Two audience changes on one Space, reaching this Channel out of order.
-    // Both converge by retract-then-apply, and the retraction is what deletes
-    // the row the application and the confirmation fence on — so the older one
-    // has to be refused *here* or it finds nothing to lose to and installs its
-    // stale roster over the newer audience.
-    await seatSource({
-      spaceId: SPACE_A, scope: "personal", participantUserIds: [OWNER, READER],
+      spaceId: SPACE_A, scope: "workspace", participantUserIds: [OWNER, READER],
       channel: personal([OWNER]), spaceRevision: 2,
     });
 
     expect(await channel().retractSpaceAccessSource({
       ...address, spaceId: SPACE_A, operationId: crypto.randomUUID(),
-      expectedSpaceRevision: 1, channel: personal([OWNER, READER]),
+      expectedSpaceRevision: 1, channel: personal([OWNER]),
     })).toEqual({ ok: false, code: "space_revision_conflict" });
     // Refused rather than partly applied: the source the newer change
     // committed is still here, with its roster.
-    expect(await channel().readAccessSources({ ...address, channel: personal([OWNER, READER]) }))
-      .toMatchObject({ spaces: [{ spaceId: SPACE_A, participantUserIds: [OWNER, READER] }] });
+    expect(await storedSources()).toEqual({
+      sources: [{ space_id: SPACE_A, participants_json: JSON.stringify([OWNER, READER]) }],
+      supplied: [],
+    });
 
     // The newer change's own convergence is not refused by its own fence.
     expect(await channel().retractSpaceAccessSource({
       ...address, spaceId: SPACE_A, operationId: crypto.randomUUID(),
-      expectedSpaceRevision: 2, channel: personal([OWNER, READER]),
+      expectedSpaceRevision: 2, channel: personal([OWNER]),
     })).toMatchObject({ ok: true });
   });
 
   it("given a source that is already gone, when it is retracted again, then it converges on an empty plan", async () => {
-    // Access is live: a source that does not exist grants nothing, and a
-    // retraction reissued under a new operation id after a crash has to finish.
+    // A retraction reissued under a new operation id after a crash has to finish.
     expect(await retract(SPACE_A, personal([OWNER]))).toEqual({
       ok: true,
       plan: { narrowScope: false, seatUserIds: [], removeUserIds: [] },

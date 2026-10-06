@@ -895,8 +895,9 @@ describe("Durable Objects in the Workers runtime", () => {
       region: "global" as const,
       role: "member" as const,
     };
-    // No `scope`, which is the whole point: `POST /workstreams` carries none,
-    // so this is the shape every create a person makes in Avalon arrives in.
+    // No `scope`, which is the whole point: an initialize nobody named an
+    // audience for is born private. `POST /workstreams` names `workspace`
+    // itself, so a Channel a person starts is not this case.
     const input = {
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
