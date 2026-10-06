@@ -337,7 +337,8 @@ press to have answered.
 
 The composer's width is the conversation's, not the pane's, and it is one width
 across every surface that has a composer. A turn is capped at `--turn-width-cap`
-(640px, in `app.css`); `--composer-width` is three quarters of that, and the
+(640px, in `app.css`), except Rally's turns at 640px and narrower, which fill
+the column; `--composer-width` is three quarters of that, and the
 field is centred on it, so the field and the bubbles it produces read as one
 column rather than as a full-width row under a narrow transcript. Four rules read
 that property: the composer stack under `:is(.workstream-screen,

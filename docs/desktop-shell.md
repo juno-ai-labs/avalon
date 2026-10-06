@@ -205,7 +205,8 @@ Each Breakout row the Channel receives carries `originTurnId` and
   news and length says open, at the design's sizes: a quiet tick is 11×2 grey,
   one with news 20×3 in `sys.color.workstream.news`, and the open one 26×4.
   Hovering a tick names it; pressing it opens the Breakout and scrolls Main to
-  the origin.
+  the origin. At phone width (640px and narrower) the bar is hidden, since it
+  would sit on the text, and the transcript keeps even 24px side padding.
 - **Show in channel:** the Breakout menu sends Main a `scrollToTurn` request,
   which waits until that turn is in the loaded transcript.
 
@@ -306,6 +307,23 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-06 — No tick bar at phone width
+
+**What changed:** At 640px and narrower the tick bar is hidden and the
+transcript's left padding drops from 48px to the 24px its right side has.
+
+**Why:** A 40px bar starting 12px in cannot sit in a 24px gutter without
+covering text, and the 48px gutter it needed left the phone transcript
+off-centre.
+
+**Considered and rejected:** A 48px gutter on both sides. It costs 48px of a
+390px screen for a bar that chips and the Channel menu already cover.
+
+**Consequences:** On a phone, chips and the Channel menu are the only ways to a
+Breakout.
+
+Shipped in [#1116](https://github.com/juno-ai-labs/avalon/pull/1116).
 
 ### 2026-10-06 — People can be removed from the title menu
 
