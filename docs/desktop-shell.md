@@ -205,7 +205,8 @@ Each Breakout row the Channel receives carries `originTurnId` and
   news and length says open, at the design's sizes: a quiet tick is 11×2 grey,
   one with news 20×3 in `sys.color.workstream.news`, and the open one 26×4.
   Hovering a tick names it; pressing it opens the Breakout and scrolls Main to
-  the origin.
+  the origin. At phone width (640px and narrower) the bar is hidden, since it
+  would sit on the text, and the transcript keeps even 24px side padding.
 - **Show in channel:** the Breakout menu sends Main a `scrollToTurn` request,
   which waits until that turn is in the loaded transcript.
 
@@ -306,6 +307,26 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-06 — No tick bar at phone width; Rally's turns fill the column
+
+**What changed:** At 640px and narrower the tick bar is hidden, the
+transcript's left padding drops back to the 24px its right side already had,
+and Rally's turns take the column's full width instead of the 88% cap.
+
+**Why:** The rule that widens the left padding to 48px for the ticks is three
+classes deep and came after the narrow-width rule, so on a phone with any
+Breakout the transcript sat off-centre: 48px left, 24px right. A 40px tick bar
+cannot fit beside text in 24px, and the capped Rally turn left a ragged empty
+strip on the right of a phone screen.
+
+**Considered and rejected:** Keeping the ticks and the 48px gutter on both
+sides. It costs 48px of a 390px screen for a bar that chips and the Channel
+menu already cover.
+
+**Consequences:** The phone override sits after the tick-bar padding rule on
+purpose; both selectors weigh the same, so moving it above that rule silently
+brings the uneven padding back.
 
 ### 2026-10-06 — People can be removed from the title menu
 
