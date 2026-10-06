@@ -210,6 +210,9 @@ import {
   createNodeRealtimeSocketFactory,
 } from './realtime-socket-broker';
 import { registerRealtimeSocketIpc } from './realtime-socket-ipc';
+import { NetworkRecovery } from './network-recovery';
+import { registerNetworkRecoveryIpc } from './network-recovery-ipc';
+import { NETWORK_RECOVERY_IPC } from '../common/network-recovery';
 import {
   decryptSessionValue,
   encryptSessionValue,
@@ -3422,6 +3425,18 @@ function assertMainWindowIpcSender(event: IpcMainInvokeEvent, operation: string)
 }
 
 function registerIpc(): void {
+  const networkRecovery = new NetworkRecovery({
+    closeConnections: () => electronSession.defaultSession.closeAllConnections(),
+    publish: (state) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+          window.webContents.send(NETWORK_RECOVERY_IPC.changed, state);
+        }
+      }
+    },
+    record: (diagnostic) => nativePerformanceLog.writeNetworkRecovery(diagnostic),
+  });
+  registerNetworkRecoveryIpc({ ipc: ipcMain, assertSender: assertTrustedIpcSender, recovery: networkRecovery });
   registerRealtimeSocketIpc({
     apiBaseUrls: Object.values(runtimeConfig().api),
     assertSender: (event) => {
