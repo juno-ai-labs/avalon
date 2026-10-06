@@ -89,7 +89,7 @@ import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-t
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
 import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
 import { BOUND_PARAMETER_ID_CHUNK } from "../src/durable-objects/bound-parameters";
-import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 import {
   seedCanonicalMessageRecord,
@@ -211,7 +211,7 @@ beforeEach(async () => {
   await reset();
   await ensureAuditSchema();
   await env.DB.batch([
-    env.DB.prepare(LINK_PAYLOADS_TABLE),
+    ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
       required_serving_contract_version INTEGER NOT NULL,

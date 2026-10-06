@@ -31,7 +31,7 @@ import { conversationObjectName, workspaceDOName } from "../src/durable-objects/
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
-import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
 import { hostedParentStub } from "./helpers/hosted-parent";
 
@@ -67,7 +67,7 @@ beforeEach(async () => {
   // (packages/db/migrations); the foreign keys are left out because nothing
   // here turns on them.
   await env.DB.batch([
-    env.DB.prepare(LINK_PAYLOADS_TABLE),
+    ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare(`CREATE TABLE workstream_create_receipts (
       workspace_id TEXT NOT NULL, creator_user_id TEXT NOT NULL, client_message_id TEXT NOT NULL,
       workstream_id TEXT NOT NULL, generation INTEGER NOT NULL, request_hash TEXT NOT NULL,

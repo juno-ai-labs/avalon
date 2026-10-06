@@ -6212,12 +6212,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).createScopeInvitations(input));
   }
 
-  async acceptScopeInvitation(input: Parameters<HostedParent["acceptScopeInvitation"]>[0]) {
-    return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).acceptScopeInvitation(input));
-  }
-
-  async describeScopeInvitation(input: Parameters<HostedParent["describeScopeInvitation"]>[0]) {
-    return (await this.channelParent(input.parentId, input.workspaceId)).describeScopeInvitation(input);
+  async claimScopeInvitations(input: Parameters<HostedParent["claimScopeInvitations"]>[0]) {
+    return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).claimScopeInvitations(input));
   }
 
   async revokeScopeInvitation(input: Parameters<HostedParent["revokeScopeInvitation"]>[0]) {

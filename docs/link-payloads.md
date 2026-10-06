@@ -11,10 +11,11 @@ has.
 
 This is the store behind that, shared rather than built per feature: a URL that
 should not describe its subject is a recurring shape, not one feature.
-[`scope-invitations.md`](scope-invitations.md) owns the first kind, `inv`, and
-everything about what an invitation *is*; this document owns the store and the
-lifecycle of a row in it. A second kind adds a `defineLinkPayload` call and
-nothing else.
+No kind uses it today. Its first, scoped invitations' `inv`, was retired when
+shares stopped carrying a token ([`scope-invitations.md`](scope-invitations.md));
+rows minted for it are no longer read and age out or stay inert. This document
+owns the store and the lifecycle of a row in it. A new kind adds a
+`defineLinkPayload` call and nothing else.
 
 ## Where the code lives
 
@@ -23,7 +24,6 @@ nothing else.
 | `packages/db/src/link-payloads.ts` | `defineLinkPayload`, `issueLinkPayload`, `openLinkPayload`, `discardLinkPayloads`, `purgeExpiredLinkPayloads`. |
 | `packages/db/migrations/0114_link_payloads.sql` | The table: token digest, type, JSON payload, created and optional expiry. |
 | `apps/api/src/worker-events.ts` | Runs the expiry sweep on the existing scheduled handler. |
-| `apps/api/src/services/scope-invitation-link.ts` | The `inv` kind, and the only production caller today. |
 
 ## How it works
 
@@ -103,14 +103,12 @@ invented for nothing.
 
 ## Testing
 
-`apps/api/test/scope-invitation-link.test.ts` covers the store against the real
-migrations: the round trip, another kind's token, one edited in transit, an
-expired row, the issue-time sweep, the scheduled sweep, a payload that no longer
-matches its prefix, one that is no longer JSON, and that the drift code survives
-`diagnosticErrorCode` rather than reducing to its fallback.
-`apps/api/test-workers/scope-invitations.test.ts` covers the store as the `inv`
-kind uses it on real workerd, including that a creation which records nothing
-takes back the rows it minted.
+`apps/api/test/link-payloads.test.ts` covers the store against the real
+migrations with a test-only kind: the round trip, another kind's token, one
+edited in transit, an expired row, the issue-time sweep, the scheduled sweep, a
+payload that no longer matches its prefix, one that is no longer JSON, and that
+the drift code survives `diagnosticErrorCode` rather than reducing to its
+fallback.
 
 ## Changelog
 
