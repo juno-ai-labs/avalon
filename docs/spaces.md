@@ -1,7 +1,7 @@
 # Spaces
 
 A **Space** is how an Organization groups its Channels. It carries a name, an
-icon and colour, an Organization-wide audience, participants who edit it, resources and
+icon and colour, an Organization-wide audience, a participant list, resources and
 Sidekick recommendations, and every Channel in the Organization belongs to at
 least one. A Channel may belong to several at once; each is a *placement* of the
 same Channel rather than a copy, so opening any of them opens the same
@@ -156,8 +156,10 @@ space** sends no icon; a caller that sends one keeps it.
 A product decision: a Space can only be Organization-wide, and it grants no
 reader to the Channels in it. A Channel's audience is its own scope and
 participants, so a private Channel can sit in any Space, and **Make private**
-works on a Channel in General. The Space's participants are the people who edit
-it, not who reads its Channels.
+works on a Channel in General. The Space's participants are its listed members,
+not who reads its Channels. Like any Organization-wide Space, any active member
+may edit one, so migration 93 also opened editing of formerly private Spaces to
+every member.
 
 The contract enforces it: `CreateSpaceRequest.scope` and
 `UpdateSpaceAudienceRequest.scope` accept only `workspace`
@@ -282,7 +284,7 @@ may have left behind.
 
 ### Participants
 
-Changing who edits a Space is one WorkspaceDO write (`noteSpaceAudience`): the
+Changing a Space's participants is one WorkspaceDO write (`noteSpaceAudience`): the
 scope is always `workspace`, and no Channel is asked or walked, because the
 Space grants none of them a reader. Removing *somebody else* is an Organization
 owner's or admin's to do, and `participant_removal_denied` refuses anybody

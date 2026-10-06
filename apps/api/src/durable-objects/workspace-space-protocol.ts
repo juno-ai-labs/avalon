@@ -163,7 +163,7 @@ export const WorkspaceSpacePresentationRequestSchema = SpaceActorSchema.extend({
 }).strict();
 export type WorkspaceSpacePresentationRequest = z.infer<typeof WorkspaceSpacePresentationRequestSchema>;
 
-/** Who edits a Space; its scope is always Organization-wide. */
+/** A Space's participants; its scope is always Organization-wide. */
 export const WorkspaceSpaceAudienceNoteRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
   audience: z.strictObject({

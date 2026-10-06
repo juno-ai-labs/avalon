@@ -104,8 +104,9 @@ describe("space contracts", () => {
     expect(CreateSpaceRequestSchema.safeParse({ ...base, colorKey: "#123456" }).success).toBe(false);
     expect(CreateSpaceRequestSchema.safeParse({ ...base, name: "   " }).success).toBe(false);
     expect(CreateSpaceRequestSchema.safeParse({ ...base, scope: "organization" }).success).toBe(false);
-    // Every Space is Organization-wide: a private one cannot be asked for.
-    expect(CreateSpaceRequestSchema.safeParse({ ...base, scope: "personal" }).success).toBe(false);
+    // Every Space is Organization-wide. A released desktop still asks for
+    // `personal`, and is given the only scope there is.
+    expect(CreateSpaceRequestSchema.parse({ ...base, scope: "personal" }).scope).toBe("workspace");
     expect(CreateSpaceRequestSchema.safeParse({ ...base, extra: true }).success).toBe(false);
   });
 

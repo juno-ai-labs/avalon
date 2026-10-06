@@ -372,13 +372,17 @@ describe("POST /spaces", () => {
     expect(await anchors()).toBe(before);
   });
 
-  it("refuses a personal Space and writes no row for it", async () => {
-    const refused = await request("/spaces", OWNER_AUTH, {
+  // A desktop released before every Space was Organization-wide still asks
+  // for `personal`; it gets the only scope there is rather than a refusal.
+  it("creates an Organization-wide Space when a released client asks for a personal one", async () => {
+    const created = await request("/spaces", OWNER_AUTH, {
       name: "Mine", iconKey: "briefcase", colorKey: "blue", scope: "personal",
     });
 
-    expect(refused.status).toBe(400);
-    expect((await spaceDirectories(OWNER)).active.items.map((item) => item.name)).not.toContain("Mine");
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ name: "Mine", scope: "workspace" });
+    expect((await spaceDirectories(OWNER)).active.items.find((item) => item.name === "Mine"))
+      .toMatchObject({ scope: "workspace" });
   });
 });
 

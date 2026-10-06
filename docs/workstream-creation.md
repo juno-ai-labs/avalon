@@ -75,7 +75,7 @@ started from a Space. The launcher starts with focus in the opening-message text
 input. The Channel name travels with that route and is committed only when the
 opening message is sent; participants are chosen in the header's
 **Participants** bar before that request. The creator's own chip leads the bar
-and has no remove control. A Space's participants are who edit it, not who is
+and has no remove control. A Space's participants are its listed members, not who is
 in its Channels, so the bar never starts from them. `NewWorkstreamScreen` remounts
 the whole launcher for every navigation that opens it, because React would
 otherwise keep one instance across a change of Space or a second opening of the
