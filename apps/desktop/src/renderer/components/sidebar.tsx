@@ -2197,9 +2197,7 @@ export function Sidebar({
         sidebarRef={panel}
         width={sidebarWidth}
       >
-        {/* At phone width the sidebar is a top bar and everything under it a
-            sheet this button drops in and out. CSS hides it at every other
-            width, where `sidebarOpen` has no effect. */}
+        {/* The phone sheet's menu button; CSS hides it above 640px. */}
         <SidebarTopActions
           aria-label="Rally actions"
           leading={<IconButton
