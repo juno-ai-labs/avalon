@@ -809,8 +809,7 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 deletes the class and every object in its namespace. The acknowledgement now
 stays on the message until delivery swaps in the outcome reaction.
 
-**Why:** The user asked for it removed. The reasoning behind that request was not
-recorded.
+**Why:** Removed at product request; the reasoning was not recorded.
 
 **Considered and rejected:** Placing one fixed working emoji in place of the
 rotation. It adds a transition and a Slack call per run for no information the
