@@ -570,6 +570,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     [associativeNavigation.data, workstreams.data],
   );
   const attentionItems = useAttentionItems(sidebarWorkstreams);
+  // The menu only says "nothing" once every Channel is loaded: the Space walk
+  // has finished, no page is left unread, and the walk did not fail.
+  const attentionComplete = workstreams.data !== undefined && !workstreams.hasMore
+    && !workstreams.isFetching && !workstreams.isError;
   const visibleSpaces = spaces.data?.items ?? [];
   // While search is open, a Breakout list the socket writes re-reads the
   // places, so a Breakout created or renamed meanwhile shows at once.
@@ -989,6 +993,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onViewSpace={prioritizeSpace}
         workspace={workspace}
         attentionItems={attentionItems}
+        attentionComplete={attentionComplete}
         workstreams={sidebarWorkstreams}
       />
         <span aria-live="polite" className="sr-only">

@@ -11,9 +11,9 @@ function Location(): React.JSX.Element {
   return <output data-testid="location">{`${location.pathname}${location.search}`}</output>;
 }
 
-function renderMenu(items: AttentionItem[]): void {
+function renderMenu(items: AttentionItem[], complete = true): void {
   render(<MemoryRouter initialEntries={['/']}>
-    <Tooltip.Provider><AttentionMenu items={items} /></Tooltip.Provider>
+    <Tooltip.Provider><AttentionMenu complete={complete} items={items} /></Tooltip.Provider>
     <Location />
   </MemoryRouter>);
 }
@@ -68,5 +68,20 @@ describe('AttentionMenu', () => {
 
     fireEvent.click(items[0]!);
     expect(screen.getByTestId('location').textContent).toBe('/workstreams/a?substream=11');
+  });
+
+  it('does not say nothing needs attention while Channels are still loading', () => {
+    renderMenu([], false);
+    const trigger = screen.getByRole('button', { name: 'Still loading channels' });
+
+    openMenu(trigger);
+    expect(screen.getByRole('menu').textContent).toBe('Still loading channels');
+  });
+
+  it('keeps the button to two digits past 99 and names the exact count', () => {
+    const many = Array.from({ length: 150 }, (_, index): AttentionItem => ({ ...unread, key: `c${index}`, workstreamId: `c${index}` }));
+    renderMenu(many);
+
+    expect(screen.getByRole('button', { name: '150 conversations need your attention' }).textContent).toBe('99+');
   });
 });

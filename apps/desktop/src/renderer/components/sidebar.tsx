@@ -62,6 +62,8 @@ interface SidebarProps {
   onOpenSearch?: () => void;
   /** Conversations waiting for this reader, for the attention menu. */
   attentionItems?: readonly AttentionItem[];
+  /** False while some Channels are not loaded yet; see `AttentionMenu`. */
+  attentionComplete?: boolean;
   workspace: Workspace;
   /**
    * The active Space directory, or absent for a host with no Space navigation.
@@ -1052,6 +1054,7 @@ const sidebarMenuFailureCopy: Record<SidebarMenuFailure, { title: string; copy: 
 export function Sidebar({
   onOpenSearch,
   attentionItems = [],
+  attentionComplete = true,
   workspace,
   spaces,
   spacesReadOnly = false,
@@ -2165,7 +2168,7 @@ export function Sidebar({
           {downloadedUpdate !== null && <IconButton className="sidebar-top-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
             <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
           </IconButton>}
-          <AttentionMenu items={attentionItems} />
+          <AttentionMenu complete={attentionComplete} items={attentionItems} />
           <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
             <IconSearch aria-hidden="true" size={16} stroke={1.9} />
           </IconButton>
