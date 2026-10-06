@@ -371,7 +371,14 @@ stub and call it directly. Three rules keep it fast:
   `sidekickReadSkillSummaries`, `sidekickReadSkillSources` and
   `sidekickReadDetails` take a list of ids, a Channel (whose recommended and
   owned Sidekicks are read here), or every loadable Sidekick, and answer from
-  local rows. Resolving a run's skills is one call on the common path.
+  local rows. Resolving a run's skills is one call on the common path, and the
+  summaries and sources are one statement inside it: `selectSidekickRows`
+  picks and orders the Sidekicks and joins each one's accepted revision, and
+  the pure `skillSummary` and `skillSource` decide each row.
+- **One read per question, one statement per change.** A question that needs
+  several of a Sidekick's rows joins them (`runView`, `withAccepted`), and a
+  change writes with a returned witness (`UPDATE ... RETURNING`, an upsert's
+  returned row) rather than reading first.
 - **A check rides the write it guards.** A Channel or Space recommendation
   checks the Sidekick's scope inside `setSidekickRecommendation` and
   `addSpaceDefault`; an external event is admitted in one call, whose unjudged
@@ -402,6 +409,11 @@ reads it.
 
 ## Invariants
 
+- **A hosted Sidekick reads the Organization's tables with `sql.exec`.** Not
+  through the runtime database adapter (`localWorkspaceEnv(...).DB`), which
+  parses every statement, applies the typed-table guard and does the sidebar
+  bookkeeping a request needs and an in-object read does not. A read after an
+  `await` reads again: another call may have changed the row meanwhile.
 - **A parent's presentation is read from its directory row.** A Channel's
   title, scope, archive state and every other presentation column come from
   `channels`; a Space's title, scope and archive state from `spaces`
@@ -463,6 +475,7 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | --- | --- |
 | A local apply fails inside a parent write (a viewer row before its Channel row, a constraint, a schema rejection) | The parent transaction rolls back. A child's delivery throws and the Queue redelivers it; a request fails with the error. Nothing is left in the outbox. |
 | A write meets somebody the member table has never heard of | The transaction rolls back with `workspace_member_unknown`; the ids are learned with one D1 read each and the write runs once more. A second miss fails the write with that code. |
+| One Sidekick's pause or resume fails during a Channel archive | That Sidekick's transaction rolls back and `sidekick_owning_room_archival_failed` names it; the archive and every other Sidekick's pause stand. |
 | A `parent_outbox` send fails | The row stays `pending`, with its code in `last_error_code`, and is due again on the alarm's retry schedule. `parent_effect_delivery_deferred` names the rows. |
 | A `parent_outbox` or `workspace_directory_followups` row does not parse (a follow-up row in the shape written before #989 is one), or an outbox row's destination refuses its shape | It is kept as `failed` with a `zodDiagnosticCode` naming the field, logged (`parent_outbox_row_unreadable`, `directory_followup_unreadable`), and never retried. An operator reads it with `run_workspace_sql` and deletes or repairs it. |
 | A directory row is found in `parent_outbox` | It is kept as `failed` with `parent_outbox_directory_row` and not applied. Directory rows apply in the parent's own transaction, so nothing writes one there. |
@@ -516,7 +529,12 @@ and 82 in one wake and proves migration 82's defaults and live triggers.
 `sidekick*` surface: publish, a refused registration leaving nothing applied, a
 refused memory-table step finishing from its entry, pause and resume, a run
 provisioned off the alarm and asked about again until it reports, a pause that
-leaves another Sidekick's run armed, and a run's terminal deadline.
+leaves another Sidekick's run armed, a run's terminal deadline, a principal
+claim that rebinds a plugin whose connection is gone and unbinds one whose
+connection is another member's, and a child effect redelivered with different
+bytes refused. `automation-directory.test.ts` lists a Channel's Sidekick to its
+participants and reads a batch in the order asked, and `scheduled-alarms.test.ts`
+cancels by key prefix only in the kinds named.
 `workspace-do-schema.test.ts` proves migration 92 drops the import ledger and
 keeps every directory row, and `forced-migration.test.ts` that a queued
 migration command for `SidekickDO` or `AutomationDO` is acknowledged rather
@@ -580,6 +598,39 @@ Space in an Organization now shares one SQLite database and one socket set.
   deleting those objects is its own decision.
 
 ## Changelog
+
+### 2026-10-06 — Hosted Sidekick SQL reads and writes as one object
+
+**What changed:** `HostedSidekick` and the `WorkspaceDO` Sidekick facade answer
+each question with one read that joins what it needs, and make each change
+with one statement that returns its witness. Connector and resource reads use
+`sql.exec` instead of the runtime database adapter, a principal claim reads and
+rebinds in one transaction, batch skill reads select every Sidekick in one
+statement, and `ScheduledAlarmStore.cancelByKeyPrefix` cancels a Sidekick's
+entries in one. The schedule-kind refresh after a Sidekick's registrations
+change is gone.
+
+**Why:** The move kept `SidekickDO`'s method shapes, which read the row again
+in every helper and reached the Organization's tables through the runtime
+database adapter. In one object, each re-read is a statement that buys nothing,
+and each adapter call pays a Zod parse, the typed-table guard and sidebar
+bookkeeping meant for requests. Every Sidekick in an Organization queues behind
+them. The refresh rebuilt the `schedules` table's entries, which no Sidekick
+writes: a Sidekick's schedule entries are written in its own transaction.
+Reading the bindings and the connections in the claim's own transaction also
+closes a gap where a connection could move between the read and the rebind.
+
+**Considered and rejected:** One transaction for every Sidekick a Channel
+archive moves: a failure would roll back the others' pauses, so each keeps its
+own. Folding the child projection's version check into its upsert: the reuse
+warning needs the old version, which an upsert's `RETURNING` does not give.
+
+**Consequences:** A new Sidekick read that needs several rows joins them; a
+helper that re-reads the row inside a method that already has it is the
+pattern this removed. A read that comes after an `await` is the exception: it
+must read again, because another call may have changed the row meanwhile.
+
+Shipped in [#1111](https://github.com/juno-ai-labs/avalon/pull/1111).
 
 ### 2026-10-06 — `SidekickDO` and the Sidekick import are deleted
 

@@ -627,6 +627,37 @@ describe("Sidekick run continuation", () => {
       .resolves.toMatchObject({ automationRunId: runId });
   });
 
+  it("lets a run's loop act before provisioning has reported the run running", async () => {
+    await activeSidekick();
+    const { runId } = await startedRun();
+    // The row as it stands between the loop starting and the provisioning
+    // consumer's report: still pending. The loop's first check lands there
+    // when the loop starts quickly.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE sidekick_runs SET state = 'pending', started_at = NULL WHERE sidekick_id = ? AND run_id = ?`,
+        AUTOMATION_ID, runId,
+      );
+    });
+    const decided = await workspaceStub().sidekickContinueRun({ ...addressed(), runId });
+    if (decided.outcome !== "continue") throw new Error(`expected the run's authority, got ${decided.code}`);
+
+    await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, {
+      region: "global" as const,
+      workspaceId: WORKSPACE_ID,
+      parentKind: "automation" as const,
+      parentId: AUTOMATION_ID,
+      substreamId: asSubstreamId(runId),
+      loopId: substreamLoopId(AUTOMATION_ID, asSubstreamId(runId)),
+      harnessRunId: asHarnessRunId(crypto.randomUUID()),
+      triggerMessageId: null,
+      activityId: null,
+      executionPrincipal: decided.executionPrincipal,
+      automationRun: decided.automationRun,
+      reason: "manual",
+    })).resolves.toMatchObject({ automationRunId: runId });
+  });
+
   it("keeps the run's context when a person answers a question the run asked", async () => {
     script = [{
       callTool: {

@@ -28,6 +28,7 @@ import { searchAudienceGroup, searchAudienceGroupIds } from "../src/services/sea
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+import { writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -196,6 +197,52 @@ describe("automation directory", () => {
     const owned = await createAndPublish("workstream");
     expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items.map((item) => item.id).sort()).toEqual([personal, shared, owned].sort());
     expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID })).items.map((item) => item.id)).toEqual([shared]);
+  });
+
+  it("lists a Channel's Sidekick to the Channel's participants, not only its author, and not to anyone else", async () => {
+    // Somebody else's Sidekick in the room, so the room's participant sees
+    // it only through the Channel's own participant rows.
+    const automationId = nextAutomationId();
+    await writeSidekickDirectoryRow(env, {
+      automationId, workspaceId: WORKSPACE_ID, authorUserId: "00000000-0000-7000-8000-00000000ad2f",
+      lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID, title: "Release notes", description: "",
+    });
+
+    expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+      .items.map((item) => item.id)).toEqual([automationId]);
+    expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID }))
+      .items).toEqual([]);
+  });
+
+  it("reads the Sidekicks asked for and the ones a Channel recommends in one call, asked-for first and each once", async () => {
+    // Created in this order, so their ids sort A < B < C < D: an order by id
+    // is not the order asked for.
+    const [a, b, c, d] = [nextAutomationId(), nextAutomationId(), nextAutomationId(), nextAutomationId()];
+    for (const [automationId, title] of [[a, "A"], [b, "B"], [c, "C"], [d, "D"]] as const) {
+      await writeSidekickDirectoryRow(env, {
+        automationId, workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
+        lifecycle: "active", scope: "workspace", owningWorkstreamId: null, title, description: "",
+      });
+    }
+    // The Channel recommends B first, then A, which is also asked for and
+    // keeps its asked-for place. B's place among the recommendations ties
+    // with C's among the asked-for, so only the tiers order them.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      // Hosted rows, as a Sidekick's own writes leave them.
+      state.storage.sql.exec(`UPDATE automation_directory SET region = 'global'`);
+      for (const [sidekickId, attachedAt] of [[b, 1], [a, 2]] as const) {
+        state.storage.sql.exec(
+          `INSERT INTO parent_sidekicks(parent_id, sidekick_id, attached_at) VALUES (?, ?, ?)`, ROOM_ID, sidekickId, attachedAt,
+        );
+      }
+    });
+
+    const summaries = await workspaceStub().sidekickReadSkillSummaries({
+      workspaceId: WORKSPACE_ID, automationIds: [d, c, a], channelId: ROOM_ID,
+      principalUserId: AUTHOR_ID, conversationParentId: ROOM_ID, audienceScope: "workspace", audienceUserIds: [AUTHOR_ID],
+    });
+
+    expect(summaries.map((summary) => summary.name)).toEqual(["D", "C", "A", "B"]);
   });
 
   it("lists an authenticated member's library without the object re-reading their membership", async () => {
