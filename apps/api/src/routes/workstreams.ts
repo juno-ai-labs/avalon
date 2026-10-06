@@ -352,9 +352,6 @@ workstreamRoutes.post("/:id/read-state/mark-unread", zValidator("param", idParam
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(WorkstreamSchema.parse(await client.markUnread()));
 });
-// Also through the service, and for the same reason: a direct add is the
-// Channel taking responsibility for this reader, so no Space's departure takes
-// them with it.
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) => {
   const participant = await new WorkstreamService(c.env, getAuth(c))
     .addParticipant(c.req.valid("param").id, c.req.valid("json").userId);

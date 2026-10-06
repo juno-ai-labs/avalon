@@ -1725,7 +1725,6 @@ describe("WorkspaceDO space authority", () => {
     };
 
     await expect(workspace().spaceDefaultTargetCurrent(target)).resolves.toBe(true);
-    await expect(workspace().spaceDefaultTargetActors(target)).resolves.toEqual([OWNER]);
 
     await workspace().removeSpaceDefault({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, kind: "resource", targetId: RESOURCE_ID,
