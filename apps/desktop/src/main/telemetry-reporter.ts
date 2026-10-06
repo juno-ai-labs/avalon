@@ -232,6 +232,7 @@ export class TelemetryReporter {
     signedIn: boolean;
     recentCount: number;
     pinnedCount: number;
+    attentionCount: number;
   }): Promise<void> {
     return this.captureProduct('menu_bar_opened', 'desktop-main', properties);
   }

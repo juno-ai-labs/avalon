@@ -66,6 +66,13 @@ it('waits for permission and removes registration when macOS permission is denie
   await vi.waitFor(() => expect(request.mock.calls.some(([, , init]) => init?.method === 'DELETE')).toBe(true));
   expect(controller.state().pushNotificationStatus).toBe('denied');
 });
+it('reports whether macOS allows Rally a badge, as it reads permission', async () => {
+  const { controller } = fixture();
+  expect(controller.state().notificationBadgeStatus).toBe('unknown');
+  native.permission.mockImplementation(() => queueMicrotask(() => native.start.mock.calls[0]![0](JSON.stringify({ permission: 'enabled', badge: 'disabled' }))));
+  await controller.initialize();
+  await vi.waitFor(() => expect(controller.state().notificationBadgeStatus).toBe('disabled'));
+});
 it('queues a fresh credential pass when the session changes during registration', async () => {
   const { controller, request, credentials } = fixture();
   const first = gate();

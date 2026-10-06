@@ -35,3 +35,9 @@ __pycache__/
 # full checkout of this repository, created and removed by the harness — never
 # something to commit.
 .claude/worktrees/
+
+# Renders, previews and scores from the rally-motion skill belong in a scratchpad;
+# the committed reference stills are .jpg and stay tracked.
+.agents/skills/rally-motion/**/*.mp4
+.agents/skills/rally-motion/**/*.png
+.agents/skills/rally-motion/**/*.wav

@@ -41,12 +41,14 @@ When someone shares a conversation with you, you get an email with a link.
 > opens the Mac app instead (see [Create or join an
 > Organization](../01-getting-started/02-create-or-join-an-organization.md)).
 
-## Signing in by email
+## Signing in
 
-The browser version signs you in with your email address, no password needed.
-(The Mac and iPhone apps use Google instead.)
+The browser version signs you in with Google or with your email address, no
+password needed. Click **Continue with Google** to use your Google account. To
+use email instead:
 
-1. Type your email address and click **Email me a sign-in link**.
+1. Click **Continue with email**, type your email address and click **Email me a
+   sign-in link**.
 2. The page changes to **Check your email**. Rally sends you an email titled
    **Sign in to Rally**, containing a code and a link.
 3. Either type the code into the **Sign-in code** box and click **Continue**, or

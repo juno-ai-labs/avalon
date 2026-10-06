@@ -163,11 +163,15 @@ def social_card() -> Image.Image:
     draw = ImageDraw.Draw(result)
     result.alpha_composite(mark(64, DARK_CANVAS), (511, 57))
     draw.text((582, 64), "rally", font=font(46, bold=True), fill=DARK_CANVAS)
-    for y, line in ((220, "Stop copy-pasting"), (307, "between Claude and Slack.")):
-        draw.text((width / 2, y), line, anchor="mt", font=font(76), fill=DARK_CANVAS)
-    for y, line in ((439, "Rally gives you, your (human) coworkers, and AI"),
-                    (481, "a single place to get work done together.")):
-        draw.text((width / 2, y), line, anchor="mt", font=font(30), fill=DARK_CANVAS)
+    for y, line in ((220, "Two Humans and AI"), (300, "in a single shared chat")):
+        draw.text((width / 2, y), line, anchor="mt", font=font(72), fill=DARK_CANVAS)
+    for y, line in (
+        (410, "Rally is an AI platform that allows for multiple humans"),
+        (446, "to work with an AI agent in shared chats. Start a channel"),
+        (482, "for multiple coworkers and work together on research,"),
+        (518, "writing code, crafting documents, and answering questions."),
+    ):
+        draw.text((width / 2, y), line, anchor="mt", font=font(27), fill=DARK_CANVAS)
     return result
 
 

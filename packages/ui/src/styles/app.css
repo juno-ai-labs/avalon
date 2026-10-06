@@ -1842,8 +1842,6 @@ pre {
 }
 
 [data-theme='dark'] .account-menu-item.menu-item[data-highlighted] { background-image: var(--hover-layer); }
-.mobile-sidebar-trigger { display: none; left: 8px; position: fixed; top: 9px; z-index: 25; }
-.sidebar-scrim { display: none; }
 .mobile-only { display: none; }
 
 /* Deep-link failure window
@@ -4457,6 +4455,22 @@ pre {
   border-bottom-left-radius: 16px;
   border-bottom-right-radius: 16px;
 }
+/* At tablet and phone width (the 920px breakpoint where the sidebar
+   collapses) the inset is space the document cannot spare, so the viewer fills
+   the window. The site
+   pane loses its curve with it, which also squares the composited view, since
+   that reads its corner off the pane when it presents.
+   On macOS the window reaches this width too (its minimum is 720), so the
+   header now sits under the traffic lights and over the drag strip. The
+   lightbox is portaled to `body`, outside the shell that sets
+   `--window-controls-inset`, so the clearance keys on the shell's class
+   instead of reading the variable. */
+@media (max-width: 920px) {
+  .attachment-lightbox.is-document-viewer { -webkit-app-region: no-drag; border: 0; border-radius: 0; box-shadow: none; inset: 0; }
+  .resource-lightbox .site-detail-pane { border-radius: 0; }
+  body:has(.has-overlay-window-controls) .attachment-lightbox.is-document-viewer .attachment-lightbox-header,
+  body:has(.has-overlay-window-controls) .resource-lightbox .rail-header { padding-left: 82px; }
+}
 /* Menus and confirmation dialogs opened by the resource lightbox sit above it. */
 body:has(.resource-lightbox) .dialog-overlay { z-index: 1002; }
 body:has(.resource-lightbox) .dialog-content { z-index: 1003; }
@@ -4511,7 +4525,13 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .attachment-gallery-arrow,
 .attachment-gallery-caption { background: var(--av-sys-color-surface-default); border: .5px solid var(--av-sys-color-border-highlight); }
 .workstream-composer textarea { background: transparent; border: 0; display: block; min-height: 51px; outline: 0; resize: none; width: 100%; }
-.workstream-composer textarea::placeholder { color: var(--av-ref-color-neutral-8); }
+/* The placeholder names the Channel or Breakout; a long name ends in an
+   ellipsis rather than wrapping the empty field onto a second line. Chromium
+   draws that ellipsis only when the empty textarea itself also carries it and
+   does not wrap; the rules on `::placeholder` alone cut the text without one.
+   Typed text clears `:placeholder-shown` and wraps as usual. */
+.workstream-composer textarea::placeholder { color: var(--av-ref-color-neutral-8); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workstream-composer textarea:placeholder-shown { text-overflow: ellipsis; white-space: nowrap; }
 .composer-input-shell { position: relative; }
 
 /*
@@ -5260,9 +5280,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   .workspace-shell:not(.app-shell) .main-pane { margin-left: 0; }
   .workspace-shell:not(.app-shell) .sidebar { background: var(--av-cmp-sidebar-background-solid); box-shadow: var(--av-sys-elevation-shadow-drawer); transform: translateX(-100%); transition: transform 160ms ease; width: 300px; z-index: 70; }
   .workspace-shell:not(.app-shell) .sidebar.is-mobile-open { transform: translateX(0); }
-  .workspace-shell:not(.app-shell) .sidebar-scrim { background: var(--av-sys-color-scrim-default); display: block; inset: 0; position: fixed; z-index: 65; }
   .workspace-shell:not(.app-shell) .mobile-only { display: inline-flex; }
-  .mobile-sidebar-trigger { display: none; }
   .workspace-shell:not(.app-shell) .sidebar-resizer { display: none; }
   .workspace-shell { --rail-max-slot: calc(100vw - 16px); }
   .automation-composer-wrap,
@@ -7698,6 +7716,59 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .single-sidebar .sidebar-footer { padding-inline: 10px; }
 .single-sidebar .account-trigger .avatar { height: 28px; width: 28px; }
 .single-sidebar .account-trigger { font-weight: 500; }
+
+/* Phone width: the sidebar is a top bar over a sheet the menu button drops in.
+   Why it is clipped rather than moved: `docs/desktop-shell.md#at-phone-width`.
+   `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx` is this 640. */
+.sidebar-menu-toggle { display: none; }
+@media (max-width: 640px) {
+  .app-shell {
+    --av-cmp-sidebar-width: 0px !important;
+    --phone-top-bar-height: 56px;
+    --phone-sheet-duration: 260ms;
+    --phone-sheet-motion: var(--phone-sheet-duration) cubic-bezier(.22, 1, .36, 1);
+  }
+  .app-shell .single-sidebar {
+    background: var(--av-cmp-sidebar-background-solid);
+    border-right: 0;
+    clip-path: inset(0 0 calc(100% - var(--phone-top-bar-height)) 0);
+    right: 0;
+    transition: clip-path var(--phone-sheet-motion);
+    width: auto;
+    z-index: 70;
+  }
+  .app-shell .single-sidebar.is-mobile-open { clip-path: inset(0); }
+  .app-shell .single-sidebar > .sidebar-top-bar {
+    border-bottom: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+    flex-basis: var(--phone-top-bar-height);
+    height: var(--phone-top-bar-height);
+    padding: 0 12px;
+  }
+  .app-shell .single-sidebar > :not(.sidebar-top-bar) {
+    opacity: 0;
+    transform: translateY(-12px);
+    transition: opacity var(--phone-sheet-motion), transform var(--phone-sheet-motion), visibility 0s linear var(--phone-sheet-duration);
+    visibility: hidden;
+  }
+  .app-shell .single-sidebar.is-mobile-open > :not(.sidebar-top-bar) {
+    opacity: 1;
+    transform: none;
+    transition: opacity var(--phone-sheet-motion), transform var(--phone-sheet-motion), visibility 0s;
+    visibility: visible;
+  }
+  .app-shell .single-sidebar > .space-pill-strip { padding-top: 12px; }
+  .app-shell .single-sidebar .sidebar-resizer { display: none; }
+  .app-shell .sidebar-menu-toggle { color: var(--av-sys-color-text-default); display: inline-flex; height: 36px; margin-left: -6px; width: 36px; }
+  .app-shell .main-pane { height: calc(100% - var(--phone-top-bar-height)); margin-top: var(--phone-top-bar-height); }
+  /* The right panel and its scrim are fixed to the window too, and start under the bar. */
+  .app-shell .rail-surface,
+  .app-shell .rail-scrim { top: var(--phone-top-bar-height); }
+}
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+  .app-shell .single-sidebar,
+  .app-shell .single-sidebar > :not(.sidebar-top-bar),
+  .app-shell .single-sidebar.is-mobile-open > :not(.sidebar-top-bar) { transition: none; }
+}
 .sidebar-section-hint { color: var(--av-sys-color-text-disabled); flex: none; font-size: 11.5px; }
 /* The sort toggle borrows the group menu trigger's hover layer and focus
    outline, so the heading's two small controls answer the pointer alike. */
@@ -7900,6 +7971,22 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-menu-person-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .title-menu-person-present { background: var(--av-sys-color-success-base); border-radius: 50%; flex: none; height: 7px; width: 7px; }
 .title-menu-person-role { color: var(--av-sys-color-text-muted); flex: none; font-size: 13.5px; }
+.title-menu-person-actions {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  height: 28px;
+  justify-content: center;
+  margin-left: -4px;
+  width: 28px;
+}
+.title-menu-person-actions:hover,
+.title-menu-person-actions[data-state="open"] { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); }
 .title-menu-add {
   background: var(--av-sys-color-surface-raised);
   border: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-strong);
@@ -8132,6 +8219,14 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .breakout-tick-card-news { color: var(--av-sys-color-workstream-news); font-weight: 600; }
 /* The transcript makes room for the ticks only when there are ticks. */
 .workstream-screen:has(> .breakout-tick-bar) .transcript-column { padding-left: max(var(--space-8), 48px); }
+/* Phone: the ticks would cover text (chips and the Channel menu still reach
+   Breakouts), and Rally's turns and their placeholder fill the column. Must
+   follow the rule above, which has the same weight. */
+@media (max-width: 640px) {
+  .workstream-screen > .breakout-tick-bar { display: none; }
+  .workstream-screen:has(> .breakout-tick-bar) .transcript-column { padding-left: var(--space-6); }
+  .workstream-screen :is(.agent-message, .conversation-opening-message:not(.is-human)) { max-width: 100%; }
+}
 
 /* ── Split conversation ─────────────────────────────────────────────────────
    A Channel and its open Breakout side by side, one resize handle between. A
@@ -8205,6 +8300,3 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 }
 .title-pill-menu-trigger:hover > .title-pill-menu-trigger-body { background: var(--av-sys-color-state-hover); }
 .title-pill-menu-trigger[data-state='open'] > .title-pill-menu-trigger-body { background: transparent; }
-/* A Breakout's composer names it; a long name ends in an ellipsis rather than
-   wrapping the empty field onto a second line. */
-.split-conversation-pane.is-breakout .workstream-composer textarea::placeholder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

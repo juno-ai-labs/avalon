@@ -51,13 +51,30 @@ existing intent retention, not introduce another scheduler.
 Payload bodies reduce Markdown formatting and Rally's internal citation and
 person-mention references to readable plain text before carrying the first
 1,000 Unicode code points with an ellipsis when shortened, fitted further to
-Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to
-the recipient's count of unarchived, non-system work streams in that workspace that
-are unread for them, or `needs_input` while they are a participant — the same
-directory `attention` read already returns as `unreadAndNeedsInputCount`. Each
-stream counts once even when both apply. A send from one workspace does not sum
+Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to the number
+the sidebar's attention menu shows ([`attention-menu.md`](attention-menu.md)):
+each Main the recipient may open and each Breakout they may list, in an
+unarchived, non-system Channel, that is unread, unseen or mentions them. The
+directory `attention` read returns it as `readerAttentionCount`
+(`WorkspaceSpaceStorage.readerAttentionCount`). A run in `needs_input` is not
+counted, as the menu does not list it. A send from one workspace does not sum
 other workspaces: iOS holds one session, and a global inbox is out of scope.
 Omitting `badge` would leave the previous icon count in place; `0` clears it.
+
+While Rally runs, the Mac sets the dock badge itself. `useDockBadge` sends the
+menu's count to main (`dock-badge:set`, `app.setBadgeCount`) on every change,
+once the Channel directory and every Breakout list the count reads have
+loaded, and clears it when the shell unmounts. Main re-applies the last count
+when a Rally window gains focus, since a background alert from another
+Organization sets that Organization's count. Foreground alerts leave `.badge`
+out of their presentation options, so they never replace it.
+
+macOS shows a badge only while notifications, with badges, are allowed for
+Rally. Authorization requests `UNAuthorizationOptionBadge`, each permission read
+(also on window focus) reports `badgeSetting` as `notificationBadgeStatus`, and
+Settings → Notifications offers **Open System Settings**
+(`com.apple.Notifications-Settings.extension?id=` the bundle id) when
+notifications or badges are off.
 APNs retains undelivered alerts for
 24 hours. Provider JWTs are shared through regional KV and refreshed at 50 minutes;
 no coordination object is introduced. Enqueue and send share the same
@@ -217,9 +234,9 @@ signed-Mac delivery.
 `apns-transport.test.ts` cover encoding/signing, Apple responses, and the
 sandbox versus production host. The real
 workerd `push-delivery.test.ts` covers read RPC, receipts, revocation, retry,
-and that `aps.badge` is the workspace attention count of unread and needs-input
-streams. `workspace-attention.test.ts` covers that count against the same
-directory projection. Desktop push/link tests cover registration and routing; existing settings and
+and that `aps.badge` is the reader's attention count. `workspace-attention.test.ts`
+covers that count, Breakouts included, against the same directory projection,
+and `dock-badge.test.tsx` covers when the Mac sends its local count. Desktop push/link tests cover registration and routing; existing settings and
 release suites cover the integration. iOS XCTest covers payload parse and the
 PUT body. For Web Push, `web-push-transport.test.ts` reproduces RFC 8291's
 worked example, checks the VAPID token and maps push service answers, redirects
@@ -239,6 +256,38 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-10-06 — Badge is the sidebar attention count, set by APNs and the Mac
+
+**What changed:** `aps.badge` is now `readerAttentionCount`: Mains and Breakouts that
+are unread, unseen or mention the reader, the attention menu's number. It
+replaces `unreadAndNeedsInputCount`, which counted Channels only and included
+read `needs_input` runs. The Mac app also sets the dock badge itself from the
+menu's count while it runs. macOS authorization now asks for badges, the
+permission read reports the badge switch, and Settings sends the user to
+Rally's entry in System Settings when notifications or badges are off.
+
+**Why:** The badge should match the count in the sidebar. The old number
+counted different things (no Breakouts, plus needs-input runs), so the two
+disagreed. APNs alone only moves the badge when an alert arrives, so reading a
+conversation never lowered it; the app setting it locally fixes that, and APNs
+still covers the time Rally is not running. Rally had never asked for badge
+permission (only alerts and sound), so the badge could be off with no way for
+the user to tell; existing installs keep that answer, since macOS does not ask
+again, which is why the badge switch is read and surfaced rather than assumed.
+
+**Considered and rejected:** A silent badge-only push on every read: a new
+producer for each read, when the running app already holds the number. Summing
+every Organization: the menu is per Organization, and iOS holds one session.
+
+**Consequences:** The server count and `attentionItems` on the client must
+change together; `waitingForReaderSql` is the server's copy of
+`readerMarkerStatus`. The count takes the reader's access class, so a guest's
+badge leaves out Organization-wide conversations their sidebar does not list.
+The Mac waits for every Breakout list the count needs before writing, since a
+missing list would lower the APNs badge.
+
+Shipped in #1121.
 
 ### 2026-10-03 — Web Push for browser members
 
