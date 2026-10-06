@@ -250,6 +250,24 @@ export class ScheduledAlarmStore {
     ).toArray().length > 0;
   }
 
+  /**
+   * Cancel every entry of these kinds whose key starts with `prefix`, in one
+   * statement. For an owner whose entries share a key prefix, such as a hosted
+   * Sidekick's `<sidekickId>:`. The prefix is compared as text, not as a
+   * `LIKE` pattern, so an id holding `%` or `_` matches only itself.
+   */
+  cancelByKeyPrefix(kinds: readonly string[], prefix: string): number {
+    if (prefix.length === 0) throw new Error("scheduled_alarm_prefix_empty");
+    return this.sql.exec(
+      `DELETE FROM _internal_durable_alarms
+        WHERE kind IN (SELECT value FROM json_each(?))
+          AND substr(alarm_key, 1, length(?2)) = ?2
+        RETURNING alarm_key`,
+      JSON.stringify(kinds),
+      prefix,
+    ).toArray().length;
+  }
+
   cancelKind(kind: string): number {
     return this.sql.exec(
       `DELETE FROM _internal_durable_alarms WHERE kind = ? RETURNING alarm_key`,
