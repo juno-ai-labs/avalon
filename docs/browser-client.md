@@ -77,8 +77,10 @@ entry asks the person to sign in with the address the link was sent to; signed
 in, it opens the Organization and the conversation. Signing in is what claims
 the share ([scoped invitations](scope-invitations.md#claiming)), on the server,
 before the session is described, so there is no acceptance screen, button or
-request after it. An old `/invite#…` link from before this is a plain sign-in
-page: the client drops the fragment from history and asks for nothing about it.
+request after it. An old `/invite#inv_…` link from before this is a sign-in
+page: the client drops the token from history, keeps it in page memory, and
+once signed in posts it to `/sharing/claim-link` so a share made before claiming
+existed still reaches its recipient, then opens what it claimed.
 
 For an unaddressed entry, the client lists the user's regional workspaces and can sign
 out through the ordinary browser-session logout. Workspace roots mount the shell,
@@ -536,7 +538,8 @@ handling, the mailbox prefill from `/browser/invitation`, the Accept invitation
 button and the accepted-destination list are gone, along with
 `apps/browser/src/invitation.ts`. An invitation email links to the conversation's
 addressed path, which signs in and opens like any canonical link; Continue with
-Google is offered there too. An old `/invite#…` link is a sign-in page.
+Google is offered there too. An old `/invite#inv_…` link is a sign-in page whose
+token is presented once after sign-in, for shares that predate claiming.
 
 **Why:** The server now claims a share when its address signs in
 ([scoped invitations](scope-invitations.md)), so the screen between sign-in and

@@ -3,11 +3,11 @@ import { listSharedDirectory, listSharedNavigationDirectory } from "../services/
 import { Hono } from "hono";
 import { z } from "zod";
 import { IdSchema } from "@rally/contracts";
-import { parentStub } from "../services/scope-invitation-claims";
-import { ScopeSharingOptionsSchema, ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, RevokeScopeInvitationSchema,
+import { claimLegacyInvitationLink, parentStub } from "../services/scope-invitation-claims";
+import { ClaimInvitationLinkSchema, ClaimedInvitationLinkSchema, ScopeSharingOptionsSchema, ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, RevokeScopeInvitationSchema,
   SharedDirectorySchema, SharedNavigationDirectorySchema, ScopeInvitationResultSchema, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
 import type { HonoAppEnv } from "../env";
-import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
+import { getIdentityAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { ApiError } from "../lib/api-error";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
@@ -50,7 +50,7 @@ function channelScopeNotFound(error: unknown): never {
   throw error;
 }
 
-/** Mounted below identity auth; every route here needs an existing relationship. */
+/** Mounted below identity auth; every route but the old-link claim needs an existing relationship. */
 export const sharingRoutes = new Hono<HonoAppEnv>();
 sharingRoutes.get("/directory", requireWorkspaceAuth, async (c) => {
   const auth = getWorkspaceAuth(c);
@@ -124,6 +124,13 @@ sharingRoutes.post("/", requireWorkspaceAuth, zValidator("json", CreateRequestSc
   try { c.executionCtx.waitUntil(delivery); } catch { void delivery; }
   c.header("Cache-Control", "no-store");
   return c.json(ScopeInvitationResultSchema.parse(result), 201);
+});
+// Compatibility for invitation emails sent before shares were claimed at
+// sign-in: their token is the only record of which Channel they name.
+sharingRoutes.post("/claim-link", zValidator("json", ClaimInvitationLinkSchema), async (c) => {
+  const claimed = await claimLegacyInvitationLink(c.env, getIdentityAuth(c).userId, c.req.valid("json").link);
+  c.header("Cache-Control", "no-store");
+  return c.json(ClaimedInvitationLinkSchema.parse({ targets: claimed.flatMap((invitation) => invitation.targets.slice(0, 1)) }));
 });
 sharingRoutes.delete("/:parentId/:invitationId", requireWorkspaceAuth,
   zValidator("param", InvitationParamSchema), zValidator("json", RevokeRequestSchema), async (c) => {
