@@ -860,8 +860,8 @@ export function setWorkspaceSlackSessionStream(
 }
 
 /**
- * Record the reaction this transition placed, only if the one it removed is
- * still there.
+ * Record the reaction this transition placed, only if the slot still points at
+ * the message it acted on and the one it removed is still there.
  *
  * `IS` rather than `=` because NULL is a real state — it means Rally has
  * placed nothing — and `=` never matches it.
@@ -873,12 +873,16 @@ export function settleWorkspaceSlackSessionReaction(
   const settled = storage.sql.exec<{ id: string }>(
     `UPDATE slack_agent_sessions
         SET reaction_current = ?, updated_at = ?
-      WHERE id = ? AND workspace_id = ? AND reaction_current IS ?
+      WHERE id = ? AND workspace_id = ?
+        AND reaction_channel_id = ? AND reaction_message_ts = ?
+        AND reaction_current IS ?
       RETURNING id`,
     request.reaction,
     request.at,
     request.sessionId,
     request.workspaceId,
+    request.channelId,
+    request.messageTs,
     request.expected,
   ).toArray()[0];
   return WorkspaceSlackSessionReactionResultSchema.parse({

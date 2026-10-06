@@ -311,11 +311,28 @@ reactions on the message — the one thing the single-slot rule exists to preven
 The reaction sits on the *triggering* message rather than the thread root, and
 each new prompt in a thread moves it.
 
-**Known gap:** a session holds one reaction slot, but a follow-up prompt is
-admitted while an earlier run in the thread is still live. The follow-up moves
-the slot to its own message, usually with the same acknowledgement emoji, so the
-conditional write cannot tell the anchors apart: the earlier run's outcome can
-land on the follow-up's message, or leave its own message showing `eyes`.
+A session holds one reaction slot, but a follow-up prompt is admitted while an
+earlier run in the thread is still live, and moves the slot to its own message,
+usually with the same emoji. So each run carries its own anchor (channel and
+message) on `slackOrigin.reactionAnchor` from admission to delivery. The outcome
+always lands on that message. When the slot still points there, the outcome is
+written back conditionally on both the anchor and the emoji; when it has moved
+on, the run swaps the configured acknowledgement for its outcome and records
+nothing, leaving the slot to the newer anchor. A run admitted before the anchor
+was carried falls back to whatever the slot holds.
+
+A follow-up from a member Rally cannot map to an account is admitted as a
+steer, and when it reaches a step boundary of the live run it merges into that
+run instead of starting its own. The commit that promotes it records its
+`slackOrigin` in the conversation's `run_absorbed_slack_origins`, and the run's
+delivery settles every message it absorbed as well as its own. A linked
+member's answer to an open question carries `slackOrigin` into the run the
+answer starts, as an ordinary message does.
+
+The anchor holds only what the Slack event fixes. `slackOrigin` is part of the
+message's admission identity, so the emoji Slack accepted, which a retried
+ingress job can see differently (a timeout, then `already_reacted`), would make
+the retry an idempotency conflict.
 
 Reaction sets resolve most-specific-wins: the built-in defaults, then a workspace
 override on the installation's `config_json`, then a per-run override. An
@@ -800,6 +817,53 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-10-06 — Each run's outcome follows its own message and member
+
+**What changed:** Admission records the run's status-reaction anchor on
+`slackOrigin.reactionAnchor`, and delivery passes it to the outcome transition.
+`settleSlackSessionReaction` now also requires the expected `channelId` and
+`messageTs`, and its `UPDATE` matches them alongside `reaction_current`.
+SubstreamAgent migration 73 adds `run_absorbed_slack_origins`, written when a
+steer is promoted into a live run, and delivery settles those messages too. A
+linked member's elicitation answer now carries `slackOrigin` into the run it
+starts. Delivery also passes `slackOrigin.actorSlackUserId` as the triggering
+member, so a needs-input connect prompt reaches whoever sent the message.
+
+**Why:** A follow-up admitted while an earlier run was live moved the session's
+one slot to its own message with the same `eyes` emoji, and the settle compared
+only the emoji. The earlier run's outcome could land on the follow-up's message,
+or its own message kept `eyes` while the follow-up later gained a second Rally
+reaction. Raised by Copilot on #1123. Separately, the 2026-08-15 entry routed
+the connect prompt to the triggering member, but the settlement path in
+`SubstreamAgent` no longer passed that member, so every prompt fell back to the
+thread's opener. When the wiring was lost was not recorded. Review of this
+change found two more paths where a message had no run of its own carrying its
+origin: an unlinked member's follow-up steered into a live run, and a linked
+member's elicitation answer.
+
+**Considered and rejected:** An anchor generation column on
+`slack_agent_sessions`, captured at admission and matched on settle. It needs a
+migration and still has to travel with the run, and on its own it cannot say
+which message the earlier run should swap once the slot has moved. The anchor
+itself answers both. Carrying the emoji admission placed in the anchor was also
+rejected: `slackOrigin` is hashed into the message's admission receipt, and a
+retry can see a different acknowledgement result, which would turn it into
+`substream_message_idempotency_conflict` (raised by Codex on this change).
+For steers, making Slack follow-ups on a live run queue instead would give each
+its own run, but steering is how an unlinked member's reply reaches the work in
+progress, and that is a product behavior this change should not move.
+
+**Consequences:** Once the slot has moved, the earlier run removes the
+connection's configured acknowledgement, not the slot's emoji, and writes
+nothing back. If the acknowledgement was changed between admission and
+delivery, or fell back to Rally's default because Slack rejected its name, the
+old emoji can stay beside the outcome. `run_absorbed_slack_origins` is never
+pruned: one small row per steered Slack message, kept for the conversation's
+life. Runs admitted before
+this change carry no anchor and keep the old slot-only behavior until they
+drain. A run that a follow-up supersedes (`superseded_by_follow_up`) still
+delivers no outcome, so its message keeps the acknowledgement.
 
 ### 2026-10-06 — The rotating working reaction was removed
 

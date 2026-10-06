@@ -3394,6 +3394,16 @@ export const SlackOriginContextSchema = z.strictObject({
   messageTs: z.string().min(1).max(80).optional(),
   /** A link back to that message, built from the team, channel and timestamp. */
   permalink: httpsUrlSchema(2000).optional(),
+  /**
+   * The message this run's status reaction sits on; see "The status reaction"
+   * in docs/slack-integration.md. Only what the event itself fixes: this rides
+   * in the message's admission identity, so a value a retry could answer
+   * differently would make the retry a conflict.
+   */
+  reactionAnchor: z.strictObject({
+    channelId: z.string().min(1).max(255),
+    messageTs: z.string().min(1).max(80),
+  }).optional(),
   invocationType: z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]),
   channelType: z.enum(["public", "private", "im", "unknown"]),
   matchedAvalonUserId: IdSchema.nullable(),
