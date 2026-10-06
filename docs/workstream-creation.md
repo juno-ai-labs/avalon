@@ -228,10 +228,8 @@ was already deferred before this module existed.
 `reserveChannelInSpaces`, after the address reservation and before the D1
 anchor. In one SQLite transaction it resolves General when the request named no
 Space, writes each membership `active`, stages the defaults each Space hands a
-new member, reserves the main conversation with its provisional directory row,
-and records each Space's source on the Channel's own authority, which seats
-nobody (`applySpaceAccessSource` with `commitWithPlan`, called inside the object
-rather than over RPC). It answers with the Spaces it read, and the
+new member, and reserves the main conversation with its provisional directory
+row. It answers with the Spaces it read, and the
 coordinator derives the opening audience from them with the same
 `resolveSpaceWorkstreamStart` the object used for the directory row's scope.
 A creation started from a provider thread passes `externalBinding`, and the
@@ -411,8 +409,8 @@ than whichever rejection landed first.
   placement transaction writes the directory row that carries the address; see
   [The Space a Channel is born in](#the-space-a-channel-is-born-in).
 - **A Channel's Organization-side birth is one transaction.** Memberships,
-  Space defaults, the parent reservation with its provisional directory row, and
-  the Space sources commit in `reserveChannelInSpaces` or not at all; creation
+  Space defaults, and the parent reservation with its provisional directory row
+  commit in `reserveChannelInSpaces` or not at all; creation
   never stages a `joining` row or an `add` intent.
 - **A create that names no audience writes a private work stream.** The scope
   reaches the object as an argument rather than a hardcoded `'workspace'`, and

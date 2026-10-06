@@ -119,24 +119,22 @@ describe("WorkspaceDO migration 93", () => {
     ]);
   });
 
-  it("drops the stored plans a Space source step would replay, and keeps every other receipt", () => {
+  it("drops the tables that recorded which Space supplied a Channel's readers", () => {
     const database = openDatabase();
     apply(database, PUBLIC_MIGRATION_VERSION - 1);
-    const receipt = database.prepare(
+    database.prepare(
       `INSERT INTO parent_access_operations (parent_id, operation_id, request_json, result_json, created_at)
-       VALUES ('channel', ?, ?, ?, 1)`,
-    );
-    receipt.run("retract", JSON.stringify({ kind: "retract_space_source", spaceId: PRIVATE }),
-      JSON.stringify({ ok: true, plan: { narrowScope: true, seatUserIds: [], removeUserIds: [PARTICIPANT] } }));
-    receipt.run("apply", JSON.stringify({ kind: "apply_space_source", spaceId: PRIVATE }),
+       VALUES ('channel', 'apply', ?, ?, 1)`,
+    ).run(JSON.stringify({ kind: "apply_space_source", spaceId: PRIVATE }),
       JSON.stringify({ ok: true, plan: { widenScope: true, seatUserIds: [] } }));
-    receipt.run("direct", JSON.stringify({ kind: "set_direct_scope", scope: "personal" }),
-      JSON.stringify({ ok: true, previousScope: "workspace", previousObserved: true }));
 
     apply(database, PUBLIC_MIGRATION_VERSION, PUBLIC_MIGRATION_VERSION - 1);
 
-    expect(database.prepare("SELECT operation_id FROM parent_access_operations ORDER BY operation_id").all())
-      .toEqual([{ operation_id: "direct" }]);
+    expect(database.prepare(
+      `SELECT name FROM sqlite_master
+        WHERE type = 'table'
+          AND name IN ('parent_space_readers', 'parent_space_sources', 'parent_direct_audience', 'parent_access_operations')`,
+    ).all()).toEqual([]);
   });
 
   it("leaves an Organization with no private Space exactly as it was", () => {

@@ -35,8 +35,6 @@ import {
   type Viewer,
 } from "./listing-rules";
 import type {
-  SpaceMember,
-  MemberWalkReach,
   WorkspaceSpaceAudienceNoteRequest,
   WorkspaceSpaceDefaultRequest,
   WorkspaceSpaceDefaultResult,
@@ -397,7 +395,7 @@ export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
  * Migration 93: every private Space becomes Organization-wide.
  *
  * Spaces can only be Organization-wide, and a Space grants no reader to its
- * Channels (`lib/channel-audience.ts`), so widening a Space here changes who
+ * Channels (`docs/spaces.md`), so widening a Space here changes who
  * sees the Space and nothing about who reads any Channel in it: a private
  * Channel stays private with the participants it has. Archived Spaces are
  * widened too, so a restore cannot bring a private one back. The waterline
@@ -413,13 +411,12 @@ export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
  * every pending delivery. A Sidekick default is already Organization-wide
  * (`assertRecommendableSidekick`) and stays.
  *
- * Each step of a Space source's application or retraction stores its plan in
- * `parent_access_operations`, and a retry of the same operation id answers the
- * stored plan before the new, empty one is computed. Those receipts are
- * dropped, so an operation interrupted before this migration re-plans under
- * the new rule rather than finishing a widening or a narrowing the old one
- * decided. Re-planning is safe: both steps are idempotent against the source
- * rows they write.
+ * The four tables that recorded which Space supplied which Channel readers
+ * are dropped with the code that wrote them (`docs/space-access-sources.md`).
+ * Their receipts stored plans under the old rule, so keeping them would let a
+ * retried operation replay a widening or a narrowing nothing decides any more.
+ * Readers first: it references the sources table. The readers a Space seated
+ * stay seated as `parent_grants` rows, which are the access itself.
  */
 export const SPACE_PUBLIC_ONLY_MIGRATION: readonly string[] = [
   `UPDATE workspace_space_state
@@ -431,8 +428,10 @@ export const SPACE_PUBLIC_ONLY_MIGRATION: readonly string[] = [
           removed_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
     WHERE kind = 'resource' AND state = 'active'
       AND space_id IN (SELECT space_id FROM spaces WHERE scope = 'personal')`,
-  `DELETE FROM parent_access_operations
-    WHERE json_extract(request_json, '$.kind') IN ('apply_space_source', 'retract_space_source')`,
+  `DROP TABLE IF EXISTS parent_space_readers`,
+  `DROP TABLE IF EXISTS parent_space_sources`,
+  `DROP TABLE IF EXISTS parent_direct_audience`,
+  `DROP TABLE IF EXISTS parent_access_operations`,
   `UPDATE spaces
       SET scope = 'workspace', updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
     WHERE scope = 'personal'`,
@@ -585,23 +584,11 @@ export interface WorkspaceSpaceDefaultPublication extends WorkspaceSpaceDefaultT
   attempts: number;
 }
 
-/** The audience and fences an equal-audience move hands the Channel's parent. */
-export interface EquivalentMoveFences {
-  scope: SpaceSummary["scope"];
-  participantUserIds: SpaceSummary["participants"][number]["userId"][];
-  sourceSpaceRevision: number;
-  sourceMembershipGeneration: number;
-  targetSpaceRevision: number;
-  targetMembershipGeneration: number;
-}
-
-type EquivalentMovePlan =
+type MovePlan =
   | { kind: "refused"; code: "space_not_found" }
-  | { kind: "different" }
+  | { kind: "staged" }
   | {
-    kind: "equivalent";
-    source: SpaceSummary;
-    target: SpaceSummary;
+    kind: "move";
     existingTarget: { state: string; generation: number } | null;
     sourceMembershipGeneration: number;
     targetMembershipGeneration: number;
@@ -614,13 +601,6 @@ interface MoveMembershipFences {
   workstreamId: string;
   sourceMembershipGeneration: number;
   targetMembershipGeneration: number;
-}
-
-/** Thrown inside the move transaction to roll it back when the Channel declines the swap. */
-class EquivalentMoveDeclined extends Error {
-  constructor() {
-    super("space_move_equivalent_declined");
-  }
 }
 
 /**
@@ -782,12 +762,6 @@ export interface SpaceConversationKey {
 /** One page of the conversations a Space read is about, before the projection. */
 export interface SpaceConversationPage {
   items: SpaceConversationKey[];
-  nextCursor: string | null;
-}
-
-/** One page of the memberships a Space fan-out still has work for. */
-export interface SpaceMemberPage {
-  members: SpaceMember[];
   nextCursor: string | null;
 }
 
@@ -1878,87 +1852,6 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * One page of the Channels this Space holds, archived ones included.
-   *
-   * `walkReach` is the difference between what a surface means by a member and
-   * what a retraction fan-out is about — and it is not `SpaceSummary.reach`,
-   * which is a *viewer's* relationship to the Space and is what the gate two
-   * lines below reads. `prepareArchive` and `prepareMembershipRemoval`
-   * flip a membership to `removing` *before* the Channel is asked to withdraw
-   * the source, so the set a staged operation still has work for is
-   * `active` plus `removing` — and an archive that read the active set would
-   * walk nothing and leave its source on every Channel it reached.
-   *
-   * Paged for the reason {@link SPACE_CHANNEL_PAGE_SIZE} pages the read beside
-   * it, and then some: every caller of this is a *walk* that spends several
-   * cross-object awaits per row, so an unbounded answer is not one slow
-   * invocation but an operation that can never finish — each redelivery
-   * restarting the same pass from the top. Ordered by Channel id, so the
-   * cursor is the id the page stopped at and a resumed walk continues from a
-   * row rather than from an offset.
-   *
-   * **`canEdit`, and there is deliberately no viewer-scoped variant.** This
-   * answers the Space's whole membership with no viewer predicate in the
-   * query, because its callers — an audience walk, an archive, a restore, the
-   * containment preflight — are operations *on* the Space and have to reach
-   * every Channel it holds or they converge on nothing. A walk narrowed to
-   * what the caller can see would leave the rest of the Space half-applied,
-   * silently. So the answer stays the Organization's and the gate is the
-   * stronger one: somebody who reaches a Space only through a Channel in it is
-   * told its mark so that Channel can be drawn, and this would hand them the
-   * complete membership of a participants-only Space — the ids of Channels
-   * they cannot open, which is the disclosure the viewer-scoped
-   * {@link WorkspaceSpaceStorage.conversationPage} and `channelCount` exist to
-   * refuse.
-   *
-   * The two refusals are told apart because only this knows which one it made:
-   * `"not_editable"` is a Space the caller is looking at and may not act on,
-   * and `false` is one they cannot see at all. Collapsed into `false` the RPC
-   * would have to pick one word for both, and the word it picked was "no such
-   * Space" about a Space whose name is on that person's sidebar.
-   */
-  members(
-    userId: string,
-    spaceId: string,
-    walkReach: MemberWalkReach = "active",
-    cursor: string | null = null,
-  ): SpaceMemberPage | "not_editable" | false {
-    const viewerReach = this.reach(member(userId), spaceId);
-    if (viewerReach === null) return false;
-    if (!editableReach(viewerReach)) return "not_editable";
-    const after = cursor === null ? null : decodeChannelCursor(cursor);
-    if (cursor !== null && after === null) return false;
-    const rows = this.storage.sql.exec<{
-      workstream_id: string;
-      generation: number;
-    } & Record<string, SqlStorageValue>>(
-      walkReach === "reaching"
-        ? `SELECT workstream_id, generation FROM space_channel_memberships
-            WHERE space_id = ? AND state IN ('active', 'removing')
-              AND (? IS NULL OR workstream_id > ?)
-            ORDER BY workstream_id LIMIT ?`
-        : `SELECT workstream_id, generation FROM space_channel_memberships
-            WHERE space_id = ? AND state = 'active'
-              AND (? IS NULL OR workstream_id > ?)
-            ORDER BY workstream_id LIMIT ?`,
-      spaceId,
-      after,
-      after ?? "",
-      SPACE_BOOTSTRAP_PAGE_SIZE + 1,
-    ).toArray();
-    const hasMore = rows.length > SPACE_BOOTSTRAP_PAGE_SIZE;
-    if (hasMore) rows.pop();
-    const last = rows.at(-1);
-    return {
-      members: rows.map((row) => ({
-        workstreamId: asWorkstreamId(row.workstream_id),
-        membershipGeneration: row.generation,
-      })),
-      nextCursor: hasMore && last ? encodeChannelCursor(last.workstream_id) : null,
-    };
-  }
-
-  /**
    * Every active Space each of these Channels sits in, as this viewer may see
    * them.
    *
@@ -2093,62 +1986,35 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * Move a Channel between two Spaces that grant the same audience, in one
-   * transaction: the target placement, the Channel's provenance swap and the
-   * source's retirement commit together or not at all.
+   * Move a Channel between two Spaces in one transaction: the target placement
+   * and the source's retirement commit together or not at all. A Space grants
+   * no reader, so nothing about the Channel moves with it.
    *
-   * `replaceSource` is the Channel's hosted parent swapping its recorded Space
-   * source, which lives in this same database. When it refuses (the Channel's
-   * record is behind the Spaces' revisions, or does not hold the source) the
-   * transaction is rolled back and the answer is `moved: false`, which sends
-   * the caller down the ordinary add-then-remove path. There is no intent: a
-   * move that commits needs no resume, and one that does not left nothing.
+   * `moved: false` is the one case left for the caller's add-then-remove path:
+   * a target somebody else already staged as `joining` before migration 93.
    */
-  moveEquivalentMembership(
-    request: WorkspaceSpaceMembershipMoveRequest,
-    replaceSource: (fences: EquivalentMoveFences) => boolean,
-    now = Date.now(),
-  ): WorkspaceSpaceMembershipMoveOutcome {
-    try {
-      return this.storage.transactionSync((): WorkspaceSpaceMembershipMoveOutcome => {
-        const plan = this.planEquivalentMove(request);
-        if (plan.kind === "refused") {
-          return { ok: false, code: plan.code, unreachableUserIds: [], blockedWorkstreamIds: [] };
-        }
-        if (plan.kind === "different") return { ok: true, moved: false };
-        if (!replaceSource({
-          scope: plan.target.scope,
-          participantUserIds: plan.target.participants.map((participant) => participant.userId),
-          sourceSpaceRevision: plan.source.revision,
-          sourceMembershipGeneration: plan.sourceMembershipGeneration,
-          targetSpaceRevision: plan.target.revision,
-          targetMembershipGeneration: plan.targetMembershipGeneration,
-        })) throw new EquivalentMoveDeclined();
-        this.stageMoveTarget(request, plan, now);
-        this.switchMoveMemberships({
-          ...request,
-          sourceMembershipGeneration: plan.sourceMembershipGeneration,
-          targetMembershipGeneration: plan.targetMembershipGeneration,
-        }, plan.existingTarget?.state === "active" ? "active" : "joining", now);
-        const source = this.authoritativeSpace(request.sourceSpaceId, request.userId);
-        const target = this.authoritativeSpace(request.targetSpaceId, request.userId);
-        if (source === false || target === false) throw new Error("space_move_summary_missing");
-        return { ok: true, moved: true, source, target };
-      });
-    } catch (error) {
-      if (error instanceof EquivalentMoveDeclined) return { ok: true, moved: false };
-      throw error;
-    }
+  moveMembership(request: WorkspaceSpaceMembershipMoveRequest, now = Date.now()): WorkspaceSpaceMembershipMoveOutcome {
+    return this.storage.transactionSync((): WorkspaceSpaceMembershipMoveOutcome => {
+      const plan = this.planMove(request);
+      if (plan.kind === "refused") {
+        return { ok: false, code: plan.code, unreachableUserIds: [], blockedWorkstreamIds: [] };
+      }
+      if (plan.kind === "staged") return { ok: true, moved: false };
+      this.stageMoveTarget(request, plan, now);
+      this.switchMoveMemberships({
+        ...request,
+        sourceMembershipGeneration: plan.sourceMembershipGeneration,
+        targetMembershipGeneration: plan.targetMembershipGeneration,
+      }, plan.existingTarget?.state === "active" ? "active" : "joining", now);
+      const source = this.authoritativeSpace(request.sourceSpaceId, request.userId);
+      const target = this.authoritativeSpace(request.targetSpaceId, request.userId);
+      if (source === false || target === false) throw new Error("space_move_summary_missing");
+      return { ok: true, moved: true, source, target };
+    });
   }
 
-  /**
-   * Whether a move is an equal-audience one, and the fences it runs at.
-   *
-   * A target already `joining` is an add somebody else staged; the ordinary
-   * path lets it converge rather than taking over its generation and its
-   * recovery receipt, so it answers `different`.
-   */
-  private planEquivalentMove(request: WorkspaceSpaceMembershipMoveRequest): EquivalentMovePlan {
+  /** The fences a move runs at, or why it cannot run here. */
+  private planMove(request: WorkspaceSpaceMembershipMoveRequest): MovePlan {
     if (!this.canEdit(request.userId, request.sourceSpaceId)
       || !this.canEdit(request.userId, request.targetSpaceId, true)) {
       return { kind: "refused", code: "space_not_found" };
@@ -2162,14 +2028,6 @@ export class WorkspaceSpaceStorage {
       request.workstreamId,
     ).toArray()[0];
     if (!sourceMembership) return { kind: "refused", code: "space_not_found" };
-    const source = this.space(request.sourceSpaceId, member(request.userId));
-    const target = this.space(request.targetSpaceId, member(request.userId));
-    if (source === false || target === false) return { kind: "refused", code: "space_not_found" };
-    const sourceParticipants = new Set(source.participants.map((participant) => participant.userId));
-    const equivalentAudience = source.scope === target.scope
-      && sourceParticipants.size === target.participants.length
-      && target.participants.every((participant) => sourceParticipants.has(participant.userId));
-    if (!equivalentAudience) return { kind: "different" };
     const existingTarget = this.storage.sql.exec<{
       state: string;
       generation: number;
@@ -2179,11 +2037,9 @@ export class WorkspaceSpaceStorage {
       request.targetSpaceId,
       request.workstreamId,
     ).toArray()[0] ?? null;
-    if (existingTarget?.state === "joining") return { kind: "different" };
+    if (existingTarget?.state === "joining") return { kind: "staged" };
     return {
-      kind: "equivalent",
-      source,
-      target,
+      kind: "move",
       existingTarget,
       sourceMembershipGeneration: sourceMembership.generation,
       targetMembershipGeneration: existingTarget?.state === "active"
@@ -2195,7 +2051,7 @@ export class WorkspaceSpaceStorage {
   /** Write the target placement as `joining` unless it is already active. */
   private stageMoveTarget(
     request: WorkspaceSpaceMembershipMoveRequest,
-    plan: Extract<EquivalentMovePlan, { kind: "equivalent" }>,
+    plan: Extract<MovePlan, { kind: "move" }>,
     now: number,
   ): void {
     const existingTarget = plan.existingTarget;
@@ -2227,24 +2083,11 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * Finish a stored equal-audience `move` intent, in the caller's transaction.
-   *
-   * No code path stages one; a stored intent names a target membership
-   * `joining` at its generation, and the Channel's provenance may already have
-   * been swapped to the target. `superseded`: the memberships are not at the intent's
-   * fences (a competing move won), so the target's `joining` row and the
-   * intent are cancelled. `moved`: the two Spaces still grant the same readers
-   * and `channel.swap` agreed (it answers true for a swap already made), so
-   * the memberships switch and the intent settles. `replan`: they do not, so
-   * `channel.restore` puts the source's record back if the swap had moved it,
-   * the move's rows are cancelled, and the caller adds the Channel to the
-   * target and removes it from the source.
+   * Finish a `move` intent staged before migration 93, in the caller's
+   * transaction: switch the memberships if they are still at its fences, else
+   * cancel what it staged.
    */
-  resumeStagedMove(
-    move: MoveMembershipFences & { operationId: string },
-    channel: { swap: (fences: EquivalentMoveFences) => boolean; restore: () => void },
-    now = Date.now(),
-  ): "moved" | "superseded" | "replan" {
+  private resumeStagedMove(move: MoveMembershipFences & { operationId: string }, now: number): "moved" | "superseded" {
     const membership = (spaceId: string) => this.storage.sql.exec<{
       state: string;
       generation: number;
@@ -2256,36 +2099,17 @@ export class WorkspaceSpaceStorage {
     ).toArray()[0];
     const sourceMembership = membership(move.sourceSpaceId);
     const targetMembership = membership(move.targetSpaceId);
-    const source = this.authoritativeSpace(move.sourceSpaceId, move.userId);
-    const target = this.authoritativeSpace(move.targetSpaceId, move.userId);
     if (sourceMembership?.state !== "active"
       || sourceMembership.generation !== move.sourceMembershipGeneration
       || !targetMembership
       || !["joining", "active"].includes(targetMembership.state)
-      || targetMembership.generation !== move.targetMembershipGeneration
-      || source === false || target === false) {
+      || targetMembership.generation !== move.targetMembershipGeneration) {
       this.cancelMembershipMoveRows(move, now);
       return "superseded";
     }
-    const sourceParticipants = new Set(source.participants.map((participant) => participant.userId));
-    const equivalent = source.scope === target.scope
-      && sourceParticipants.size === target.participants.length
-      && target.participants.every((participant) => sourceParticipants.has(participant.userId));
-    if (equivalent && channel.swap({
-      scope: target.scope,
-      participantUserIds: target.participants.map((participant) => participant.userId),
-      sourceSpaceRevision: source.revision,
-      sourceMembershipGeneration: move.sourceMembershipGeneration,
-      targetSpaceRevision: target.revision,
-      targetMembershipGeneration: move.targetMembershipGeneration,
-    })) {
-      this.switchMoveMemberships(move, targetMembership.state, now);
-      this.settleIntent(move.operationId, "membership_moved", true, now);
-      return "moved";
-    }
-    channel.restore();
-    this.cancelMembershipMoveRows(move, now);
-    return "replan";
+    this.switchMoveMemberships(move, targetMembership.state, now);
+    this.settleIntent(move.operationId, "membership_moved", true, now);
+    return "moved";
   }
 
   /**
@@ -2500,7 +2324,7 @@ export class WorkspaceSpaceStorage {
    * Put a Channel that is being created straight into a Space, active.
    *
    * No `joining` stage and no intent: the caller writes the membership, the
-   * Channel's parent and its Space sources in one transaction, so there is no
+   * Channel's parent and its memberships in one transaction, so there is no
    * moment between a staged row and its settlement for a crash to land in and
    * nothing for an alarm to finish. A row that is already active (a retry of
    * the same create) keeps its generation; a removed one is reactivated at the
@@ -2602,7 +2426,10 @@ export class WorkspaceSpaceStorage {
    * and its position, because `directory()` is what hides it and a restore is
    * meant to bring the arrangement back with the row.
    */
-  finalizeMembershipRemoval(request: WorkspaceSpaceMembershipSettleRequest, now = Date.now()): SpaceSummary | false {
+  finalizeMembershipRemoval(
+    request: { userId: string; spaceId: string; workstreamId: string; membershipGeneration: number },
+    now = Date.now(),
+  ): SpaceSummary | false {
     return this.storage.transactionSync(() => {
       const removed = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE space_channel_memberships
@@ -2652,6 +2479,127 @@ export class WorkspaceSpaceStorage {
       );
       this.advanceWaterline(now);
       return this.space(request.spaceId, member(request.userId));
+    });
+  }
+
+  /**
+   * Put a Channel in a Space: stage and activate the membership and stage the
+   * Space's defaults for it, in one transaction. A Space grants no reader, so
+   * nothing outside this object takes part.
+   */
+  addMembership(request: WorkspaceSpaceMembershipRequest, now = Date.now()): WorkspaceSpaceMutationResult {
+    return this.storage.transactionSync((): WorkspaceSpaceMutationResult => {
+      const prepared = this.prepareMembership(request, now);
+      if (!prepared.ok) return prepared;
+      const space = this.finalizeMembership({
+        ...request, spaceRevision: prepared.space.revision, membershipGeneration: prepared.membershipGeneration,
+      }, now);
+      if (space === false || space === "conflict") {
+        return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      }
+      this.stageDefaultsForMember(request.spaceId, request.workstreamId, prepared.membershipGeneration, request.userId, now);
+      return { ok: true, space };
+    });
+  }
+
+  /** Take a Channel out of a Space that is not its last, in one transaction. */
+  removeMembership(request: WorkspaceSpaceMembershipRemovalRequest, now = Date.now()): WorkspaceSpaceMutationResult {
+    return this.storage.transactionSync((): WorkspaceSpaceMutationResult => {
+      const prepared = this.prepareMembershipRemoval(request, now);
+      if (!prepared.ok) return prepared;
+      const space = this.finalizeMembershipRemoval({ ...request, membershipGeneration: prepared.membershipGeneration }, now);
+      if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      return { ok: true, space };
+    });
+  }
+
+  /** Archive a Space that strands no live Channel, in one transaction. */
+  archive(userId: string, spaceId: string, now = Date.now()): WorkspaceSpaceMutationResult {
+    return this.storage.transactionSync((): WorkspaceSpaceMutationResult => {
+      const prepared = this.prepareArchive(userId, spaceId, now);
+      if (!prepared.ok) return prepared;
+      const space = this.finalizeArchive(userId, spaceId, now);
+      if (space === "protected") return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
+      return { ok: true, space };
+    });
+  }
+
+  /**
+   * Finish one intent staged before migration 93, in one transaction.
+   *
+   * Nothing stages these any more: each operation is one transaction. An
+   * intent still unsettled at the deploy is finished here from its own
+   * fences, with no Channel involved, because a Space grants no reader.
+   * Answers what changed so the caller can publish it.
+   */
+  resumeLegacyIntent(intent: WorkspaceSpaceIntentClaim, now = Date.now()): {
+    spaceIds: string[]; workstreamId: string | null; membershipChanged: boolean; spaceChanged: boolean;
+  } {
+    return this.storage.transactionSync(() => {
+      const none = { spaceIds: [intent.spaceId], workstreamId: intent.workstreamId, membershipChanged: false, spaceChanged: false };
+      const settle = (receipt: string) => this.settleIntent(intent.operationId, receipt, true, now);
+      const workstreamId = intent.workstreamId;
+      const generation = intent.membershipGeneration;
+      switch (intent.kind) {
+        case "add": {
+          if (!workstreamId || !generation) { settle("add_fences_missing"); return none; }
+          const activated = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+            `UPDATE space_channel_memberships SET state = 'active', updated_at = ?, removed_at = NULL
+              WHERE space_id = ? AND workstream_id = ? AND state = 'joining' AND generation = ?
+              RETURNING space_id`,
+            now, intent.spaceId, workstreamId, generation,
+          ).toArray()[0];
+          if (activated) {
+            this.stageDefaultsForMember(intent.spaceId, workstreamId, generation, intent.requestedByUserId, now);
+            this.advanceWaterline(now);
+          }
+          settle(activated ? "membership_finalized" : "add_superseded");
+          return { ...none, membershipChanged: Boolean(activated) };
+        }
+        case "remove": {
+          if (!workstreamId || !generation) { settle("remove_fences_missing"); return none; }
+          const removed = this.finalizeMembershipRemoval({
+            userId: intent.requestedByUserId, spaceId: intent.spaceId, workstreamId, membershipGeneration: generation,
+          }, now);
+          settle(removed === false ? "remove_superseded" : "membership_removed");
+          return { ...none, membershipChanged: removed !== false };
+        }
+        case "move": {
+          if (!workstreamId || !generation || !intent.sourceSpaceId || !intent.sourceMembershipGeneration) {
+            this.cancelIntent(intent.operationId, now);
+            return none;
+          }
+          const moved = this.resumeStagedMove({
+            operationId: intent.operationId, userId: intent.requestedByUserId,
+            sourceSpaceId: intent.sourceSpaceId, targetSpaceId: intent.spaceId, workstreamId,
+            sourceMembershipGeneration: intent.sourceMembershipGeneration, targetMembershipGeneration: generation,
+          }, now);
+          return { ...none, spaceIds: [intent.sourceSpaceId, intent.spaceId], membershipChanged: moved === "moved" };
+        }
+        case "archive": {
+          const archived = this.finalizeArchive(intent.requestedByUserId, intent.spaceId, now);
+          if (archived === false || archived === "protected") {
+            // The archive cannot finish as its requester, so it is taken back:
+            // the memberships it staged return rather than sit `removing`
+            // under a Space that is still live.
+            this.storage.sql.exec(
+              `UPDATE space_channel_memberships SET state = 'active', generation = generation + 1, updated_at = ?
+                WHERE space_id = ? AND state = 'removing'`,
+              now, intent.spaceId,
+            );
+            this.advanceWaterline(now);
+            settle("archive_abandoned");
+          } else {
+            settle("archived");
+          }
+          return { ...none, spaceChanged: true };
+        }
+        case "restore":
+        case "audience":
+          settle(`${intent.kind}_settled`);
+          return none;
+      }
     });
   }
 
@@ -3211,8 +3159,8 @@ export class WorkspaceSpaceStorage {
    * delivery gives the requester back what they lost: they are no longer an
    * active member of the Organization, which the resume records by name, and
    * they no longer have an editable reach into the Space, which the resume
-   * (`SpaceChannelAccess.resume`) settles by name, writing the code here first,
-   * because this statement only matches a row that is still unsettled.
+   * settles by name, writing the code here first, because this statement only
+   * matches a row that is still unsettled.
    */
   recordIntentFailure(operationId: string, errorCode: string, now = Date.now()): void {
     if (!this.ready()) return;
