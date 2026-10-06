@@ -24,11 +24,10 @@ export function createMix(duration, { sampleRate: SR = 48000 } = {}) {
   const noise = () => rnd() * 2 - 1;
   const env = (t, a, d) => t < a ? t / a : Math.exp(-(t - a) * d);
   const saw = p => 2 * (p % 1) - 1;
-  const m = { offset: 0, duration };
+  const m = { duration };
 
   // add a generated voice at t0; fn(x, state) returns the sample x seconds in
   function add(t0, dur, fn, gain = 1, pan = 0, send = 0) {
-    t0 += m.offset;
     const s0 = Math.max(0, Math.floor(t0 * SR)), s1 = Math.min(N, Math.floor((t0 + dur) * SR));
     const gl = gain * Math.cos((pan + 1) * Math.PI / 4), gr = gain * Math.sin((pan + 1) * Math.PI / 4);
     const st = { lp: 0, lp2: 0, hp: 0, prev: 0, ph: 0, ph2: 0, ph3: 0 };
@@ -52,7 +51,6 @@ export function createMix(duration, { sampleRate: SR = 48000 } = {}) {
   };
   /** Filtered-noise swish that pans across; put one under every camera move. */
   m.whoosh = (t, dur, g = .35, f0 = .02, f1 = .4, pan0 = -.6, pan1 = .6) => {
-    t += m.offset;
     const s0 = Math.floor(t * SR), s1 = Math.min(N, Math.floor((t + dur) * SR)); let lp = 0, lp2 = 0;
     for (let i = Math.max(0, s0); i < s1; i++) {
       const p = (i - s0) / (s1 - s0); const c = f0 + (f1 - f0) * Math.sin(p * Math.PI);
@@ -62,7 +60,6 @@ export function createMix(duration, { sampleRate: SR = 48000 } = {}) {
     }
   };
   m.riser = (t, dur, g = .4) => add(t, dur, (x, s) => { const p = x / dur; const c = .01 + p * p * .5; s.lp += (noise() - s.lp) * c; s.ph += (180 + 1400 * p * p) / SR; return (s.lp * .8 + Math.sin(TAU * s.ph) * .15) * p * p; }, g, 0, .3);
-  m.glitch = (t0, t1, g = .12) => { let t = t0; while (t < t1) { const d = .01 + rnd() * .04; const f = 200 + rnd() * 3000; add(t, d, (x, s) => { s.ph += f / SR; return (Math.sign(Math.sin(TAU * s.ph)) * .5 + noise() * .5) * (Math.floor(x * 3000) % 2); }, g * rnd(), rnd() * 2 - 1); t += d + rnd() * .02; } };
   // ---- tones ----
   /** Short pop: a message arriving, a chip appearing. f in Hz (use nf(midi)). */
   m.blip = (t, f, g = .25, pan = 0, decay = 22) => add(t, .35, (x, s) => { s.ph += f / SR; s.ph2 += f * 2.005 / SR; return (Math.sin(TAU * s.ph) + .35 * Math.sin(TAU * s.ph2)) * env(x, .002, decay); }, g, pan, .35);

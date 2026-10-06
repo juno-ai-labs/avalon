@@ -90,7 +90,8 @@ function chatStack(ctx, app, msgs, t, { bottom = chatBottom(app) } = {}) {
     const m = vis[i]; const h = chatMsgHeight(ctx, m, t); const k = i === vis.length - 1 ? eo3(prog(t, m.t, m.t + .32)) : 1;
     y -= h * k; pos.unshift([m, y]);
   }
-  ctx.save(); ctx.beginPath(); ctx.rect(app.x, app.y + 106, app.w, app.h - 106); ctx.clip();
+  // clip above the composer, so an arriving message never draws over it (+8 for descenders)
+  ctx.save(); ctx.beginPath(); ctx.rect(app.x, app.y + 106, app.w, bottom - app.y - 106 + 8); ctx.clip();
   pos.forEach(([m, top]) => { m._top = top; if (top + chatMsgHeight(ctx, m, t) >= app.y) chatMsg(ctx, app, m, top, t); });
   ctx.restore();
   return pos;
