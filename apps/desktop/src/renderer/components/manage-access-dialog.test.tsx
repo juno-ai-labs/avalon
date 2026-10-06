@@ -93,6 +93,8 @@ describe('Manage access', () => {
     });
 
     expect(await screen.findByText('Only the 2 people in the channel.')).toBeVisible();
+    // The description must not say the Spaces listed below can read it.
+    expect(screen.getByText('Who can read Quarterly planning, and the spaces it is placed in.')).toBeVisible();
     expect(screen.getByText('Hiring')).toBeVisible();
     expect(screen.getByText('General')).toBeVisible();
     // An Organization-wide Space beside it does not make it public.

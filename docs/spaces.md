@@ -167,7 +167,14 @@ The contract enforces it: `CreateSpaceRequest.scope` and
 written before WorkspaceDO migration 93 (`SPACE_PUBLIC_ONLY_MIGRATION`), which
 widened every Space, archived ones included, and touched no Channel: a Channel
 that was private through a private Space keeps its seated participants and stays
-private.
+private. Two things go with the widening. A private Space's resource defaults
+are retired, because they were checked against its participants only and any
+member can now start a Channel that picks them up; a Sidekick default was
+already Organization-wide and stays. And the stored plans of Space source steps
+(`parent_access_operations` receipts for `apply_space_source` and
+`retract_space_source`) are dropped, so an operation interrupted before the
+deploy re-plans under the new rule instead of replaying a widening or narrowing
+the old one decided.
 
 Because a Space supplies no audience, a create that names none is born with the
 scope its caller asked for. `POST /workstreams` asks for `workspace`, so a
@@ -2109,7 +2116,9 @@ provenance and its walks outright: the archive, restore and membership fences
 still run on it, so the rule was put where the plans are computed and the
 plumbing left for a follow-up.
 
-**Consequences:** A Channel's own scope is its whole audience. Readers a private
+**Consequences:** A Channel's own scope is its whole audience. Formerly private
+Spaces lose their resource defaults, which somebody re-adds against the
+Organization-wide audience check. Readers a private
 Space seated before migration 93 stay seated as the Channel's own, and nothing
 withdraws them when the Channel leaves that Space. Internal creators that name
 `personal` (digests, imports, a Sidekick's suggestions shown to one person) now
