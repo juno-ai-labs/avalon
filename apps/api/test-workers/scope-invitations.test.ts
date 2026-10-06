@@ -297,6 +297,30 @@ it("keeps the lookup row for a share recorded while a claim was deleting it", as
   expect(await routes(NEWCOMER)).toEqual([{ workspace_id: workspaceId, parent_id: parentId }]);
 });
 
+it("reports a revocation as done when only its lookup-row cleanup fails", async () => {
+  const share = await create([child], [NEWCOMER]);
+  await runInDurableObject(room(), async (instance) => {
+    const target = instance as unknown as { env: Env };
+    const originalEnv = target.env;
+    const database = new Proxy(originalEnv.DB, { get: (current, property) => property === "batch"
+      ? () => Promise.reject(new Error("D1_ERROR: simulated outage"))
+      : Reflect.get(current, property) });
+    target.env = new Proxy(originalEnv, { get: (current, property, receiver) => property === "DB" ? database : Reflect.get(current, property, receiver) });
+    try {
+      // Committed in the object; the stale row it leaves is harmless and a
+      // later claim removes it. Reporting failure would send the sharer into
+      // a retry that can only answer `revision_conflict`.
+      expect(await instance.revokeScopeInvitation({ workspaceId, parentId, actorUserId: actorId,
+        invitationId: share.id, expectedRevision: 1 })).toMatchObject({ status: "revoked" });
+    } finally { target.env = originalEnv; }
+  });
+  expect(await routes(NEWCOMER)).toHaveLength(1);
+  await verifyNewcomer();
+  await claimScopeInvitations(env, newcomerId);
+  expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: false });
+  expect(await routes(NEWCOMER)).toEqual([]);
+});
+
 it("never restores a revoked grant or a removed membership when a claim runs again", async () => {
   const share = await create();
   await withHostedParent(room(), parentId, (parent) => {

@@ -29,14 +29,23 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
     queryKey: ['scope-invitations', parentId, substreamId],
     queryFn: async ({ signal }) => {
       const result = await api.listScopeInvitations(target, signal);
-      return result.status === 'ready' ? result.invitations.filter((invitation) => invitation.status === 'pending'
-        && (invitation.expiresAt === null || invitation.expiresAt > Date.now())) : [];
+      // Denied means this person cannot share here, so there is nothing of
+      // theirs to manage; the form says so if they try.
+      if (result.status !== 'ready') return [];
+      // One row per address: sharing twice makes two pending shares, and
+      // removing the person has to remove both, or the other still lets them in.
+      const byEmail = new Map<string, Array<{ id: string; revision: number }>>();
+      for (const invitation of result.invitations) {
+        if (invitation.status !== 'pending' || (invitation.expiresAt !== null && invitation.expiresAt <= Date.now())) continue;
+        byEmail.set(invitation.email, [...byEmail.get(invitation.email) ?? [], { id: invitation.id, revision: invitation.revision }]);
+      }
+      return [...byEmail].map(([email, shares]) => ({ email, shares }));
     },
   });
   const remove = useMutation({
-    mutationFn: async (invitation: { id: string; revision: number }) => {
-      const result = await api.revokeScopeInvitation(parentId, invitation.id, invitation.revision);
-      if (result.status !== 'revoked') throw new Error('scope invitation was not revoked');
+    mutationFn: async (guest: { shares: Array<{ id: string; revision: number }> }) => {
+      const results = await Promise.all(guest.shares.map((share) => api.revokeScopeInvitation(parentId, share.id, share.revision)));
+      if (results.some((result) => result.status !== 'revoked')) throw new Error('scope invitation was not revoked');
     },
     onSettled: () => { void pending.refetch(); },
   });
@@ -73,13 +82,17 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
       ? 'Enter valid email addresses, separated by spaces, commas, or semicolons.'
       : failure === 'remove' ? 'That guest couldn’t be removed. Try again.'
         : 'The conversation couldn’t be shared. Try again.'}</InlineError> : null}
+    {pending.isError ? <div className="scope-sharing-guests-failed">
+      <InlineError>Guests waiting to sign in couldn’t be loaded.</InlineError>
+      <Button disabled={pending.isFetching} onClick={() => void pending.refetch()}>Try again</Button>
+    </div> : null}
     {pending.data?.length ? <div className="member-action-list" aria-label="Guests who have not signed in yet">
-      {pending.data.map((invitation) => <div className="member-action-row" key={invitation.id}>
-        <Avatar member={{ id: invitation.id, name: invitation.email, email: invitation.email, timezone: 'UTC' }} size="medium" />
-        <span><strong>{invitation.email}</strong><small>Joins when they sign in with this address</small></span>
+      {pending.data.map((guest) => <div className="member-action-row" key={guest.email}>
+        <Avatar member={{ id: guest.email, name: guest.email, email: guest.email, timezone: 'UTC' }} size="medium" />
+        <span><strong>{guest.email}</strong><small>Joins when they sign in with this address</small></span>
         <Badge className="role-badge">Guest</Badge>
-        <IconButton label={`Remove ${invitation.email}`} disabled={remove.isPending}
-          onClick={() => { setFailure(null); remove.mutate(invitation, { onError: () => setFailure('remove') }); }}>
+        <IconButton label={`Remove ${guest.email}`} disabled={remove.isPending}
+          onClick={() => { setFailure(null); remove.mutate(guest, { onError: () => setFailure('remove') }); }}>
           <X aria-hidden="true" size={15} />
         </IconButton>
       </div>)}

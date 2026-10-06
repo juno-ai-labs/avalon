@@ -142,8 +142,10 @@ it('lists people who have not signed in yet as Guests, and removes one', async (
     expiresAt: null, status: 'pending', revision: 1, acceptedByUserId: null };
   const claimed: ScopeInvitationSummary = { ...waiting, id: '00000000-0000-4000-8000-000000000011', email: 'joined@example.test',
     status: 'accepted', acceptedByUserId: asUserId('00000000-0000-4000-8000-000000000012') };
+  // Shared twice with the same address: two pending shares, one person.
+  const again: ScopeInvitationSummary = { ...waiting, id: '00000000-0000-4000-8000-000000000013', revision: 3 };
   const list = vi.spyOn(api, 'listScopeInvitations')
-    .mockResolvedValueOnce({ status: 'ready', invitations: [waiting, claimed] })
+    .mockResolvedValueOnce({ status: 'ready', invitations: [waiting, claimed, again] })
     .mockResolvedValue({ status: 'ready', invitations: [claimed] });
   const revoke = vi.spyOn(api, 'revokeScopeInvitation').mockResolvedValue({ status: 'revoked', invitation: { ...waiting, status: 'revoked', revision: 2 } });
   const client = new QueryClient();
@@ -155,10 +157,29 @@ it('lists people who have not signed in yet as Guests, and removes one', async (
   expect(guests).toHaveTextContent('Guest');
   // Someone who already signed in is a participant now, not a pending Guest.
   expect(guests).not.toHaveTextContent('joined@example.test');
+  expect(screen.getAllByRole('button', { name: 'Remove new@example.test' })).toHaveLength(1);
 
   fireEvent.click(screen.getByRole('button', { name: 'Remove new@example.test' }));
-  await waitFor(() => expect(revoke).toHaveBeenCalledWith(parentId, waiting.id, 1));
+  // Removing the person revokes every share that would still let them in.
+  await waitFor(() => expect(revoke).toHaveBeenCalledTimes(2));
+  expect(revoke).toHaveBeenCalledWith(parentId, waiting.id, 1);
+  expect(revoke).toHaveBeenCalledWith(parentId, again.id, 3);
   await waitFor(() => expect(screen.queryByLabelText('Guests who have not signed in yet')).toBeNull());
+  expect(list).toHaveBeenCalledTimes(2);
+  client.clear();
+});
+
+it('says when the Guests waiting to sign in could not be loaded, and retries', async () => {
+  const api = new RallyApi('https://api.test', null);
+  const list = vi.spyOn(api, 'listScopeInvitations')
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValue({ status: 'ready', invitations: [] });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><Tooltip.Provider><ScopeSharingPanel api={api}
+    workspaceId={workspaceId} parentId={parentId} substreamId="0" /></Tooltip.Provider></QueryClientProvider>);
+  expect(await screen.findByText('Guests waiting to sign in couldn’t be loaded.')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  await waitFor(() => expect(screen.queryByText('Guests waiting to sign in couldn’t be loaded.')).toBeNull());
   expect(list).toHaveBeenCalledTimes(2);
   client.clear();
 });

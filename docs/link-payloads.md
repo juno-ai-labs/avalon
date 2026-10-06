@@ -113,6 +113,27 @@ fallback.
 
 ## Changelog
 
+### 2026-10-06 — Keep the store after its only kind stopped minting
+
+**What changed.** Scoped invitations no longer mint `inv` tokens: a share is
+now claimed by signing in with its address. Nothing mints into this table
+today. The store, its sweep and its tests stay; the tests use a test-only kind.
+`inv` rows are still read, as routing only, so shares made before the change
+reach their recipient.
+
+**Why.** Its first kind went away with the acceptance step it carried a secret
+for, not because the store was wrong. Old emailed links still need their rows.
+
+**Considered and rejected.** Dropping the store and table would have cut those
+old links off, and removing a general tool belongs in its own change rather
+than one about sharing.
+
+**Consequences.** `inv` rows with no expiry stay until removed by hand once no
+share they point at can still be pending. A future kind still adds one
+`defineLinkPayload` call.
+
+PR: [#1120](https://github.com/juno-ai-labs/avalon/pull/1120).
+
 ### 2026-09-19 — Give the emailed-link store its own document
 
 Split out of [`scope-invitations.md`](scope-invitations.md), which is where this
