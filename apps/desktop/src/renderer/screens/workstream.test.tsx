@@ -29,7 +29,7 @@ import {
   railChildrenWithAttention,
   workspaceMemberFromSession,
 } from './workstream';
-import { conversationActivityRow, conversationShowsStoppingRow, NO_STOP_ACKNOWLEDGEMENT, nextStopAcknowledgement, refusalMessage } from './conversation-surface';
+import { conversationActivityRow, conversationShowsStoppingRow, NO_STOP_ACKNOWLEDGEMENT, nextStopAcknowledgement, refusalMessage, RemoveParticipantDialog } from './conversation-surface';
 import { JumpToLatestButton } from '../components/conversation-follow';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
@@ -654,6 +654,45 @@ describe('RunFailureNotice', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
+  });
+});
+
+describe('RemoveParticipantDialog', () => {
+  const jordan = { id: 'member-2', name: 'Jordan', email: 'jordan@example.com', timezone: 'UTC' };
+
+  it('names who is being removed and removes only on Continue', () => {
+    const onContinue = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <RemoveParticipantDialog member={jordan} noun="breakout" onCancel={onCancel} onContinue={onContinue} pending={false} self={false} />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Remove Jordan from the breakout?' })).toBeTruthy();
+    expect(screen.getByText('Jordan will be taken off this breakout. They keep access only if it’s public.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onCancel).toHaveBeenCalled();
+    expect(onContinue).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(onContinue).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the reader whether to leave when they chose themselves, and shows a refusal in place', () => {
+    render(
+      <Tooltip.Provider>
+        <RemoveParticipantDialog failure="You are the last participant." member={jordan} noun="channel" onCancel={vi.fn()} onContinue={vi.fn()} pending={false} self />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Leave the channel?' })).toBeTruthy();
+    expect(screen.getByText('You will be taken off this channel. You keep access only if it’s public or a space you’re in includes it.')).toBeTruthy();
+    expect(screen.getByText('You are the last participant.')).toBeTruthy();
+  });
+
+  it('is closed while nobody is chosen', () => {
+    render(<RemoveParticipantDialog member={undefined} noun="channel" onCancel={vi.fn()} onContinue={vi.fn()} pending={false} self={false} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
 

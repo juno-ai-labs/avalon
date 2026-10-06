@@ -120,6 +120,37 @@ describe('a title pill menu with levels', () => {
     expect(onAdd).toHaveBeenCalledWith(newcomer);
   });
 
+  it('offers to remove someone else, and to leave for the reader, from each person’s dots menu', async () => {
+    const onRemove = vi.fn();
+    const colleague = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
+    renderChannelPill({
+      people: { candidates: [], onAdd: vi.fn(), onRemove, adding: false, currentUserId: member.id },
+      workstream: { id: 'c1', title: 'Launch', scope: 'personal', participants: [member, colleague], resources: [] },
+    });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Jordan actions' }), { button: 0, ctrlKey: false });
+    const remove = await screen.findByRole('menuitem', { name: 'Remove from channel' });
+    expect(remove).toHaveClass('menu-item-danger');
+    fireEvent.click(remove);
+    expect(onRemove).toHaveBeenCalledWith(colleague);
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Leave the channel' }));
+    expect(onRemove).toHaveBeenLastCalledWith(member);
+  });
+
+  it('does not let the last participant leave', async () => {
+    const onRemove = vi.fn();
+    renderChannelPill({ people: { candidates: [], onAdd: vi.fn(), onRemove, adding: false, currentUserId: member.id } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Adam actions' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: 'Leave the channel' })).toHaveAttribute('data-disabled');
+  });
+
   it('keeps keyboard focus in the menu across levels, and returns it to the row it left', async () => {
     const newcomer = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
     renderChannelPill({ people: { candidates: [member, newcomer], onAdd: vi.fn(), adding: false, currentUserId: member.id } });

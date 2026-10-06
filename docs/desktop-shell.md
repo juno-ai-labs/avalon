@@ -166,7 +166,10 @@ from; reduced motion turns both off.
 
 - **Channel menu:** root header is the Space it lives in (with **Open space**). People is the scope (with **Change**, which
   opens the full roster dialog), a search, the participants and suggestions
-  to add inline (`TitleMenuPeople`). Sidekicks is the Sidekick section. Breakouts
+  to add inline (`TitleMenuPeople`). Each participant's dots menu offers
+  **Remove from channel**, or **Leave the channel** on the reader's own row,
+  disabled for the last participant; the host confirms in a Cancel/Continue
+  dialog before it removes. Sidekicks is the Sidekick section. Breakouts
   is the list, newest activity first, filtered past six. More is **Pinned in
   my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
   **Public to organization** (a switch both ways; a refusal to make it private
@@ -303,6 +306,19 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-06 — People can be removed from the title menu
+
+**What changed:** Each participant row in the People level carries a dots
+menu with one danger action, Remove from channel/breakout, worded as Leave for
+the reader. `TitleMenuPeople.onRemove` hands the person to the host, which
+asks in `RemoveParticipantDialog` and then runs the same remove mutation the
+roster dialog uses.
+
+**Why:** Removing someone, or leaving, needed the full roster dialog behind
+**Change**. The confirm lives in the host rather than the menu because the
+menu closes as the dialog takes focus, and state kept inside it would unmount
+with it.
 
 ### 2026-10-06 — The sidebar is a top bar and sheet at phone width
 
