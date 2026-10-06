@@ -372,9 +372,11 @@ through its Space. Its Channels carry the privacy instead.
 one exception. It would have left two kinds of Space and a Channel whose
 privacy depended on which one it was born in.
 
-**What a future change must respect:** the room decides each new Channel's
-audience at spawn; a change that reads it from the Space again would open
-private rooms to the Organization.
+**Consequences:** The room decides each new Channel's audience at spawn; a
+change that reads it from the Space again would open private rooms to the
+Organization.
+
+Pull request: [#1119](https://github.com/juno-ai-labs/avalon/pull/1119).
 
 ### 2026-10-05 — A public room joins the existing Space it is named for
 

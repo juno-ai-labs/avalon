@@ -612,8 +612,10 @@ Channel public again, and a private Channel could not be born anywhere.
 coordinator. It would quietly make public any internal create that forgot to
 name an audience; the route that means public now says so.
 
-**What a future change must respect:** a new creation path names its scope;
-nothing widens a Channel after birth on its behalf.
+**Consequences:** A new creation path names its scope; nothing widens a
+Channel after birth on its behalf.
+
+Pull request: [#1119](https://github.com/juno-ai-labs/avalon/pull/1119).
 
 ### 2026-10-01 — A pending row stays pending until its create answers
 
