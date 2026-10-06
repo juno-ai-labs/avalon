@@ -389,11 +389,8 @@ jobs:
           DEPLOY_SHA: ${{ needs.verify.outputs.verified_sha }}
         run: |
           set -euo pipefail
-          # Cloudflare reports two unrelated failures as code 10021. A startup
-          # budget overrun is deterministic and must fail now. "Pipeline binding
-          # error. Please try again later" is a control-plane fault that has
-          # cleared on the next attempt (#1107, #1113, #1115), so that one alone
-          # gets one retry after 60 seconds. Both numbers are the team's choice.
+          # Retry only the Pipeline binding form of error 10021, never the
+          # startup-budget form; see docs/api-worker-deployment.md.
           upload_version() {
             local config="$1"
             local output_name="$2"

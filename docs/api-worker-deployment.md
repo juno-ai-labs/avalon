@@ -151,11 +151,12 @@ selected product regions.
     timing happens to pass.
   - **`Pipeline binding error. Please try again later`.** A Pipelines
     control-plane fault on a Worker with a Pipeline binding (the Global API),
-    not anything in the graph. The upload step retries it once after 60
-    seconds. If that also fails, rerun the failed job of the newest API run on
-    `main` once; if it still fails, check the pinned streams with
-    `node scripts/ensure-cloudflare-inference-lakehouse.mjs --check` before
-    retrying again.
+    not anything in the graph. The versioned upload step retries it once after
+    60 seconds; the direct deploy path does not retry. If it still fails, rerun
+    the failed job of the newest API run on `main` once; if that fails too,
+    check the pinned streams with `pnpm exec dotenv -e .env.local -- node
+    scripts/ensure-cloudflare-inference-lakehouse.mjs --check` before retrying
+    again.
 
 - A missing target Worker makes caller deployment fail. The workflow deploys or
   uploads target services first.
