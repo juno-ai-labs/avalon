@@ -12,7 +12,7 @@ import {
   SidebarScroll,
 } from '@rally/ui/components/resizable-sidebar';
 import { SidebarTopActions } from '@rally/ui/components/space-pills';
-import { IconCloudDownload, IconDeviceDesktopDown, IconMessagePlus, IconSearch } from '@tabler/icons-react';
+import { IconCloudDownload, IconDeviceDesktopDown, IconMenu2, IconMessagePlus, IconSearch } from '@tabler/icons-react';
 import { NewWorkstreamMenu } from './new-workstream-menu';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -20,7 +20,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { conversationNeedsViewer, type CreateSpaceRequest, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconArrowsSort, IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
+import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
@@ -247,6 +247,7 @@ const LOAD_MORE_DISTANCE = 400;
 
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
+const NAVIGATION_SHEET_ID = 'rally-navigation';
 
 /**
  * How long the sidebar will wait for the list to carry a pin before it stops
@@ -1097,6 +1098,16 @@ export function Sidebar({
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  // Escape closes the phone sheet, as it would any menu. Listening only while
+  // it is open keeps Escape free for everything else the rest of the time.
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+    const close = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !event.defaultPrevented) setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [setSidebarOpen, sidebarOpen]);
   const selectedSpaceFilter = useUiStore((state) => state.sidebarSpaceFilter);
   const setSelectedSpaceFilter = useUiStore((state) => state.setSidebarSpaceFilter);
   const channelSort = useUiStore((state) => state.sidebarChannelSort);
@@ -2147,12 +2158,9 @@ export function Sidebar({
 
   return (
     <>
-      <IconButton className="mobile-sidebar-trigger" label="Open navigation" onClick={() => setSidebarOpen(true)}>
-        <Menu size={17} />
-      </IconButton>
-      {sidebarOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setSidebarOpen(false)} type="button" />}
       <ResizableSidebar
         aria-label="Rally navigation"
+        id={NAVIGATION_SHEET_ID}
         className={clsx('sidebar single-sidebar', sidebarOpen && 'is-mobile-open')}
         collapsible={false}
         compact={false}
@@ -2164,7 +2172,22 @@ export function Sidebar({
         sidebarRef={panel}
         width={sidebarWidth}
       >
-        <SidebarTopActions aria-label="Rally actions">
+        {/* At phone width the sidebar is a top bar and everything under it a
+            sheet this button drops in and out. CSS hides it at every other
+            width, where `sidebarOpen` has no effect. */}
+        <SidebarTopActions
+          aria-label="Rally actions"
+          leading={<IconButton
+            aria-controls={NAVIGATION_SHEET_ID}
+            aria-expanded={sidebarOpen}
+            className="sidebar-menu-toggle window-no-drag"
+            label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            showTooltip={false}
+          >
+            <IconMenu2 aria-hidden="true" size={20} stroke={1.8} />
+          </IconButton>}
+        >
           {downloadedUpdate !== null && <IconButton className="sidebar-top-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
             <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
           </IconButton>}
@@ -2232,7 +2255,11 @@ export function Sidebar({
         <SidebarScroll
           as="nav"
           aria-label={spaces === undefined ? 'Organization navigation' : 'Channels'}
-          onClick={() => setSidebarOpen(false)}
+          // Opening a Channel closes the phone sheet; a sort toggle or a row
+          // menu inside it does not.
+          onClick={(event) => {
+            if ((event.target as Element).closest('a')) setSidebarOpen(false);
+          }}
           onScroll={loadMoreWhenNearBottom}
           scrollRef={scrollRef}
         >

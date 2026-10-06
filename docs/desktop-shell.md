@@ -104,6 +104,25 @@ compact rail collapses it to a tile like a Space row. Today the one item is
 browser tab, for members and guests alike; the Mac app passes none and draws
 nothing there. Tips or tutorials go here too.
 
+### At phone width
+
+At 640px and narrower the sidebar becomes a 56px top bar over the
+conversation: the **menu button** (tabler `menu-2`) at its left, the round top
+actions at its right. Everything else in the sidebar (pills, list, footer
+items, account) is a full-screen sheet under the bar. The menu button toggles
+`useUiStore.sidebarOpen`; the sheet drops in and out with a clip over 260ms,
+and reduced motion cuts it. Opening a Channel from the list, Escape, or the
+button closes it. Picking a pill or re-sorting does not, since the reader is
+still choosing.
+
+It is CSS on the same `<aside>`, not a second component. The bar stays inside
+the aside so the actions keep one mount, and the aside is clipped rather than
+moved, since a transform would carry the bar off screen with the sheet. The
+clip also stops taps on the closed sheet, and `visibility` keeps it out of the
+tab order. `SidebarTopActions` takes the button through its `leading` slot.
+Electron's window has an 860px minimum, so only the browser reaches this
+width. Above it the button is hidden and `sidebarOpen` does nothing.
+
 ### Pins under All
 
 A pin belongs to one placement, and the server keeps one ordered run per Space
@@ -233,7 +252,9 @@ panel of the pane it was clicked in, once.
   route behaviour.
 - **The sidebar never collapses.** Nothing may write a collapsed width or hide
   the pills; the icon rail and its storage keys are gone. Guard: the
-  `collapsible={false}` prop; no toggle exists to call.
+  `collapsible={false}` prop; no toggle exists to call. At phone width the
+  sheet hides the pills and list behind the menu button; that is a different
+  layout, not a collapse, and writes no width.
 
 ## Boundary
 
@@ -277,6 +298,25 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-06 — The sidebar is a top bar and sheet at phone width
+
+**What changed:** At 640px and narrower the sidebar's top bar spans the
+screen with a `menu-2` button at its left and the round actions at its
+right, and the rest of the sidebar is a sheet that button drops in and out.
+`SidebarTopActions` gained a `leading` slot. The unused fixed
+`mobile-sidebar-trigger` button and its scrim, hidden by CSS at every width,
+are gone.
+
+**Why:** On a phone the 340px sidebar left no room for the conversation, and
+the web app had no way to reach a phone-sized layout.
+
+**Considered and rejected:** A separate mobile header holding copies of the
+actions. Two attention menus and two New channel dialogs would need keeping
+in step, so the bar stays the sidebar's own and CSS changes its shape. A
+slide-in drawer from the left was also rejected: the aside holds the bar, so a
+transform would move the bar too. A future change that moves the top actions
+out of the aside has to bring the sheet's open state with them.
 
 ### 2026-10-05 — The Space strip has no Refresh
 
