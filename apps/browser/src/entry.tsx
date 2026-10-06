@@ -46,6 +46,16 @@ async function clearAllDrafts(): Promise<void> {
 }
 type Proof = { region: string; challengeId: string; credential: string; redemptionId: string };
 
+/**
+ * The one screen the browser shows while Rally opens: restoring a session,
+ * opening an organization, and downloading the signed-in shell. Each step
+ * draws the same mark in the same place, so the hand-off between them is
+ * invisible.
+ */
+export function BrowserBoot(): React.JSX.Element {
+  return <main className="onboarding-shell entry"><div className="boot-mark" role="status" aria-label="Opening Rally"><RallyMark /></div></main>;
+}
+
 /** This entry has no account setup step. Collaboration mounts after authentication. */
 export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void, onRevalidate: () => void) => ReactNode } = {}) {
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
@@ -246,6 +256,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     // session and user id. Leave that to the restore path, which activates it
     // through Global, rather than showing this deployment's session first.
     if (destination && destination.region !== (proof?.region ?? signInRegion)) {
+      // The opening screen covers the restore; the spent code's card must not.
+      setChecking(true);
       refreshSession.current?.(false);
       return;
     }
@@ -345,12 +357,17 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   if (!proof && destination && workspaceSession && session && workspaceSession.user.id === session.user.id && renderCollaboration) {
     return <div className="browser-shell">
-      {error && <p role="alert">{error}</p>}
+      {error && <div className="browser-shell-error"><InlineError>{error}</InlineError></div>}
       <div className="browser-conversation">{renderCollaboration(destination.region, workspaceSession, signOutStable, revalidate)}</div>
     </div>;
   }
 
-  if (checking && !session && !proof) return <main className="onboarding-shell entry"><div className="boot-mark" role="status" aria-label="Opening Rally"><RallyMark /></div></main>;
+  if (checking && !session && !proof) return <BrowserBoot />;
+  // A signed-in link to an organization is still opening it; the signed-in
+  // card would show an empty organization list until it does. `busy` is an
+  // action on that card, such as sign-out, which also clears `error`. A
+  // workspace session for another user is the old account's, still pending.
+  if (!proof && destination && session && workspaceSession?.user.id !== session.user.id && !error && !busy && renderCollaboration) return <BrowserBoot />;
 
   const failure = error ?? (!session && !proof && !challenge ? googleNotice : null);
   return <main className="onboarding-shell signin-shell entry">
