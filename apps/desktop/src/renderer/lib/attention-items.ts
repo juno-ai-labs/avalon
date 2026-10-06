@@ -21,8 +21,15 @@ function breakoutListsOf(results: ReadonlyArray<{ data: WorkstreamChildDirectory
  * The attention items for the sidebar's Channel rows, reading each Breakout
  * list from the cache the Organization socket writes. Only a Channel whose row
  * says a Breakout needs the reader is read, and nothing is fetched.
+ *
+ * `breakoutListsLoaded` is false while any of those lists has not arrived:
+ * the items then leave its Breakouts out, so their count is a floor rather
+ * than the number.
  */
-export function useAttentionItems(workstreams: readonly WorkstreamSummary[]): AttentionItem[] {
+export function useAttentionItems(workstreams: readonly WorkstreamSummary[]): {
+  items: AttentionItem[];
+  breakoutListsLoaded: boolean;
+} {
   const withBreakouts = useMemo(
     () => workstreams.filter((workstream) => (workstream.breakoutAttentionCount ?? 0) > 0).map((workstream) => workstream.id),
     [workstreams],
@@ -38,6 +45,9 @@ export function useAttentionItems(workstreams: readonly WorkstreamSummary[]): At
   return useMemo(() => {
     const lists: Record<string, readonly Breakout[] | undefined> = {};
     withBreakouts.forEach((id, index) => { lists[id] = breakouts[index]; });
-    return attentionItems(workstreams, lists);
+    return {
+      items: attentionItems(workstreams, lists),
+      breakoutListsLoaded: breakouts.every((list) => list !== undefined),
+    };
   }, [breakouts, withBreakouts, workstreams]);
 }

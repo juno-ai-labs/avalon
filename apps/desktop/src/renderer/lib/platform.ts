@@ -34,7 +34,7 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   // A tab has no status item. The preference reads as on so the desktop and the
   // browser agree about what the stored default is, and unavailable so the
   // toggle is offered nowhere it cannot work.
-  pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+  pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
   menuBarAvailable: false,
   menuBarPresent: false,
   // A tab is not a login item either. Both read as unavailable so neither
@@ -277,6 +277,9 @@ const browserBridge: RallyDesktopBridge = {
   },
   async setPushNotificationsEnabled() { return this.getApplicationSettings(); },
   async openNotificationSettings() {},
+  async setDockBadgeCount() {
+    // A browser tab has no dock icon.
+  },
   async setMenuBarEnabled() {
     throw new Error('The menu bar item is available only in the Rally desktop app.');
   },
