@@ -7570,15 +7570,12 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   color: var(--av-sys-color-palette-ink-light);
 }
 
-/* The attention count: the sidebar's unread red with white digits. It grows
-   sideways past two digits rather than shrinking them. */
+/* The attention count: the sidebar's unread red with white digits, in the
+   same 32px circle as its siblings. */
 .sidebar-top-actions > .attention-trigger.has-attention {
   background: var(--av-sys-color-workstream-news);
   box-shadow: var(--av-cmp-composer-shadow);
   color: var(--av-sys-color-palette-ink-light);
-  min-width: 32px;
-  padding: 0 8px;
-  width: auto;
 }
 .sidebar-top-actions > .attention-trigger.has-attention:hover:not(:disabled),
 .sidebar-top-actions > .attention-trigger.has-attention:focus-visible {
@@ -7586,6 +7583,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   color: var(--av-sys-color-palette-ink-light);
 }
 .attention-count { font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 650; line-height: 1; }
+.attention-count.is-capped { font-size: 10.5px; letter-spacing: -0.02em; }
 .attention-menu { max-height: min(480px, calc(100vh - 80px)); max-width: min(360px, calc(100vw - 20px)); overflow-y: auto; width: 340px; }
 .attention-menu-item { gap: 10px; min-height: 44px; }
 .attention-menu-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
