@@ -311,11 +311,15 @@ reactions on the message — the one thing the single-slot rule exists to preven
 The reaction sits on the *triggering* message rather than the thread root, and
 each new prompt in a thread moves it.
 
-**Known gap:** a session holds one reaction slot, but a follow-up prompt is
-admitted while an earlier run in the thread is still live. The follow-up moves
-the slot to its own message, usually with the same acknowledgement emoji, so the
-conditional write cannot tell the anchors apart: the earlier run's outcome can
-land on the follow-up's message, or leave its own message showing `eyes`.
+A session holds one reaction slot, but a follow-up prompt is admitted while an
+earlier run in the thread is still live, and moves the slot to its own message,
+usually with the same emoji. So each run carries its own anchor (channel,
+message, and the emoji admission placed) on `slackOrigin.reactionAnchor` from
+admission to delivery. The outcome always lands on that message. When the slot
+still points there, the outcome is written back conditionally on both the anchor
+and the emoji; when it has moved on, the run swaps its own emoji and records
+nothing, leaving the slot to the newer anchor. A run admitted before the anchor
+was carried falls back to whatever the slot holds.
 
 Reaction sets resolve most-specific-wins: the built-in defaults, then a workspace
 override on the installation's `config_json`, then a per-run override. An
@@ -800,6 +804,31 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-10-06 — Each run settles the reaction on its own message
+
+**What changed:** Admission records the run's status-reaction anchor on
+`slackOrigin.reactionAnchor`, and delivery passes it to the outcome transition.
+`settleSlackSessionReaction` now also requires the expected `channelId` and
+`messageTs`, and its `UPDATE` matches them alongside `reaction_current`.
+
+**Why:** A follow-up admitted while an earlier run was live moved the session's
+one slot to its own message with the same `eyes` emoji, and the settle compared
+only the emoji. The earlier run's outcome could land on the follow-up's message,
+or its own message kept `eyes` while the follow-up later gained a second Rally
+reaction. Raised by Copilot on #1123.
+
+**Considered and rejected:** An anchor generation column on
+`slack_agent_sessions`, captured at admission and matched on settle. It needs a
+migration and still has to travel with the run, and on its own it cannot say
+which message the earlier run should swap once the slot has moved. The anchor
+itself answers both.
+
+**Consequences:** Once the slot has moved, the earlier run removes the emoji
+admission placed, not the slot's, and writes nothing back. Runs admitted before
+this change carry no anchor and keep the old slot-only behavior until they
+drain. A run that a follow-up supersedes (`superseded_by_follow_up`) still
+delivers no outcome, so its message keeps the acknowledgement.
 
 ### 2026-10-06 — The rotating working reaction was removed
 

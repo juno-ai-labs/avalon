@@ -5656,6 +5656,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       text,
       `${input.harnessRunId}:${outcome.status}`,
       outcome.status,
+      { reactionAnchor: input.slackOrigin?.reactionAnchor ?? null },
     );
     return settlementDiagnosticCode;
   }

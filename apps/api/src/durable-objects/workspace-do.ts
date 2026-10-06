@@ -13547,11 +13547,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Settle the status reaction against the emoji the caller removed.
+   * Settle the status reaction against the anchor the caller acted on and the
+   * emoji it removed.
    *
-   * Answers `raced` when another transition — a working tick, or the terminal
-   * outcome — moved `reaction_current` while the caller was talking to Slack.
-   * The decision comes from the `RETURNING` witness, not a row count.
+   * Answers `raced` when another transition moved `reaction_current`, or a
+   * follow-up moved the anchor, while the caller was talking to Slack. The
+   * decision comes from the `RETURNING` witness, not a row count.
    */
   async settleSlackSessionReaction(
     input: WorkspaceSlackSessionReactionRequest,
