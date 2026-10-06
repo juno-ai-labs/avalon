@@ -8204,12 +8204,13 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 /* At phone width the ticks would sit on the text, so they go and the column
    keeps the narrow rule's even padding; chips and the Channel menu still reach
    every Breakout. Rally's turns fill the column there, since 88% of a phone
-   leaves a ragged right edge with nothing beside it. This sits after the rule
+   leaves a ragged right edge with nothing beside it; their opening
+   placeholder does too, so the snapshot lands without the turn widening. This sits after the rule
    above because both are three classes deep and source order decides. */
 @media (max-width: 640px) {
   .workstream-screen > .breakout-tick-bar { display: none; }
   .workstream-screen:has(> .breakout-tick-bar) .transcript-column { padding-left: var(--space-6); }
-  .workstream-screen .agent-message { max-width: 100%; }
+  .workstream-screen :is(.agent-message, .conversation-opening-message:not(.is-human)) { max-width: 100%; }
 }
 
 /* ── Split conversation ─────────────────────────────────────────────────────
