@@ -192,3 +192,25 @@ it("logs out every workspace session attached to the browser and clears its cook
   expect((await request("session",entry.cookie)).status).toBe(401);
   expect((await request("logout",entry.cookie,{})).status).toBe(204);
 });
+
+it("creates an organization the browser then opens with its cookie, and keeps no bearer it was never given",async () => {
+  const entry = await login();
+  const operationId = "01920000-0000-7000-8000-000000000001";
+  const response = await request("workspace/create",entry.cookie,{ name:"Acme Research",operationId });
+  expect(response.status).toBe(201);
+  const created = await response.json() as { region:string; workspaceId:string };
+  expect(created.region).toBe("global");
+  expect(created).not.toHaveProperty("accessToken");
+  expect(db.prepare("SELECT name FROM workspaces WHERE id=?").get(created.workspaceId)).toEqual({ name:"Acme Research" });
+  // The session the create path minted is revoked; only the browser's identity session stays open.
+  expect(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE revoked_at IS NULL").get()).toEqual({ n:1 });
+  // A retry of the same operation returns the same organization rather than a second.
+  const retry = await request("workspace/create",entry.cookie,{ name:"Acme Research",operationId });
+  expect(retry.status).toBe(201);
+  expect(await retry.json()).toEqual(created);
+  expect(db.prepare("SELECT COUNT(*) AS n FROM workspaces").get()).toEqual({ n:1 });
+  const selected = await request("workspace/select",entry.cookie,{ workspaceId:created.workspaceId });
+  expect(selected.status).toBe(200);
+  expect(await selected.json()).toMatchObject({ workspace:{ id:created.workspaceId,name:"Acme Research",role:"owner" } });
+  expect((await request("workspace/create",undefined,{ name:"Acme Research",operationId:crypto.randomUUID() })).status).toBe(401);
+});
