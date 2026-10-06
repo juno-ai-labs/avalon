@@ -7921,10 +7921,11 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   flex-direction: column;
   font-size: 12.5px;
   gap: 6px;
-  justify-content: center;
+  /* Icons sit on one line across the row even when a label wraps to two. */
+  justify-content: flex-start;
   min-height: 70px;
   outline: 0;
-  padding: 8px 4px;
+  padding: 14px 4px 8px;
   text-align: center;
   transition: background-color 120ms ease;
   user-select: none;
@@ -7955,9 +7956,17 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   margin-bottom: 8px;
   padding: 12px 14px;
 }
+/* The icon stays level with the title when the detail wraps. */
+.title-menu-scope > svg { align-self: flex-start; flex: none; margin-top: 2px; }
 .title-menu-scope-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .title-menu-scope-title { color: var(--av-sys-color-text-default); font-size: 14.5px; }
 .title-menu-scope-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; }
+/* Too narrow to put the copy and Change beside the icon: stack all three. */
+@media (max-width: 480px) {
+  .title-menu-scope { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .title-menu-scope > svg { margin-top: 0; }
+  .title-menu-scope .title-menu-link { margin-left: -4px; }
+}
 .title-menu-view:has(> .title-menu-scope) .title-menu-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
 .title-menu-person { align-items: center; display: flex; gap: 12px; min-height: 52px; padding: 4px 8px; }
 .title-menu-person .avatar { height: 34px; width: 34px; }
