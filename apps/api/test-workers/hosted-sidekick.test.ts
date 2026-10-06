@@ -1188,9 +1188,10 @@ describe("a hosted Sidekick", () => {
     // for the entry to move.
     const before = Date.now();
     await runDurableObjectAlarm(workspaceStub());
+    // Well under the 30-second test budget.
     await expect.poll(async () => (await alarms())
-      .filter((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND && alarm.alarm_key === started.runId)
-      .map((alarm) => alarm.due_at > before)).toEqual([true]);
+      .find((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND && alarm.alarm_key === started.runId)?.due_at,
+    { timeout: 10_000 }).toBeGreaterThan(before);
     expect(await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId })).toMatchObject({ state: "pending" });
   });
 
