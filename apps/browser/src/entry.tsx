@@ -365,8 +365,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   if (checking && !session && !proof) return <BrowserBoot />;
   // A signed-in link to an organization is still opening it; the signed-in
   // card would show an empty organization list until it does. `busy` is an
-  // action on that card, such as sign-out, which also clears `error`.
-  if (!proof && destination && session && !workspaceSession && !error && !busy && renderCollaboration) return <BrowserBoot />;
+  // action on that card, such as sign-out, which also clears `error`. A
+  // workspace session for another user is the old account's, still pending.
+  if (!proof && destination && session && workspaceSession?.user.id !== session.user.id && !error && !busy && renderCollaboration) return <BrowserBoot />;
 
   const failure = error ?? (!session && !proof && !challenge ? googleNotice : null);
   return <main className="onboarding-shell signin-shell entry">
