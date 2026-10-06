@@ -112,6 +112,10 @@ export class ScopeInvitationService {
     const actor = await this.readRelationship(request.workspaceId, request.actorUserId);
     const result = this.record(request, actor, prepared);
     if (result.status !== "created") return result;
+    // Again now the share is recorded: a claim for one of these addresses that
+    // settled while this creation was waiting on D1 may have deleted the row
+    // written above, before this share was there to keep it.
+    await this.noteRecipients(request.workspaceId, emails);
     // Someone who already signs in with one of these addresses holds the share
     // now rather than at their next sign-in: there is nothing for them to accept.
     await this.claimForKnownRecipients(request.workspaceId, emails);
@@ -213,14 +217,22 @@ export class ScopeInvitationService {
    * still pending keeps its row, so the next sign-in tries it again.
    */
   private async forgetSettled(workspaceId: string, emails: string[]): Promise<void> {
-    const waiting = new Set(this.invitations.summaries()
-      .filter((summary) => summary.status === "pending" && (summary.expiresAt === null || summary.expiresAt > Date.now()))
-      .map((summary) => summary.email));
-    const settled = emails.filter((email) => !waiting.has(email));
+    const settled = emails.filter((email) => !this.waiting().has(email));
     if (settled.length === 0) return;
     await this.env.DB.batch(settled.map((email) => this.env.DB.prepare(
       "DELETE FROM scope_share_recipients WHERE email = ? AND workspace_id = ? AND parent_id = ?",
     ).bind(email, workspaceId, this.parentId)));
+    // A share for one of these addresses recorded while the delete was in
+    // flight needs its row back.
+    const revived = settled.filter((email) => this.waiting().has(email));
+    if (revived.length > 0) await this.noteRecipients(workspaceId, revived);
+  }
+
+  /** Addresses with a share here that a sign-in could still claim. */
+  private waiting(): Set<string> {
+    return new Set(this.invitations.summaries()
+      .filter((summary) => summary.status === "pending" && (summary.expiresAt === null || summary.expiresAt > Date.now()))
+      .map((summary) => summary.email));
   }
 
   async revoke(input: z.infer<typeof RevokeScopeInvitationSchema>): Promise<ScopeInvitationResult> {

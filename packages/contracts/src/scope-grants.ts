@@ -143,6 +143,15 @@ export const ClaimScopeInvitationsSchema = z.strictObject({
 });
 export type ClaimScopeInvitations = z.infer<typeof ClaimScopeInvitationsSchema>;
 
+/**
+ * An invitation email sent before claiming existed carries an `inv_` token in
+ * its link. Presenting it after sign-in only says which Channel to ask; the
+ * claim still requires one of the caller's verified addresses.
+ */
+export const ClaimInvitationLinkSchema = z.strictObject({ link: z.string().min(1) });
+/** The first target of each share the link led to, for the page to open; empty when nothing was claimed. */
+export const ClaimedInvitationLinkSchema = z.strictObject({ targets: z.array(ScopeGrantTargetSchema) });
+
 export const RevokeScopeInvitationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, invitationId: IdSchema,
   actorUserId: UserIdSchema, expectedRevision: z.number().int().positive(),

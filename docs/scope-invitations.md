@@ -25,7 +25,7 @@ conversation owner.
 | `packages/contracts/src/scope-grants.ts` | Batch, claim, revision and result contracts. |
 | `apps/desktop/src/renderer/components/scope-sharing-panel.tsx` | Shared email form, stable retry operation, and the Guests still waiting to sign in, each revocable. |
 | `apps/api/src/routes/sharing.ts` | Authenticated HTTP boundary; server-selected actor and recipient identities. |
-| `apps/api/src/services/scope-invitation-claims.ts` | Claiming at sign-in: which Channels hold a share for the user's verified addresses, and asking each to claim. |
+| `apps/api/src/services/scope-invitation-claims.ts` | Claiming at sign-in: which Channels hold a share for the user's verified addresses, and asking each to claim; plus the old `inv_` token read for shares made before claiming. |
 | `packages/db/migrations/0119_scope_share_recipients.sql` | `scope_share_recipients`: address to Channel lookup for shares still waiting for a sign-in. |
 | `apps/api/src/services/scope-invitation-email.ts` | What the invitation says: the heading, the quoted preview, and the line about Rally. |
 | `apps/api/src/services/conversation-preview.ts` | The last turns of one conversation, named and truncated for somewhere outside the product. |
@@ -82,7 +82,11 @@ Channel that holds the share, before the Organization object records it. The
 share stays in the object, beside the grants it becomes; the row only says where
 to ask. Writing it first, with the other external awaits, means a denied or
 replayed creation can leave a row pointing at nothing pending. That is harmless:
-a claim that finds nothing removes it.
+a claim that finds nothing removes it. Creation writes the row again once the
+share is recorded, and a claim that deletes rows re-checks afterwards and
+restores any whose address gained a pending share meanwhile: a claim settling
+an address's last share and a new share to that address can otherwise race,
+leaving the new share with no row.
 
 `claimScopeInvitations` (`scope-invitation-claims.ts`) reads the user's verified
 addresses from `user_verified_emails`, plus any address the caller has verified
@@ -112,7 +116,8 @@ grants with the claim receipt in one local transaction. A share that cannot be
 claimed yet stays pending and keeps its lookup row, so the next sign-in tries
 again; once nothing is pending for an address in that Channel, its row is
 deleted. A Channel that cannot be reached is logged as
-`scope_invitation_claim_failed` and never fails the sign-in.
+`scope_invitation_claim_failed`; a failed lookup is logged as
+`scope_invitation_claim_lookup_failed`. Neither fails the sign-in.
 
 A claim is a cross-authority operation only at the relationship step. If the
 process stops after creating the D1 relationship, that relationship confers no
@@ -331,9 +336,15 @@ it opens nothing, since the revoked share is never claimed.
 
 `token_hash` on `parent_invitations` is retired but still `NOT NULL UNIQUE`; new
 rows store the invitation's own id there rather than paying for a table rebuild.
-Links in inboxes from before this change (`/invite#inv_…`) open the browser's
-sign-in page, and signing in with the invited address claims the share as any
-sign-in does. Their `link_payloads` rows are no longer read. A corrupted receipt or unavailable
+Shares made before this change have no lookup row, and the `inv_` token in their
+email (`/invite#inv_…`) is the only record of their Channel. The browser keeps
+that token in page memory and, once signed in, posts it to
+`POST /sharing/claim-link`, which reads the Channel from its `link_payloads` row
+and runs the ordinary claim with the caller's verified addresses. The token is
+routing, never proof: someone signed in with another address claims nothing.
+A Google sign-in from such a link leaves the page and loses the token; email
+sign-in, which those emails asked for, keeps it. Remove the route and
+`LEGACY_INVITATION_LINK` once no such share can still be pending. A corrupted receipt or unavailable
 identity authority remains an error, never a grant.
 
 ## Testing
@@ -346,7 +357,9 @@ real browser one-time-code sign-in with no further step, that someone else's
 claim reaching the same Channel takes nothing, a Global-verified address this
 deployment has not recorded, child-only access, atomic multi-target claiming
 with the share left pending after a rollback, re-claiming after removal and
-revocation, revoked and expired shares, sharer replacement, stable
+revocation, revoked and expired shares, a lookup outage that leaves the sign-in
+intact, a delete racing a new share's row, the old `inv_` token claiming only
+for the right address, sharer replacement, stable
 operation/email receipts, relationship publication, and the link's exact form.
 It also proves the bound the whole feature rests on, against real conversation
 objects with distinct transcripts in Main and in a child: an offer of the child
@@ -409,7 +422,9 @@ verified sign-in for it takes what is still pending; revoke a share sent to a
 wrong address. Email-only identities do not cross deployments, so a second
 deployment serving Organizations needs the link's sign-in to happen there.
 `parent_invitations.token_hash` is retired but still constrained, and stores
-the invitation id. Old `/invite#inv_…` links open the sign-in page.
+the invitation id. Shares made before this change keep reaching their
+recipient through the token in their old email, via `POST /sharing/claim-link`,
+until none is left pending.
 
 ### 2026-09-21 — Make outside-product conversation previews plain text before sizing
 
