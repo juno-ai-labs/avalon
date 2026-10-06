@@ -7,7 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
-import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
+import { isIosDevice, isMobileOs } from '../src/device';
+import { legacyIosWorkstreamHandoff } from '../src/workstream-link';
 import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
@@ -23,6 +24,13 @@ describe('public Rally site', () => {
     expect(isIosDevice('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', 'iPhone', 5)).toBe(true);
     expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 5)).toBe(true);
     expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 0)).toBe(false);
+  });
+  it('treats iOS, iPadOS and Android as mobile, and a Mac as not', () => {
+    expect(isMobileOs('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', 'iPhone', 5)).toBe(true);
+    expect(isMobileOs('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 5)).toBe(true);
+    expect(isMobileOs('Mozilla/5.0 (Linux; Android 15; Pixel 9)', 'Linux armv8l', 5)).toBe(true);
+    expect(isMobileOs('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 0)).toBe(false);
+    expect(isMobileOs('Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32', 0)).toBe(false);
   });
   it('hands canonical Channel paths to iPhone builds through their legacy addressed reader', () => {
     expect(legacyIosWorkstreamHandoff({
@@ -205,11 +213,12 @@ describe('public Rally site', () => {
     expect(renderLlmsTxt()).toContain('- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with other humans\n');
   });
 
-  it('lists the section links and the download button in the shared header, without Blog', () => {
+  it('lists the section links, the download button and the mobile sign-in in the shared header, without Blog', () => {
     const nav = renderSiteChrome('<!-- rally:site-nav -->');
     expect([...nav.matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/gu)].map(([, href, label]) => `${label} ${href}`)).toEqual([
       'Features /#features', 'Pricing /#pricing', 'Compare /#compare',
       'Download for Mac https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
+      'Sign in to Rally https://app.rallywith.ai',
     ]);
   });
 

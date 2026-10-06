@@ -7,6 +7,7 @@ import {
   workstreamDeepLinkFromParsedTarget,
   type ParsedWorkstreamLinkTarget,
 } from '@rally/contracts/workstream-links';
+import { isIosDevice } from './device';
 import { reportDesktopHandoff } from './telemetry';
 
 export {};
@@ -82,10 +83,6 @@ function initializeWorkstreamHandoff(): void {
     reportDesktopHandoff('workstream', 'manual', 'valid');
   });
   window.setTimeout(openOnce, 120);
-}
-
-export function isIosDevice(userAgent: string, platform: string, maxTouchPoints: number): boolean {
-  return /iPad|iPhone|iPod/u.test(userAgent) || (platform === 'MacIntel' && maxTouchPoints > 1);
 }
 
 /** Old iPhone builds understand this addressed path, but not Base58 /s/ /c/ /b/. */

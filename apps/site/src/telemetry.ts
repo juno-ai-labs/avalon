@@ -294,7 +294,9 @@ function reportSiteAction(link: SiteActionLink): void {
  */
 export const SITE_ACTION_LINKS = {
   'download-header': { action: 'download', placement: 'header' },
+  'sign-in-header': { action: 'primary_cta', placement: 'header' },
   'download-hero': { action: 'download', placement: 'hero' },
+  'web-app-hero': { action: 'secondary_cta', placement: 'hero' },
   'download-pricing-start': { action: 'download', placement: 'pricing', plan: 'start' },
   'download-pricing-grow': { action: 'download', placement: 'pricing', plan: 'grow' },
   'contact-pricing-enterprise': { action: 'founder_contact', placement: 'pricing', plan: 'enterprise' },
