@@ -110,6 +110,7 @@ describe('running an import', () => {
     const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
     const api = {
       startSessionImport: () => options.reservation ?? Promise.resolve({ workstreamId: 'w1', substreamId: 's1' }),
+      confirmSocketTicket: vi.fn(),
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
       discardSessionImport: async (workstreamId: string) => { discards.push(workstreamId); },
       startSessionImportUpdate: unused,
@@ -124,8 +125,22 @@ describe('running an import', () => {
       ...(onSteps ? { onSteps } : {}),
       ...(options.onStarted ? { onStarted: options.onStarted } : {}),
     });
-    return { run, discards };
+    return { run, discards, api };
   }
+
+  it('confirms recovery only after a valid import feed frame', async () => {
+    sockets.length = 0;
+    const { run, api } = started();
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    const socket = sockets[0]!;
+    socket.emit('open');
+    socket.emit('message', 'not JSON');
+    socket.emit('message', JSON.stringify({ type: 'harness_status_changed', status: 'invalid' }));
+    expect(api.confirmSocketTicket).not.toHaveBeenCalled();
+    socket.emit('message', wire('harness_status_changed', { status: 'running' }));
+    expect(api.confirmSocketTicket).toHaveBeenCalledWith({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] });
+    await run.cancel();
+  });
 
   it('refuses failed page checks before saving and accepts a repaired comparison', async () => {
     sockets.length = 0;
@@ -335,6 +350,7 @@ describe('running an import', () => {
     const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
     const api = {
       startSessionImport: async () => ({ workstreamId: 'w1', substreamId: 's1' }),
+      confirmSocketTicket: vi.fn(),
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
       discardSessionImport: async (workstreamId: string) => { discards.push(workstreamId); },
       completeSessionImport: async () => 'w1',
@@ -375,6 +391,7 @@ describe('running an import', () => {
     const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
     const api = {
       startSessionImport: async () => ({ workstreamId: 'w1', substreamId: 's1' }),
+      confirmSocketTicket: vi.fn(),
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
       discardSessionImport: async () => undefined,
       completeSessionImport: async (workstreamId: string) => { completions.push(workstreamId); return workstreamId; },
@@ -426,6 +443,7 @@ describe('running an import', () => {
     const unused = async (): Promise<never> => { throw new Error('not used by this run'); };
     const api = {
       startSessionImport: async () => ({ workstreamId: 'w1', substreamId: 's1' }),
+      confirmSocketTicket: vi.fn(),
       getSocketTicket: async () => ({ url: 'wss://rally.test/feed', ticket: 't', protocols: ['rally', 't'] as [string, string] }),
       discardSessionImport: async () => undefined,
       completeSessionImport: async () => { throw new Error('This import key belongs to another channel'); },

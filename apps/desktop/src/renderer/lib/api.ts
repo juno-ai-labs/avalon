@@ -101,7 +101,9 @@ import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { isCookieSession, type CookieClientSession } from '@rally/contracts/client-session';
 import { logDebug } from '../../common/logger';
-import { requestSocketTicket } from './socket-ticket-request';
+import { isSocketTicketRequestTimeoutError, requestSocketTicket } from './socket-ticket-request';
+import { fetchWithNetworkRecovery, networkRecoveryGeneration, reportNetworkTicket, waitForNetworkRecovery } from './network-recovery';
+import type { NetworkTicketObservation } from '../../common/network-recovery';
 import { normalizeElicitation } from './elicitation';
 import { resolveMentionPayload } from './mention-draft';
 import { newRequestId } from './perf-trace';
@@ -585,6 +587,7 @@ export function redactQuery(path: string): string {
 }
 
 export class RallyApi {
+  private readonly networkTickets = new WeakMap<SocketTicket, NetworkTicketObservation>();
   private readonly pendingRunKeys = new Map<string, string>();
   private readonly faviconRequests = new Map<string, Promise<Blob | null>>();
 
@@ -646,6 +649,8 @@ export class RallyApi {
   }
 
   private async send(path: string, init: RequestInit, accessToken: string | null): Promise<Response> {
+    const recovery = waitForNetworkRecovery(init.signal ?? undefined);
+    if (recovery) await recovery;
     const headers = new Headers(init.headers);
     if (!headers.has('Accept')) headers.set('Accept', 'application/json');
     // On every request rather than on the two that check it: the header says
@@ -657,7 +662,7 @@ export class RallyApi {
     const cookie = isCookieSession(this.session);
     if (cookie) headers.delete('Authorization');
     try {
-      return await fetch(`${this.baseUrl}${path}`, { ...init, headers, ...(cookie ? { credentials: 'same-origin' as const } : {}) });
+      return await fetchWithNetworkRecovery(`${this.baseUrl}${path}`, { ...init, headers, ...(cookie ? { credentials: 'same-origin' as const } : {}) });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       throw networkApiError('Rally could not reach the selected regional service.', error);
@@ -2201,23 +2206,48 @@ export class RallyApi {
     if (speculative) queryParams.set('speculative', 'true');
     const encodedQuery = queryParams.toString();
     const query = encodedQuery === '' ? '' : `?${encodedQuery}`;
-    return requestSocketTicket(
-      (attemptSignal) => this.request(
-        `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
-        { schema: this.socketSchema, signal: attemptSignal, ...(requestId ? { requestId } : {}) },
-      ),
-      { ownerSignal: signal, timeoutMs },
+    return this.socketTicketRequest(
+      `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
+      { signal, timeoutMs, requestId },
     );
   }
 
   getWorkspaceSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
-    return requestSocketTicket(
-      (attemptSignal) => this.request('/workspace/socket', {
-        schema: this.socketSchema,
-        signal: attemptSignal,
-      }),
-      { ownerSignal: signal },
-    );
+    return this.socketTicketRequest('/workspace/socket', { signal });
+  }
+
+  /** A live snapshot/sync, rather than a 101 or a ticket, proves recovery. */
+  confirmSocketTicket(ticket: SocketTicket): void {
+    const observation = this.networkTickets.get(ticket);
+    if (!observation) return;
+    this.networkTickets.delete(ticket);
+    reportNetworkTicket({ ...observation, outcome: 'live' });
+  }
+
+  private async socketTicketRequest(path: string, options: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    requestId?: string;
+  }): Promise<SocketTicket> {
+    const recovery = waitForNetworkRecovery(options.signal);
+    if (recovery) await recovery;
+    const observation: NetworkTicketObservation = {
+      generation: networkRecoveryGeneration(), target: path.split('?')[0]!, outcome: 'accepted',
+    };
+    try {
+      const ticket = await requestSocketTicket(
+        (signal) => this.request(path, { schema: this.socketSchema, signal,
+          ...(options.requestId ? { requestId: options.requestId } : {}) }),
+        { ownerSignal: options.signal, timeoutMs: options.timeoutMs },
+      );
+      this.networkTickets.set(ticket, observation);
+      reportNetworkTicket(observation);
+      return ticket;
+    } catch (error) {
+      reportNetworkTicket({ ...observation,
+        outcome: isSocketTicketRequestTimeoutError(error) && navigator.onLine !== false ? 'timeout' : 'failed' });
+      throw error;
+    }
   }
 
   async getTranscriptionSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {

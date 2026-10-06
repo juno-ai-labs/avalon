@@ -104,6 +104,30 @@ compact rail collapses it to a tile like a Space row. Today the one item is
 browser tab, for members and guests alike; the Mac app passes none and draws
 nothing there. Tips or tutorials go here too.
 
+### At phone width
+
+At 640px and narrower the sidebar becomes a 56px top bar over the
+conversation: the **menu button** (tabler `menu-2`) at its left, the round top
+actions at its right. Everything else in the sidebar (pills, list, footer
+items, account) is a full-screen sheet under the bar. The menu button toggles
+`useUiStore.sidebarOpen`; the sheet drops in and out with a clip over 260ms,
+and reduced motion cuts it. Any route change closes it, whoever navigated (a
+row, a search result, the New channel form, a pill that had to leave the open
+Channel), as do Escape, the button, and widening past 640px. Picking a pill
+that only filters, or re-sorting, does not, since the reader is still
+choosing. While it is open, `AppShell` makes `.main-pane` `inert`, so Tab and
+a screen reader stay in the sheet, and Escape hands focus back to the button.
+Escape is heard in the capture phase and stands down while a menu or dialog
+is open, so it closes that first; a tooltip does not count, though Radix marks
+its Escape handled.
+
+It is CSS on the same `<aside>`: a `clip-path` hides all but the bar, and
+also stops taps on the closed sheet; `visibility` keeps the sheet out of the
+tab order once the close finishes. `SidebarTopActions` takes the button
+through its `leading` slot. Electron's window has an 860px minimum, so only
+the browser reaches this width. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx`
+repeats the CSS's 640.
+
 ### Pins under All
 
 A pin belongs to one placement, and the server keeps one ordered run per Space
@@ -236,7 +260,9 @@ panel of the pane it was clicked in, once.
   route behaviour.
 - **The sidebar never collapses.** Nothing may write a collapsed width or hide
   the pills; the icon rail and its storage keys are gone. Guard: the
-  `collapsible={false}` prop; no toggle exists to call.
+  `collapsible={false}` prop; no toggle exists to call. At phone width the
+  sheet hides the pills and list behind the menu button; that is a different
+  layout, not a collapse, and writes no width.
 
 ## Boundary
 
@@ -292,8 +318,30 @@ roster dialog uses.
 **Why:** Removing someone, or leaving, needed the full roster dialog behind
 **Change**. The confirm lives in the host rather than the menu because the
 menu closes as the dialog takes focus, and state kept inside it would unmount
-with it. A refusal keeps the dialog open so its reason shows where it was asked.
-The last participant cannot leave, matching the roster dialog.
+with it.
+
+### 2026-10-06 — The sidebar is a top bar and sheet at phone width
+
+**What changed:** At 640px and narrower the sidebar's top bar spans the
+screen with a `menu-2` button at its left and the round actions at its
+right, and the rest of the sidebar is a sheet that button drops in and out.
+`SidebarTopActions` gained a `leading` slot. The unused fixed
+`mobile-sidebar-trigger` button and its scrim, hidden by CSS at every width,
+are gone.
+
+**Why:** On a phone the 340px sidebar left no room for the conversation, and
+the web app had no way to reach a phone-sized layout.
+
+**Considered and rejected:** A separate mobile header holding copies of the
+actions. Two attention menus and two New channel dialogs would need keeping
+in step, so the bar stays the sidebar's own and CSS changes its shape. A
+slide-in drawer from the left was also rejected: the aside holds the bar, so a
+transform would move the bar too.
+
+**Consequences:** A future change that moves the top actions out of the aside
+has to bring the sheet's open state with them. `sidebarOpen` now means "the
+pane is inert", so anything that sets it has to be at phone width; the sheet
+closes itself on widening and on every route change to keep that true.
 
 ### 2026-10-05 — The Space strip has no Refresh
 
