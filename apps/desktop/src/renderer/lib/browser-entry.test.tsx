@@ -263,6 +263,21 @@ it('returns to email entry on a non-JSON unauthorized response', async () => {
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
+it('leads with Google and opens the email form only when asked', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 })));
+  render(<BrowserEntry />);
+  const google = await screen.findByRole('button', { name: 'Continue with Google' });
+  expect(google).toHaveClass('button-primary');
+  expect(screen.queryByRole('textbox', { name: 'Email' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Continue with email' }));
+  expect(screen.getByRole('textbox', { name: 'Email' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Email me a sign-in link' })).toHaveClass('button-primary');
+  expect(screen.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Other sign-in options' }));
+  expect(screen.getByRole('button', { name: 'Continue with Google' })).toBeInTheDocument();
+  expect(screen.queryByRole('textbox', { name: 'Email' })).toBeNull();
+});
+
 it('preserves renewal requested while a focus restore is in flight', async () => {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
   const now = Date.parse('2026-09-17T00:00:00.000Z'); vi.setSystemTime(now);
@@ -364,6 +379,29 @@ it('hides Continue with Google on an invitation page, whose link lives only in p
   expect(screen.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
 });
 
+it('returns to the Google-first choice after an email sign-in signs out', async () => {
+  let signedIn = false;
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session' || path === '/email/redeem') return signedIn
+      ? Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() })
+      : Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/email/start') { signedIn = true; return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: Date.now() + 600_000 }, { status: 202 }); }
+    if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
+    if (path === '/logout') { signedIn = false; return new Response(null, { status: 204 }); }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue with email' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: 'person@example.test' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Sign-in code' }), { target: { value: '123456' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+  expect(await screen.findByRole('button', { name: 'Continue with Google' })).toBeInTheDocument();
+  expect(screen.queryByRole('textbox', { name: 'Email' })).toBeNull();
+});
+
 it('drops a returned Google failure once an email sign-in starts', async () => {
   vi.stubGlobal('fetch', vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
@@ -374,6 +412,7 @@ it('drops a returned Google failure once an email sign-in starts', async () => {
   history.replaceState(null, '', '/#google_error=google_oauth_failed');
   render(<BrowserEntry />);
   expect(await screen.findByRole('alert')).toHaveTextContent('Google sign-in did not complete. Try again or use your email.');
+  fireEvent.click(screen.getByRole('button', { name: 'Continue with email' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: 'person@example.test' } });
   fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
   expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
@@ -400,7 +439,8 @@ it('shows the opening mark, not an empty organization list, while a sign-in open
   history.replaceState(null, '', `/app/workspaces/global/${workspace.id}`);
   const view = render(<BrowserEntry renderCollaboration={(_region, session) => <output>{session.workspace?.name}</output>} />);
   try {
-    fireEvent.change(await screen.findByRole('textbox', { name: 'Email' }), { target: { value: user.email } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with email' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: user.email } });
     fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
     fireEvent.change(await screen.findByRole('textbox', { name: 'Sign-in code' }), { target: { value: '1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
@@ -429,7 +469,8 @@ it('shows the opening mark while a sign-in activates a linked organization in an
   history.replaceState(null, '', `/app/workspaces/enterprise/${enterprise.id}`);
   const view = render(<BrowserEntry renderCollaboration={(_region, session) => <output>{session.workspace?.name}</output>} />);
   try {
-    fireEvent.change(await screen.findByRole('textbox', { name: 'Email' }), { target: { value: user.email } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with email' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: user.email } });
     fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
     fireEvent.change(await screen.findByRole('textbox', { name: 'Sign-in code' }), { target: { value: '1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
