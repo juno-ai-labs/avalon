@@ -129,6 +129,23 @@ const installedConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   'x',
 ]);
 
+/** A row under the Mac's notification toggle saying why macOS is not showing them, with the way to fix it. */
+function MacNotificationNotice({ title, detail, onOpen }: {
+  title: string;
+  detail: string;
+  onOpen?: () => void;
+}): React.JSX.Element {
+  return (
+    <div className="settings-preference-row">
+      <span className="settings-row-copy">
+        <strong>{title}</strong>
+        <small>{detail}</small>
+      </span>
+      {onOpen && <Button onClick={onOpen}>Open System Settings</Button>}
+    </div>
+  );
+}
+
 /** Settings → Notifications in a browser tab: this browser's Web Push subscription. */
 function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Element {
   const queryClient = useQueryClient();
@@ -1432,13 +1449,26 @@ export function WorkspaceSettingsScreen({
             {activeSection === 'notifications' && featureFlags.data?.pushNotificationsEnabled && !browserHost && (
               <section className="settings-pane">
                 <div className="settings-pane-heading"><h2>On this Mac</h2></div>
-                <SettingToggle setting={settings.pushNotifications}
-                  checked={applicationSettings?.pushNotificationsEnabled ?? true}
-                  disabled={!applicationSettings || applicationSettings.pushNotificationStatus === 'unavailable' || updatePushNotifications.isPending}
-                  onChange={(event) => updatePushNotifications.mutate(event.currentTarget.checked)} />
-                {applicationSettings?.pushNotificationStatus === 'unavailable' && <p className="settings-section-copy">Notifications need an installed release build of Rally.</p>}
-                {applicationSettings?.pushNotificationStatus === 'denied' && <p className="settings-section-copy">Notifications for Rally are turned off in macOS, so you get no alerts and no Dock badge. <button className="button-secondary" onClick={() => void bridge.openNotificationSettings()}>Open System Settings</button></p>}
-                {applicationSettings?.pushNotificationStatus === 'enabled' && applicationSettings.notificationBadgeStatus === 'disabled' && <p className="settings-section-copy">Badges for Rally are turned off in macOS, so the Dock icon does not show what needs your attention. <button className="button-secondary" onClick={() => void bridge.openNotificationSettings()}>Open System Settings</button></p>}
+                <div className="settings-list-card">
+                  <SettingToggle setting={settings.pushNotifications}
+                    checked={applicationSettings?.pushNotificationsEnabled ?? true}
+                    disabled={!applicationSettings || applicationSettings.pushNotificationStatus === 'unavailable' || updatePushNotifications.isPending}
+                    onChange={(event) => updatePushNotifications.mutate(event.currentTarget.checked)} />
+                  {applicationSettings?.pushNotificationStatus === 'unavailable' && (
+                    <MacNotificationNotice title="Not available in this build"
+                      detail="Notifications need an installed release build of Rally." />
+                  )}
+                  {applicationSettings?.pushNotificationStatus === 'denied' && (
+                    <MacNotificationNotice title="Turned off in macOS"
+                      detail="Rally can't show alerts or a Dock badge until you allow notifications."
+                      onOpen={() => void bridge.openNotificationSettings()} />
+                  )}
+                  {applicationSettings?.pushNotificationStatus === 'enabled' && applicationSettings.notificationBadgeStatus === 'disabled' && (
+                    <MacNotificationNotice title="Badges turned off in macOS"
+                      detail="The Dock icon won't show what needs your attention until you allow badges."
+                      onOpen={() => void bridge.openNotificationSettings()} />
+                  )}
+                </div>
                 {updatePushNotifications.error && <InlineError>{updatePushNotifications.error.message}</InlineError>}
               </section>
             )}

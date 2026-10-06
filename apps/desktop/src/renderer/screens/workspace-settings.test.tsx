@@ -2305,8 +2305,8 @@ describe('Organization settings', () => {
   });
 
   it.each([
-    ['denied', 'unknown', 'Notifications for Rally are turned off in macOS, so you get no alerts and no Dock badge.'],
-    ['enabled', 'disabled', 'Badges for Rally are turned off in macOS, so the Dock icon does not show what needs your attention.'],
+    ['denied', 'unknown', 'Turned off in macOS'],
+    ['enabled', 'disabled', 'Badges turned off in macOS'],
   ] as const)('sends a Mac with notifications %s and badges %s to System Settings', async (status, badge, copy) => {
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
     getApplicationSettings.mockResolvedValue(applicationSettings({
@@ -2316,7 +2316,7 @@ describe('Organization settings', () => {
     fireEvent.click(await within(screen.getByRole('navigation', { name: 'Settings sections' }))
       .findByRole('button', { name: 'Notifications' }));
 
-    const notice = (await screen.findByText(copy)).closest('p') as HTMLElement;
+    const notice = (await screen.findByText(copy)).closest('.settings-preference-row') as HTMLElement;
     fireEvent.click(within(notice).getByRole('button', { name: 'Open System Settings' }));
     expect(openNotificationSettings).toHaveBeenCalledTimes(1);
   });
