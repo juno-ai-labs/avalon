@@ -70,15 +70,23 @@ if (opt('video')) {
     ...(wav ? ['-i', wav] : []),
     '-c:v', 'libx264', '-preset', 'slow', '-crf', '14', '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-tune', 'animation',
     ...(wav ? ['-c:a', 'aac', '-b:a', '320k', '-shortest'] : []), '-movflags', '+faststart', out], { stdio: ['pipe', 'inherit', 'inherit'] });
+  // a failed encode must fail the run, not hand over a missing or truncated film
+  let ffDied = false;
+  const ffExit = new Promise(r => ff.on('close', c => { ffDied = true; r(c); }));
+  ff.stdin.on('error', () => { ffDied = true; });
   const total = Math.round(info.duration * info.fps), t0 = Date.now();
   const checks = [];
   for (let f = 0; f < total; f++) {
+    if (ffDied) break;
     const png = await grab(page, f);
     if (f % info.fps === Math.floor(info.fps / 2)) { const c = path.join(work, `c_${f}.png`); fs.writeFileSync(c, png); checks.push(c); }
-    if (!ff.stdin.write(png)) await new Promise(r => ff.stdin.once('drain', r));
+    // wait for the pipe, but stop waiting if ffmpeg exits or the pipe breaks
+    if (!ff.stdin.write(png)) await new Promise(r => { ff.stdin.once('drain', r); ff.stdin.once('error', r); ff.once('close', r); });
     if (f % (info.fps * 5) === 0) console.log(`frame ${f}/${total}  ${((Date.now() - t0) / 1000).toFixed(0)}s`);
   }
-  ff.stdin.end(); await new Promise(r => ff.on('close', r));
+  ff.stdin.end();
+  const code = await ffExit;
+  if (code !== 0) { console.error(`ffmpeg failed (exit ${code}); no video written to ${out}`); await browser.close(); process.exit(1); }
   console.log('video:', out);
   console.log('check sheet (one frame per second, read it):', sheet(checks, out.replace(/\.mp4$/, '-check.png'), 5));
 }
