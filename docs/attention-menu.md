@@ -91,13 +91,20 @@ It does not name who mentioned the reader (see the changelog).
 
 ## Failure modes and limits
 
+- **While the Channel directory is still loading** (the Space walk at
+  startup, a page not yet read on an older server's paged list, or a walk that
+  failed), the menu never says "Nothing needs your attention": an empty list
+  reads **Still loading channels**, and a non-empty one adds that line under
+  its rows. `AppShell` decides this from the directory query (`hasMore`,
+  `isFetching`, `isError`).
 - **A Breakout list that has not arrived yet** (a cold start before the first
   socket row, or a REST-only row) lists none of that Channel's Breakouts. The
   Channel's own Main still lists. The list fills in when the row arrives.
 - **A row older than the socket's first push** says what it said last; the
   menu is as current as the sidebar, no more and no less.
-- **No cap on the count or the list.** The trigger widens past two digits and
-  the dropdown scrolls. The count's colours are the `workstream-news` and
+- **The count shows 99+ past two digits** so it stays in the 32px button the
+  sidebar's minimum width is sized for; the accessible label keeps the exact
+  number. The list has no cap and scrolls. The count's colours are the `workstream-news` and
   `palette-ink-light` tokens, checked in a real window in both themes.
 
 ## Testing
@@ -130,7 +137,9 @@ running agent or needs-input run, as `conversationNeedsViewer` does: those are
 the agent's state, not something sent to the person. Naming the mention's
 author: it needs a server change and was not asked for.
 
-**Consequences:** A new reader-owned state belongs in `readerMarkerStatus` and
+**Consequences:** The menu only claims "nothing" once the whole directory has
+loaded; review caught that a partly walked list would otherwise read as
+exhaustive. A new reader-owned state belongs in `readerMarkerStatus` and
 `MARKER_PRECEDENCE` together, and then appears here and on the sidebar dot at
 once. Anything that should appear here but is not a conversation (a failed
 Sidekick, say) needs a source this module does not have yet.
