@@ -309,27 +309,51 @@ it('does not publish an old account organization list after focus restores anoth
   expect(screen.getByRole('link', { name: /Other account organization/ })).toBeInTheDocument();
 });
 
-it('fills the invited mailbox into the sign-in form and accepts by the opaque token alone', async () => {
-  // Token-shaped, not token-like: a high-entropy fixture trips the secret scan.
-  const sealed = `inv_${'this-is-not-a-real-token'.padEnd(43, '0')}`;
-  history.replaceState(null, '', `/invite#${sealed}`);
-  const bodies = new Map<string, unknown>();
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
-    const path = input.split('/browser')[1];
-    if (init?.body) bodies.set(path!, JSON.parse(String(init.body)));
-    if (path === '/invitation') return Response.json({ email: 'invited@example.test' });
-    if (path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
-    if (path === '/email/start') return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: new Date(Date.now() + 600_000).toISOString() }, { status: 202 });
+it('opens a shared conversation straight from sign-in, with nothing to accept', async () => {
+  // The emailed link is the conversation's own address. Signing in as the
+  // invited mailbox is the whole of joining: the server claims the share then.
+  const path = `/app/workspaces/global/${workspace.id}/workstreams/dddddddd-dddd-4ddd-8ddd-dddddddddddd`;
+  history.replaceState(null, '', path);
+  const requests: string[] = [];
+  let signedIn = false;
+  const expiresAt = new Date(Date.now() + 100_000).toISOString();
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const route = input.split('/browser')[1]!;
+    requests.push(route);
+    if (route === '/session' || (route === '/workspace/select' && !signedIn)) return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (route === '/email/start') return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: Date.now() + 600_000 }, { status: 202 });
+    if (route === '/email/redeem') { signedIn = true; return Response.json({ user, workspace: null, expiresAt }); }
+    if (route === '/workspace/select') return Response.json({ user, workspace, expiresAt });
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry renderCollaboration={() => <p>Shared conversation</p>} />);
+  expect(await screen.findByText('Sign in with the email address the link was sent to.')).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: 'guest@example.test' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Sign-in code' }), { target: { value: '123456' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  expect(await screen.findByText('Shared conversation')).toBeInTheDocument();
+  expect(location.pathname).toBe(path);
+  expect(requests.some((route) => route.includes('accept') || route === '/invitation')).toBe(false);
+});
+
+it('treats an old token invitation link as a plain sign-in page', async () => {
+  history.replaceState(null, '', `/invite#inv_${'this-is-not-a-real-token'.padEnd(43, '0')}`);
+  const requests: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const route = input.split('/browser')[1]!;
+    requests.push(route);
+    if (route === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
     throw new Error(`Unexpected browser request: ${input}`);
   }));
   render(<BrowserEntry />);
-  // The recipient never typed this: the page asked the deployment what the
-  // token was addressed to, before any session exists.
-  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue('invited@example.test'));
-  expect(bodies.get('/invitation')).toEqual({ link: sealed });
+  expect(await screen.findByRole('button', { name: 'Continue with Google' })).toBeInTheDocument();
+  // The token is out of history, and nothing asks what it pointed at: signing
+  // in with the invited address is what claims the share.
+  expect(location.pathname).toBe('/');
   expect(location.hash).toBe('');
-  fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
-  await waitFor(() => expect(bodies.get('/email/start')).toMatchObject({ email: 'invited@example.test' }));
+  expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue('');
+  expect(requests).toEqual(['/session']);
 });
 
 it('starts Google sign-in for the page it was opened on and explains a declined one on return', async () => {
@@ -348,20 +372,6 @@ it('starts Google sign-in for the page it was opened on and explains a declined 
     fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
     await waitFor(() => expect(starts).toEqual([{ returnPath: `/app/workspaces/global/${workspace.id}` }]));
   } finally { view.unmount(); }
-});
-
-it('hides Continue with Google on an invitation page, whose link lives only in page memory', async () => {
-  history.replaceState(null, '', `/invite#inv_${'this-is-not-a-real-token'.padEnd(43, '0')}`);
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
-    const path = input.split('/browser')[1];
-    if (path === '/invitation') return Response.json({ email: 'invited@example.test' });
-    if (path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
-    throw new Error(`Unexpected browser request: ${input}`);
-  }));
-  render(<BrowserEntry />);
-  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue('invited@example.test'));
-  expect(screen.getByRole('button', { name: 'Email me a sign-in link' })).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
 });
 
 it('drops a returned Google failure once an email sign-in starts', async () => {

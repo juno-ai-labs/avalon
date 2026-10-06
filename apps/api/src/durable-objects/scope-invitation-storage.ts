@@ -98,8 +98,8 @@ export class ScopeInvitationStorage {
     });
   }
 
-  /** Called in the SAME transaction as grant activation. Never rebind an accepted invite. */
-  accept(id: string, userId: string, incarnation: string): ScopeInvitationSummary {
+  /** Called in the SAME transaction as grant activation. Never rebind a claimed share. */
+  claim(id: string, userId: string, incarnation: string): ScopeInvitationSummary {
     const record = this.read(id);
     if (!record || record.summary.status !== "pending") throw new Error("scope_invitation_not_pending");
     const summary = ScopeInvitationSummarySchema.parse({ ...record.summary, status: "accepted",

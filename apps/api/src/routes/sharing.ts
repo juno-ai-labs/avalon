@@ -3,11 +3,11 @@ import { listSharedDirectory, listSharedNavigationDirectory } from "../services/
 import { Hono } from "hono";
 import { z } from "zod";
 import { IdSchema } from "@rally/contracts";
-import { UNAVAILABLE_INVITATION, openScopeInvitationCredential, parentStub } from "../services/scope-invitation-link";
-import { ScopeSharingOptionsSchema, ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, AcceptScopeInvitationSchema, RevokeScopeInvitationSchema, ScopeInvitationCredentialSchema,
+import { parentStub } from "../services/scope-invitation-claims";
+import { ScopeSharingOptionsSchema, ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, RevokeScopeInvitationSchema,
   SharedDirectorySchema, SharedNavigationDirectorySchema, ScopeInvitationResultSchema, type ScopeInvitationResult } from "@rally/contracts/scope-grants";
 import type { HonoAppEnv } from "../env";
-import { getIdentityAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
+import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { ApiError } from "../lib/api-error";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
@@ -21,11 +21,10 @@ const CreateRequestSchema = z.strictObject({
   expiresAt: CreateScopeInvitationsSchema.shape.expiresAt,
   completeWorkstream: CreateScopeInvitationsSchema.shape.completeWorkstream,
 });
-const AcceptRequestSchema = ScopeInvitationCredentialSchema;
 const RevokeRequestSchema = RevokeScopeInvitationSchema.pick({ expectedRevision: true });
 const InvitationParamSchema = z.strictObject({ parentId: IdSchema, invitationId: IdSchema });
 
-function acceptedResult(input: ScopeInvitationResult) {
+function sharingResult(input: ScopeInvitationResult) {
   const result = ScopeInvitationResultSchema.parse(input);
   if (result.status !== "denied") return result;
   const status = result.reason === "configuration_required" ? 503
@@ -35,8 +34,7 @@ function acceptedResult(input: ScopeInvitationResult) {
     : result.reason === "migration_pending" ? "Sharing is being prepared. Try again shortly."
     : result.reason === "configuration_required" ? "Email sharing is not configured. Contact your workspace administrator."
     : result.reason === "scope_changed" || result.reason === "revision_conflict" || result.reason === "operation_conflict" ? "Sharing changed. Refresh the available scopes and try again."
-    : result.reason === "verified_email_required" ? "Sign out and sign in with the email address that received this invitation."
-    : UNAVAILABLE_INVITATION;
+    : "This share is no longer available.";
   throw new ApiError(status, `scope_${result.reason}`, message);
 }
 
@@ -52,7 +50,7 @@ function channelScopeNotFound(error: unknown): never {
   throw error;
 }
 
-/** Mounted below identity auth; only creating/revoking needs an existing relationship. */
+/** Mounted below identity auth; every route here needs an existing relationship. */
 export const sharingRoutes = new Hono<HonoAppEnv>();
 sharingRoutes.get("/directory", requireWorkspaceAuth, async (c) => {
   const auth = getWorkspaceAuth(c);
@@ -109,31 +107,23 @@ sharingRoutes.post("/", requireWorkspaceAuth, zValidator("json", CreateRequestSc
     throw new ApiError(400, "scope_address_mismatch", "Choose targets in this workstream");
   }
   const request = CreateScopeInvitationsSchema.parse({ ...body, workspaceId: auth.workspaceId, actorUserId: auth.userId });
-  const result = await (await parentStub(c.env, request.workspaceId)).createScopeInvitations(request).catch(channelScopeNotFound);
-  c.header("Cache-Control", "no-store");
-  return c.json(ScopeInvitationResultSchema.parse(acceptedResult(result)), 201);
-});
-sharingRoutes.post("/accept", zValidator("json", AcceptRequestSchema), async (c) => {
-  // The credential names its own scope; an authenticated caller cannot address
-  // an invitation this deployment did not issue a token for, and never sees
-  // where it points until the acceptance it authorizes succeeds.
-  const address = await openScopeInvitationCredential(c.env, c.req.valid("json"));
-  if (!address) throw new ApiError(403, "scope_invitation_unavailable", UNAVAILABLE_INVITATION);
-  const request = AcceptScopeInvitationSchema.parse({ ...address, userId: getIdentityAuth(c).userId });
-  const result = await (await parentStub(c.env, request.workspaceId)).acceptScopeInvitation(request).catch(channelScopeNotFound);
-  // Acceptance may have created the recipient's guest relationship. Publish
-  // its change now rather than on the next cron sweep, so the rest of the
-  // Organization (member lists, other checks) hears of it in seconds. After
-  // the response: the acceptance itself already recorded it where it checks.
-  const delivery = dispatchWorkspaceRelationshipChanges(c.env, { workspaceId: request.workspaceId, userId: request.userId })
+  const result = ScopeInvitationResultSchema.parse(sharingResult(
+    await (await parentStub(c.env, request.workspaceId)).createScopeInvitations(request).catch(channelScopeNotFound)));
+  // A recipient who already had an account was claimed as the share was made,
+  // which may have created their guest relationship. Publish it now rather
+  // than on the next cron sweep. After the response: the claim already
+  // recorded it where it checks.
+  const joined = result.status === "created"
+    ? [...new Set(result.invitations.flatMap((invitation) => invitation.acceptedByUserId ? [invitation.acceptedByUserId] : []))] : [];
+  const delivery = Promise.all(joined.map((userId) => dispatchWorkspaceRelationshipChanges(c.env, { workspaceId: request.workspaceId, userId })
     .catch((error: unknown) => {
       logWarn(c.env, "workspace_relationship_dispatch_failed", {
         workspace_id: request.workspaceId, error: diagnosticErrorCode(error, "workspace_relationship_dispatch_failed"),
       });
-    });
+    })));
   try { c.executionCtx.waitUntil(delivery); } catch { void delivery; }
   c.header("Cache-Control", "no-store");
-  return c.json(ScopeInvitationResultSchema.parse(acceptedResult(result)));
+  return c.json(ScopeInvitationResultSchema.parse(result), 201);
 });
 sharingRoutes.delete("/:parentId/:invitationId", requireWorkspaceAuth,
   zValidator("param", InvitationParamSchema), zValidator("json", RevokeRequestSchema), async (c) => {
@@ -142,5 +132,5 @@ sharingRoutes.delete("/:parentId/:invitationId", requireWorkspaceAuth,
       workspaceId: auth.workspaceId, actorUserId: auth.userId });
     const result = await (await parentStub(c.env, request.workspaceId)).revokeScopeInvitation(request).catch(channelScopeNotFound);
     c.header("Cache-Control", "no-store");
-    return c.json(ScopeInvitationResultSchema.parse(acceptedResult(result)));
+    return c.json(ScopeInvitationResultSchema.parse(sharingResult(result)));
   });

@@ -1,12 +1,16 @@
 # Scoped invitations
 
-Scoped invitations offer Main, individual children or a workstream to verified
-email recipients. The invitation and resulting grants live in the same Channel
-parent, hosted in `WorkspaceDO`
-([hosted conversation parents](hosted-conversation-parents.md)). Client integration lands in the browser-lite layer of the PR stack
-(#825); this platform layer (#822) owns the protocol. The [lite browser entry](browser-client.md) accepts invitations through this
-protocol. The shared email panel creates and revokes pending invitations from
-the browser conversation header or native participant dialog. The same panel manages direct accepted grants.
+Scoped invitations share Main, individual children or a workstream with email
+addresses. A share belongs to the address: whoever signs in with that verified
+address holds it, and there is no acceptance step, link secret or confirmation
+screen. The share and the grants it becomes live in the same Channel parent,
+hosted in `WorkspaceDO`
+([hosted conversation parents](hosted-conversation-parents.md)). Someone who
+already signs in with the address is claimed as the share is made; anyone else
+is claimed the first time they sign in. Until then they appear as a **Guest** in
+the sharing panel. The shared email panel creates shares, lists those still
+waiting for a sign-in, and revokes them, from the browser conversation header or
+the native participant dialog.
 The panel reports a created invitation to its container rather than confirming it
 in place: the standalone share dialog dismisses itself, and the participant
 dialog, which embeds the panel beside its own controls, stays open on an emptied
@@ -18,17 +22,16 @@ conversation owner.
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/scope-grants.ts` | Batch, acceptance, revision and result contracts. |
-| `apps/desktop/src/renderer/components/scope-sharing-panel.tsx` | Shared email invitation form, stable retry operation and pending revocation. |
+| `packages/contracts/src/scope-grants.ts` | Batch, claim, revision and result contracts. |
+| `apps/desktop/src/renderer/components/scope-sharing-panel.tsx` | Shared email form, stable retry operation, and the Guests still waiting to sign in, each revocable. |
 | `apps/api/src/routes/sharing.ts` | Authenticated HTTP boundary; server-selected actor and recipient identities. |
-| `apps/api/src/services/scope-invitation-link.ts` | The emailed link's token kind, what opens it, and the workstream address it names. |
+| `apps/api/src/services/scope-invitation-claims.ts` | Claiming at sign-in: which Channels hold a share for the user's verified addresses, and asking each to claim. |
+| `packages/db/migrations/0119_scope_share_recipients.sql` | `scope_share_recipients`: address to Channel lookup for shares still waiting for a sign-in. |
 | `apps/api/src/services/scope-invitation-email.ts` | What the invitation says: the heading, the quoted preview, and the line about Rally. |
 | `apps/api/src/services/conversation-preview.ts` | The last turns of one conversation, named and truncated for somewhere outside the product. |
-| `packages/db/src/link-payloads.ts` | The shared opaque-token store, documented in [`link-payloads.md`](link-payloads.md). |
-| `packages/db/migrations/0114_link_payloads.sql` | The shared `link_payloads` table: token digest, type, JSON and optional expiry. |
-| `apps/api/src/routes/browser.ts` | Unauthenticated `POST /browser/invitation`, releasing the invited mailbox to a link holder. |
-| `apps/api/src/durable-objects/scope-invitation-service.ts` | Current sharing authority, verified mailbox, relationship admission, grant activation and email delivery. |
-| `apps/api/src/durable-objects/scope-invitation-storage.ts` | Operation receipts, invitation state, encrypted delivery and acceptance binding. |
+| `apps/api/src/services/browser-session-service.ts`, `platform-onboarding-service.ts` | The two sign-in points that claim: browser session registration, and regional discovery. |
+| `apps/api/src/durable-objects/scope-invitation-service.ts` | Current sharing authority, relationship admission, grant activation on claim, and email delivery. |
+| `apps/api/src/durable-objects/scope-invitation-storage.ts` | Operation receipts, share state, encrypted delivery and claim binding. |
 | `apps/api/src/durable-objects/hosted-parent.ts` | Addressed RPCs and delivery alarm execution. |
 
 ## How it works
@@ -60,68 +63,73 @@ Workspace-public reading alone is insufficient even to start preparation.
 
 One operation records an invitation per distinct email, with stable grant
 operation IDs and an encrypted email payload. Its transaction schedules the
-existing alarm mechanism. No GET consumes an invitation. Retrying the same
-operation returns its recorded invitations; changing its input conflicts.
-Delivery retries use the same provider idempotency key and encrypted body.
+existing alarm mechanism. Retrying the same operation returns its recorded
+invitations; changing its input conflicts. Delivery retries use the same
+provider idempotency key and encrypted body.
 
-The email's link is `<browser origin>/invite#inv_<43 characters>` and nothing
-else: a type prefix and 256 bits. Workspace, work stream and invitation are a
-row in the issuing region's `link_payloads`, keyed by the token's SHA-256
-digest. Those three identifiers were the server's own routing, published to
-whoever the mail was forwarded to and describing the shape of a team they hold
-no access to. They are now readable only by the deployment holding the row, and
-the recipient learns where the invitation points from the acceptance they
-authorized, not from the link.
+### Claiming
 
-**The acceptance secret is not in that row — the token that reads the row is
-that secret.** The owner holds its HMAC and the row holds its SHA-256, so
-neither store carries anything a holder could present. An earlier revision put a
-second secret in the payload beside the three identifiers, which made a dump of
-`link_payloads` a set of working invitations through the addressed request body
-that is still accepted; one token doing both jobs removes that copy rather than
-protecting it. Reading the row therefore proves only *which* invitation is being
-asked about, and the owner still checks the presented token against the HMAC it
-recorded.
+**A share is claimed by signing in, and by nothing else.** The address the
+sharer typed is the whole of what the share names, and a verified sign-in with
+that address is the whole of the proof. There is no token in the link and no
+acceptance request: the explicit step that used to sit between sign-in and the
+conversation only existed so a mail scanner fetching a link could not consume
+it, and with nothing in the link to consume, an email one-time code or Google
+sign-in is already a human proving they hold the mailbox.
 
-**The store itself is [`link-payloads.md`](link-payloads.md)**, which owns the
-prefix typing, a row's lifecycle and the rule that a payload may never carry a
-presentable secret. It is shared rather than invitation-specific because a link
-whose URL should not describe its subject is a recurring shape, and this is only
-its first kind. What belongs here is what an invitation puts in it: `inv` carries
-`expiresAt` or null as the row's deadline, so a row dies with the invitation it
-addresses, and a row for an invitation with no expiry is retained — see that
-document's **Invariants** for why nothing can reclaim it and what the open
-retention question is.
+Creation writes one `scope_share_recipients` row per address in D1, naming the
+Channel that holds the share, before the Organization object records it. The
+share stays in the object, beside the grants it becomes; the row only says where
+to ask. Writing it first, with the other external awaits, means a denied or
+replayed creation can leave a row pointing at nothing pending. That is harmless:
+a claim that finds nothing removes it.
 
-`expiresAt` itself is bounded at the largest instant a `Date` can represent.
-That is not a policy ceiling — policy expiry is still `null` until the team sets
-one — but the point past which `new Date(value).toISOString()` throws
-`RangeError: Invalid time value` while minting the row, from a value the
-contract had accepted. Anything above it is refused at the schema, where the
-rejection can still name `expiresAt`; anything larger again was already refused
-for not being a safe integer, which is why the ceiling is the `Date` range and
-not that one.
+`claimScopeInvitations` (`scope-invitation-claims.ts`) reads the user's verified
+addresses from `user_verified_emails`, plus any address the caller has verified
+itself, looks up their rows, and asks each Channel to claim. It runs at two
+points:
 
-The token is minted before the sharing checks and the transaction, with every
-other external await. A creation that is then denied, or that replays an earlier
-operation, therefore mints rows addressing an invitation that was never
-recorded. The alternative, writing the row after the invitation commits, risks
-the opposite and worse failure, an invitation whose emailed link resolves to
-nothing. Such a row is inert — opening it reaches an owner with no such
-invitation, which refuses it exactly as it refuses a revoked one — but inert is
-not reclaimed, so every path that does not record what it minted discards those
-tokens itself. That is the only moment it can: afterwards nobody holds them.
-Discarding is housekeeping and cannot fail the request, which was already
-decided; a failure to discard is logged and leaves a row that is still inert.
+- **Browser session registration**, which every browser sign-in passes through:
+  email one-time code, magic link, Google, and activation in another deployment.
+  It runs before the session is described, so the Organization it just joined
+  is in the list the browser receives.
+- **Regional discovery**, which desktop sign-in and cross-deployment activation
+  both use. It passes the Global identity's address, since a person known to a
+  deployment only through the platform link may have no verified row there.
 
-`POST /sharing/accept` and `POST /browser/invitation` both take that token and
-resolve it server-side; a token this deployment cannot read is refused in the
-same sentence as a revoked invitation, because distinguishing them would tell a
-holder something about an invitation they do not hold. The addressed request
-body those routes took before — workspace, work stream, invitation and token —
-is still accepted, so links already in inboxes when this shipped continue to
-work; nothing mints that form any more, and it can be dropped once no such link
-is outstanding.
+**Creation also claims at once** for every address that already belongs to a
+user in this deployment. That person holds the share before the response
+returns and shows up as a participant, not a pending Guest; they still get the
+email, which is how they hear of it.
+
+A claim, per pending share for one of the addresses, checks that it is usable
+(not revoked, not past `expiresAt`), that its targets have finished their
+participant migration, and that the sharer still holds the share in the
+membership incarnation they shared it from. It establishes an ordinary guest
+relationship if absent, preserving full members and refusing suspended
+relationships, then re-reads the share and sharing state and commits all target
+grants with the claim receipt in one local transaction. A share that cannot be
+claimed yet stays pending and keeps its lookup row, so the next sign-in tries
+again; once nothing is pending for an address in that Channel, its row is
+deleted. A Channel that cannot be reached is logged as
+`scope_invitation_claim_failed` and never fails the sign-in.
+
+A claim is a cross-authority operation only at the relationship step. If the
+process stops after creating the D1 relationship, that relationship confers no
+conversation access, and the next claim resumes grant activation. Within the
+grant owner, a failed target write rolls back all targets and the receipt.
+Whoever's claim created a guest relationship publishes it right away, rather
+than waiting for the cron sweep: the sharing route for a claim made as the share
+was created, and the claim service for one made at sign-in.
+
+The email's link is the conversation's own address,
+`<browser origin>/app/workspaces/<region>/<workspace>/workstreams/<channel>` with
+`/substreams/<id>` for a child share. It carries nothing a holder could present,
+so a forwarded copy opens a sign-in page and nothing more. Signing in with the
+right address lands in the conversation; any other address finds no access.
+Only one deployment exists today; if a second one serves Organizations, an
+email-only identity cannot cross deployments, and the link's sign-in will have
+to happen in the deployment it names.
 
 ### What the invitation says
 
@@ -168,7 +176,7 @@ that bargain, not extending it.
 The message goes out as both parts, composed once and stored together so a
 delivery retry sends what was composed rather than something rendered again
 later. The styled part is the same template Rally's workspace invitation uses:
-one 560-pixel table, inline styles, the brand mark, the black accept button, the
+one 560-pixel table, inline styles, the brand mark, the black "Open in Rally" button, the
 quoted turns behind a left rule.
 
 **What that template may use is decided by where it is read.** Gmail drops a
@@ -208,42 +216,11 @@ forge, and member-written
 turns are quoted with `>` below the real link so a message ending in its own
 sign-in sentence cannot sit where ours does.
 
-`POST /browser/invitation` is the one unauthenticated read here, and it exists
-because an opaque link cannot tell the sign-in form under it which mailbox to
-fill in. It takes the token and nothing else: on the addressed body, which
-acceptance still accepts, nothing is looked up, so the caller's own identifiers
-would reach a Durable Object stub with no session behind the request — one
-instantiated per workspace and parent id anyone cares to name, and a missing
-work stream answered with a 500 where every other answer here is one 403. A link
-minted in that format never carried a mailbox to fill in, so refusing it here
-regresses nothing.
-
-It checks the secret exactly as acceptance does, on the same invitation state
-and through the same predicate for everything acceptance would refuse it for,
-and returns that mailbox alone — never the workspace, the work
-stream, the sharer or the scopes. A holder who can read it can also accept with
-it once they hold the mailbox, so it releases no authority that the link did not
-already carry.
-
-`POST /sharing/accept` accepts an identity-only session. The owner checks the
-secret, a current `user_verified_emails` binding, invitation state/expiry and the
-sharer's current membership incarnation and scope authority. It establishes an
-ordinary guest relationship if absent, preserving full members and refusing
-suspended relationships. It then re-reads local invitation and sharing state and
-commits all target grants with the acceptance receipt in one local transaction.
-Participant projection delivery remains the grant ledger's responsibility;
-`accepted` means the grants committed, not that every downstream holder applied
-its projection.
-
-Acceptance is a cross-authority operation only at the relationship step. If the
-process stops after creating the D1 relationship, that relationship confers no
-conversation access. A retry resumes grant activation. Within the grant owner,
-a failed target write rolls back all targets and the acceptance receipt.
-
 `DELETE /sharing/:parentId/:invitationId` requires current sharing authority and
-the observed revision. It revokes only a pending invitation. If acceptance won
-first, the caller must remove the accepted scope grants explicitly; an invitation
-operation must not erase another independently granted scope.
+the observed revision. It revokes only a pending share, and deletes the address's
+lookup row once nothing else waits for it there. If a claim won first, the caller
+must remove the scope grants explicitly; an invitation operation must not erase
+another independently granted scope.
 
 ### Sharing interface and scoped listing
 
@@ -256,8 +233,12 @@ credentials, email bodies or grant-operation receipts.
 
 The shared panel deduplicates normalized email addresses. A failed response keeps
 the same operation ID for the unchanged recipient/scope selection; success clears
-the draft and refreshes invitation summaries. Pending invites can be revoked at
-the displayed revision. Accepted shares use grant/participant management instead.
+the draft and refreshes invitation summaries. Below the form it lists the shares
+for its conversation still waiting for a sign-in, each as a **Guest** row with
+the address and a remove control that revokes it at the displayed revision.
+Claimed shares are not listed there: their recipient is a participant, labelled
+Guest in the participant list when their relationship is a guest one, and is
+managed through grant/participant management.
 The panel reads `/sharing/:parentId/options` for shareable scope choices. This is
 read-only: legacy Main uses its canonical participant facts, legacy children use
 the parent-owned private roster, and transferred scopes use canonical grants.
@@ -298,47 +279,28 @@ and the panel states that distinction. Existing last-participant rules apply.
 
 ## Invariants
 
-- A forwarded link is insufficient: the authenticated user must hold its verified
-  recipient mailbox. Profile email alone is never proof.
+- A share is held by the verified address it names and nothing else. A forwarded
+  link opens a sign-in page; profile email alone is never proof.
+- Only a pending share is ever claimed. A claimed share is never claimed again,
+  so a later claim never reapplies a revoked grant, recreates a removed
+  relationship, or binds the share to a replacement relationship.
 - The actor's recorded membership incarnation must still be current. Rejoining
-  does not restore their old invitations' authority.
-- The accepted user and membership incarnation are permanent receipt fields.
-  Replaying acceptance never reapplies grants, recreates a removed relationship,
-  or binds the invitation to a replacement relationship.
-- The grant transaction and invitation acceptance cannot be separated. A grant
-  commit without its receipt would allow an interrupted acceptance to restore a
-  later revocation.
-- The emailed link names no deployment, and only the region holding its row can
-  resolve it, so the lite client opens it against the one serving the page. A
-  second browser deployment must give the link its own routing again rather than
-  offering a token to every deployment in turn.
-- A row whose payload no longer matches the shape its prefix promises is this
-  deployment's own drift rather than a forged link, and says so;
-  [`link-payloads.md`](link-payloads.md) owns that rule and the code it raises.
-- The token in the link is the acceptance secret, not a handle to one. It
-  carries 256 bits for that reason, and neither store it is recorded in — the
-  owner's HMAC, the row's digest — holds a value that can be presented.
-- Describing an invitation checks its expiry itself rather than inheriting the
-  acceptance path's state check. An accepted invitation is still usable, so
-  without that check a lapsed link would keep naming its mailbox forever.
-- The preview and acceptance ask one predicate for everything else that can
-  withdraw an invitation — the targets' migration, and whether the sharer still
-  holds the share in the incarnation they offered it from. A preview that
-  outlives acceptance's conditions is a mailbox oracle, and two copies of the
-  conditions is how it gets there.
-- The unauthenticated preview takes the opaque token only. The addressed body
-  reaches a Durable Object without a lookup, which is not something an
-  unauthenticated caller may choose.
-- A creation that does not record what it minted discards those links itself.
-  Nothing else can: the row is keyed by a digest of a token nothing stores, so
-  the minting call is the last place it is reachable.
+  does not restore their old shares' authority.
+- The grant transaction and the claim receipt cannot be separated. A grant
+  commit without its receipt would let an interrupted claim restore a later
+  revocation.
+- A lookup row is a hint, never authority. The Organization object decides; a
+  row with nothing pending behind it is removed by the next claim that reaches it.
+- A lookup row stays while anything is pending for its address in that Channel,
+  so a share that could not be claimed yet (migration, sharer state, a failure
+  mid-transaction) is retried on the next sign-in.
+- Claiming never fails a sign-in.
 - The preview reads the offered conversation and no other. Main is previewed
   only where Main is what is offered.
 - Nothing rendered into the email can fail the invitation. A name, a title or a
-  transcript that cannot be read is left out; only the link and the secret are
-  load-bearing.
-- Email bodies and credentials are not returned by public routes. The only stored
-  readable credential representation is encrypted with the existing server key.
+  transcript that cannot be read is left out; only the link is load-bearing.
+- Email bodies are not returned by public routes. The only stored readable copy
+  is encrypted with the existing server key.
 - Browser setup, onboarding and connector configuration are outside the lite
   client; existing scoped collaboration remains the intended product scope.
 
@@ -359,42 +321,42 @@ number bounding this module's output, the per-turn byte ceiling above, is
 arithmetic on a published platform limit rather than a policy guess: change
 Gmail's documented figure and the ceiling moves with it. Existing platform
 request/storage limits still apply. Invalid origin/key configuration
-refuses creation. `BROWSER_APP_ORIGIN` and the existing encryption/signing keys
-are required; the existing transactional Resend configuration delivers mail.
+refuses creation. `BROWSER_APP_ORIGIN` and the existing encryption key are
+required; the existing transactional Resend configuration delivers mail.
 Development/test delivery uses the shared sender's no-send behavior.
 
 A send accepted by the provider followed by a lost acknowledgement is retried
 with the same key. Revocation during an in-flight send may still deliver a link;
-its owner refuses subsequent acceptance. A corrupted receipt or unavailable
+it opens nothing, since the revoked share is never claimed.
+
+`token_hash` on `parent_invitations` is retired but still `NOT NULL UNIQUE`; new
+rows store the invitation's own id there rather than paying for a table rebuild.
+Links in inboxes from before this change (`/invite#inv_…`) open the browser's
+sign-in page, and signing in with the invited address claims the share as any
+sign-in does. Their `link_payloads` rows are no longer read. A corrupted receipt or unavailable
 identity authority remains an error, never a grant.
 
 ## Testing
 
 `pnpm --filter @rally/api test:workers test-workers/scope-invitations.test.ts`
 runs real D1, `WorkspaceDO` SQLite, RPCs, alarms and HTTP routing. The fixture
-declares the D1 columns it uses. It covers verified-recipient admission, child-only
-access, atomic multi-target activation, replay after removal/revocation,
-sharer replacement, stable operation/email receipts and identity-only HTTP
-acceptance. It also reads the link out of the delivered encrypted body to prove
-it is one typed token with no identifier or region in it, that the row holds a
-digest rather than that token and no secret beside the address it stores, that a
-dump of it replayed through the addressed body is refused, previews and accepts
-by the token alone, and refuses an edited token, a wrong secret, a revoked
-invitation and one past its deadline whether or not it was accepted first.
+declares the D1 columns it uses. It covers a share claimed as it is made for an
+existing account, one held for an address with no account and claimed by a
+real browser one-time-code sign-in with no further step, that someone else's
+claim reaching the same Channel takes nothing, a Global-verified address this
+deployment has not recorded, child-only access, atomic multi-target claiming
+with the share left pending after a rollback, re-claiming after removal and
+revocation, revoked and expired shares, sharer replacement, stable
+operation/email receipts, relationship publication, and the link's exact form.
 It also proves the bound the whole feature rests on, against real conversation
 objects with distinct transcripts in Main and in a child: an offer of the child
 quotes the child and never Main, an offer of Main quotes Main and never the
 child, and a system notice in either is not conversation and never leaves. That
 case needs the runtime — the Node fixture resolves every substream id to one
 database, so the same assertions there would pass with the boundary broken.
-It covers the housekeeping around those rows too: that a replayed and a denied
-creation each leave the table where they found it, that an `expiresAt` past the
-`Date` range is refused with the field named in the diagnostic rather than
-raising a `RangeError` while minting, and that a preview failure is logged with
-the port code that says which authority refused.
-`apps/api/test/scope-invitation-link.test.ts` covers the store against the real
-migrations: the round trip, another kind's token, an edited one, an expired row,
-the sweep, and a payload that no longer matches its prefix.
+It also checks that an `expiresAt` past the `Date` range is refused with the
+field named in the diagnostic, and that a preview failure is logged with the
+port code that says which authority refused.
 `apps/api/test/scope-invitation-email.test.ts` covers the body: the heading and
 each of its fallbacks, a name carrying a newline, the quoted turns, the singular
 and plural earlier-message line, word truncation, the byte ceiling that bounds a
@@ -414,6 +376,40 @@ handoff against real Main and child agents, including refusal to transfer for a
 nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
+
+### 2026-10-06 — Claim shares at sign-in; drop the acceptance step and the link token
+
+**What changed.** Sharing by email no longer needs the recipient to accept.
+Signing in with the shared-with address claims every share waiting for it:
+browser session registration and regional discovery both call
+`claimScopeInvitations`, and creation claims at once for an address that
+already belongs to a user. A new D1 table, `scope_share_recipients`, maps an
+address to the Channels holding its pending shares. `POST /sharing/accept`,
+`POST /browser/invitation`, the `inv` link token and its HMAC are gone; the
+email links to the conversation's own address and says "Open in Rally". The
+sharing panel lists shares still waiting for a sign-in as Guest rows the sharer
+can remove.
+
+**Why.** The product owner judged the one-time code a sufficient safeguard on
+its own. The acceptance click was there so a mail scanner fetching the link
+could not consume it, but a human proving they hold the mailbox already happens
+at sign-in, so the click after it added a screen and no protection. The token
+existed only to carry that acceptance secret and to route the link, and both
+jobs went with it.
+
+**Considered and rejected.** Keeping the token and auto-accepting in the browser
+after sign-in was smaller, but kept a client-side protocol, an unauthenticated
+preview route and a link secret for a step nobody sees. Moving pending shares
+into D1 entirely would split a share from the grants it becomes, losing the
+single transaction that stops an interrupted claim restoring a later
+revocation; the lookup row is only a hint for that reason.
+
+**Consequences.** A share is held by an address, so anyone who later holds a
+verified sign-in for it takes what is still pending; revoke a share sent to a
+wrong address. Email-only identities do not cross deployments, so a second
+deployment serving Organizations needs the link's sign-in to happen there.
+`parent_invitations.token_hash` is retired but still constrained, and stores
+the invitation id. Old `/invite#inv_…` links open the sign-in page.
 
 ### 2026-09-21 — Make outside-product conversation previews plain text before sizing
 

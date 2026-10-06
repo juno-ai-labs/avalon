@@ -229,11 +229,12 @@ what it withholds.
 ### Invitation admission
 
 [Scoped invitations](scope-invitations.md) use the same current grant policy for
-every target at creation and acceptance. A verified mailbox match is necessary
-but insufficient: the sharer's membership incarnation and sharing authority must
-remain valid, the recipient relationship must be active, and local invitation
-revocation must not have won. Acceptance and target grant operations commit in
-one `WorkspaceDO` transaction. Replays return the receipt without reapplying grants.
+every target at creation and when a share is claimed, which happens when its
+address signs in. A verified mailbox match is necessary but insufficient: the
+sharer's membership incarnation and sharing authority must remain valid, the
+recipient relationship must be active, and local invitation revocation must not
+have won. The claim and its target grant operations commit in one `WorkspaceDO`
+transaction. A claimed share is never claimed again, so nothing reapplies grants.
 
 ### Evidence and read lifetime
 

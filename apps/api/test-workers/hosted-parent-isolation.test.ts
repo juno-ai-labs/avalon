@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { conversationObjectName } from "../src/durable-objects/names";
 import { hostedParentStub, insertChannelRow, readSharedWorkstream, withHostedParent } from "./helpers/hosted-parent";
-import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000e0001");
 const channelA = asWorkstreamId("00000000-0000-4000-8000-0000000e00a0");
@@ -67,7 +67,7 @@ beforeEach(async () => {
   await reset();
   const people = [shared, onlyB, recipient];
   await env.DB.batch([
-    env.DB.prepare(LINK_PAYLOADS_TABLE),
+    ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT)"),
     ...people.map((id) => env.DB.prepare(
       "INSERT INTO users VALUES (?, 'Person', 'person@example.test', NULL, 'UTC', '2026-09-25T00:00:00.000Z')",
