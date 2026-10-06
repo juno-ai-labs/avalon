@@ -3495,6 +3495,11 @@ function registerIpc(): void {
     await desktopPush.set(enabled);
     return desktopApplicationSettings();
   });
+  ipcMain.handle('dock-badge:set', (event, count: unknown) => {
+    assertTrustedIpcSender(event);
+    if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) throw new Error('Invalid dock badge count');
+    if (process.platform === 'darwin') app.setBadgeCount(count);
+  });
   ipcMain.handle('application-settings:open-notifications', async (event) => {
     assertTrustedIpcSender(event);
     await shell.openExternal('x-apple.systempreferences:com.apple.Notifications-Settings.extension');

@@ -12362,7 +12362,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       waiting_for_you: number;
       waiting_priority: number;
       has_unread_activity: number;
-      unread_and_needs_input: number;
     }>(
       `SELECT
          COALESCE(SUM(CASE
@@ -12385,20 +12384,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
              )
              OR viewer.manual_unread_from_ordinal IS NOT NULL
              OR viewer.unseen = 1
-           ) THEN 1 ELSE 0 END), 0) AS has_unread_activity,
-         COALESCE(SUM(CASE
-           WHEN (
-             (directory.scope = 'workspace' OR viewer.is_participant = 1) AND (
-               directory.latest_attention_ordinal > COALESCE(
-                 viewer.seen_attention_ordinal,
-                 directory.unread_tracking_start_ordinal
-               )
-               OR viewer.manual_unread_from_ordinal IS NOT NULL
-               OR viewer.unseen = 1
-             )
-           ) OR (
-             viewer.is_participant = 1 AND directory.exact_state = 'needs_input'
-           ) THEN 1 ELSE 0 END), 0) AS unread_and_needs_input
+           ) THEN 1 ELSE 0 END), 0) AS has_unread_activity
        FROM channels directory
        LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
@@ -12419,7 +12405,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       waitingForYou: row.waiting_for_you,
       waitingReason,
       hasUnreadActivity: row.has_unread_activity === 1,
-      unreadAndNeedsInputCount: row.unread_and_needs_input,
+      attentionCount: this.spaceStorage().readerAttentionCount(member(request.userId)),
     });
   }
 

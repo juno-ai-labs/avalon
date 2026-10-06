@@ -439,9 +439,19 @@ const LIVE_EXACT_STATE_LIST = LIVE_EXACT_STATES.map((state) => `'${state}'`).joi
  * Channel nobody has opened from reading as unread to every member.
  */
 function liveForViewerSql(directory: "directory" | "breakout", viewer: "viewer" | "breakout_viewer"): string {
-  const seen = `COALESCE(${viewer}.seen_attention_ordinal, ${directory}.unread_tracking_start_ordinal)`;
   return `(${directory}.exact_state IN (${LIVE_EXACT_STATE_LIST})
-       OR ${viewer}.manual_unread_from_ordinal IS NOT NULL
+       OR ${waitingForReaderSql(directory, viewer)})`;
+}
+
+/**
+ * {@link liveForViewerSql} without the run: unread, unseen or mentioning this
+ * person. These are the three reader-owned states the sidebar's attention menu
+ * lists (`readerMarkerStatus` on the client), so the dock badge counts the
+ * same conversations the menu does.
+ */
+function waitingForReaderSql(directory: "directory" | "breakout", viewer: "viewer" | "breakout_viewer"): string {
+  const seen = `COALESCE(${viewer}.seen_attention_ordinal, ${directory}.unread_tracking_start_ordinal)`;
+  return `(${viewer}.manual_unread_from_ordinal IS NOT NULL
        OR ${directory}.latest_attention_ordinal > ${seen}
        OR ${viewer}.unseen = 1
        OR COALESCE(${viewer}.latest_mention_attention_ordinal, 0) > ${seen})`;
@@ -1697,6 +1707,56 @@ export class WorkspaceSpaceStorage {
 
   attentionCount(viewer: Viewer, spaceId: string): number {
     return this.attentionCounts(viewer, [spaceId]).get(spaceId) ?? 0;
+  }
+
+  /**
+   * How many conversations wait for this reader across the Organization: each
+   * Main they may open and each Breakout they may list that is unread, unseen
+   * or mentions them, in unarchived, non-system Channels. The sidebar's
+   * attention menu shows the same number from the rows it holds; this is that
+   * count for a reader whose sidebar is not open, which is what an APNs
+   * `badge` needs.
+   */
+  readerAttentionCount(viewer: Viewer): number {
+    const mains = this.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count
+         FROM channels directory
+         LEFT JOIN channel_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?
+          AND viewer.authority_generation = directory.authority_generation
+        WHERE directory.archived_at IS NULL
+          AND directory.system_kind IS NULL
+          AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+          AND ${waitingForReaderSql("directory", "viewer")}`,
+      viewer.userId,
+    ).one().count;
+    if (!this.breakoutsReady()) return mains;
+    const breakouts = this.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count
+         FROM breakouts breakout
+         JOIN channels directory
+           ON directory.workstream_id = breakout.workstream_id
+         LEFT JOIN channel_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?
+          AND viewer.authority_generation = directory.authority_generation
+         LEFT JOIN breakout_viewers breakout_viewer
+           ON breakout_viewer.workstream_id = breakout.workstream_id
+          AND breakout_viewer.substream_id = breakout.substream_id
+          AND breakout_viewer.user_id = ?
+          AND breakout_viewer.authority_generation = breakout.authority_generation
+        WHERE directory.archived_at IS NULL
+          AND directory.system_kind IS NULL
+          AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true })}
+          AND breakout.archived_at IS NULL
+          AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
+          AND ${waitingForReaderSql("breakout", "breakout_viewer")}`,
+      viewer.userId,
+      viewer.userId,
+      viewer.userId,
+    ).one().count;
+    return mains + breakouts;
   }
 
   /** Viewer-specific live Breakout totals, grouped under the Channels they list. */

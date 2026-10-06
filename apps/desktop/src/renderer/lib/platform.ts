@@ -277,6 +277,9 @@ const browserBridge: RallyDesktopBridge = {
   },
   async setPushNotificationsEnabled() { return this.getApplicationSettings(); },
   async openNotificationSettings() {},
+  async setDockBadgeCount() {
+    // A browser tab has no dock icon.
+  },
   async setMenuBarEnabled() {
     throw new Error('The menu bar item is available only in the Rally desktop app.');
   },
