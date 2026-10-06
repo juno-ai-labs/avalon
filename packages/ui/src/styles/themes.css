@@ -337,9 +337,13 @@
   /* The height of a control. */
   --av-sys-size-control-height: 36px;
 
-  /* Between one turn and the next in the feed: the space under the action row
-   * a turn lays out beneath itself. */
-  --av-sys-space-stack-gap: var(--av-ref-space-unit);
+  /* Between one turn and the next in the feed. The actions float beside a turn
+   * rather than in a row under it, so this gap alone separates two speakers. */
+  --av-sys-space-stack-gap: calc(var(--av-ref-space-unit) * 6);
+
+  /* Between turns of one burst: one author's run of turns, which reads as a
+   * single thought and so sits closer than two speakers do. */
+  --av-sys-space-burst-gap: var(--av-ref-space-unit);
 
   /* Between a row and the row before it when a stretch of transcript this
    * client has not loaded lies between them. Nothing else marks the seam, so
@@ -782,7 +786,8 @@
 
   --av-sys-size-control-height: 36px;
 
-  --av-sys-space-stack-gap: var(--av-ref-space-unit);
+  --av-sys-space-stack-gap: calc(var(--av-ref-space-unit) * 6);
+  --av-sys-space-burst-gap: var(--av-ref-space-unit);
 
   --av-sys-space-seam-gap: calc(var(--av-ref-space-unit) * 8);
 

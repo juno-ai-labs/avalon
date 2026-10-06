@@ -3339,6 +3339,7 @@ pre {
    gap, the widest, whatever its kind: nothing else marks the seam, and the
    two rows either side of it are not adjacent however they look. */
 .virtual-message-row[data-row-gap='stack'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-stack-gap); }
+.virtual-message-row[data-row-gap='burst'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-burst-gap); }
 .virtual-message-row[data-row-gap='seam'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-seam-gap); }
 .virtual-message-row[data-row-gap='block'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-block-gap); }
 .virtual-message-row[data-row-gap='event'] > .message-arrival-layer > :first-child { margin-top: var(--av-sys-space-event-gap); }

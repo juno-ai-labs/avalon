@@ -153,7 +153,7 @@ export function feedRowKind(message: Message): FeedRowKind {
  * is now the closest distance in the feed, which would draw two rows with an
  * unseen stretch between them as the tightest pair on screen.
  */
-export type FeedRowGap = 'none' | 'stack' | 'block' | 'event' | 'seam';
+export type FeedRowGap = 'none' | 'burst' | 'stack' | 'block' | 'event' | 'seam';
 
 export function feedRowGap(previous: Message | undefined, current: Message): FeedRowGap {
   if (!previous) return 'none';
@@ -162,6 +162,56 @@ export function feedRowGap(previous: Message | undefined, current: Message): Fee
   const kind = feedRowKind(current);
   if (before === 'event') return kind === 'turn' ? 'block' : 'event';
   return kind === 'event' ? 'block' : 'stack';
+}
+
+/**
+ * How long after a burst's first turn its author's next turn still joins it.
+ * The product's number, not a tuning: a run of turns sent inside it reads as
+ * one thought.
+ */
+export const BURST_WINDOW_MS = 2 * 60_000;
+
+/**
+ * Who a turn belongs to for burst grouping, or nothing when it never groups.
+ * Matched on the account rather than the display name, so two people sharing a
+ * name never merge. Imported turns keep their own identity line: their author
+ * label is the provider, not a person.
+ */
+function burstAuthor(message: Message): string | undefined {
+  if (feedRowKind(message) !== 'turn' || message.messageType !== 'text' || message.importProvenance) return undefined;
+  if (message.authorType === 'human') return message.author?.id ? `human:${message.author.id}` : undefined;
+  const actor = message.externalActor;
+  return actor ? `external:${actor.provider}:${actor.providerAccountId}:${actor.providerUserId}` : undefined;
+}
+
+/**
+ * The ids of the turns that continue a burst: the same author's text turn,
+ * directly after another of theirs, within `BURST_WINDOW_MS` of the burst's
+ * first turn. Any other row between them — Rally, a system note, a tool row, a
+ * card — ends the burst, and so do the unread divider and an unloaded stretch,
+ * since each is something drawn between the two turns. Measured from the
+ * first turn rather than the previous one, so a slow trickle cannot hold one
+ * name over minutes of messages.
+ *
+ * Computed over the whole list rather than per row: the feed is windowed, and
+ * a burst's first turn may not be mounted.
+ */
+export function feedBurstContinuations(messages: readonly Message[], firstUnreadIndex = -1): ReadonlySet<string> {
+  const continuing = new Set<string>();
+  let burstKey: string | undefined;
+  let burstStart = 0;
+  messages.forEach((message, index) => {
+    const key = burstAuthor(message);
+    const at = Date.parse(message.createdAt);
+    if (key && key === burstKey && index !== firstUnreadIndex && !message.precededByTranscriptGap
+      && at - burstStart <= BURST_WINDOW_MS) {
+      continuing.add(message.id);
+      return;
+    }
+    burstKey = key;
+    burstStart = at;
+  });
+  return continuing;
 }
 
 /** The live border-box height used by the work-stream feed's virtual ledger. */
@@ -280,6 +330,10 @@ export function MessageFeed({
       openSubstreamId={breakoutChips.openSubstreamId}
     />;
   };
+  const burstContinuations = useMemo(
+    () => feedBurstContinuations(messages, firstUnreadIndex),
+    [firstUnreadIndex, messages],
+  );
   const row = (message: Message, index: number): React.JSX.Element => (
     <div className="message-arrival-layer" data-arrival-id={message.id} data-arrival-kind={message.messageType}>
       {index === firstUnreadIndex && (
@@ -293,6 +347,7 @@ export function MessageFeed({
         <MessageBlock
           {...(citations ? { citations } : {})}
           collapseHeadings
+          continuesBurst={burstContinuations.has(message.id)}
           currentUserId={currentUserId}
           currentUserName={currentUserName}
           loadAttachmentContent={loadAttachmentContent}
@@ -319,7 +374,7 @@ export function MessageFeed({
     return (
       <div className="virtual-transcript" ref={feed}>
         {messages.map((message, index) => (
-          <div className="virtual-message-row" data-index={index} data-row-gap={feedRowGap(messages[index - 1], message)} key={message.id}>
+          <div className="virtual-message-row" data-index={index} data-row-gap={burstContinuations.has(message.id) ? 'burst' : feedRowGap(messages[index - 1], message)} key={message.id}>
             {row(message, index)}
           </div>
         ))}
@@ -340,7 +395,7 @@ export function MessageFeed({
           <div
             className="virtual-message-row"
             data-index={virtualRow.index}
-            data-row-gap={feedRowGap(messages[virtualRow.index - 1], message)}
+            data-row-gap={burstContinuations.has(message.id) ? 'burst' : feedRowGap(messages[virtualRow.index - 1], message)}
             key={message.id}
             ref={virtualizer.measureElement}
             style={{

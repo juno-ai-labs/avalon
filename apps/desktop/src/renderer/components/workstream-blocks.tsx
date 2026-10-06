@@ -2623,10 +2623,16 @@ interface MessageBlockProps {
   onConnectorConnected?: (selectionKey: string) => void;
   authorizedResourceToolIds?: ReadonlySet<string>;
   onResourceAuthorized?: (failedToolInvocationId: string) => void;
+  /**
+   * The turn continues its author's burst (see `feedBurstContinuations`), so
+   * the identity line above the burst's first turn already names it.
+   */
+  continuesBurst?: boolean;
 }
 
 export function MessageBlock({
   onStartSubstream,
+  continuesBurst = false,
   citations,
   collapseHeadings = false,
   currentUserId,
@@ -2836,8 +2842,11 @@ export function MessageBlock({
           not a private thread: whose words these are and when they were said is
           the same question about their own turn as about anybody else's, and a
           turn that answers it only for other people makes the reader's own
-          messages the one thing on screen with no time against it. */}
-      <MessageByline
+          messages the one thing on screen with no time against it. A turn
+          continuing a burst is the exception: the burst's first turn names
+          the author and the time, and repeating them on every turn of a run
+          sent within the burst window is what buried the conversation. */}
+      {!continuesBurst && <MessageByline
         align={human ? 'end' : 'start'}
         author={human ? humanAuthorName : message.importProvenance ? importedProvider : automation ? automationAuthor : 'Rally'}
         importedBy={message.importProvenance?.importedByName}
@@ -2847,7 +2856,7 @@ export function MessageBlock({
         workSummary={message.workSummary ? workSummaryLabel(message.workSummary) : undefined}
       >
         {!human && collapseHeadings && <MarkdownCollapseAllButton />}
-      </MessageByline>
+      </MessageByline>}
       {human ? (
         <div className="human-message-content">
           {message.text ? (

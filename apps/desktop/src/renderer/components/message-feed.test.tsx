@@ -68,6 +68,47 @@ describe('MessageFeed', () => {
     expect(feedRowGap(afterGap, eventAfterGap)).toBe('seam');
   });
 
+  /**
+   * A run of one person's turns names them once. The window is measured from
+   * the burst's first turn, and anything drawn between two turns ends it.
+   */
+  it('names the author once per burst', () => {
+    const kate = { id: 'user-k', name: 'Katherine' };
+    const alex = { id: 'user-a', name: 'Alex' };
+    const at = (minute: number, second = 0) => `2026-09-01T10:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}.000Z`;
+    const turn = (id: string, author: { id: string; name: string }, createdAt: string, extra: Partial<Message> = {}) =>
+      message({ id, authorType: 'human', author, text: id, createdAt, ...extra });
+    const messages = [
+      turn('k1', kate, at(0)),
+      turn('k2', kate, at(1)),
+      turn('k3', kate, at(2)),
+      turn('k4', kate, at(2, 1)),
+      turn('a1', alex, at(3)),
+      turn('k5', kate, at(3, 30)),
+      message({ id: 'rally', text: 'An answer.', createdAt: at(3, 40) }),
+      turn('k6', kate, at(3, 50)),
+      turn('k7', kate, at(4), { precededByTranscriptGap: true }),
+      turn('k8', kate, at(4, 10)),
+      turn('k9', { id: 'user-k2', name: 'Katherine' }, at(4, 20)),
+      message({ id: 'slack-1', authorType: 'external', text: 'slack-1', createdAt: at(5), externalActor: { provider: 'slack', providerAccountId: 'T1', providerUserId: 'U1', displayName: 'Sam', avatarUrl: null } }),
+      message({ id: 'slack-2', authorType: 'external', text: 'slack-2', createdAt: at(5, 10), externalActor: { provider: 'slack', providerAccountId: 'T1', providerUserId: 'U1', displayName: 'Sam', avatarUrl: null } }),
+      turn('k10', kate, at(6)),
+      turn('k11', kate, at(6, 5)),
+    ];
+    render(<MessageFeed firstUnreadIndex={14} messages={messages} onAnswerElicitation={answer_} />);
+
+    const named = [...document.querySelectorAll('.message-block')]
+      .filter((block) => block.querySelector('.message-author'))
+      .map((block) => block.id.replace('message-', ''));
+    // k2 and k3 sit inside the two minutes from k1; k4 is past them. Alex,
+    // Rally, the unloaded seam, a different account with the same name, and
+    // the unread divider each start a new burst.
+    expect(named).toEqual(['k1', 'k4', 'a1', 'k5', 'rally', 'k6', 'k7', 'k9', 'slack-1', 'k10', 'k11']);
+    // A continuing turn sits at the burst gap rather than the turn gap.
+    const gaps = [...document.querySelectorAll('.virtual-message-row')].map((row) => row.getAttribute('data-row-gap'));
+    expect(gaps.slice(0, 5)).toEqual(['none', 'burst', 'burst', 'stack', 'stack']);
+  });
+
   it('renders every message when the adapter does not window the list', () => {
     render(
       <MessageFeed
