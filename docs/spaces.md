@@ -2115,6 +2115,8 @@ get private Channels where General used to make them public. `SpaceScopeSchema`
 still reads `personal` for old rows, and the desktop keeps the copy for the
 three retired refusal codes for an older server during a rolling deploy.
 
+Pull request: [#1119](https://github.com/juno-ai-labs/avalon/pull/1119).
+
 ### 2026-10-05 — Rally chooses a new Space's icon from its name
 
 **What changed:** `iconKey` is optional on `CreateSpaceRequest`. Without one,
