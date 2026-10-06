@@ -34,7 +34,7 @@ const workstreamSocketOpenContext = vi.hoisted(() => vi.fn((workstreamId: string
 const updateStatus = vi.hoisted(() => ({ current: { kind: 'idle' } as { kind: string; version?: string } }));
 const installDownloadedUpdate = vi.hoisted(() => vi.fn(async () => undefined));
 const applicationSettings = vi.hoisted(() => ({
-  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
+  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
   listeners: new Set<(settings: unknown) => void>(),
 }));
 
@@ -223,7 +223,7 @@ describe('Sidebar channel markers', () => {
     startWorkstreamSocketWarmup.mockReset();
     cancelWorkstreamSocketWarmup.mockReset();
     workstreamSocketOpenContext.mockReset().mockReturnValue({ state: 'cold' });
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 320, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
@@ -3175,7 +3175,7 @@ describe('pinned channels', () => {
 describe('Sidebar channel paging', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
@@ -3284,7 +3284,7 @@ describe('Sidebar channel paging', () => {
 describe('the sidebar without a recency list', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
@@ -3479,7 +3479,7 @@ describe('the sidebar without a recency list', () => {
 describe('alphabetical channels inside a space', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     // Every case here is about the list under one Space, so that Space is
     // the filter the sidebar opens on.

@@ -81,6 +81,8 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
   /** Whether the Rally status item is in the macOS menu bar. On by default. */
   pushNotificationsEnabled: boolean;
   pushNotificationStatus: string;
+  /** macOS's "Badge application icon" switch for Rally; `unknown` until read. */
+  notificationBadgeStatus: 'enabled' | 'disabled' | 'unknown';
   menuBarEnabled: boolean;
   /** Whether this platform has a menu bar Rally can live in at all. The
    * preference is still stored where it is not, so moving the same profile to a

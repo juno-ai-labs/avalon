@@ -29,6 +29,7 @@ import {
   DESKTOP_DEEP_LINK_PROTOCOLS,
 } from '@rally/contracts/desktop-deep-link';
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { APNS_TOPICS } from '@rally/contracts/push-notifications';
 import type { Region } from "@rally/contracts/regions";
 import { regions } from "@rally/contracts/regions";
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
@@ -3502,7 +3503,8 @@ function registerIpc(): void {
   });
   ipcMain.handle('application-settings:open-notifications', async (event) => {
     assertTrustedIpcSender(event);
-    await shell.openExternal('x-apple.systempreferences:com.apple.Notifications-Settings.extension');
+    // `id` opens Rally's own entry rather than the list of apps.
+    await shell.openExternal(`x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=${APNS_TOPICS.macos}`);
   });
   ipcMain.handle('update:get-status', (event) => {
     assertTrustedIpcSender(event);
