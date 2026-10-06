@@ -1,8 +1,8 @@
 /** Approved landing copy. */
 export const accessCopy = {
-  title: 'Rally: one place for you, your coworkers, and AI',
-  headline: 'Stop copy-pasting\nbetween Claude and Slack.',
-  description: 'Rally gives you, your (human) coworkers, and an AI agent a single place to get work done together.',
+  title: 'Rally: one place for you, your human coworkers, and AI',
+  headline: 'Two Humans and AI in a single shared chat',
+  description: 'Rally is an AI platform that allows for multiple humans to work with an AI agent in shared chats. Start a channel for multiple coworkers and work together on research, writing code, crafting documents, and answering questions.',
 };
 
 export function renderAccessCopy(html: string): string {
