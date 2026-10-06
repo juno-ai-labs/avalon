@@ -8201,6 +8201,14 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .breakout-tick-card-news { color: var(--av-sys-color-workstream-news); font-weight: 600; }
 /* The transcript makes room for the ticks only when there are ticks. */
 .workstream-screen:has(> .breakout-tick-bar) .transcript-column { padding-left: max(var(--space-8), 48px); }
+/* Phone: the ticks would cover text (chips and the Channel menu still reach
+   Breakouts), and Rally's turns and their placeholder fill the column. Must
+   follow the rule above, which has the same weight. */
+@media (max-width: 640px) {
+  .workstream-screen > .breakout-tick-bar { display: none; }
+  .workstream-screen:has(> .breakout-tick-bar) .transcript-column { padding-left: var(--space-6); }
+  .workstream-screen :is(.agent-message, .conversation-opening-message:not(.is-human)) { max-width: 100%; }
+}
 
 /* ── Split conversation ─────────────────────────────────────────────────────
    A Channel and its open Breakout side by side, one resize handle between. A
