@@ -4454,13 +4454,21 @@ pre {
   border-bottom-left-radius: 16px;
   border-bottom-right-radius: 16px;
 }
-/* At tablet and phone width (the 920 where the sidebar collapses) the inset is
-   space the document cannot spare, so the viewer fills the window. The site
+/* At tablet and phone width (the 920px breakpoint where the sidebar
+   collapses) the inset is space the document cannot spare, so the viewer fills
+   the window. The site
    pane loses its curve with it, which also squares the composited view, since
-   that reads its corner off the pane when it presents. */
+   that reads its corner off the pane when it presents.
+   On macOS the window reaches this width too (its minimum is 720), so the
+   header now sits under the traffic lights and over the drag strip. The
+   lightbox is portaled to `body`, outside the shell that sets
+   `--window-controls-inset`, so the clearance keys on the shell's class
+   instead of reading the variable. */
 @media (max-width: 920px) {
-  .attachment-lightbox.is-document-viewer { border: 0; border-radius: 0; box-shadow: none; inset: 0; }
+  .attachment-lightbox.is-document-viewer { -webkit-app-region: no-drag; border: 0; border-radius: 0; box-shadow: none; inset: 0; }
   .resource-lightbox .site-detail-pane { border-radius: 0; }
+  body:has(.has-overlay-window-controls) .attachment-lightbox.is-document-viewer .attachment-lightbox-header,
+  body:has(.has-overlay-window-controls) .resource-lightbox .rail-header { padding-left: 82px; }
 }
 /* Menus and confirmation dialogs opened by the resource lightbox sit above it. */
 body:has(.resource-lightbox) .dialog-overlay { z-index: 1002; }
