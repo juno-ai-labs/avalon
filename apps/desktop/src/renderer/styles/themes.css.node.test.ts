@@ -185,6 +185,9 @@ describe('token references', () => {
     // The phone layout's top-bar height and sheet motion: geometry and timing
     // of one responsive block, the same in every theme.
     '--phone-top-bar-height', '--phone-sheet-duration', '--phone-sheet-motion',
+    // The width a title menu level may take: what Radix reports as available,
+    // less the frame's padding. Layout arithmetic, the same in every theme.
+    '--title-menu-room',
     // The feed's spacing steps, each a multiple of the one `ref.space.unit`
     // token; the multiples are the stylesheet's, not a theme's.
     '--space-1', '--space-2', '--space-3', '--space-4', '--space-5', '--space-6', '--space-7', '--space-8'];
@@ -206,7 +209,7 @@ describe('token references', () => {
     '--origin-step',
     // A picker swatch's ink dot, set per swatch from markColors().
     '--swatch-ink',
-    '--radix-dropdown-menu-content-available-height',
+    '--radix-dropdown-menu-content-available-height', '--radix-dropdown-menu-content-available-width',
     '--radix-select-content-available-height', '--radix-select-trigger-width'];
 
   it('names only tokens the registry declares', () => {
