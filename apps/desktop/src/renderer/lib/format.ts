@@ -101,6 +101,29 @@ export function formatSparseRelativeDate(value: string, now = new Date()): Spars
   return `${month} ${date.getFullYear()}`;
 }
 
+const sidebarWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
+const sidebarMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+/**
+ * A sidebar row's activity time: the time today, "Yesterday", a weekday within
+ * the week, then a short date. The attention menu uses it too.
+ */
+export function formatSidebarActivityTime(value: string, now = new Date()): string {
+  const date = new Date(value);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return 'Unknown time';
+
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
+  const startOfWeekWindow = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
+
+  if (timestamp >= startOfToday && timestamp < startOfTomorrow) return formatTime(value);
+  if (timestamp >= startOfYesterday && timestamp < startOfToday) return 'Yesterday';
+  if (timestamp >= startOfWeekWindow && timestamp < startOfYesterday) return sidebarWeekday.format(date);
+  return sidebarMonthDay.format(date);
+}
+
 export function formatDuration(milliseconds?: number): string | undefined {
   if (milliseconds === undefined) return undefined;
   const normalizedMilliseconds = Math.max(0, milliseconds);
@@ -157,6 +180,33 @@ export function workstreamMarkerStatus(
   // outside the ranking, and it cannot reach here now — but `find` is typed
   // `| undefined`, so the arm has to say something.
   return MARKER_PRECEDENCE.find((status) => active.has(status)) ?? own;
+}
+
+/** The markers that belong to the reader alone rather than to the run. */
+export type ReaderMarkerStatus = Extract<WorkstreamMarkerStatus, 'unseen' | 'mentioned' | 'unread'>;
+
+/**
+ * The reader's own marker on a conversation, ignoring its run, or null when
+ * the reader is caught up.
+ *
+ * The attention menu lists what is waiting for *this person*, and a running
+ * agent is not: nobody has to do anything about it yet. The order between the
+ * three is `MARKER_PRECEDENCE`'s, so it moves when that list does.
+ */
+export function readerMarkerStatus(
+  conversation: { hasUnread?: boolean; unseen?: boolean; youAreMentioned?: boolean },
+): ReaderMarkerStatus | null {
+  const active = new Set<WorkstreamMarkerStatus>();
+  if (conversation.unseen === true) active.add('unseen');
+  if (conversation.youAreMentioned === true) active.add('mentioned');
+  if (conversation.hasUnread === true) active.add('unread');
+  return (MARKER_PRECEDENCE.find((status) => active.has(status)) as ReaderMarkerStatus | undefined) ?? null;
+}
+
+/** Where a marker sits in the one ranking; lower is more urgent. */
+export function markerRank(status: WorkstreamMarkerStatus): number {
+  const index = MARKER_PRECEDENCE.indexOf(status);
+  return index === -1 ? MARKER_PRECEDENCE.length : index;
 }
 
 /** The server-side range that describes one visible recency heading. */
