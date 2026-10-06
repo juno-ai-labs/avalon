@@ -29,10 +29,11 @@ import {
   consumeDeepLinkWorkstreamNavigation,
   useDeepLinkWorkstreamNavigation,
 } from '../lib/deep-link-navigation';
-import { formatDateTime, formatSidebarActivityTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, recencyTimestamp, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
+import { formatDateTime, formatSidebarActivityTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
 import { committedOrder, moveWithin, orderByStoredIds } from '../lib/personal-order';
 import { compareAlphabeticalName, compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
+import { compareRecentChannels } from '../../common/recency-groups';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import type { AttentionItem } from '../lib/attention-items';
 import { desktopBridge } from '../lib/platform';
@@ -194,14 +195,8 @@ function workstreamHasActivityForViewer(workstream: WorkstreamSummary): boolean 
   return workstream.hasUnread === true || workstreamAttentionCount(workstream) > 0;
 }
 
-/**
- * Newest last activity first, ties A to Z. The Channel's own last activity,
- * not when this reader last opened it: the row's time shows the same value,
- * so the order and the times down the list agree.
- */
-function compareRecent(left: WorkstreamSummary, right: WorkstreamSummary): number {
-  return recencyTimestamp(right) - recencyTimestamp(left) || compareAlphabeticalTitle(left, right);
-}
+/** The sidebar's Recent sort, shared with the menu bar. */
+const compareRecent = compareRecentChannels;
 
 type WorkstreamComparator = (left: WorkstreamSummary, right: WorkstreamSummary) => number;
 
