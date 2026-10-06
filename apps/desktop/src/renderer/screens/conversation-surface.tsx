@@ -661,6 +661,41 @@ export function AddParticipantDialog({
   );
 }
 
+/**
+ * The second step of taking someone out of a conversation from its title
+ * menu: what it means, and a way back. It stays open on a refusal so the
+ * reason is read where it was asked.
+ */
+export function RemoveParticipantDialog({ failure, member, noun, onCancel, onContinue, pending, self }: {
+  failure?: string | undefined;
+  member: WorkspaceMember | undefined;
+  noun: 'channel' | 'breakout';
+  onCancel: () => void;
+  onContinue: () => void;
+  pending: boolean;
+  self: boolean;
+}): React.JSX.Element {
+  // A Space that includes the Channel keeps its members in, so leaving the
+  // Channel's own list ends access only when nothing else grants it.
+  const who = self ? 'You' : member?.name ?? 'They';
+  const keeps = self ? 'You keep' : 'They keep';
+  const viaSpace = noun === 'channel' ? ` or a space ${self ? 'you’re' : 'they’re'} in includes it` : '';
+  return (
+    <Modal
+      description={`${who} will be taken off this ${noun}. ${keeps} access only if it’s public${viaSpace}.`}
+      footer={<>
+        <Button disabled={pending} onClick={onCancel}>Cancel</Button>
+        <Button className="button-danger" disabled={pending} onClick={onContinue}>Continue</Button>
+      </>}
+      onOpenChange={(next) => { if (!next && !pending) onCancel(); }}
+      open={member !== undefined}
+      title={self ? `Leave the ${noun}?` : `Remove ${member?.name ?? 'this person'} from the ${noun}?`}
+    >
+      {failure ? <InlineError>{failure}</InlineError> : null}
+    </Modal>
+  );
+}
+
 function readableResourceKind(value: string): string {
   return value.replace(/[_-]+/gu, ' ').replace(/\b\w/gu, (letter) => letter.toLocaleUpperCase());
 }
@@ -1150,6 +1185,12 @@ export function ConversationSurface({
   const olderRequestsRef = useRef(new Map<string, Promise<void>>());
   const [positionedConversation, setPositionedConversation] = useState<string | null>(null);
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false);
+  /** The participant the title menu asked to take out, held until the reader confirms. */
+  const [removeConfirmRequest, setRemoveConfirm] = useState<{ member: WorkspaceMember; parentId: string; target: string } | null>(null);
+  // The surface outlives a route change, so a request asked in another
+  // conversation is not this one's to confirm.
+  const removeConfirm = removeConfirmRequest?.parentId === id && removeConfirmRequest.target === substreamId ? removeConfirmRequest : null;
+  useEffect(() => { setRemoveConfirm(null); }, [id, substreamId]);
   const [participantDialogSubstreamId, setParticipantDialogSubstreamId] = useState(substreamId);
   const [resourceDialogOpen, setResourceDialogOpen] = useState(false);
   const [resourceSearch, setResourceSearch] = useState('');
@@ -2795,6 +2836,11 @@ export function ConversationSurface({
             ? refusalMessage(addParticipant.error) ?? 'That person couldn’t be added.'
             : undefined,
           currentUserId: session?.user.id,
+          onRemove: (member) => {
+            addParticipant.reset();
+            removeParticipant.reset();
+            setRemoveConfirm({ member, parentId: id, target: substreamId });
+          },
         } : undefined,
         origin: origin ? {
           byline: `Started from ${origin.origin.authorType === 'agent' ? 'Rally’s' : `${origin.origin.author?.name ?? 'a'}’s`} message · ${formatDateTime(origin.origin.createdAt)}`,
@@ -3110,6 +3156,20 @@ export function ConversationSurface({
         }}
         open={participantDialogOpen}
         pending={addParticipant.isPending || removeParticipant.isPending}
+      />
+      <RemoveParticipantDialog
+        failure={removeConfirm && removeParticipant.error
+          ? refusalMessage(removeParticipant.error) ?? 'That participant couldn’t be removed.'
+          : undefined}
+        noun={removeConfirm?.target === '0' ? 'channel' : 'breakout'}
+        onCancel={() => { setRemoveConfirm(null); removeParticipant.reset(); }}
+        onContinue={() => {
+          if (!removeConfirm) return;
+          removeParticipant.mutate({ member: removeConfirm.member, target: removeConfirm.target }, { onSuccess: () => setRemoveConfirm(null) });
+        }}
+        pending={removeParticipant.isPending}
+        member={removeConfirm?.member}
+        self={removeConfirm?.member.id === session?.user.id}
       />
       <AddResourceDialog
         incomplete={availableResources.data?.pages.some((page) => page.complete === false) ?? false}
