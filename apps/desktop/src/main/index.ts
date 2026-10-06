@@ -4,6 +4,8 @@ import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browse
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
 import { BrowserImportContextSchema, BrowserImportedWorkstreamIdSchema, BrowserImportProgressSchema, type BrowserImportContext, type BrowserImportProgress } from '../common/browser-import';
 import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
+import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
+import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
 import type { ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
@@ -14,6 +16,7 @@ import {
   ProductAnalyticsPreferenceSchema,
   RegionSchema,
   SessionSchema,
+  SocketTicketSchema,
   WorkspaceOnboardingStateSchema,
   WorkspaceAttentionSchema,
   WorkspaceDepartureSchema,
@@ -175,12 +178,12 @@ import {
   allowsTrustedAudioCapture,
 } from './media-permission';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
-import { MenuBarContentStore } from './menu-bar-content';
+import { menuBarContentFromDirectory } from './menu-bar-content';
 import {
-  MENU_BAR_PINNED_LIMIT,
-  MENU_BAR_RECENT_LIMIT,
+  MENU_BAR_SECTION_LIMIT,
   supportsSectionHeaders,
 } from './menu-bar-menu';
+import { ChannelDirectoryWatch } from './channel-directory-watch';
 import { MenuBarOpenObserver } from './menu-bar-open-observer';
 import {
   isMessageExportUrl,
@@ -208,6 +211,7 @@ import { DesktopPushNotifications } from "./push-notifications";
 import {
   RealtimeSocketBroker,
   createNodeRealtimeSocketFactory,
+  reachSocketFromRealtimeClient,
 } from './realtime-socket-broker';
 import { registerRealtimeSocketIpc } from './realtime-socket-ipc';
 import { NetworkRecovery } from './network-recovery';
@@ -338,9 +342,6 @@ const DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS = 15_000;
 /** Short, because the drop-down is already open — or about to be — while this
  * runs, and a menu that updates a minute later has updated for nobody. */
 const MENU_BAR_REQUEST_TIMEOUT_MS = 8_000;
-/** How long the menu's cached content is served before the pointer arriving at
- * the status item asks for it again. */
-const MENU_BAR_CONTENT_MAX_AGE_MS = 15_000;
 
 const telemetryScreens = new Set<DesktopTelemetryScreen>([
   'onboarding_welcome', 'onboarding_region', 'onboarding_workspace',
@@ -910,16 +911,11 @@ function broadcastSessionChanged(value: WireSession | null): void {
   if (exposed) developerSettingsFlagController.observeSession(flagSessionIdentity(exposed.user.id, exposed.apiBaseUrl));
   else developerSettingsFlagController.stop();
   // The menu bar item outlives every window, so it has to be told about a
-  // sign-out directly. Leaving the previous account's work-stream titles in the
-  // menu would keep them readable to whoever signs in next.
-  //
-  // Only the sign-out half is unconditional. This also fires on every token
-  // renewal, so fetching without a status item to fill would be recurring API
-  // traffic — and a cache of work-stream titles in memory — on every Windows and
-  // Linux install and on any Mac with the preference off. `clear()` stays
-  // ungated so a cache from a session where the item *was* on cannot outlive it.
-  if (!exposed) menuBarContentStore.clear();
-  else if (menuBarItemIsLive()) void menuBarContentStore.refresh();
+  // sign-out directly. Leaving the previous account's Channel titles in the
+  // menu would keep them readable to whoever signs in next, so a sign-out
+  // drops them here, synchronously, before the queued sync below runs.
+  if (!exposed) channelDirectoryWatch.stop();
+  syncMenuBarDirectory();
   menuBarController.refresh();
 
   // A sign-in is the first moment a settings window would be worth having, and
@@ -1289,14 +1285,74 @@ const developerSettingsFlagController = new DeveloperSettingsFlagController({
   },
 });
 
-const menuBarContentStore = new MenuBarContentStore({
-  requestJson: rallyApiRequest,
+/**
+ * Dials the main process's own workspace socket for the menu bar, through the
+ * same Node broker route as the feed sockets. No frame ceiling: the subscribe
+ * answer is the whole sidebar, and the renderer's socket has none either.
+ */
+const menuBarSocketFactory = createNodeRealtimeSocketFactory(
+  (url) => electronSession.defaultSession.resolveProxy(url),
+  undefined,
+  0,
+);
+
+function logMenuBarSocketDiagnostic(diagnostic: ReachWatchDiagnostic): void {
+  if (diagnostic.code === 'ticket_failed' || diagnostic.code === 'open_failed') {
+    logWarn('rally', `menu bar workspace socket ${diagnostic.code}`, diagnostic.error);
+  } else {
+    logWarn('rally', `menu bar workspace socket ${diagnostic.code}: ${diagnostic.closeCode}`);
+  }
+}
+
+/**
+ * The Channel rows behind the menu bar, held over a workspace socket of the
+ * main process's own so the count beside the status item is the sidebar's
+ * count whether or not a window exists. See `docs/menu-bar.md`.
+ */
+const channelDirectoryWatch = new ChannelDirectoryWatch({
+  socket: (handlers) => watchWorkspaceSocket({
+    ticket: async () => SocketTicketSchema.parse(await rallyApiRequest('/workspace/socket')),
+    open: (url, ticket) => reachSocketFromRealtimeClient(menuBarSocketFactory(url, socketTicketProtocols(ticket))),
+    ...handlers,
+    onDiagnostic: logMenuBarSocketDiagnostic,
+  }),
   onChange: () => menuBarController.refresh(),
-  // From storage rather than `inMemorySession`, which a login launch has not
-  // set when the status item first asks.
-  available: async () => !activeStoredCredentialIsGuest(await loadStoredAuthSet(), await loadStoredProfileSet()),
+  requestId: uuidV7,
   logWarning: (message, error) => logWarn('rally', message, error),
 });
+
+/** Which account and Organization the socket serves; a token renewal keeps it. */
+let menuBarDirectoryIdentity: string | null = null;
+let menuBarDirectorySync: Promise<void> = Promise.resolve();
+
+/**
+ * Opens, keeps or closes the menu bar's socket to match the stored session.
+ *
+ * Called on every session change (token renewals included), when the
+ * preference moves, and at launch. Read from storage rather than
+ * `inMemorySession`, which a login launch has not set when the status item
+ * first needs content. Serialized, so two quick changes cannot open two
+ * sockets. A guest is refused the Channel list, so it gets no socket; a
+ * preference that is off, or a platform with no menu bar, gets none either.
+ */
+function syncMenuBarDirectory(): void {
+  menuBarDirectorySync = menuBarDirectorySync.then(async () => {
+    const authSet = await loadStoredAuthSet();
+    const active = authSet ? activeStoredCredential(authSet) : null;
+    const live = active !== null && active.binding.workspaceId !== null && menuBarItemIsLive()
+      && !activeStoredCredentialIsGuest(authSet, await loadStoredProfileSet());
+    const identity = live
+      ? `${active.binding.userId}:${active.binding.region}:${active.binding.workspaceId}`
+      : null;
+    const runningAsIdentified = (identity !== null) === channelDirectoryWatch.running();
+    if (identity === menuBarDirectoryIdentity && runningAsIdentified) return;
+    menuBarDirectoryIdentity = identity;
+    channelDirectoryWatch.stop();
+    if (identity !== null) channelDirectoryWatch.start();
+  }).catch((error: unknown) => {
+    logWarn('rally', 'could not open the menu bar workspace socket', error);
+  });
+}
 
 const launchAtLoginController = new LaunchAtLoginController({
   supported: process.platform === 'darwin',
@@ -1348,16 +1404,19 @@ const menuBarController = new MenuBarController({
   supported: process.platform === 'darwin',
   appName: app.name,
   createTray: createMenuBarTray,
-  content: () => menuBarContentStore.content(),
+  content: () => menuBarContentFromDirectory(channelDirectoryWatch.snapshot()),
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
   signedIn: () => Boolean(inMemoryAuthSet),
   sectionHeaders: supportsSectionHeaders(process.getSystemVersion()),
   actions: {
     selected: (action) => { void telemetryReporter?.menuBarActionSelected(action); },
-    openWorkstream: (workstreamId) => {
+    openConversation: (workstreamId, substreamId) => {
       activateFromMenuBar();
-      emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
+      emitDeepLink(
+        `${customProtocol}://workstreams/${workstreamId}${substreamId === null ? '' : `/substreams/${substreamId}`}`,
+        'menu_bar',
+      );
     },
     openRally: openMainWindowFromMenuBar,
     quit: () => app.quit(),
@@ -1507,6 +1566,8 @@ async function rallyApiRequest(
     headers: {
       Accept: 'application/json',
       Authorization: `Bearer ${accessToken}`,
+      // The socket ticket route admits only a client that names its contract.
+      [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION),
       ...(init ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(init ? { body: JSON.stringify(init.body) } : {}),
@@ -3556,7 +3617,7 @@ function registerIpc(): void {
     );
     // Nothing was fetched while the item was off, so an item just switched on
     // would open empty until the pointer next crossed it.
-    if (menuBarItemIsLive() && inMemoryAuthSet) void menuBarContentStore.refresh();
+    syncMenuBarDirectory();
     // `state()` for the same reason as the Developer preference above: reading
     // Lockdown mode's full settings can run the keystore fallback, and adding
     // or removing a status item must never cost anyone their session.
@@ -4186,32 +4247,18 @@ function createMenuBarTray(): MenuBarTray {
   const tray = new Tray(icon);
   tray.setToolTip(app.name);
   tray.setIgnoreDoubleClickEvents(true);
-  // The drop-down opens from cache, so freshness is bought on the way in: the
-  // pointer reaching the item is roughly a menu's worth of time before it is
-  // read. `refreshIfStale` is what keeps a pointer crossing the menu bar from
-  // becoming a request.
-  const prepareMenu = (): void => {
-    // Before the fetch, and unconditionally: the headings are a function of the
-    // clock as well as the content, so they can be wrong with nothing to
-    // re-fetch — and a refresh that fails publishes nothing to rebuild from.
-    // The controller's own guard makes this a no-op unless a boundary passed.
-    menuBarController.refreshIfHeadingsExpired();
-    // Signed out there is nothing to ask for, and every attempt would log a
-    // warning. The menu already says so, and a sign-in refreshes on its own.
-    if (!inMemoryAuthSet) return;
-    void menuBarContentStore.refreshIfStale(MENU_BAR_CONTENT_MAX_AGE_MS);
-  };
+  // The drop-down opens from what the main process's workspace socket already
+  // holds, so a click costs no request: freshness arrives as socket pushes.
   const openObserver = new MenuBarOpenObserver(() => {
-    const content = menuBarContentStore.content();
+    const content = menuBarContentFromDirectory(channelDirectoryWatch.snapshot());
     void telemetryReporter?.menuBarOpened({
       signedIn: Boolean(inMemoryAuthSet),
-      recentCount: Math.min(content.recents.length, MENU_BAR_RECENT_LIMIT),
-      pinnedCount: Math.min(content.pinned.length, MENU_BAR_PINNED_LIMIT),
+      recentCount: Math.min(content.recents.length, MENU_BAR_SECTION_LIMIT),
+      pinnedCount: 0,
+      attentionCount: content.attention.length,
     });
   });
-  tray.on('mouse-enter', prepareMenu);
   tray.on('click', () => {
-    prepareMenu();
     // Both this and `menu-will-show` observe the open. Which of the two macOS
     // raises for a status item's own menu is not something this repository can
     // check — there is no menu bar in the sandbox — and reporting nothing is
@@ -4225,6 +4272,7 @@ function createMenuBarTray(): MenuBarTray {
       menu.on('menu-will-close', () => openObserver.closed());
       tray.setContextMenu(menu);
     },
+    setTitle: (title) => tray.setTitle(title),
     destroy: () => tray.destroy(),
   };
 }
@@ -5155,7 +5203,7 @@ if (!singleInstanceLock) {
     } catch (error) {
       logWarn('rally', 'could not add Rally to the menu bar', error);
     }
-    if (launchAuth && menuBarItemIsLive()) void menuBarContentStore.refresh();
+    if (launchAuth) syncMenuBarDirectory();
     // Hidden only into somewhere. The menu bar item is what a login launch
     // leaves a person, and it is off whenever they turned it off and absent
     // whenever creating it failed — either way, opening no window would start

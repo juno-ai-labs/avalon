@@ -9,10 +9,13 @@ substream `0` feed is dialled by a Node broker in the main process. The split
 lets the desktop open a useful swarm in parallel without moving protocol state
 or product caches out of the renderer.
 
-A desktop holds **one** workspace socket, in the main window: the Settings
-and Sidekicks windows consume it through main rather than dialling their own,
-and each dials only while no main window is publishing — see
+A desktop's windows hold **one** workspace socket, in the main window: the
+Settings and Sidekicks windows consume it through main rather than dialling
+their own, and each dials only while no main window is publishing — see
 [the Organization-sync relay](#one-workspace-socket-per-desktop-the-organization-sync-relay).
+On macOS, with the menu bar item on, the main process holds a second, its own,
+for the Channel rows behind the menu bar's attention count; it outlives every
+window ([`menu-bar.md`](menu-bar.md#the-content)).
 
 An automation's page uses the same feed socket kind: its conversation is
 substream `0` under the automation, dialled through the same broker and the
@@ -839,6 +842,25 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-10-06 — The main process holds a workspace socket for the menu bar
+
+**What changed:** On macOS with the menu bar item on, the main process dials a
+workspace socket of its own through `watchWorkspaceSocket` (now the transport
+under `watchWorkspaceReach`) and the Node broker's route, walks every Space with
+`space_channels`, and applies row pushes. A desktop with a main window open
+therefore holds two workspace sockets.
+
+**Why:** The menu bar shows the sidebar's attention count, which needs each
+row's reader marks and Breakout lists; only this socket carries them, and the
+menu bar has to be right with no window open. The relay could not serve it: it
+carries topics, never rows, and ends with the main window.
+
+**Consequences:** The "one per desktop" rule now covers windows, not the main
+process. The second socket costs one subscribe answer and one Space walk per
+connect, and the same row pushes the window's socket receives. Its frame
+ceiling is off, as the renderer's is. [`menu-bar.md`](menu-bar.md) owns the
+mechanism.
 
 ### 2026-10-05 — Repeated ticket timeouts can reset shared desktop connections
 
