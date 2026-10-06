@@ -65,7 +65,7 @@ describe("Sideline sidebar", () => {
     it("falls back to the default width when the saved one is unreadable", () => {
       stored.set("sideline.sidebar-width", "wide");
 
-      expect(render(null)).toContain("--spaces-sidebar-width:280px");
+      expect(render(null)).toContain("--spaces-sidebar-width:306px");
     });
   });
 });

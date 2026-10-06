@@ -3,8 +3,10 @@
 // from the leading edge. Every hierarchy rail uses this width.
 export const COLLAPSED_SIDEBAR_WIDTH = 88;
 /**
- * Narrow enough to drag, wide enough for the top bar's five buttons beside the
- * macOS traffic lights: 100px inset + 5 × 32px buttons + 4 × 8px gaps + 14px.
+ * Wide enough for the top bar's five buttons beside the macOS traffic lights:
+ * 100px inset + 5 × 32px buttons + 4 × 8px gaps + 14px. The attention count
+ * widens its button past two digits, so a three-digit count with an update
+ * waiting overflows by about 8px. Shared by every host, web and Sideline too.
  */
 export const MIN_SIDEBAR_WIDTH = 306;
 export const MAX_SIDEBAR_WIDTH = 400;

@@ -9,7 +9,7 @@ import { StatusDot, Tip } from './primitives';
 import { RelativeTime } from './relative-time';
 import { WorkstreamGlyph } from './workstream-glyph';
 
-export const NOTHING_NEEDS_ATTENTION = 'Nothing needs your attention';
+const NOTHING_NEEDS_ATTENTION = 'Nothing needs your attention';
 
 function attentionLabel(count: number): string {
   return count === 1 ? '1 conversation needs your attention' : `${count} conversations need your attention`;

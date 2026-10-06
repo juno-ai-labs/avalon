@@ -69,15 +69,11 @@ first-open paths that clear the sidebar dot remove the row and lower the count.
   so reordering the sidebar ranking reorders the menu. Guard:
   `attention-items.test.ts` pins the current order.
 - **Opening the menu fetches nothing.** The Breakout queries are disabled
-  observers. Making one fetch would add a request per Channel with a waiting
-  Breakout to every render of the shell. Guard: none automated; the query
-  options say `enabled: false`.
+  observers; letting one fetch adds a request per waiting Channel to every
+  shell render. Guard: none automated.
 - **Count and list are one array.** The trigger shows `items.length`, so the
   number can never disagree with the rows under it. Guard:
   `attention-menu.test.tsx`.
-- **The count's colours are tokens:** `--av-sys-color-workstream-news` and
-  `--av-sys-color-palette-ink-light`, so both themes follow the sidebar's own
-  unread red. Guard: verified visually, no automated guard.
 
 ## Boundary
 
@@ -91,9 +87,7 @@ account menu's (`GET /workspace/attention`,
 [`multiple-workspaces.md`](multiple-workspaces.md)), and that boundary holds:
 no cross-Organization list.
 
-It does not say *who* mentioned the reader. The Channel row carries only that a
-mention is unread; naming the author needs the WorkspaceDO viewer row to carry
-it, which is a server change nobody has made.
+It does not name who mentioned the reader (see the changelog).
 
 ## Failure modes and limits
 
@@ -103,7 +97,8 @@ it, which is a server change nobody has made.
 - **A row older than the socket's first push** says what it said last; the
   menu is as current as the sidebar, no more and no less.
 - **No cap on the count or the list.** The trigger widens past two digits and
-  the dropdown scrolls.
+  the dropdown scrolls. The count's colours are the `workstream-news` and
+  `palette-ink-light` tokens, checked in a real window in both themes.
 
 ## Testing
 
