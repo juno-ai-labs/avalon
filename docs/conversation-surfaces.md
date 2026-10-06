@@ -81,8 +81,12 @@ Sidekick authoring uses the shared conversation surface in a separate library wi
 - `apps/desktop/src/renderer/lib/window-activation.ts` answers the one question
   every one of those surfaces has to ask before it opens: whether the hover or
   the focus it is looking at came from the person or from the window being
-  brought to the front. `App` installs it per window; `Tip` and the sidebar's
-  row preview ask it, and anything else that opens on hover or focus should.
+  brought to the front. It also answers whether a focus follows a key press or
+  a pointer press, so a tip opens on keyboard focus and not on focus that code
+  moved after a tap or click. `App` installs it per window, and the browser's
+  shell installs it itself because it mounts below `App`; `Tip` and the
+  sidebar's row preview ask it, and anything else that opens on hover or focus
+  should.
 - `apps/desktop/src/renderer/components/expanded-composer.tsx`,
   `use-draft-text.ts`, and `use-file-attachments.ts` provide the common composer
   shell, local text persistence, and staged-file lifecycle.
@@ -673,6 +677,32 @@ alongside its socket sequence, so revisiting a conversation can resume after the
 activation event without losing the warning; later clears replace that retained set.
 
 ## Changelog
+
+### 2026-10-06 — A tip opens on focus only after a key
+
+**What changed:** `lib/window-activation.ts` records whether the last deliberate
+input was a key or a pointer press, and exposes it as `focusFollowsKeyboard`.
+`Tip` declines to open on a focus that follows a pointer press. The browser shell
+now installs the tracking itself.
+
+**Why:** On a phone-width web window, opening the Sidekicks level of the title
+menu moves focus onto Add Sidekick, and its tip, placed to the right of a
+full-width row, opened off the edge of the screen. Nobody tabbed there: the focus
+was code's, after a tap. The guard that should have caught focus that is not the
+person's never ran on the web at all, because the browser mounts `WorkspaceApp`
+below the `App` that installs it.
+
+**Considered and rejected:** Placing the tip above or below when neither side
+has room, which Radix's tooltip does not expose and which would still show a tip
+nobody asked for. Removing this one tip, which leaves every other tip that a
+level or a returning dialog focuses with the same defect. `:focus-visible`,
+for the reason the 2026-09-11 "Coming back to Rally" entry gives, and because Chromium drew it on this
+very focus.
+
+**Consequences:** Hover is unchanged; only focus asks. A pointer user no longer
+gets a tip on focus that code moves after their click, which was noise on the
+desktop too. The answer is permissive until the tracking is installed, so a
+test mounting one component sees the old behaviour.
 
 ### 2026-09-24 — One composer host on every surface
 
