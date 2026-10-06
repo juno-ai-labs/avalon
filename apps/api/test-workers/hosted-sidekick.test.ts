@@ -1183,12 +1183,15 @@ describe("a hosted Sidekick", () => {
     await activeAutomation();
     const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "resend-run-01" });
     // The run alarm hands the run on; nothing consumes the Queue here, so no
-    // report comes back.
-    await runDurableObjectAlarm(workspaceStub());
+    // report comes back. The object's own alarm may already be running the
+    // entry, which `runDurableObjectAlarm` does not wait for, so the wait is
+    // for the entry to move.
     const before = Date.now();
-    const pending = (await alarms()).filter((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND && alarm.alarm_key === started.runId);
-    expect(pending).toHaveLength(1);
-    expect(pending[0]!.due_at).toBeGreaterThan(before);
+    await runDurableObjectAlarm(workspaceStub());
+    // Well under the 30-second test budget.
+    await expect.poll(async () => (await alarms())
+      .find((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND && alarm.alarm_key === started.runId)?.due_at,
+    { timeout: 10_000 }).toBeGreaterThan(before);
     expect(await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId })).toMatchObject({ state: "pending" });
   });
 
