@@ -62,7 +62,7 @@ export async function deliverPush(env: Env, message: PushDeliveryMessage, send: 
   const data = { v: 1 as const, kind: row.notificationKind, region: env.AVALON_REGION, workspaceId: row.workspaceId, url };
   const collapseId = await pushCollapseId(row.workspaceId, row.intentId);
   const payload: PushPayloads = {
-    apns: renderPushPayload({ title, body, threadKey: row.workstreamId, badge: attention.unreadAndNeedsInputCount, data }),
+    apns: renderPushPayload({ title, body, threadKey: row.workstreamId, badge: attention.attentionCount, data }),
     web: renderWebPushPayload({ title, body, collapseId, data, maxBytes: WEB_PUSH_PAYLOAD_BYTES }),
   };
   const db = workspaceRegionalDatabase(env);
