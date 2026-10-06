@@ -979,8 +979,9 @@ export class WorkstreamService {
     id: string,
     elicitationId: string,
     input: AnswerElicitationInput,
+    slackOrigin?: SlackOriginContext,
   ) {
-    return (await this.authoritativeClient(id)).answerElicitation(elicitationId, input);
+    return (await this.authoritativeClient(id)).answerElicitation(elicitationId, input, slackOrigin);
   }
 
   async workstreamControlSocketTicket(id: string) {

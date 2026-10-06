@@ -1159,61 +1159,71 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
   });
 });
 
+/** A Channel with one open text question from a settled run, ready to answer. */
+async function openQuestion(): Promise<{
+  stub: DurableObjectStub<SubstreamAgent>;
+  runId: string;
+  elicitationId: string;
+}> {
+  const stub = agentStub(ELICITATION_ANSWER_ID);
+  await provisionWorkstream(stub, ELICITATION_ANSWER_ID);
+  // `openElicitation` stores the parent run as correlation identity; it does
+  // not require that run to be executing locally. This test is about the
+  // answer's pending input and activation request, so a settled row satisfies
+  // the foreign key without starting unrelated inference first.
+  const runId = ELICITATION_PARENT_RUN_ID;
+  await seedCompletedRun(stub, runId);
+  const elicitationId = "00000000-0000-7000-8000-0000000006aa";
+  const messageId = "00000000-0000-7000-8000-0000000006ab";
+  const createdAt = "2026-08-26T12:00:00.000Z";
+  const question = await stub.fetch("https://object.test/internal/scheduling", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: ELICITATION_ANSWER_ID,
+      operation: "openElicitation",
+      args: [{
+        elicitationId,
+        runId,
+        toolCallId: `${runId}:turn:1:tool:0`,
+        prompt: "Which environment?",
+        responseType: "text",
+        optionsJson: "[]",
+        minimumSelections: 0,
+        maximumSelections: null,
+        targetUserId: null,
+        messageId,
+        structuredContentJson: JSON.stringify({
+          kind: "elicitation",
+          elicitation: {
+            id: elicitationId,
+            workstreamId: ELICITATION_ANSWER_ID,
+            harnessRunId: runId,
+            prompt: "Which environment?",
+            responseType: "text",
+            options: [],
+            minimumSelections: 0,
+            maximumSelections: null,
+            targetUserId: null,
+            status: "open",
+            answer: null,
+            answeredByUserId: null,
+            createdAt,
+            answeredAt: null,
+          },
+        }),
+        now: Date.parse(createdAt),
+      }],
+    }),
+  });
+  expect(question.status).toBe(200);
+  return { stub, runId, elicitationId };
+}
+
 describe("answering an elicitation in the ordered transcript", () => {
   it("keeps the attributed response pending until the loop can promote it", async () => {
-    const stub = agentStub(ELICITATION_ANSWER_ID);
-    await provisionWorkstream(stub, ELICITATION_ANSWER_ID);
-    // `openElicitation` stores the parent run as correlation identity; it does
-    // not require that run to be executing locally. This test is about the
-    // answer's pending input and activation request, so a settled row satisfies
-    // the foreign key without starting unrelated inference first.
-    const runId = ELICITATION_PARENT_RUN_ID;
-    await seedCompletedRun(stub, runId);
-    const elicitationId = "00000000-0000-7000-8000-0000000006aa";
-    const messageId = "00000000-0000-7000-8000-0000000006ab";
-    const createdAt = "2026-08-26T12:00:00.000Z";
-    const question = await stub.fetch("https://object.test/internal/scheduling", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        workspaceId: WORKSPACE_ID,
-        workstreamId: ELICITATION_ANSWER_ID,
-        operation: "openElicitation",
-        args: [{
-          elicitationId,
-          runId,
-          toolCallId: `${runId}:turn:1:tool:0`,
-          prompt: "Which environment?",
-          responseType: "text",
-          optionsJson: "[]",
-          minimumSelections: 0,
-          maximumSelections: null,
-          targetUserId: null,
-          messageId,
-          structuredContentJson: JSON.stringify({
-            kind: "elicitation",
-            elicitation: {
-              id: elicitationId,
-              workstreamId: ELICITATION_ANSWER_ID,
-              harnessRunId: runId,
-              prompt: "Which environment?",
-              responseType: "text",
-              options: [],
-              minimumSelections: 0,
-              maximumSelections: null,
-              targetUserId: null,
-              status: "open",
-              answer: null,
-              answeredByUserId: null,
-              createdAt,
-              answeredAt: null,
-            },
-          }),
-          now: Date.parse(createdAt),
-        }],
-      }),
-    });
-    expect(question.status).toBe(200);
+    const { stub, runId, elicitationId } = await openQuestion();
 
     await runInDurableObject(stub, async (instance, state) => {
       const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
@@ -1288,6 +1298,34 @@ describe("answering an elicitation in the ordered transcript", () => {
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM runs WHERE origin = 'elicitation_answer'`,
       ).one().count).toBe(0);
+    });
+  });
+
+  it("carries the Slack message that answered into the run the answer starts", async () => {
+    const { stub, elicitationId } = await openQuestion();
+    const slackOrigin = {
+      teamId: "T1", actorSlackUserId: "U_ANSWER", channelId: "C1", channelName: null, threadTs: "1.0",
+      invocationType: "app_mention", channelType: "public", matchedAvalonUserId: CREATOR_ID,
+      nearbyMessagesStatus: "not_applicable", nearbyMessages: [], attachments: [],
+      reactionAnchor: { channelId: "C1", messageTs: "9.0" },
+    };
+    const answered = await product(stub, {
+      operation: "answer_elicitation",
+      auth: AUTH,
+      elicitationId,
+      input: { answer: "staging" },
+      slackOrigin,
+    });
+    expect(answered.status).toBe(200);
+
+    await runInDurableObject(stub, (_instance, state) => {
+      const started = state.storage.sql.exec<{ execution_context_json: string }>(
+        `SELECT execution_context_json FROM runs WHERE origin = 'elicitation_answer'`,
+      ).one();
+      expect(JSON.parse(started.execution_context_json)).toMatchObject({
+        reason: "elicitation_answer",
+        slackOrigin,
+      });
     });
   });
 });

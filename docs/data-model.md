@@ -912,7 +912,10 @@ column catalog; what follows is only what WorkspaceDO still holds.
   `slackUserIsLinked` incident below, and again the automation delivery-target
   500 of 2026-08-31. A session row is delivery state (status, reaction, who
   started the thread); where a Slack message routes is decided by
-  `external_conversation_bindings`, below.
+  `external_conversation_bindings`, below. Each SubstreamAgent's
+  `run_absorbed_slack_origins` (its migration 73) records the Slack origin of
+  every steer a run absorbed, so that run can settle those messages' status
+  reactions; see [`slack-integration.md`](slack-integration.md#the-status-reaction).
 
 - An automation has no destinations anywhere: its rows store none, and
   a run's loop input is a reference to its definition revision. A room-owned

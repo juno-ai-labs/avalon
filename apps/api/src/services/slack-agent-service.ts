@@ -1273,7 +1273,13 @@ export class SlackAgentService {
     text: string | null,
     deliveryKey: string,
     outcomeStatus: "completed" | "needs_input" | "failed" | "stopped",
-    triggeringSlackUserId: string | null = null,
+    run: {
+      triggeringSlackUserId?: string | null;
+      /** Where this run's own status reaction sits; absent on payloads admitted before it was carried. */
+      reactionAnchor?: SlackReactionAnchor | null;
+      /** Follow-ups steered into this run, which have no run of their own to settle them. */
+      absorbedReactionAnchors?: readonly SlackReactionAnchor[];
+    } = {},
   ): Promise<void> {
     this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     const session = WorkspaceSlackSessionResultSchema.parse(
@@ -1301,7 +1307,7 @@ export class SlackAgentService {
     // belong to that one person, so delivery follows the member whose message
     // triggered this run. Old workflow payloads lack the field and safely fall
     // back to the opener while they drain during deployment.
-    const deliverySlackUserId = triggeringSlackUserId ?? session.slack_user_id;
+    const deliverySlackUserId = run.triggeringSlackUserId ?? session.slack_user_id;
     const deliveryUserLinked = responseText && outcomeStatus === "needs_input"
       ? await this.slackUserIsLinked(
         session.connection_id,
@@ -1396,7 +1402,10 @@ export class SlackAgentService {
       } catch (error) {
         logWarn(this.env, "slack_thread_status_cleanup_failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
       }
-      await this.applyOutcomeReaction(session, connection, token, outcomeStatus);
+      await this.applyOutcomeReaction(
+        session, connection, token, outcomeStatus,
+        run.reactionAnchor ?? null, run.absorbedReactionAnchors ?? [],
+      );
       if (session.slack_stream_ts) {
         await (await this.workspaceDirectory(workspaceId)).setSlackSessionStream({
           workspaceId,
@@ -2335,13 +2344,24 @@ export class SlackAgentService {
         });
       }
     }
-    const slackOrigin = await this.slackOriginContext(
+    const originContext = await this.slackOriginContext(
       connection,
       teamId,
       slackUserId,
       source,
       matchedWorkspaceUserId,
     );
+    // The run carries its own anchor to delivery; see "The status reaction"
+    // in docs/slack-integration.md.
+    const slackOrigin: SlackOriginContext = reactionSource
+      ? {
+          ...originContext,
+          reactionAnchor: {
+            channelId: reactionSource.channelId,
+            messageTs: reactionSource.timestamp,
+          },
+        }
+      : originContext;
     const channel = channelId ?? await this.openDm(token, slackUserId);
     const thread = threadTs ?? await this.createUserPromptRoot(token, channel, requestedPrompt);
     const openingClientMessageId = clientMessageId.slice(0, 120);
@@ -2502,6 +2522,7 @@ export class SlackAgentService {
             connection.workspace_id,
             session.workstream_id,
             requestedPrompt,
+            slackOrigin,
           )) {
             await service.createMessage(session.workstream_id, {
               text: requestedPrompt,
@@ -3067,6 +3088,7 @@ export class SlackAgentService {
     workspaceId: string,
     workstreamId: string,
     response: string,
+    slackOrigin: SlackOriginContext,
   ): Promise<boolean> {
     const elicitation = await createSchedulingObjectPort(this.env, workspaceId, workstreamId)
       .oldestOpenElicitation();
@@ -3079,6 +3101,7 @@ export class SlackAgentService {
           "text" | "radio" | "single_select" | "multi_select",
         options_json: elicitation.options_json,
       }, response),
+      slackOrigin,
     );
     return true;
   }
@@ -3760,7 +3783,8 @@ export class SlackAgentService {
   }
 
   /**
-   * Swaps the reaction on a run's source message for the one naming its outcome.
+   * Swaps the reaction on each message a run answered for the one naming its
+   * outcome: the message that started it, and any follow-up steered into it.
    *
    * Never throws. A reaction is decoration on a run that has already happened,
    * and the persisted Avalon run stays canonical whatever Slack answers here —
@@ -3771,8 +3795,25 @@ export class SlackAgentService {
     connection: SlackConnectionRow,
     token: string,
     outcome: SlackReactionOutcome,
+    ownAnchor: SlackReactionAnchor | null,
+    absorbedAnchors: readonly SlackReactionAnchor[],
   ): Promise<void> {
-    if (!session.reaction_channel_id || !session.reaction_message_ts) return;
+    if (ownAnchor || session.reaction_channel_id) {
+      await this.settleOutcomeReaction(session, connection, token, outcome, ownAnchor);
+    }
+    for (const anchor of absorbedAnchors) {
+      await this.settleOutcomeReaction(session, connection, token, outcome, anchor);
+    }
+  }
+
+  /** One message's outcome transition; `anchor` null is a run admitted before anchors were carried. */
+  private async settleOutcomeReaction(
+    session: WorkspaceSlackSession,
+    connection: SlackConnectionRow,
+    token: string,
+    outcome: SlackReactionOutcome,
+    anchor: SlackReactionAnchor | null,
+  ): Promise<void> {
     try {
       // Re-read rather than trusting the snapshot `deliverWorkstreamOutcome`
       // took at the top. Between that read and this call a legacy stream close,
@@ -3781,33 +3822,48 @@ export class SlackAgentService {
       // `reaction_current` meanwhile. Removing a stale emoji answers
       // `no_reaction`, which is swallowed as success — leaving two Rally
       // reactions on the message, which is the one invariant this feature has.
-      // Known gap: a follow-up prompt admitted while this run is live moves the
-      // session's single reaction slot to its own message, usually with the same
-      // emoji, and this check cannot tell the two anchors apart.
       const workspace = await this.workspaceDirectory(session.workspace_id);
-      const placed = WorkspaceSlackSessionResultSchema.parse(
+      const current = WorkspaceSlackSessionResultSchema.parse(
         await workspace.slackSessionById({
           workspaceId: session.workspace_id,
           sessionId: session.id,
         }),
-      ).session?.reaction_current ?? null;
+      ).session;
+      if (!current) return;
+      // The session's one slot may since belong to a newer prompt, usually
+      // with the same emoji; see "The status reaction" in
+      // docs/slack-integration.md.
+      const target = anchor
+        ?? (current.reaction_channel_id && current.reaction_message_ts
+          ? { channelId: current.reaction_channel_id, messageTs: current.reaction_message_ts }
+          : null);
+      if (!target) return;
+      const anchored = current.reaction_channel_id === target.channelId
+        && current.reaction_message_ts === target.messageTs;
       const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
+      // Once the slot has moved on, nothing records this message any more, and
+      // the only Rally emoji admission puts there is the acknowledgement. If
+      // that never landed, removing it answers `no_reaction`, which the adapter
+      // treats as success.
+      const placed = anchored ? current.reaction_current : reactions.acknowledgement;
       const result = await this.executeSlackReaction(connection, token, {
         kind: "reaction",
-        channelId: session.reaction_channel_id,
-        timestamp: session.reaction_message_ts,
+        channelId: target.channelId,
+        timestamp: target.messageTs,
         add: reactions.outcomes[outcome],
         remove: placed,
         fallback: slackDefaultReactionFor(outcome),
       });
-      // Conditional on the value this transition actually removed, so a write
-      // that slipped in behind the read is detected rather than overwritten.
-      // `IS` rather than `=` because the column is nullable and NULL is a real
-      // state here: it means Avalon has placed nothing.
+      // The slot belongs to the newer anchor; its emoji is not this run's to record.
+      if (!anchored) return;
+      // Conditional on the anchor and the emoji removed, so a write or a
+      // re-anchor that slipped in behind the read is detected, not overwritten.
       const written = WorkspaceSlackSessionReactionResultSchema.parse(
         await workspace.settleSlackSessionReaction({
           workspaceId: session.workspace_id,
           sessionId: session.id,
+          channelId: target.channelId,
+          messageTs: target.messageTs,
           expected: placed,
           reaction: result?.reaction ?? null,
           at: nowIso(),
@@ -4261,6 +4317,9 @@ async function stableUuid(value: string): Promise<string> {
 
 /** What a run with no text response says, rather than posting nothing at all. */
 const SLACK_EMPTY_RESULT_TEXT = "Rally completed the task without a text response.";
+
+/** The message a run's status reaction sits on. */
+type SlackReactionAnchor = NonNullable<SlackOriginContext["reactionAnchor"]>;
 
 /**
  * The reaction vocabulary a workspace installation has configured, if any.
