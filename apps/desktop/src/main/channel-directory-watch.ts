@@ -218,6 +218,10 @@ export class ChannelDirectoryWatch {
       );
       return;
     }
+    // Loading again, as the sidebar says while it refetches: the rows held
+    // stay on screen, but "nothing waiting" waits for this walk to finish.
+    this.complete = false;
+    this.changed();
     const before = new Set(this.rows.keys());
     const pushed = new Set<string>();
     const returned = new Set<string>();
