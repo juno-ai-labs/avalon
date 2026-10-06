@@ -254,6 +254,7 @@ describe('channel directory watch', () => {
     const second = await subject.connected();
     expect(second).not.toBe(first);
     second.message(subscribeAnswer([GENERAL]));
+    expect(subject.watch.snapshot().complete).toBe(false);
     // Pricing left this reader while the socket was down; nothing replayed its tombstone.
     second.message(spaceAnswer(second.requests('space_channels')[0]!, [row(ACME)], null, 9));
     await flush();
