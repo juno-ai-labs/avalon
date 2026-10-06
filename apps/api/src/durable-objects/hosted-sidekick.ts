@@ -417,6 +417,11 @@ async function homeAdmits(
   })).authorized;
 }
 
+/** An agent's child reservation: the reservation request without what the parent supplies itself. */
+const AgentChildReservationSchema = ConversationParentReserveChildRequestSchema.omit({
+  authorityGeneration: true, directory: true, kind: true,
+});
+
 /** What a skill read says about its audience: the request without the Sidekick it names. */
 type SidekickAudienceRequest = Omit<SidekickSkillReadRequest, "workspaceId" | "automationId">;
 
@@ -841,8 +846,10 @@ export class HostedSidekick {
 
   async runNow(input: AutomationRunNowRequest): Promise<{ runId: string; reused: boolean }> {
     const request = parseRpcInput(AutomationRunNowRequestSchema, input, "run_now");
+    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    // Read after the access check's await: a revision applied or a pause
+    // made meanwhile is what the run must see.
     const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
-    await this.assertManager(row, request.actor);
     if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
     const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
     if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
@@ -864,8 +871,9 @@ export class HostedSidekick {
    */
   async runSeeded(input: AutomationRunSeededRequest): Promise<{ runId: string; reused: boolean }> {
     const request = parseRpcInput(AutomationRunSeededRequestSchema, input, "run_seeded");
+    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    // Read after the access check's await, as `runNow` does.
     const row = this.assertSidekick(request.workspaceId, request.automationId);
-    await this.assertManager(row, request.actor);
     if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
     if (request.seed.assistant === null) {
       throw new ApiError(422, "demo_seed_run_without_script", "A seeded run needs a turn to answer with");
@@ -1288,10 +1296,11 @@ export class HostedSidekick {
 
   /** Reserve against current parent authority without a caller-side preflight call. */
   reserveAgentChild(input: Omit<ConversationParentReserveChildRequest, "authorityGeneration" | "directory" | "kind">): ConversationParentReserveChildResult {
+    const request = parseRpcInput(AgentChildReservationSchema, input, "reserve_agent_child");
     const row = this.row();
     if (!row || row.lifecycle === "deleted" || row.owning_room_archived_at !== null) throw new Error("workstream_archived");
-    this.assertIdentity(row, input.workspaceId, input.parentId);
-    this.registerChild(input.substreamId, "child", input.createdByUserId, Date.now());
+    this.assertIdentity(row, request.workspaceId, request.parentId);
+    this.registerChild(request.substreamId, "child", request.createdByUserId, Date.now());
     return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration: row.authority_generation });
   }
 
