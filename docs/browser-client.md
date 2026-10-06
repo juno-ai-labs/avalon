@@ -365,14 +365,10 @@ Its screens draw the desktop's sign-in card and the shared `RallyMark`,
 `Button`, `ConnectorMark` and `InlineError`. A sign-in or picker change belongs
 in `@rally/ui`'s `app.css` so both hosts move together; the browser's
 `styles.css` keeps only what a web page adds.
-Every wait between a page load and the shell draws one screen, `BrowserBoot`:
-the desktop's pulsing mark centered on the canvas. The session restore, the
-organization a link names while it opens, and the lazy shell's download each
-show it, so the steps hand off without a visible change. A signed-in link must
-never fall through to the signed-in card while its organization opens, since
-that card's organization list is empty for a link and reads as "no access".
-A sign-in whose link names another deployment holds the same screen while
-Global activates it, rather than the spent code's "Check your email" card.
+Every wait from page load to the shell draws `BrowserBoot`. A signed-in link
+never falls through to the signed-in card while its organization opens, since
+that card's organization list is empty for a link and reads as "no access"; nor,
+when the link names another deployment, to the spent code's card.
 Collaboration code loads after authentication through one explicit lazy boundary;
 this is the browser-only exception to static imports. The browser declares its
 desktop dependency because it consumes the existing collaboration implementation;
@@ -556,19 +552,16 @@ Substream Archive stays in the right-click menu, away from the header Share cont
 
 ## Changelog
 
-### 2026-10-06 — One opening screen from load to shell
+### 2026-10-06 — A signed-in link opens behind the boot screen
 
-**What changed:** The lazy shell's loading fallback was a bare "Opening Rally…"
-paragraph in the top-left corner, and signing in from an organization link
-showed the signed-in card, with its empty organization list, until the
-organization opened; a link to another deployment showed the spent code's card
-instead. All of these now draw `BrowserBoot`, the same mark the session
-restore already showed. The error line above a mounted shell uses the shared
-`InlineError` in a bar instead of an unstyled paragraph.
+**What changed:** Until a linked organization opens, the entry shows
+`BrowserBoot`. Before, it showed the signed-in card, with an empty organization
+list, or for a link to another deployment the spent code's "Check your email"
+card.
 
-**Why:** Each step was added on its own and only the first got the boot mark;
-nothing tied the later waits to it. Naming the screen gives the next wait one
-thing to reach for.
+**Why:** Both read as a failure (no access, or a code to enter again) during an
+ordinary wait. Whatever is added between sign-in and the shell has to keep
+this: the organization's open is a wait, not a state of the card.
 
 ### 2026-10-03 — Guests get the desktop shell too
 
