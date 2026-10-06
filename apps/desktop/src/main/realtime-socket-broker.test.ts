@@ -192,6 +192,15 @@ describe('proxyUrlsFromElectronResolution', () => {
     expect(first.terminate).toHaveBeenCalledOnce();
   });
 
+  it('dials with the frame ceiling a factory was given, so the menu bar socket takes the whole sidebar', async () => {
+    const attempts = vi.fn().mockReturnValue(new FakeSocket());
+    const factory = createNodeRealtimeSocketFactory(async () => 'DIRECT', attempts, 0);
+    factory(openInput().url, openInput().protocols);
+    await Promise.resolve();
+
+    expect(attempts.mock.calls[0]?.[0]).toMatchObject({ proxyUrl: '', maxPayload: 0 });
+  });
+
   it('closes immediately when the renderer cancels while PAC resolution is pending', async () => {
     let resolveProxy!: (resolution: string) => void;
     const attempts = vi.fn();
