@@ -141,8 +141,13 @@ below it is raised on the next launch by `sidebar-preferences.ts`'s clamp.
 the top bar four buttons, five while an update waits. On macOS the bar starts
 at 100px to clear the traffic lights (82px inset plus 18px padding) and keeps
 14px on the right, which at 240px left 126px for buttons that need 192px
-(5 × 32px plus 4 × 8px gaps). 306px is exactly what five need. It had already
-overflowed by 26px whenever an update was waiting.
+(5 × 32px plus 4 × 8px gaps). 306px fits five 32px buttons; a three-digit
+attention count widens its button by about 8px, which this does not cover. The
+bar had already overflowed by 26px whenever an update was waiting. Every host
+shares the constant, so the web (no inset, no import) and Sideline (no
+attention menu) carry a minimum sized for the macOS bar; a per-host minimum is
+the change if that cost matters. `loadSidebarWidth` now clamps its fallback
+too, because Sideline's 280px default sat below the new minimum.
 
 **Considered and rejected:** Hiding the import button at narrow widths, and
 tightening the gaps to 4px, which saves only 16px.
