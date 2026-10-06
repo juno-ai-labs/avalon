@@ -356,6 +356,23 @@ it('treats an old token invitation link as a plain sign-in page', async () => {
   expect(requests).toEqual(['/session']);
 });
 
+it('presents an old token link once signed in, so a share made before claiming still reaches its recipient', async () => {
+  const link = `inv_${'this-is-not-a-real-token'.padEnd(43, '0')}`;
+  history.replaceState(null, '', `/invite#${link}`);
+  const bodies = new Map<string, unknown>();
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const route = input.split('/browser')[1]!;
+    if (init?.body) bodies.set(route, JSON.parse(String(init.body)));
+    if (route === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (route === '/workspaces') return Response.json({ workspaces: [] });
+    if (route === '/api/_/sharing/claim-link') return Response.json({ targets: [] });
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry />);
+  await waitFor(() => expect(bodies.get('/api/_/sharing/claim-link')).toEqual({ link }));
+  expect(location.hash).toBe('');
+});
+
 it('starts Google sign-in for the page it was opened on and explains a declined one on return', async () => {
   const starts: unknown[] = [];
   vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {

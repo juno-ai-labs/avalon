@@ -11,9 +11,10 @@ has.
 
 This is the store behind that, shared rather than built per feature: a URL that
 should not describe its subject is a recurring shape, not one feature.
-No kind uses it today. Its first, scoped invitations' `inv`, was retired when
-shares stopped carrying a token ([`scope-invitations.md`](scope-invitations.md));
-rows minted for it are no longer read and age out or stay inert. This document
+No kind mints into it today. Its first, scoped invitations' `inv`, was retired
+when shares stopped carrying a token ([`scope-invitations.md`](scope-invitations.md));
+its rows are still read, as routing only, so shares made before then reach
+their recipient, until none is left pending. This document
 owns the store and the lifecycle of a row in it. A new kind adds a
 `defineLinkPayload` call and nothing else.
 

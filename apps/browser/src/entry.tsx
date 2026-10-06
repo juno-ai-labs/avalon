@@ -9,7 +9,8 @@ import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspacesSche
 import { browserRequest, BrowserApiError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 
-import { parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
+import { parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget, workstreamAddressedUrl } from "@rally/contracts/workstream-links";
+import { ClaimedInvitationLinkSchema } from "@rally/contracts/scope-grants";
 
 import { WorkspaceIdSchema } from "@rally/contracts";
 
@@ -69,6 +70,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const sessionUser = useRef<string | null>(null);
   const renewalAt = useRef(Number.POSITIVE_INFINITY);
   const sessionChannel = useRef<BroadcastChannel | null>(null);
+  const legacyLink = useRef<string | null>(null);
   const refreshSession = useRef<((renew: boolean) => void) | null>(null);
 
   useEffect(() => {
@@ -90,9 +92,14 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const selected = selectedRegion.success ? selectedRegion.data : initialRegion;
     setRegion(selected);
     // Invitation emails once linked here with a token. Shares no longer need
-    // one: whoever signs in with the invited address holds them, so an old
-    // link is only a sign-in page now. Drop the token from history.
-    if (location.pathname === "/invite") history.replaceState(null, "", "/");
+    // one: whoever signs in with the invited address holds them. But a share
+    // made before that has no other record of its Channel, so keep the token
+    // in this page's memory and present it once signed in. Drop it from history.
+    if (location.pathname === "/invite") {
+      const link = location.hash.slice(1);
+      if (/^inv_[A-Za-z0-9_-]+$/u.test(link)) legacyLink.current = link;
+      history.replaceState(null, "", "/");
+    }
     const hasMagicProof = location.pathname === "/login/email" && fragment.has("token");
     if (hasMagicProof) {
       const input = EmailLoginRedeemSchema.safeParse({ challengeId: fragment.get("challenge"),
@@ -192,6 +199,21 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     });
     return () => { cancelRenewal(); cancelExpiry(); };
   }, [session?.expiresAt, session?.user.id, region]);
+
+  useEffect(() => {
+    const link = legacyLink.current;
+    if (!session || !link) return;
+    legacyLink.current = null;
+    // Routing only: the server claims with the session's own verified addresses.
+    void browserRequest(IDENTITY_REGION, "/api/_/sharing/claim-link", ClaimedInvitationLinkSchema, { link })
+      .then(({ targets: [target] }) => {
+        if (target) location.assign(new URL(workstreamAddressedUrl(location.origin, { region: IDENTITY_REGION,
+          workspaceId: target.workspaceId, workstreamId: target.parentId,
+          ...(target.kind === "conversation" && target.substreamId !== "0" ? { substreamId: target.substreamId } : {}) })).pathname);
+      })
+      // The workspace list below still shows anything the sign-in itself claimed.
+      .catch(() => undefined);
+  }, [session]);
 
   useEffect(() => {
     if (!session || !destination) { setWorkspaceSession(null); return; }
