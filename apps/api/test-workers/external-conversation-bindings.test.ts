@@ -29,7 +29,7 @@ import {
   type SpaceId,
   type UserId,
 } from "@rally/contracts";
-import { conversationEffectHash, type ParentEffect } from "@rally/contracts/conversation-effects";
+import { writeSidekickDirectoryRow } from "./helpers/sidekick";
 
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
@@ -619,25 +619,9 @@ describe("suspending bindings", () => {
       workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["D1", "1.0"],
       target: { kind: "conversation", parentKind: "automation", parentId: SIDEKICK, substreamId: RUN }, at: at(),
     });
-    const effect = {
-      kind: "directory_automation",
-      automationId: SIDEKICK,
-      authorUserId: USER_ID,
-      lifecycle: "deleted",
-      scope: "workspace",
-      owningWorkstreamId: null,
-      title: "Weekly call prep",
-      description: "",
-      nextRunAt: null,
-    } satisfies Extract<ParentEffect, { kind: "directory_automation" }>;
-    await workspace().applyAutomationDirectory({
-      workspaceId: WORKSPACE_ID,
-      envelope: {
-        kind: "parent_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
-        parentKind: "automation", parentId: SIDEKICK, generation: 1, messageId: "deleted-v1",
-        partitionKey: "automation", sourceVersion: 1, requiredProjectionVersion: null,
-        payloadHash: conversationEffectHash(effect), effect,
-      },
+    await writeSidekickDirectoryRow(env, {
+      automationId: SIDEKICK, workspaceId: WORKSPACE_ID, authorUserId: USER_ID, lifecycle: "deleted",
+      scope: "workspace", owningWorkstreamId: null, title: "Weekly call prep", description: "",
     });
     expect(await resolve(["D1", "1.0"])).toEqual({ outcome: "suspended", path: ["D1", "1.0"], reason: "sidekick_deleted" });
   });
@@ -687,25 +671,9 @@ describe("a lasting suspension during a disconnect", () => {
     await workspace().suspendExternalConversationBindings({
       workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["C1"], reason: "provider_membership_ended", at: at(),
     });
-    const effect = {
-      kind: "directory_automation",
-      automationId: SIDEKICK,
-      authorUserId: USER_ID,
-      lifecycle: "deleted",
-      scope: "workspace",
-      owningWorkstreamId: null,
-      title: "Weekly call prep",
-      description: "",
-      nextRunAt: null,
-    } satisfies Extract<ParentEffect, { kind: "directory_automation" }>;
-    await workspace().applyAutomationDirectory({
-      workspaceId: WORKSPACE_ID,
-      envelope: {
-        kind: "parent_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
-        parentKind: "automation", parentId: SIDEKICK, generation: 1, messageId: "deleted-while-disconnected",
-        partitionKey: "automation", sourceVersion: 1, requiredProjectionVersion: null,
-        payloadHash: conversationEffectHash(effect), effect,
-      },
+    await writeSidekickDirectoryRow(env, {
+      automationId: SIDEKICK, workspaceId: WORKSPACE_ID, authorUserId: USER_ID, lifecycle: "deleted",
+      scope: "workspace", owningWorkstreamId: null, title: "Weekly call prep", description: "",
     });
 
     await workspace().reactivateExternalConversationBindings({

@@ -16,7 +16,6 @@ export type WorkspaceScheduledAlarmPhase =
   | "parent_outbox"
   | "parent_breakouts"
   | "directory_followup"
-  | "sidekick_import"
   | "final_rearm";
 
 export type ObservableWorkspaceScheduledAlarmKind =

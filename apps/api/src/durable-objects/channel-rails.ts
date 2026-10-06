@@ -179,7 +179,7 @@ interface RailChannel {
   reported: boolean;
 }
 
-/** `SidekickDO.readSkillSummary`'s answer, with the viewer as principal and Main's participants as the audience. */
+/** `HostedSidekick.readSkillSummary`'s answer, with the viewer as principal and Main's participants as the audience. */
 function sidekickShown(row: SidekickRow, channel: RailChannel, participants: readonly string[], viewerId: string): boolean {
   return row.lifecycle !== "deleted" && sidekickAudienceAllows({
     scope: row.scope,

@@ -4,7 +4,7 @@ A Sidekick lets a person delegate work or knowledge. Its Organization's
 `WorkspaceDO` holds its identity, immutable definitions, optional triggers, and
 runs, through `HostedSidekick`; how it got there and how it is stored are
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them)'s.
-The legacy `SidekickDO` only exports its rows until it is deleted.
+The legacy `SidekickDO` that held them before is deleted.
 Substream `0` is the authoring conversation; delegated runs are child substreams.
 
 ## Sidekick publication and loading
@@ -207,30 +207,12 @@ above Settings. It lists accessible personal, workspace, and room Sidekicks.
 The library uses the normal desktop session and workspace boundary. The center
 sidebar renders participants as a facepile and provides attachment removal.
 
-### Class rename deployment
-
-The Worker exports `SidekickDO`. PR #583 supplied the dual-export compatibility
-release with the old v9 bindings. The
-rename release appends v10 in configured deployments and points `AUTOMATION_DOS` at
-`SidekickDO`, preserving namespace IDs and all `:automation:` object-name bytes.
-It requires verified compatibility deployments in configured deployments before rollout.
-The object now reports class `SidekickDO` but retains component `automation_do`
-and its existing schema ledger. Migration commands queued with `AutomationDO`
-are translated at dispatch to the new class; the tracker accepts both names so
-pre-rename inventory and reports remain actionable during regional rollout.
-The final cleanup removes the old Worker export only after verifying the rename.
-An internal source-import shim still exposes the historical type name; it does
-not export a Cloudflare class from the Worker entrypoint. The class itself is
-now a frozen exporter, deleted with its binding once every Organization has
-imported its Sidekicks.
-
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract (`onChildCommonProjection` moves the run row), and the schedule, run and memory-table alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: opens a run's conversation and starts its loop from the `sidekick_run_provision` Queue message the run's alarm entry sends. |
-| `apps/api/src/durable-objects/sidekick-do.ts` | The legacy object, reduced to its migration ledger and `exportForImport`. |
 | `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; and the refusal text the run's transcript records. |
 | `apps/api/src/durable-objects/substream-agent.ts` | `claimPersistentLoopExecution`, which continues a run from a run child's pending input, and `refuseSidekickRunInput`, which settles one the Sidekick refused. |
 | `apps/api/src/services/workstream-participant-model-message.ts` | `renderRunContinuationNote`, and `externalInputFraming`, which renders outside text in a run child as evidence. |
@@ -692,9 +674,8 @@ A Sidekick's `automation_directory` row is its definition row: id, author,
 lifecycle, scope, home, title, description and next run beside the accepted
 revision, bindings and appearance. Every change writes it in place, bumps the
 `automations` sidebar waterline and republishes the list, in the same call.
-The `directory_automation` effect is still accepted from a legacy object that
-has not been imported, which is how such a Sidekick is enrolled for its
-import; it never overwrites an imported Sidekick's row. An applied row that
+A late `directory_automation` effect from the deleted `SidekickDO` is
+acknowledged and logged as ignored. An applied row that
 changes something a rail shows (not its run times) also advances the rail
 waterline of the Channel that owns it and of every Channel recommending or
 attaching it.
@@ -961,23 +942,7 @@ definition columns migration 91 added), `sidekick_revisions`,
 `sidekick_schedules`, `sidekick_runs`, `sidekick_email_receipts`, the child
 tables, and alarm entries keyed `<sidekickId>:<key>`;
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them)
-maps them to the legacy tables. The legacy `SidekickDO` schema below stays
-until the class is deleted, because an object not yet imported is read through
-it.
-
-`SidekickDO` SQLite retains the namespace renamed from `AutomationDO`, with
-ordered object migrations: `automation`, `definition_revisions`,
-`schedules`, `runs`, `inbound_email_receipts`, the shared parent tables,
-`_internal_durable_alarms`, and the `object_retirement` tombstone
-([`workspace-retirement.md`](workspace-retirement.md)). `run_id` is the child
-substream id, and `harness_run_id` is unique per run. Migration 6 adds
-`runs.seed_json`, null on every run but one a demo seeded; migration 7 adds
-`automation.appearance_json`, null until somebody picks an icon or a colour.
-Migration 9 adds `automation.chat_appearance_json`, the appearance the setup chat
-last submitted, null until it first does. Migration 11 adds
-`automation.owning_substream_id`, `NOT NULL DEFAULT '0'`: the home conversation
-under the owning Channel. Migration 14 adds the export freeze and its alarm
-snapshot.
+maps them to the tables of the deleted `SidekickDO`.
 
 `WorkspaceDO` migration 32 rebuilt `automation_directory` (automation id,
 workspace, author, `source_version`, hash, lifecycle, scope, owning work stream,
@@ -1065,10 +1030,8 @@ and in the Organization's `sidekick_runs` (`run_workspace_sql`, filtered by
 backoff gate in `_internal_durable_alarms`; the Organization's alarm report
 names the entry and the handler's code. A run stuck `pending` with its child
 registered is waiting on its `sidekick_run_provision` message, which its entry
-sends again. A Sidekick whose `sidekick_imports` row is `pending` has not moved
-yet; `last_error_code` says why, and `retry_sidekick_import` moves it after a
-repair. When
-that code is a schema rejection it names the schema and the failing paths — a
+sends again. When
+a handler's code is a schema rejection it names the schema and the failing paths — a
 bare `ZodError` there is a parse that has not yet been moved onto
 `parseRpcInput`, and is itself the defect to fix before diagnosing further. A
 run refusing provider writes with "This automation run is no longer running"

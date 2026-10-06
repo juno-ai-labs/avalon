@@ -16,10 +16,9 @@
  * its siblings, because Channel code scans those across every parent and a
  * Sidekick's run is not a Breakout.
  *
- * `sidekick_imports` is the list of Sidekicks that still live in a legacy
- * object: every row the directory held when this ran. The directory receiver
- * adds a row for a Sidekick it had not heard of, until the legacy class is
- * deleted.
+ * `sidekick_imports` was the list of Sidekicks that still lived in a legacy
+ * object: every row the directory held when this ran. Migration 92 drops it,
+ * after the legacy class was deleted.
  */
 export const HOSTED_SIDEKICK_SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE automation_directory ADD COLUMN region TEXT`,

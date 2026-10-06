@@ -5,7 +5,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { asWorkspaceId } from "@rally/contracts";
 import { WorkspaceRelationshipSchema } from "@rally/contracts/scope-grants";
-import { conversationEffectHash, type ParentEffect } from "@rally/contracts/conversation-effects";
+import { writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { searchAudienceGroup, searchAudienceGroupIds } from "../src/services/search-audience";
 import { insertChannelRow } from "./helpers/hosted-parent";
@@ -166,23 +166,14 @@ describe("search audience: the person side", () => {
     expect(await groups(BREAKOUT_MEMBER)).toContain(group);
   });
 
-  it("learns who a Sidekick runs as from its directory row, and keeps it past an older effect", async () => {
+  it("learns who a Sidekick runs as from its directory row", async () => {
     await seedOrganization();
     const automationId = "00000000-0000-7000-8000-00000000d005";
-    const apply = (version: number, runAsUserId?: string) => {
-      const effect: Extract<ParentEffect, { kind: "directory_automation" }> = {
-        kind: "directory_automation", automationId, authorUserId: MEMBER, ...(runAsUserId ? { runAsUserId } : {}),
-        lifecycle: "active", scope: "personal", owningWorkstreamId: null, title: "Brief", description: "", nextRunAt: null };
-      return workspace().applyAutomationDirectory({ workspaceId: WORKSPACE_ID, envelope: {
-        kind: "parent_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID, parentKind: "automation",
-        parentId: automationId, generation: 1, messageId: `brief-v${version}`, partitionKey: "automation", sourceVersion: version,
-        requiredProjectionVersion: null, payloadHash: conversationEffectHash(effect), effect } });
-    };
     const [runsAs] = await searchAudienceGroupIds([sidekick(automationId)]);
-    await apply(1, EXECUTOR);
-    expect(await groups(EXECUTOR)).toContain(runsAs);
-    // An effect queued before the field existed carries no executor; the row keeps the one it knows.
-    await apply(2);
+    await writeSidekickDirectoryRow(env, {
+      automationId, workspaceId: WORKSPACE_ID, authorUserId: MEMBER, runAsUserId: EXECUTOR,
+      lifecycle: "active", scope: "personal", owningWorkstreamId: null, title: "Brief", description: "",
+    });
     expect(await groups(EXECUTOR)).toContain(runsAs);
     expect(await groups(BREAKOUT_MEMBER)).not.toContain(runsAs);
   });

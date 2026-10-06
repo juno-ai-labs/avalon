@@ -165,8 +165,7 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
   }
 
   if (target.scope === "automation") {
-    // The Sidekick's parent is hosted by its Organization object, which
-    // imports one still in its legacy object before it answers.
+    // The Sidekick's parent is hosted by its Organization object.
     const automation = await durableObjectStubForWorkspace(
       env,
       env.WORKSPACE_DOS,

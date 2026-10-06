@@ -180,7 +180,7 @@ function channelDoubles(log: string[]) {
  * to behave for the service under test to reach anything at all.
  */
 function namespaceDouble<
-  T extends Env["WORKSPACE_DOS"] | Env["SUBSTREAM_AGENTS"] | Env["AUTOMATION_DOS"],
+  T extends Env["WORKSPACE_DOS"] | Env["SUBSTREAM_AGENTS"],
 >(stub: object): T {
   const namespace = {
     idFromName: (name: string) => ({ toString: () => name }),
@@ -230,7 +230,6 @@ function serviceEnv(input: {
     }),
     WORKSPACE_DOS: namespaceDouble<Env["WORKSPACE_DOS"]>(organizationObject(input.workspace, input.room)),
     SUBSTREAM_AGENTS: namespaceDouble<Env["SUBSTREAM_AGENTS"]>(conversation),
-    AUTOMATION_DOS: namespaceDouble<Env["AUTOMATION_DOS"]>({}),
     ACCESS_REVOCATION_QUEUE: createCloudflareTestBinding<Env["ACCESS_REVOCATION_QUEUE"]>(
       (input.revocationQueue ?? { send: vi.fn(async () => undefined) }) as never,
     ),

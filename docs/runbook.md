@@ -1069,9 +1069,7 @@ cannot establish production namespace preservation.
 ### Debugging an automation
 
 An automation's rows are its Organization's: `automation_directory` and the
-`sidekick_*` tables in `WorkspaceDO`, filtered by `sidekick_id` (one not yet
-imported still has them in its legacy `SidekickDO`, named
-`<region>:<workspace>:automation:<automationId>`; `sidekick_imports` says which).
+`sidekick_*` tables in `WorkspaceDO`, filtered by `sidekick_id`.
 Its conversations are
 `SubstreamAgent`s named `<region>:<workspace>:<automationId>` (the chat) and
 `<region>:<workspace>:<automationId>:<runId>` (each run).

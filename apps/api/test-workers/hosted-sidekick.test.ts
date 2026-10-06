@@ -1165,12 +1165,9 @@ describe("a hosted Sidekick", () => {
     expect(run).toMatchObject({ status: "completed" });
   });
 
-  it("opens a Sidekick's conversation without its legacy object, which is never asked", async () => {
+  it("lets the Sidekick's author open its conversation and refuses an outsider", async () => {
     await activeAutomation();
-    // Any use of the legacy binding throws, so an allowed answer proves the
-    // whole decision was the Organization object's.
-    const legacy = new Proxy({}, { get: () => { throw new Error("legacy_sidekick_binding_used"); } });
-    const authorization = new AuthorizationService({ ...TEST_ENV, AUTOMATION_DOS: legacy as Env["AUTOMATION_DOS"] });
+    const authorization = new AuthorizationService(TEST_ENV);
     expect(await authorization.checkMany({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, delegation: null },
       [{ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") }]))
       .toMatchObject([{ status: "allowed" }]);
