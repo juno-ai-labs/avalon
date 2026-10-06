@@ -1147,7 +1147,7 @@ export class HostedSidekick {
       const bindings = JSON.parse(row.connector_bindings_json) as Record<string, string>;
       // Per bound plugin: whether its connection is usable by the claimant
       // (an Organization one, or the claimant's own), and if not, the
-      // claimant's replacement for the plugin, if any.
+      // plugin's connection when the claimant may use it (one per plugin).
       const decisions = this.sql.exec<{ plugin_id: string; usable: number; replacement_id: string | null }>(
         `SELECT binding.key AS plugin_id,
                 EXISTS (
@@ -1159,7 +1159,7 @@ export class HostedSidekick {
                   WHERE replacement.workspace_id = ?1 AND replacement.status <> 'disabled'
                     AND replacement.model_plugin_id = binding.key
                     AND (replacement.scope = 'workspace' OR replacement.owner_user_id = ?2)
-                  ORDER BY replacement.id DESC LIMIT 1) AS replacement_id
+                  LIMIT 1) AS replacement_id
            FROM json_each(?3) binding`,
         row.workspace_id, claimant, row.connector_bindings_json,
       ).toArray();
