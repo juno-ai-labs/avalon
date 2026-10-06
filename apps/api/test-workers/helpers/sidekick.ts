@@ -1,6 +1,6 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env as workerEnv } from "cloudflare:workers";
-import { afterEach, beforeEach, vi } from "vitest";
+import { afterEach, beforeEach, expect, vi } from "vitest";
 import { asWorkspaceId } from "@rally/contracts";
 
 import { HostedSidekick, type HostedSidekickHost } from "../../src/durable-objects/hosted-sidekick";
@@ -61,6 +61,9 @@ export async function provisionStartedSidekickRuns(env: Env, workspaceId: string
   return started.map((run) => run.run_id);
 }
 
+/** The wait for a due run's handoff: well under the 30-second test budget. */
+const RUN_HANDOFF_TIMEOUT_MS = 10_000;
+
 /**
  * Fire the Organization's alarm, then provision whatever runs it started.
  *
@@ -72,15 +75,14 @@ export async function provisionStartedSidekickRuns(env: Env, workspaceId: string
 export async function runSidekickAlarms(env: Env, workspaceId: string, region = "global"): Promise<string[]> {
   const stub = sidekickWorkspace(env, workspaceId, region);
   await runDurableObjectAlarm(stub);
-  for (;;) {
-    const due = await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM _internal_durable_alarms WHERE kind = ? AND due_at <= ?`,
-      AUTOMATION_RUN_ALARM_KIND, Date.now(),
-    ).one().count);
-    if (due === 0) break;
-    await runDurableObjectAlarm(stub);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+  // Only waits: firing the alarm again here would start the same run a second
+  // time while the first pass is still sending. Due is the scheduler's own
+  // test, so an entry the handler deferred ends the wait, and the caller's
+  // assertion reports the run that never started.
+  await expect.poll(() => runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<{ count: number }>(
+    `SELECT COUNT(*) AS count FROM _internal_durable_alarms WHERE kind = ? AND MAX(due_at, retry_at) <= ?`,
+    AUTOMATION_RUN_ALARM_KIND, Date.now(),
+  ).one().count), { timeout: RUN_HANDOFF_TIMEOUT_MS }).toBe(0);
   return provisionStartedSidekickRuns(env, workspaceId, region);
 }
 
