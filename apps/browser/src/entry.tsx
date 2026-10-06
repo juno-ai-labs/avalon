@@ -256,6 +256,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     // session and user id. Leave that to the restore path, which activates it
     // through Global, rather than showing this deployment's session first.
     if (destination && destination.region !== (proof?.region ?? signInRegion)) {
+      // The opening screen covers the restore; the spent code's card must not.
+      setChecking(true);
       refreshSession.current?.(false);
       return;
     }
