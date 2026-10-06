@@ -82,6 +82,8 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
   /** Whether the Rally status item is in the macOS menu bar. On by default. */
   pushNotificationsEnabled: boolean;
   pushNotificationStatus: string;
+  /** macOS's "Badge application icon" switch for Rally; `unknown` until read. */
+  notificationBadgeStatus: 'enabled' | 'disabled' | 'unknown';
   menuBarEnabled: boolean;
   /** Whether this platform has a menu bar Rally can live in at all. The
    * preference is still stored where it is not, so moving the same profile to a
@@ -400,6 +402,11 @@ export interface RallyDesktopBridge {
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setPushNotificationsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   openNotificationSettings: () => Promise<void>;
+  /**
+   * The dock icon's badge: the sidebar attention menu's count, `0` to clear.
+   * macOS shows it only while notifications, with badges, are allowed.
+   */
+  setDockBadgeCount: (count: number) => Promise<void>;
   setMenuBarEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setLaunchAtLogin: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setProductAnalyticsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
