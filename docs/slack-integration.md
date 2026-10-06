@@ -313,13 +313,18 @@ each new prompt in a thread moves it.
 
 A session holds one reaction slot, but a follow-up prompt is admitted while an
 earlier run in the thread is still live, and moves the slot to its own message,
-usually with the same emoji. So each run carries its own anchor (channel,
-message, and the emoji admission placed) on `slackOrigin.reactionAnchor` from
-admission to delivery. The outcome always lands on that message. When the slot
-still points there, the outcome is written back conditionally on both the anchor
-and the emoji; when it has moved on, the run swaps its own emoji and records
+usually with the same emoji. So each run carries its own anchor (channel and
+message) on `slackOrigin.reactionAnchor` from admission to delivery. The outcome
+always lands on that message. When the slot still points there, the outcome is
+written back conditionally on both the anchor and the emoji; when it has moved
+on, the run swaps the configured acknowledgement for its outcome and records
 nothing, leaving the slot to the newer anchor. A run admitted before the anchor
 was carried falls back to whatever the slot holds.
+
+The anchor holds only what the Slack event fixes. `slackOrigin` is part of the
+message's admission identity, so the emoji Slack accepted, which a retried
+ingress job can see differently (a timeout, then `already_reacted`), would make
+the retry an idempotency conflict.
 
 Reaction sets resolve most-specific-wins: the built-in defaults, then a workspace
 override on the installation's `config_json`, then a per-run override. An
@@ -827,10 +832,16 @@ thread's opener. When the wiring was lost was not recorded.
 `slack_agent_sessions`, captured at admission and matched on settle. It needs a
 migration and still has to travel with the run, and on its own it cannot say
 which message the earlier run should swap once the slot has moved. The anchor
-itself answers both.
+itself answers both. Carrying the emoji admission placed in the anchor was also
+rejected: `slackOrigin` is hashed into the message's admission receipt, and a
+retry can see a different acknowledgement result, which would turn it into
+`substream_message_idempotency_conflict` (raised by Codex on this change).
 
-**Consequences:** Once the slot has moved, the earlier run removes the emoji
-admission placed, not the slot's, and writes nothing back. Runs admitted before
+**Consequences:** Once the slot has moved, the earlier run removes the
+connection's configured acknowledgement, not the slot's emoji, and writes
+nothing back. If the acknowledgement was changed between admission and
+delivery, or fell back to Rally's default because Slack rejected its name, the
+old emoji can stay beside the outcome. Runs admitted before
 this change carry no anchor and keep the old slot-only behavior until they
 drain. A run that a follow-up supersedes (`superseded_by_follow_up`) still
 delivers no outcome, so its message keeps the acknowledgement.
