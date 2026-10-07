@@ -84,7 +84,9 @@ export function applicationMenuTemplate(
     { role: 'editMenu' },
     {
       // Electron's own View items, spelled out because a `viewMenu` role with
-      // a submenu replaces them rather than adding to them.
+      // a submenu replaces them rather than adding to them. macOS adds its own
+      // full-screen item (Fn-F) to any menu titled View, so Electron's
+      // would be a second one there.
       label: 'View',
       submenu: [
         { label: 'Refresh Organization List', click: options.actions.refreshOrganizationList },
@@ -96,8 +98,9 @@ export function applicationMenuTemplate(
         { role: 'resetZoom' },
         { role: 'zoomIn' },
         { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
+        ...(options.platform === 'darwin'
+          ? []
+          : [{ type: 'separator' }, { role: 'togglefullscreen' }] satisfies MenuItemConstructorOptions[]),
       ],
     },
     { role: 'windowMenu' },
