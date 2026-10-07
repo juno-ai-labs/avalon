@@ -13,6 +13,7 @@ import { scheduleSessionDeadline } from "./session-timer";
 
 import { parseSidekickLinkPathTarget, parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
 
+import { UuidV7Schema } from "@rally/contracts/telemetry";
 import { WorkspaceIdSchema } from "@rally/contracts";
 
 const initialRegion = configuredRegions[0]!;
@@ -72,7 +73,18 @@ export function BrowserBoot(): React.JSX.Element {
 export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void, onRevalidate: () => void) => ReactNode } = {}) {
   const signupFlow = useRef<string | null>(null);
   const signupViewed = useRef(false);
-  signupFlow.current ??= uuidV7();
+  if (signupFlow.current === null) {
+    const entryUrl = new URL(location.href);
+    const incoming = UuidV7Schema.safeParse(entryUrl.searchParams.get('signupFlowId'));
+    signupFlow.current = incoming.success ? incoming.data : uuidV7();
+  }
+  useEffect(() => {
+    const entryUrl = new URL(location.href);
+    if (entryUrl.searchParams.has('signupFlowId')) {
+      entryUrl.searchParams.delete('signupFlowId');
+      history.replaceState(history.state, '', entryUrl.href);
+    }
+  }, []);
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
   // What the restore path opens: the address the page loaded with, or an
   // organization opened in place since, which a later focus then restores.
