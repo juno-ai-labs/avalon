@@ -2344,6 +2344,8 @@ pre {
 .workspace-settings-screen .settings-row-value strong { font-size: 13px; font-weight: 400; }
 .inline-editable-text { border-radius: 6px; cursor: text; margin: -3px -6px; padding: 3px 6px; }
 .inline-editable-text:hover { background: var(--av-sys-color-state-hover); }
+.inline-editable-field { align-items: flex-end; display: flex; flex-direction: column; gap: 4px; }
+.inline-editable-reason { color: var(--av-sys-color-danger-soft); font-size: 12px; }
 .inline-editable-input {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-ref-color-line-4);

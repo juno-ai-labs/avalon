@@ -72,6 +72,46 @@ describe('InlineEditableText', () => {
       expect(screen.getByRole('button', { name: /Organization name/ })).toHaveTextContent('Rally'));
   });
 
+  it('opens on Space as well as Enter, as a button does', () => {
+    render(<InlineEditableText ariaLabel="Organization name" onSave={vi.fn<Save>()} value="Rally" />);
+    fireEvent.keyDown(screen.getByRole('button', { name: /Organization name/ }), { key: ' ' });
+    expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveValue('Rally');
+  });
+
+  it('keeps a draft open with its reason when validation refuses it', () => {
+    const onSave = vi.fn<Save>(async () => undefined);
+    render(<InlineEditableText
+      ariaLabel="Organization name"
+      onSave={onSave}
+      validate={(next) => (next.length < 2 ? 'Use 2 to 120 characters.' : null)}
+      value="Rally"
+    />);
+    fireEvent.doubleClick(screen.getByRole('button', { name: /Organization name/ }));
+    const input = screen.getByRole('textbox', { name: 'Organization name' });
+    fireEvent.change(input, { target: { value: 'J' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(input).toHaveValue('J');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('alert')).toHaveTextContent('Use 2 to 120 characters.');
+  });
+
+  it('returns focus to the name after Enter or Escape, but not after a click away', async () => {
+    const { input } = edit();
+    fireEvent.change(input, { target: { value: 'Juno Labs' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('button', { name: /Organization name/ })).toHaveFocus());
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: /Organization name/ }));
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' });
+    expect(screen.getByRole('button', { name: /Organization name/ })).toHaveFocus();
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: /Organization name/ }));
+    fireEvent.blur(screen.getByRole('textbox'));
+    expect(screen.getByRole('button', { name: /Organization name/ })).not.toHaveFocus();
+  });
+
   it('is plain text with no edit affordance when disabled', () => {
     render(<InlineEditableText ariaLabel="Organization name" disabled onSave={vi.fn()} value="Rally" />);
     fireEvent.doubleClick(screen.getByText('Rally'));

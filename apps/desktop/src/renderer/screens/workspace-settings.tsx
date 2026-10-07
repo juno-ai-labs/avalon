@@ -47,7 +47,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
-import { ConnectorEventConsoleProviders, ConnectorInstallationProviders, connectorApiKeyAcceptable } from '@rally/contracts';
+import { ConnectorEventConsoleProviders, ConnectorInstallationProviders, WorkspaceNameSchema, connectorApiKeyAcceptable } from '@rally/contracts';
 import type {
   ConnectorOAuthStart,
   CustomMcpToolPolicy,
@@ -1014,8 +1014,12 @@ export function WorkspaceSettingsScreen({
   });
   const renameWorkspace = useMutation({
     mutationFn: (name: string) => api!.updateWorkspace({ name }),
-    // Awaited so the new name is in `workspace` before the field lets go of it.
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace'] }),
+    // Written straight into the read, so the name is in `workspace` before the
+    // field lets go of it, without a refetch; the sync echo refetches anyway.
+    onSuccess: (updated) => queryClient.setQueriesData<Workspace>(
+      { queryKey: ['workspace'] },
+      (current) => current && { ...current, name: updated.name },
+    ),
   });
   const applyApplicationSettingsMutation = (
     settings: DesktopApplicationSettings,
@@ -1516,6 +1520,7 @@ export function WorkspaceSettingsScreen({
                         ariaLabel="Organization name"
                         disabled={!isAdmin || !api}
                         onSave={(name) => renameWorkspace.mutateAsync(name)}
+                        validate={(name) => (WorkspaceNameSchema.safeParse(name).success ? null : 'Use 2 to 120 characters.')}
                         value={workspace.name}
                       />
                     </span>
