@@ -1,3 +1,4 @@
+import { observeSignup, type SignupPlatform } from '../telemetry/signup';
 import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { logWarn } from "../observability/logger";
 import { z } from "zod";
@@ -5,7 +6,7 @@ import { EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema 
 export { EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema } from "@rally/contracts/browser-session";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { browserOrigin } from "../lib/browser-origin";
+import { browserOrigin, browserReturnUrl } from "../lib/browser-origin";
 import { decryptString, encryptString, hmacSha256, randomToken, timingSafeEqualText } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
 import { resolveVerifiedEmailIdentity } from "./login-identity-service";
@@ -20,6 +21,7 @@ export type EmailLoginPolicy = z.infer<typeof EmailLoginPolicySchema>;
 const EncryptedSchema = z.strictObject({ ciphertext:z.string(),iv:z.string() });
 const DeliverySchema = z.strictObject({ email:z.string().email(),from:z.string(),text:z.string(),subject:z.string() });
 interface ChallengeRow {
+  telemetry_flow_id:string|null; telemetry_client_platform:SignupPlatform;
   id:string; email:string; magic_hash:string; otp_hash:string; expires_at:number;
   max_failed_attempts:number|null; failed_attempts:number; redeemed_at:number|null;
   redemption_id:string|null; user_id:string|null; session_id:string|null;
@@ -66,12 +68,17 @@ export async function openEmailLoginSecret(env: Env, id: string, value: string):
   return JSON.parse(await decryptString(sealed.ciphertext,sealed.iv,env.OAUTH_STATE_ENCRYPTION_KEY,`email-login:${id}`));
 }
 
-export async function startEmailLogin(env: Env, input: z.infer<typeof EmailLoginStartSchema>) {
+export async function startEmailLogin(env: Env, input: z.infer<typeof EmailLoginStartSchema>, clientPlatform: SignupPlatform = 'browser') {
   const request = EmailLoginStartSchema.parse(input);
   const policy = configuredEmailLoginPolicy(env);
+  const flowId = request.signupFlowId ?? uuidV7();
   const token = randomToken();
   const code = otpCode(policy.otpDigits);
-  const url = new URL("/login/email",env.BROWSER_APP_ORIGIN);
+  // A sign-in started from a shared link lands back on it; the client reads
+  // the proof there as on the plain sign-in page.
+  const url = new URL(request.returnPath?.startsWith("/app/")
+    ? browserReturnUrl(env,request.returnPath)
+    : new URL("/login/email",env.BROWSER_APP_ORIGIN).toString());
   // Fragments do not reach the HTTP server, proxy logs or scanner GETs.
   url.hash = new URLSearchParams({ region:env.AVALON_REGION,challenge:request.challengeId,token }).toString();
   const now = Date.now();
@@ -84,21 +91,27 @@ export async function startEmailLogin(env: Env, input: z.infer<typeof EmailLogin
   // The encrypted email is the durable delivery intent. Retrying issuance with
   // the same challenge ID preserves its credentials and provider request body.
   await env.DB.prepare(`INSERT INTO email_login_challenges
-    (id,email,magic_hash,otp_hash,expires_at,max_failed_attempts,delivery_payload_encrypted,created_at)
-    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`)
-    .bind(request.challengeId,request.email,magicHash,otpHash,expiresAt,policy.maxFailedAttempts,encrypted,now).run();
-  const row = await env.DB.prepare("SELECT email,expires_at FROM email_login_challenges WHERE id=?")
-    .bind(request.challengeId).first<{ email:string;expires_at:number }>();
+    (id,email,magic_hash,otp_hash,expires_at,max_failed_attempts,delivery_payload_encrypted,created_at,telemetry_flow_id,telemetry_client_platform)
+    VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`)
+    .bind(request.challengeId,request.email,magicHash,otpHash,expiresAt,policy.maxFailedAttempts,encrypted,now,flowId,clientPlatform).run();
+  const row = await env.DB.prepare("SELECT email,expires_at,telemetry_flow_id,telemetry_client_platform FROM email_login_challenges WHERE id=?")
+    .bind(request.challengeId).first<{ email:string;expires_at:number;telemetry_flow_id:string|null;telemetry_client_platform:SignupPlatform }>();
   if (!row || row.email !== request.email) throw new ApiError(409,"email_login_request_conflict","Start a new sign-in request");
+  const flow = { flowId: row.telemetry_flow_id, clientPlatform: row.telemetry_client_platform };
+  observeSignup(env, flow, 'signup_started', 'email');
+  observeSignup(env, flow, 'signup_email_submitted', 'email');
   return EmailLoginStartedSchema.parse({ challengeId:request.challengeId,expiresAt:row.expires_at });
 }
 
 /** No GET calls this function. Both proof types consume the same challenge. */
-export async function redeemEmailLogin(env: Env, input: z.infer<typeof EmailLoginRedeemSchema>) {
+export async function redeemEmailLogin(env: Env, input: z.infer<typeof EmailLoginRedeemSchema>, clientPlatform: SignupPlatform) {
   configuredEmailLoginPolicy(env);
   const request = EmailLoginRedeemSchema.parse(input);
   const row = await env.DB.prepare("SELECT * FROM email_login_challenges WHERE id=?").bind(request.challengeId).first<ChallengeRow>();
   if (!row) throw refused();
+  const flow = { flowId: row.telemetry_flow_id, clientPlatform: row.telemetry_client_platform };
+  observeSignup(env, flow, 'signup_verification_requested', request.method, { clientPlatform });
+  try {
   const proof = await digest(env,row.id,request.method,request.credential);
   const expected = request.method === "magic" ? row.magic_hash : row.otp_hash;
   if (!timingSafeEqualText(proof,expected)) {
@@ -113,21 +126,26 @@ export async function redeemEmailLogin(env: Env, input: z.infer<typeof EmailLogi
     return { challengeId:row.id,redemptionId:request.redemptionId };
   }
   if (row.expires_at <= Date.now() || (row.max_failed_attempts !== null && row.failed_attempts >= row.max_failed_attempts)) throw refused();
-  const userId = await resolveVerifiedEmailIdentity(env.DB,row.email);
+  const userId = await resolveVerifiedEmailIdentity(env.DB,row.email, flow);
+  observeSignup(env, flow, 'signup_verification_completed', request.method, { userId, clientPlatform });
   const sessionId = uuidV7();
   const encrypted = await seal(env,row.id,{ refreshToken:randomToken(48) });
   // Persist the winning identity and session credentials with proof consumption.
   // A crash before session insertion resumes this same session, never a second.
   const won = await env.DB.prepare(`UPDATE email_login_challenges
-    SET redeemed_at=?,redemption_id=?,user_id=?,session_id=?,session_secret_encrypted=?
+    SET redeemed_at=?,redemption_id=?,user_id=?,session_id=?,session_secret_encrypted=?,signup_created=COALESCE((SELECT signup_flow_id = ? FROM users WHERE id = ?),0)
     WHERE id=? AND redeemed_at IS NULL AND expires_at>?
       AND (max_failed_attempts IS NULL OR failed_attempts<max_failed_attempts)
-    RETURNING id`).bind(Date.now(),request.redemptionId,userId,sessionId,encrypted,row.id,Date.now()).first();
+    RETURNING id`).bind(Date.now(),request.redemptionId,userId,sessionId,encrypted,flow.flowId,userId,row.id,Date.now()).first();
   if (!won) {
     const current = await env.DB.prepare("SELECT redemption_id FROM email_login_challenges WHERE id=?").bind(row.id).first<{ redemption_id:string|null }>();
     if (current?.redemption_id !== request.redemptionId) throw refused();
   }
   return { challengeId:row.id,redemptionId:request.redemptionId };
+  } catch (error) {
+    observeSignup(env, flow, 'signup_failed', request.method, { result: 'failed', clientPlatform });
+    throw error;
+  }
 }
 
 export async function deliverEmailLogin(env: Env, challengeId: string): Promise<void> {

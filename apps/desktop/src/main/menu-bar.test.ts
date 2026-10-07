@@ -8,6 +8,7 @@ function noopActions(): MenuBarActions {
   return {
     selected: vi.fn(),
     openConversation: vi.fn(),
+    openAccessRequest: vi.fn(),
     openRally: vi.fn(),
     quit: vi.fn(),
   };
@@ -202,14 +203,14 @@ describe('menu bar controller', () => {
       channelTitle: null,
       reason: 'unread' as const,
     }));
-    const subject = harness({ content: { attention, attentionComplete: true, recents: [] } });
+    const subject = harness({ content: { accessRequests: [], attention, attentionComplete: true, recents: [] } });
     await subject.controller.initialize();
 
     expect(subject.titles.at(-1)).toBe('7');
   });
 
   it('shows no number while nothing is waiting, or nobody is signed in', async () => {
-    const quiet = harness({ content: { attention: [], attentionComplete: true, recents: [] } });
+    const quiet = harness({ content: { accessRequests: [], attention: [], attentionComplete: true, recents: [] } });
     await quiet.controller.initialize();
     expect(quiet.titles.at(-1)).toBe('');
 
@@ -217,6 +218,7 @@ describe('menu bar controller', () => {
       signedIn: false,
       content: {
         attention: [{ key: 'a', workstreamId: 'a', substreamId: null, title: 'A', channelTitle: null, reason: 'unread' }],
+        accessRequests: [],
         attentionComplete: true,
         recents: [],
       },
@@ -227,7 +229,7 @@ describe('menu bar controller', () => {
 
   it('rebuilds the drop-down from whatever is currently held', async () => {
     const subject = harness({
-      content: { attention: [], attentionComplete: true, recents: [{ id: 'a', title: 'Acme renewal', substreamId: null }] },
+      content: { accessRequests: [], attention: [], attentionComplete: true, recents: [{ id: 'a', title: 'Acme renewal', substreamId: null }] },
     });
     await subject.controller.initialize();
     subject.controller.refresh();

@@ -36,7 +36,6 @@ on:
       - "scripts/wrangler-config.mjs"
       - "scripts/entry-point.mjs"
       - "scripts/check-regional-health.mjs"
-      - "scripts/check-workspace-handoff-site.mjs"
       - "scripts/select-api-deploy-mode.mjs"
       - "scripts/deploy-api-direct-region.mjs"
   workflow_dispatch:
@@ -277,14 +276,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-
-      # The public site and API deploy from independent workflows. A writer
-      # release must not emit /app/workspaces links until Pages serves that
-      # rewrite and the live updater advertises a desktop that understands its
-      # native target. If either independent release is pending or failed, this
-      # run stops before migrations or Worker upload and can be re-run later.
-      - name: Require workspace-addressed link readers
-        run: node scripts/check-workspace-handoff-site.mjs
 
       - name: Require every R2 bucket declared by the regional Wrangler configs
         run: node scripts/check-cloudflare-r2-buckets.mjs

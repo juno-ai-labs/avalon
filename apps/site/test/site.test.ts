@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
-import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
+import { handoffAppTarget, handoffDevice, handoffHeading, isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
 import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
@@ -23,6 +23,31 @@ describe('public Rally site', () => {
     expect(isIosDevice('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', 'iPhone', 5)).toBe(true);
     expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 5)).toBe(true);
     expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 0)).toBe(false);
+  });
+  it('quotes the linked name in the handoff heading and cuts it past 40 characters', () => {
+    expect(handoffHeading('Q3 launch plan')).toBe('Opening “Q3 launch plan” in Rally');
+    expect(handoffHeading('x'.repeat(40))).toBe(`Opening “${'x'.repeat(40)}” in Rally`);
+    expect(handoffHeading(`${'x'.repeat(39)} tail`)).toBe(`Opening “${'x'.repeat(39)}…” in Rally`);
+  });
+  it('names which Rally app a shared link can open on each device', () => {
+    expect(handoffDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 0)).toBe('mac');
+    expect(handoffDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 5)).toBe('ios');
+    expect(handoffDevice('Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32', 0)).toBe('other');
+    expect(handoffDevice('Mozilla/5.0 (Linux; Android 14; Pixel 8)', 'Linux armv8l', 5)).toBe('other');
+  });
+  it('leaves a shared link to the web app where no Rally app can open it', () => {
+    const workspace = { region: 'global', workspaceId: '00000000-0000-7000-8000-0000000000a1' };
+    const workstream = { ...workspace, spaceId: '00000000-0000-7000-8000-0000000000a9', workstreamId: '00000000-0000-7000-8000-0000000000b1' };
+    const space = { ...workspace, spaceId: '00000000-0000-7000-8000-0000000000a9' };
+    const none = { workstream: null, space: null, sidekick: null };
+    expect(handoffAppTarget('other', { ...none, workstream })).toBeNull();
+    expect(handoffAppTarget('ios', { ...none, space })).toBeNull();
+    expect(handoffAppTarget('ios', { ...none, workstream })).toEqual({
+      app: 'ios',
+      href: 'rallywithai://handoff/workspaces/global/00000000-0000-7000-8000-0000000000a1/workstreams/00000000-0000-7000-8000-0000000000b1',
+    });
+    expect(handoffAppTarget('mac', { ...none, space })?.app).toBe('mac');
+    expect(handoffAppTarget('mac', { ...none, space })?.href.startsWith('rallywithai://workspace/global/')).toBe(true);
   });
   it('hands canonical Channel paths to iPhone builds through their legacy addressed reader', () => {
     expect(legacyIosWorkstreamHandoff({

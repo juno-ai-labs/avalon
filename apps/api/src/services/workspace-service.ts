@@ -13,6 +13,8 @@ import {
   type WorkspaceInvitationRole,
 } from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import type { OrganizationUsage, PlanId } from "@rally/contracts/usage";
+import { readOrganizationUsage, setWorkspacePlan } from "./usage-metering";
 import { newId, nowIso } from "@rally/db";
 import { downloadGrantUrl, issueDownloadGrant, revokeDownloadGrant, revokeDownloadGrantsForInvitation } from "@rally/db/private-access";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
@@ -469,15 +471,17 @@ export class WorkspaceService {
     };
   }
 
-  async updateWorkspace(input: { timezone: string }) {
+  async updateWorkspace(input: { name?: string | undefined; timezone?: string | undefined }) {
     this.requireAdmin();
+    // One statement for either field: a field left out keeps its stored value.
     await this.env.DB.prepare(
       `UPDATE workspaces
-       SET timezone = ?, updated_at = ?
+       SET name = COALESCE(?, name), timezone = COALESCE(?, timezone), updated_at = ?
        WHERE id = ?`,
     )
       .bind(
-        input.timezone,
+        input.name ?? null,
+        input.timezone ?? null,
         nowIso(),
         this.auth.workspaceId,
       )
@@ -558,6 +562,22 @@ export class WorkspaceService {
       );
     }
     await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId });
+  }
+
+  /**
+   * Move this Organization to a plan. Administrators only, as with every other
+   * Organization-wide setting; there is no billing behind it yet, so the change
+   * is the quota alone (docs/usage-metering.md).
+   */
+  async setPlan(plan: PlanId): Promise<OrganizationUsage> {
+    this.requireAdmin();
+    const now = Date.now();
+    if (!await setWorkspacePlan(this.env, this.auth.workspaceId, plan, now)) {
+      throw new ApiError(404, "workspace_not_found", "Workspace not found");
+    }
+    const usage = await readOrganizationUsage(this.env, this.auth.workspaceId, now);
+    if (!usage) throw new ApiError(404, "workspace_not_found", "Workspace not found");
+    return usage;
   }
 
   /**

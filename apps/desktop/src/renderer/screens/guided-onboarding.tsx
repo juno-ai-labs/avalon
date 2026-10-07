@@ -11,6 +11,7 @@ import { PERSONAL_COLOR_KEYS, personalColorKey, type AccountOnboarding, type Onb
 import { Button, InlineError, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor, personalColorInk } from '../components/personal-avatar';
 import { useAppSession } from '../lib/app-session';
+import { accountOnboardingQueryKey } from '../lib/account-onboarding-query';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { OnboardingIntroduction } from '../components/onboarding-introduction';
 import type { Workspace } from '../lib/types';
@@ -26,17 +27,22 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
   // The browser is reached from the landing page, which already introduced
   // Rally, so it records the introduction as seen rather than showing it again.
   const [previewed, setPreviewed] = useState(host === 'browser');
+  // Account onboarding and the profile it carries belong to the signed-in
+  // account. On a support session that is the Rally staff member, not the
+  // person on screen, so none of it is read, shown or written there
+  // (`docs/impersonation.md`).
+  const supportSession = Boolean(session?.impersonator);
   // A guest has no member directory to read; their people come from each
   // conversation's own detail.
   const members = useQuery({ queryKey: ['workspace-members'], queryFn: () => api!.getWorkspaceMembers(), enabled: Boolean(api && session?.workspace && !guest) });
-  const account = useQuery({ queryKey: ['account-onboarding', session?.user.email],
-    queryFn: () => getAccountOnboarding(), enabled: Boolean(session), refetchOnWindowFocus: 'always' });
+  const account = useQuery({ queryKey: accountOnboardingQueryKey(session?.user.email),
+    queryFn: () => getAccountOnboarding(), enabled: Boolean(session) && !supportSession, refetchOnWindowFocus: 'always' });
   const queryClient = useQueryClient();
   const editor = useMemo(() => new AccountProfileEditor('',
     (input) => updateAccountOnboarding(input),
     () => getAccountOnboarding(),
     (saved) => {
-      queryClient.setQueryData(['account-onboarding', session?.user.email], saved);
+      queryClient.setQueryData(accountOnboardingQueryKey(session?.user.email), saved);
       void queryClient.invalidateQueries({ queryKey: ['workspace-members'] });
       void queryClient.invalidateQueries({ queryKey: ['workspace'] });
     }), [getAccountOnboarding, queryClient, session?.user.email, updateAccountOnboarding]);
@@ -67,13 +73,13 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
     if (account.error) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
     return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
   }
-  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={account.isPending || account.isFetching}><ConversationAdmissionProvider allowed={guest || Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{!guest && account.data?.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
+  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={!supportSession && (account.isPending || account.isFetching)}><ConversationAdmissionProvider allowed={guest || supportSession || Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{!guest && account.data?.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
 }
 
-export function OnboardingPage({ title, subtitle, children, footer }: { title: string; subtitle?: string; children: ReactNode; footer?: ReactNode }): React.JSX.Element {
+export function OnboardingPage({ title, subtitle, children, footer }: { title: string; subtitle?: string | readonly string[]; children: ReactNode; footer?: ReactNode }): React.JSX.Element {
   return <main className="guided-onboarding window-drag">
     <section className="guided-page window-no-drag" aria-label={title}>
-      <header><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</header>
+      <header><h1>{title}</h1>{(typeof subtitle === 'string' ? [subtitle] : subtitle ?? []).map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</header>
       <div className="guided-content">{children}</div>
       {footer && <footer className="guided-footer">{footer}</footer>}
     </section>
@@ -113,13 +119,14 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
   const account = useOnboardingAccount();
   const { session, updateAccountOnboarding } = useAppSession();
   const queryClient = useQueryClient();
-  const [color, setColor] = useState<PersonalPresentation['color']>(account?.presentation?.color ?? 'blue');
+  // An account with no saved look starts on a random color.
+  const [color, setColor] = useState<PersonalPresentation['color']>(() => account?.presentation?.color ?? PERSONAL_COLOR_KEYS[Math.floor(Math.random() * PERSONAL_COLOR_KEYS.length)]!);
   const [name, setName] = useState(account?.presentation?.displayName ?? session?.user.name ?? '');
   const [initials, setInitials] = useState(account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase());
   const [draftRevision, setDraftRevision] = useState(account?.revision);
   useEffect(() => {
     if (!account || account.revision === draftRevision) return;
-    setColor(account.presentation?.color ?? 'blue');
+    setColor((current) => account.presentation?.color ?? current);
     setName(account.presentation?.displayName ?? session?.user.name ?? '');
     setInitials(account.presentation?.initials ?? '');
     setDraftRevision(account.revision);
@@ -131,7 +138,7 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
     setBusy(true); setError(null);
     try {
       const updated = await updateAccountOnboarding({ expectedRevision: draftRevision, presentation: { color, avatar: 'circle', displayName: name.trim(), initials: initials.trim() } });
-      queryClient.setQueryData(['account-onboarding', session?.user.email], updated);
+      queryClient.setQueryData(accountOnboardingQueryKey(session?.user.email), updated);
       await queryClient.invalidateQueries({ queryKey: ['workspace-members'] });
       await onSaved?.();
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not save your profile.'); await queryClient.invalidateQueries({ queryKey: ['account-onboarding'] }); }
@@ -151,6 +158,10 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
 function AccountProfileSettings({ profileDetails }: { profileDetails?: (name: string) => ReactNode }): React.JSX.Element {
   const editor = useContext(ProfileEditorContext);
   const loading = useContext(AccountLoadingContext);
+  const { session } = useAppSession();
+  // The account profile is the signed-in account's: on a support session, the
+  // Rally staff member's, which is not the person shown here.
+  if (session?.impersonator) return <p className="settings-support-note">{session.impersonator.name} is signed in as {session.user.name}. Their profile is theirs to change.</p>;
   if (!editor && loading) return <p role="status">Loading account profile…</p>;
   if (!editor) return <InlineError>Account profile is unavailable.</InlineError>;
   return <AccountProfileFields editor={editor} profileDetails={profileDetails} />;
@@ -220,7 +231,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     // behind for Back.
     openFirstWorkstream();
   };
-  if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally" subtitle="Your team will see your avatar and color. They follow you across devices."><PersonalSetup onSaved={() => state.path === 'creator' ? advance('people') : finishOnboarding()} /></OnboardingPage>;
+  if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally"><PersonalSetup onSaved={() => state.path === 'creator' ? advance('people') : finishOnboarding()} /></OnboardingPage>;
   const inviteAddresses = [...new Set([...emails, ...emailDraft.split(/[\s,;]+/u)].map((email) => email.trim().toLowerCase()).filter(Boolean))];
   const invalidEmails = inviteAddresses.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email));
   const addEmails = (value: string, commitLast: boolean): void => {
@@ -229,7 +240,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     setEmails((previous) => [...new Set([...previous, ...parts.map((email) => email.trim().toLowerCase()).filter(Boolean)])]);
     setEmailDraft(remaining);
   };
-  if (state.stage === 'people') return <OnboardingPage title="Invite your teammates" subtitle="Add email addresses to invite people to your organization." footer={<>
+  if (state.stage === 'people') return <OnboardingPage title="Invite your teammates" subtitle={["Rally is designed to be multi-human. Rally lets teammates work with AI in shared (cooperative) chat, so without your teammates it won't be as fun.", "Don't worry, you can start using it even before they accept the invite."]} footer={<>
     <Button className="button-primary" disabled={busy || !inviteAddresses.length || invalidEmails} onClick={() => void perform(async () => {
       const addresses = inviteAddresses.filter((email) => !sent.includes(email));
       setEmailDraft('');
@@ -262,7 +273,6 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
       </div>
       <p id="invite-email-hint">Separate emails with a space, comma, or semicolon.</p>
       {invalidEmails && <p className="inline-error">Enter a complete email address for each teammate.</p>}
-      <p>Everyone invited joins as a Member and can use organization connections. Your private streams stay private.</p>
     </div>
     {sent.length > 0 && <p role="status">Invited: {sent.join(', ')}</p>}{error && <InlineError>{error}</InlineError>}
   </OnboardingPage>;

@@ -503,7 +503,17 @@ describe('organization account menu', () => {
     openMenu();
     const menu = await screen.findByRole('menu');
     expect(within(menu).getAllByText('72% left this week')).toHaveLength(1);
-    // Under the active row when the list is shown; on its own when it is not.
     expect(within(menu).queryByText('Organizations') !== null).toBe(enabled);
+  });
+
+  it('puts the usage row right under Settings, ahead of the Organizations list', async () => {
+    renderMenu({ enabled: true, presentation: 'grok', activeUsage: <span>72% left this week</span> });
+    openMenu();
+    const menu = await screen.findByRole('menu');
+    const settingsRow = within(menu).getByRole('menuitem', { name: 'Settings' });
+    const usage = within(menu).getByText('72% left this week');
+    const organizations = within(menu).getByText('Organizations');
+    expect(settingsRow.nextElementSibling).toBe(usage);
+    expect(usage.compareDocumentPosition(organizations) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

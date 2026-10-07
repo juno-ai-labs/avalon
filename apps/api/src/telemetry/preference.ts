@@ -123,9 +123,13 @@ export async function applyRegionalPreferenceProjection(
     throw new Error('telemetry_preference_handle_conflict');
   }
   if (row.product_analytics_preference_version > projection.version) return;
-  if (row.product_analytics_preference_version === projection.version
-    && row.product_analytics_enabled !== (projection.enabled ? 1 : 0)) {
-    throw new Error('telemetry_preference_version_conflict');
+  if (row.product_analytics_preference_version === projection.version) {
+    if (row.product_analytics_enabled !== (projection.enabled ? 1 : 0)) {
+      throw new Error('telemetry_preference_version_conflict');
+    }
+    // Already this projection: every create, accept and activation sends it,
+    // and the write would change nothing but `updated_at`.
+    if (row.preference_subject_handle === projection.preferenceSubjectHandle) return;
   }
   await env.DB.prepare(
     `UPDATE users

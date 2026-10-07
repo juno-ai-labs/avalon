@@ -3,7 +3,7 @@ import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowStat
 import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
 import { BrowserImportContextSchema, BrowserImportedWorkstreamIdSchema, BrowserImportProgressSchema, type BrowserImportContext, type BrowserImportProgress } from '../common/browser-import';
-import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
+import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
 import type { ZodType } from 'zod';
@@ -17,6 +17,11 @@ import {
   RegionSchema,
   SessionSchema,
   SocketTicketSchema,
+  StartSupportSessionRequestSchema,
+  SupportPeopleSchema,
+  SupportWorkspacesSchema,
+  type SupportPerson,
+  type SupportWorkspace,
   WorkspaceOnboardingStateSchema,
   WorkspaceAttentionSchema,
   WorkspaceDepartureSchema,
@@ -116,6 +121,7 @@ import {
 import { accountReconnectRequiredFailure } from '../common/workspace-activation-error';
 import {
   definitivelyInvalidatesStoredCredential,
+  RallyApiResponseError,
   readJsonBody,
   refreshFailureIsTerminal,
   responseError,
@@ -246,6 +252,7 @@ import { registerWorkspaceSyncRelayIpc } from './workspace-sync-relay-ipc';
 import {
   activeStoredCredential,
   activeStoredCredentialIsGuest,
+  storedCredentialIsSupport,
   activeStoredWorkspaceCredential,
   mergeStoredSession,
   parseStoredAuthSet,
@@ -863,6 +870,14 @@ function publicSession(value: WireSession): DesktopSession {
           timezone: value.workspace.timezone,
         }
       : null,
+    ...(value.impersonator ? {
+      impersonator: {
+        id: value.impersonator.id,
+        email: value.impersonator.email,
+        name: value.impersonator.name,
+        ...(value.impersonator.avatarUrl ? { avatarUrl: value.impersonator.avatarUrl } : {}),
+      },
+    } : {}),
   };
 }
 
@@ -1435,6 +1450,10 @@ const menuBarController = new MenuBarController({
         'menu_bar',
       );
     },
+    openAccessRequest: (requestId) => {
+      activateFromMenuBar();
+      emitDeepLink(`${customProtocol}://access-requests/${requestId}`, 'menu_bar');
+    },
     openRally: openMainWindowFromMenuBar,
     quit: () => app.quit(),
   },
@@ -1445,7 +1464,12 @@ const menuBarController = new MenuBarController({
 });
 
 const desktopPush = new DesktopPushNotifications({
-  credentials: async () => (await loadStoredAuthSet())?.workspaces ?? [],
+  // A support session is somebody else's; their notifications are not this device's.
+  credentials: async () => {
+    const auth = await loadStoredAuthSet();
+    const profiles = await loadStoredProfileSet();
+    return (auth?.workspaces ?? []).filter((credential) => !storedCredentialIsSupport(profiles, credential));
+  },
   request: async (credential, path, init = {}) => {
     const ask = (auth: StoredAuth) => net.fetch(`${apiBaseForAuth(auth)}${path}`, {
       ...init, headers: { ...init.headers, Authorization: `Bearer ${auth.accessToken}` },
@@ -2335,9 +2359,11 @@ async function requireOnboardingIdentitySession(): Promise<WireSession> {
 
 async function onboardingIdentityRequest(
   request: (identity: WireSession) => Promise<Response>,
+  /** The identity the caller already loaded, so the request does not read it twice. */
+  loaded?: WireSession,
 ): Promise<{ identity: WireSession; response: Response }> {
   return requestWithOnboardingIdentity({
-    load: requireOnboardingIdentitySession,
+    load: loaded ? async () => loaded : requireOnboardingIdentitySession,
     refresh: async (identity) => {
       const auth = await loadStoredAuthSet();
       const account = auth?.account;
@@ -2651,7 +2677,7 @@ async function requestOnboardingSession(
       },
       body: JSON.stringify(body),
     },
-  ));
+  ), identity);
   const response = requested.response;
   if (!response.ok) throw await responseError(response);
   const parsed = SessionSchema.safeParse(await response.json());
@@ -2679,8 +2705,11 @@ async function requestOnboardingSession(
       throw new Error('The signed-in Rally account changed during organization setup');
     }
     const activate = selectionIntent === workspaceSelectionIntent;
+    const displaced = await displacedSupportCredentialUnlocked(session);
     inMemoryAuthSet = await writeSplitSessionFiles(session, { activate });
+    if (displaced) revokeInBackground(displaced);
     if (activate) {
+      await dropBackgroundSupportCredentialsUnlocked();
       inMemorySession = session;
       broadcastSessionChanged(session);
       return publicSession(session);
@@ -2688,6 +2717,167 @@ async function requestOnboardingSession(
     const current = await loadStoredSession() ?? await loadStoredIdentitySession();
     if (!current) throw new Error('Rally was signed out while organization setup was running');
     return publicSession(current);
+  });
+}
+
+/**
+ * Rally staff support access (`docs/impersonation.md`). Every call goes to
+ * Global with the account's identity credential, which is what the API checks
+ * staff membership against; the support session itself is stored and used
+ * like any other Organization credential, marked by its profile's
+ * `impersonator`.
+ */
+async function supportIdentityGet<T>(path: string, schema: ZodType<T>): Promise<T> {
+  const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+    `${configuredApiBase('global')}${path}`,
+    { method: 'GET', headers: { Accept: 'application/json', Authorization: `Bearer ${credential.accessToken}` } },
+  ));
+  if (!response.ok) throw await responseError(response);
+  const parsed = schema.safeParse(await response.json());
+  if (!parsed.success) throw new Error(`Rally returned an invalid Rally access response (${describeZodIssues(parsed.error)})`);
+  return parsed.data;
+}
+
+/** `null` when the account is not Rally staff, which is final; anything else throws so it is retried. */
+async function listSupportWorkspaces(): Promise<SupportWorkspace[] | null> {
+  try {
+    return (await supportIdentityGet('/auth/support/workspaces', SupportWorkspacesSchema)).workspaces;
+  } catch (error) {
+    if (error instanceof RallyApiResponseError && error.code === 'support_access_staff_required') return null;
+    throw error;
+  }
+}
+
+async function listSupportPeople(input: unknown): Promise<SupportPerson[]> {
+  const workspaceId = IdSchema.safeParse(input);
+  if (!workspaceId.success) throw new Error('Invalid organization');
+  return (await supportIdentityGet(`/auth/support/workspaces/${workspaceId.data}/people`, SupportPeopleSchema)).people;
+}
+
+async function startSupportSession(input: unknown): Promise<DesktopSession> {
+  const request = StartSupportSessionRequestSchema.safeParse(input);
+  if (!request.success) throw new Error('Invalid Rally access request');
+  const expectedLifecycleEpoch = sessionLifecycleEpoch;
+  const selectionIntent = ++workspaceSelectionIntent;
+  const identity = await requireOnboardingIdentitySession();
+  const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+    `${configuredApiBase('global')}/auth/support/session`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${credential.accessToken}`,
+      },
+      body: JSON.stringify(request.data),
+    },
+  ), identity);
+  if (!response.ok) throw await responseError(response);
+  const parsed = SessionSchema.safeParse(await response.json());
+  if (!parsed.success) throw new Error(`Rally returned an invalid support session (${describeZodIssues(parsed.error)})`);
+  if (!parsed.data.workspace || !parsed.data.impersonator) {
+    throw new Error(`Rally returned a support session without its ${parsed.data.workspace ? 'impersonator' : 'workspace'}`);
+  }
+  const apiBaseUrl = validatedApiBase(parsed.data.apiBaseUrl);
+  if (
+    parsed.data.workspace.id !== request.data.workspaceId
+    || parsed.data.user.id !== request.data.userId
+    || parsed.data.impersonator.id !== identity.user.id
+    || apiBaseUrl !== runtimeConfig().api[parsed.data.workspace.region]
+  ) {
+    throw new Error('Rally returned a support session for the wrong person or organization');
+  }
+  const session = { ...parsed.data, apiBaseUrl };
+  return withSessionMutation(async () => {
+    if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
+      throw new Error('Rally was signed out while Rally access was starting');
+    }
+    const currentAuth = await loadStoredAuthSet();
+    if (!currentAuth?.account || currentAuth.account.binding.userId !== identity.user.id) {
+      throw new Error('The signed-in Rally account changed while Rally access was starting');
+    }
+    const activate = selectionIntent === workspaceSelectionIntent;
+    const displaced = await displacedSupportCredentialUnlocked(session);
+    inMemoryAuthSet = await writeSplitSessionFiles(session, { activate });
+    // A support session for another person in the same Organization takes its
+    // slot; the one it replaces is ended on the server rather than orphaned.
+    if (displaced) revokeInBackground(displaced);
+    await dropBackgroundSupportCredentialsUnlocked();
+    if (!activate) {
+      const current = await loadStoredSession() ?? await loadStoredIdentitySession();
+      if (!current) throw new Error('Rally was signed out while Rally access was starting');
+      return publicSession(current);
+    }
+    inMemorySession = session;
+    broadcastSessionChanged(session);
+    return publicSession(session);
+  });
+}
+
+/**
+ * End the active support session: revoke it on the server, forget it here, and
+ * return to the Organization this device used before it, the way leaving one
+ * does. A no-op when the active credential is the account's own.
+ */
+async function endSupportSession(): Promise<DesktopSession | null> {
+  return withSessionMutation(async () => {
+    const auth = await loadStoredAuthSet();
+    const active = auth ? activeStoredCredential(auth) : null;
+    if (active && storedCredentialIsSupport(await loadStoredProfileSet(), active)) {
+      revokeInBackground(active);
+      await removeStoredCredentialUnlocked(active);
+    }
+    return inMemorySession ? publicSession(inMemorySession) : null;
+  });
+}
+
+/**
+ * A support session lasts only while it is in front of the person. Selecting
+ * any other Organization ends whichever support session was open, so none is
+ * left behind to be refreshed, listed or asked for attention in the
+ * background. Caller holds the session mutation lock.
+ */
+async function dropBackgroundSupportCredentialsUnlocked(): Promise<void> {
+  const auth = await loadStoredAuthSet();
+  const profiles = await loadStoredProfileSet();
+  if (!auth || !profiles) return;
+  const active = activeStoredCredential(auth);
+  const dropped = auth.workspaces.filter((credential) => (
+    credential !== active && storedCredentialIsSupport(profiles, credential)
+  ));
+  if (dropped.length === 0) return;
+  let nextAuth = auth;
+  let nextProfiles = profiles;
+  for (const credential of dropped) {
+    revokeInBackground(credential);
+    ({ auth: nextAuth, profiles: nextProfiles } = removeStoredWorkspace(
+      nextAuth, nextProfiles, credential.binding.workspaceId!, credential.binding.region,
+    ));
+  }
+  await writeStoredAuthFile(userDataDirectory(), encryptStoredSessionValue(JSON.stringify(nextAuth)));
+  await writeStoredProfileFile(userDataDirectory(), encryptStoredSessionValue(JSON.stringify(nextProfiles)));
+  inMemoryAuthSet = nextAuth;
+  inMemoryProfileSet = nextProfiles;
+}
+
+/**
+ * The support credential `session` is about to replace in its Organization's
+ * slot, if one is stored there. Writing the new session overwrites it, so the
+ * caller revokes it afterwards. Caller holds the session mutation lock.
+ */
+async function displacedSupportCredentialUnlocked(session: WireSession): Promise<StoredAuth | null> {
+  if (!session.workspace) return null;
+  const auth = await loadStoredAuthSet();
+  const current = auth ? storedWorkspaceCredential(auth, session.workspace.id, session.workspace.region) : null;
+  if (!current || current.refreshToken === session.refreshToken) return null;
+  return storedCredentialIsSupport(await loadStoredProfileSet(), current) ? current : null;
+}
+
+function revokeInBackground(credential: StoredAuth): void {
+  void revokeStoredCredentials({
+    version: 2, account: null, workspaces: [credential], activeWorkspace: null, workspaceRecency: [],
+  }).then((failures) => {
+    if (failures.length > 0) logWarn('rally', 'A support session could not be revoked on the server', failures[0]);
   });
 }
 
@@ -3818,6 +4008,22 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return surrenderActiveWorkspace();
   });
+  ipcMain.handle('support:list-workspaces', (event) => {
+    assertTrustedIpcSender(event);
+    return listSupportWorkspaces();
+  });
+  ipcMain.handle('support:list-people', (event, workspaceId: unknown) => {
+    assertTrustedIpcSender(event);
+    return listSupportPeople(workspaceId);
+  });
+  ipcMain.handle('support:start', (event, input: unknown) => {
+    assertTrustedIpcSender(event);
+    return startSupportSession(input);
+  });
+  ipcMain.handle('support:end', (event) => {
+    assertTrustedIpcSender(event);
+    return endSupportSession();
+  });
   ipcMain.handle('onboarding:activate-workspace', (event, input: unknown) => {
     assertTrustedIpcSender(event);
     return activateWorkspace(input);
@@ -4876,6 +5082,10 @@ function installApplicationMenu(): void {
       },
       checkForUpdates: () => autoUpdateController?.checkForUpdates(),
       installDownloadedUpdate: () => autoUpdateController?.installDownloadedUpdate(),
+      // Only the main window has the account menu that lists Organizations.
+      refreshOrganizationList: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('organizations:refresh-requested');
+      },
     },
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

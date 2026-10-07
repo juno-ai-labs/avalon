@@ -1,3 +1,4 @@
+import { observeSignup, observeAuthenticationCompleted, type SignupFlow, type SignupPlatform } from '../telemetry/signup';
 import { openEmailLoginSecret } from "./email-login-service";
 import { isConfiguredRegion } from "@rally/contracts/regions";
 import { createRemoteJWKSet, jwtVerify, SignJWT, type JWTPayload } from "jose";
@@ -6,12 +7,13 @@ import { asUserId, asWorkspaceId, RefreshTokenSchema, IdSchema, WorkspaceSchema,
 import { isDesktopDeepLinkProtocol, SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
-import { browserOrigin } from "../lib/browser-origin";
+import { browserOrigin, browserReturnUrl } from "../lib/browser-origin";
 import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { publishSessionRevocations, type RevokedSessionRow } from "./access-revocation";
 import { logWarn } from "../observability/logger";
 import { openString, randomToken, sealString, sha256, timingSafeEqualText } from "../lib/crypto";
 import { persistVerifiedGoogleIdentity } from "./login-identity-service";
+import { supportOrganizationId, supportSessionLiveSql } from "./support-access";
 
 const encoder = new TextEncoder();
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
@@ -42,12 +44,25 @@ export async function purgeExpiredEmailLoginChallenges(env: Env): Promise<void> 
           SELECT 1 FROM sessions s WHERE s.id = email_login_challenges.session_id))))`)
     .bind(now, new Date(now).toISOString(), now - SESSION_RENEWAL_WINDOW_SECONDS * 1_000).run();
 }
-/** Fixed SQL fragments for renewal of the ordinary sessions table. */
-export function sessionRenewalPolicy(region: Region, now = nowIso()) {
+/**
+ * Fixed SQL fragments for renewal of the ordinary sessions table.
+ *
+ * A support session (`impersonator_user_id` set) renews only while its grant
+ * and its staff member's membership are live, and never past the grant's
+ * expiry, so the seven days an Organization gave cannot be renewed past.
+ */
+export function sessionRenewalPolicy(env: Pick<Env, "AVALON_REGION" | "APP_ENV" | "RALLY_DEV_AUTH">, now = nowIso()) {
   const ceiling = `+${SESSION_MAX_LIFETIME_SECONDS} seconds`;
   return {
-    expirySql: "MIN(?, strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?))",
-    expiryValues: [new Date(Date.parse(now) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(), ceiling],
+    expirySql: `MIN(?, strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?), COALESCE((
+      SELECT support_grant.expires_at FROM support_access_grants support_grant
+      WHERE support_grant.workspace_id = sessions.workspace_id AND sessions.impersonator_user_id IS NOT NULL
+    ), ?))`,
+    expiryValues: [
+      new Date(Date.parse(now) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(),
+      ceiling,
+      "9999-12-31T23:59:59.999Z",
+    ],
     eligibilitySql: `region = ? AND revoked_at IS NULL AND expires_at > ?
       AND strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?) > ?
       AND (workspace_id IS NULL OR EXISTS (
@@ -55,8 +70,9 @@ export function sessionRenewalPolicy(region: Region, now = nowIso()) {
         WHERE member.workspace_id = sessions.workspace_id AND member.user_id = sessions.user_id
           AND member.status = 'active' AND member.incarnation = sessions.workspace_incarnation
           AND workspace.abandoned_at IS NULL
-      ))`,
-    eligibilityValues: [region, now, ceiling, now],
+      ))
+      AND (impersonator_user_id IS NULL OR (${supportSessionLiveSql("sessions")}))`,
+    eligibilityValues: [env.AVALON_REGION, now, ceiling, now, now, supportOrganizationId(env)],
   };
 }
 export const DEVELOPMENT_USER_ID = "00000000-0000-7000-8000-000000000001";
@@ -68,6 +84,7 @@ function identityBootstrapWorkspaceId(): null {
 
 interface OAuthStateRow {
   id: string;
+  telemetry_flow_id: string | null;
   region: Region;
   purpose: string;
   code_verifier_encrypted: string;
@@ -83,6 +100,7 @@ interface OAuthStateRow {
 }
 
 interface IdentityRow {
+  signup_created?: boolean;
   access_class: "member" | "guest" | null;
   user_id: string;
   email: string;
@@ -97,6 +115,8 @@ interface IdentityRow {
   workspace_timezone: string | null;
   workspace_created_at: string | null;
   role: "owner" | "admin" | "member" | null;
+  /** The staff member acting, on a support session only. */
+  impersonator?: Session["impersonator"];
 }
 
 function secretKey(env: Env): Uint8Array {
@@ -194,16 +214,6 @@ function browserGoogleCallbackUrl(env: Env): string {
   return new URL(`/regional/${env.AVALON_REGION}/browser/google/callback`, browserOrigin(env)).toString();
 }
 
-/** Where a browser sign-in lands afterwards: a path on the browser host, nothing else. */
-function browserReturnUrl(env: Env, path: string | undefined): string {
-  const origin = browserOrigin(env).origin;
-  const target = new URL(path && path.startsWith("/") ? path : "/", origin);
-  if (target.origin !== origin || target.pathname.startsWith("//")) {
-    throw new ApiError(422, "invalid_return_uri", "The browser return path is not allowed");
-  }
-  return `${target.origin}${target.pathname}`;
-}
-
 interface GoogleCredentials {
   clientId: string;
   clientSecret: string;
@@ -217,8 +227,9 @@ export class AuthService {
    * ticket to hand back: the callback sets the browser cookie itself. The
    * caller binds the returned state to the browser with a cookie of its own.
    */
-  async beginBrowserIdentity(input: { returnPath?: string | undefined }): Promise<{ url: string; state: string }> {
+  async beginBrowserIdentity(input: { returnPath?: string | undefined; signupFlowId?: string | undefined }): Promise<{ url: string; state: string }> {
     return this.startIdentity({
+      signupFlowId: input.signupFlowId,
       purpose: "browser_identity",
       desktopAttemptId: null,
       desktopCodeChallenge: null,
@@ -230,14 +241,16 @@ export class AuthService {
   async consumeBrowserIdentityCallback(code: string, state: string): Promise<{ session: Session; returnUrl: string }> {
     const credentials = this.requireGoogleIdentity();
     const row = await this.claimOAuthState(state, "browser_identity");
-    const verifier = await openString(row.code_verifier_encrypted, this.env.OAUTH_STATE_ENCRYPTION_KEY);
-    const identity = await this.exchangeGoogleIdentity(credentials, code, verifier, browserGoogleCallbackUrl(this.env));
-    return { session: await this.createSession(identity), returnUrl: row.return_uri };
+    const identity = await this.verifySignupIdentity(row, credentials, code, browserGoogleCallbackUrl(this.env));
+    const session = await this.createSession(identity);
+    observeAuthenticationCompleted(this.env, { flowId: row.telemetry_flow_id, clientPlatform: 'browser' }, 'google', identity.user_id, identity.signup_created === true);
+    return { session, returnUrl: row.return_uri };
   }
 
   async consumeBrowserIdentityDenial(state: string): Promise<string> {
     this.requireGoogleIdentity();
     const row = await this.claimOAuthState(state, "browser_identity");
+    observeSignup(this.env, { flowId: row.telemetry_flow_id, clientPlatform: 'browser' }, 'signup_failed', 'google', { result: 'denied' });
     return row.return_uri;
   }
 
@@ -262,6 +275,7 @@ export class AuthService {
    * its own kind, so neither can consume the other's state.
    */
   private async startIdentity(input: {
+    signupFlowId?: string | undefined;
     purpose: "identity" | "browser_identity";
     desktopAttemptId: string | null;
     desktopCodeChallenge: string | null;
@@ -270,13 +284,14 @@ export class AuthService {
   }): Promise<{ url: string; state: string }> {
     const { clientId } = this.requireGoogleIdentity();
     const state = randomToken(32);
+    const flowId = input.signupFlowId ?? newId();
     const googleVerifier = randomToken(64);
     await this.env.DB.prepare(
       `INSERT INTO oauth_states
        (id, region, provider, purpose, code_verifier_encrypted, workspace_id,
         workspace_name, invitation_id, desktop_attempt_id, desktop_code_challenge,
-        return_uri, expires_at)
-       VALUES (?, ?, 'google', ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)`,
+        return_uri, expires_at, telemetry_flow_id)
+       VALUES (?, ?, 'google', ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
     )
       .bind(
         state,
@@ -287,8 +302,10 @@ export class AuthService {
         input.desktopCodeChallenge,
         input.returnUri,
         new Date(Date.now() + 10 * 60_000).toISOString(),
+        flowId,
       )
       .run();
+    observeSignup(this.env, { flowId, clientPlatform: input.purpose === 'browser_identity' ? 'browser' : 'desktop' }, 'signup_started', 'google');
     const authorize = new URL("https://accounts.google.com/o/oauth2/v2/auth");
     authorize.search = new URLSearchParams({
       client_id: clientId,
@@ -303,11 +320,26 @@ export class AuthService {
     return { url: authorize.toString(), state };
   }
 
+  private async verifySignupIdentity(row: OAuthStateRow, credentials: GoogleCredentials, code: string, redirectUri: string): Promise<IdentityRow> {
+    const flow: SignupFlow = { flowId: row.telemetry_flow_id, clientPlatform: row.purpose === 'browser_identity' ? 'browser' : 'desktop' };
+    observeSignup(this.env, flow, 'signup_verification_requested', 'google');
+    try {
+      const verifier = await openString(row.code_verifier_encrypted, this.env.OAUTH_STATE_ENCRYPTION_KEY);
+      const identity = await this.exchangeGoogleIdentity(credentials, code, verifier, redirectUri, flow);
+      observeSignup(this.env, flow, 'signup_verification_completed', 'google', { userId: identity.user_id });
+      return identity;
+    } catch (error) {
+      observeSignup(this.env, flow, 'signup_failed', 'google', { result: 'failed' });
+      throw error;
+    }
+  }
+
   private async exchangeGoogleIdentity(
     credentials: GoogleCredentials,
     code: string,
     verifier: string,
     redirectUri: string,
+    signup?: SignupFlow,
   ): Promise<IdentityRow> {
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -351,13 +383,14 @@ export class AuthService {
       email: claims.email,
       name: typeof claims.name === "string" ? claims.name : claims.email.split("@")[0] ?? "Avalon user",
       avatarUrl: typeof claims.picture === "string" ? claims.picture : null,
-    });
+    }, signup);
   }
 
   async beginIdentity(input: {
     returnUri?: string;
     desktopAttemptId: string;
     desktopCodeChallenge: string;
+    signupFlowId?: string | undefined;
   }): Promise<string> {
     this.requireGoogleIdentity();
     if (!/^[A-Za-z0-9_-]{43}$/u.test(input.desktopAttemptId)) {
@@ -367,6 +400,7 @@ export class AuthService {
       throw new ApiError(422, "invalid_desktop_challenge", "The desktop authentication challenge is invalid");
     }
     const { url } = await this.startIdentity({
+      signupFlowId: input.signupFlowId,
       purpose: "identity",
       desktopAttemptId: input.desktopAttemptId,
       desktopCodeChallenge: input.desktopCodeChallenge,
@@ -432,16 +466,15 @@ export class AuthService {
     if (!row.desktop_attempt_id || !row.desktop_code_challenge) {
       throw new ApiError(401, "invalid_desktop_binding", "The desktop authentication binding is missing");
     }
-    const verifier = await openString(row.code_verifier_encrypted, this.env.OAUTH_STATE_ENCRYPTION_KEY);
-    const identity = await this.exchangeGoogleIdentity(credentials, code, verifier, callbackUrl(this.env, "identity"));
+    const identity = await this.verifySignupIdentity(row, credentials, code, callbackUrl(this.env, "identity"));
     const ticket = randomToken(40);
     const ticketHash = await sha256(ticket);
     const at = nowIso();
     await this.env.DB.prepare(
       `INSERT INTO desktop_login_tickets
        (id, ticket_hash, user_id, workspace_id, region, desktop_attempt_id,
-        desktop_code_challenge, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        desktop_code_challenge, expires_at, created_at, telemetry_flow_id, signup_created)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         newId(),
@@ -456,6 +489,8 @@ export class AuthService {
         row.desktop_code_challenge,
         new Date(Date.now() + 2 * 60_000).toISOString(),
         at,
+        row.telemetry_flow_id,
+        identity.signup_created ? 1 : 0,
       )
       .run();
     const target = new URL(row.return_uri);
@@ -469,6 +504,7 @@ export class AuthService {
     this.requireGoogleIdentity();
     const row = await this.claimOAuthState(state, "identity");
     const target = new URL(row.return_uri);
+    observeSignup(this.env, { flowId: row.telemetry_flow_id, clientPlatform: 'desktop' }, 'signup_failed', 'google', { result: 'denied' });
     target.searchParams.set("error", "google_oauth_denied");
     target.searchParams.set("region", this.env.AVALON_REGION);
     if (row.desktop_attempt_id) target.searchParams.set("attempt", row.desktop_attempt_id);
@@ -490,13 +526,14 @@ export class AuthService {
       `UPDATE desktop_login_tickets SET consumed_at = ?
        WHERE ticket_hash = ? AND region = ? AND desktop_attempt_id = ?
          AND consumed_at IS NULL AND expires_at > ?
-       RETURNING user_id, workspace_id, desktop_code_challenge`,
+       RETURNING user_id, workspace_id, desktop_code_challenge, telemetry_flow_id, signup_created`,
     )
       .bind(nowIso(), hash, input.region, input.attemptId, nowIso())
-      .first<{ user_id: string; workspace_id: string | null; desktop_code_challenge: string | null }>();
+      .first<{ user_id: string; workspace_id: string | null; desktop_code_challenge: string | null; telemetry_flow_id: string | null; signup_created: number }>();
     if (!claimed) throw new ApiError(401, "invalid_login_ticket", "The login ticket is invalid, expired, or already used");
     const proof = await sha256(input.codeVerifier);
     if (!claimed.desktop_code_challenge || !timingSafeEqualText(proof, claimed.desktop_code_challenge)) {
+      observeSignup(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, 'signup_failed', 'google', { result: 'failed', userId: claimed.user_id });
       // Matching ticket + attempt claims are intentionally burned on a wrong
       // verifier, mirroring RFC 7636 authorization-code redemption semantics.
       throw new ApiError(401, "invalid_login_ticket", "The login ticket is invalid, expired, or already used");
@@ -514,7 +551,9 @@ export class AuthService {
         .run();
     }
     const identity = await this.loadIdentity(claimed.user_id, claimed.workspace_id);
-    return this.createSession(identity);
+    const session = await this.createSession(identity);
+    observeAuthenticationCompleted(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, 'google', claimed.user_id, claimed.signup_created === 1);
+    return session;
   }
 
   async refresh(refreshToken: string): Promise<Session> {
@@ -523,7 +562,7 @@ export class AuthService {
     const newHash = await sha256(newRefreshToken);
     const rotatedAt = nowIso();
     const replayGraceStart = new Date(Date.now() - 60_000).toISOString();
-    const renewal = sessionRenewalPolicy(this.env.AVALON_REGION, rotatedAt);
+    const renewal = sessionRenewalPolicy(this.env, rotatedAt);
     const row = await this.env.DB.prepare(
       `UPDATE sessions
        SET previous_refresh_token_hash = refresh_token_hash,
@@ -534,7 +573,7 @@ export class AuthService {
            OR (previous_refresh_token_hash = ? AND refresh_rotated_at >= ?)
          )
          AND ${renewal.eligibilitySql}
-       RETURNING id, user_id, workspace_id`,
+       RETURNING id, user_id, workspace_id, impersonator_user_id`,
     )
       .bind(
         newHash,
@@ -545,9 +584,12 @@ export class AuthService {
         replayGraceStart,
         ...renewal.eligibilityValues,
       )
-      .first<{ id: string; user_id: string; workspace_id: string | null }>();
+      .first<{ id: string; user_id: string; workspace_id: string | null; impersonator_user_id: string | null }>();
     if (!row) throw new ApiError(401, "invalid_refresh_token", "The refresh token is invalid or expired");
-    const identity = await this.loadIdentity(row.user_id, row.workspace_id);
+    const identity = {
+      ...await this.loadIdentity(row.user_id, row.workspace_id),
+      ...(row.impersonator_user_id ? { impersonator: await this.loadImpersonator(row.impersonator_user_id) } : {}),
+    };
     const accessToken = await issueAccessToken(this.env, {
       sessionId: row.id,
       userId: asUserId(row.user_id),
@@ -638,9 +680,9 @@ export class AuthService {
     email: string;
     name: string;
     avatarUrl: string | null;
-  }): Promise<IdentityRow> {
+  }, signup?: SignupFlow): Promise<IdentityRow> {
     const at = nowIso();
-    const user = { id: await persistVerifiedGoogleIdentity(this.env.DB, input) };
+    const user = await persistVerifiedGoogleIdentity(this.env.DB, input, signup);
     const platformLink = await this.env.DB.prepare(
       `UPDATE users SET platform_user_id = ?, updated_at = ?
        WHERE id = ? AND (platform_user_id IS NULL OR platform_user_id = ?)`,
@@ -648,7 +690,7 @@ export class AuthService {
     if (Number(platformLink.meta.changes ?? 0) !== 1) {
       throw new ApiError(409, "platform_identity_conflict", "The Global identity could not be linked safely");
     }
-    return this.loadIdentity(user.id, null);
+    return { ...await this.loadIdentity(user.id, null), signup_created: user.created };
   }
 
   private async loadIdentity(userId: string, workspaceId: string | null): Promise<IdentityRow> {
@@ -673,7 +715,11 @@ export class AuthService {
         access_class: null,
       };
     }
-    const row = await this.env.DB.prepare(
+    return this.requireWorkspaceIdentity(await this.workspaceIdentityStatement(userId, workspaceId).first<IdentityRow>());
+  }
+
+  private workspaceIdentityStatement(userId: string, workspaceId: string): D1PreparedStatement {
+    return this.env.DB.prepare(
       `SELECT u.id AS user_id, u.email, u.name AS user_name, u.avatar_url,
          u.timezone AS user_timezone,
          u.created_at AS user_created_at, w.id AS workspace_id, w.name AS workspace_name,
@@ -683,13 +729,61 @@ export class AuthService {
        JOIN workspaces w ON w.id = m.workspace_id
        WHERE u.id = ? AND w.id = ? AND m.status = 'active'
          AND w.abandoned_at IS NULL`,
-    )
-      .bind(userId, workspaceId)
-      .first<IdentityRow>();
+    ).bind(userId, workspaceId);
+  }
+
+  private requireWorkspaceIdentity(row: IdentityRow | null | undefined): IdentityRow {
     if (!row || row.workspace_region !== this.env.AVALON_REGION) {
       throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
     }
     return row;
+  }
+
+  /**
+   * `createRegionalSession` for a caller that writes the workspace in the same
+   * D1 batch: `statements` go after the membership they need, and `issue`
+   * takes their results in order. The session row is written only for an
+   * active membership of a workspace in this region, which is what
+   * `loadIdentity` would have refused on, so a batch that made no membership
+   * leaves no session behind it.
+   */
+  async prepareWorkspaceSession(userId: string, workspaceId: string): Promise<{
+    statements: D1PreparedStatement[];
+    issue: (results: readonly D1Result[]) => Promise<Session>;
+  }> {
+    const sessionId = newId();
+    const refreshToken = randomToken(48);
+    const at = nowIso();
+    const insert = this.env.DB.prepare(
+      `INSERT INTO sessions
+       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
+       SELECT ?, m.user_id, m.workspace_id, ?, ?, ?, ?
+         FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id
+        WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active'
+          AND w.region = ? AND w.abandoned_at IS NULL`,
+    ).bind(
+      sessionId,
+      this.env.AVALON_REGION,
+      await sha256(refreshToken),
+      new Date(Date.parse(at) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(),
+      at,
+      userId,
+      workspaceId,
+      this.env.AVALON_REGION,
+    );
+    return {
+      statements: [insert, this.workspaceIdentityStatement(userId, workspaceId)],
+      issue: async (results) => {
+        const identity = this.requireWorkspaceIdentity(results[1]?.results?.[0] as IdentityRow | undefined);
+        const accessToken = await issueAccessToken(this.env, {
+          sessionId,
+          userId: asUserId(identity.user_id),
+          workspaceId: asWorkspaceId(workspaceId),
+          region: this.env.AVALON_REGION,
+        });
+        return this.formatSession(identity, accessToken, refreshToken);
+      },
+    };
   }
 
   /** Workspace discovery for provider-independent, region-local identities. */
@@ -713,6 +807,73 @@ export class AuthService {
     return this.createSession(await this.loadIdentity(userId, workspaceId));
   }
 
+  /**
+   * Issues a support session: an ordinary session of `representedUserId` in
+   * `workspaceId`, carrying the staff member who is acting. The one statement
+   * that writes it admits nothing unless the grant is live, the operator is an
+   * active member of the staff Organization, and the represented person is an
+   * active member or guest, and it expires with the grant rather than slide
+   * past it. `SupportAccessService.start` is its only caller.
+   */
+  async createSupportSession(input: {
+    sessionId: string;
+    operatorUserId: string;
+    representedUserId: string;
+    workspaceId: string;
+    staffWorkspaceId: string;
+  }): Promise<Session> {
+    const sessionId = input.sessionId;
+    const refreshToken = randomToken(48);
+    const at = nowIso();
+    const inserted = await this.env.DB.prepare(
+      `INSERT INTO sessions
+       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at,
+        impersonator_user_id, impersonator_incarnation)
+       SELECT ?, m.user_id, m.workspace_id, ?, ?, MIN(?, g.expires_at), ?, staff.user_id, staff.incarnation
+         FROM workspace_members m
+         JOIN workspaces w ON w.id = m.workspace_id
+         JOIN support_access_grants g ON g.workspace_id = m.workspace_id AND g.expires_at > ?
+         JOIN workspace_members staff ON staff.workspace_id = ? AND staff.user_id = ?
+           AND staff.status = 'active' AND staff.access_class = 'member'
+        WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active'
+          AND w.region = ? AND w.abandoned_at IS NULL AND m.workspace_id != staff.workspace_id
+       RETURNING id`,
+    ).bind(
+      sessionId,
+      this.env.AVALON_REGION,
+      await sha256(refreshToken),
+      new Date(Date.parse(at) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(),
+      at,
+      at,
+      input.staffWorkspaceId,
+      input.operatorUserId,
+      input.representedUserId,
+      input.workspaceId,
+      this.env.AVALON_REGION,
+    ).first<{ id: string }>();
+    if (!inserted) {
+      throw new ApiError(403, "support_session_unavailable", "This person is not available for Rally access");
+    }
+    const identity = {
+      ...await this.loadIdentity(input.representedUserId, input.workspaceId),
+      impersonator: await this.loadImpersonator(input.operatorUserId),
+    };
+    const accessToken = await issueAccessToken(this.env, {
+      sessionId,
+      userId: asUserId(identity.user_id),
+      workspaceId: asWorkspaceId(input.workspaceId),
+      region: this.env.AVALON_REGION,
+    });
+    return this.formatSession(identity, accessToken, refreshToken);
+  }
+
+  async loadImpersonator(userId: string): Promise<NonNullable<Session["impersonator"]>> {
+    const row = await this.env.DB.prepare("SELECT id, email, name, avatar_url FROM users WHERE id = ?")
+      .bind(userId).first<{ id: string; email: string; name: string; avatar_url: string | null }>();
+    if (!row) throw new ApiError(401, "identity_not_found", "The signed-in user no longer exists");
+    return { id: row.id, email: row.email, name: row.name, avatarUrl: row.avatar_url };
+  }
+
   /** Issues a region-local identity session, bound to no workspace, for a
    * browser registration the Global control plane has already admitted. */
   async createIdentitySession(userId: string): Promise<Session> {
@@ -720,17 +881,19 @@ export class AuthService {
   }
 
   /** Only a successfully consumed mailbox challenge can resume this session. */
-  async resumeEmailLogin(receipt: { challengeId:string;redemptionId:string }): Promise<Session> {
-    const row = await this.env.DB.prepare(`SELECT user_id,session_id,session_secret_encrypted,redeemed_at
+  async resumeEmailLogin(receipt: { challengeId:string;redemptionId:string }, clientPlatform: SignupPlatform): Promise<Session> {
+    const row = await this.env.DB.prepare(`SELECT user_id,session_id,session_secret_encrypted,redeemed_at,telemetry_flow_id,telemetry_client_platform,signup_created
       FROM email_login_challenges WHERE id=? AND redemption_id=? AND redeemed_at IS NOT NULL`)
       .bind(IdSchema.parse(receipt.challengeId),IdSchema.parse(receipt.redemptionId))
-      .first<{ user_id:string;session_id:string;session_secret_encrypted:string;redeemed_at:number }>();
+      .first<{ user_id:string;session_id:string;session_secret_encrypted:string;redeemed_at:number;telemetry_flow_id:string|null;telemetry_client_platform: 'browser' | 'desktop';signup_created:number }>();
     if (!row) throw new ApiError(401,"email_login_invalid","This sign-in attempt is invalid");
     const secret = await openEmailLoginSecret(this.env,receipt.challengeId,row.session_secret_encrypted);
     const refreshToken = RefreshTokenSchema.parse(secret && typeof secret === "object" && "refreshToken" in secret ? secret.refreshToken : null);
-    return this.createSession(await this.loadIdentity(row.user_id,null),{
+    const session = await this.createSession(await this.loadIdentity(row.user_id,null),{
       sessionId:row.session_id,refreshToken,createdAt:new Date(row.redeemed_at).toISOString(),
     });
+    observeAuthenticationCompleted(this.env, { flowId: row.telemetry_flow_id, clientPlatform: row.telemetry_client_platform }, 'email', row.user_id, row.signup_created === 1, clientPlatform);
+    return session;
   }
 
   private async createSession(identity: IdentityRow, prepared?: { sessionId:string;refreshToken:string;createdAt:string }): Promise<Session> {
@@ -795,6 +958,7 @@ export class AuthService {
             createdAt: identity.workspace_created_at,
           }
         : null,
+      ...(identity.impersonator ? { impersonator: identity.impersonator } : {}),
       apiBaseUrl: this.env.PUBLIC_API_BASE_URL,
     };
   }

@@ -1,3 +1,5 @@
+import { AccessRequestDialog } from './access-request-dialog';
+import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
 import type { CreateSpaceRequest, PinnedOrder, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
@@ -14,15 +16,18 @@ import {
   WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY,
 } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
+import { isWindowSurfaceRoute } from '../lib/window-surface';
 import { MacDownloadLink } from './mac-download-link';
+import { MAC_APP_DOWNLOADABLE } from '../lib/browser-connectors';
 import type { RallyApi } from '../lib/api';
 import { workstreamRecencyAt } from '../lib/format';
 import { useAttentionItems } from '../lib/attention-items';
 import { useDockBadge } from '../lib/dock-badge';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { openLink } from '../lib/browser-rail-links';
-import { conversationDirectoryQueryKey, mainOmitted } from '../lib/conversation-directory';
+import { associativeWorkstreamsForSidebar, conversationDirectoryQueryKey } from '../lib/conversation-directory';
 import { desktopBridge } from '../lib/platform';
+import { useSupportWorkspaces } from '../lib/use-support-workspaces';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { uuidV7 } from '../lib/telemetry';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
@@ -70,6 +75,21 @@ export function useLayoutMountedRef(): React.RefObject<boolean> {
     return () => { mounted.current = false; };
   }, []);
   return mounted;
+}
+
+/**
+ * The account directory with the active workspace's row named from
+ * `GET /workspace`. Discovery fills the directory and no sync topic reruns it,
+ * while the `workspace_profile` topic refreshes that read on a rename, so this
+ * is what keeps a renamed Organization's name current on the account menu.
+ */
+export function withActiveWorkspaceName(
+  rows: readonly DesktopWorkspaceSummary[],
+  active: { id: string; name: string; region: string },
+): DesktopWorkspaceSummary[] {
+  return rows.map((row) => (
+    row.id === active.id && row.region === active.region ? { ...row, name: active.name } : row
+  ));
 }
 
 /** Archive is writable only while this connection still owns a live Space snapshot. */
@@ -432,51 +452,35 @@ export function searchChannelPlaces(
   });
 }
 
-/**
- * The Channel rail: the socket's rows, the same list for a member and a guest.
- *
- * The workspace socket lists a Channel when any conversation in it is this
- * person's to open (see `docs/listing-rules.md`). Where Main is not one of
- * them, the conversation directory says which are, and the row opens on the
- * first it lists rather than on Main. The directory adds no rows of its own.
- */
-export function associativeWorkstreamsForSidebar(
-  directory: SharedNavigationDirectory | undefined,
-  workstreams: readonly WorkstreamSummary[] | undefined,
-): WorkstreamSummary[] {
-  if (!workstreams) return [];
-  if (!directory) return [...workstreams];
-  const entryPoints = new Map<string, WorkstreamSummary['associativeSubstreamId']>();
-  for (const entry of directory.workstreams) {
-    if (!mainOmitted(entry)) continue;
-    const first = entry.conversations.find((item) => !item.archived) ?? entry.conversations[0];
-    if (first) entryPoints.set(entry.parentId, first.substreamId);
-  }
-  if (entryPoints.size === 0) return [...workstreams];
-  return workstreams.map((workstream) => {
-    const associativeSubstreamId = entryPoints.get(workstream.id);
-    return associativeSubstreamId ? { ...workstream, associativeSubstreamId } : workstream;
-  });
-}
-
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
   const personalPresentation = useContext(MemberPresentationContext).get(workspace.currentUser.id);
   const {
     acceptInvitation,
     activateWorkspace,
     api,
+    clearPendingAccessRequest,
     clearPendingInvitation,
     declineInvitation,
     finishWorkspaceSetup,
     getOnboardingState,
     invitationApi,
+    pendingAccessRequestId,
     pendingInvitation,
     abandonAccountSignIn,
     runtime,
     session,
     signOut,
+    listSupportWorkspaces,
+    listSupportPeople,
+    startSupportSession,
+    endSupportSession,
   } = useAppSession();
   const { host, guest: guestSession } = useShellCapabilities();
+  const accessRequests = useAccessRequests(workspace.id);
+  const decideAccessRequest = useDecideAccessRequest(api ?? null, workspace.id);
+  // A request row chosen in the attention menu; the menu bar's arrives as
+  // `pendingAccessRequestId` instead. Either opens the one dialog.
+  const [openAccessRequestId, setOpenAccessRequestId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
@@ -579,7 +583,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     && !workstreams.isFetching && !workstreams.isError;
   // A Breakout list still on its way would make the count a floor, and the
   // dock would then lower the badge APNs set from the full count.
-  useDockBadge(attentionItems.length, attentionComplete && breakoutListsLoaded);
+  // The attention button's number: waiting conversations and access requests.
+  useDockBadge(attentionItems.length + accessRequests.length, attentionComplete && breakoutListsLoaded);
   const visibleSpaces = spaces.data?.items ?? [];
   // While search is open, a Breakout list the socket writes re-reads the
   // places, so a Breakout created or renamed meanwhile shows at once.
@@ -609,6 +614,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryFn: getOnboardingState,
     enabled: multipleWorkspacesEnabled,
   });
+  const supportWorkspaces = useSupportWorkspaces(session?.impersonator?.id ?? session?.user.id, listSupportWorkspaces);
+  const impersonator = session?.impersonator
+    ? { id: session.impersonator.id, name: session.impersonator.name, email: session.impersonator.email,
+        timezone: 'UTC', ...(session.impersonator.avatarUrl ? { avatarUrl: session.impersonator.avatarUrl } : {}) }
+    : null;
   // Main lists the stored set whatever happened to discovery. The account's
   // own state is not read here: a switch or a creation that finds the
   // identity credential missing signs in through the browser and continues
@@ -636,8 +646,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     clearPendingInvitation();
     void desktopBridge().showDeepLinkError(mismatch);
   }, [clearPendingInvitation, pendingInvitationPreview.data, session]);
-  const activeWorkspace: DesktopWorkspaceSummary = workspaceDirectory.data?.workspaces
-    .find((candidate) => candidate.id === workspace.id && candidate.region === workspace.region) ?? {
+  const directoryWorkspaces = workspaceDirectory.data
+    ? withActiveWorkspaceName(workspaceDirectory.data.workspaces, workspace)
+    : undefined;
+  const activeWorkspace: DesktopWorkspaceSummary = directoryWorkspaces?.find((candidate) => (
+    candidate.id === workspace.id && candidate.region === workspace.region
+  )) ?? {
       id: workspace.id,
       name: workspace.name,
       slug: workspace.id,
@@ -646,9 +660,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       ...(session?.workspace?.accessClass === 'guest' ? { accessClass: 'guest' as const } : {}),
       createdAt: new Date(0).toISOString(),
     };
-  const knownWorkspaces = workspaceDirectory.data?.workspaces.length
-    ? workspaceDirectory.data.workspaces
-    : [activeWorkspace];
+  const knownWorkspaces = directoryWorkspaces?.length ? directoryWorkspaces : [activeWorkspace];
   const promptedInvitation = pendingInvitationPreview.data
     ? workspaceDirectory.data?.invitations.find((candidate) => (
       candidate.workspaceId === pendingInvitationPreview.data.workspaceId
@@ -726,6 +738,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     'app-shell',
     windowControlsShellClass(runtime?.platform),
     showShellRail ? 'rail-open' : '',
+    // Where there is no window to open, a window surface takes the whole tab.
+    host === 'browser' && isWindowSurfaceRoute(location.pathname) ? 'is-window-surface' : '',
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
     enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',
   ].filter(Boolean).join(' ');
@@ -758,11 +772,17 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
 
   return (
     <>
+      <AccessRequestDialog
+        api={api ?? null}
+        onClose={() => { setOpenAccessRequestId(null); clearPendingAccessRequest(); }}
+        requestId={openAccessRequestId ?? pendingAccessRequestId}
+        workspaceId={workspace.id}
+      />
       <div className={shellClassName} style={shellStyle}>
       <Sidebar
         onOpenSearch={api ? () => setSearchOpen(true) : undefined}
-        // A browser tab always offers the Mac app, member or guest.
-        footerItems={host === 'browser' ? <MacDownloadLink /> : undefined}
+        // A desktop browser tab offers the Mac app, member or guest; a phone or tablet cannot run it.
+        footerItems={host === 'browser' && MAC_APP_DOWNLOADABLE ? <MacDownloadLink /> : undefined}
         accountMenu={(
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}
@@ -783,10 +803,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
               clearPendingInvitation();
               await workspaceDirectory.refetch();
             }}
-            onCreateWorkspace={async (input, operationId, progress) => {
-              await finishWorkspaceSetup(input.name, input.region, operationId, progress);
-              await workspaceDirectory.refetch();
-            }}
+            // No directory refetch: the creation lands the new workspace, which
+            // remounts this shell, and the new one reads discovery itself.
+            onCreateWorkspace={(input, operationId, progress) => (
+              finishWorkspaceSetup(input.name, input.region, operationId, progress)
+            )}
             onDeclineInvitation={async (invitation) => {
               await declineInvitation(invitation.region, invitation.id);
               await workspaceDirectory.refetch();
@@ -798,7 +819,14 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             onAbandonSignIn={abandonAccountSignIn}
             onInvitationPromptDismiss={clearPendingInvitation}
             onOpenSettings={() => { void desktopBridge().openSettings(); }}
-            onSignOut={() => { void signOut().catch(() => undefined); }}
+            onSignOut={() => {
+              if (impersonator) void endSupportSession().catch(() => undefined);
+              else void signOut().catch(() => undefined);
+            }}
+            impersonator={impersonator}
+            supportWorkspaces={supportWorkspaces.data ?? []}
+            loadSupportPeople={listSupportPeople}
+            onStartSupportSession={(target, person) => startSupportSession({ region: target.region, workspaceId: target.id }, person.id)}
             onSwitchWorkspace={async (target) => {
               const targetKey = desktopWorkspaceIdentityKey(target.region, target.id);
               if (!navigator.onLine) {
@@ -1000,6 +1028,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         workspace={workspace}
         attentionItems={attentionItems}
         attentionComplete={attentionComplete}
+        accessRequests={accessRequests}
+        accessDecisionFailed={decideAccessRequest.isError}
+        onDecideAccessRequest={(request, decision) => decideAccessRequest.mutate({ id: request.id, decision })}
+        onOpenAccessRequest={(request) => setOpenAccessRequestId(request.id)}
         workstreams={sidebarWorkstreams}
       />
         <span aria-live="polite" className="sr-only">

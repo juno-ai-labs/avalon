@@ -88,7 +88,8 @@ async function establishWorkspace(): Promise<void> {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
       workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -2259,5 +2260,54 @@ describe("WorkspaceDO space authority", () => {
       sql: "SELECT kind FROM space_intents WHERE space_id = ?",
       bindings: [spaceId],
     })).toMatchObject({ rows: [] });
+  });
+});
+
+describe("WorkspaceDO opening a new Organization", () => {
+  const GENERAL = asSpaceId("00000000-0000-7000-8000-00000000cf1b");
+
+  it("given General's anchor, when the Organization is initialized, then General exists and its Spaces are ready in that one call", async () => {
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: OWNER, spaceId: GENERAL, authorityGeneration: 1,
+    })).resolves.toEqual({ spacesReady: true });
+
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ phase: "complete", generalSpaceId: GENERAL, ready: true });
+    expect((await spaceDirectories(OWNER)).active.items).toMatchObject([{ id: GENERAL, name: "General" }]);
+  });
+
+  it("given no anchor, when a new Organization is initialized, then it is answered not ready and nothing is created", async () => {
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam"))
+      .resolves.toEqual({ spacesReady: false });
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ phase: "pending", generalSpaceId: null, ready: false });
+  });
+
+  it("given a guest as the creator, when the Organization is initialized, then General is not opened for them", async () => {
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: GUEST, spaceId: GENERAL, authorityGeneration: 1,
+    })).resolves.toEqual({ spacesReady: false });
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ generalSpaceId: null, ready: false });
+  });
+
+  it("given a creator lookup that fails, when the Organization is initialized, then it answers not ready rather than failing", async () => {
+    // The creator's relationship is read from D1 on a fresh object; with the
+    // table gone that read throws, as a D1 outage would.
+    await env.DB.exec("DROP TABLE workspace_members");
+
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: OWNER, spaceId: GENERAL, authorityGeneration: 1,
+    })).resolves.toEqual({ spacesReady: false });
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ generalSpaceId: null, ready: false });
+  });
+
+  it("given an Organization already open, when it is initialized again, then it is answered ready without an anchor", async () => {
+    await workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: OWNER, spaceId: GENERAL, authorityGeneration: 1,
+    });
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam"))
+      .resolves.toEqual({ spacesReady: true });
   });
 });

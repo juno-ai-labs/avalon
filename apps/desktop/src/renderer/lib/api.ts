@@ -5,6 +5,8 @@ import { MemberPreferencesSchema, PersonalSystemPromptSchema, SessionImportRunSc
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
+import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, type ConversationAccessDecisionResult, type ConversationAccessPreview } from "@rally/contracts";
+import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
@@ -95,7 +97,7 @@ import {
   type SubstreamPreparationPreview,
 } from '@rally/contracts/substream-creation';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
-import { OrganizationUsageSchema, type OrganizationUsage } from '@rally/contracts/usage';
+import { OrganizationUsageSchema, type OrganizationUsage, type PlanId } from '@rally/contracts/usage';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
@@ -901,9 +903,26 @@ export class RallyApi {
     return mapUser(user);
   }
 
-  async updateWorkspaceTimezone(timezone: string): Promise<Workspace> {
-    await this.request('/workspace', { method: 'PATCH', body: { timezone }, schema: WireWorkspaceSchema });
-    return this.getWorkspace();
+  /**
+   * Saves only the fields given; the server keeps the rest. Answers with the
+   * profile the PATCH returned rather than a second read, so a committed
+   * change is never reported as failed by a read that followed it.
+   */
+  updateWorkspace(input: { name?: string; timezone?: string }): Promise<{ name: string; timezone: string }> {
+    return this.request('/workspace', { method: 'PATCH', body: input, schema: WireWorkspaceSchema });
+  }
+
+  /** Rally access for this Organization (`docs/impersonation.md`). */
+  async getSupportAccess(): Promise<SupportAccess> {
+    return this.request('/workspace/support-access', { schema: SupportAccessSchema });
+  }
+
+  async grantSupportAccess(): Promise<SupportAccess> {
+    return this.request('/workspace/support-access', { method: 'PUT', schema: SupportAccessSchema });
+  }
+
+  async revokeSupportAccess(): Promise<SupportAccess> {
+    return this.request('/workspace/support-access', { method: 'DELETE', schema: SupportAccessSchema });
   }
 
   async getTerminalWorkspaceSettings(signal?: AbortSignal): Promise<TerminalWorkspaceSettings> {
@@ -953,6 +972,11 @@ export class RallyApi {
    */
   async getWorkspaceUsage(signal?: AbortSignal): Promise<OrganizationUsage> {
     return this.request('/workspace/usage', { schema: OrganizationUsageSchema, signal });
+  }
+
+  /** Administrators only. Answers with the meter as it reads under the new plan. */
+  async setWorkspacePlan(plan: PlanId): Promise<OrganizationUsage> {
+    return this.request('/workspace/plan', { method: 'PUT', body: { plan }, schema: OrganizationUsageSchema });
   }
 
   async getWorkspaceMembers(signal?: AbortSignal): Promise<WorkspaceMember[]> {
@@ -1058,6 +1082,17 @@ export class RallyApi {
     return this.request(`/workspaces/${encodeURIComponent(workspaceId)}/membership?expectedOutcome=${expectedOutcome}`, {
       method: 'DELETE', schema: WorkspaceDepartureSchema,
     });
+  }
+
+  /**
+   * Take somebody else out of a workspace. The settings roster calls this
+   * "Suspend": the person loses access at once and can be invited back later.
+   */
+  async removeWorkspaceMember(workspaceId: string, userId: string): Promise<void> {
+    await this.requestVoid(
+      `/workspaces/${encodeURIComponent(workspaceId)}/membership/member/${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    );
   }
 
   async createWorkspace(name: string): Promise<void> {
@@ -2105,6 +2140,29 @@ export class RallyApi {
     });
   }
 
+  /** Name, mark and whether this person can open it: asked only once the socket refuses. */
+  async conversationAccessPreview(parentId: string, substreamId: string): Promise<ConversationAccessPreview> {
+    return this.request(`${this.substreamPath(parentId, substreamId)}/access-preview`, {
+      schema: ConversationAccessPreviewSchema,
+    });
+  }
+
+  /** Emails the creator a one-click approval. */
+  async requestConversationAccess(parentId: string, substreamId: string): Promise<void> {
+    await this.request(`${this.substreamPath(parentId, substreamId)}/access-requests`, {
+      method: 'POST',
+      schema: ConversationAccessRequestResultSchema,
+    });
+  }
+
+  /** The approver settles a request: from the attention menu, or the menu bar's modal. */
+  async decideConversationAccess(requestId: string, decision: 'approve' | 'decline'): Promise<ConversationAccessDecisionResult> {
+    return this.request(`/conversations/access-requests/${encodeURIComponent(requestId)}/${decision}`, {
+      method: 'POST',
+      schema: ConversationAccessDecisionResultSchema,
+    });
+  }
+
   /** The child's title converges over its feed and parent control sockets. */
   async renameSubstream(parentId: string, substreamId: string, title: string): Promise<void> {
     await this.requestVoid(this.substreamPath(parentId, substreamId), {
@@ -2584,16 +2642,21 @@ export class RallyApi {
     });
   }
 
+  async observeSignupView(flowId: string): Promise<void> {
+    await this.requestVoid('/auth/signup/view', { method: 'POST', body: { flowId } });
+  }
+
   async beginGoogleLogin(
     region: Region,
     callbackUri: string,
-    input: { workspaceName?: string; invitationToken?: string; authAttempt: DesktopAuthAttempt },
+    input: { workspaceName?: string; invitationToken?: string; authAttempt: DesktopAuthAttempt; signupFlowId?: string },
   ): Promise<string> {
     const result = await this.request('/auth/google/start', {
       method: 'POST',
       body: {
         region,
         returnUri: callbackUri,
+        ...(input.signupFlowId ? { signupFlowId: input.signupFlowId } : {}),
         desktopAttemptId: input.authAttempt.attemptId,
         desktopCodeChallenge: input.authAttempt.codeChallenge,
         ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),

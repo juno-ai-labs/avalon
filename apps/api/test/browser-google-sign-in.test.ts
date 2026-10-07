@@ -1,3 +1,4 @@
+import { drainWaitUntil } from './helpers/cloudflare-workers';
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { SignJWT, exportJWK, generateKeyPair } from "jose";
@@ -5,7 +6,7 @@ import { createApp } from "../src/app";
 import { sealString, sha256 } from "../src/lib/crypto";
 import { BrowserSessionSchema } from "../src/services/browser-session-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
-import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { migratedObservabilityFixture, sqliteD1 } from "./helpers/sqlite-d1";
 
 let db: DatabaseSync;
 const origin = "https://app.example.test";
@@ -66,8 +67,8 @@ async function start(returnPath?:string) {
   const binding = response.headers.get("set-cookie")!.split(";")[0]!;
   return { authorize:new URL(url),binding };
 }
-beforeEach(() => { db = migratedSqliteDatabase(); });
-afterEach(() => { db.close();vi.restoreAllMocks(); });
+beforeEach(() => { db = migratedObservabilityFixture(); });
+afterEach(async () => { await drainWaitUntil(); db.close();vi.restoreAllMocks(); });
 
 it("starts Google with a callback on the browser host and binds the state to this browser",async () => {
   const { authorize,binding } = await start("/app/workspaces/global/abc");
@@ -215,4 +216,34 @@ it.each(["//evil.example.test/steal","/\\evil.example.test/x","/.//evil.example.
   expect(response.status).toBe(422);
   expect(await response.json()).toMatchObject({ error:{ code:"invalid_return_uri" } });
   expect(db.prepare("SELECT COUNT(*) AS states FROM oauth_states").get()).toEqual({ states:0 });
+});
+
+it('correlates browser Google proof and account creation without claiming completed organization setup', async () => {
+  await googleIssuing({ sub:'new-google-signup',email:'signup@example.test',email_verified:true,name:'Signup' });
+  const { authorize,binding } = await start();
+  const state = authorize.searchParams.get('state')!;
+  expect((await browser(`google/callback?code=google-code&state=${state}`, { cookie:binding })).status).toBe(302);
+  await drainWaitUntil();
+  const events = db.prepare('SELECT envelope_json FROM telemetry_accepted_events ORDER BY rowid').all()
+    .map(row => JSON.parse(String(row.envelope_json)) as { name:string;properties:{ flowId:string;clientPlatform:string;entryPlatform:string };identityScope:string });
+  expect(events.map(event => event.name)).toEqual(['signup_started','signup_verification_requested','signup_verification_completed','authentication_completed','signup_account_created']);
+  expect(new Set(events.map(event => event.properties.flowId)).size).toBe(1);
+  expect(events.at(-1)).toMatchObject({ identityScope:'anonymous-epoch',properties:{ clientPlatform:'browser',entryPlatform:'browser',accountStatus:'new' } });
+});
+
+it('tracks desktop signup through verified ticket exchange, excluding OAuth-only handoffs from authenticated counts', async () => {
+  const verifier = 'v'.repeat(43);
+  await googleIssuing({ sub:'desktop-signup',email:'desktop-signup@example.test',email_verified:true });
+  const started = await desktop('google/start', { desktopAttemptId:'a'.repeat(43),desktopCodeChallenge:await sha256(verifier) });
+  const authorize = new URL((await started.json() as { url:string }).url);
+  const callback = await desktop(`google/callback?code=desktop-code&state=${authorize.searchParams.get('state')}`);
+  const target = handoffTarget(callback.headers.get('location'));
+  await drainWaitUntil();
+  const names = () => db.prepare('SELECT envelope_json FROM telemetry_accepted_events ORDER BY rowid').all()
+    .map(row => (JSON.parse(String(row.envelope_json)) as { name:string }).name);
+  expect(names()).toEqual(['signup_started','signup_verification_requested','signup_verification_completed']);
+  const response = await desktop('desktop/exchange', { ticket:target.searchParams.get('ticket'),region:'global',attemptId:'a'.repeat(43),codeVerifier:verifier });
+  expect(response.status,await response.clone().text()).toBe(200);
+  await drainWaitUntil();
+  expect(names()).toEqual(['signup_started','signup_verification_requested','signup_verification_completed','authentication_completed','signup_account_created']);
 });

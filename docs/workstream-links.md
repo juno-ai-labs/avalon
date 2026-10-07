@@ -24,6 +24,7 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | Choose a Channel's current Space placement for server-generated links | `WorkspaceDO.canonicalChannelSpace`, `apps/api/src/services/workstream-link-service.ts` |
 | Serve current and legacy work-stream paths | `apps/site/app/workstreams/index.html`, `apps/site/src/workstream-link.ts` |
 | Make the dynamic path resolve | `apps/site/public/_redirects` |
+| The signed-out name lookup the page's heading shows | `apps/api/src/routes/links.ts`, `WorkspaceDO.linkTitle` |
 | Style every desktop-handoff page like the desktop sign-in screen | `apps/site/src/desktop-handoff.css` |
 | Slack unfurl | `unfurlRallyLinks` in `apps/api/src/services/slack-agent-service.ts` |
 | The card's blocks and its one status table | `slack-workstream-card.ts` |
@@ -63,6 +64,44 @@ Rally *hands out*, for three reasons:
   phone got an unclickable string and no way to reach the work stream.
 - **It is dead for anyone without the app.** The canonical page can at least say
   what happened and point at the download.
+
+### The handoff page
+
+The heading reads `Opening “<name>” in Rally`, with the name cut at 40
+characters. Holding a link is the permission to see the name of what it
+points at, private or not, so the page asks `GET /links/title?path=<its own
+path>` on the Global API with no sign-in. The route parses the path with the
+same readers the page uses and asks the Organization's object for that one
+title: a Channel, Breakout, Space, or a Sidekick that is not deleted. It reads
+no viewer, no contents and no other field. An unknown Organization is refused
+from D1 before any object opens.
+
+This is looser than the Slack unfurl's audience table above, on purpose: the
+product call (2026-10-07) is that whoever holds a link may see the name, color
+and icon of what it points at, archived or private included. The unfurl differs
+because Rally itself posts the card into a Slack channel, where people who never
+opened the link read it; the handoff page shows the name only to the person who
+opened the link. Aligning the unfurl with the looser rule would be a separate
+decision. Until the answer lands, or when it misses,
+the heading is plain `Opening in Rally`, and the buttons work the same either
+way. A link minted in a second region needs the page to ask that region's API.
+
+The page offers the desktop app first and the web app beside it. On a Mac it
+tries the deep link once on load, shows **Open in Rally for Mac**, then
+**Continue in browser**, which opens the same path on `app.rallywith.ai`; the
+browser client reads every addressed path this page does
+([`browser-client.md`](browser-client.md#the-shell)). Under them sits the Mac
+download. On an iPhone or iPad a Channel or Breakout opens the iOS app, with the
+browser as the second choice. Where no Rally app can open the link (Windows,
+Linux, Android, or a Space or Sidekick on iOS) the page skips the launch and the
+browser is the one button. An ID-only link from before workspace addressing
+names no Organization, so it gets no browser button.
+
+The page remembers in `localStorage` which button this browser last chose. After
+**Continue in browser** it stops launching the app on load, because for someone
+without the app that launch is an error prompt every time, but the app stays the
+first button. Clicking it switches back. Without storage the page launches the
+app every time, as it did before the browser option.
 
 ### Why the id is in the path
 
@@ -271,7 +310,7 @@ open the same section in whichever workspace happens to be active. Give a new de
 canonical HTTPS form only when someone would reasonably paste it somewhere else.
 
 Every browser handoff reports only its closed type, `presented`/`automatic`/
-`manual` method, and local validity through the public-site telemetry boundary.
+`manual`/`browser` method, and local validity through the public-site telemetry boundary.
 The canonical work-stream UUID, custom-protocol target, query, fragment, and any
 single-use material are deliberately excluded. The desktop separately observes a
 successful deep-link activation; the site event is an attempt, not proof that the
@@ -342,16 +381,66 @@ Both Rally hosts serve `/.well-known/apple-app-site-association`. Desktop claims
 `/app/workstreams/*` paths until an iPhone release with the new parser is
 available. A canonical Channel or Breakout link opens the site handoff, which
 uses the old addressed iPhone reader; it does not send the new Base58 path to
-an installed old build. Space-only and Sidekick URLs stay on the web with a
-desktop-only explanation because the iPhone has no Space dashboard or Sidekick screen.
+an installed old build. Space-only and Sidekick URLs open in the web app on an
+iPhone because it has no Space dashboard or Sidekick screen.
 The desktop main process adapts these HTTPS links with `workstreamHttpsDeepLink`, then
 uses existing scheme navigation. The iPhone opens the Channel and Breakout paths
 into the native client. Legacy origins and other path families remain
-in the browser. The site must deploy first; `scripts/check-apple-app-association.mjs`
-checks both hosts after site deployment and before desktop release. Push clicks
+in the browser. The site must deploy before a desktop release that relies on a
+new path. Push clicks
 use the same adapter with notification attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-10-07 — Deploys no longer re-check live link readers
+
+**What changed:** The API deploy no longer probes the live handoff page and
+update manifest before it ships, and the site deploy and desktop release no
+longer compare the live Apple association file to a hardcoded copy. The
+`rally-workspace-handoff-version` line is gone from `latest-mac.yml`.
+
+**Why:** Each check compared a live copy of a file this repository owns to a
+second copy pinned in the check, so it proved nothing a deploy had not already
+done. The handoff probe matched button copy; when #1144 reworded the button,
+every API deploy stopped there while the page itself was correct. The rollout
+order these gates enforced was needed once, for the move to addressed links,
+and every reader has shipped since.
+
+**What to respect:** A change that needs the site or desktop to ship before the
+API states that order in its pull request. Do not add a gate that pins a copy of
+a checked-in file or page text.
+
+### 2026-10-07 — A copied link opens in the web app too
+
+**What changed:** The `/app/*` handoff page adds **Continue in browser**, which
+opens the same path on `app.rallywith.ai`. Where no Rally app can open the link
+the browser becomes the only button and the page skips the launch. The page
+remembers a browser choice and then stops launching the app on load. The
+browser client now also reads the Sidekick path. Telemetry gains a `browser`
+handoff method. The heading names the linked resource through a new
+signed-out `GET /links/title`, and the kind label and sub-line are gone.
+
+**Why:** The page was a dead end for anyone without the Mac app: a teammate on
+Windows, on a phone, or not yet installed got an app launch that did nothing
+and a pointer to the marketing site, though the web app could already open the
+same Organization, Space and Channel. Naming the resource signed out is safe
+because holding the link is already the permission to see its name; the lookup
+returns that one field and nothing inside the resource.
+
+**Considered and rejected:** Minting copied links on `app.rallywith.ai`. That
+drops the Slack unfurl and the Apple universal-link claim on `rallywith.ai`,
+and skips the desktop for the people who have it. Sending a remembered browser
+choice straight to the web app, which would end the nudge toward the desktop
+for good after one click. Carrying the name in the link's fragment, which
+every link reader refuses today, goes stale on a rename, and shows whatever an
+edited link says.
+
+**Consequences:** The desktop stays the first choice
+wherever a Rally app can open the link. A new canonical path family needs the
+browser client's `shellLocation` and entry target to read it, or the browser
+button lands on the Organization root.
+
+Shipped in juno-ai-labs/avalon#1144.
 
 ### 2026-09-25 — Sidekicks get a shareable link
 
