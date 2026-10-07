@@ -1,5 +1,5 @@
 import { startConnectorAuthorization } from '../lib/start-connector-authorization';
-import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOAD_URL, useConnectorStartAvailable } from '../lib/browser-connectors';
+import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, useConnectorStartAvailable } from '../lib/browser-connectors';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ConnectorConnectionCardCatalog,
@@ -425,7 +425,9 @@ export function ConnectorConnectionCardView({
         {connected ? (
           <span aria-live="polite" className="connector-connection-card-status" role="status"><Check aria-hidden="true" size={14} /> Connected</span>
         ) : macAppOnly ? (
-          <a className="connector-connection-card-status" href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a>
+          MAC_APP_DOWNLOADABLE
+            ? <a className="connector-connection-card-status" href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a>
+            : <span className="connector-connection-card-status">{MAC_APP_CONNECT_NOTE}</span>
         ) : (
           <Button
             className="connector-connection-card-action button-primary"

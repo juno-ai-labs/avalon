@@ -102,8 +102,9 @@ the sidebar's **footer items**: rows the host passes as `footerItems`, drawn by
 list is, since they are outside its scroll, and each is a `SidebarRow`, so a
 compact rail collapses it to a tile like a Space row. Today the one item is
 **Download the Mac app**, which `AppShell` passes whenever the host is a
-browser tab, for members and guests alike; the Mac app passes none and draws
-nothing there. Tips or tutorials go here too.
+desktop browser tab, for members and guests alike. A phone or tablet browser
+gets none, by `MAC_APP_DOWNLOADABLE` in `lib/browser-connectors.ts`, and neither does the
+Mac app. Tips or tutorials go here too.
 
 ### At phone width
 
@@ -308,6 +309,19 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-07 — No Mac download on phones and tablets
+
+**What changed:** The browser no longer passes **Download the Mac app** as a
+footer item on iOS, iPadOS or Android. Connectors a browser cannot start say
+**Connect this from the Mac app.** there, as plain text, instead of linking the
+download.
+
+**Why:** A phone or tablet cannot run the Mac build, so the row was a dead end
+in a footer with little room.
+
+**What to respect:** iPadOS reports itself as a Mac; only a touch count above
+one marks it, so a check on the user agent alone would show the row there.
 
 ### 2026-10-06 — No tick bar at phone width
 

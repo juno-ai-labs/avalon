@@ -169,6 +169,8 @@ with Docs and Sheets. A connection is offered only when every capability it asks
 for is listed (`browserCanConnect`). Every other connector, in Settings, account
 onboarding and a conversation's connection card, is shown with its buttons
 disabled and "Download the Mac app to connect this." linking to the Mac build.
+On a phone or tablet (`MAC_APP_DOWNLOADABLE` false) it reads "Connect this from
+the Mac app." with no link, since the build cannot run there.
 The list is presentation only; the connection routes do not read it.
 
 A cookie session's `RallyApi` starts with `?handoff=browser`. The API stores
