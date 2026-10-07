@@ -65,9 +65,9 @@ This setting decides where code running on that computer may connect on the
 internet. It is the one setting in this chapter that is mainly about security,
 so read this section slowly.
 
-Open **Settings → Security**. The page is headed
-**Terminal network access**. The Terminal runs on cloud computers, so wherever
-the page says "cloud computers", it means Rally's Terminal.
+Open **Settings → Security** and find **Terminal network access**. The
+Terminal runs on cloud computers, so wherever the page says "cloud computers",
+it means Rally's Terminal.
 
 ### The two choices
 

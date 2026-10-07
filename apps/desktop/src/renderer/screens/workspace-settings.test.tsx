@@ -633,12 +633,12 @@ describe('Organization settings', () => {
     renderSettings();
 
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    const internetAccess = within(navigation).getByRole('button', { name: 'Security' });
-    expect(internetAccess).not.toHaveClass('settings-navigation-child');
+    const securityNavigation = within(navigation).getByRole('button', { name: 'Security' });
+    expect(securityNavigation).not.toHaveClass('settings-navigation-child');
     // Between Organization and Connections.
-    const workspaceNavigation = within(navigation).getByRole('button', { name: 'Organization' });
-    expect(workspaceNavigation.compareDocumentPosition(internetAccess) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-    expect(internetAccess.compareDocumentPosition(
+    const organizationNavigation = within(navigation).getByRole('button', { name: 'Organization' });
+    expect(organizationNavigation.compareDocumentPosition(securityNavigation) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(securityNavigation.compareDocumentPosition(
       within(navigation).getByRole('button', { name: 'Connections' }),
     ) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 
@@ -650,7 +650,7 @@ describe('Organization settings', () => {
     expect(screen.queryByRole('radio', { name: /^Full internet/ })).not.toBeInTheDocument();
     expect(api.getTerminalWorkspaceSettings).not.toHaveBeenCalled();
 
-    fireEvent.click(internetAccess);
+    fireEvent.click(securityNavigation);
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Security' })).toBeVisible();
     expect(await screen.findByRole('radio', { name: /^Trusted only/ }, { timeout: 10_000 })).toBeChecked();
