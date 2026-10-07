@@ -221,6 +221,26 @@ For a notarized release candidate, repeat the selected-icon test from an install
 - **Reset leaves a stale icon:** confirm the native bridge can resolve `SLSIconAppearanceConfiguration`. The default returns after the Dock cache is rebuilt even when the private best-effort refresh is unavailable.
 - **Packaging rejects nested code:** rebuild with `pnpm --filter @rally/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
 
+## Changelog
+
+### 2026-10-07 — The favicon disc is wider, so the mark has room inside it
+
+**What changed:** `FAVICON_DISC_RADIUS` went from 160 to 204.
+
+**Why:** The thick stroke reaches 142.3 units from the centre, so at 160 the
+volt mark nearly met the disc's edge and read as cramped in a tab. At 204 the
+black ring is about 30% of the radius.
+
+**Considered and rejected:** Thinning `THICK_STROKE` to make room. The menu bar
+glyph shares it.
+
+**Consequences:** A larger disc shrinks the mark, stroke included. At 16 px the
+mark went from about 14 px to 11 px across and its stroke from 1.5 px to 1.2 px.
+That trade was accepted for the space; growing the disc further costs legibility
+at 16 px.
+
+PR: #1165.
+
 ### 2026-10-07 — The mark is generated from its equation; the favicon is the thick mark on a black disc; the menu bar glyph is twice as thick
 
 **What changed:** `scripts/generate-rally-mark.py` now writes every vector copy
