@@ -178,12 +178,12 @@ it.each([false, true])('renews before expiry and respects an unchanged absolute 
   let view: ReturnType<typeof render> | undefined;
   try {
     await act(async () => { view = render(<BrowserEntry />); });
-    expect(screen.getByRole('heading', { name: 'Your shared work' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Your organizations' })).toBeInTheDocument();
     await act(async () => { await vi.advanceTimersByTimeAsync(50_000); });
     expect(renewals).toBe(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(50_000); });
     if (extended) {
-      expect(screen.getByRole('heading', { name: 'Your shared work' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Your organizations' })).toBeInTheDocument();
       await act(async () => { await vi.advanceTimersByTimeAsync(100_000); });
       expect(renewals).toBe(2);
     } else expect(renewals).toBe(1);
@@ -380,10 +380,10 @@ it('waits for the organization list before saying nothing has been shared', asyn
     throw new Error(`Unexpected browser request: ${input}`);
   }));
   render(<BrowserEntry />);
-  expect(await screen.findByText('Loading your shared work…')).toBeInTheDocument();
-  expect(screen.queryByText(/Nothing has been shared/u)).toBeNull();
+  expect(await screen.findByText('Loading your organizations…')).toBeInTheDocument();
+  expect(screen.queryByText(/is not part of an organization/u)).toBeNull();
   await act(async () => { finish!(Response.json({ workspaces: [] })); });
-  expect(await screen.findByText('Nothing has been shared with guest@example.test yet.')).toBeInTheDocument();
+  expect(await screen.findByText('guest@example.test is not part of an organization yet.')).toBeInTheDocument();
 });
 
 it('starts Google sign-in for the page it was opened on and explains a declined one on return', async () => {
@@ -470,7 +470,7 @@ it('shows the opening mark, not an empty organization list, while a sign-in open
     fireEvent.change(await screen.findByRole('textbox', { name: 'Sign-in code' }), { target: { value: '1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByRole('status', { name: 'Opening Rally' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Your shared work' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Your organizations' })).not.toBeInTheDocument();
     await act(async () => { openWorkspace(); });
     expect(await screen.findByText('Shared team')).toBeInTheDocument();
   } finally { view.unmount(); }
@@ -521,7 +521,7 @@ it('creates an organization from the empty shared-work screen through the cookie
   }));
   const view = render(<BrowserEntry />);
   try {
-    await screen.findByText('Nothing has been shared with guest@example.test yet.');
+    await screen.findByText('guest@example.test is not part of an organization yet.');
     fireEvent.click(screen.getByRole('button', { name: 'Create an organization' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: ' Acme Research ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
@@ -574,7 +574,7 @@ it('drops the organization form when another account signs in elsewhere', async 
     await screen.findByRole('textbox', { name: 'Organization name' });
     current = { ...user, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', email: 'other@example.test' };
     await act(async () => { channel.postMessage('session-changed'); });
-    await screen.findByText('Nothing has been shared with other@example.test yet.');
+    await screen.findByText('other@example.test is not part of an organization yet.');
     expect(screen.queryByRole('textbox', { name: 'Organization name' })).not.toBeInTheDocument();
   } finally { view.unmount(); channel.close(); }
 });
