@@ -39,9 +39,9 @@ SPHERE_RADIUS = 124.0
 THICK_STROKE = 30
 # The favicon sits on a black disc centred on the sphere. The seam just touches
 # the sphere's outline (radius 127.3 at this perspective), so the thick stroke
-# reaches 142.3; 185 leaves a ring of black about a sixth of the radius wide.
+# reaches 142.3; 204 leaves a ring of black about 30% of the radius wide.
 # At 160 the stroke nearly met the edge and the mark read as cramped in a tab.
-FAVICON_DISC_RADIUS = 185
+FAVICON_DISC_RADIUS = 204
 
 VOLT = "#CCFF00"
 INK = "#111210"
