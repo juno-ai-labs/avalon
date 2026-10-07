@@ -196,7 +196,7 @@ function revealWindow(): void {
 }
 
 function openSettingsSection(
-  name: 'Account' | 'Digest' | 'Organization' | 'Internet access' | 'Connections' | 'GitHub' | 'MCP tools' | 'Application',
+  name: 'Account' | 'Digest' | 'Organization' | 'Internet access' | 'Connections' | 'Application',
 ): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
@@ -600,7 +600,7 @@ describe('Organization settings', () => {
     if (definition.availability === 'browser') sessionHost.current = 'browser';
     renderSettings();
     // Wait for the shared availability and connection metadata, not for the destination pane.
-    await screen.findByRole('button', { name: 'GitHub' });
+    await screen.findByRole('button', { name: 'GitHub One' });
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
     fireEvent.change(search, { target: { value: definition.label } });
     const results = screen.getByRole('navigation', { name: 'Settings search results' });
@@ -756,7 +756,7 @@ describe('Organization settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    const row = (await screen.findByText('Slack · Rally')).closest('tr');
+    const row = (await within(screen.getByRole('main')).findByText('Slack · Rally')).closest('tr');
     const rowMark = row?.querySelector('.connector-mark');
     expect(rowMark).toBeTruthy();
 
@@ -786,7 +786,7 @@ describe('Organization settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    const row = (await screen.findByText('Deploy notifications')).closest('tr');
+    const row = (await within(screen.getByRole('main')).findByText('Deploy notifications')).closest('tr');
     expect(row?.querySelector('.connector-mark')).toBeNull();
   });
 
@@ -902,7 +902,7 @@ describe('Organization settings', () => {
     renderSettings();
 
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    fireEvent.click(await within(navigation).findByRole('button', { name: 'MCP tools' }));
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'Acme docs' }));
 
     expect(await screen.findByText('https://mcp.acme.test/mcp')).toBeVisible();
     const writeRow = (await screen.findByText('publish_doc'))
@@ -946,7 +946,7 @@ describe('Organization settings', () => {
     }));
     renderSettings();
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    fireEvent.click(await within(navigation).findByRole('button', { name: 'MCP tools' }));
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'Acme docs' }));
     fireEvent.change(await screen.findByLabelText('Tools Rally may use'), {
       target: { value: 'read_only_tools' },
     });
@@ -989,7 +989,7 @@ describe('Organization settings', () => {
     renderSettings();
 
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    fireEvent.click(await within(navigation).findByRole('button', { name: 'MCP tools' }));
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'My docs' }));
 
     expect(await screen.findByText('This server’s tools could not be read')).toBeVisible();
     expect(screen.getByText('Custom MCP returned HTTP 503')).toBeVisible();
@@ -998,7 +998,7 @@ describe('Organization settings', () => {
     expect(screen.getByLabelText('Tools Rally may use')).toBeDisabled();
   });
 
-  it('adds a nested GitHub settings page only for a configurable active connection', async () => {
+  it('gives every installed connection its own page under Connections, settings or not', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000020',
       connectorType: 'github',
@@ -1007,14 +1007,40 @@ describe('Organization settings', () => {
       capabilities: ['github.metadata.read', 'github.contents.read'],
       status: 'healthy',
       settingsKind: 'github_repository_access',
+      toolCount: 20,
+    }, {
+      id: '00000000-0000-7000-8000-000000000022',
+      connectorType: 'granola',
+      scope: 'you',
+      displayName: 'Granola · adam@example.com',
+      capabilities: ['granola.notes.read'],
+      status: 'healthy',
+      toolCount: 6,
     }]);
     renderSettings();
 
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    const githubNavigation = await within(navigation).findByRole('button', { name: 'GitHub' });
-    expect(githubNavigation).toHaveClass('settings-navigation-child');
-    fireEvent.click(githubNavigation);
+    const granolaNavigation = await within(navigation).findByRole('button', { name: 'Granola · adam@example.com' });
+    const githubNavigation = within(navigation).getByRole('button', { name: 'GitHub · Rally' });
+    // Personal before organization, as the tables list them, both after Connections.
+    expect(within(navigation).getByRole('button', { name: 'Connections' })
+      .compareDocumentPosition(granolaNavigation) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(granolaNavigation.compareDocumentPosition(githubNavigation) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(granolaNavigation).toHaveClass('settings-navigation-child');
+    expect(granolaNavigation.querySelector('.connector-mark')).not.toBeNull();
 
+    // A connection with nothing to configure still has a page: its status, access and tools.
+    fireEvent.click(granolaNavigation);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Granola · adam@example.com' })).toBeVisible();
+    expect(granolaNavigation).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByText('6 tools available to Rally through this connection.')).toBeVisible();
+    expect(screen.getByText('Personal')).toBeVisible();
+    expect(screen.queryByRole('heading', { level: 2, name: 'Repository access' })).not.toBeInTheDocument();
+    expect(api.getGitHubRepositoryAccessSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(githubNavigation);
+    expect(githubNavigation).toHaveAttribute('aria-current', 'page');
+    expect(granolaNavigation).not.toHaveAttribute('aria-current');
     expect(await screen.findByRole('heading', { level: 2, name: 'Repository access' })).toBeVisible();
     expect(await screen.findByText('juno-ai-labs/rally')).toBeVisible();
     expect(screen.getByText(/Read-only still allows Rally to edit and commit locally/u)).toBeVisible();
@@ -1022,6 +1048,39 @@ describe('Organization settings', () => {
       '00000000-0000-7000-8000-000000000020',
       expect.any(AbortSignal),
     );
+  });
+
+  it('opens a connection\'s own page from search, and a setting on the connection it names', async () => {
+    const first = '00000000-0000-7000-8000-000000000030';
+    const second = '00000000-0000-7000-8000-000000000031';
+    api.getConnections.mockResolvedValue([first, second].map((id, index) => ({
+      id, connectorType: 'custom_mcp', scope: 'workspace',
+      displayName: index === 0 ? 'Cloudflare API' : 'Cloudflare Observability',
+      capabilities: ['custom_mcp.tools'], status: 'healthy', settingsKind: 'custom_mcp_tools',
+    })));
+    api.getCustomMcpSettings.mockImplementation(async (connectionId: string) => ({
+      connectionId, connectionName: connectionId, scope: 'workspace',
+      serverUrl: `https://mcp.example.test/${connectionId}`, authMode: 'oauth', toolPolicy: 'all_tools',
+      toolPolicyEditable: true, tools: [], toolsUnavailable: null,
+    }));
+    renderSettings();
+    await screen.findByRole('button', { name: 'Cloudflare Observability' });
+    const search = screen.getByRole('searchbox', { name: 'Search settings' });
+
+    fireEvent.change(search, { target: { value: 'observability' } });
+    const results = screen.getByRole('navigation', { name: 'Settings search results' });
+    expect(within(results).getByRole('button', { name: 'Cloudflare Observability Connections' })).toBeVisible();
+    fireEvent.click(document.querySelector<HTMLElement>(`[data-setting-result="connection:${second}"]`)!);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Cloudflare Observability' })).toBeVisible();
+    await waitFor(() => expect(document.activeElement).toHaveAttribute('data-setting-id', `connection:${second}`));
+    expect(await screen.findByText(`https://mcp.example.test/${second}`)).toBeVisible();
+
+    fireEvent.change(search, { target: { value: 'Tools Rally may use API' } });
+    fireEvent.click(document.querySelector<HTMLElement>(`[data-setting-result="mcpPolicy:${first}"]`)!);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Cloudflare API' })).toBeVisible();
+    await waitFor(() => expect(document.activeElement).toHaveAttribute('data-setting-instance', first));
+    expect(document.activeElement).toHaveAttribute('data-setting-id', 'mcpPolicy');
+    expect(api.updateCustomMcpToolPolicy).not.toHaveBeenCalled();
   });
 
   it('shows organization GitHub policy read-only to non-admin members', async () => {
@@ -1036,14 +1095,14 @@ describe('Organization settings', () => {
     }]);
     renderSettings({ ...workspace, currentUser: member });
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub' }));
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub · Rally' }));
 
     expect(await screen.findByText(/Ask an organization administrator to change it/u)).toBeVisible();
     expect(screen.getByRole('combobox', { name: 'Repository availability' })).toBeDisabled();
     expect(screen.getByRole('combobox', { name: 'Default remote access' })).toBeDisabled();
   });
 
-  it('lets a member switch from an organization GitHub policy to personal settings', async () => {
+  it('gives a member\'s personal GitHub connection a page apart from the organization\'s', async () => {
     const workspaceConnectionId = '00000000-0000-7000-8000-000000000020';
     const personalConnectionId = '00000000-0000-7000-8000-000000000021';
     api.getConnections.mockResolvedValue([{
@@ -1075,11 +1134,9 @@ describe('Organization settings', () => {
     }));
     renderSettings({ ...workspace, currentUser: member });
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub' }));
-
-    const connection = await screen.findByRole('combobox', { name: 'GitHub connection' });
-    expect(connection).toBeEnabled();
-    fireEvent.change(connection, { target: { value: personalConnectionId } });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub · Rally' }));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Repository availability' })).toBeDisabled());
+    fireEvent.click(within(navigation).getByRole('button', { name: 'GitHub · Sam' }));
 
     await waitFor(() => expect(api.getGitHubRepositoryAccessSettings).toHaveBeenCalledWith(
       personalConnectionId,
@@ -1100,7 +1157,7 @@ describe('Organization settings', () => {
     }]);
     renderSettings();
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub' }));
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'GitHub · Rally' }));
 
     const availability = await screen.findByRole('combobox', { name: 'Repository availability' });
     fireEvent.change(availability, { target: { value: 'selected_repositories' } });
@@ -1525,7 +1582,7 @@ describe('Organization settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    await screen.findByText('Slack · Rally');
+    await within(screen.getByRole('main')).findByText('Slack · Rally');
     expect(screen.queryByRole('button', { name: 'Policy' })).not.toBeInTheDocument();
   });
 
@@ -1595,7 +1652,7 @@ describe('Organization settings', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for organization' }));
     // The lost response found its connection: setup closes rather than
     // offering a second one, and the row that appears carries no console.
-    expect(await screen.findByText('Granola organization events')).toBeVisible();
+    expect(await within(document.querySelector('main')!).findByText('Granola organization events')).toBeVisible();
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Connect Granola workspace' })).toBeNull());
     expect(screen.queryByRole('dialog', { name: 'Organization events' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Manage events for Granola organization events', hidden: true })).not.toBeInTheDocument();
@@ -1637,7 +1694,7 @@ describe('Organization settings', () => {
     expect(within(firefliesCard!).queryByRole('button', { name: 'Connect for organization' })).not.toBeInTheDocument();
     // The workspace connection a customer already has keeps its row — it still
     // receives meetings — and offers no webhook console over it.
-    expect(screen.getByText('Fireflies organization meetings')).toBeVisible();
+    expect(within(screen.getByRole('main')).getByText('Fireflies organization meetings')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Manage events for Fireflies organization meetings', hidden: true })).not.toBeInTheDocument();
 
     fireEvent.click(await enabledConnectAction(firefliesCard!, 'Connect for me'));
@@ -1976,7 +2033,7 @@ describe('Organization settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    const connectionName = await screen.findByText('Google · adam@example.com');
+    const connectionName = await within(screen.getByRole('main')).findByText('Google · adam@example.com');
     expect(connectionName).toBeVisible();
     expect(await screen.findByText('7')).toBeVisible();
     const personalTable = screen.getByRole('table', { name: 'Personal connections' });
@@ -2043,7 +2100,7 @@ describe('Organization settings', () => {
 
     const rotateButton = await screen.findByRole('button', { name: 'Refresh Inbound webhook' });
     expect(screen.getByRole('table', { name: 'Organization connections' })).toBeVisible();
-    expect(screen.getAllByText('Inbound webhook')).toHaveLength(2);
+    expect(within(screen.getByRole('main')).getAllByText('Inbound webhook')).toHaveLength(2);
     expect(rotateButton).toBeVisible();
     fireEvent.focus(rotateButton);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
@@ -2092,8 +2149,8 @@ describe('Organization settings', () => {
     renderSettings({ ...workspace, currentUser: member });
     openSettingsSection('Connections');
 
-    expect(await screen.findByText('Google · sam@example.com')).toBeVisible();
-    expect(screen.getByText('Linear · Rally')).toBeVisible();
+    expect(await within(screen.getByRole('main')).findByText('Google · sam@example.com')).toBeVisible();
+    expect(within(screen.getByRole('main')).getByText('Linear · Rally')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Refresh Google · sam@example.com' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Refresh Linear · Rally' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete Google · sam@example.com' })).toBeVisible();
