@@ -2971,12 +2971,7 @@ pre {
 
 .settings-connection-tables { display: grid; gap: 18px; }
 .settings-connection-group { min-width: 0; }
-.settings-connection-group-heading {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  margin: 0 2px 7px;
-}
+.settings-connection-group-heading { margin: 0 2px 7px; }
 .settings-connection-group-heading h3 { font-size: var(--av-cmp-control-font-size); margin: 0; }
 .settings-connection-table-frame { overflow-x: auto; }
 .settings-connection-table { border-collapse: collapse; min-width: 540px; width: 100%; }
