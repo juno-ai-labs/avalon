@@ -1894,9 +1894,11 @@ export function Sidebar({
   };
 
   // A Channel released into Pinned goes to the slot the section held open for
-  // it. The server appends a new pin, so a slot anywhere but the end is a pin
-  // followed by a reorder, and the arrangement is previewed from the release
-  // on so the row lands in its slot rather than at the end and then moving.
+  // it. A Space's run appends a new pin, so there a slot anywhere but the end
+  // is a pin followed by a reorder. All's saved order keeps a Channel's old
+  // slot after it is unpinned, so under All even a drop at the end is saved.
+  // The arrangement is previewed from the release on so the row lands in its
+  // slot rather than somewhere else first.
   const pinAt = async (workstream: WorkstreamSummary, index: number): Promise<void> => {
     const spaceId = pinOrderSpaceId;
     const visible = pinnedWorkstreams.map((pinned) => pinned.id);
@@ -1904,8 +1906,9 @@ export function Sidebar({
     // Search only shows some pins; the new one goes before the visible row it
     // was dropped above, wherever that row sits among the hidden ones.
     const anchor = visible[index];
-    const at = anchor === undefined ? -1 : stored.indexOf(anchor);
-    const preview = spaceId === null || at < 0 ? null : {
+    const at = anchor === undefined ? stored.length : stored.indexOf(anchor);
+    const saves = spaceId !== null && at >= 0 && (anchor !== undefined || spaceId === ALL_PINNED);
+    const preview = !saves || spaceId === null ? null : {
       spaceId,
       itemIds: [...visible.slice(0, index), workstream.id, ...visible.slice(index)],
     };
