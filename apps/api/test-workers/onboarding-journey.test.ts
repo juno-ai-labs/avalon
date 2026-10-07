@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { OnboardingJourneyStore } from '../src/durable-objects/onboarding-journey';
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/workspace-do';
 import { applyDurableObjectSqliteMigrations } from '../src/durable-objects/sqlite-migrations';
+import { workspaceDOName } from '../src/durable-objects/names';
+import { asWorkspaceId } from '@rally/contracts';
 
 const creator = '00000000-0000-7000-8000-000000000001';
 const member = '00000000-0000-7000-8000-000000000002';
@@ -57,15 +59,16 @@ describe('durable onboarding journey', () => {
   });
 
   it('moves a journey stored at the retired connectors step on to personal setup', async () => {
-    const stub = env.MIGRATION_PROBE_DO!.getByName('onboarding-journey-retired-stage');
-    await stub.ping();
+    const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000003');
+    const stub = env.WORKSPACE_DOS.getByName(workspaceDOName('global', workspaceId));
+    await stub.initializeWorkspace(workspaceId, 'wnam');
+    // Seeding only: a row the retired step left behind, which no RPC can write any more.
     await runInDurableObject(stub, (_instance, state) => {
-      applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
-        component: 'workspace_do', workerVersionId: 'onboarding-retired-stage-test', now: 1 });
       state.storage.sql.exec("INSERT INTO onboarding_journeys(user_id, path, stage) VALUES (?, 'creator', 'connectors')", creator);
-      const store = new OnboardingJourneyStore(state.storage.sql);
-      expect(store.get(creator, 'creator')).toMatchObject({ stage: 'profile', revision: 1 });
-      expect(store.update(creator, 'creator', { expectedRevision: 1, stage: 'people' })).toMatchObject({ stage: 'people', revision: 2 });
     });
+    const journey = (update?: { expectedRevision: number; stage: 'people' }) =>
+      stub.onboardingJourney({ workspaceId, placementAffinity: 'wnam', userId: creator, path: 'creator', ...(update ? { update } : {}) });
+    expect(await journey()).toMatchObject({ stage: 'profile', revision: 1 });
+    expect(await journey({ expectedRevision: 1, stage: 'people' })).toMatchObject({ stage: 'people', revision: 2 });
   });
 });

@@ -440,6 +440,8 @@ it does for the email login identity itself. Every regional user the bridge
 touches gains login identity rows. A new provider's name must fit the shape
 migration 0120 checks and the API's `loginIdentitySchema`.
 
+PR: [#1129](https://github.com/juno-ai-labs/avalon/pull/1129).
+
 ### 2026-10-05 — A terminal account failure ends the desktop session
 
 **What changed:** Missing account identity in an otherwise signed-in desktop,
