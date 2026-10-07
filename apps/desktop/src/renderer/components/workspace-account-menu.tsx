@@ -20,11 +20,8 @@ import { RelativeTime } from './relative-time';
 export interface WorkspaceAccountMenuProps {
   activeWorkspace: DesktopWorkspaceSummary;
   /**
-   * The active Organization's usage meter, as a full row right under Settings,
-   * where the Usage section it opens lives. It sits there whether or not the
-   * Organizations list is shown, so every member sees it in one place. It is a slot so the
-   * menu stays presentational: the host supplies the usage read, and the slot
-   * mounts with the menu's content, so opening the menu refreshes it.
+   * The active Organization's usage meter, a full row under Settings. A slot,
+   * so the host supplies the read and opening the menu refreshes it.
    */
   activeUsage?: ReactNode;
   attention: Record<string, WorkspaceAttention | undefined>;

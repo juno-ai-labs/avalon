@@ -28,7 +28,7 @@ are in
 | `config/usage-lakehouse.json`, `config/usage-lakehouse-stream-schema.json` | The usage lakehouse: the `USAGE_LAKEHOUSE` Pipeline into the Iceberg table `avalon.usage_events` in R2, provisioned by `scripts/ensure-cloudflare-inference-lakehouse.mjs` like the other lakehouses. |
 | `apps/ace/src/client/workspaces.tsx` | The plan control on Ace's workspaces tab. |
 | `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, `useSetOrganizationPlan`, the `usage` local-cache slice, and the formatters. |
-| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage with its plan picker, and the account menu's meter (a full row right under Settings). Both meters fill in the viewer's own accent (`--personal-color`), which `app.css` sets on them. |
+| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage with its plan picker, and the account menu's meter (a full row right under Settings). |
 | `packages/ui/src/components/primitives.tsx` (`Meter`) | The shared meter primitive and its `cmp.meter.*` tokens. |
 
 Each call site emits next to where its cost is already known; searching for
