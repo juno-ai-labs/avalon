@@ -194,8 +194,6 @@ function browserGoogleCallbackUrl(env: Env): string {
   return new URL(`/regional/${env.AVALON_REGION}/browser/google/callback`, browserOrigin(env)).toString();
 }
 
-/** Where a browser sign-in lands afterwards: a path on the browser host, nothing else. */
-
 interface GoogleCredentials {
   clientId: string;
   clientSecret: string;

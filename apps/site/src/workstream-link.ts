@@ -9,7 +9,7 @@ import {
   type SidekickLinkTarget,
   type SpaceLinkTarget,
 } from '@rally/contracts/workstream-links';
-import { apiBaseUrl, reportDesktopHandoff } from './telemetry';
+import { apiBaseUrl, reportDesktopHandoff, storageRead, storageWrite } from './telemetry';
 
 export {};
 
@@ -160,20 +160,13 @@ export function handoffAppTarget(
   return targets.sidekick ? { app: 'mac', href: sidekickDeepLink(targets.sidekick) } : null;
 }
 
+/** Without storage the page auto-opens the app every time, as it did before. */
 function readOpenIn(): string | null {
-  try {
-    return localStorage.getItem(OPEN_IN_KEY);
-  } catch {
-    return null;
-  }
+  return storageRead(localStorage, OPEN_IN_KEY);
 }
 
 function rememberOpenIn(choice: 'app' | 'browser'): void {
-  try {
-    localStorage.setItem(OPEN_IN_KEY, choice);
-  } catch {
-    // Without storage the page auto-opens the app every time, as it did before.
-  }
+  storageWrite(localStorage, OPEN_IN_KEY, choice);
 }
 
 export function isIosDevice(userAgent: string, platform: string, maxTouchPoints: number): boolean {
