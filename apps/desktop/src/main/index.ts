@@ -2335,9 +2335,11 @@ async function requireOnboardingIdentitySession(): Promise<WireSession> {
 
 async function onboardingIdentityRequest(
   request: (identity: WireSession) => Promise<Response>,
+  /** The identity the caller already loaded, so the request does not read it twice. */
+  loaded?: WireSession,
 ): Promise<{ identity: WireSession; response: Response }> {
   return requestWithOnboardingIdentity({
-    load: requireOnboardingIdentitySession,
+    load: loaded ? async () => loaded : requireOnboardingIdentitySession,
     refresh: async (identity) => {
       const auth = await loadStoredAuthSet();
       const account = auth?.account;
@@ -2651,7 +2653,7 @@ async function requestOnboardingSession(
       },
       body: JSON.stringify(body),
     },
-  ));
+  ), identity);
   const response = requested.response;
   if (!response.ok) throw await responseError(response);
   const parsed = SessionSchema.safeParse(await response.json());
