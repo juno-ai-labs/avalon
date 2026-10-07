@@ -34,7 +34,7 @@ export function renderSiteNav(): string {
     + `<a class="button button-small header-download" data-site-action="download-header" href="${DOWNLOAD}" download>Download for Mac</a>`
     // Shown instead of the download on touch-only devices, which cannot run the Mac app (landing.css).
     // The web app signs in and signs up through one door, so the label rolls between the two.
-    + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai" aria-label="Sign in or sign up for Rally">'
+    + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai" aria-label="Sign in to Rally or sign up for Rally">'
     + '<span class="header-sign-in-wheel" aria-hidden="true"><span>Sign in to Rally</span><span>Sign up for Rally</span></span></a></nav>';
 }
 
