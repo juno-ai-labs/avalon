@@ -38,7 +38,11 @@ import { workspaceDOName } from "../durable-objects/names";
 import { BrowserSessionService } from "./browser-session-service";
 import { AuthService } from "./auth-service";
 import { openGeneralSpaceForNewWorkspace } from "./space-bootstrap-service";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
+import {
+  acceptsNewWorkstreamWork,
+  readWorkstreamAuthorityControl,
+  type WorkstreamAuthorityControl,
+} from "./workstream-authority";
 import { batchWithRegionalWorkstreamAnchor, parentAnchorStatements } from "./workstream-runtime-database";
 import type { WorkspaceGeneralOpening } from "../durable-objects/workspace-space-protocol";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -421,7 +425,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     }
 
     const session = await new AuthService(this.env).prepareWorkspaceSession(user.id, input.workspaceId);
-    const results = await this.createOwnedWorkspace(user.id, input, authority.generation, session.statements);
+    const results = await this.createOwnedWorkspace(user.id, input, authority, session.statements);
     return session.issue(results);
   }
 
@@ -468,7 +472,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       await this.initializeWorkspaceObject(input.workspaceId, placementAffinity);
       return;
     }
-    await this.createOwnedWorkspace(user.id, reference, authority.generation, []);
+    await this.createOwnedWorkspace(user.id, reference, authority, []);
   }
 
   /**
@@ -477,19 +481,21 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
    * journal entry and General's anchor, and reads back the checks; `trailing`
    * statements (the creator's session) go after the membership they need, and
    * the batch's results from them on are returned. One object call then
-   * initializes the Organization and opens General in it. An authority
-   * generation below 1 is closed: General is left to the slower path, which
-   * asks again and refuses with a name.
+   * initializes the Organization and opens General in it. An authority that
+   * does not accept new work (closed, or mid-migration with a positive
+   * generation) gets no anchor here: General is left to the slower path,
+   * which asks again and refuses with a name.
    */
   private async createOwnedWorkspace(
     userId: string,
     input: OperationReference & { name: string; placementAffinity: WorkspacePlacementAffinity },
-    authorityGeneration: number,
+    authority: WorkstreamAuthorityControl,
     trailing: D1PreparedStatement[],
   ): Promise<D1Result[]> {
     const at = nowIso();
     const slug = workspaceSlug(input.name, input.workspaceId);
-    const generalSpaceId = authorityGeneration >= 1 ? uuidV7() : null;
+    const authorityGeneration = authority.generation;
+    const generalSpaceId = acceptsNewWorkstreamWork(authority) && authorityGeneration >= 1 ? uuidV7() : null;
     const general = generalSpaceId === null ? null : parentAnchorStatements(this.env, {
       workspaceId: input.workspaceId, parentId: generalSpaceId, parentKind: "space", generation: authorityGeneration, at,
     });
@@ -1615,7 +1621,13 @@ export class PlatformOnboardingService {
       throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
     }
     if (reservation.status === "active") {
-      return this.issueExistingSession(identity, region, workspaceId, placementAffinity);
+      // A replay of an action that committed: `committed` may not have run, or
+      // may have failed, the first time, and it is idempotent.
+      const [session] = await Promise.all([
+        this.issueExistingSession(identity, region, workspaceId, placementAffinity),
+        committed?.(),
+      ]);
+      return session;
     }
     if (reservation.operation_id !== operationId) {
       throw new ApiError(409, "workspace_setup_in_progress", "Workspace setup is already in progress");
