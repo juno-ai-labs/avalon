@@ -132,6 +132,12 @@ through its `leading` slot. Electron's window has an 860px minimum, so only
 the browser reaches this width. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx`
 repeats the CSS's 640.
 
+On a touch screen (`hover: none` and `pointer: coarse`) every text field,
+and the composer's highlight layer with it, renders at 16px. iOS Safari zooms
+into any focused field with smaller text and stays zoomed after blur; raising
+the text is the fix that keeps pinch zoom, where `maximum-scale=1` would take
+it away on Android. The rule sits at the end of `app.css`.
+
 ### Pins under All
 
 A pin belongs to one placement, and the server keeps one ordered run per Space
