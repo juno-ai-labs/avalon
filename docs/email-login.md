@@ -145,9 +145,11 @@ client's browser, where that storage is absent. A `next` field in the fragment
 beside the proof: the path itself already carries the destination, and every
 link reader parses it.
 
-**What a future change has to respect:** `EmailLoginStartSchema` is strict,
+**Consequences:** `EmailLoginStartSchema` is strict,
 so an API older than this change rejects a start that carries `returnPath`.
 Deploy the API before the browser client.
+
+Shipped in juno-ai-labs/avalon#1144.
 
 ### 2026-09-18 — Production email sign-in policy
 

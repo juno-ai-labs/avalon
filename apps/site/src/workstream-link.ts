@@ -13,8 +13,12 @@ import { apiBaseUrl, reportDesktopHandoff, storageRead, storageWrite } from './t
 
 export {};
 
-/** The web app, which opens every addressed path this page serves. */
-const BROWSER_APP_ORIGIN = 'https://app.rallywith.ai';
+/** The web app, which opens every addressed path this page serves; the local one when this page is served locally. */
+function browserAppOrigin(): string {
+  return location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+    ? 'http://localhost:8794'
+    : 'https://app.rallywith.ai';
+}
 
 /** Which app this browser last chose for a shared link, so a web-only reader is not sent to an app they lack. */
 const OPEN_IN_KEY = 'rally.sharedLinks.openIn';
@@ -53,11 +57,14 @@ function initializeWorkstreamHandoff(): void {
   // so there is no name to look up and no web app to open it in.
   const addressed = workstreamTarget?.region !== null;
   if (addressed && title) void showResourceName(title);
-  const webUrl = addressed ? new URL(window.location.pathname, BROWSER_APP_ORIGIN).toString() : null;
+  // Choosing the browser also cancels the app launch still pending on this page.
+  let attempted = false;
+  const webUrl = addressed ? new URL(window.location.pathname, browserAppOrigin()).toString() : null;
   if (browser && webUrl) {
     browser.href = webUrl;
     browser.removeAttribute('hidden');
     browser.addEventListener('click', () => {
+      attempted = true;
       rememberOpenIn('browser');
       reportDesktopHandoff('workstream', 'browser', 'valid');
     });
@@ -87,7 +94,6 @@ function initializeWorkstreamHandoff(): void {
     help?.setAttribute('hidden', '');
   }
 
-  let attempted = false;
   const openOnce = (): void => {
     if (attempted) return;
     attempted = true;
