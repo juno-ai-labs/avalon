@@ -54,8 +54,10 @@ The person who asked gets an email when the request is approved or declined.
 3. **The request.** The approver is the conversation's creator, who must be an
    active member and not the requester. The Organization object records the
    request, or returns the one already pending for this person and
-   conversation. Only a new row sends the email and pushes the approver's
-   list, so pressing again sends nothing twice. The requester's name is copied
+   conversation. Only a new row pushes the approver's list. The email goes
+   until one has gone out (`emailed_at`): pressing again after a failed send
+   retries it under the same idempotency key, and after a sent one does
+   nothing. The requester's name is copied
    into the row, since names live in D1 and the list is built in the object.
 4. **The approver's list.** The subscribe answer carries `accessRequests` on
    every connect, and each change sends `workspace_access_requests` with the
@@ -65,16 +67,20 @@ The person who asked gets an email when the request is approved or declined.
    request for a conversation since archived drops out of the list.
 5. **Answering in the app.** `POST /conversations/access-requests/:id/approve`
    or `decline`, as the signed-in approver. Anyone else is told it does not
-   exist. Approving runs `WorkstreamService.addParticipant` (a Channel) or
-   `SubstreamCreationService.changeParticipant` (a Breakout) as that person,
-   then settles the row. A request already settled answers `settled`.
+   exist. The row is settled first, so only the decision that wins it acts:
+   an approve and a decline sent together from two places cannot leave
+   somebody added under a request that reads declined. Approving then runs
+   `WorkstreamService.addParticipant` (a Channel) or
+   `SubstreamCreationService.changeParticipant` (a Breakout) as that person.
+   If that add is refused, the row goes back to pending (`reopen`) and is
+   listed again. A request already settled answers `settled`.
 6. **Answering in the email.** The link names the stored request and its
    approver, sealed with AES-GCM under `OAUTH_STATE_ENCRYPTION_KEY` and the
    purpose `rally-conversation-access-approval-v1`. The `GET` grants nothing:
    it serves a page whose one script, allowed by a per-response CSP nonce,
    posts the token back, so a mail scanner that fetches the link changes
-   nothing. The `POST` acts as the approver under `principal: "connector"`
-   and settles the row. A request already approved shows "Access approved"
+   nothing. The `POST` claims the row as approved first, the same way, then
+   acts as the approver under `principal: "connector"`. A request already approved shows "Access approved"
    without granting again. A declined one stays declined.
 7. **Telling the requester.** Whichever call settled the request sends
    "You can now open …" (with an **Open in Rally** link) or "Your request to
