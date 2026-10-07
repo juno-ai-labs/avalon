@@ -28,6 +28,21 @@ h1,h2,h3,p{margin:0}
 .button-outline:hover{opacity:1;background:var(--wash)}
 .button-mark{display:block;flex-shrink:0;pointer-events:none}
 .header-sign-in{display:none}
+/* The two header labels share one cell and roll through it with the app's vertical wheel
+   (background-agent-digit in packages/ui app.css), half a cycle apart. */
+.header-sign-in-wheel{display:inline-grid;overflow:hidden;perspective:80px}
+.header-sign-in-wheel>span{grid-area:1/1;text-align:center;animation:header-sign-in-wheel 7s ease-out infinite}
+.header-sign-in-wheel>span+span{animation-delay:-3.5s}
+@keyframes header-sign-in-wheel{
+0%,46%{opacity:1;transform:translateY(0) rotateX(0)}
+50%{opacity:0;transform:translateY(-100%) rotateX(55deg)}
+50.01%,96%{opacity:0;transform:translateY(100%) rotateX(-55deg)}
+100%{opacity:1;transform:translateY(0) rotateX(0)}
+}
+@media (prefers-reduced-motion:reduce){
+.header-sign-in-wheel>span{animation:none}
+.header-sign-in-wheel>span+span{visibility:hidden}
+}
 
 .site-header{position:sticky;top:0;z-index:30;border-bottom:1px solid var(--hairline);background:oklch(.08 0 0/.85);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
 .site-header-inner{max-width:1400px;height:var(--header);margin:auto;padding:0 var(--gutter);display:flex;align-items:center;justify-content:space-between;gap:16px}
