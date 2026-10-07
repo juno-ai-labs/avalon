@@ -22,7 +22,7 @@ and connection rules it inherits are in [`connectors.md`](connectors.md).
 | `apps/api/src/services/connection-service.ts` | `createCustomMcp`, `beginCustomMcp`, `getCustomMcpSettings`, `updateCustomMcpToolPolicy`, and the custom-MCP branches of `completeProvider` and `reconnect`. |
 | `apps/api/src/routes/connections.ts` | `POST /connections/custom-mcp`, `POST /connections/custom-mcp/start`, `GET /connections/:id/custom-mcp/tools`, `PUT /connections/:id/custom-mcp/tool-policy`, and the OAuth callback. |
 | `apps/api/src/lib/connector-registry.ts` | `customMcpConnectorConfig` — the callback URI, which is all this connector needs to be available in a region. |
-| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The provider card, the connect dialog, and the **MCP tools** pane. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The provider card, the connect dialog, and the **MCP tools** part of each server's own connection page. |
 
 ### Adding a server
 
@@ -99,9 +99,10 @@ every member.
 
 `GET /connections/:id/custom-mcp/tools` reads the same live catalog an
 activation reads and returns, per tool, the server's `readOnlyHint` and
-`destructiveHint` and whether the current policy admits it. The **MCP tools**
-settings pane renders it beside the endpoint, the authentication mode, and the
-policy control. A tool the policy withholds stays listed and marked, so a person
+`destructiveHint` and whether the current policy admits it. Each connected
+server has its own page under Connections in Settings, and its **MCP tools**
+section renders the catalog beside the endpoint, the authentication mode, and
+the policy control. A tool the policy withholds stays listed and marked, so a person
 can see what is being held back rather than watching it disappear.
 
 That read is also a discovery, so it stores the number of tools the policy
