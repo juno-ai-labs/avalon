@@ -310,24 +310,20 @@ describe('Sidebar channel markers', () => {
     }
   });
 
-  it('marks sidebar creation telemetry only when the Channel setup is submitted', async () => {
-    const onCreateChannel = vi.fn(async () => undefined);
+  it('opens the new-Channel screen from New channel and marks it as the sidebar\'s', () => {
+    const onCreateChannel = vi.fn();
     render(<MemoryRouter><Tooltip.Provider>
       <Sidebar {...defaultActions} onCreateChannel={onCreateChannel}
         onSignOut={vi.fn()} spaces={[general()]} workspace={workspace} workstreams={[]} />
     </Tooltip.Provider></MemoryRouter>);
-    // The header's New channel opens the form directly, with no menu between.
+    // No menu and no dialog between: the screen names and places the Channel.
     const launcher = screen.getByRole('button', { name: 'New channel' });
     expect(launcher).not.toHaveAttribute('aria-haspopup');
     fireEvent.click(launcher);
-    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
 
-    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Launch' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'Launch', spaceId: general().id }));
+    expect(onCreateChannel).toHaveBeenCalledWith({ spaceId: general().id });
     expect(markSurfaceEntrypoint).toHaveBeenCalledWith('sidebar_new');
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -1404,10 +1400,11 @@ describe('Sidebar channel markers', () => {
     it('offers channel creation locked to the selected Space from empty list space', async () => {
       const hiring = space();
       const target = placedIn(workstream('empty-area', 'Quarterly planning', 'completed'), hiring.id);
+      const onCreateChannel = vi.fn();
       render(
         <MemoryRouter>
           <Tooltip.Provider>
-            <Sidebar {...defaultActions} onSignOut={vi.fn()}
+            <Sidebar {...defaultActions} onCreateChannel={onCreateChannel} onSignOut={vi.fn()}
               spaces={[general(), hiring]} workspace={workspace} workstreams={[target]} />
           </Tooltip.Provider>
         </MemoryRouter>,
@@ -1438,10 +1435,7 @@ describe('Sidebar channel markers', () => {
 
       fireEvent.contextMenu(screen.getByRole('navigation', { name: 'Channels' }), { clientX: 120, clientY: 300 });
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Start New Channel' }));
-      const dialog = await screen.findByRole('dialog', { name: 'Start a new channel' });
-      const picker = within(dialog).getByRole('combobox', { name: 'Space' });
-      expect(picker).toHaveTextContent('Hiring');
-      expect(picker).toBeDisabled();
+      expect(onCreateChannel).toHaveBeenCalledWith({ spaceId: hiring.id });
     });
   });
 
@@ -1501,7 +1495,8 @@ describe('Sidebar channel markers', () => {
     );
   });
 
-  it('starts the new Channel Space picker on All, then orders it like the Space pills', async () => {
+  it('starts a new Channel under All in General', () => {
+    const onCreateChannel = vi.fn();
     const accounts = space('00000000-0000-7000-8000-0000000000f6', 'Accounts');
     const hiring = space();
     const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
@@ -1510,6 +1505,7 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
+            onCreateChannel={onCreateChannel}
             onSignOut={vi.fn()}
             spaces={[general(), launch, accounts, hiring]}
             workspace={workspace}
@@ -1521,13 +1517,7 @@ describe('Sidebar channel markers', () => {
 
     expect(pillNames()).toEqual(['All', 'Accounts', 'Hiring', 'Launch']);
     fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
-
-    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
-    const spacePicker = within(dialog).getByRole('combobox', { name: 'Space' });
-    expect(spacePicker).toHaveTextContent('All');
-    fireEvent.click(spacePicker);
-    expect(screen.getAllByRole('option').map((option) => option.textContent))
-      .toEqual(['All', 'Accounts', 'Hiring', 'Launch']);
+    expect(onCreateChannel).toHaveBeenCalledWith({ spaceId: general().id });
   });
 
   it('removes a channel from the space whose placement menu was opened', async () => {
@@ -4172,12 +4162,12 @@ describe('the sidebar Space filter', () => {
   describe('a pill picked while a Channel is open', () => {
     const empty = space('00000000-0000-7000-8000-0000000000f6', 'Empty');
 
-    function renderOpen(workstreamId: string): void {
+    function renderOpen(workstreamId: string, path = `/workstreams/${workstreamId}`): void {
       function CurrentRoute(): React.JSX.Element {
         return <output aria-label="Current route">{useLocation().pathname}</output>;
       }
       render(
-        <MemoryRouter initialEntries={[`/workstreams/${workstreamId}`]}>
+        <MemoryRouter initialEntries={[path]}>
           <Tooltip.Provider>
             <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[home, hiring, launch, empty]}
               workspace={workspace} workstreams={[alpha, bravo, charlie, delta]} />
@@ -4198,12 +4188,21 @@ describe('the sidebar Space filter', () => {
       expect(pill('Launch')).toHaveAttribute('aria-pressed', 'true');
     });
 
-    it('opens the Space\'s dashboard when that Space holds no Channels', async () => {
+    it('starts a Channel in that Space when it holds none', async () => {
       renderOpen(alpha.id);
 
       selectSpace('Empty');
-      await waitFor(() => expect(route()).toBe(`/spaces/${empty.id}`));
+      await waitFor(() => expect(route()).toBe(`/spaces/${empty.id}/workstreams/new`));
       expect(pill('Empty')).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('leaves a new-Channel screen for another Space as it leaves a Channel', async () => {
+      renderOpen(alpha.id, `/spaces/${hiring.id}/workstreams/new`);
+
+      selectSpace('Launch');
+      await waitFor(() => expect(route()).toBe(`/workstreams/${charlie.id}`));
+      selectSpace('Empty');
+      await waitFor(() => expect(route()).toBe(`/spaces/${empty.id}/workstreams/new`));
     });
 
     it('stays on the open Channel when that Space holds it', () => {
@@ -4267,18 +4266,13 @@ describe('the sidebar Space filter', () => {
       expect(screen.queryByRole('button', { name: /Restart to update/u })).not.toBeInTheDocument();
     });
 
-    it('starts a channel in the selected Space from New channel', async () => {
-      const onCreateChannel = vi.fn(async () => undefined);
+    it('starts a channel in the selected Space from New channel', () => {
+      const onCreateChannel = vi.fn();
       renderFiltered({ onCreateChannel });
       selectSpace('Launch');
 
       fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
-      const dialog = await screen.findByRole('dialog', { name: 'Start a new channel' });
-      expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('Launch');
-      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Roadmap' } });
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
-
-      await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'Roadmap', spaceId: launch.id }));
+      expect(onCreateChannel).toHaveBeenCalledWith({ spaceId: launch.id });
     });
   });
 });

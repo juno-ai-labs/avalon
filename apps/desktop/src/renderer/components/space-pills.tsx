@@ -24,7 +24,7 @@ interface SpacePillsProps {
   selectedSpaceId: string | null;
   revealSelection?: { revision: number; spaceId: string } | null;
   ready: boolean;
-  onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
+  onCreateChannel: (input: { spaceId: string }) => void;
   onCreateSpace: (name: string) => Promise<void>;
   onArchive?: ((spaceId: string) => Promise<void>) | undefined;
   onMoveChannel: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
