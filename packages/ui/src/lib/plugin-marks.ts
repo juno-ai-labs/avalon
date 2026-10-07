@@ -1,5 +1,6 @@
 import Apple from '@thesvg/react/apple';
 import Canva from './brand-marks/canva';
+import Cloudflare from '@thesvg/react/cloudflare';
 import Github from '@thesvg/react/github';
 import Google from '@thesvg/react/google';
 import GoogleDrive from '@thesvg/react/google-drive';
@@ -49,11 +50,12 @@ export type PluginBrandMarkComponent =
 
 /** The brands Rally connects to, or links out to, that have a mark of their own. */
 export const PLUGIN_BRAND_MARKS: Record<
-  'apple' | 'ashby' | 'canva' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'notion' | 'slack' | 'x',
+  'apple' | 'ashby' | 'canva' | 'cloudflare' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'notion' | 'slack' | 'x',
   PluginBrandMarkComponent
 > = {
   apple: { Mark: Apple, mono: true },
   canva: { Mark: Canva, mono: true },
+  cloudflare: { Mark: Cloudflare, mono: true },
   ashby: { Mark: Ashby, mono: true },
   fireflies: { Mark: Fireflies, mono: true },
   github: { Mark: Github, mono: true },
@@ -108,6 +110,24 @@ export function connectorBrandMark(
     case 'notion': return 'notion';
     case 'slack': return 'slack';
     case 'x': return 'x';
+    case 'custom_mcp': return displayName ? markNamedIn(displayName) : null;
     default: return null;
   }
+}
+
+/**
+ * The company a custom MCP server's own name spells out, as whole words.
+ *
+ * A custom server has no connector type of its own to key on, and the list
+ * Settings draws from carries only the name its creator gave it — "Cloudflare
+ * API", "Linear (staging)". Whole words, longest first, so "Google Drive" is
+ * Drive and "Ex" or "Next" never reads as X. `x` and `apple` are left out: one
+ * letter is no evidence, and nobody connects an Apple MCP server.
+ */
+const namedMarks = (Object.keys(PLUGIN_BRAND_MARKS) as PluginBrandMark[])
+  .filter((mark) => mark !== 'x' && mark !== 'apple')
+  .sort((a, b) => b.length - a.length);
+function markNamedIn(displayName: string): PluginBrandMark | null {
+  const words = ` ${displayName.toLowerCase().split(/[^a-z0-9]+/u).join(' ')} `;
+  return namedMarks.find((mark) => words.includes(` ${mark.replace('-', ' ')} `)) ?? null;
 }

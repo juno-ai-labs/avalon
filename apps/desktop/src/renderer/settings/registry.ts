@@ -15,12 +15,17 @@ export interface SettingDefinition {
   readonly aliases?: readonly string[];
   /** Setup fields reveal their entry point; search never starts authorization. */
   readonly entryPoint?: string;
+  /**
+   * Set on a setting that lives on one connection's page. It is indexed once per
+   * connection whose `settingsKind` matches, never on its own.
+   */
+  readonly connectionKind?: 'github_repository_access' | 'custom_mcp_tools';
 }
 export function defineSetting<const T extends SettingDefinition>(definition: T): T {
   return definition;
 }
 export const settings = {
-  mcpServer: defineSetting({ id: 'mcpServer', section: 'custom-mcp', label: 'Server authorization', kind: 'information', description: 'Inspect the connected server URL and authentication method.', options: ['Authorize again', 'OAuth', 'Request headers'] }),
+  mcpServer: defineSetting({ id: 'mcpServer', section: 'connection', connectionKind: 'custom_mcp_tools', label: 'Server authorization', kind: 'information', description: 'Inspect the connected server URL and authentication method.', options: ['Authorize again', 'OAuth', 'Request headers'] }),
   inviteEmail: defineSetting({ id: 'inviteEmail', section: 'workspace', label: "Email address", kind: 'custom', description: "Invite a teammate by email.", availability: 'admin' }),
   inviteRole: defineSetting({ id: 'inviteRole', section: 'workspace', label: "Role", kind: 'select', description: "Choose the invited teammate’s organization role.", availability: 'admin' }),
   inviteSend: defineSetting({ id: 'inviteSend', section: 'workspace', label: "Send invitation", kind: 'action', description: "Send the invitation after entering an email address.", availability: 'admin' }),
@@ -57,13 +62,13 @@ export const settings = {
   invitations: defineSetting({ id: 'invitations', section: 'workspace', label: "Invitations", kind: 'custom', description: "Invite teammates by email. Links expire after seven days.", availability: 'admin', options: ['Revoke invitation', 'Copy invitation link'] }),
   workspaceAccess: defineSetting({ id: 'workspaceAccess', section: 'workspace', label: "Organization access", kind: 'action', description: "Leaving removes this organization from your Rally account on every device.", aliases: ["workspace"] }),
   connections: defineSetting({ id: 'connections', section: 'connections', label: "Your connections", kind: 'collection', description: "Credentials currently available to you or this organization.", aliases: ["integrations","connectors"] }),
-  githubAccess: defineSetting({ id: 'githubAccess', section: 'github', label: "Repository access", kind: 'custom', description: "Configure GitHub repository permissions." }),
-  githubAvailability: defineSetting({ id: 'githubAvailability', section: 'github', label: "Repository availability", kind: 'select', description: "All repositories follows the GitHub App installation. Selected repositories exposes only the entries you add below.", options: Object.values(githubAvailabilityLabels) }),
-  githubRemote: defineSetting({ id: 'githubRemote', section: 'github', label: "Default remote access", kind: 'select', description: "Read-only still allows Rally to edit and commit locally. It blocks push, pull requests, issues, reviews, and other remote mutations.", options: Object.values(githubRemoteLabels) }),
-  githubRepositories: defineSetting({ id: 'githubRepositories', section: 'github', label: "Repositories", kind: 'collection', description: "Search repositories and configure individual remote access." }),
-  mcpTools: defineSetting({ id: 'mcpTools', section: 'custom-mcp', label: "MCP tools", kind: 'custom', description: "Configure a connected MCP server.", aliases: ["integrations"] }),
-  mcpPolicy: defineSetting({ id: 'mcpPolicy', section: 'custom-mcp', label: "Tools Rally may use", kind: 'select', description: "Choose which tools the server may expose.", options: ['All tools', 'Read-only tools'] }),
-  mcpCatalog: defineSetting({ id: 'mcpCatalog', section: 'custom-mcp', label: "Tools", kind: 'collection', description: "Inspect tool names and descriptions." }),
+  githubAccess: defineSetting({ id: 'githubAccess', section: 'connection', connectionKind: 'github_repository_access', label: "Repository access", kind: 'custom', description: "Configure GitHub repository permissions." }),
+  githubAvailability: defineSetting({ id: 'githubAvailability', section: 'connection', connectionKind: 'github_repository_access', label: "Repository availability", kind: 'select', description: "All repositories follows the GitHub App installation. Selected repositories exposes only the entries you add below.", options: Object.values(githubAvailabilityLabels) }),
+  githubRemote: defineSetting({ id: 'githubRemote', section: 'connection', connectionKind: 'github_repository_access', label: "Default remote access", kind: 'select', description: "Read-only still allows Rally to edit and commit locally. It blocks push, pull requests, issues, reviews, and other remote mutations.", options: Object.values(githubRemoteLabels) }),
+  githubRepositories: defineSetting({ id: 'githubRepositories', section: 'connection', connectionKind: 'github_repository_access', label: "Repositories", kind: 'collection', description: "Search repositories and configure individual remote access." }),
+  mcpTools: defineSetting({ id: 'mcpTools', section: 'connection', connectionKind: 'custom_mcp_tools', label: "MCP tools", kind: 'custom', description: "Configure a connected MCP server.", aliases: ["integrations"] }),
+  mcpPolicy: defineSetting({ id: 'mcpPolicy', section: 'connection', connectionKind: 'custom_mcp_tools', label: "Tools Rally may use", kind: 'select', description: "Choose which tools the server may expose.", options: ['All tools', 'Read-only tools'] }),
+  mcpCatalog: defineSetting({ id: 'mcpCatalog', section: 'connection', connectionKind: 'custom_mcp_tools', label: "Tools", kind: 'collection', description: "Inspect tool names and descriptions." }),
   lockdown: defineSetting({ id: 'lockdown', section: 'application', label: "Lockdown mode", kind: 'toggle', description: "Protect the saved session with this Mac’s keystore instead of Rally’s shared encryption key.", aliases: ["security","keychain","privacy"] }),
   analytics: defineSetting({ id: 'analytics', section: 'application', label: "Product analytics", kind: 'toggle', description: "Share semantic product usage, sanitized errors and breadcrumbs, and native crash reports. Telemetry can include your verified name and email so Rally can contact you. Essential content-free reliability signals continue when this is off.", aliases: ["privacy","diagnostics"] }),
   appearance: defineSetting({ id: 'appearance', section: 'application', label: "Appearance", kind: 'select', description: "Follow this device or keep Rally light or dark.", options: appearanceModeDescriptions.map((option) => option.label), aliases: ['theme'] }),
