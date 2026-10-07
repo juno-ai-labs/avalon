@@ -27,8 +27,10 @@ export function useOnboardingAccount(): AccountOnboarding | null { return useCon
 
 export function AccountOnboardingGate({ children }: { children: ReactNode }): React.JSX.Element {
   const { api, session, signOut, updateCurrentUserName, getAccountOnboarding, updateAccountOnboarding } = useAppSession();
-  const { guest } = useShellCapabilities();
-  const [previewed, setPreviewed] = useState(false);
+  const { guest, host } = useShellCapabilities();
+  // The browser is reached from the landing page, which already introduced
+  // Rally, so it records the introduction as seen rather than showing it again.
+  const [previewed, setPreviewed] = useState(host === 'browser');
   // A guest has no member directory to read; their people come from each
   // conversation's own detail.
   const members = useQuery({ queryKey: ['workspace-members'], queryFn: () => api!.getWorkspaceMembers(), enabled: Boolean(api && session?.workspace && !guest) });
@@ -103,7 +105,8 @@ function PlatformIntroduction({ previewed }: { previewed: boolean }): React.JSX.
   useEffect(() => {
     if (previewed && !recorded.current) { recorded.current = true; void complete(); }
   }, [previewed, complete]);
-  if (previewed) return <OnboardingPage title="Welcome to Rally" footer={error ? <Button onClick={() => void complete()}>Retry</Button> : undefined}>{error ? <InlineError>{error}</InlineError> : <RallyMark />}</OnboardingPage>;
+  const { host } = useShellCapabilities();
+  if (previewed) return <OnboardingPage title={host === 'browser' ? 'Opening Rally' : 'Welcome to Rally'} footer={error ? <Button onClick={() => void complete()}>Retry</Button> : undefined}>{error ? <InlineError>{error}</InlineError> : <RallyMark />}</OnboardingPage>;
   return <OnboardingIntroduction signedIn onComplete={() => void complete()} busy={busy} error={error} />;
 }
 
