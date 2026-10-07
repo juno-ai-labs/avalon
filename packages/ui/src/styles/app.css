@@ -7797,8 +7797,10 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .single-sidebar .channel-row-time { color: var(--av-sys-color-text-disabled); }
 .single-sidebar .sidebar-footer-line { margin-inline: 16px; width: auto; }
 /* Rows above the footer line. Padded as `.sidebar-scroll` pads a row,
-   compact included, so they line up with the list above. */
-.sidebar-footer-items { display: flex; flex: none; flex-direction: column; gap: 4px; padding: 4px 12px 0; transition: padding var(--sidebar-layout-motion); }
+   compact included, so they line up with the list above. The bottom pad
+   matches `.sidebar-footer`'s top pad, so the rows sit as far above the
+   line as the account menu sits below it. */
+.sidebar-footer-items { display: flex; flex: none; flex-direction: column; gap: 4px; padding: 4px 12px 8px; transition: padding var(--sidebar-layout-motion); }
 .resizable-sidebar.is-compact .sidebar-footer-items { padding-inline: calc((100% - 54px) / 2); }
 .single-sidebar .sidebar-footer { padding-inline: 10px; }
 .single-sidebar .account-trigger .avatar { height: 28px; width: 28px; }
