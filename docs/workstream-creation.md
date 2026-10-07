@@ -18,6 +18,7 @@ attempt at the opposite that the changelog records.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, the create mutation, and `launchedWorkstreamDetail` — the one place a launched work stream's cached detail is built. |
+| `apps/desktop/src/renderer/components/new-channel-participants.tsx` | The Participants row above the composer: the **+** that widens into the people search, and the pill that opens the list a person is removed from. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The pending-row rule on the shared list: `addPendingWorkstream`, `confirmPendingWorkstream`, `discardPendingWorkstream`, `keepPendingWorkstreams` (applied by every write that replaces the list), and `releasePendingWorkstreams`, the one path that may remove a pending row. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | `optimisticOpeningTranscript`, the one place either launcher's optimistic turn is built, and the detail a launched substream is seeded with. |
 | `packages/ui/src/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. Shared with the substream launcher, which renders the same three rows inside a work stream's own column ([`substream-creation.md`](substream-creation.md)). |
@@ -41,17 +42,19 @@ the response.
 The component renders one tree in both states, a three-row grid of header, body,
 and composer dock:
 
-- **Not launching** — the header is the **Participants** bar, the body row is
-  empty, and the dock carries only the composer. The dock spans the body and
-  dock rows and centres itself in them, so the composer sits in the middle of
-  the pane below the bar. The mention and command lists, which open upward,
+- **Not launching** — the header is collapsed, the body row is empty, and the
+  dock carries the Channel's setup above the composer: the **Participants**
+  row (`NewChannelParticipants`), then the Space picker and the Channel name.
+  The dock spans the body and dock rows and centres itself in them, so the
+  composer sits in the middle of the pane with its setup directly above it.
+  The mention and command lists, which open upward,
   cap their height at the room left above it, so a short window scrolls them
   rather than running them under the bar. The retired Welcome back dashboard,
   attention list, and suggested-work shelf no longer sit between opening Rally
   and starting a work stream.
 - **Launching** — the root additionally carries `workstream-screen`, the header
   is 44px around the Channel name (or a title skeleton), and the body holds a
-  transcript. The Participants bar leaves with the resting state. 44px because that is the row the conversation this
+  transcript. The setup rows leave with the resting state. 44px because that is the row the conversation this
   becomes actually uses: `.grokbot-workstream-header`, which every conversation
   renders, takes the screen's header track down from the base 55px. The header
   takes that height on the frame the class lands rather than growing into it;
@@ -67,24 +70,50 @@ those things: it is the same message capsule at the same width on both sides of
 the hand-off, per
 [`conversation-surfaces.md`](conversation-surfaces.md).
 
-The sidebar's plus first collects the required Space and Channel name in the
-standard creation dialog, then opens the launcher at
-`/spaces/:spaceId/workstreams/new` without creating a Channel. That is the only
-route to the launcher: there is no Space-less one, because every Channel is
-started from a Space. The launcher starts with focus in the opening-message text
-input. The Channel name travels with that route and is committed only when the
-opening message is sent; participants are chosen in the header's
-**Participants** bar before that request. The creator's own chip leads the bar
-and has no remove control. A Space's participants are its listed members, not who is
-in its Channels, so the bar never starts from them. `NewWorkstreamScreen` remounts
-the whole launcher for every navigation that opens it, because React would
-otherwise keep one instance across a change of Space or a second opening of the
-same one: the people picked for one Channel were sent with the next, and the
-composer's autofocus did not run again. Each opening therefore starts with
-nobody picked and focus in the message box, never in the Participants bar. The
+The sidebar's **New channel** opens the launcher at
+`/spaces/:spaceId/workstreams/new` at once, on the Space the sidebar is filtered
+to, or on General (listed as **All**) when it is not. There is no dialog first:
+the Space and the name are set on the screen itself, and nothing is created until
+the opening message is sent. That is the only route to the launcher: there is no
+Space-less one, because every Channel is started from a Space. A Space with no
+Channel to open lands here too (`emptySpaceRoute` in `lib/workstream-landing.ts`):
+an empty Organization opens it on General, a pill picked for a Space with no
+Channels opens it on that Space, as does a newly created Space and a Channel
+moved out of the last placement in its Space. A reader who cannot start Channels
+gets the Space's dashboard instead.
+
+The setup above the composer is three controls:
+
+- **Participants.** The creator's avatar leads one pill summing up who is in
+  the Channel; the pill opens the full list, which is where a person is taken
+  back out, and the creator has no remove control. The dashed **+** widens in
+  place into the search field, its results opening upward. A Space's
+  participants are its listed members, not who is in its Channels, so the row
+  never starts from them.
+- **Space.** The shared `DropdownSelect`, in its `pill` variant and opening
+  upward, listing the Spaces a Channel can be started in through
+  `useSpaceChoices`. Changing it is local state rather than a navigation, because
+  a navigation remounts the launcher and would drop the people and name already
+  chosen. The draft key stays the route's Space, so the words in the composer
+  never swap for another Space's draft.
+- **Name.** Optional; a Channel sent without one is titled by the server, as
+  before.
+
+Every change of state on the screen moves rather than jumps: the **+** box
+eases its width into the search field, the lists rise into place, and a person
+added arrives in the avatar stack. `prefers-reduced-motion` is cut by the
+global kill-switch.
+
+The launcher starts with focus in the opening-message text input.
+`NewWorkstreamScreen` remounts the whole launcher for every navigation that
+opens it, because React would otherwise keep one instance across a change of
+Space or a second opening of the same one: the people picked for one Channel
+were sent with the next, and the composer's autofocus did not run again. Each
+opening therefore starts with nobody picked and focus in the message box. The
 unsent draft and its attachments are cached by Space, so the remount loses
-nothing typed, and the key stays stable throughout the launch hand-off. The sidebar lists existing work streams without
-a placeholder row for the unsent draft.
+nothing typed, and the key stays stable throughout the launch hand-off. The
+sidebar lists existing work streams without a placeholder row for the unsent
+draft.
 
 ### What moves
 
@@ -594,6 +623,39 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-07 — The Channel is set up beside its composer, and empty Spaces open on it
+
+**What changed:** The sidebar's creation dialog for a Channel is gone. **New
+channel** opens the launcher straight away, and the Participants row, the Space
+picker and the name field sit directly above the composer instead of in a
+header bar and a dialog. A Space with no Channel to open now lands on this
+screen rather than on its dashboard: the empty Organization's landing, a pill
+picked for an empty Space (including from the new-Channel screen of another
+Space), a newly created Space, and a Channel moved out of the last placement in
+its Space. Picking a pill that has Channels while on the new-Channel screen of
+another Space opens that Space's first Channel, as it does from a Channel.
+
+**Why:** Asked for directly, from mockups that put every setup choice next to
+the message that commits it. The dialog split one act across two surfaces, and
+a Space with nothing in it showed settings when the only useful next step was
+starting a Channel.
+
+**Considered and rejected:** Holding the picked Space in the route. Every
+navigation remounts the launcher (2026-09-24's reason still holds), so a change
+of Space would drop the people and name already chosen. Keeping the dialog for
+the Space and name and moving only the Participants row. The 2026-09-24 entry
+rejected routing fallbacks to General's launcher as "a composer nobody asked
+for"; product now asks for exactly that.
+
+**Consequences:** The name is optional again, where the dialog required it; the
+server titles an unnamed Channel. A future control on this screen should join
+the setup rows above the composer, not the header, which is collapsed until
+launch. The people list and the Space list both open upward, capped at the room
+above the centred dock through the screen's size container, so a change to the
+setup rows' height has to move that cap too.
+
+Pull request: [#1130](https://github.com/juno-ai-labs/avalon/pull/1130).
 
 ### 2026-10-06 — A Channel is born with the scope it asked for
 

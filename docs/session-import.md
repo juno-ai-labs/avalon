@@ -36,8 +36,8 @@ plus menu offers **Start New Channel**, **Import Channel from Claude or
 ChatGPT**, and **Create New Space**; the import item opens the [import
 window](embedded-browser.md), and only the desktop host, which has that browser,
 offers it. Right-clicking empty space in a Space's channel list opens the same
-menu without **Create New Space**; from there both the channel form and the
-import sheet are locked to that Space (`spaceLocked` in the import window's
+menu without **Create New Space**; from there a new Channel starts in that
+Space and the import sheet is locked to it (`spaceLocked` in the import window's
 context). The round **New space** button at the head of the Space pills opens
 **Create New Space** directly. The person opens a conversation in the window — their own, signed in,
 or a shared link — and clicks Import. A sheet asks for the Space and a Channel
