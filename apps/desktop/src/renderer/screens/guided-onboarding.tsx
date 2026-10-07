@@ -11,6 +11,7 @@ import { PERSONAL_COLOR_KEYS, personalColorKey, type AccountOnboarding, type Onb
 import { Button, InlineError, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor, personalColorInk } from '../components/personal-avatar';
 import { useAppSession } from '../lib/app-session';
+import { accountOnboardingQueryKey } from '../lib/account-onboarding-query';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { OnboardingIntroduction } from '../components/onboarding-introduction';
 import type { Workspace } from '../lib/types';
@@ -29,14 +30,14 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
   // A guest has no member directory to read; their people come from each
   // conversation's own detail.
   const members = useQuery({ queryKey: ['workspace-members'], queryFn: () => api!.getWorkspaceMembers(), enabled: Boolean(api && session?.workspace && !guest) });
-  const account = useQuery({ queryKey: ['account-onboarding', session?.user.email],
+  const account = useQuery({ queryKey: accountOnboardingQueryKey(session?.user.email),
     queryFn: () => getAccountOnboarding(), enabled: Boolean(session), refetchOnWindowFocus: 'always' });
   const queryClient = useQueryClient();
   const editor = useMemo(() => new AccountProfileEditor('',
     (input) => updateAccountOnboarding(input),
     () => getAccountOnboarding(),
     (saved) => {
-      queryClient.setQueryData(['account-onboarding', session?.user.email], saved);
+      queryClient.setQueryData(accountOnboardingQueryKey(session?.user.email), saved);
       void queryClient.invalidateQueries({ queryKey: ['workspace-members'] });
       void queryClient.invalidateQueries({ queryKey: ['workspace'] });
     }), [getAccountOnboarding, queryClient, session?.user.email, updateAccountOnboarding]);
@@ -132,7 +133,7 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
     setBusy(true); setError(null);
     try {
       const updated = await updateAccountOnboarding({ expectedRevision: draftRevision, presentation: { color, avatar: 'circle', displayName: name.trim(), initials: initials.trim() } });
-      queryClient.setQueryData(['account-onboarding', session?.user.email], updated);
+      queryClient.setQueryData(accountOnboardingQueryKey(session?.user.email), updated);
       await queryClient.invalidateQueries({ queryKey: ['workspace-members'] });
       await onSaved?.();
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not save your profile.'); await queryClient.invalidateQueries({ queryKey: ['account-onboarding'] }); }

@@ -38,6 +38,7 @@ participant/directory views without closing valid conversations.
 | `apps/desktop/src/main/workspace-directory.ts` | The account menu's directory: the stored set merged with discovery, and the reconciliation that retires a membership a complete discovery no longer lists. |
 | `apps/desktop/src/renderer/components/workspace-account-menu.tsx`, `app-shell.tsx` | Flagged switcher, invitations, attention states, switching presentation, and creation in the legacy component variant. |
 | `apps/desktop/src/renderer/lib/draft-keys.ts`, `draft-cache.ts`, `app-session.tsx` | Workspace-scoped composer drafts and exact cleanup when one membership ends. |
+| `apps/desktop/src/renderer/lib/app-session.tsx` (`applyActivatedSession`), `account-onboarding-query.ts` | Landing a switch or a creation: the pending mark, the route reset, and what crosses the cache reset. |
 
 ## How it works
 
@@ -135,13 +136,32 @@ count.
 Choosing a workspace is a dissolve, not a cut. While the new credential is
 minted the current panes dim in place and the menu row shows its spinner; the
 menu stays open so a failure lands under the row the person chose, and closes
-itself once the switch took. `activateWorkspace` fetches the new workspace's
-record with the new credential before the old workspace is torn down and
-seeds it into the cleared cache the moment the session changes, so the shell
-never shows a bare "Opening workspace…" between the two; the same panes then
-fade back up over the unchanged backdrop showing the new workspace. The
-feature flags ride across the same way, stamped stale, so the account menu
-keeps its shape until the new workspace's own answer arrives.
+itself once the switch took. The new shell draws its first frame from the
+session itself, which already describes the workspace (`workspaceFromSession`
+is its placeholder for `GET /workspace`), so the switch lands the moment main
+answers; the record is fetched before the old workspace is torn down only for
+a session too incomplete to describe it, so the shell never shows a bare
+"Opening workspace…" between the two. The same panes then fade back up over
+the unchanged backdrop showing the new workspace. The feature flags ride
+across the cache reset, stamped stale, so the account menu keeps its shape
+and its directory read starts on the first frame rather than after the new
+workspace's flags answer; the account's onboarding state, read at identity
+scope, rides across with them so the setup journey's read starts on the
+first frame too. A creation carries it only when it already says eligible: a
+first organization can make an ineligible account eligible, never the
+reverse, and a stale `false` would admit the creator past their journey.
+
+Creating a workspace lands through the same path (`applyActivatedSession`).
+Main announces the new session the moment it is persisted, before the create
+call returns; the renderer holds that announcement while its own creation is
+in flight, as a switch does, so the old shell is not torn down early on the
+previous workspace's route with an empty cache. A creation does not know its
+workspace's id until main answers, so it holds any workspace in the region it
+asked for, though a renewal of the workspace on screen passes; main's answer
+is its active session, and a creation that fails applies the last broadcast it
+held instead. The account
+menu's create action does not refetch the directory afterwards: the landing
+remounts the shell, and the new one reads discovery itself.
 
 A switch that changed the workspace always lands on the new work-stream page.
 A work stream open in the previous workspace must never be looked up in the
@@ -348,6 +368,9 @@ Composer dictation remains tied to its composer lifecycle.
   it is not deletion.
 - Defensive polling cadence and device-count limits stay open until the team
   chooses their values.
+- Nothing reads a Global operation's `status`. That is what lets its
+  completion run beside the binding's activation; a reader of it would have to
+  order the two again.
 
 ## Boundary
 
@@ -376,6 +399,9 @@ never acquire a product WebSocket.
   The desktop keeps that ID across identity refresh and transport retries.
 - Queue publication after membership transition is best effort, as documented in
   `access-revocation.md`; authorization fences still refuse every reconnect.
+- A regional profile refresh reports `regional_identity_conflict` only for a
+  uniqueness refusal (another regional user holds the verified email). Any
+  other database failure keeps its own error.
 
 ## Data model
 
@@ -409,6 +435,40 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-10-07: Creating an organization takes fewer round trips, and lands like a switch
+
+**What changed:** `finishWorkspaceSetup` marks its creation pending and lands
+through `applyActivatedSession`, the switch's path, which now carries the
+account onboarding state with the flags and fetches `GET /workspace` before the
+swap only when the session cannot describe the workspace. The create handler no
+longer refetches the directory, and main loads the onboarding identity once. On
+the server, Global reads the identity, its sign-in methods, a replayed
+operation and the preference in parallel, `begin` and `reserve` are each one
+batch, and activation, completion and eligibility run together after the
+region commits; the region refreshes a returning user in one batch and creates
+the Organization, its session row and General's anchor in one more
+([`spaces.md`](spaces.md) has General's half).
+
+**Why:** Creating an organization was slower than switching to one. Most of
+the server's serial round trips read rows the same request had written or
+already held, and on desktop main's early broadcast cleared the cache and
+remounted the shell on the previous workspace's route before the create call
+returned, after which the directory and the setup journey each waited on
+another read.
+
+**Considered and rejected:** Prefetching the workspace socket ticket with the
+session. With no blocking read left before the swap the head start is one
+React commit, and tickets are minted per dial with a sixty-second life.
+
+**Consequences:** A creation's pending mark matches by region and holds any
+other workspace's broadcast there; a renewal of the workspace on screen passes,
+and a creation that fails applies the last one it held. A session that
+describes its workspace lands without `GET /workspace` in hand. The preference
+is read before the reservation, since a read failing after it would leave a
+pending binding nothing releases.
+
+Shipped in #1142.
 
 ### 2026-10-06 — A deployment links a person by any sign-in method
 
