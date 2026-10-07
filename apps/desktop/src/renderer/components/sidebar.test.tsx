@@ -3967,7 +3967,7 @@ describe('the sidebar Space filter', () => {
     expect(screen.getByRole('button', { name: 'Hiring' })).toBeVisible();
   });
 
-  it('in a browser tab at phone width, keeps the Space row until the window widens', () => {
+  it('in a browser tab, moves New space between the top bar and the Space row as the window crosses phone width', () => {
     let wide = false;
     const listeners = new Set<() => void>();
     vi.stubGlobal('matchMedia', (query: string) => ({
@@ -4003,6 +4003,50 @@ describe('the sidebar Space filter', () => {
 
     expect(within(topBar).getByRole('button', { name: 'New space' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+
+    act(() => {
+      wide = false;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+  });
+
+  it('in a browser tab, keeps an open restore dialog when the window crosses phone width', async () => {
+    let wide = true;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      get matches() { return query.includes('min-width') ? wide : false; },
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    }));
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              inactiveSpaces={[space(hiring.id, 'Hiring', { status: 'archived' })]}
+              onSignOut={vi.fn()}
+              spaces={[home]}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'New space' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Restore archived space' }));
+    expect(await screen.findByRole('dialog', { name: 'Restore archived space' })).toBeVisible();
+
+    act(() => {
+      wide = false;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(screen.getByRole('dialog', { name: 'Restore archived space' })).toBeVisible();
   });
 
   function renderFiltered(props: Partial<React.ComponentProps<typeof Sidebar>> = {}): void {
