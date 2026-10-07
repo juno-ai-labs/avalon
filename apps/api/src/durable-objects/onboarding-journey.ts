@@ -30,16 +30,14 @@ export class OnboardingJourneyStore {
   update(userId: string, path: 'creator' | 'member', raw: UpdateOnboardingJourney): OnboardingJourney | null {
     const input = UpdateOnboardingJourneySchema.parse(raw);
     const current = this.get(userId, path);
-    if ((!input.connectorIds || JSON.stringify(input.connectorIds) === JSON.stringify(current.connectorIds)) && current.stage === input.stage) return current;
+    if (current.stage === input.stage) return current;
     if (current.revision !== input.expectedRevision) return null;
     const next: Record<OnboardingJourney['stage'], OnboardingJourney['stage'][]> = {
       connectors: [], people: path === 'creator' ? ['complete'] : [], profile: path === 'creator' ? ['people'] : ['complete'],
       complete: [],
     };
     if (!next[current.stage].includes(input.stage)) return null;
-    this.sql.exec(`UPDATE onboarding_journeys SET stage = ?, revision = revision + 1,
-      connector_ids = ? WHERE user_id = ?`,
-    input.stage, JSON.stringify(input.connectorIds ?? current.connectorIds), userId);
+    this.sql.exec('UPDATE onboarding_journeys SET stage = ?, revision = revision + 1 WHERE user_id = ?', input.stage, userId);
     return this.get(userId, path);
   }
 

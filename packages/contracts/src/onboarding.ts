@@ -92,20 +92,18 @@ export const OnboardingJourneySchema = z.object({
  * advance their own onboarding, and the rejection would cross the workspace
  * object's RPC hop as a bare `Error`. Retired accent names are kept parseable
  * above for the same reason. A selection nobody can act on any more is noise, so
- * it is dropped on the way out; a write still has to name ids that exist, at the
- * boundary that can report which one did not.
+ * it is dropped on the way out.
  */
 export const StoredOnboardingConnectorSelectionsSchema = z.array(z.unknown()).transform((values) =>
   values.filter((value): value is z.infer<typeof OnboardingConnectorSelectionSchema> =>
     OnboardingConnectorSelectionSchema.safeParse(value).success));
+/** Connector selections are read from old rows only; nothing writes them since the step was retired. */
 export const UpdateOnboardingJourneySchema = z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
   stage: OnboardingJourneySchema.shape.stage,
-  connectorIds: z.array(OnboardingConnectorSelectionSchema).optional(),
 });
 export type PersonalPresentation = z.infer<typeof PersonalPresentationSchema>;
 export type AccountOnboarding = z.infer<typeof AccountOnboardingSchema>;
 export type UpdateAccountOnboarding = z.infer<typeof UpdateAccountOnboardingSchema>;
-export type OnboardingConnectorId = z.infer<typeof OnboardingConnectorIdSchema>;
 export type OnboardingJourney = z.infer<typeof OnboardingJourneySchema>;
 export type UpdateOnboardingJourney = z.infer<typeof UpdateOnboardingJourneySchema>;
