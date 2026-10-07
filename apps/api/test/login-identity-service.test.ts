@@ -130,6 +130,9 @@ describe("verified login identities", () => {
     expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
     expect(() => db.exec("UPDATE users SET platform_user_id = 'another' WHERE id = 'u'"))
       .toThrow("platform_user_id_immutable");
-    expect(await resolveVerifiedEmailIdentity(sqliteD1(db), "mixed@example.com")).toBe("u");
+    // This fixture stops at 0108; exercise its persisted identity output rather
+    // than running the current service against a deliberately historical schema.
+    expect(db.prepare("SELECT user_id FROM user_verified_emails WHERE email = ?").get("mixed@example.com"))
+      .toEqual({ user_id: "u" });
   });
 });

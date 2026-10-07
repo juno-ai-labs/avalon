@@ -282,7 +282,143 @@ function productEvent<
   return registryEntry;
 }
 
+const signupEventProperties = deferredZodSchema(() => z.strictObject({
+      flowId: UuidV7Schema,
+      clientPlatform: z.enum(["browser", "desktop"]),
+      entryPlatform: z.enum(["browser", "desktop"]),
+      method: z.enum(["google", "email", "otp", "magic", "unknown"]),
+      result: z.enum(["success", "failed", "denied"]),
+      accountStatus: z.enum(["new", "existing"]).optional(),
+      signupPath: z.enum(["new_organization", "existing_organization"]).optional(),
+    }));
+
 export const TELEMETRY_EVENTS = {
+  signup_onboarding_completed: productEvent({
+    name: "signup_onboarding_completed",
+    definition: "A new user completed the account introduction.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+
+  signup_organization_ready: productEvent({
+    name: "signup_organization_ready",
+    definition: "A new user gained access to a new or existing organization.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+
+  signup_organization_requested: productEvent({
+    name: "signup_organization_requested",
+    definition: "A new user requested organization creation or invitation acceptance.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+
+  signup_account_created: productEvent({
+    name: "signup_account_created",
+    definition: "A new account received an authenticated session.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+
+  signup_viewed: productEvent({
+    name: "signup_viewed",
+    definition: "The browser or desktop sign-in screen became visible.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+
+  signup_started: productEvent({
+    name: "signup_started",
+    definition: "A sign-in or signup request reached the API.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+  signup_email_submitted: productEvent({
+    name: "signup_email_submitted",
+    definition: "A mailbox challenge was issued after email submission.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+  signup_verification_requested: productEvent({
+    name: "signup_verification_requested",
+    definition: "A code, magic link, or Google callback reached verification.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+  signup_verification_completed: productEvent({
+    name: "signup_verification_completed",
+    definition: "The API verified the mailbox or Google identity.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+  authentication_completed: productEvent({
+    name: "authentication_completed",
+    definition: "The API issued an authenticated session for a new or returning account.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+  signup_completed: productEvent({
+    name: "signup_completed",
+    definition: "A new user gained organization access and completed any required account introduction.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+  signup_failed: productEvent({
+    name: "signup_failed",
+    definition: "An observed authentication stage failed or was declined.",
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"],
+    authoritativeSource: "api",
+    identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties,
+    priority: "high",
+  }),
+
   application_lifecycle: event({
     ...common,
     name: "application_lifecycle",
@@ -2074,7 +2210,7 @@ export type TelemetryEventProperties<TName extends TelemetryEventName> = z.infer
 >;
 export const telemetryEventNames = Object.keys(TELEMETRY_EVENTS) as TelemetryEventName[];
 
-const UuidV7Schema = z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7");
+export const UuidV7Schema = z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7");
 const SafeReleaseSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u);
 
 export const TelemetryBreadcrumbSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
