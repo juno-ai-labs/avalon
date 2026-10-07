@@ -354,6 +354,8 @@ so its local state (an open archive dialog, a drop flash) does not survive the
 first Space being added or the last archived. Both happen at the end of a flow
 that closes those dialogs anyway.
 
+Shipped in [#1148](https://github.com/juno-ai-labs/avalon/pull/1148).
+
 ### 2026-10-07 — Add people invites guests; Share and the Space header leave the title menu
 
 **What changed:** The People level's search takes email addresses. Enter adds

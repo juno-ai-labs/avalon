@@ -3967,6 +3967,44 @@ describe('the sidebar Space filter', () => {
     expect(screen.getByRole('button', { name: 'Hiring' })).toBeVisible();
   });
 
+  it('in a browser tab at phone width, keeps the Space row until the window widens', () => {
+    let wide = false;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      get matches() { return query.includes('min-width') ? wide : false; },
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    }));
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              onSignOut={vi.fn()}
+              spaces={[home]}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    const topBar = screen.getByRole('generic', { name: 'Rally actions' });
+
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New space' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+
+    act(() => {
+      wide = true;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(within(topBar).getByRole('button', { name: 'New space' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+  });
+
   function renderFiltered(props: Partial<React.ComponentProps<typeof Sidebar>> = {}): void {
     render(
       <MemoryRouter>
