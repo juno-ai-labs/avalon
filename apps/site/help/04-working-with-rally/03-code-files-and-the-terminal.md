@@ -86,7 +86,7 @@ The sandbox is a modest machine with a fixed size:
 
 Code in the sandbox can reach the internet, but only as far as your
 Organization allows. An administrator chooses between two settings in
-**Settings → Internet access**, under **Terminal network access**:
+**Settings → Security**, under **Terminal network access**:
 
 - **Trusted only**: the services Rally needs to work, plus any extra
   addresses the Organization approves.
@@ -100,7 +100,7 @@ see [Organization settings](../10-running-an-organization/03-organization-settin
 
 The Terminal is not switched on in every region, and the Rally team can pause
 it for safety. When it is unavailable, Rally's code tools fail with a message
-saying the sandbox is unavailable, and **Settings → Internet access** shows
+saying the sandbox is unavailable, and **Settings → Security** shows
 **Terminal unavailable**. Rally then answers in the
 conversation as best it can without running code.
 
