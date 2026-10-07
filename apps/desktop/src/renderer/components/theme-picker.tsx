@@ -1,4 +1,4 @@
-import { settings } from '../settings/registry';
+import { settings, type SettingDefinition } from '../settings/registry';
 import { SettingLabel } from '../settings/setting-label';
 import {
   appearanceModeDescriptions,
@@ -10,7 +10,7 @@ import { persistThemeChoice, useTheme } from '../lib/theme';
  * Rally has one visual language. This control only decides whether that GrokBot
  * palette follows the Mac or stays pinned light or dark.
  */
-export function ThemePicker(): React.JSX.Element {
+export function ThemePicker({ setting = settings.appearance }: { setting?: SettingDefinition } = {}): React.JSX.Element {
   const { choice, resolved } = useTheme();
   const lighting = resolved;
 
@@ -18,8 +18,8 @@ export function ThemePicker(): React.JSX.Element {
     <div className="settings-theme-card">
       <div className="settings-theme-heading">
         <span>
-          <strong><SettingLabel setting={settings.appearance} /></strong>
-          <small>{settings.appearance.description}</small>
+          <strong><SettingLabel setting={setting} /></strong>
+          <small>{setting.description}</small>
         </span>
       </div>
 

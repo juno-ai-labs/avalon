@@ -19,6 +19,17 @@ export interface ClientSession {
     accessClass?: "member" | "guest";
     timezone?: string;
   } | null;
+  /**
+   * The Rally staff member acting as `user`, on a support session only
+   * (`docs/impersonation.md`). The shell shows them beside `user` and offers
+   * **End impersonation** in place of signing out.
+   */
+  impersonator?: {
+    id: string;
+    email: string;
+    name: string;
+    avatarUrl?: string;
+  };
 }
 
 /** A same-origin cookie session never carries a JavaScript bearer credential. */

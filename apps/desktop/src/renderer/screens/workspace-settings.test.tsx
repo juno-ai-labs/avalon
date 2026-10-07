@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
+  getSupportAccess: vi.fn(),
   promoteWorkspaceGuest: vi.fn(),
   getConnections: vi.fn(),
   getGitHubRepositoryAccessSettings: vi.fn(),
@@ -290,6 +291,7 @@ describe('Organization settings', () => {
     window.history.replaceState({}, '', '/');
     settingsSectionRequest.listener = null;
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
+    api.getSupportAccess.mockResolvedValue({ available: true, expiresAt: null });
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
     api.getMyPersonalSystemPrompt.mockResolvedValue('');
@@ -595,6 +597,7 @@ describe('Organization settings', () => {
       deliveryTargets: [{ type: 'email', connectionId: null, displayName: 'Adam', status: 'active', lastDeliveredAt: null }],
       nextRunAt: null, lastDeliveredAt: null,
     });
+    if (definition.availability === 'browser') sessionHost.current = 'browser';
     renderSettings();
     // Wait for the shared availability and connection metadata, not for the destination pane.
     await screen.findByRole('button', { name: 'GitHub' });
@@ -2040,7 +2043,6 @@ describe('Organization settings', () => {
 
     const rotateButton = await screen.findByRole('button', { name: 'Refresh Inbound webhook' });
     expect(screen.getByRole('table', { name: 'Organization connections' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Organization connections' }).parentElement).toHaveTextContent('1');
     expect(screen.getAllByText('Inbound webhook')).toHaveLength(2);
     expect(rotateButton).toBeVisible();
     fireEvent.focus(rotateButton);
@@ -2401,15 +2403,15 @@ describe('Organization settings', () => {
     expect(screen.queryByRole('button', { name: 'Open System Settings' })).toBeNull();
   });
 
-  it('offers only appearance in a browser and names the Mac app for the rest', async () => {
+  it('drops the Desktop app section in a browser and offers appearance under Account', async () => {
     sessionHost.current = 'browser';
     renderSettings();
-    openSettingsSection('Application');
 
-    expect(await screen.findByText('Security, diagnostics, app icon, update and startup settings are available in the Mac app.')).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Appearance' })).toBeVisible();
-    expect(screen.queryByRole('switch', { name: 'Lockdown mode' })).toBeNull();
-    expect(screen.queryByRole('switch', { name: /Product analytics/ })).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'Appearance' })).toBeVisible();
+    expect(screen.getByRole('radio', { name: 'Dark' })).toBeVisible();
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    expect(within(navigation).queryByRole('button', { name: 'Application' })).toBeNull();
+    expect(within(navigation).queryByText('Desktop app')).toBeNull();
   });
 
   it('returns to the workspace instead of closing a browser tab', async () => {

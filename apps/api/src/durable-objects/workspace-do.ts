@@ -1177,6 +1177,12 @@ const SocketIdentitySchema = z.object({
   sessionId: z.string().min(1).max(200),
   ticketId: z.string().uuid(),
   ticketExpiresAt: z.coerce.number().int().positive(),
+  /**
+   * The Rally staff member behind a support session (`docs/impersonation.md`),
+   * from the signed ticket. Such a socket never shows the person as present
+   * and never records them opening a Channel.
+   */
+  impersonatorUserId: UserIdSchema.optional(),
 });
 
 type SocketIdentity = z.infer<typeof SocketIdentitySchema>;
@@ -4270,7 +4276,9 @@ function contributesPresence(
 } {
   return attachment?.subscribed === true
     && attachment.applicationState === "foreground"
-    && attachment.foregroundWorkstreamId !== null;
+    && attachment.foregroundWorkstreamId !== null
+    // Staff on a support session are not the person being present.
+    && !attachment.impersonatorUserId;
 }
 
 /**
@@ -6836,6 +6844,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // Somebody listed the Channel only through a Breakout opens that
     // Breakout, not Main, so Main is not theirs to wake.
     if (this.mainOpenable(viewerOf(attachment), workstreamId)) this.wakeMainConversation(workstreamId);
+    // A support session reads without becoming the person's recent history
+    // (`docs/impersonation.md`); the wake above is only about speed.
+    if (attachment.impersonatorUserId) return;
     this.state.storage.transactionSync(() => {
       this.state.storage.sql.exec(
         `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
@@ -15115,6 +15126,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       sessionId: readRallyHeader(request.headers, RALLY_HEADERS.SESSION_ID) ?? null,
       ticketId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_ID) ?? null,
       ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
+      impersonatorUserId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_IMPERSONATOR_ID),
     });
     if (!identity.success) return json({ error: "invalid_socket_identity" }, 400);
 

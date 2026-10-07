@@ -331,6 +331,14 @@ export interface IdentityAuthContext {
    */
   principal?: "connector" | "demo_seed" | "impersonation" | "resource_authorization";
   /**
+   * Set on a support session: the Rally staff member actually acting as
+   * `userId`, read from `sessions.impersonator_user_id` with the same query that
+   * authenticated the request. Authority stays `userId`'s; this names who to
+   * hold accountable and is what a route consults to refuse an action a support
+   * session may not take (`docs/impersonation.md`).
+   */
+  impersonatorUserId?: UserId;
+  /**
    * The analytics surrogates this person and workspace are known by in PostHog
    * — `users.analytics_person_id` and `workspaces.analytics_workspace_id`.
    * They ride the session query that authenticates the request rather than

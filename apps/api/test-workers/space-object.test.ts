@@ -404,7 +404,8 @@ describe("a Space's hosted parent", () => {
     await env.DB.batch([
       env.DB.prepare(`CREATE TABLE sessions (
         id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT, region TEXT,
-        revoked_at TEXT, expires_at TEXT, workspace_incarnation TEXT DEFAULT 'existing-member'
+        revoked_at TEXT, expires_at TEXT, workspace_incarnation TEXT DEFAULT 'existing-member',
+        impersonator_user_id TEXT
       )`),
       env.DB.prepare(`CREATE TABLE workspace_members (
         workspace_id TEXT, user_id TEXT, status TEXT, role TEXT,
