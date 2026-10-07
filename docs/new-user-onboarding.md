@@ -59,7 +59,9 @@ editable. Onboarding has no teammate discovery API.
   account becomes eligible if it is a member of no other organization here and
   holds no active binding to another deployment (a local guest relationship does
   not count), so a browser creator gets the creator journey a new Mac account
-  gets. A failed create changes nothing.
+  gets. A failed create changes nothing. Eligibility is set beside the
+  binding's activation once the region has committed, and a retry of the same
+  create sets it again, so a write that failed the first time is repaired.
 - The workspace object owns progress. Generic SQL cannot address its typed-only
   onboarding table.
 - Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt.

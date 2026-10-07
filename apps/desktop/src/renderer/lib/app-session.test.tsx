@@ -1172,6 +1172,29 @@ describe('single-platform desktop identity routing', () => {
     getWorkspace.mockRestore();
   });
 
+  it('lets a renewal of the workspace on screen through while a creation waits', async () => {
+    const current = { id: '00000000-0000-7000-8000-00000000003c', name: 'Organization B', region: 'global' as const, role: 'member' as const };
+    bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession, workspace: current });
+    let finishCreate!: (session: DesktopSession) => void;
+    bridge.createWorkspace.mockImplementationOnce(() => new Promise<DesktopSession>((resolve) => { finishCreate = resolve; }));
+    renderProvider();
+    expect(await screen.findByText('global:Organization B')).toBeVisible();
+
+    let creation!: Promise<void>;
+    await act(async () => { creation = observedFinishWorkspaceSetup!('New Organization', 'global'); await Promise.resolve(); });
+    await waitFor(() => expect(bridge.createWorkspace).toHaveBeenCalledTimes(1));
+    // Main renews the session on screen (here, after a rename) while the
+    // creation is still waiting on a browser sign-in.
+    await act(async () => { sessionListener?.({ ...globalIdentitySession, workspace: { ...current, name: 'Organization B renamed' } }); });
+    expect(await screen.findByText('global:Organization B renamed')).toBeVisible();
+
+    await act(async () => {
+      finishCreate({ ...globalIdentitySession, workspace: { id: '00000000-0000-7000-8000-00000000003d', name: 'New Organization', region: 'global', role: 'owner' } });
+      await creation;
+    });
+    expect(await screen.findByText('global:New Organization')).toBeVisible();
+  });
+
   it('applies a switch held during a creation that then fails', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,

@@ -75,7 +75,7 @@ export function sqliteD1(database: DatabaseSync): D1Database {
   const legacyWorkstreamProductColumns = (database.prepare(
     "PRAGMA table_info(workstreams)",
   ).all() as Array<{ name: string }>).some((column) => column.name === "title");
-  const minimalAnchorInsert = /^\s*INSERT OR IGNORE INTO workstreams\s*\(id, workspace_id, do_identity_anchor\)\s*VALUES \(\?, \?, 1\)\s*$/iu;
+  const minimalAnchorInsert = /^\s*INSERT (?:OR IGNORE )?INTO workstreams\s*\(id, workspace_id, do_identity_anchor\)\s*VALUES \(\?, \?, 1\)(?:\s*ON CONFLICT\(id\) DO NOTHING)?\s*$/iu;
   const prepare = (sql: string) => {
     // A focused service fixture sometimes keeps the through-0089 product
     // tables in this one SQLite connection while the code under test correctly

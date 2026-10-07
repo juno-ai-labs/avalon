@@ -299,6 +299,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const opened = { region: created.region, workspaceId: created.workspaceId };
     history.replaceState(null, "", `/app/workspaces/${opened.region}/${opened.workspaceId}`);
     destinationRef.current = opened;
+    // The list read before the creation said "none". Left in place, a select
+    // that then fails would offer Create again and make a second organization.
+    setWorkspaces(null);
     createOperation.current = null;
     setCreatePending(false);
     setCreating(false);
