@@ -61,7 +61,7 @@ Keep both native and selectable source artwork unmasked:
 - Each selectable PNG must be square, full-bleed, and 1024×1024. The build stages it in an Icon Composer `.icon` package and macOS owns the final app-icon enclosure and rendering.
 - Keep the transparent Icon Composer mark source at 1024×1024. Default, Dark, and Mono remain appearance treatments within the one `.icon` asset.
 - The legacy `icon.icns` is the only asset that deliberately contains a baked silhouette, because it is used for the DMG volume.
-- The menu bar renditions are the one place colour is deliberately discarded: a macOS template image is an alpha mask, so `menu_bar_template_icon` renders the mark in pure black at 16 pt and 32 pt and lets AppKit paint it. Both the `Template` filename suffix and the `@2x` sibling are load-bearing; see [`menu-bar.md`](menu-bar.md).
+- The menu bar renditions are the one place colour is deliberately discarded: a macOS template image is an alpha mask, so `menu_bar_template_icon` renders the mark in pure black at 16 pt and 32 pt and lets AppKit paint it. It draws straight from the seam equation at twice the mark's stroke (30 units), because the standard cut is under a pixel wide at 16 pt. Both the `Template` filename suffix and the `@2x` sibling are load-bearing; see [`menu-bar.md`](menu-bar.md).
 
 The renderer preview uses generated 128×128 copies and CSS rounding only to represent the macOS tile. That rounding is not written into the 1024px source files.
 
@@ -220,7 +220,7 @@ For a notarized release candidate, repeat the selected-icon test from an install
 - **Reset leaves a stale icon:** confirm the native bridge can resolve `SLSIconAppearanceConfiguration`. The default returns after the Dock cache is rebuilt even when the private best-effort refresh is unavailable.
 - **Packaging rejects nested code:** rebuild with `pnpm --filter @rally/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
 
-### 2026-10-07 — The mark's vectors are generated from its equation; the favicon is the bare mark
+### 2026-10-07 — The mark is generated from its equation; the favicon is the bare mark; the menu bar glyph is twice as thick
 
 **What changed:** `scripts/generate-rally-mark.py` now writes every vector copy
 of the mark from the seam equation and its projection (see
@@ -241,6 +241,12 @@ Making a variant, such as a thicker cut, meant editing coordinates by hand,
 and `rally-mark-small.svg` had been made by changing the stroke without
 widening the viewBox, which clipped about 1.4 units off its left and right
 edges. Its viewBox is now padded by its own stroke.
+
+The menu bar template images are now drawn from the same equation at twice
+the mark's stroke instead of being cut from the raster mask. At 16 pt the
+standard stroke was under a pixel wide and looked faint beside the system
+glyphs. The raster path had also stretched the mark about 7% vertically,
+because it resized a non-square crop into a square.
 
 **Considered and rejected:** Shrinking or lightening the dark square: any
 opaque dark tile still gets the outline. A transparent touch icon: iOS fills
