@@ -15,6 +15,7 @@ import { SettingsSearchResults, useRevealSetting } from '../settings/search-resu
 import { SidebarSearch } from '../components/sidebar-search';
 import { digestDeliverySetting } from '../settings/digest-provider';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
   GitBranch,
@@ -25,6 +26,7 @@ import {
   MonitorCog,
   Newspaper,
   Bell,
+  Ellipsis,
   Plug,
   RefreshCcw,
   Search,
@@ -54,7 +56,7 @@ import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { parseDesktopReleaseChannel, type DesktopReleaseChannel } from '../../common/release-channels';
-import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, InlineError, Modal, SegmentedControl } from '../components/primitives';
+import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, IconButton, InlineError, Modal, SegmentedControl } from '../components/primitives';
 import { connectorBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
@@ -652,6 +654,23 @@ export function WorkspaceSettingsScreen({
     mutationFn: (guest: { id: string; incarnation: string; revision: number }) =>
       api!.promoteWorkspaceGuest(guest.id, { incarnation: guest.incarnation, expectedRevision: guest.revision }),
     onSuccess: () => setPromotion(null),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
+  });
+  // Members first, then guests, each by the name the row shows.
+  const sortedMembers = useMemo(() => {
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    const people = members.data ?? [];
+    return [
+      ...people.filter((member) => member.accessClass !== 'guest').sort(byName),
+      ...people.filter((member) => member.accessClass === 'guest').sort(byName),
+    ];
+  }, [members.data]);
+  const [suspension, setSuspension] = useState<{ id: string; name: string; guest: boolean } | null>(null);
+  // "Suspend" is the server's member removal: the row goes, access ends at
+  // once, and an invitation brings them back. Their contributions stay.
+  const suspendMember = useMutation({
+    mutationFn: (userId: string) => api!.removeWorkspaceMember(workspace.id, userId),
+    onSuccess: () => setSuspension(null),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
   });
   const leavingClosesWorkspace = members.data?.length === 1;
@@ -1511,54 +1530,81 @@ export function WorkspaceSettingsScreen({
                 </div>
                 {members.error && <InlineError>{members.error.message}</InlineError>}
                 <div className="settings-member-list settings-list-card">
-                  {(members.data ?? []).map((member) => (
-                    <div className="settings-member-row" key={member.id}>
-                      <Avatar member={member} size="medium" />
-                      <span><strong>{member.name}</strong><small>{member.email}</small></span>
-                      <div className="settings-member-actions">
-                        <Badge className="role-badge">{member.accessClass === 'guest' ? 'Guest' : member.role ?? 'member'}</Badge>
-                        {/*
-                          * Two promotions meet on this row and neither is the
-                          * other: a guest holds no role at all and is made a
-                          * member first, while a member is handed the same
-                          * powers the viewer is using right now. The owner has
-                          * no control beside them either way — their role is
-                          * the one the server refuses to reassign, so drawing a
-                          * button that can only fail is worse than drawing none.
-                          */}
-                        {isAdmin && member.accessClass === 'guest' && member.incarnation && member.revision && (
-                          <Button disabled={promoteGuest.isPending} aria-label={`Make ${member.name} a member`}
-                            onClick={() => { promoteGuest.reset(); setPromotion({ id: member.id, name: member.name, incarnation: member.incarnation!, revision: member.revision! }); }}>
-                            Make member
-                          </Button>
-                        )}
-                        {isAdmin && member.role !== 'owner' && member.status !== 'invited'
-                          && member.accessClass !== 'guest' && (
-                          <Button
-                            // The visible label is the same on every row, which is
-                            // all a sighted reader needs — the row it sits in says
-                            // who it acts on. A screen reader announces the button
-                            // alone, so the accessible name carries the person.
-                            // The email is in it because two people can share a
-                            // display name, and the roster is exactly where that
-                            // collision shows up.
-                            aria-label={member.role === 'admin'
-                              ? `Remove administrator access from ${member.name} (${member.email})`
-                              : `Make ${member.name} (${member.email}) an administrator`}
-                            disabled={setMemberRole.isPending}
-                            onClick={() => setMemberRole.mutate({
-                              userId: member.id,
-                              role: member.role === 'admin' ? 'member' : 'admin',
-                            })}
-                          >
-                            {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
-                          </Button>
-                        )}
+                  {sortedMembers.map((member) => {
+                    const isGuest = member.accessClass === 'guest';
+                    // Every row draws the menu so they line up, but two are
+                    // disabled. The owner's role is not reassignable, and an
+                    // organization has one owner, so nobody here may remove
+                    // them. Someone still invited is not a member to act on yet.
+                    const menuDisabled = member.role === 'owner' || member.status === 'invited';
+                    const canPromoteGuest = isGuest && Boolean(member.incarnation && member.revision);
+                    const self = member.id === workspace.currentUser.id;
+                    return (
+                      <div className="settings-member-row" key={member.id}>
+                        <Avatar member={member} size="medium" />
+                        <span><strong>{member.name}</strong><small>{member.email}</small></span>
+                        <div className="settings-member-actions">
+                          <Badge className="role-badge">{isGuest ? 'Guest' : member.role ?? 'member'}</Badge>
+                          {isAdmin && (
+                            <DropdownMenu.Root>
+                              <DropdownMenu.Trigger asChild disabled={menuDisabled}>
+                                {/* The email is in the name because two people can share a display name. */}
+                                <IconButton label={`${member.name} (${member.email}) member actions`} showTooltip={false}>
+                                  <Ellipsis size={16} />
+                                </IconButton>
+                              </DropdownMenu.Trigger>
+                              <DropdownMenu.Portal>
+                                <DropdownMenu.Content align="end" className="menu-content" sideOffset={6}>
+                                  {/*
+                                    * Two promotions meet here and neither is the
+                                    * other: a guest holds no role at all and is
+                                    * made a member first, while a member is handed
+                                    * the same powers the viewer is using now.
+                                    */}
+                                  {isGuest ? (
+                                    <DropdownMenu.Item className="menu-item" disabled={!canPromoteGuest || promoteGuest.isPending}
+                                      onSelect={() => { promoteGuest.reset(); setPromotion({ id: member.id, name: member.name, incarnation: member.incarnation!, revision: member.revision! }); }}>
+                                      Make member
+                                    </DropdownMenu.Item>
+                                  ) : (
+                                    <DropdownMenu.Item className="menu-item" disabled={setMemberRole.isPending}
+                                      onSelect={() => setMemberRole.mutate({
+                                        userId: member.id,
+                                        role: member.role === 'admin' ? 'member' : 'admin',
+                                      })}>
+                                      {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
+                                    </DropdownMenu.Item>
+                                  )}
+                                  {/* The server refuses removing yourself; leaving is its own control. */}
+                                  {!self && (
+                                    <DropdownMenu.Item className="menu-item menu-item-danger" disabled={suspendMember.isPending}
+                                      onSelect={() => { suspendMember.reset(); setSuspension({ id: member.id, name: member.name, guest: isGuest }); }}>
+                                      Suspend
+                                    </DropdownMenu.Item>
+                                  )}
+                                </DropdownMenu.Content>
+                              </DropdownMenu.Portal>
+                            </DropdownMenu.Root>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 {setMemberRole.error && <InlineError>{setMemberRole.error.message}</InlineError>}
+
+                <Modal open={suspension !== null} onOpenChange={(open) => { if (!open && !suspendMember.isPending) setSuspension(null); }}
+                  title={`Suspend ${suspension?.name ?? 'this person'}?`}
+                  // An organization invitation brings a member back. A guest
+                  // arrives through sharing instead, so the copy promises
+                  // nothing about their return.
+                  description={`They lose access to this organization right away. Their conversations and contributions stay.${suspension?.guest ? '' : ' You can invite them back later.'}`}
+                  footer={<>
+                    <Button disabled={suspendMember.isPending} onClick={() => setSuspension(null)}>Cancel</Button>
+                    <Button className="button-danger" disabled={suspendMember.isPending} onClick={() => { if (suspension) suspendMember.mutate(suspension.id); }}>Suspend</Button>
+                  </>}>
+                  {suspendMember.error && <InlineError>{suspendMember.error.message}</InlineError>}
+                </Modal>
 
                 <Modal open={promotion !== null} onOpenChange={(open) => { if (!open) setPromotion(null); }} title="Make guest a member"
                   description={`${promotion?.name ?? 'This guest'} will gain normal organization membership. Existing conversations and contributions stay with their account.`}>

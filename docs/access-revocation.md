@@ -100,6 +100,7 @@ The producers are:
   is gone, so none of that person's windows is admissible any longer. Their
   session rows are deliberately left alone: every authorization query joins
   membership, so a session stops resolving the moment the row is gone.
+  Organization settings calls this "Suspend" in each roster row's menu.
 - **A member leaves.** `WorkspaceService.leaveWorkspace` deletes the caller's
   membership, or atomically suspends it while abandoning a workspace whose last
   active member is leaving, then publishes the same membership-wide message.
@@ -500,6 +501,27 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-10-07 — Organization settings can suspend a member
+
+**What changed:** Each row in the Organization settings roster has a menu, and
+its "Suspend" item, after a confirmation, calls the existing
+`DELETE /workspaces/:workspaceId/membership/member/:userId`, which had no
+client caller until now.
+
+**Why:** Administrators had no way in the product to take someone out of an
+organization. The removal write and its revocation publish already existed, so
+the menu reuses them rather than adding a second way to end a membership.
+
+**Considered and rejected:** A new `status = 'suspended'` write that keeps the
+row. `listMembers` hides suspended rows, so nobody could see a suspended person
+to restore them, and the `suspended` status today means "the last member left
+and the workspace closed". Removal is the reversible option that exists: an
+invitation brings the person back.
+
+**Consequences:** "Suspend" in the UI is removal on the server. If suspension
+ever needs to be undone in place, it needs its own status, a roster that shows
+it, and a restore write; this entry is where that change should start.
 
 ### 2026-09-25 — The Channel step runs inside the Organization object
 
