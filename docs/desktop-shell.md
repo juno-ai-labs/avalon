@@ -68,6 +68,12 @@ new-Channel screen for that Space when it holds none; the new-Channel screen of
 another Space counts as hidden too. Restoring an archived Space selects its
 pill the same way, so it can navigate too.
 
+In a browser tab at desktop width, an Organization with no Space but General
+has no pill row: **New space** sits at the end of the top bar's actions, at
+the bar's 32px, and **All** is not drawn, since it would filter nothing. The
+first Space brings the row and All back. The phone
+sheet always keeps the row, since its top bar shows while the sheet is shut.
+
 Every Space picker (the new-Channel screen's, the import window, **Add to
 space**) reads its list through `useSpaceChoices`: General first and named **All**,
 matching the first pill, then the rest A to Z. A new Channel starts in the Space
@@ -328,6 +334,25 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-07 — With no Spaces, the browser folds New space into the top bar and drops All
+
+**What changed:** In a browser tab wider than the phone layout, when the only
+Space is General, the sidebar draws the Space pill strip inside
+`SidebarTopActions` (`SpacePills inline`, `.space-pill-strip.is-inline`)
+instead of as its own row, and leaves out **All**. The first Space, or a restore, moves it back; the
+last archive folds it again.
+
+**Why:** A new Organization's second row held one button and an All filter
+that filters nothing, and cost a row of height for it.
+
+**Considered and rejected:** Doing it on the Mac app too. The desktop bar sits
+beside the window controls, and the request was browser only.
+
+**Consequences:** `SpacePills` remounts when it moves between the two places,
+so its local state (an open archive dialog, a drop flash) does not survive the
+first Space being added or the last archived. Both happen at the end of a flow
+that closes those dialogs anyway.
 
 ### 2026-10-07 — Add people invites guests; Share and the Space header leave the title menu
 
