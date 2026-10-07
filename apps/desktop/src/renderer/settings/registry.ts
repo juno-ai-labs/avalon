@@ -3,7 +3,7 @@ import { appearanceModeDescriptions } from '../../common/themes';
 import { applicationIconChoices } from '../../common/application-icons';
 import { DAY_PRESETS, WEEKDAYS, githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from './choices';
 
-export type SettingsAvailability = 'admin' | 'developer' | 'menuBar' | 'login' | 'releaseChannel';
+export type SettingsAvailability = 'admin' | 'developer' | 'menuBar' | 'login' | 'releaseChannel' | 'browser';
 export interface SettingDefinition {
   readonly id: string;
   readonly section: DesktopSettingsSection;
@@ -66,6 +66,9 @@ export const settings = {
   lockdown: defineSetting({ id: 'lockdown', section: 'application', label: "Lockdown mode", kind: 'toggle', description: "Protect the saved session with this Mac’s keystore instead of Rally’s shared encryption key.", aliases: ["security","keychain","privacy"] }),
   analytics: defineSetting({ id: 'analytics', section: 'application', label: "Product analytics", kind: 'toggle', description: "Share semantic product usage, sanitized errors and breadcrumbs, and native crash reports. Telemetry can include your verified name and email so Rally can contact you. Essential content-free reliability signals continue when this is off.", aliases: ["privacy","diagnostics"] }),
   appearance: defineSetting({ id: 'appearance', section: 'application', label: "Appearance", kind: 'select', description: "Follow this device or keep Rally light or dark.", options: appearanceModeDescriptions.map((option) => option.label), aliases: ['theme'] }),
+  // A browser has no Application section, so its appearance picker lives under
+  // Account. Same control and copy; only the section search sends you to differs.
+  accountAppearance: defineSetting({ id: 'accountAppearance', section: 'account', label: "Appearance", kind: 'select', description: "Follow this device or keep Rally light or dark.", options: appearanceModeDescriptions.map((option) => option.label), availability: 'browser', aliases: ['theme'] }),
   pushNotifications: defineSetting({ id: 'pushNotifications', section: 'notifications', label: "Notify me about mentions and additions", description: "Show notifications on this device, even when Rally is closed.", kind: 'toggle' }),
   menuBar: defineSetting({ id: 'menuBar', section: 'application', label: "Show Rally in the menu bar", kind: 'toggle', description: "Keep the Rally mark in the menu bar for a new meeting or note, a new automation, what Rally suggests next, and your recent channels.", availability: 'menuBar', aliases: ["status item","meetings"] }),
   appIcon: defineSetting({ id: 'appIcon', section: 'application', label: "App icon", kind: 'custom', description: "Choose how Rally appears in the Dock, Finder, Launchpad, and Spotlight.", options: applicationIconChoices.map((option) => option.label) }),
@@ -88,6 +91,8 @@ export interface SettingsSearchContext {
   readonly menuBar: boolean;
   readonly login: boolean;
   readonly releaseChannel: boolean;
+  /** Settings is running as a route in a browser tab rather than the Mac app. */
+  readonly browser: boolean;
 }
 export function isSettingAvailable(setting: SettingDefinition, context: SettingsSearchContext): boolean {
   return context.sections.has(setting.section)

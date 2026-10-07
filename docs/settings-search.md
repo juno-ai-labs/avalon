@@ -38,6 +38,11 @@ It renders through the shared dropdown and is indexed from the same Stable and
 Faster option labels. Browser fallback surfaces omit it because they cannot
 configure Electron's updater.
 
+A browser has no **Desktop app** group at all: every Application setting but
+appearance configures the Mac app itself. Appearance moves to Account there, under
+its own definition (`accountAppearance`) gated on the `browser` availability, so
+search sends a browser reader to Account and a Mac reader to Application.
+
 `SettingsProvider` supplies entries with unique keys. The core provider derives
 entries from the definitions. Connection providers derive entries from the
 already-authorized connection snapshot: GitHub and MCP entries retain the
@@ -166,6 +171,24 @@ to land. `components/organization-usage.tsx` draws the section;
 [`local-cache.md`](local-cache.md) owns the row it paints from.
 
 ## Changelog
+
+### 2026-10-07 — Drop the Desktop app section from browser Settings
+
+**What changed:** Browser Settings no longer lists the Desktop app group or its
+Application page. The appearance picker moved into Account, and search gained a
+`browser` availability so it finds appearance where each host shows it.
+
+**Why:** In a browser the Application page held one working control and a note
+that everything else lived in the Mac app. A section named for an app the reader
+is not using was noise.
+
+**Considered and rejected:** Moving the existing `appearance` definition to
+Account on both hosts would split the Mac's device settings across two pages.
+Making a definition's section depend on the host would break the rule that
+definitions are fixed at module load.
+
+**Consequences:** A setting that lives in different sections per host needs one
+definition per section, each gated on the host that shows it.
 
 ### 2026-09-15 — Make the desktop release channel a searchable device preference
 
