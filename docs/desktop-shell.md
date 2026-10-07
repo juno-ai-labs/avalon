@@ -109,8 +109,10 @@ Mac app. Tips or tutorials go here too.
 ### At phone width
 
 At 640px and narrower the sidebar becomes a 56px top bar over the
-conversation: the **menu button** (tabler `menu-2`) at its left, the round top
-actions at its right. Everything else in the sidebar (pills, list, footer
+conversation: the **menu button** at its left, the round top actions at its
+right. The menu button has the same raised round fill as those actions, and
+its glyph is tabler `menu-2` while the sheet is shut and `x` while it is open;
+the two turn into each other over 180ms, and reduced motion swaps them. Everything else in the sidebar (pills, list, footer
 items, account) is a full-screen sheet under the bar. The menu button toggles
 `useUiStore.sidebarOpen`; the sheet drops in and out with a clip over 260ms,
 and reduced motion cuts it. Any route change closes it, whoever navigated (a
@@ -309,6 +311,25 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-07 — The phone menu button shows when the sheet is open
+
+**What changed:** At phone width the menu button turns from a menu glyph into
+a close mark while the sheet is open, and wears the same 32px raised round
+fill as the top actions beside it.
+
+**Why:** The button looked the same open or shut; only its accessible name
+changed. The open sheet covers the screen, so the button's one job then is to
+close it, and a close mark says so. Without a fill it was the one bare control
+in a row of round buttons.
+
+**Considered and rejected:** Tinting the button while open. It reads as a
+pressed or hover state, and sits next to the red attention count. A
+sidebar-collapse glyph, which suits a sidebar beside content but not a sheet
+over it.
+
+**Consequences:** Both glyphs stay mounted and CSS keys on `aria-expanded`, so
+the state the button shows cannot drift from the state it announces.
 
 ### 2026-10-07 — No Mac download on phones and tablets
 
