@@ -223,13 +223,13 @@ For a notarized release candidate, repeat the selected-icon test from an install
 
 ### 2026-10-07 — The favicon disc is wider, so the mark has room inside it
 
-`FAVICON_DISC_RADIUS` went from 160 to 185, and `favicon.svg` and
+`FAVICON_DISC_RADIUS` went from 160 to 204, and `favicon.svg` and
 `favicon.png` were regenerated from it.
 
 **Why:** The thick stroke reaches 142.3 units from the centre, which left a
 17.7-unit ring at radius 160. In a browser tab the volt mark nearly met the
-disc's edge and read as cramped. At 185 the ring is 42.7 units, about a sixth
-of the radius.
+disc's edge and read as cramped. At 204 the ring is 61.7 units, about 30% of
+the radius. 185 was tried first and judged still too tight.
 
 **Considered and rejected:** Thinning the stroke instead. `THICK_STROKE` is
 shared with the menu bar glyph, and the favicon needs the weight at 16 px.
