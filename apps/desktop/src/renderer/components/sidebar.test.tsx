@@ -4310,6 +4310,19 @@ describe('the sidebar Space filter', () => {
       expect(pill('Launch')).toHaveAttribute('aria-pressed', 'true');
     });
 
+    it('keeps the phone sheet open while it opens that Space\'s first Channel', async () => {
+      renderOpen(alpha.id);
+      const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      selectSpace('Launch');
+      await waitFor(() => expect(route()).toBe(`/workstreams/${charlie.id}`));
+      expect(navigation).toHaveClass('is-mobile-open');
+
+      fireEvent.click(screen.getByRole('link', { name: /Delta/u }));
+      expect(navigation).not.toHaveClass('is-mobile-open');
+    });
+
     it('starts a Channel in that Space when it holds none', async () => {
       renderOpen(alpha.id);
 

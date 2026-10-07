@@ -123,10 +123,10 @@ the two turn into each other over 180ms, and reduced motion swaps them. Everythi
 items, account) is a full-screen sheet under the bar. The menu button toggles
 `useUiStore.sidebarOpen`; the sheet drops in and out with a clip over 260ms,
 and reduced motion cuts it. Any route change closes it, whoever navigated (a
-row, a search result, the New channel form, a pill that had to leave the open
-Channel), as do Escape, the button, and widening past 640px. Picking a pill
-that only filters, or re-sorting, does not, since the reader is still
-choosing. While it is open, `AppShell` makes `.main-pane` `inert`, so Tab and
+row, a search result, the New channel form), as do Escape, the button, and
+widening past 640px. Picking a pill does not, even one that had to leave the
+open Channel for that Space's first one, and neither does re-sorting, since
+the reader is still choosing. While it is open, `AppShell` makes `.main-pane` `inert`, so Tab and
 a screen reader stay in the sheet, and Escape hands focus back to the button.
 Escape is heard in the capture phase and stands down while a menu or dialog
 is open, so it closes that first; a tooltip does not count, though Radix marks
@@ -334,6 +334,23 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-07 — Switching Spaces keeps the phone sheet open
+
+**What changed:** At phone width, a pill that leaves the open Channel for its
+Space's first Channel (or its new-Channel screen) no longer closes the sheet.
+
+**Why:** A reader picks a Space to browse its Channels. Closing the sheet on
+that hop dropped them into a Channel they never chose, and they had to open
+the menu again to pick the one they wanted.
+
+**Considered and rejected:** Not navigating at all on a phone. The open
+Channel would then sit behind a list that no longer shows it, and closing the
+sheet would land somewhere the pills do not match.
+
+**Consequences:** The pill's own navigation sets a one-shot flag the
+route-change effect consumes, so every other route change still closes the
+sheet.
 
 ### 2026-10-07 — With no Spaces, the browser folds New space into the top bar and drops All
 
