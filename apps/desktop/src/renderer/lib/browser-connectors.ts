@@ -9,6 +9,14 @@ export const MAC_APP_DOWNLOAD_URL = 'https://downloads.rallywith.ai/stable/darwi
 export const MAC_APP_CONNECT_NOTE = 'Download the Mac app to connect this.';
 
 /**
+ * Whether the browser runs on a phone or tablet OS, where a Mac download is
+ * no use. iPadOS reports itself as a Mac, so a touch-capable "MacIntel" counts.
+ */
+export function isMobileOs(userAgent: string, platform: string, maxTouchPoints: number): boolean {
+  return /Android|iPad|iPhone|iPod/u.test(userAgent) || (platform === 'MacIntel' && maxTouchPoints > 1);
+}
+
+/**
  * Whether a connection asking for `capabilities` can start in a browser: every
  * capability it asks for has to be on the served list. A request is one
  * authorization, so it is offered whole or not at all.
