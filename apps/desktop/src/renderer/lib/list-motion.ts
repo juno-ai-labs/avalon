@@ -298,3 +298,21 @@ export function layoutRowAt<T extends Element>(rows: Iterable<T>, clientY: numbe
   }
   return undefined;
 }
+
+/**
+ * Where a row arriving from outside the list would go: the number of rows
+ * whose *layout* midpoint is above the viewport y, net of any motion they are
+ * playing. The rows passed in are the list's own, not the placeholder held
+ * open for the arrival. Because the placeholder pushes the rows after it down
+ * by one slot, the answer only changes once the pointer has crossed half of a
+ * neighbour, so the slot holds still under a pointer that is sitting in it.
+ */
+export function layoutInsertIndex(rows: Iterable<Element>, clientY: number): number {
+  let index = 0;
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect();
+    const top = rect.top - translationOf(getComputedStyle(row).transform).y;
+    if (clientY >= top + rect.height / 2) index += 1;
+  }
+  return index;
+}
