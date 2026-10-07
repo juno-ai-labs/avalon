@@ -3,7 +3,9 @@ import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
-import { BrowserWorkspacesSchema } from '@rally/contracts/browser-session';
+import { BrowserSessionSchema, BrowserWorkspacesSchema } from '@rally/contracts/browser-session';
+import { SupportPeopleSchema, SupportWorkspacesSchema } from '@rally/contracts';
+import { z } from 'zod';
 import { IDENTITY_REGION, type Region } from '@rally/contracts/regions';
 import { WorkspaceApp } from '../../desktop/src/renderer/App';
 import { AccountOnboardingGate } from '../../desktop/src/renderer/screens/guided-onboarding';
@@ -124,6 +126,23 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     // re-reads the server session and unmounts this shell if it is gone.
     signOutIfCredentialCleared: revalidate,
     surrenderActiveWorkspace: revalidate,
+    // Rally access over this browser's cookie (`docs/impersonation.md`): the
+    // support session takes the Organization's slot in this browser, and the
+    // page reloads into it, as switching Organization does here.
+    listSupportWorkspaces: async () => (await browserRequest(IDENTITY_REGION, '/support/workspaces', SupportWorkspacesSchema)).workspaces,
+    listSupportPeople: async (workspaceId) =>
+      (await browserRequest(IDENTITY_REGION, `/support/workspaces/${encodeURIComponent(workspaceId)}/people`, SupportPeopleSchema)).people,
+    startSupportSession: async (target, userId) => {
+      await browserRequest(target.region, '/support/session', BrowserSessionSchema, { workspaceId: target.workspaceId, userId });
+      location.assign(`/app/workspaces/${target.region}/${target.workspaceId}`);
+    },
+    endSupportSession: async () => {
+      if (session.workspace) {
+        await browserRequest(session.workspace.region, '/support/end', z.undefined(), { workspaceId: session.workspace.id });
+        await clearWorkspaceLocalCache(session.user.id, session.workspace.region, session.workspace.id);
+      }
+      location.assign('/');
+    },
     clearDeepLinkError: () => undefined,
   }), [api, getAccountOnboarding, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
   const createSidekick = useCallback(() => desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET), []);

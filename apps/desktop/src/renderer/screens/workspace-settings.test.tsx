@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
+  getSupportAccess: vi.fn(),
   promoteWorkspaceGuest: vi.fn(),
   getConnections: vi.fn(),
   getGitHubRepositoryAccessSettings: vi.fn(),
@@ -290,6 +291,7 @@ describe('Organization settings', () => {
     window.history.replaceState({}, '', '/');
     settingsSectionRequest.listener = null;
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
+    api.getSupportAccess.mockResolvedValue({ available: true, expiresAt: null });
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
     api.getMyPersonalSystemPrompt.mockResolvedValue('');

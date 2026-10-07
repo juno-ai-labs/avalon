@@ -406,7 +406,8 @@ describe("the supervisor around the facet", () => {
   it("preserves artifact sessions admitted after a removed membership rejoined", async () => {
     await env.DB.prepare(`CREATE TABLE sessions (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT,
-      workspace_incarnation TEXT
+      workspace_incarnation TEXT,
+      impersonator_user_id TEXT
     )`).run();
     await env.DB.batch([
       env.DB.prepare("INSERT INTO sessions VALUES (?, ?, ?, ?)").bind("old-session", VIEWER, WORKSPACE, "old-membership"),
