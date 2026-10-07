@@ -160,8 +160,8 @@ one per turn of what people and Rally said); its own icon and colour are chosen
 from **Icon and color** in its menu (`AppearanceSubmenu`). An open pill fills
 solid and drops its lift to the bare ring.
 
-Each menu has a root and levels. The root is a header, a row of action tiles
-(Add people, Rename, Copy link, Share, More) and one row each for People,
+Each menu has a root and levels. The root is a row of action tiles (Add people,
+Rename, Copy link, More), under a header on a Breakout, and one row each for People,
 Sidekicks and, on a Channel, Breakouts, with a count beside each. A row, or the
 Add people and More tiles, opens its level in place (`useTitleMenuNav`), and the
 pill becomes a breadcrumb, the title quietened and the level after it. The
@@ -171,19 +171,26 @@ and travels the popout's width and height between them over 320ms while the
 level's rows arrive on a 22ms stagger, sliding in from the side the move came
 from; reduced motion turns both off.
 
-- **Channel menu:** root header is the Space it lives in (with **Open space**). People is the scope (with **Change**, which
-  opens the full roster dialog), a search, the participants and suggestions
-  to add inline (`TitleMenuPeople`). Each participant's dots menu offers
+- **Channel menu:** no header; the tiles come first. People is a search, the
+  participants (members and guests), invitations still waiting, and
+  suggestions to add inline (`TitleMenuPeople`). Enter in the search takes
+  addresses separated by spaces, commas or semicolons: an address someone in
+  the Organization has adds them, any other is invited to the conversation as
+  a guest (`TitleMenuInvites`, backed by `useScopeInvitations`), and the menu
+  stays open for the next. A name narrowed to one person adds them. Pending
+  invitations load only once People opens. Each participant's dots menu offers
   **Remove from channel**, or **Leave the channel** on the reader's own row,
   disabled for the last participant; the host confirms in a Cancel/Continue
-  dialog before it removes. Sidekicks is the Sidekick section. Breakouts
+  dialog before it removes. A waiting invitation's dots menu offers **Cancel
+  invite**. Sidekicks is the Sidekick section. Breakouts
   is the list, newest activity first, filtered past six. More is **Pinned in
   my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
   **Public to organization** (a switch both ways; a refusal to make it private
   names what holds it public), Import updates, host extras, the Channel's artifacts, and
   **Archive channel** last.
 - **Breakout menu:** root header is the Channel it belongs to (with **Show in
-  channel**) and the message it started from. People and Sidekicks as above;
+  channel**) and the message it started from. People (inviting to the
+  Breakout alone) and Sidekicks as above;
   More is Icon and color, **Public to organization**, and **Archive breakout** last.
 
 ### Breakouts
@@ -314,6 +321,31 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-07 — Add people invites guests; Share and the Space header leave the title menu
+
+**What changed:** The People level's search takes email addresses. Enter adds
+anyone already in the Organization and invites any other address as a guest
+of that Channel or Breakout, without closing the menu, and pending invitations
+list beside the participants with **Cancel invite**. The **Share** tile, the
+scope row with **Change**, the Channel menu's **In space** header and **Copy
+channel email address** are gone.
+
+**Why:** Share and Add people were two doors to one job, inviting someone in,
+and Share's dialog closed after each send. Folding the guest invite into the
+People search makes one place to bring anyone in, and keeping the menu open
+lets several be added in a row. The scope row repeated what **More** already
+switches, and the Space header pushed the actions down for a link the sidebar
+already gives.
+
+**Considered and rejected:** Keeping the Share dialog behind the tile. It
+duplicated the People level and could not show members and invitations
+together.
+
+**Consequences:** `useScopeInvitations` is the one client for a
+conversation's invitations; the share panel and the People level read one
+cache entry, so a cancel in either shows in both. The roster dialog
+(`AddParticipantDialog`) is no longer reachable from the title menus.
 
 ### 2026-10-07 — The phone menu button shows when the sheet is open
 

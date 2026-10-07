@@ -112,8 +112,12 @@ export function TitleMenuMorph({ children }: { children: ReactNode }): React.JSX
  * take them), lets Tab and Escape through to the menu, takes focus when its
  * level opens, and hands the down arrow to the first result.
  */
-export function TitleMenuSearch({ label, onChange, value }: {
-  label: string; onChange: (value: string) => void; value: string;
+export function TitleMenuSearch({ label, onChange, onEnter, value }: {
+  label: string;
+  onChange: (value: string) => void;
+  /** Enter in the box; the menu stays open so it can be pressed again. */
+  onEnter?: (() => void) | undefined;
+  value: string;
 }): React.JSX.Element {
   return <label className="title-menu-search">
     <IconSearch aria-hidden="true" size={15} stroke={1.8} />
@@ -124,6 +128,11 @@ export function TitleMenuSearch({ label, onChange, value }: {
       onKeyDown={(event) => {
         if (event.key === 'Escape' || event.key === 'Tab') return;
         event.stopPropagation();
+        if (event.key === 'Enter' && onEnter) {
+          event.preventDefault();
+          onEnter();
+          return;
+        }
         if (event.key !== 'ArrowDown') return;
         const view = event.currentTarget.closest('.title-menu-view');
         const first = view?.querySelector<HTMLElement>('[role="menuitem"]:not([data-disabled])');
