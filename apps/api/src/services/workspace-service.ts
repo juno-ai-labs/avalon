@@ -17,6 +17,7 @@ import { newId, nowIso } from "@rally/db";
 import { downloadGrantUrl, issueDownloadGrant, revokeDownloadGrant, revokeDownloadGrantsForInvitation } from "@rally/db/private-access";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
+import { workspaceSlug } from "../lib/workspace-slug";
 import { randomToken, sha256 } from "../lib/crypto";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import {
@@ -1121,8 +1122,7 @@ export class WorkspaceOnboardingService {
 
     const workspaceId = newId();
     const normalized = name.trim();
-    const slugBase = normalized.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "workspace";
-    const slug = `${slugBase}-${workspaceId.slice(0, 8)}`;
+    const slug = workspaceSlug(normalized, workspaceId);
     const at = nowIso();
     await this.env.DB.batch([
       this.env.DB.prepare(
