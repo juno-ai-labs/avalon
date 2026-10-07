@@ -74,7 +74,15 @@ path>` on the Global API with no sign-in. The route parses the path with the
 same readers the page uses and asks the Organization's object for that one
 title: a Channel, Breakout, Space, or a Sidekick that is not deleted. It reads
 no viewer, no contents and no other field. An unknown Organization is refused
-from D1 before any object opens. Until the answer lands, or when it misses,
+from D1 before any object opens.
+
+This is looser than the Slack unfurl's audience table above, on purpose: the
+product call (2026-10-07) is that whoever holds a link may see the name, color
+and icon of what it points at, archived or private included. The unfurl differs
+because Rally itself posts the card into a Slack channel, where people who never
+opened the link read it; the handoff page shows the name only to the person who
+opened the link. Aligning the unfurl with the looser rule would be a separate
+decision. Until the answer lands, or when it misses,
 the heading is plain `Opening in Rally`, and the buttons work the same either
 way. A link minted in a second region needs the page to ask that region's API.
 

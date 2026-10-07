@@ -48,7 +48,7 @@ function uuidV7(milliseconds = Date.now()): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function storageRead(storage: Storage, key: string): string | null {
+export function storageRead(storage: Storage, key: string): string | null {
   try {
     return storage.getItem(key);
   } catch {
@@ -56,7 +56,7 @@ function storageRead(storage: Storage, key: string): string | null {
   }
 }
 
-function storageWrite(storage: Storage, key: string, value: string): void {
+export function storageWrite(storage: Storage, key: string, value: string): void {
   try {
     storage.setItem(key, value);
   } catch {
