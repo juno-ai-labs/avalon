@@ -157,7 +157,8 @@ call returns; the renderer holds that announcement while its own creation is
 in flight, as a switch does, so the old shell is not torn down early on the
 previous workspace's route with an empty cache. A creation does not know its
 workspace's id until main answers, so it holds any workspace in the region it
-asked for; main's answer is its active session either way. The account
+asked for; main's answer is its active session either way, and a creation
+that fails applies the last broadcast it held instead. The account
 menu's create action does not refetch the directory afterwards: the landing
 remounts the shell, and the new one reads discovery itself.
 
@@ -486,7 +487,8 @@ binding's activation; a reader of it would have to order the two again.
 The pending mark of a creation matches by region alone. A
 broadcast for another workspace in that region arriving during a creation is
 held, and the creation's answer, which is main's active session at the end
-of its mutation, is applied instead. A session that describes its workspace
+of its mutation, is applied instead; a creation that fails applies the held
+broadcast. A session that describes its workspace
 now lands without `GET /workspace` in hand; the shell draws from the
 placeholder and the read replaces it in place, as on a cold start. A journey
 read on a cold start still waits for the account's eligibility.

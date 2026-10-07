@@ -1172,6 +1172,31 @@ describe('single-platform desktop identity routing', () => {
     getWorkspace.mockRestore();
   });
 
+  it('applies a switch held during a creation that then fails', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: '00000000-0000-7000-8000-00000000003a', name: 'Organization B', region: 'global', role: 'member' },
+    });
+    const elsewhere: DesktopSession = {
+      ...globalIdentitySession,
+      workspace: { id: '00000000-0000-7000-8000-00000000003b', name: 'Organization C', region: 'global', role: 'member' },
+    };
+    // Another window switches this account to Organization C while the
+    // creation is in flight, and then the creation is refused.
+    bridge.createWorkspace.mockImplementationOnce(async () => {
+      sessionListener?.(elsewhere);
+      throw new Error('creation refused');
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Organization B')).toBeVisible();
+
+    await act(async () => {
+      await expect(observedFinishWorkspaceSetup!('Refused Organization', 'global')).rejects.toThrow('creation refused');
+    });
+
+    expect(await screen.findByText('global:Organization C')).toBeVisible();
+  });
+
   it('does not carry an ineligible account across a creation, which can make it eligible', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,

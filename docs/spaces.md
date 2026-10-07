@@ -497,7 +497,11 @@ creator the way `openGeneralSpace` does, reserves General under that id through
 the same `reserveGeneral` step, and closes the cutover, all in that one call.
 It answers `spacesReady`; anything short of `true` (the authority closed, a
 guest creator, an authority mid-migration, a cutover that cannot close) sends the caller to
-`openGeneralSpaceForNewWorkspace`, which is `ensureGeneral` as above. An
+`openGeneralSpaceForNewWorkspace`, which is `ensureGeneral` as above. The
+Space half of the call is best effort, as that function is: a failure there is
+logged as `space_general_open_failed` (a refusal as
+`space_general_open_refused`, with its code) and answers `false`, so it never
+fails an Organization whose rows are already committed. An
 Organization whose cutover is already complete answers `true` without any of
 this, so activating one costs the one call and no D1 read for Spaces.
 
