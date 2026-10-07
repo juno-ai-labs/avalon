@@ -17,7 +17,7 @@ it("converges concurrent browser activation in real D1 without changing another 
     env.DB.prepare(`CREATE TABLE workspace_members(workspace_id TEXT,user_id TEXT,status TEXT,role TEXT,access_class TEXT,
       incarnation TEXT,revision INTEGER DEFAULT 1,joined_at TEXT,last_seen_at TEXT,PRIMARY KEY(workspace_id,user_id))`),
     env.DB.prepare(`CREATE TABLE sessions(id TEXT PRIMARY KEY,user_id TEXT,workspace_id TEXT,region TEXT,refresh_token_hash TEXT,
-      previous_refresh_token_hash TEXT,refresh_rotated_at TEXT,expires_at TEXT,created_at TEXT,revoked_at TEXT,workspace_incarnation TEXT)`),
+      previous_refresh_token_hash TEXT,refresh_rotated_at TEXT,expires_at TEXT,created_at TEXT,revoked_at TEXT,workspace_incarnation TEXT, impersonator_user_id TEXT)`),
     env.DB.prepare(`CREATE TRIGGER bind_session_incarnation AFTER INSERT ON sessions WHEN NEW.workspace_id IS NOT NULL
       BEGIN UPDATE sessions SET workspace_incarnation=(SELECT incarnation FROM workspace_members
       WHERE workspace_id=NEW.workspace_id AND user_id=NEW.user_id AND status='active') WHERE id=NEW.id; END`),

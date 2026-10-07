@@ -16,6 +16,8 @@ export function cookieClientSession(region: string, session: BrowserSession): Co
     workspace: session.workspace ? { id: session.workspace.id, name: session.workspace.name,
       region: session.workspace.region, role: session.workspace.role, timezone: session.workspace.timezone,
       ...(session.workspace.accessClass ? { accessClass: session.workspace.accessClass } : {}) } : null,
+    ...(session.impersonator ? { impersonator: { id: session.impersonator.id, name: session.impersonator.name,
+      email: session.impersonator.email, ...(session.impersonator.avatarUrl ? { avatarUrl: session.impersonator.avatarUrl } : {}) } } : {}),
   };
 }
 

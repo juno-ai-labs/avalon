@@ -4,7 +4,8 @@ import { authBodyLimit } from "../middleware/auth-body-limit";
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { z } from "zod";
-import { WorkspaceIdSchema } from "@rally/contracts";
+import { StartSupportSessionRequestSchema, SupportPeopleSchema, SupportWorkspacesSchema, WorkspaceIdSchema } from "@rally/contracts";
+import { SupportAccessService } from "../services/support-access";
 import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
 import type { Env, HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -220,6 +221,24 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     const session = BrowserSessionSchema.parse(await service.select(credential(c),c.req.valid("json").workspaceId));
     observeSignupProgress(c.env, session.user.id, 'signup_organization_ready', 'existing_organization', 'browser');
     return c.json(BrowserSessionSchema.parse(session));
+  });
+
+  // Rally staff acting in an Organization that granted Rally access
+  // (`docs/impersonation.md`): the same service the Mac app reaches through
+  // `/auth/support`, authorized by this browser's identity session.
+  routes.get("/support/workspaces",async (c) => {
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    return c.json(SupportWorkspacesSchema.parse(await new SupportAccessService(c.env,auth).workspaces()));
+  });
+  routes.get("/support/workspaces/:workspaceId/people",zValidator("param",z.object({ workspaceId:WorkspaceIdSchema })),async (c) => {
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    return c.json(SupportPeopleSchema.parse(await new SupportAccessService(c.env,auth).people(c.req.valid("param").workspaceId)));
+  });
+  routes.post("/support/session",authBodyLimit,zValidator("json",StartSupportSessionRequestSchema),async (c) =>
+    c.json(BrowserSessionSchema.parse(await new BrowserSessionService(c.env).selectSupport(credential(c),c.req.valid("json")))));
+  routes.post("/support/end",zValidator("json",z.strictObject({ workspaceId:WorkspaceIdSchema })),async (c) => {
+    await new BrowserSessionService(c.env).endSupport(credential(c),c.req.valid("json").workspaceId);
+    return c.body(null,204);
   });
 
   routes.all("/api/:workspaceId/*",async (c) => {

@@ -117,6 +117,16 @@ The producers are:
   (`RETURNING id, user_id, workspace_id`) and publishes one message per row,
   carrying that session's id. Only the windows that presented that session are
   closed; the person's other windows are still theirs.
+- **Rally access ends.** `revokeSupportSessions` (`services/support-access.ts`)
+  expires support sessions at once, publishes one message per row, and marks
+  revoked only the rows it announced. One whose message fails stays expired
+  but unmarked, so the expiry sweep below announces it on its next run rather
+  than its sockets staying open with nothing left to retry. It runs when an
+  Organization revokes Rally access, and when a Juno Labs relationship delivery
+  says a staff membership ended, for that membership's incarnation only.
+  An expired grant needs no producer: a support session's `expires_at` never
+  passes its grant's, so the expiry sweep below closes it.
+  [`impersonation.md`](impersonation.md#support-access) owns the mechanism.
 - **A session expires.** Nobody performs an expiry, so no request would ever
   publish one. `reapExpiredSessions` is that writer: on the five-minute cron it
   marks up to 200 expired rows revoked and publishes each one.

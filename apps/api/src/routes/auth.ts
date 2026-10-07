@@ -1,6 +1,6 @@
 import { UuidV7Schema } from '@rally/contracts/telemetry';
 import { observeSignup, observeSignupProgress } from '../telemetry/signup';
-import { requireIdentityAuth, getIdentityAuth } from "../middleware/auth";
+import { requireIdentityAuth, getIdentityAuth, refuseSupportSession } from "../middleware/auth";
 import { startEmailLogin, redeemEmailLogin, deliverEmailLogin, EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
 import { Hono } from "hono";
 import { authBodyLimit } from "../middleware/auth-body-limit";
@@ -10,6 +10,9 @@ import {
   RefreshRequestSchema,
   RefreshTokenSchema,
   SessionSchema,
+  StartSupportSessionRequestSchema,
+  SupportPeopleSchema,
+  SupportWorkspacesSchema,
   WorkspaceSchema,
   WorkspaceIdSchema,
   WorkspaceInvitationPreviewSchema,
@@ -22,6 +25,7 @@ import { ApiError } from "../lib/api-error";
 import { compatibleDesktopDeepLink, desktopHandoffUrl } from "../lib/desktop-handoff";
 import { AuthService, verifyAccessToken } from "../services/auth-service";
 import { previewInvitation } from "../services/workspace-service";
+import { SupportAccessService } from "../services/support-access";
 
 const startBody = z.object({
   returnUri: z.union([HttpOrDesktopDeepLinkUrlSchema, z.literal(SIDELINE_AUTH_CALLBACK_URI)]).optional(),
@@ -51,17 +55,35 @@ authRoutes.post('/signup/view', authBodyLimit, zValidator('json', z.strictObject
 const RegionalWorkspacesSchema = z.object({ workspaces:z.array(WorkspaceSchema) });
 const SelectRegionalWorkspaceSchema = z.strictObject({ workspaceId:WorkspaceIdSchema });
 
-authRoutes.get("/workspaces",requireIdentityAuth,async (c) => {
+authRoutes.get("/workspaces",requireIdentityAuth,refuseSupportSession,async (c) => {
   c.header("Cache-Control","no-store");
   const workspaces = await new AuthService(c.env).listRegionalWorkspaces(getIdentityAuth(c).userId);
   return c.json(RegionalWorkspacesSchema.parse({ workspaces }));
 });
-authRoutes.post("/workspace/select",requireIdentityAuth,authBodyLimit,zValidator("json",SelectRegionalWorkspaceSchema),async (c) => {
+authRoutes.post("/workspace/select",requireIdentityAuth,refuseSupportSession,authBodyLimit,zValidator("json",SelectRegionalWorkspaceSchema),async (c) => {
   c.header("Cache-Control","no-store");
   const auth = getIdentityAuth(c);
   observeSignupProgress(c.env, auth.userId, 'signup_organization_requested', 'existing_organization', 'desktop');
   const session = await new AuthService(c.env).createRegionalSession(auth.userId,c.req.valid("json").workspaceId);
   observeSignupProgress(c.env, auth.userId, 'signup_organization_ready', 'existing_organization', 'desktop');
+  return c.json(SessionSchema.parse(session));
+});
+
+// Rally staff acting in an Organization that granted Rally access
+// (`docs/impersonation.md`). Each call re-checks staff membership and the grant.
+const supportWorkspaceParam = z.object({ workspaceId: WorkspaceIdSchema });
+authRoutes.get("/support/workspaces", requireIdentityAuth, async (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(SupportWorkspacesSchema.parse(await new SupportAccessService(c.env, getIdentityAuth(c)).workspaces()));
+});
+authRoutes.get("/support/workspaces/:workspaceId/people", requireIdentityAuth, zValidator("param", supportWorkspaceParam), async (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(SupportPeopleSchema.parse(
+    await new SupportAccessService(c.env, getIdentityAuth(c)).people(c.req.valid("param").workspaceId)));
+});
+authRoutes.post("/support/session", requireIdentityAuth, authBodyLimit, zValidator("json", StartSupportSessionRequestSchema), async (c) => {
+  c.header("Cache-Control", "no-store");
+  const { session } = await new SupportAccessService(c.env, getIdentityAuth(c)).start(c.req.valid("json"));
   return c.json(SessionSchema.parse(session));
 });
 

@@ -27,11 +27,16 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
   // The browser is reached from the landing page, which already introduced
   // Rally, so it records the introduction as seen rather than showing it again.
   const [previewed, setPreviewed] = useState(host === 'browser');
+  // Account onboarding and the profile it carries belong to the signed-in
+  // account. On a support session that is the Rally staff member, not the
+  // person on screen, so none of it is read, shown or written there
+  // (`docs/impersonation.md`).
+  const supportSession = Boolean(session?.impersonator);
   // A guest has no member directory to read; their people come from each
   // conversation's own detail.
   const members = useQuery({ queryKey: ['workspace-members'], queryFn: () => api!.getWorkspaceMembers(), enabled: Boolean(api && session?.workspace && !guest) });
   const account = useQuery({ queryKey: accountOnboardingQueryKey(session?.user.email),
-    queryFn: () => getAccountOnboarding(), enabled: Boolean(session), refetchOnWindowFocus: 'always' });
+    queryFn: () => getAccountOnboarding(), enabled: Boolean(session) && !supportSession, refetchOnWindowFocus: 'always' });
   const queryClient = useQueryClient();
   const editor = useMemo(() => new AccountProfileEditor('',
     (input) => updateAccountOnboarding(input),
@@ -68,7 +73,7 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
     if (account.error) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
     return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
   }
-  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={account.isPending || account.isFetching}><ConversationAdmissionProvider allowed={guest || Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{!guest && account.data?.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
+  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={!supportSession && (account.isPending || account.isFetching)}><ConversationAdmissionProvider allowed={guest || supportSession || Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{!guest && account.data?.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
 }
 
 export function OnboardingPage({ title, subtitle, children, footer }: { title: string; subtitle?: string | readonly string[]; children: ReactNode; footer?: ReactNode }): React.JSX.Element {
@@ -153,6 +158,10 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
 function AccountProfileSettings({ profileDetails }: { profileDetails?: (name: string) => ReactNode }): React.JSX.Element {
   const editor = useContext(ProfileEditorContext);
   const loading = useContext(AccountLoadingContext);
+  const { session } = useAppSession();
+  // The account profile is the signed-in account's: on a support session, the
+  // Rally staff member's, which is not the person shown here.
+  if (session?.impersonator) return <p className="settings-support-note">{session.impersonator.name} is signed in as {session.user.name}. Their profile is theirs to change.</p>;
   if (!editor && loading) return <p role="status">Loading account profile…</p>;
   if (!editor) return <InlineError>Account profile is unavailable.</InlineError>;
   return <AccountProfileFields editor={editor} profileDetails={profileDetails} />;
