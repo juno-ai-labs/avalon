@@ -8415,3 +8415,18 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 }
 .title-pill-menu-trigger:hover > .title-pill-menu-trigger-body { background: var(--av-sys-color-state-hover); }
 .title-pill-menu-trigger[data-state='open'] > .title-pill-menu-trigger-body { background: transparent; }
+
+/*
+ * iOS Safari zooms the page into any focused field whose text is under 16px,
+ * and leaves it zoomed after blur. Touch screens get 16px text in every text
+ * field instead; maximum-scale=1 would also stop it but takes pinch zoom away
+ * on Android. Important because the field rules it overrides are scoped deeper
+ * than any one rule here could be. That also shrinks a larger field to 16px,
+ * so a field styled above 16px has to be added to the :not() list.
+ */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], .space-name-input),
+  textarea,
+  select,
+  .workstream-composer .composer-highlight { font-size: 16px !important; }
+}
