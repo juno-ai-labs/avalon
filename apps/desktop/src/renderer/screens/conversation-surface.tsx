@@ -109,6 +109,7 @@ import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
 import { ConversationAccessRequest } from '../components/conversation-access-request';
+import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import {
@@ -1235,6 +1236,10 @@ export function ConversationSurface({
     setResourcePreview({ resourceId, returnFocus, workstreamScoped: true });
   }, []);
   const workspaceId = session?.workspace?.id ?? 'unbound';
+  // Requests to join waiting on this reader, kept by the workspace socket; the
+  // People level lists the ones for the conversation on screen.
+  const accessRequests = useAccessRequests(workspaceId);
+  const decideAccessRequest = useDecideAccessRequest(api ?? null, workspaceId);
   const workspaceRegion = session?.workspace?.region ?? 'global';
   const attachmentDraft = useFileAttachments(api, workstreamDraftKey(workspaceRegion, workspaceId, id, substreamId));
   const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
@@ -2866,7 +2871,9 @@ export function ConversationSurface({
             await addParticipant.mutateAsync({ member, target: substreamId });
           },
           adding: addParticipant.isPending,
-          error: addParticipant.error
+          error: decideAccessRequest.error
+            ? 'That request couldn’t be answered. Try again.'
+            : addParticipant.error
             ? refusalMessage(addParticipant.error) ?? 'That person couldn’t be added.'
             : invitations.invite.error ? 'They couldn’t be invited. Try again.'
               : invitations.remove.error
@@ -2876,6 +2883,12 @@ export function ConversationSurface({
                   : 'That invite couldn’t be cancelled. Try again.'
                 : undefined,
           currentUserId: session?.user.id,
+          requests: {
+            items: accessRequests
+              .filter((request) => request.parentId === id && request.substreamId === substreamId)
+              .map((request) => ({ id: request.id, userId: request.requesterUserId, name: request.requesterName })),
+            onDecide: (requestId, decision) => decideAccessRequest.mutate({ id: requestId, decision }),
+          },
           onRemove: (member) => {
             addParticipant.reset();
             removeParticipant.reset();
