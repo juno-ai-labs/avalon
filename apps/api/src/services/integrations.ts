@@ -8039,7 +8039,16 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             halt: "needs_input" as const,
           };
         }
-        await publishWorkstreamEvent(env, input.workspaceId, input.parentId, { type: "elicitation_created", elicitation });
+        // The question belongs to the conversation whose run asked it. Without
+        // the substream it lands in Main's room, where every Channel member,
+        // outside a private Breakout too, sees a question Main cannot answer.
+        await publishWorkstreamEvent(
+          env,
+          input.workspaceId,
+          input.parentId,
+          { type: "elicitation_created", elicitation },
+          input.substreamId ?? "0",
+        );
         emitProductUsageTelemetry(env, {
           workspaceId: input.workspaceId,
           ...(input.executionPrincipal.type === 'user'
