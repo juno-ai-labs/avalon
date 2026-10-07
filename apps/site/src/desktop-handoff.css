@@ -94,6 +94,23 @@ body {
 .handoff-open:hover { background: var(--primary-hover); }
 .handoff-open[aria-disabled='true'] { opacity: 0.48; pointer-events: none; }
 
+/* The web app beside the desktop one: a quiet outline under the primary. */
+.handoff-secondary {
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  border-radius: 26px;
+  color: var(--text);
+  display: flex;
+  font-size: 14px;
+  justify-content: center;
+  margin-top: 10px;
+  min-height: 48px;
+  padding: 6px 16px;
+  text-decoration: none;
+  transition: border-color 140ms ease;
+}
+.handoff-secondary:hover { border-color: color-mix(in srgb, var(--text) 40%, transparent); }
+
 .handoff-card .handoff-help { font-size: 12px; line-height: 1.5; margin-top: 14px; }
 
 .handoff-card .handoff-error { color: var(--danger); font-size: 12px; margin-top: 8px; }
