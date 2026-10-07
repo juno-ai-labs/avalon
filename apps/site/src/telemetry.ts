@@ -313,9 +313,22 @@ export function siteActionForLink(id: string | undefined): SiteActionLink | null
 
 function initializeSiteActions(): void {
   const selected = (event: MouseEvent): void => {
-    const link = (event.target as Element | null)?.closest?.<HTMLElement>('[data-site-action]');
-    const action = siteActionForLink(link?.dataset['siteAction']);
-    if (action) reportSiteAction(action);
+    const link = (event.target as Element | null)?.closest?.<HTMLAnchorElement>('a[data-site-action]');
+    const id = link?.dataset['siteAction'];
+    const action = siteActionForLink(id);
+    if (!action || !link) return;
+    let flowId: string | undefined;
+    if (id === 'web-app-hero' || id === 'sign-in-header') {
+      flowId = uuidV7();
+      const destination = new URL(link.href);
+      destination.searchParams.set('signupFlowId', flowId);
+      link.href = destination.href;
+      // Default navigation reads the updated href after dispatch. Restore the
+      // clean link afterwards so copied links never share an attempt.
+      destination.searchParams.delete('signupFlowId');
+      setTimeout(() => { link.href = destination.href; }, 0);
+    }
+    reportSiteAction({ ...action, ...(flowId ? { flowId } : {}) });
   };
   document.addEventListener('click', selected, { capture: true });
   // A middle-click opens a link without firing `click`.

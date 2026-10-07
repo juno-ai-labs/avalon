@@ -25,6 +25,7 @@ describe('desktop telemetry identity', () => {
     expect(first.installationId[14]).toBe('7');
     expect(first.anonymousEpochId[14]).toBe('7');
     expect(first.accountEpochId[14]).toBe('7');
+    expect(first.firstSignupFlowId?.[14]).toBe('7');
     const encoded = await readFile(join(directory, 'telemetry', 'identity.json'), 'utf8');
     expect(encoded).not.toMatch(/email|userId|workspaceId|token/iu);
   });
@@ -43,8 +44,19 @@ describe('desktop telemetry identity', () => {
     const first = await readTelemetryIdentity(directory, new Date('2026-08-12T00:00:00.000Z'));
     const rotated = await rotateTelemetryEpochs(directory, new Date('2026-08-12T00:01:00.000Z'));
     expect(rotated.installationId).toBe(first.installationId);
+    expect(rotated.firstSignupFlowId).toBeUndefined();
     expect(rotated.anonymousEpochId).not.toBe(first.anonymousEpochId);
     expect(rotated.accountEpochId).not.toBe(first.accountEpochId);
+  });
+
+  it('does not invent a first-install flow for existing installation data', async () => {
+    const directory = await root();
+    const current = await readTelemetryIdentity(directory);
+    delete current.firstSignupFlowId;
+    await writeFile(join(directory, 'telemetry', 'identity.json'), JSON.stringify(current));
+    const reread = await readTelemetryIdentityState(directory);
+    expect(reread.created).toBe(false);
+    expect(reread.identity.firstSignupFlowId).toBeUndefined();
   });
 
   it('replaces a corrupt identity document atomically', async () => {

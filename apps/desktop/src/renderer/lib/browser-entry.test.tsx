@@ -14,7 +14,7 @@ const user = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'guest@example
 const workspace = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Shared team', slug: 'shared',
   region: 'global', accessClass: 'guest', role: null, timezone: 'UTC', createdAt: user.createdAt };
 
-afterEach(() => { vi.useRealTimers(); history.replaceState(null, '', '/'); });
+afterEach(() => { vi.useRealTimers(); sessionStorage.clear(); history.replaceState(null, '', '/'); });
 
 // Renderer test: HTTP is the boundary; backend cookie/membership authority is
 // exercised by the API browser-session suites. The channel itself is real.
@@ -438,6 +438,55 @@ it('starts Google sign-in for the page it was opened on and explains a declined 
     await waitFor(() => expect(starts).toEqual([{ returnPath: `/app/workspaces/global/${workspace.id}`, signupFlowId: expect.stringMatching(/^[0-9a-f-]{14}7/u) }]));
     expect(views).toEqual([{ flowId: starts[0]!.signupFlowId }]);
   } finally { view.unmount(); }
+});
+
+it.each([
+  ['01a0ee73-d366-7fb9-b5c0-3ceb3156f70a', '01a0ee73-d366-7fb9-b5c0-3ceb3156f70a'],
+  ['invalid', expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-7/u)],
+])('handles landing signup flow %s without retaining it in the URL', async (incoming, expected) => {
+  const views: Array<{ flowId: string }> = [];
+  const starts: Array<{ signupFlowId: string }> = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ error: { message: 'Sign in' } }, { status: 401 });
+    if (path === '/signup/view') { views.push(JSON.parse(String(init?.body))); return new Response(null, { status: 204 }); }
+    if (path === '/google/start') { starts.push(JSON.parse(String(init?.body))); return Response.json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=s' }); }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  history.replaceState(null, '', `/?signupFlowId=${incoming}`);
+  const view = render(<BrowserEntry />);
+  try {
+    await waitFor(() => expect(views).toHaveLength(1));
+    expect(location.search).toBe('');
+    expect(views[0]!.flowId).toEqual(expected);
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
+    await waitFor(() => expect(starts).toHaveLength(1));
+    expect(starts[0]!.signupFlowId).toBe(views[0]!.flowId);
+  } finally { view.unmount(); }
+});
+
+it('keeps landing attribution when the signed-out page reloads, and a new CTA replaces it', async () => {
+  const views: Array<{ flowId: string }> = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ error: { message: 'Sign in' } }, { status: 401 });
+    if (path === '/signup/view') { views.push(JSON.parse(String(init?.body))); return new Response(null, { status: 204 }); }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  const first = '01a0ee73-d366-7fb9-b5c0-3ceb3156f70a';
+  const second = '01a0ee73-d366-7fb9-b5c0-3ceb3156f70b';
+  history.replaceState(null, '', `/?signupFlowId=${first}`);
+  let view = render(<BrowserEntry />);
+  await waitFor(() => expect(views).toEqual([{ flowId: first }]));
+  expect(location.search).toBe('');
+  view.unmount();
+  view = render(<BrowserEntry />);
+  await waitFor(() => expect(views).toEqual([{ flowId: first }, { flowId: first }]));
+  view.unmount();
+  history.replaceState(null, '', `/?signupFlowId=${second}`);
+  view = render(<BrowserEntry />);
+  await waitFor(() => expect(views).toEqual([{ flowId: first }, { flowId: first }, { flowId: second }]));
+  view.unmount();
 });
 
 it.each(['google', 'email'] as const)('keeps %s sign-in available on an older strict start API', async method => {

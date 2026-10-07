@@ -537,8 +537,9 @@ snapshots.
 
 It does not own product state, authorization for the product action being
 observed, provider content, PostHog-side retention/access/configuration, legal
-approval, advertising, consent-law determinations, cross-site identity, or
-public-site analytics. The public site remains unchanged. Product analytics are
+approval, advertising, consent-law determinations, or cross-site account identity.
+Public-site acquisition reporting is owned by `public-site-telemetry.md`; its
+opaque flow correlation joins signup observations without joining identities. Product analytics are
 advisory and may be incomplete; regional product authority is canonical — D1
 for workspace/control data and, after its guarded cutover, the Channel's parent
 in `WorkspaceDO` and its conversations for work-stream product data.
@@ -602,7 +603,31 @@ the organization setup funnel when the user selects their organization.
 signup began. Desktop-issued email links redeemed in a browser retain both.
 `source: api` names the producer. Desktop offers Google; browser offers Google
 and email. Native PostHog funnels count flow attempts, not unique people.
-Public-site acquisition has a separate subject and is not linked to signup.
+Public-site acquisition retains a separate anonymous subject. The landing
+page's “Use the web app” and header sign-in links mint a fresh opaque UUIDv7
+on each activation and carry it in `signupFlowId`; `site_action_selected.flowId` and all subsequent signup stages
+share it. Browser entry validates and saves it in tab-scoped session storage before
+removing it from the address bar. Reloads retain the attempt; a new incoming
+CTA replaces it, and authentication or sign-out retires the stored lineage.
+Unavailable storage never blocks sign-in. Funnels
+that include the CTA must aggregate by `properties.flowId` across subjects.
+
+The desktop flow starts at `desktop_install_opened`, emitted by main only when
+installation data is first created and no account is saved. Its random
+`firstSignupFlowId` persists in the installation identity file and is exposed by
+the trusted runtime bridge while no account has been observed. Sign-in reads it
+once and carries it into the existing API stages. Account changes retire it;
+existing installations and repaired corrupt identity files are not backfilled.
+The event respects Product analytics settings and uses the existing spool and
+anonymous capability. A missing or failed telemetry bridge falls back to a
+regular signup flow without blocking authentication. “Fresh install” means new
+local installation data, not reinstalling the binary over existing app data.
+
+The dashboard has two complete tracking flows: browser from the hero web CTA,
+and desktop from the first installation opening. Both include first organization
+access (new or existing) and required account introduction. Cross-subject SQL
+joins by flow ID show ordered stage counts and previous-stage drop-off within
+14 days, rather than merging site or installation subjects with account identity.
 
 The unauthenticated view endpoint accepts only a UUIDv7, but callers can submit
 fresh IDs to inflate view counts; it has no new issuance limit. Successful stages
@@ -2007,6 +2032,29 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-10-07 — Connect browser and fresh-install entry to signup
+
+**What changed:** Web entry links propagate an opaque signup flow to browser
+entry and report it on the existing site action event. A new main-owned first
+installation opening carries a persisted flow into desktop signup.
+
+**Why:** Separate anonymous site and signup subjects hid abandonment between
+selecting the web CTA and completing organization setup. Desktop also needed a
+cohort anchored at the first opening rather than every sign-in screen.
+
+**Considered and rejected:** Replacing the direct Mac download with browser
+registration would change the acquisition experience. A static DMG cannot
+reliably carry the visitor's identity, so its clicks remain separate.
+
+**Consequences:** Join cross-subject stages by flow ID, validate incoming IDs,
+retire first-install lineage after account changes, and deploy the API readers
+before site and desktop producers. Download
+clicks do not prove an installation or a completed desktop signup. Each CTA
+activation needs its own flow, and browser reloads must preserve the tab's
+attribution until authentication.
+
+Shipped in [PR #1161](https://github.com/juno-ai-labs/avalon/pull/1161).
 
 ### 2026-10-07 — Observe the complete first signup journey
 

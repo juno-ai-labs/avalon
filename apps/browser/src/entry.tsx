@@ -13,6 +13,7 @@ import { scheduleSessionDeadline } from "./session-timer";
 
 import { parseSidekickLinkPathTarget, parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
 
+import { UuidV7Schema } from "@rally/contracts/telemetry";
 import { WorkspaceIdSchema } from "@rally/contracts";
 
 const initialRegion = configuredRegions[0]!;
@@ -68,11 +69,39 @@ export function BrowserBoot(): React.JSX.Element {
   return <main className="onboarding-shell entry"><div className="boot-mark" role="status" aria-label="Opening Rally"><RallyMark /></div></main>;
 }
 
+const SIGNUP_FLOW_STORAGE_KEY = 'rally-browser-signup-flow';
+
+function savedSignupFlow(): string | null {
+  try {
+    const parsed = UuidV7Schema.safeParse(sessionStorage.getItem(SIGNUP_FLOW_STORAGE_KEY));
+    return parsed.success ? parsed.data : null;
+  } catch { return null; }
+}
+
+function rememberSignupFlow(flowId: string | null): void {
+  try {
+    if (flowId) sessionStorage.setItem(SIGNUP_FLOW_STORAGE_KEY, flowId);
+    else sessionStorage.removeItem(SIGNUP_FLOW_STORAGE_KEY);
+  } catch { /* Storage may be disabled; sign-in still works. */ }
+}
+
 /** This entry has no account setup step. Collaboration mounts after authentication. */
 export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void, onRevalidate: () => void) => ReactNode } = {}) {
   const signupFlow = useRef<string | null>(null);
   const signupViewed = useRef(false);
-  signupFlow.current ??= uuidV7();
+  if (signupFlow.current === null) {
+    const entryUrl = new URL(location.href);
+    const incoming = UuidV7Schema.safeParse(entryUrl.searchParams.get('signupFlowId'));
+    signupFlow.current = incoming.success ? incoming.data : savedSignupFlow() ?? uuidV7();
+  }
+  useEffect(() => {
+    rememberSignupFlow(signupFlow.current);
+    const entryUrl = new URL(location.href);
+    if (entryUrl.searchParams.has('signupFlowId')) {
+      entryUrl.searchParams.delete('signupFlowId');
+      history.replaceState(history.state, '', entryUrl.href);
+    }
+  }, []);
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
   // What the restore path opens: the address the page loaded with, or an
   // organization opened in place since, which a later focus then restores.
@@ -172,6 +201,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         }
         if (!active || read !== sessionRead.current) return;
         sessionUser.current = current.user.id;
+        rememberSignupFlow(null);
         setSession(current);
         setError(null);
         if (!opened) {
@@ -287,6 +317,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       return;
     }
     sessionUser.current = current.user.id;
+    rememberSignupFlow(null);
     setSession(current);
     if (!destination) {
       const result = await browserRequest(proof?.region ?? IDENTITY_REGION, "/workspaces", BrowserWorkspacesSchema);
@@ -362,6 +393,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       if (read !== sessionRead.current) return;
       sessionUser.current = null;
       signupFlow.current = uuidV7();
+      rememberSignupFlow(signupFlow.current);
       signupViewed.current = false;
       setSession(null); setWorkspaces(null); setCreating(false); setChallenge(null); setCode(""); issuance.current = null;
       sessionChannel.current?.postMessage("session-changed");

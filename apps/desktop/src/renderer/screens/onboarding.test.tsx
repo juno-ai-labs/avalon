@@ -19,6 +19,7 @@ const telemetry = vi.hoisted(() => ({
   reportTelemetryProductIntent: vi.fn(),
 }));
 const bridge = vi.hoisted(() => ({
+  getRuntimeConfig: vi.fn(),
   cancelDesktopAuthAttempt: vi.fn(),
   createDesktopAuthAttempt: vi.fn(),
   openExternal: vi.fn(),
@@ -76,6 +77,7 @@ const invitation: PendingWorkspaceInvitation = {
 describe('identity-first onboarding screens', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    bridge.getRuntimeConfig.mockResolvedValue(sessionState.runtime);
     api.observeSignupView.mockResolvedValue(undefined);
     sessionState.region = 'global';
     sessionState.workspaceName = '';
@@ -105,6 +107,25 @@ describe('identity-first onboarding screens', () => {
       'rallywithai://auth/complete',
       { authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) }, signupFlowId: telemetry.operationId },
     ));
+  });
+
+  it('carries the fresh-install flow through the sign-in screen and Google start', async () => {
+    bridge.getRuntimeConfig.mockResolvedValue({ ...sessionState.runtime, firstSignupFlowId: '01a0ee73-d366-7fb9-b5c0-3ceb3156f70a' });
+    render(<SignInScreen />);
+    await waitFor(() => expect(api.observeSignupView).toHaveBeenCalledWith('01a0ee73-d366-7fb9-b5c0-3ceb3156f70a'));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
+    await waitFor(() => expect(api.beginGoogleLogin).toHaveBeenCalledWith('global', 'rallywithai://auth/complete', {
+      authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) },
+      signupFlowId: '01a0ee73-d366-7fb9-b5c0-3ceb3156f70a',
+    }));
+  });
+
+  it('keeps signup available when first-install telemetry cannot be read', async () => {
+    bridge.getRuntimeConfig.mockRejectedValue(new Error('runtime unavailable'));
+    render(<SignInScreen />);
+    await waitFor(() => expect(api.observeSignupView).toHaveBeenCalledWith(telemetry.operationId));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
+    await waitFor(() => expect(api.beginGoogleLogin).toHaveBeenCalledWith('global', 'rallywithai://auth/complete', expect.objectContaining({ signupFlowId: telemetry.operationId })));
   });
 
   it('collects an organization name after authentication and defaults to Global', async () => {
