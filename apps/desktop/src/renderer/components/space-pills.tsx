@@ -6,6 +6,7 @@ import { SpacePill, SpacePillAddButton, SpacePillStrip } from '@rally/ui/compone
 import { compareAlphabeticalName } from '@rally/ui/lib/alphabetical';
 import clsx from 'clsx';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 
 import { blockedChannelLabel, spaceFailureSentence, spaceRefusalChannelIds } from '../lib/space-failure-copy';
@@ -15,12 +16,8 @@ import { AcknowledgedErrorDialog, type AcknowledgedError } from './acknowledged-
 import { Button, InlineError, Modal } from './primitives';
 
 interface SpacePillsProps {
-  /**
-   * Drawn inside the sidebar's top bar rather than as its own row. The host
-   * asks for it only when there is no Space to filter by, so All is left out:
-   * with nothing else to pick, it would filter nothing.
-   */
-  inline?: boolean;
+  /** Where New space goes instead of the strip, when there is no Space to filter by. */
+  inlineTarget?: HTMLElement | null;
   inactiveSpaces: SpaceSummary[];
   loading?: boolean;
   readOnly?: boolean;
@@ -57,7 +54,7 @@ const CHANNEL_DROP_ACCEPTED_FLASH_MS = 780;
  * dragging a Channel onto a pill still places it in that Space.
  */
 export function SpacePills({
-  inline = false,
+  inlineTarget = null,
   inactiveSpaces,
   loading = false,
   readOnly = false,
@@ -186,13 +183,13 @@ export function SpacePills({
 
   return (
     <>
-      <SpacePillStrip className={clsx(inline && 'is-inline')} leading={addButton || undefined} ref={scrollRef}>
+      {inlineTarget ? createPortal(addButton, inlineTarget) : <SpacePillStrip leading={addButton || undefined} ref={scrollRef}>
         {!ready ? (
           <span className="space-pill-strip-note">Opening this organization…</span>
         ) : loading && spaces.length === 0 ? (
           <span aria-hidden="true" className="skeleton-bar space-pill-skeleton" />
         ) : <>
-          {!inline && <SpacePill onClick={() => onSelect(null)} selected={selectedSpaceId === null}>All</SpacePill>}
+          <SpacePill onClick={() => onSelect(null)} selected={selectedSpaceId === null}>All</SpacePill>
           {orderedSpaces.map((space) => (
             <ContextMenu.Root key={space.id}>
               <ContextMenu.Trigger asChild>
@@ -287,7 +284,7 @@ export function SpacePills({
             </ContextMenu.Root>
           ))}
         </>}
-      </SpacePillStrip>
+      </SpacePillStrip>}
       <AcknowledgedErrorDialog
         error={failure}
         onAcknowledge={() => setFailure(null)}
