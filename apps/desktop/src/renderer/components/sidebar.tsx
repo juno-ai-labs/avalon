@@ -90,7 +90,7 @@ interface SidebarProps {
   /**
    * The Spaces whose Channels have been loaded, when they load a Space at a
    * time. A Space missing here with no rows yet draws placeholders rather than
-   * "No channels yet". Absent means every Channel held is all there is.
+   * the empty list. Absent means every Channel held is all there is.
    */
   loadedSpaceIds?: ReadonlySet<string>;
   /** The Space on screen changed: load its Channels ahead of the others. */
@@ -2420,17 +2420,10 @@ export function Sidebar({
                 <SidebarSkeletonGroup count={3} />
               </>
             ) : spacesEnabled ? (
-              (unpinnedWorkstreams.length > 0 || pinnedWorkstreams.length === 0) && (
+              unpinnedWorkstreams.length > 0 || (pinnedWorkstreams.length === 0 && !spacesReadOnly) ? (
                 <>
-                {/* Named whenever the list has rows, pinned or not: the heading
-                    carries the sort toggle, and a reader with no pins is the
-                    one who most needs Recent and Needs you to find their way.
-                    Named too when there are no Channels at all, in place of a
-                    "No channels yet" line: the empty Pinned section above
-                    already says there is nothing yet, and the heading keeps
-                    the sidebar's shape, with a ghost row, for the first
-                    Channel to land in. Only
-                    with everything pinned does it have nothing to head. */}
+                {/* Also shown with no Channels at all, over a ghost row; hidden
+                    when everything is pinned. */}
                 <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:channels">
                   <h2>Channels</h2>
                   <button
@@ -2445,11 +2438,10 @@ export function Sidebar({
                     <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
                   </button>
                 </div>
-                {unpinnedWorkstreams.length === 0 ? (
-                  // Nothing at all to list: the outline of the row the first
-                  // Channel will fill, in place of a line saying so.
+                {unpinnedWorkstreams.length === 0 ? <>
                   <SidebarList><SidebarGhostChannelRow /></SidebarList>
-                ) : (
+                  <p className="sr-only">No channels yet</p>
+                </> : (
                   <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
                     {unpinnedWorkstreams.map((workstream) => (
                       <Fragment key={workstream.id}>{renderWorkstream(
@@ -2461,6 +2453,9 @@ export function Sidebar({
                   </SidebarList>
                 )}
                 </>
+              ) : (
+                // A guest cannot create a Channel, so there is no slot to show.
+                pinnedWorkstreams.length === 0 && <p className="sidebar-empty">No channels yet</p>
               )
             ) : groups.length === 0 ? (
               // Pinned work streams are work streams, so the empty line only

@@ -66,16 +66,7 @@ export function SidebarSkeletonGroup({ count }: { count: number }): React.JSX.El
   );
 }
 
-/**
- * Where the first Channel will land, drawn while the list has none.
- *
- * The outline of a Channel row and nothing in it: the glyph's own pebble,
- * dashed and unfilled with no symbol, and still bars where the title and time
- * go. Still rather than pulsing because nothing is loading; it is a shape to
- * fill, not a wait.
- *
- * Decorative: the Channels heading above already names the list.
- */
+/** Where the first Channel will land: a Channel row's outline, still because nothing is loading. */
 export function SidebarGhostChannelRow(): React.JSX.Element {
   return (
     <SidebarRow as="div" aria-hidden="true" className="workstream-row channel-row ghost-channel-row">
