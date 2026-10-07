@@ -4,8 +4,8 @@ description: Set the Organization's name and time zone, decide where Rally's cod
 ---
 
 A handful of settings apply to everyone in the Organization at once. They live
-in three places in the Settings window: **Organization**, its child page
-**Internet access**, and **Connections**. Everyone can look at them. Only
+in three places in the Settings window: **Organization**, **Security**, and
+**Connections**. Everyone can look at them. Only
 owners and administrators can change them.
 
 ## Organization preferences
@@ -65,7 +65,7 @@ This setting decides where code running on that computer may connect on the
 internet. It is the one setting in this chapter that is mainly about security,
 so read this section slowly.
 
-Open **Settings → Organization → Internet access**. The page is headed
+Open **Settings → Security**. The page is headed
 **Terminal network access**, and its description mentions **Daytona**. Daytona
 is the company that runs the computers behind Rally's Terminal, so wherever
 you read "Daytona" on this page, think "Rally's Terminal".
