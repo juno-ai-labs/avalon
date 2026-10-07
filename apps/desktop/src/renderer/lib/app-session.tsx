@@ -30,6 +30,8 @@ import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { CollaborationSessionProvider, shellCapabilities, type ConnectorSetupCapability, type PendingConnectorOAuth } from './collaboration-session';
 export type { PendingConnectorOAuth } from './collaboration-session';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
+import { workspaceFromSession } from './session-workspace';
+import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
 import { markDeepLinkWorkstreamNavigation } from './deep-link-navigation';
 import { clearAllLocalCache, clearWorkspaceLocalCache } from './local-cache';
@@ -244,8 +246,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
   const sessionRef = useRef<DesktopSession | null>(null);
   sessionRef.current = session;
-  /** The workspace a menu switch is in the middle of landing; see the session-changed listener. */
-  const pendingActivationRef = useRef<{ region: Region; workspaceId: string } | null>(null);
+  /** The workspace a switch or a creation is in the middle of landing; see the
+   * session-changed listener. A creation's `workspaceId` is `null`. */
+  const pendingActivationRef = useRef<{
+    region: Region;
+    workspaceId: string | null;
+    /** The last broadcast held for this mark, for a creation that fails to apply. */
+    held?: DesktopSession;
+  } | null>(null);
   /** Whoever is waiting on the browser sign-in this renderer last started, and the attempt it is waiting on. */
   const pendingAccountSignInRef = useRef<{
     attemptId: string;
@@ -327,9 +335,17 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // make the switch look like a session change that already happened.
     const pending = pendingActivationRef.current;
     if (
-      pending && nextSession?.workspace
-      && nextSession.workspace.id === pending.workspaceId && nextSession.workspace.region === pending.region
+      pending && nextSession?.workspace && nextSession.workspace.region === pending.region
+      // A creation does not know its workspace's id until main answers, so it
+      // holds any other workspace in the region it asked for; a renewal of the
+      // one on screen passes, since a browser sign-in can keep a creation
+      // waiting for minutes. Its own answer is main's active session, and a
+      // failed creation applies the last broadcast it held.
+      && (pending.workspaceId === null
+        ? nextSession.workspace.id !== sessionRef.current?.workspace?.id
+        : nextSession.workspace.id === pending.workspaceId)
     ) {
+      pending.held = nextSession;
       return;
     }
     const previousSession = sessionRef.current;
@@ -500,28 +516,38 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
    * open in the previous workspace must not be looked up in the next one.
    * The feature flags ride across the same way so the account menu keeps its
    * shape while the new workspace's answer is on its way.
+   *
+   * The record is fetched first only for a session that cannot describe the
+   * workspace; otherwise the session is the shell's placeholder. The account's
+   * onboarding state (identity-scoped) rides with the flags, except across a
+   * creation that could make an ineligible account eligible.
    */
   const applyActivatedSession = useCallback(async (
     nextSession: DesktopSession,
     previous: DesktopSession | null,
+    landing: 'activation' | 'creation' = 'activation',
   ): Promise<void> => {
     const target = nextSession.workspace;
     const workspaceChanged = !target || !previous?.workspace
       || previous.workspace.id !== target.id || previous.workspace.region !== target.region;
-    const prefetched = target
+    const prefetched = target && !workspaceFromSession(nextSession)
       ? await new RallyApi(nextSession.apiBaseUrl, nextSession).getWorkspace().catch(() => null)
       : null;
     const flags = queryClient.getQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY);
+    const accountKey = accountOnboardingQueryKey(nextSession.user.email);
+    const held = previous?.user.email === nextSession.user.email
+      ? queryClient.getQueryData<AccountOnboarding>(accountKey)
+      : undefined;
+    const account = landing === 'creation' && held?.eligible !== true ? undefined : held;
     if (workspaceChanged) window.location.hash = '/';
     applySession(nextSession);
     if (prefetched && target) {
       queryClient.setQueryData(['workspace', target.id, nextSession.user.id], prefetched);
     }
-    if (flags !== undefined) {
-      // Carried, not trusted: stamped stale so the new workspace's own answer
-      // replaces it on the first render that asks.
-      queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, flags, { updatedAt: 0 });
-    }
+    // Carried, not trusted: stamped stale so the new workspace's own answer
+    // replaces each on the first render that asks.
+    if (flags !== undefined) queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, flags, { updatedAt: 0 });
+    if (account !== undefined) queryClient.setQueryData(accountKey, account, { updatedAt: 0 });
   }, [applySession, queryClient]);
 
   const activateWorkspace = useCallback(async (
@@ -605,12 +631,35 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     if (normalized.length < 2) throw new Error('Enter an organization name with at least two characters.');
     setDeviceWorkspaceName(normalized);
     setWorkspaceNameState(normalized);
-    const nextSession = await withAccountIdentity(
-      () => bridge.createWorkspace({ region: selectedRegion, name: normalized, operationId }),
-      progress,
-    );
-    applySession(nextSession);
-  }, [applySession, bridge, withAccountIdentity]);
+    // Landed the way a switch lands. Without the mark, main's broadcast of the
+    // new workspace reached the listener before this call returned, cleared
+    // the cache and remounted the shell on the previous workspace's route,
+    // with the flags and the account's onboarding state gone.
+    const creation: { region: Region; workspaceId: null; held?: DesktopSession } = {
+      region: selectedRegion, workspaceId: null,
+    };
+    pendingActivationRef.current = creation;
+    try {
+      const nextSession = await withAccountIdentity(
+        () => bridge.createWorkspace({ region: selectedRegion, name: normalized, operationId }),
+        progress,
+      );
+      // What is on screen now, not when the creation began: a renewal may
+      // have landed while it waited.
+      await applyActivatedSession(nextSession, sessionRef.current, 'creation');
+    } catch (error) {
+      // A creation holds every broadcast in its region, so a workspace another
+      // window activated there meanwhile was held for this call's answer. A
+      // failed creation has no answer: that broadcast is main's session now.
+      if (creation.held && pendingActivationRef.current === creation) {
+        pendingActivationRef.current = null;
+        applySession(creation.held);
+      }
+      throw error;
+    } finally {
+      if (pendingActivationRef.current === creation) pendingActivationRef.current = null;
+    }
+  }, [applyActivatedSession, applySession, bridge, withAccountIdentity]);
 
   /**
    * Drafted text and cached attachment bytes are workspace content, so a device

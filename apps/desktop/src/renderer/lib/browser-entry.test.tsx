@@ -536,25 +536,68 @@ it('shows the opening mark while a sign-in activates a linked organization in an
   } finally { view.unmount(); }
 });
 
-it('creates an organization from the empty shared-work screen through the cookie route', async () => {
+it('creates an organization from the empty shared-work screen and opens it in place', async () => {
   const created: unknown[] = [];
+  const calls: string[] = [];
   const createdId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const expiresAt = new Date(Date.now() + 100_000).toISOString();
+  const owned = { ...workspace, id: createdId, name: 'Acme Research', accessClass: 'member', role: 'owner' };
   vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
-    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    calls.push(input);
+    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt });
     if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
     if (input === '/regional/global/browser/workspace/create') {
       created.push(JSON.parse(String(init?.body)));
       return Response.json({ region: 'global', workspaceId: createdId }, { status: 201 });
     }
+    if (input === '/regional/global/browser/workspace/select') {
+      expect(JSON.parse(String(init?.body))).toEqual({ workspaceId: createdId });
+      return Response.json({ user, workspace: owned, expiresAt });
+    }
     throw new Error(`Unexpected request ${input}`);
   }));
-  const view = render(<BrowserEntry />);
+  const view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.workspace?.name}`}</output>} />);
   try {
     await screen.findByText('guest@example.test is not part of an organization, and nothing has been shared with it yet.');
     fireEvent.click(screen.getByRole('button', { name: 'Create an organization' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: ' Acme Research ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
     await waitFor(() => expect(created).toEqual([{ name: 'Acme Research', operationId: expect.stringMatching(/^[0-9a-f-]{14}7/u) }]));
+    // The organization opens in this document, at its own address.
+    expect(await screen.findByText('global:Acme Research')).toBeInTheDocument();
+    expect(location.pathname).toBe(`/app/workspaces/global/${createdId}`);
+    // A later restore reopens the organization rather than reading the list.
+    calls.length = 0;
+    fireEvent.focus(window);
+    await waitFor(() => expect(calls).toEqual(['/regional/global/browser/workspace/select']));
+    expect(screen.getByText('global:Acme Research')).toBeInTheDocument();
+  } finally { view.unmount(); }
+});
+
+it('does not offer Create again when a created organization fails to open', async () => {
+  const createdId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef';
+  const expiresAt = new Date(Date.now() + 100_000).toISOString();
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt });
+    if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
+    if (input === '/regional/global/browser/workspace/create') return Response.json({ region: 'global', workspaceId: createdId }, { status: 201 });
+    if (input === '/regional/global/browser/workspace/select') {
+      return Response.json({ error: { code: 'regional_onboarding_unavailable', message: 'The region is unavailable' } }, { status: 503 });
+    }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.workspace?.name}`}</output>} />);
+  try {
+    await screen.findByText('guest@example.test is not part of an organization, and nothing has been shared with it yet.');
+    fireEvent.click(screen.getByRole('button', { name: 'Create an organization' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Acme Research' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Organization name' })).not.toBeInTheDocument());
+    await waitFor(() => expect(location.pathname).toBe(`/app/workspaces/global/${createdId}`));
+    // The select failed; the empty list read before the creation must not come
+    // back with Create on it.
+    expect(await screen.findByText('The region is unavailable')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create an organization' })).not.toBeInTheDocument();
   } finally { view.unmount(); }
 });
 

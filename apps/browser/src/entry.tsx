@@ -58,6 +58,9 @@ export function BrowserBoot(): React.JSX.Element {
 /** This entry has no account setup step. Collaboration mounts after authentication. */
 export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void, onRevalidate: () => void) => ReactNode } = {}) {
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
+  // What the restore path opens: the address the page loaded with, or an
+  // organization opened in place since, which a later focus then restores.
+  const destinationRef = useRef<{ region: string; workspaceId: string } | null>(null);
   const [workspaceSession, setWorkspaceSession] = useState<BrowserSession | null>(null);
   const [region, setRegion] = useState(initialRegion);
   const [email, setEmail] = useState("");
@@ -108,6 +111,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     }
     const selectedRegion = ConfiguredRegionSchema.safeParse(target?.region ?? fragment.get("region") ?? initialRegion);
     const selected = selectedRegion.success ? selectedRegion.data : initialRegion;
+    if (target) destinationRef.current = { region: selected, workspaceId: target.workspaceId };
     setRegion(selected);
     // Invitation emails once linked here with a token. A share no longer needs
     // one: signing in with its address claims it, so this is a sign-in page.
@@ -133,14 +137,16 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const restore = (renew = false) => {
       if (restoring) { pendingRenewal ||= renew; return; }
       const read = ++sessionRead.current;
+      const opened = destinationRef.current;
+      const openedRegion = opened?.region ?? selected;
       restoring = (async () => {
         // A deployment other than Global whose cookie has lapsed answers 401;
         // opening the workspace below activates it again through Global.
-        if (renew) await browserRequest(selected, "/session/renew", BrowserSessionSchema, {}).catch((cause: unknown) => {
-          if (!(target && selected !== IDENTITY_REGION && cause instanceof BrowserApiError && cause.status === 401)) throw cause;
+        if (renew) await browserRequest(openedRegion, "/session/renew", BrowserSessionSchema, {}).catch((cause: unknown) => {
+          if (!(opened && openedRegion !== IDENTITY_REGION && cause instanceof BrowserApiError && cause.status === 401)) throw cause;
         });
-        const current = target
-          ? await openWorkspace(selected, target.workspaceId)
+        const current = opened
+          ? await openWorkspace(openedRegion, opened.workspaceId)
           : await browserRequest(selected, "/session", BrowserSessionSchema);
         if (!active || read !== sessionRead.current) return;
         if (sessionUser.current && sessionUser.current !== current.user.id) {
@@ -152,7 +158,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         sessionUser.current = current.user.id;
         setSession(current);
         setError(null);
-        if (!target) {
+        if (!opened) {
           const result = await browserRequest(selected, "/workspaces", BrowserWorkspacesSchema);
           if (active && read === sessionRead.current) setWorkspaces(result.workspaces);
         }
@@ -292,9 +298,20 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     try { created = await browserRequest(IDENTITY_REGION, "/workspace/create", BrowserWorkspaceCreatedSchema, { name: name.trim(), operationId }); }
     catch (cause) { setCreatePending(false); throw cause; }
     // The new organization opens as any other does, and its setup continues
-    // there. Stay pending until the page leaves, so the card keeps its spinner.
-    location.assign(`/app/workspaces/${created.region}/${created.workspaceId}`);
-    await new Promise<never>(() => undefined);
+    // there, but in this document: navigating to it downloaded and booted the
+    // page again only to read back the session this one already holds. The
+    // address is replaced rather than pushed because nothing here answers
+    // Back, and the shell reads the organization's address before its router.
+    const opened = { region: created.region, workspaceId: created.workspaceId };
+    history.replaceState(null, "", `/app/workspaces/${opened.region}/${opened.workspaceId}`);
+    destinationRef.current = opened;
+    // The list read before the creation said "none". Left in place, a select
+    // that then fails would offer Create again and make a second organization.
+    setWorkspaces(null);
+    createOperation.current = null;
+    setCreatePending(false);
+    setCreating(false);
+    setDestination(opened);
   }
 
   async function continueWithGoogle() {
