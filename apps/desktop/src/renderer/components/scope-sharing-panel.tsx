@@ -16,7 +16,9 @@ import { InlineError, Modal } from './primitives';
 export function useScopeInvitations({ api, workspaceId, parentId, substreamId, enabled = true }: {
   api: RallyApi; workspaceId: string; parentId: string; substreamId: string; enabled?: boolean;
 }) {
-  const operation = useRef<{ key: string; id: string } | null>(null);
+  // One retry identity per batch, kept until that batch is created, so a retry
+  // replays the same operation even while another batch is in flight.
+  const operations = useRef(new Map<string, string>());
   // Main is conversation 0: a workstream grant would also include inheriting children.
   // Built on use: a surface mounts this before it has a workspace to parse.
   const target = (): ScopeGrantTarget => ({ kind: 'conversation', workspaceId: asWorkspaceId(workspaceId),
@@ -51,11 +53,12 @@ export function useScopeInvitations({ api, workspaceId, parentId, substreamId, e
   const invite = useMutation({ mutationFn: async (recipients: string[]) => {
     const targets = [target()];
     const key = JSON.stringify({ recipients, targets });
-    if (operation.current?.key !== key) operation.current = { key, id: crypto.randomUUID() };
-    const result = await api.createScopeInvitations({ operationId: operation.current.id, parentId,
+    const operationId = operations.current.get(key) ?? crypto.randomUUID();
+    operations.current.set(key, operationId);
+    const result = await api.createScopeInvitations({ operationId, parentId,
       emails: recipients, targets, completeWorkstream: false, expiresAt: null });
     if (result.status !== 'created') throw new Error('scope invitation was not created');
-    operation.current = null;
+    operations.current.delete(key);
     return result;
   } });
   return { pending, invite, remove };

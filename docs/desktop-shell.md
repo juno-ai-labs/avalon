@@ -177,13 +177,19 @@ from; reduced motion turns both off.
   addresses separated by spaces, commas or semicolons: an address someone in
   the Organization has adds them, any other is invited to the conversation as
   a guest (`TitleMenuInvites`, backed by `useScopeInvitations`), and the menu
-  stays open for the next. A name narrowed to one person adds them. Pending
-  invitations load only once People opens. Each participant's dots menu offers
+  stays open for the next. Adds run one at a time, then the invite, and only
+  what failed stays in the box. A name narrowed to one person adds them; an
+  address whose Organization account is not active is refused rather than
+  invited. Pending invitations load only once People opens, and new addresses
+  wait for them, since they decide who is already invited; a failed load
+  shows **Try again**. Enter that finishes an input method's composition does
+  not submit. Each participant's dots menu offers
   **Remove from channel**, or **Leave the channel** on the reader's own row,
   disabled for the last participant; the host confirms in a Cancel/Continue
   dialog before it removes. A waiting invitation's dots menu offers **Cancel
   invite**. Sidekicks is the Sidekick section. Breakouts
-  is the list, newest activity first, filtered past six. More is **Pinned in
+  is the list, newest activity first, filtered past six. More is **Icon and
+  color** (the same choice as the pill's icon), **Pinned in
   my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
   **Public to organization** (a switch both ways; a refusal to make it private
   names what holds it public), Import updates, host extras, the Channel's artifacts, and
@@ -329,7 +335,8 @@ anyone already in the Organization and invites any other address as a guest
 of that Channel or Breakout, without closing the menu, and pending invitations
 list beside the participants with **Cancel invite**. The **Share** tile, the
 scope row with **Change**, the Channel menu's **In space** header and **Copy
-channel email address** are gone.
+channel email address** are gone. The Channel's More gains **Icon and
+color**, as the Breakout's has.
 
 **Why:** Share and Add people were two doors to one job, inviting someone in,
 and Share's dialog closed after each send. Folding the guest invite into the
@@ -344,7 +351,10 @@ together.
 
 **Consequences:** `useScopeInvitations` is the one client for a
 conversation's invitations; the share panel and the People level read one
-cache entry, so a cancel in either shows in both. The roster dialog
+cache entry, so a cancel in either shows in both. It keeps one retry id per
+batch, so a retried invite replays its own operation rather than making a
+second. A submission's adds run in order because each add returns the whole
+roster and the cache takes the last one to arrive. The roster dialog
 (`AddParticipantDialog`) is no longer reachable from the title menus.
 
 ### 2026-10-07 — The phone menu button shows when the sheet is open
