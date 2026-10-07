@@ -269,8 +269,8 @@ workspace.
 **What changed:** Settings → Organization → Usage is now two standard rows:
 Plan, with its picker, above Weekly quota, with the meter as its value. The
 Plan row is backed by `PUT /workspace/plan`. Owners and administrators can
-change the plan; other members see it locked. The meter, there and in the
-account menu, fills in the viewer's own accent instead of the brand colour. In
+change the plan; other members see it locked. The account menu's meter fills
+in the viewer's own accent; the Settings meter keeps the theme's colour. In
 that menu the meter moved from under the active Organization's row to a full
 row right under Settings, titled Quota.
 
