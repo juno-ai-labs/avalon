@@ -8,7 +8,8 @@ import { isComposingKeyEvent } from '../lib/ime';
  * Enter saves and Escape cancels; leaving the field also cancels, so only an
  * explicit Enter writes. The saved value shows at once while `onSave` runs and
  * falls back to `value` if it rejects; the caller owns the error message. A
- * blank or unchanged value saves nothing.
+ * blank or unchanged value saves nothing, and it cannot be edited again until
+ * the save settles.
  */
 export function InlineEditableText({
   ariaLabel,
@@ -59,7 +60,8 @@ export function InlineEditableText({
     );
   }
 
-  if (disabled) return <strong>{shown}</strong>;
+  // Locked while a save is in flight, so two saves never race to be last.
+  if (disabled || saving !== null) return <strong>{shown}</strong>;
 
   return (
     <strong
