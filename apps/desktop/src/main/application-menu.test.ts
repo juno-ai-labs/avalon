@@ -8,6 +8,7 @@ function actions() {
     openWebsite: vi.fn(),
     checkForUpdates: vi.fn(),
     installDownloadedUpdate: vi.fn(),
+    refreshOrganizationList: vi.fn(),
   };
 }
 
@@ -82,5 +83,23 @@ describe('application menu update lifecycle', () => {
     expect(template.filter((item) => item.label === 'File')).toHaveLength(1);
     expect(leadingItems.some((item) => item.role === 'close')).toBe(false);
     expect(template.some((item) => item.role === 'windowMenu')).toBe(true);
+  });
+
+  it('adds Refresh Organization List to View and keeps Electron\'s View items', () => {
+    const callbacks = actions();
+    const template = applicationMenuTemplate({
+      appName: 'Rally',
+      platform: 'darwin',
+      updateStatus: { kind: 'idle' },
+      actions: callbacks,
+    });
+    const view = template.find((item) => item.label === 'View')!;
+    const items = view.submenu as MenuItemConstructorOptions[];
+
+    expect(items[0]).toMatchObject({ label: 'Refresh Organization List', click: callbacks.refreshOrganizationList });
+    expect(items.slice(1).map((item) => item.role ?? item.type)).toEqual([
+      'separator', 'reload', 'forceReload', 'toggleDevTools', 'separator',
+      'resetZoom', 'zoomIn', 'zoomOut', 'separator', 'togglefullscreen',
+    ]);
   });
 });
