@@ -12,6 +12,7 @@ import {
 
 const api = vi.hoisted(() => ({
   beginGoogleLogin: vi.fn(),
+  observeSignupView: vi.fn(),
 }));
 const telemetry = vi.hoisted(() => ({
   operationId: '00000000-0000-7000-8000-000000000011',
@@ -75,6 +76,7 @@ const invitation: PendingWorkspaceInvitation = {
 describe('identity-first onboarding screens', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    api.observeSignupView.mockResolvedValue(undefined);
     sessionState.region = 'global';
     sessionState.workspaceName = '';
     api.beginGoogleLogin.mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
@@ -89,7 +91,10 @@ describe('identity-first onboarding screens', () => {
 
   it('uses one global identity entry and does not ask for a login region', async () => {
     sessionState.region = 'enterprise';
-    render(<SignInScreen />);
+    const view = render(<SignInScreen />);
+    await waitFor(() => expect(api.observeSignupView).toHaveBeenCalledWith(telemetry.operationId));
+    view.rerender(<SignInScreen />);
+    expect(api.observeSignupView).toHaveBeenCalledTimes(1);
 
     expect(screen.queryByRole('radio')).not.toBeInTheDocument();
     await waitFor(() => expect(sessionState.selectRegion).toHaveBeenCalledWith('global'));
@@ -98,7 +103,7 @@ describe('identity-first onboarding screens', () => {
     await waitFor(() => expect(api.beginGoogleLogin).toHaveBeenCalledWith(
       'global',
       'rallywithai://auth/complete',
-      { authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) } },
+      { authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) }, signupFlowId: telemetry.operationId },
     ));
   });
 

@@ -386,11 +386,29 @@ iPhone because it has no Space dashboard or Sidekick screen.
 The desktop main process adapts these HTTPS links with `workstreamHttpsDeepLink`, then
 uses existing scheme navigation. The iPhone opens the Channel and Breakout paths
 into the native client. Legacy origins and other path families remain
-in the browser. The site must deploy first; `scripts/check-apple-app-association.mjs`
-checks both hosts after site deployment and before desktop release. Push clicks
+in the browser. The site must deploy before a desktop release that relies on a
+new path. Push clicks
 use the same adapter with notification attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-10-07 — Deploys no longer re-check live link readers
+
+**What changed:** The API deploy no longer probes the live handoff page and
+update manifest before it ships, and the site deploy and desktop release no
+longer compare the live Apple association file to a hardcoded copy. The
+`rally-workspace-handoff-version` line is gone from `latest-mac.yml`.
+
+**Why:** Each check compared a live copy of a file this repository owns to a
+second copy pinned in the check, so it proved nothing a deploy had not already
+done. The handoff probe matched button copy; when #1144 reworded the button,
+every API deploy stopped there while the page itself was correct. The rollout
+order these gates enforced was needed once, for the move to addressed links,
+and every reader has shipped since.
+
+**What to respect:** A change that needs the site or desktop to ship before the
+API states that order in its pull request. Do not add a gate that pins a copy of
+a checked-in file or page text.
 
 ### 2026-10-07 — A copied link opens in the web app too
 
