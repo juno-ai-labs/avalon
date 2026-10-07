@@ -468,7 +468,7 @@ const browserBridge: RallyDesktopBridge = {
   // Rally access runs through the Mac app's main process or the browser
   // app's cookie routes; this development stand-in offers none.
   async listSupportWorkspaces() {
-    return [];
+    return null;
   },
   async listSupportPeople() {
     return [];

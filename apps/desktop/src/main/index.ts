@@ -121,6 +121,7 @@ import {
 import { accountReconnectRequiredFailure } from '../common/workspace-activation-error';
 import {
   definitivelyInvalidatesStoredCredential,
+  RallyApiResponseError,
   readJsonBody,
   refreshFailureIsTerminal,
   responseError,
@@ -2735,8 +2736,14 @@ async function supportIdentityGet<T>(path: string, schema: { safeParse: (value: 
   return parsed.data;
 }
 
-async function listSupportWorkspaces(): Promise<SupportWorkspace[]> {
-  return (await supportIdentityGet('/auth/support/workspaces', SupportWorkspacesSchema)).workspaces;
+/** `null` when the account is not Rally staff, which is final; anything else throws so it is retried. */
+async function listSupportWorkspaces(): Promise<SupportWorkspace[] | null> {
+  try {
+    return (await supportIdentityGet('/auth/support/workspaces', SupportWorkspacesSchema)).workspaces;
+  } catch (error) {
+    if (error instanceof RallyApiResponseError && error.code === 'support_access_staff_required') return null;
+    throw error;
+  }
 }
 
 async function listSupportPeople(input: unknown): Promise<SupportPerson[]> {

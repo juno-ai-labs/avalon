@@ -46,6 +46,7 @@ export function supportSessionLiveSql(alias: string): string {
       WHERE grant_row.workspace_id = ${alias}.workspace_id AND grant_row.expires_at > ?)
     AND EXISTS (SELECT 1 FROM workspace_members staff
       WHERE staff.workspace_id = ? AND staff.user_id = ${alias}.impersonator_user_id
+        AND staff.incarnation = ${alias}.impersonator_incarnation
         AND staff.status = 'active' AND staff.access_class = 'member')`;
 }
 
@@ -105,6 +106,10 @@ export class SupportAccessService {
     }
     const at = nowIso();
     const expiresAt = new Date(Date.parse(at) + SUPPORT_ACCESS_GRANT_MS).toISOString();
+    // Recorded before the grant exists, so access can never be live without a
+    // record of who gave it. A grant that then fails to write leaves a record
+    // of an attempt, which is the safe direction to be wrong in.
+    await this.audit(workspaceId, "support_access.granted", "workspace", workspaceId, { expiresAt });
     await this.env.DB.prepare(
       `INSERT INTO support_access_grants (workspace_id, granted_by_user_id, granted_at, expires_at)
        VALUES (?, ?, ?, ?)
@@ -113,7 +118,6 @@ export class SupportAccessService {
          granted_at = excluded.granted_at,
          expires_at = excluded.expires_at`,
     ).bind(workspaceId, this.auth.userId, at, expiresAt).run();
-    await this.audit(workspaceId, "support_access.granted", "workspace", workspaceId, { expiresAt });
     return { available: true, expiresAt };
   }
 
@@ -166,13 +170,16 @@ export class SupportAccessService {
   async start(input: { workspaceId: string; userId: string }): Promise<{ session: Session; sessionId: string }> {
     const operator = await this.requireStaff();
     await this.requireGrant(input.workspaceId);
-    const { session, sessionId } = await new AuthService(this.env).createSupportSession({
+    // Recorded before the session exists, for the same reason as a grant.
+    const sessionId = newId();
+    await this.audit(input.workspaceId, "support_session.started", "user", input.userId, { sessionId }, operator);
+    const session = await new AuthService(this.env).createSupportSession({
+      sessionId,
       operatorUserId: operator,
       representedUserId: input.userId,
       workspaceId: input.workspaceId,
       staffWorkspaceId: supportOrganizationId(this.env),
     });
-    await this.audit(input.workspaceId, "support_session.started", "user", input.userId, { sessionId }, operator);
     return { session, sessionId };
   }
 
