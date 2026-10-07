@@ -1443,6 +1443,50 @@ describe('socket-first channel open', () => {
     expect(client.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.participants).toEqual([katherine]);
   });
 
+  it('lands in the Channel’s Space after leaving a personal room whose socket closed first', async () => {
+    const adam = {
+      id: '00000000-0000-7000-8000-000000000651',
+      name: 'Adam',
+      email: 'adam@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    const katherine = {
+      id: '00000000-0000-7000-8000-000000000652',
+      name: 'Katherine',
+      email: 'katherine@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    session.current = {
+      user: { id: adam.id, name: adam.name, email: adam.email },
+      workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: 'member' },
+    };
+    const detail = recoveryBoot({ participants: [adam, katherine], scope: 'personal' });
+    api.getWorkspaceMembers.mockResolvedValue([adam, katherine]);
+    // The server closes the reader's socket before it answers the DELETE, and
+    // that close evicts the cached detail.
+    const rendered: { client?: QueryClient } = {};
+    api.removeParticipant.mockImplementation(() => {
+      rendered.client?.removeQueries({ queryKey: ['workstream', workstreamId] });
+      return Promise.resolve(undefined);
+    });
+    rendered.client = renderScreen((queryClient) => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+      queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
+    });
+
+    await titleMenu('Channel menu: Recovered channel', ['Add people', 'Change']);
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam participant actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from main conversation' }));
+    await waitFor(() => expect(locationInTest?.pathname).toBe('/'));
+    expect(locationInTest?.state).toEqual({
+      skipWorkstreamIds: [workstreamId],
+      spaceId: '00000000-0000-7000-8000-000000000673',
+    });
+  });
+
   it('retries the authoritative socket after the first attempt fails', async () => {
     const retryOpening = vi.fn();
     retainedSocket.mockReturnValue({

@@ -10,10 +10,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { associativeWorkstreamsForSidebar } from '../lib/conversation-directory';
 import { patchCachedWorkstream, setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
   applyArchivedSpace,
-  associativeWorkstreamsForSidebar,
   searchChannelPlaces,
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,

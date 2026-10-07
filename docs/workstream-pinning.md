@@ -26,7 +26,8 @@ the different question of who a work stream is *for*.
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The flat-array cache key and the only typed write boundary for it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` derives the new pin positions before handing the list update to the cache boundary. |
 | `apps/desktop/src/renderer/screens/workstream-landing.tsx` | The Space-less root route: resolves to the most recent row, else the composer. |
-| `apps/desktop/src/renderer/lib/workstream-landing.ts` | Shared landing selection and `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` state it carries. |
+| `apps/desktop/src/renderer/lib/sidebar-channel-order.ts` | The order the sidebar draws a Space's Channels in (pins by position, then the reader's sort), and `firstSidebarChannelInSpace`, its top row, for the landing to agree with. The landing applies the same `associativeWorkstreamsForSidebar` rows from `conversation-directory.ts`. |
+| `apps/desktop/src/renderer/lib/workstream-landing.ts` | Shared landing selection and `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` and optional `spaceId` state it carries. |
 
 ### Pinning
 
@@ -449,6 +450,41 @@ Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
+
+### 2026-10-07 — Leaving a Channel lands on its Space's top sidebar row
+
+**What changed:** Leaving a Channel's Main now opens the row the sidebar draws
+first in that Space: its first pin, or else the first Channel under the
+reader's sort, opened the way that row opens (a Breakout when Main is not the
+reader's). A Space the leave emptied opens on starting a Channel there. The
+Space is the sidebar's filter when the Channel is in it, otherwise the
+Channel's first Space, and the destination carries `?space=` so the sidebar
+selects it and the landed row is the top row on screen. The sidebar's order moved into
+`sidebar-channel-order.ts` and the conversation directory's row rule into
+`conversation-directory.ts`, so the sidebar and the landing read one copy.
+
+**Why:** Leaving a personal Channel left the reader on "Channel could not be
+opened". The server closes the leaver's socket before it answers the DELETE,
+and that close evicts the cached detail; the leave handler read the scope from
+the cache in `onSuccess`, found nothing, and never left the route. It now
+snapshots the scope and Space in `onMutate`, before the request. The landing's
+old answer, the most recent Channel across the Organization, also dropped the
+reader out of the Space they were working in.
+
+**Considered and rejected:** Keeping the detail through the revocation.
+Evicting on revoke is the access boundary in `docs/access-revocation.md`, and
+the leave only needs two facts it already had. A recency-only pick inside the
+Space was the first cut; it disagreed with the sidebar whenever a pin or an
+A–Z sort put another row on top, which is what "first channel" means to the
+reader.
+
+**Consequences:** A Space landing waits for that Space's whole list, as the
+sidebar does, because its first pin can sit on a later page than a row that
+matches. Any new reader of "the top row" must call `firstSidebarChannelInSpace`
+rather than sort on its own. Leaving an Organization-wide Channel still stays
+put, since the reader keeps read access.
+
+Shipped in juno-ai-labs/avalon#1141.
 
 ### 2026-10-02 — All's Pinned section keeps an order of its own, and is always there
 
