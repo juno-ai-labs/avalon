@@ -3927,6 +3927,24 @@ describe('alphabetical channels inside a space', () => {
     await waitFor(() => expect(slots()).toEqual(['Alpha', 'Bravo']));
   });
 
+  it('leaves a dropped Channel\'s slot behind when the reader switches Space mid-pin', () => {
+    // The pin never answers, so the slot would stay open in Hiring.
+    renderSidebar({ onPinWorkstream: () => new Promise<boolean>(() => undefined), workstreams: [pinned(alpha, 0), bravo] });
+    const section = screen.getByRole('region', { name: 'Pinned' });
+    const transfer = channelTransfer();
+    const source = dragTarget(/Bravo/u);
+
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    fireEvent.dragOver(section, { dataTransfer: transfer });
+    fireEvent.drop(section, { dataTransfer: transfer });
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+    expect(document.querySelector('.pinned-drop-ghost')).toHaveTextContent('Bravo');
+
+    act(() => useUiStore.setState({ sidebarSpaceFilter: launch.id }));
+
+    expect(document.querySelector('.pinned-drop-ghost')).toBeNull();
+  });
+
   it('settles the empty Pinned drop zone when the Channel drag is cancelled', () => {
     renderSidebar({ workstreams: [alpha, bravo] });
     const transfer = channelTransfer('none');
