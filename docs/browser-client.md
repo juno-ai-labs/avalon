@@ -585,6 +585,8 @@ entry, so Back leaves Rally rather than returning to the empty list. A focus
 or a session change while it is open reselects it, as for a page loaded at
 its address, rather than reading the organization list.
 
+Shipped in #1142.
+
 ### 2026-10-06 — Create an organization from the browser
 
 **What changed:** The signed-in entry's empty state offers **Create an

@@ -1920,6 +1920,8 @@ the unique index still decides a race between them. A change to how General is
 made has to hold for both. The Node D1 shim's `run` now returns a statement's
 rows, as D1's does, so a read inside a batch is tested as it runs.
 
+Shipped in #1142.
+
 ### 2026-10-06 — Every Space is Organization-wide and grants no reader
 
 **What changed:** A Space can only be Organization-wide: the create and
