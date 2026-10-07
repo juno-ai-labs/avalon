@@ -38,7 +38,7 @@ import { parseTerminalRegionConfiguration } from "../services/terminal/contract"
 import { createTerminalProviderRpcClient } from "../services/terminal/provider-rpc-client";
 import { TerminalSettingsService } from "../services/terminal/settings";
 import { issueWorkspaceSocketTicket } from "../services/socket-service";
-import { OrganizationUsageSchema } from "@rally/contracts/usage";
+import { OrganizationUsageSchema, WorkspacePlanChangeSchema } from "@rally/contracts/usage";
 import { readOrganizationUsage } from "../services/usage-metering";
 import { ApiError } from "../lib/api-error";
 
@@ -105,6 +105,12 @@ workspaceRoutes.get("/usage", async (c) => {
   if (!usage) throw new ApiError(404, "workspace_not_found", "Workspace not found");
   return c.json(OrganizationUsageSchema.parse(usage));
 });
+// An administrator choosing the Organization's plan. Answers with the meter as
+// it reads under the new plan, so the picker repaints without a second read.
+workspaceRoutes.put("/plan", zValidator("json", WorkspacePlanChangeSchema), async (c) =>
+  c.json(OrganizationUsageSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).setPlan(c.req.valid("json").plan))),
+);
 workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), async (c) =>
   c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).updateWorkspace(c.req.valid("json")))),
 );
