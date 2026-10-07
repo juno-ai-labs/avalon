@@ -141,6 +141,7 @@ export function renderLayout({ site, page, html, headings, assets }: LayoutInput
     `<link rel="canonical" href="${canonical}">`,
     `<link rel="alternate" type="text/markdown" href="${page.markdownUrl}">`,
     '<link rel="help" type="text/plain" href="/help/llms.txt">',
+    '<link rel="icon" href="/favicon.svg" type="image/svg+xml">',
     '<link rel="icon" href="/favicon.png" type="image/png">',
     '<link rel="apple-touch-icon" href="/apple-touch-icon.png">',
     `<meta property="og:title" content="${escapeHtml(title)}">`,
