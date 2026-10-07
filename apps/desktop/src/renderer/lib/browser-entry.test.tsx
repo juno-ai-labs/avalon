@@ -383,7 +383,7 @@ it('waits for the organization list before saying nothing has been shared', asyn
   expect(await screen.findByText('Loading your organizations…')).toBeInTheDocument();
   expect(screen.queryByText(/is not part of an organization/u)).toBeNull();
   await act(async () => { finish!(Response.json({ workspaces: [] })); });
-  expect(await screen.findByText('guest@example.test is not part of an organization yet.')).toBeInTheDocument();
+  expect(await screen.findByText('guest@example.test is not part of an organization, and nothing has been shared with it yet.')).toBeInTheDocument();
 });
 
 it('starts Google sign-in for the page it was opened on and explains a declined one on return', async () => {
@@ -521,7 +521,7 @@ it('creates an organization from the empty shared-work screen through the cookie
   }));
   const view = render(<BrowserEntry />);
   try {
-    await screen.findByText('guest@example.test is not part of an organization yet.');
+    await screen.findByText('guest@example.test is not part of an organization, and nothing has been shared with it yet.');
     fireEvent.click(screen.getByRole('button', { name: 'Create an organization' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: ' Acme Research ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
@@ -574,7 +574,7 @@ it('drops the organization form when another account signs in elsewhere', async 
     await screen.findByRole('textbox', { name: 'Organization name' });
     current = { ...user, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', email: 'other@example.test' };
     await act(async () => { channel.postMessage('session-changed'); });
-    await screen.findByText('other@example.test is not part of an organization yet.');
+    await screen.findByText('other@example.test is not part of an organization, and nothing has been shared with it yet.');
     expect(screen.queryByRole('textbox', { name: 'Organization name' })).not.toBeInTheDocument();
   } finally { view.unmount(); channel.close(); }
 });
