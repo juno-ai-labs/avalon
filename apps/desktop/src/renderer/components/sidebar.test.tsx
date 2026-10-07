@@ -4288,12 +4288,17 @@ describe('the sidebar Space filter', () => {
       function CurrentRoute(): React.JSX.Element {
         return <output aria-label="Current route">{useLocation().pathname}</output>;
       }
+      function Elsewhere(): React.JSX.Element {
+        const navigate = useNavigate();
+        return <button onClick={() => void navigate(`/workstreams/${delta.id}`)} type="button">Search result</button>;
+      }
       render(
         <MemoryRouter initialEntries={[path]}>
           <Tooltip.Provider>
             <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[home, hiring, launch, empty]}
               workspace={workspace} workstreams={[alpha, bravo, charlie, delta]} />
             <CurrentRoute />
+            <Elsewhere />
           </Tooltip.Provider>
         </MemoryRouter>,
       );
@@ -4308,6 +4313,21 @@ describe('the sidebar Space filter', () => {
       expect(channelTitles()).toEqual(['Charlie', 'Delta']);
       await waitFor(() => expect(route()).toBe(`/workstreams/${charlie.id}`));
       expect(pill('Launch')).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('keeps the phone sheet open while it opens that Space\'s first Channel', async () => {
+      renderOpen(alpha.id);
+      const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      selectSpace('Launch');
+      await waitFor(() => expect(route()).toBe(`/workstreams/${charlie.id}`));
+      expect(navigation).toHaveClass('is-mobile-open');
+
+      // The pill's pass is spent: the next route change closes the sheet,
+      // even one from outside it.
+      fireEvent.click(screen.getByRole('button', { name: 'Search result' }));
+      expect(navigation).not.toHaveClass('is-mobile-open');
     });
 
     it('starts a Channel in that Space when it holds none', async () => {
