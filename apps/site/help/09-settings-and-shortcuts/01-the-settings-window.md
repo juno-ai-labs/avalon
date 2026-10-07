@@ -47,7 +47,7 @@ Rally on this Mac.
 | **Digest** | When Rally writes you a summary and where it sends it. | [The digest](../08-rally-everywhere/05-the-digest.md) |
 | **Notifications** | Whether this Mac tells you about mentions and additions. | [Notifications](../08-rally-everywhere/04-notifications.md) |
 | **Organization** | The Organization's name, its default time zone, its members and invitations. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
-| **Internet access** | Where code Rally runs is allowed to connect. Sits indented under **Organization**. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
+| **Security** | Where code Rally runs is allowed to connect. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
 | **Connections** | Every tool you or your Organization have connected, and the ones you could add. | [Settings → Connections](../05-connecting-your-tools/01-connections.md) |
 | **GitHub** | Which repositories Rally may touch. Indented under **Connections**. | [GitHub](../05-connecting-your-tools/04-github.md) |
 | **MCP tools** | The tools offered by a custom MCP server. Indented under **Connections**. | [Custom MCP server](../05-connecting-your-tools/14-custom-mcp-server.md) |

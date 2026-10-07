@@ -140,10 +140,13 @@ taken out of a private Channel or a guest's share is revoked (see
 
 The open window stops updating and does not try to reconnect. Rally deletes the
 copy of that Channel, and every Breakout under it, that it kept on the computer.
-The person sees **Channel could not be opened** (or **Sidekick could not be
-opened**) with a **Try again** button, which will keep failing, because the
-access is gone rather than the connection. The Channel's row leaves their
-sidebar shortly afterwards.
+A member sees the Channel's name with a **Request access** button, which emails
+whoever created it (see
+[Who can see what](../03-spaces-and-breakouts/04-who-can-see-what.md)). A guest
+sees **Channel could not be opened** (or **Sidekick could not be opened**) with
+a **Try again** button, which will keep failing, because the access is gone
+rather than the connection. The Channel's row leaves their sidebar shortly
+afterwards.
 
 ## Signing out is different
 

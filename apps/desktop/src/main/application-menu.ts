@@ -6,6 +6,7 @@ export interface ApplicationMenuActions {
   readonly openWebsite: () => void;
   readonly checkForUpdates: () => void;
   readonly installDownloadedUpdate: () => void;
+  readonly refreshOrganizationList: () => void;
 }
 
 export interface ApplicationMenuOptions {
@@ -81,7 +82,27 @@ export function applicationMenuTemplate(
     leadingMenu,
     ...(options.platform === 'darwin' ? [fileMenu] : []),
     { role: 'editMenu' },
-    { role: 'viewMenu' },
+    {
+      // Electron's own View items, spelled out because a `viewMenu` role with
+      // a submenu replaces them rather than adding to them. macOS adds its own
+      // full-screen item (Fn-F) to any menu titled View, so Electron's
+      // would be a second one there.
+      label: 'View',
+      submenu: [
+        { label: 'Refresh Organization List', click: options.actions.refreshOrganizationList },
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        ...(options.platform === 'darwin'
+          ? []
+          : [{ type: 'separator' }, { role: 'togglefullscreen' }] satisfies MenuItemConstructorOptions[]),
+      ],
+    },
     { role: 'windowMenu' },
     {
       role: 'help',

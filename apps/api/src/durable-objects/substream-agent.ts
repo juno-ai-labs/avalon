@@ -157,6 +157,7 @@ import {
 } from "../services/workstream-batch-update";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import type { WorkstreamRuntimeResourceAttacher } from "../services/workstream-object-client";
+import { recordSupportAction } from "../services/support-access";
 import {
   acceptsNewWorkstreamWork,
   permitsLegacyRuntimeDrain,
@@ -318,6 +319,12 @@ const SocketAttachmentSchema = z.object({
   // admitted role instead of paying for a second D1 session lookup.
   role: z.enum(["owner", "admin", "member"]).nullable().optional(),
   analyticsWorkspaceId: z.string().nullable().optional(),
+  /**
+   * The Rally staff member behind a support session (`docs/impersonation.md`):
+   * such a socket is never shown as present, never settles the person's
+   * unseen or read state, and audits the commands it sends.
+   */
+  impersonatorUserId: UserIdSchema.optional(),
   connectedAt: z.string().datetime({ offset: true }),
   afterSequence: z.number().int().nonnegative(),
   subscribed: z.boolean().default(false),
@@ -382,6 +389,7 @@ const SocketUpgradeIdentitySchema = z.object({
   role: z.enum(["owner", "admin", "member"]).nullable().optional(),
   analyticsWorkspaceId: z.string().optional(),
   membershipVersion: z.coerce.number().int().nonnegative().optional(),
+  impersonatorUserId: UserIdSchema.optional(),
 });
 
 type SocketUpgradeIdentity = z.infer<typeof SocketUpgradeIdentitySchema>;
@@ -539,6 +547,7 @@ interface AuthRoleRow {
   role: AuthContext["role"];
   analytics_workspace_id?: string | null;
   session_expires_at?: string;
+  impersonator_user_id?: string | null;
 }
 
 const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstreamId: WorkstreamIdSchema });
@@ -6144,6 +6153,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return;
     }
 
+    // Everything from here on writes. A support session's commands are
+    // audited in the background, never ahead of the command itself.
+    if (attachment.impersonatorUserId && attachment.sessionId) {
+      this.state.waitUntil(recordSupportAction(this.env, {
+        workspaceId: attachment.workspaceId,
+        impersonatorUserId: attachment.impersonatorUserId,
+        representedUserId: attachment.userId,
+        sessionId: attachment.sessionId,
+        action: "support_session.socket_command",
+        workstreamId: attachment.workstreamId,
+        metadata: { command: parsed.data.type, substreamId: attachment.substreamId },
+      }));
+    }
+
     if (parsed.data.type === "create_message") {
       await this.createSocketMessage(socket, attachment, parsed.data, requestReceivedAt);
       return;
@@ -6499,6 +6522,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           region: this.env.AVALON_REGION,
           role: attachment.role,
           analyticsWorkspaceId: attachment.analyticsWorkspaceId ?? null,
+          ...(attachment.impersonatorUserId ? { impersonatorUserId: attachment.impersonatorUserId } : {}),
         };
         span.setAttributes(identityAttributes({
           analyticsWorkspaceId: auth.analyticsWorkspaceId,
@@ -6905,7 +6929,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // `users` from a Durable Object, and no diagnostic is worth widening
         // what a socket's authorization depends on.
         `SELECT member.role, workspace.analytics_workspace_id,
-                session.expires_at AS session_expires_at
+                session.expires_at AS session_expires_at, session.impersonator_user_id
            FROM sessions session
            JOIN workspace_members member
              ON member.workspace_id = session.workspace_id
@@ -6937,6 +6961,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         region: this.env.AVALON_REGION,
         role: role.role,
         analyticsWorkspaceId: role.analytics_workspace_id ?? null,
+        ...(role.impersonator_user_id ? { impersonatorUserId: asUserId(role.impersonator_user_id) } : {}),
       },
       sessionExpiresAt,
     };
@@ -7528,6 +7553,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           request.headers,
           RALLY_HEADERS.SOCKET_ADMISSION_MEMBERSHIP_VERSION,
         ),
+        impersonatorUserId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_IMPERSONATOR_ID),
       });
 
     if (!identity.success) return jsonResponse({ error: "invalid_socket_identity" }, 400);
@@ -7639,6 +7665,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       sessionId: identity.data.sessionId,
       role: auth.role,
       analyticsWorkspaceId: auth.analyticsWorkspaceId ?? null,
+      ...((identity.data.impersonatorUserId ?? auth.impersonatorUserId)
+        ? { impersonatorUserId: identity.data.impersonatorUserId ?? auth.impersonatorUserId } : {}),
       connectedAt: new Date().toISOString(),
       afterSequence: identity.data.afterSequence ?? 0,
       subscribed: false,
@@ -8331,6 +8359,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           region: this.env.AVALON_REGION,
           role: attachment.role,
           analyticsWorkspaceId: attachment.analyticsWorkspaceId ?? null,
+          ...(attachment.impersonatorUserId ? { impersonatorUserId: attachment.impersonatorUserId } : {}),
         }
       // A socket hibernated by the previous deployment has no admitted role
       // in its attachment. Preserve it through the rolling deploy by taking
@@ -8352,6 +8381,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           attachment
           && attachment.subscribed
           && attachment.publishPresence
+          // Staff on a support session are not the person being present.
+          && !attachment.impersonatorUserId
           && attachment.workspaceId === workspaceId
           && attachment.workstreamId === workstreamId
         )

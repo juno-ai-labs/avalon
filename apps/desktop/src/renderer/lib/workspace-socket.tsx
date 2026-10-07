@@ -9,6 +9,7 @@ import {
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
   WorkspaceReachChangedEventSchema,
+  WorkspaceAccessRequestsEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceChannelRailsEventSchema,
   WorkspaceSpaceChannelsEventSchema,
@@ -68,6 +69,7 @@ import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from '
 import type { WorkstreamSummary } from './types';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { memberPreferencesQueryKey } from './use-member-preferences';
+import { accessRequestsQueryKey } from './access-requests';
 import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
 import {
   applyVersionedWorkstreamState,
@@ -981,6 +983,9 @@ export function WorkspaceSocketProvider({
               subscribed = true;
               sendPresence();
             }
+            if (sync.data.accessRequests) {
+              queryClient.setQueryData(accessRequestsQueryKey(workspaceId), sync.data.accessRequests);
+            }
             if (sync.data.viewerPreferences) {
               // Cancelled first: a REST read started before this answer holds
               // older data and would otherwise land on top of it, fresh forever.
@@ -1199,6 +1204,11 @@ export function WorkspaceSocketProvider({
             void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
             return;
           }
+          const accessRequests = safeParseSocketEvent(WorkspaceAccessRequestsEventSchema, decoded);
+          if (accessRequests.success) {
+            queryClient.setQueryData(accessRequestsQueryKey(workspaceId), accessRequests.data.requests);
+            return;
+          }
           const reachChanged = safeParseSocketEvent(WorkspaceReachChangedEventSchema, decoded);
           if (reachChanged.success) {
             // This person joined or left a Channel or Breakout. A member's
@@ -1269,6 +1279,7 @@ export function WorkspaceSocketProvider({
               ['workspace_space_snapshot', 'space snapshot', spaceSnapshot],
               ['space_conversations_changed', 'space conversations nudge', spaceConversations],
               ['workspace_reach_changed', 'reach change', reachChanged],
+              ['workspace_access_requests', 'access requests', accessRequests],
             ],
           );
         });

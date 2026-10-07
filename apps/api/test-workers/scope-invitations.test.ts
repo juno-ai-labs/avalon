@@ -83,8 +83,8 @@ beforeEach(async () => {
     env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, analytics_person_id TEXT, name TEXT, email TEXT)"),
     env.DB.prepare("INSERT INTO users (id, name) VALUES (?, 'Adam Owner'), (?, NULL)").bind(actorId, recipientId),
     env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT,
-      region TEXT, workspace_incarnation TEXT, revoked_at TEXT, expires_at TEXT)`),
-    env.DB.prepare("INSERT INTO sessions VALUES ('actor-session', ?, ?, 'global', 'actor-membership', NULL, '2099-01-01T00:00:00.000Z')").bind(actorId, workspaceId),
+      region TEXT, workspace_incarnation TEXT, revoked_at TEXT, expires_at TEXT, impersonator_user_id TEXT)`),
+    env.DB.prepare("INSERT INTO sessions VALUES ('actor-session', ?, ?, 'global', 'actor-membership', NULL, '2099-01-01T00:00:00.000Z', NULL)").bind(actorId, workspaceId),
     ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare("INSERT INTO user_verified_emails VALUES ('guest@example.test',?)").bind(recipientId),
   ]);
@@ -118,7 +118,7 @@ async function prepareBrowserSignIn() {
   await env.DB.batch([
     ...["slug TEXT", "timezone TEXT", "created_at TEXT"].map((column) =>
       env.DB.prepare(`ALTER TABLE workspaces ADD COLUMN ${column}`)),
-    ...["avatar_url TEXT", "timezone TEXT DEFAULT 'UTC'", "created_at TEXT", "updated_at TEXT", "platform_user_id TEXT", "onboarding_eligible INTEGER"].map((column) =>
+    ...["avatar_url TEXT", "timezone TEXT DEFAULT 'UTC'", "created_at TEXT", "updated_at TEXT", "platform_user_id TEXT", "onboarding_eligible INTEGER", "signup_flow_id TEXT", "signup_client_platform TEXT", "signup_path TEXT", "signup_completed_at TEXT", "onboarding_introduced INTEGER DEFAULT 0"].map((column) =>
       env.DB.prepare(`ALTER TABLE users ADD COLUMN ${column}`)),
     ...["refresh_token_hash TEXT", "created_at TEXT"].map((column) =>
       env.DB.prepare(`ALTER TABLE sessions ADD COLUMN ${column}`)),
@@ -133,7 +133,7 @@ async function prepareBrowserSignIn() {
       id TEXT PRIMARY KEY,email TEXT NOT NULL,magic_hash TEXT NOT NULL,otp_hash TEXT NOT NULL,
       expires_at INTEGER NOT NULL,max_failed_attempts INTEGER,failed_attempts INTEGER NOT NULL DEFAULT 0,
       delivery_payload_encrypted TEXT NOT NULL,delivery_sent_at INTEGER,created_at INTEGER NOT NULL,
-      redeemed_at INTEGER,redemption_id TEXT,user_id TEXT,session_id TEXT UNIQUE,session_secret_encrypted TEXT)`),
+      redeemed_at INTEGER,redemption_id TEXT,user_id TEXT,session_id TEXT UNIQUE,session_secret_encrypted TEXT,telemetry_flow_id TEXT,telemetry_client_platform TEXT,signup_created INTEGER DEFAULT 0)`),
     env.DB.prepare("CREATE TABLE browser_sessions(session_id TEXT PRIMARY KEY,credential_hash TEXT UNIQUE)"),
     env.DB.prepare("CREATE TABLE browser_workspace_sessions(browser_session_id TEXT,workspace_id TEXT,session_id TEXT UNIQUE,PRIMARY KEY(browser_session_id,workspace_id))"),
   ]);

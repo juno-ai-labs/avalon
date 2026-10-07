@@ -1,8 +1,11 @@
+import { UuidV7Schema } from '@rally/contracts/telemetry';
+import { observeSignup, observeSignupProgress } from '../telemetry/signup';
 import { authBodyLimit } from "../middleware/auth-body-limit";
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { z } from "zod";
-import { WorkspaceIdSchema } from "@rally/contracts";
+import { StartSupportSessionRequestSchema, SupportPeopleSchema, SupportWorkspacesSchema, WorkspaceIdSchema } from "@rally/contracts";
+import { SupportAccessService } from "../services/support-access";
 import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
 import type { Env, HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -76,13 +79,17 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     await next();
     c.header("Cache-Control","no-store");
   });
+  routes.post('/signup/view', authBodyLimit, zValidator('json', z.strictObject({ flowId: UuidV7Schema })), (c) => {
+    observeSignup(c.env, { flowId: c.req.valid('json').flowId, clientPlatform: 'browser' }, 'signup_viewed', 'unknown');
+    return c.body(null, 204);
+  });
   routes.post("/email/start",authBodyLimit,zValidator("json",EmailLoginStartSchema),async (c) => {
     const started = await startEmailLogin(c.env,c.req.valid("json"));
     await deliverEmailLogin(c.env,started.challengeId);
     return c.json(EmailLoginStartedSchema.parse(started),202);
   });
   routes.post("/google/start",authBodyLimit,zValidator("json",BrowserGoogleStartSchema),async (c) => {
-    const { url,state } = await new AuthService(c.env).beginBrowserIdentity({ returnPath:c.req.valid("json").returnPath });
+    const { url,state } = await new AuthService(c.env).beginBrowserIdentity(c.req.valid("json"));
     const binding = googleStateCookie(c.env,state);
     setCookie(c,binding.name,state,binding.attributes);
     return c.json(BrowserGoogleStartedSchema.parse({ url }));
@@ -127,8 +134,8 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
   });
   routes.get("/email/redeem",(c) => { c.header("Allow","POST");return c.body(null,405); });
   routes.post("/email/redeem",authBodyLimit,zValidator("json",EmailLoginRedeemSchema),async (c) => {
-    const receipt = await redeemEmailLogin(c.env,c.req.valid("json"));
-    const session = await new AuthService(c.env).resumeEmailLogin(receipt);
+    const receipt = await redeemEmailLogin(c.env,c.req.valid("json"), 'browser');
+    const session = await new AuthService(c.env).resumeEmailLogin(receipt, 'browser');
     const service = new BrowserSessionService(c.env);
     const cookie = await service.register(session);
     writeCookie(c,cookie.credential,cookie.expiresAt);
@@ -175,7 +182,9 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     if (c.env.AVALON_REGION !== IDENTITY_REGION) throw new ApiError(409,"global_identity_required","Open this organization through Rally's identity deployment");
     if (region === c.env.AVALON_REGION) throw new ApiError(400,"browser_workspace_local","Select a workspace in this deployment directly");
     const auth = await new BrowserSessionService(c.env).read(credential(c));
+    observeSignupProgress(c.env, auth.userId, 'signup_organization_requested', 'existing_organization', 'browser');
     const registration = await new PlatformOnboardingService(c.env,auth).activateBrowser(region,workspaceId);
+    observeSignupProgress(c.env, auth.userId, 'signup_organization_ready', 'existing_organization', 'browser');
     const target = cookieOptions(c.env,region);
     setCookie(c,target.name,registration.credential,{ ...target.attributes,expires:new Date(registration.expiresAt) });
     return c.body(null,204);
@@ -192,10 +201,12 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     const region = c.env.AVALON_REGION;
     if (region !== IDENTITY_REGION) throw new ApiError(409,"global_identity_required","Create an organization through Rally's identity deployment");
     const auth = await new BrowserSessionService(c.env).read(credential(c));
+    observeSignupProgress(c.env, auth.userId, 'signup_organization_requested', 'new_organization', 'browser');
     const telemetryId = telemetryOperationId(operationId);
     try {
       const session = await new PlatformOnboardingService(c.env,auth).createWorkspace(name,region,c.req.raw.cf,operationId);
       await new AuthService(c.env).logout({ sessionId:(await verifyAccessToken(c.env,session.accessToken)).sessionId });
+      observeSignupProgress(c.env, auth.userId, 'signup_organization_ready', 'new_organization', 'browser');
       deferOnboardingOutcome(c,auth,session,"workspace_create_completed",region,telemetryId,"success");
       return c.json(BrowserWorkspaceCreatedSchema.parse({ region,workspaceId:session.workspace?.id }),201);
     } catch (error) {
@@ -203,8 +214,32 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
       throw error;
     }
   });
-  routes.post("/workspace/select",zValidator("json",z.strictObject({ workspaceId:WorkspaceIdSchema })),async (c) =>
-    c.json(BrowserSessionSchema.parse(await new BrowserSessionService(c.env).select(credential(c),c.req.valid("json").workspaceId))));
+  routes.post("/workspace/select",zValidator("json",z.strictObject({ workspaceId:WorkspaceIdSchema })),async (c) => {
+    const service = new BrowserSessionService(c.env);
+    const auth = await service.read(credential(c));
+    observeSignupProgress(c.env, auth.userId, 'signup_organization_requested', 'existing_organization', 'browser');
+    const session = BrowserSessionSchema.parse(await service.select(credential(c),c.req.valid("json").workspaceId));
+    observeSignupProgress(c.env, session.user.id, 'signup_organization_ready', 'existing_organization', 'browser');
+    return c.json(BrowserSessionSchema.parse(session));
+  });
+
+  // Rally staff acting in an Organization that granted Rally access
+  // (`docs/impersonation.md`): the same service the Mac app reaches through
+  // `/auth/support`, authorized by this browser's identity session.
+  routes.get("/support/workspaces",async (c) => {
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    return c.json(SupportWorkspacesSchema.parse(await new SupportAccessService(c.env,auth).workspaces()));
+  });
+  routes.get("/support/workspaces/:workspaceId/people",zValidator("param",z.object({ workspaceId:WorkspaceIdSchema })),async (c) => {
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    return c.json(SupportPeopleSchema.parse(await new SupportAccessService(c.env,auth).people(c.req.valid("param").workspaceId)));
+  });
+  routes.post("/support/session",authBodyLimit,zValidator("json",StartSupportSessionRequestSchema),async (c) =>
+    c.json(BrowserSessionSchema.parse(await new BrowserSessionService(c.env).selectSupport(credential(c),c.req.valid("json")))));
+  routes.post("/support/end",zValidator("json",z.strictObject({ workspaceId:WorkspaceIdSchema })),async (c) => {
+    await new BrowserSessionService(c.env).endSupport(credential(c),c.req.valid("json").workspaceId);
+    return c.body(null,204);
+  });
 
   routes.all("/api/:workspaceId/*",async (c) => {
     const workspace = c.req.param("workspaceId");

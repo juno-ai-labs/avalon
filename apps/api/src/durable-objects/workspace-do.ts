@@ -134,6 +134,12 @@ import {
   type UpdateOnboardingJourney,
 } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { WorkspaceAccessRequestsEventSchema } from "@rally/contracts";
+import {
+  AccessRequestRefSchema, AccessRequestSubjectRequestSchema, AccessRequestSubjectSchema, CONVERSATION_ACCESS_REQUESTS_MIGRATION,
+  ConversationAccessRequestStorage, conversationMark, RecordAccessRequestSchema, ResolveAccessRequestSchema,
+  type StoredAccessRequest,
+} from "./conversation-access-request-storage";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 import {
@@ -402,6 +408,7 @@ import {
   WorkspaceDirectoryDueRequestSchema,
   WorkspaceDirectoryListRequestSchema,
   WorkspaceDirectoryLookupRequestSchema,
+  WorkspaceLinkTitleRequestSchema,
   WorkspaceDirectoryLookupResultSchema,
   WorkspaceDirectoryRecentRequestSchema,
   WorkspaceDirectoryReadableIdsRequestSchema,
@@ -661,6 +668,8 @@ import {
   WorkspaceSpaceListRequestSchema,
   WorkspaceSpaceGeneralOpenResultSchema,
   WorkspaceSpaceGeneralRequestSchema,
+  WorkspaceGeneralOpeningSchema,
+  type WorkspaceGeneralOpening,
   WorkspaceSpaceMembershipMoveOutcomeSchema,
   WorkspaceSpaceMembershipMoveRequestSchema,
   WorkspaceSpaceMutationResultSchema,
@@ -1083,6 +1092,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   'search_authorization_push', 'search_authorization_keys', 'search_authorization_dependencies',
   "resource_search_versions",
   "onboarding_journeys",
+  "conversation_access_requests",
   "workstream_notification_intents",
   "workspace_socket_unheard", // The first-frame watch's ledger.
   // Converted to typed methods, so a generic statement naming one is a
@@ -1167,6 +1177,12 @@ const SocketIdentitySchema = z.object({
   sessionId: z.string().min(1).max(200),
   ticketId: z.string().uuid(),
   ticketExpiresAt: z.coerce.number().int().positive(),
+  /**
+   * The Rally staff member behind a support session (`docs/impersonation.md`),
+   * from the signed ticket. Such a socket never shows the person as present
+   * and never records them opening a Channel.
+   */
+  impersonatorUserId: UserIdSchema.optional(),
 });
 
 type SocketIdentity = z.infer<typeof SocketIdentitySchema>;
@@ -4169,6 +4185,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // Every Space is Organization-wide. A Space grants no reader to its
   // Channels, so no Channel changes; see docs/spaces.md#every-space-is-organization-wide.
   statements: SPACE_PUBLIC_ONLY_MIGRATION,
+}, {
+  version: 95,
+  description: "requests to join a Channel or Breakout, addressed to an approver",
+  statements: CONVERSATION_ACCESS_REQUESTS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4256,7 +4276,9 @@ function contributesPresence(
 } {
   return attachment?.subscribed === true
     && attachment.applicationState === "foreground"
-    && attachment.foregroundWorkstreamId !== null;
+    && attachment.foregroundWorkstreamId !== null
+    // Staff on a support session are not the person being present.
+    && !attachment.impersonatorUserId;
 }
 
 /**
@@ -6822,6 +6844,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // Somebody listed the Channel only through a Breakout opens that
     // Breakout, not Main, so Main is not theirs to wake.
     if (this.mainOpenable(viewerOf(attachment), workstreamId)) this.wakeMainConversation(workstreamId);
+    // A support session reads without becoming the person's recent history
+    // (`docs/impersonation.md`); the wake above is only about speed.
+    if (attachment.impersonatorUserId) return;
     this.state.storage.transactionSync(() => {
       this.state.storage.sql.exec(
         `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
@@ -7929,13 +7954,57 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().map((row) => row.workstream_id);
   }
 
-  /** Pin the workspace identity before any child object can be resolved. */
+  /**
+   * Pin the workspace identity before any child object can be resolved, and
+   * answer whether the Organization's Spaces are ready to draw. With
+   * `general` (whose D1 anchor the caller wrote), a new Organization's General
+   * is made and its cutover closed here. See docs/spaces.md#general.
+   */
   async initializeWorkspace(
     workspaceId: string,
     placementAffinity: WorkspacePlacementAffinity,
-  ): Promise<void> {
+    general?: WorkspaceGeneralOpening,
+  ): Promise<{ spacesReady: boolean }> {
     await this.initialized;
     this.ensureIdentity(workspaceId, placementAffinity);
+    // The identity above is the call's contract; the Spaces are best effort, as
+    // `openGeneralSpaceForNewWorkspace` is, so a failure there answers not
+    // ready and the caller's slower path (and the alarm behind it) takes over
+    // rather than failing an Organization whose rows are already committed.
+    try {
+      return { spacesReady: await this.openSpaces(workspaceId, general) };
+    } catch (error) {
+      logWarn(this.env, "space_general_open_failed", {
+        workspace_id: workspaceId,
+        reason: diagnosticErrorCode(error, "space_general_open_failed"),
+      });
+      return { spacesReady: false };
+    }
+  }
+
+  private async openSpaces(workspaceId: string, general: WorkspaceGeneralOpening | undefined): Promise<boolean> {
+    const storage = this.spaceStorage();
+    if (!storage.ready()) return false;
+    if (storage.bootstrapStatus().ready) return true;
+    if (storage.generalSpaceId() === null) {
+      if (general === undefined) return false;
+      const opening = parseRpcInput(WorkspaceGeneralOpeningSchema, general, "initialize_workspace_general");
+      const refusal = await this.spaceRefusalCode(workspaceId, opening.creatorUserId, "write");
+      const opened = refusal === null
+        ? await this.reserveGeneral(
+          { workspaceId, userId: opening.creatorUserId },
+          opening.spaceId,
+          opening.authorityGeneration,
+        )
+        : { ok: false as const, code: refusal };
+      if (!opened.ok) {
+        logWarn(this.env, "space_general_open_refused", { workspace_id: workspaceId, reason: opened.code });
+        return false;
+      }
+    }
+    if (storage.completeBootstrap() !== "complete") return false;
+    this.publishSpaceSnapshot();
+    return true;
   }
 
   /** Which room owns an automation, and which of its conversations is home, for a caller resolving participation. */
@@ -8759,7 +8828,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * `space_not_found`, the answer an identity the caller cannot use as a Space
    * always gets; a generation D1 cannot supply is `space_authority_unreachable`.
    */
-  private async spaceParentReservation(spaceId: string): Promise<
+  private async spaceParentReservation(spaceId: string, authorityGeneration?: number): Promise<
     | { ok: false; code: "space_not_found" | "space_authority_unreachable" }
     | { ok: true; reserve: (userId: string, space: SpaceSummary) => void }
   > {
@@ -8767,7 +8836,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       "SELECT parent_kind FROM parent_metadata WHERE parent_id = ?", spaceId,
     ).toArray()[0]?.parent_kind;
     if (known !== undefined && known !== "space") return { ok: false, code: "space_not_found" };
-    const authority = await readWorkstreamAuthorityControl(this.env);
+    const authority = authorityGeneration === undefined
+      ? await readWorkstreamAuthorityControl(this.env)
+      : { generation: authorityGeneration };
     if (authority.generation < 1) return { ok: false, code: "space_authority_unreachable" };
     const workspaceId = this.workspaceId();
     if (!workspaceId) throw new Error("workspace_identity_unknown");
@@ -8814,32 +8885,46 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (refusal) return { ok: false, code: refusal };
     const storage = this.spaceStorage();
     const existing = storage.generalSpaceId();
-    let general: { space: SpaceSummary; created: boolean };
     if (existing !== null) {
       const space = storage.readable(member(request.userId), existing);
       if (space === false) return { ok: false, code: "space_not_found" };
-      general = { space, created: false };
-    } else if (request.spaceId === undefined) {
-      return { ok: true, absent: true };
-    } else {
-      const spaceId = request.spaceId;
-      const parent = await this.spaceParentReservation(spaceId);
-      if (!parent.ok) return { ok: false, code: parent.code };
-      general = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
-        const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId);
-        if (ensured.created) parent.reserve(request.userId, ensured.space);
-        return ensured;
-      }));
-      if (!general.created && storage.readable(member(request.userId), general.space.id) === false) {
-        return { ok: false, code: "space_not_found" };
-      }
+      storage.noteGeneralSpace(space.id);
+      return WorkspaceSpaceGeneralOpenResultSchema.parse({ ok: true, space, created: false });
+    }
+    if (request.spaceId === undefined) return { ok: true, absent: true };
+    const general = await this.reserveGeneral(request, request.spaceId);
+    if (!general.ok) return general;
+    return WorkspaceSpaceGeneralOpenResultSchema.parse({ ok: true, space: general.space, created: general.created });
+  }
+
+  /**
+   * Write General and its hosted parent under `spaceId`, whose D1 anchor the
+   * caller has written, or answer with the General a concurrent caller made.
+   * The caller has passed `spaceRefusalCode`. `authorityGeneration` is the
+   * generation that anchor was written at, when the caller already read it.
+   */
+  private async reserveGeneral(
+    request: { workspaceId: string; userId: string },
+    spaceId: string,
+    authorityGeneration?: number,
+  ): Promise<{ ok: true; space: SpaceSummary; created: boolean } | { ok: false; code: SpaceErrorCode }> {
+    const storage = this.spaceStorage();
+    const parent = await this.spaceParentReservation(spaceId, authorityGeneration);
+    if (!parent.ok) return { ok: false, code: parent.code };
+    const general = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
+      const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId);
+      if (ensured.created) parent.reserve(request.userId, ensured.space);
+      return ensured;
+    }));
+    if (!general.created && storage.readable(member(request.userId), general.space.id) === false) {
+      return { ok: false, code: "space_not_found" };
     }
     storage.noteGeneralSpace(general.space.id);
     if (general.created) {
       this.publishSpaceSnapshot();
       await this.afterParentWrite();
     }
-    return WorkspaceSpaceGeneralOpenResultSchema.parse({ ok: true, space: general.space, created: general.created });
+    return { ok: true, ...general };
   }
 
   private static generalReservation(request: { workspaceId: string; userId: string }): WorkspaceSpaceReserveRequest {
@@ -11442,6 +11527,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       channelIds: [...commonChanges, ...breakoutChanges],
       viewerChannelIds: mergeViewerChanges(viewerChanges, breakoutViewerChanges),
     });
+    // An access request names its conversation as it is now, and leaves out
+    // one since archived; its approver's list moves with the conversation.
+    for (const approverUserId of this.accessRequestStorage().approversFor([...commonChanges, ...breakoutChanges])) {
+      this.publishAccessRequests(approverUserId);
+    }
     // A Channel row carries its live Breakout total. A child projection does
     // not advance the parent's directory waterline, so republish the parent
     // row; the receiver may accept this aggregate from a duplicate version.
@@ -14268,6 +14358,153 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /**
+   * The title of whatever a shared link names, or null when nothing here has
+   * that id. Holding the link is the permission: a link's title is shown to
+   * anyone who has it, so this reads no viewer and checks no scope. A deleted
+   * Sidekick is gone; an archived Channel, Breakout or Space keeps its name.
+   */
+  async linkTitle(input: unknown): Promise<{ title: string | null }> {
+    await this.initialized;
+    const { workspaceId, target } = parseRpcInput(WorkspaceLinkTitleRequestSchema, input, "link_title");
+    // An object no Organization ever opened, reached only where placement
+    // falls back outside production: it holds nothing to name.
+    if (this.workspaceId() === null) return { title: null };
+    this.assertWorkspace(workspaceId);
+    const sql = this.state.storage.sql;
+    const row = target.kind === "channel"
+      ? sql.exec<{ title: string }>(`SELECT title FROM channels WHERE workstream_id = ?`, target.workstreamId).toArray()[0]
+      : target.kind === "breakout"
+        ? sql.exec<{ title: string }>(
+          `SELECT title FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
+          target.workstreamId, target.substreamId,
+        ).toArray()[0]
+        : target.kind === "space"
+          ? sql.exec<{ title: string }>(`SELECT title FROM spaces WHERE space_id = ?`, target.spaceId).toArray()[0]
+          : sql.exec<{ title: string }>(
+            `SELECT title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+            target.sidekickId,
+          ).toArray()[0];
+    return { title: row?.title.trim() || null };
+  }
+
+  /**
+   * The name, mark and creator of one unarchived Channel or Breakout, for an
+   * access request. Asks nothing of the viewer: the caller has already proved
+   * an active member and holds the id, and this names only what a Channel
+   * reached through a Breakout already names (`docs/channel-access-requests.md`).
+   */
+  async accessRequestSubject(input: { workspaceId: string; parentId: string; substreamId: string }): Promise<{
+    kind: "channel" | "breakout";
+    title: string;
+    appearance: z.infer<typeof WorkstreamAppearanceSchema> | null;
+    markId: string;
+    createdByUserId: string | null;
+  } | null> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestSubjectRequestSchema, input, "access_request_subject");
+    this.assertWorkspace(request.workspaceId);
+    const breakout = request.substreamId !== "0";
+    const row = this.state.storage.sql.exec<{
+      title: string; appearance_json: string | null; created_by_user_id: string | null; parent_appearance_json?: string | null;
+    }>(
+      breakout
+        ? `SELECT breakout.title, breakout.appearance_json, breakout.created_by_user_id,
+              parent.appearance_json AS parent_appearance_json
+             FROM breakouts breakout JOIN channels parent ON parent.workstream_id = breakout.workstream_id
+            WHERE breakout.workstream_id = ? AND breakout.substream_id = ?
+              AND breakout.archived_at IS NULL AND parent.archived_at IS NULL`
+        : `SELECT title, appearance_json, created_by_user_id FROM channels
+            WHERE workstream_id = ? AND archived_at IS NULL`,
+      ...(breakout ? [request.parentId, request.substreamId] : [request.parentId]),
+    ).toArray()[0];
+    if (!row) return null;
+    return AccessRequestSubjectSchema.parse({
+      kind: breakout ? "breakout" : "channel",
+      title: row.title,
+      ...conversationMark({
+        parentId: request.parentId, substreamId: request.substreamId,
+        appearanceJson: row.appearance_json, parentAppearanceJson: row.parent_appearance_json ?? null,
+      }),
+      createdByUserId: row.created_by_user_id,
+    });
+  }
+
+  private accessRequestStorage(): ConversationAccessRequestStorage {
+    return new ConversationAccessRequestStorage(this.state.storage.sql);
+  }
+
+  /** Record a request, or return the one already pending; the approver's sockets get their new list. */
+  async recordConversationAccessRequest(input: {
+    workspaceId: string; parentId: string; substreamId: string; requesterUserId: string;
+    requesterName: string; approverUserId: string;
+  }): Promise<{ request: StoredAccessRequest; created: boolean }> {
+    await this.initialized;
+    const request = parseRpcInput(RecordAccessRequestSchema, input, "record_conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    const recorded = this.accessRequestStorage().record({ ...request, id: uuidV7(), now: Date.now() });
+    if (recorded.created) this.publishAccessRequests(request.approverUserId);
+    return recorded;
+  }
+
+  async conversationAccessRequest(input: { workspaceId: string; id: string }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestRefSchema, input, "conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    return this.accessRequestStorage().get(request.id);
+  }
+
+  /** Settle a pending request; null when it was already settled. The approver's sockets get their new list. */
+  async resolveConversationAccessRequest(input: {
+    workspaceId: string; id: string; status: "approved" | "declined";
+  }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    const request = parseRpcInput(ResolveAccessRequestSchema, input, "resolve_conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    const resolved = this.accessRequestStorage().resolve(request.id, request.status, Date.now());
+    if (resolved) this.publishAccessRequests(resolved.approverUserId);
+    return resolved;
+  }
+
+  /** The approver's email for this request went out. */
+  async markConversationAccessRequestEmailed(input: { workspaceId: string; id: string }): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestRefSchema, input, "mark_conversation_access_request_emailed");
+    this.assertWorkspace(request.workspaceId);
+    this.accessRequestStorage().markEmailed(request.id, Date.now());
+  }
+
+  /** An approval whose grant failed goes back to pending; the approver's sockets get it back. */
+  async reopenConversationAccessRequest(input: { workspaceId: string; id: string }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestRefSchema, input, "reopen_conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    const reopened = this.accessRequestStorage().reopen(request.id);
+    if (reopened) this.publishAccessRequests(reopened.approverUserId);
+    return reopened;
+  }
+
+  /**
+   * The approver's whole pending list, to their sockets only. Outside the
+   * waterline: the subscribe answer carries it again on every connect.
+   */
+  private publishAccessRequests(approverUserId: string): void {
+    let payload: string | null = null;
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed || attachment.userId !== approverUserId) continue;
+      payload ??= JSON.stringify(WorkspaceAccessRequestsEventSchema.parse({
+        type: "workspace_access_requests",
+        requests: this.accessRequestStorage().pendingFor(approverUserId, this.spaceStorage().breakoutsReady()),
+      }));
+      try {
+        socket.send(payload);
+      } catch {
+        // Hibernation owns cleanup; a reconnecting client is sent the list again.
+      }
+    }
+  }
+
   async recentWorkstreamDirectory(
     input: WorkspaceDirectoryRecentRequest,
   ): Promise<WorkspaceDirectoryLookupResult> {
@@ -14889,6 +15126,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       sessionId: readRallyHeader(request.headers, RALLY_HEADERS.SESSION_ID) ?? null,
       ticketId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_ID) ?? null,
       ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
+      impersonatorUserId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_IMPERSONATOR_ID),
     });
     if (!identity.success) return json({ error: "invalid_socket_identity" }, 400);
 
@@ -16353,6 +16591,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const sidebar = this.sidebarPayload(attachment);
     this.logWorkspaceSocketHandshake(attachment, "sidebar_built", diagnosticAttemptId);
     const viewerPreferences = this.readMemberPreferences(attachment.userId);
+    // Only a member is ever an approver; a guest's answer carries no list.
+    const accessRequests = attachment.accessClass === "guest"
+      ? undefined : this.accessRequestStorage().pendingFor(attachment.userId, this.spaceStorage().breakoutsReady());
     let events: WorkspaceSocketSyncEvent[];
     if (afterWaterline === 0) {
       events = [{
@@ -16426,7 +16667,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
     this.logWorkspaceSocketHandshake(attachment, "flags_resolved", diagnosticAttemptId);
     for (const event of events) {
-      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({ ...event, featureFlags, viewerPreferences })));
+      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({
+        ...event, featureFlags, viewerPreferences, ...(accessRequests ? { accessRequests } : {}),
+      })));
     }
     this.logWorkspaceSocketHandshake(attachment, "sync_sent", diagnosticAttemptId);
     socket.serializeAttachment({

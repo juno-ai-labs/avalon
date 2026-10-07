@@ -1,6 +1,8 @@
 import {
   safeParseSocketEvent,
+  WorkspaceAccessRequestsEventSchema,
   WorkspaceSocketSyncEventSchema,
+  type ConversationAccessRequestItem,
   WorkspaceSpaceChannelsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
   WorkspaceWorkstreamPageEventSchema,
@@ -36,9 +38,11 @@ export interface ChannelDirectorySnapshot {
    * is "not read yet".
    */
   readonly complete: boolean;
+  /** Access requests waiting on this person, newest first, as the socket last sent them. */
+  readonly accessRequests: readonly ConversationAccessRequestItem[];
 }
 
-export const emptyChannelDirectorySnapshot: ChannelDirectorySnapshot = { channels: [], breakouts: {}, complete: false };
+export const emptyChannelDirectorySnapshot: ChannelDirectorySnapshot = { channels: [], breakouts: {}, complete: false, accessRequests: [] };
 
 /** The transport half: `watchWorkspaceSocket` with the ticket and dialler already bound. */
 export type ChannelDirectorySocket = (
@@ -138,6 +142,7 @@ export class ChannelDirectoryWatch {
   private readonly pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private readonly walkedSpaces = new Set<string>();
   private complete = false;
+  private accessRequests: readonly ConversationAccessRequestItem[] = [];
   /** Walks of Spaces a snapshot named after the full walk; the list is not whole until they land. */
   private spaceWalksPending = 0;
   /** Channels a push named while the walk ran; see `subscribed`. */
@@ -173,6 +178,7 @@ export class ChannelDirectoryWatch {
     this.breakoutLists.clear();
     this.walkedSpaces.clear();
     this.complete = false;
+    this.accessRequests = [];
     this.spaceWalksPending = 0;
     this.changed();
   }
@@ -194,6 +200,7 @@ export class ChannelDirectoryWatch {
       })),
       breakouts,
       complete: this.complete && this.spaceWalksPending === 0,
+      accessRequests: this.accessRequests,
     };
     return this.cached;
   }
@@ -221,6 +228,7 @@ export class ChannelDirectoryWatch {
       );
       return;
     }
+    if (parsed.success && parsed.data.accessRequests) this.accessRequests = parsed.data.accessRequests;
     // Loading again, as the sidebar says while it refetches: the rows held
     // stay on screen, but "nothing waiting" waits for this walk to finish.
     this.complete = false;
@@ -343,6 +351,13 @@ export class ChannelDirectoryWatch {
       const entry = this.pending.get(requestId)!;
       this.pending.delete(requestId);
       entry.resolve(message);
+      return;
+    }
+    if (type === 'workspace_access_requests') {
+      const event = safeParseSocketEvent(WorkspaceAccessRequestsEventSchema, message);
+      if (!event.success) return this.unreadable(type, event.error);
+      this.accessRequests = event.data.requests;
+      this.changed();
       return;
     }
     if (type === 'workspace_workstream_state') {

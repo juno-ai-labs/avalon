@@ -335,7 +335,7 @@ beforeEach(async () => {
       VALUES ('guest', ?, ?, 'active', 'member')`).bind(workspaceId, guest),
     env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member', id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, region TEXT NOT NULL, revoked_at TEXT,
-      expires_at TEXT NOT NULL)`),
+      expires_at TEXT NOT NULL, impersonator_user_id TEXT)`),
     ...[owner, member, reader, guest].map((userId) => env.DB.prepare(
       `INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`,

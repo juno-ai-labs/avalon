@@ -38,10 +38,17 @@ It renders through the shared dropdown and is indexed from the same Stable and
 Faster option labels. Browser fallback surfaces omit it because they cannot
 configure Electron's updater.
 
+A browser has no **Desktop app** group at all: every Application setting but
+appearance configures the Mac app itself. Appearance moves to Account there, under
+its own definition (`accountAppearance`) gated on the `browser` availability, so
+search sends a browser reader to Account and a Mac reader to Application.
+
 `SettingsProvider` supplies entries with unique keys. The core provider derives
-entries from the definitions. Connection providers derive entries from the
-already-authorized connection snapshot: GitHub and MCP entries retain the
-connection ID, installed connections expose their management row, and digest
+entries from the definitions, leaving out those with a `connectionKind`.
+Connection providers derive entries from the already-authorized connection
+snapshot: each installed connection is an entry for its own page, its
+`connectionKind` definitions are repeated once per matching connection, both
+retaining the connection ID, and digest
 destinations use the same delivery capability that makes their control visible.
 The connector catalogue supplies setup entry points even before connecting.
 
@@ -53,12 +60,24 @@ inactive pages. Results replace navigation while the query is non-empty;
 typing does not change the active page.
 
 Sections are pages, and a page may be indented under the one it belongs to.
-`internet-access` sits under `workspace` and `github` under `connections`; the
-child is a section in its own right, with its own definitions, its own read and
-its own deep link, not a scroll position inside its parent. `sectionLabels` in
+Installed connections sit under `connections`. A child page is not a scroll
+position inside its parent: it has its own definitions, its own read and its
+own deep link. `sectionLabels` in
 `search-results.tsx` is typed as a total record of the section list, so adding a
 section that nobody named fails the build rather than shipping a search result
 whose page name is blank.
+
+`connection` is one section shared by every installed connection; the selected
+connection ID names the instance, the same pair a search result carries. Its
+sidebar items, table rows and search entries all set both. Definitions with a
+`connectionKind` appear only on the pages of connections whose `settingsKind`
+matches. A `connection` request with no live connection, including a deep link,
+lands on Connections once the list has loaded.
+
+A section's id is its deep link, so it outlives the label. The **Security** page
+keeps the id `internet-access` from when it was called Internet access. Search
+indexes the id, not the label, so a renamed page carries its visible name as an
+alias on its definitions.
 
 Both sidebars render `SidebarSearch` with the same sizing, typography, icon and
 focus treatment. The main window uses its button mode to open workspace search;
@@ -90,8 +109,8 @@ searches for either label filter by the available scope. API-key searches reveal
 Workspace setup has no event selection: Rally manages Ashby subscriptions
 automatically, while automations choose which event types they use.
 Personal owners can refresh their own OAuth connection. Administrators manage
-Ashby installations through **Manage events**; no other connector's row offers
-it. The main view shows
+Ashby installations through **Manage events** on the connection's page; no
+other connector's page offers it. The main view shows
 plain status, the last event and explained **Test**, with **Get help** when needed.
 **Advanced** contains saved-status refresh, API-key replacement and technical
 recovery; subscription diagnostics are collapsed separately. Cleanup retry is
@@ -166,6 +185,56 @@ to land. `components/organization-usage.tsx` draws the section;
 [`local-cache.md`](local-cache.md) owns the row it paints from.
 
 ## Changelog
+
+### 2026-10-07 — Every connection gets its own page
+
+**What changed:** The Connections sidebar entry lists every installed
+connection beneath it, with its company mark, and each opens a page of its own.
+The `github` and `custom-mcp` sections, which showed one connection of their
+kind behind a dropdown, became the one `connection` section. A custom MCP server
+wears the mark of a company its name spells out, so "Cloudflare API" draws
+Cloudflare's.
+
+**Why:** A workspace with two MCP servers had one **MCP tools** page and had to
+pick a server from a dropdown on it, and a connection with no settings of its
+own had nowhere to be looked at but a table row. One page per connection gives
+each a place to be found, from the sidebar, the table or search, whatever its
+kind. The table's inline actions moved onto the page, so the list is for finding
+a connection and the page is for acting on it, and the two never disagree about
+which actions a connection offers.
+
+**Considered and rejected:** A section per connector kind, as before, keeps the
+dropdown and leaves most connections without a page. Reading each custom
+server's URL to choose its mark would cost one live request per server to draw
+the sidebar; the name is already in the list.
+
+**Consequences:** `connection` is meaningless without a connection ID, so
+anything that opens it must also set one; a section request from the main
+process names no connection, so it lands on Connections. A setting tied to one kind of connection declares `connectionKind` rather
+than a section of its own. A server named for no known company draws the
+generic server icon.
+
+PR #1157.
+
+### 2026-10-07 — Drop the Desktop app section from browser Settings
+
+**What changed:** Browser Settings no longer lists the Desktop app group or its
+Application page. The appearance picker moved into Account, and search gained a
+`browser` availability so it finds appearance where each host shows it.
+
+**Why:** In a browser the Application page held one working control and a note
+that everything else lived in the Mac app. A section named for an app the reader
+is not using was noise.
+
+**Considered and rejected:** Moving the existing `appearance` definition to
+Account on both hosts would split the Mac's device settings across two pages.
+Making a definition's section depend on the host would break the rule that
+definitions are fixed at module load.
+
+**Consequences:** A setting that lives in different sections per host needs one
+definition per section, each gated on the host that shows it.
+
+PR #1155.
 
 ### 2026-09-15 — Make the desktop release channel a searchable device preference
 

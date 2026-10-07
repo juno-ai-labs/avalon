@@ -42,6 +42,17 @@ Passwordless challenge storage is defined by migration 0111 and documented in
 [email sign-in](email-login.md). Challenge redemption records an identity-only
 session receipt; workspace relationships and grants remain separate authorities.
 
+## Signup lineage
+
+Regional migration 0121 adds an opaque telemetry flow to OAuth state, desktop
+login tickets, and email challenges. Tickets and challenges preserve whether the
+proof created a new identity. Email challenges also preserve their entry surface.
+New user insertion records `signup_flow_id` and `signup_client_platform`;
+`signup_path` and `signup_completed_at` record first organization readiness and
+one completion. These are analytics bookkeeping, never authorization or a gate
+on authentication. Existing identities and old proofs remain without lineage.
+See [complete signup measurement](telemetry.md#complete-signup-measurement).
+
 ## Impersonation relationships
 
 WorkspaceDO migration 67 adds `workspace_impersonation_relationships`, keyed by
@@ -51,6 +62,14 @@ destination, purpose, or read/write sub-permission. Exact direction is the
 authority and self-impersonation is an ordinary self-pair. Message rows remain
 unchanged; dual-principal correlation belongs to `audit_events`. See
 [impersonation](impersonation.md).
+
+D1 migration 0122 adds Rally access. `support_access_grants` holds at most one
+row per Organization: who granted it, when, and when it runs out; revoking
+deletes the row. `sessions.impersonator_user_id` marks a support session, an
+ordinary session of the represented person that names the Rally staff member
+acting, and `sessions.impersonator_incarnation` the staff membership that
+admitted them. NULL means a login session, which every row written before 0122 is.
+See [impersonation](impersonation.md#support-access).
 
 ## Agent communication relationships
 
@@ -494,6 +513,10 @@ SQL joins.
   [`personal-system-prompt.md`](personal-system-prompt.md).
   `member_preferences` (migration 89) holds each member's display preferences;
   see [`member-preferences.md`](member-preferences.md).
+  `conversation_access_requests` (migration 95) holds each request to join a
+  Channel or Breakout, addressed to one approver, with at most one pending per
+  person per conversation; see
+  [`channel-access-requests.md`](channel-access-requests.md).
   `space_channel_memberships` is keyed by Space and Channel with **no**
   uniqueness on the Channel, because a Channel belongs to as many Spaces as it
   was added to. `space_intents` is one row per staged cross-object operation

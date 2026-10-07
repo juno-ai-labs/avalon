@@ -8,25 +8,28 @@ import { CreateScopeInvitationsSchema, type ScopeGrantTarget } from '@rally/cont
 import { ApiError, type RallyApi } from '../lib/api';
 import { InlineError, Modal } from './primitives';
 
-export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onShared }: {
-  api: RallyApi; workspaceId: string; parentId: string; substreamId: string;
-  // Told when an invitation was created. The panel reports the outcome rather
-  // than announcing it: the emptied form is what a container that stays open
-  // shows, and the share dialog dismisses itself.
-  onShared?: () => void;
-}): React.JSX.Element {
-  const [emails, setEmails] = useState('');
-  const [failure, setFailure] = useState<'invalid_emails' | 'share' | 'remove' | 'joined' | null>(null);
-  const operation = useRef<{ key: string; id: string } | null>(null);
+/**
+ * A conversation's guest invitations by email: the ones still waiting for
+ * their guest to sign in, inviting more, and taking one back. Shared by the
+ * share panel and the title menu's People level, which read one cache entry.
+ */
+export function useScopeInvitations({ api, workspaceId, parentId, substreamId, enabled = true }: {
+  api: RallyApi; workspaceId: string; parentId: string; substreamId: string; enabled?: boolean;
+}) {
+  // One retry identity per batch, kept until that batch is created, so a retry
+  // replays the same operation even while another batch is in flight.
+  const operations = useRef(new Map<string, string>());
   // Main is conversation 0: a workstream grant would also include inheriting children.
-  const target: ScopeGrantTarget = { kind: 'conversation', workspaceId: asWorkspaceId(workspaceId),
-    parentId: asWorkstreamId(parentId), substreamId: asSubstreamId(substreamId) };
+  // Built on use: a surface mounts this before it has a workspace to parse.
+  const target = (): ScopeGrantTarget => ({ kind: 'conversation', workspaceId: asWorkspaceId(workspaceId),
+    parentId: asWorkstreamId(parentId), substreamId: asSubstreamId(substreamId) });
   // Shares nobody has claimed yet. Someone who already has an account is
   // claimed as the share is made and appears among the participants instead.
   const pending = useQuery({
     queryKey: ['scope-invitations', parentId, substreamId],
+    enabled,
     queryFn: async ({ signal }) => {
-      const result = await api.listScopeInvitations(target, signal);
+      const result = await api.listScopeInvitations(target(), signal);
       // Denied means this person cannot share here, so there is nothing of
       // theirs to manage; the form says so if they try.
       if (result.status !== 'ready') return [];
@@ -48,14 +51,29 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
     onSettled: () => { void pending.refetch(); },
   });
   const invite = useMutation({ mutationFn: async (recipients: string[]) => {
-    const targets = [target];
+    const targets = [target()];
     const key = JSON.stringify({ recipients, targets });
-    if (operation.current?.key !== key) operation.current = { key, id: crypto.randomUUID() };
-    const result = await api.createScopeInvitations({ operationId: operation.current.id, parentId,
+    const operationId = operations.current.get(key) ?? crypto.randomUUID();
+    operations.current.set(key, operationId);
+    const result = await api.createScopeInvitations({ operationId, parentId,
       emails: recipients, targets, completeWorkstream: false, expiresAt: null });
     if (result.status !== 'created') throw new Error('scope invitation was not created');
+    operations.current.delete(key);
     return result;
   } });
+  return { pending, invite, remove };
+}
+
+export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onShared }: {
+  api: RallyApi; workspaceId: string; parentId: string; substreamId: string;
+  // Told when an invitation was created. The panel reports the outcome rather
+  // than announcing it: the emptied form is what a container that stays open
+  // shows, and the share dialog dismisses itself.
+  onShared?: () => void;
+}): React.JSX.Element {
+  const [emails, setEmails] = useState('');
+  const [failure, setFailure] = useState<'invalid_emails' | 'share' | 'remove' | 'joined' | null>(null);
+  const { pending, invite, remove } = useScopeInvitations({ api, workspaceId, parentId, substreamId });
   return <section className="scope-sharing-panel" aria-label="Share by email" aria-busy={invite.isPending}>
     <form onSubmit={(event) => {
       event.preventDefault(); setFailure(null);
@@ -67,7 +85,7 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
       // runs regardless, and would close whichever dialog was opened in its
       // place, taking the newly typed addresses with it.
       invite.mutate([...new Set(parsed.data)].sort(), {
-        onSuccess: () => { setEmails(''); setFailure(null); operation.current = null; void pending.refetch(); onShared?.(); },
+        onSuccess: () => { setEmails(''); setFailure(null); void pending.refetch(); onShared?.(); },
         onError: () => { setFailure('share'); },
       });
     }}>

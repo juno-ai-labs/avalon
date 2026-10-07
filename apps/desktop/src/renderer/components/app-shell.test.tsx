@@ -10,10 +10,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { associativeWorkstreamsForSidebar } from '../lib/conversation-directory';
 import { patchCachedWorkstream, setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
   applyArchivedSpace,
-  associativeWorkstreamsForSidebar,
   searchChannelPlaces,
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
@@ -26,6 +26,7 @@ import {
   useLatestCommittedValue,
   upsertSpaceDirectory,
   windowControlsShellClass,
+  withActiveWorkspaceName,
   batchArchiveSkipIds,
   workstreamMatchesBatchFilter,
 } from './app-shell';
@@ -764,5 +765,22 @@ describe('windowControlsShellClass', () => {
   // than jumping it sideways when the answer lands.
   it('names nothing while the platform is still unknown', () => {
     expect(windowControlsShellClass(undefined)).toBe('');
+  });
+});
+
+describe('withActiveWorkspaceName', () => {
+  const row = (id: string, region: string, name: string) => ({
+    id, name, slug: id, region, role: 'owner' as const, createdAt: '2026-08-01T00:00:00.000Z',
+  });
+
+  it('renames only the active row, matched on id and region together', () => {
+    const rows = [row('a', 'global', 'Old'), row('a', 'eu', 'Same id elsewhere'), row('b', 'global', 'Other')];
+    expect(withActiveWorkspaceName(rows, { id: 'a', region: 'global', name: 'Juno Labs' }).map((r) => r.name))
+      .toEqual(['Juno Labs', 'Same id elsewhere', 'Other']);
+  });
+
+  it('leaves a directory without the active row as it was', () => {
+    const rows = [row('b', 'global', 'Other')];
+    expect(withActiveWorkspaceName(rows, { id: 'a', region: 'global', name: 'Juno Labs' })).toEqual(rows);
   });
 });

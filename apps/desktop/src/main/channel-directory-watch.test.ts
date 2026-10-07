@@ -292,6 +292,23 @@ describe('channel directory watch', () => {
     expect(subject.watch.snapshot().complete).toBe(true);
   });
 
+  it('holds the access requests the subscribe answer and later pushes carry', async () => {
+    const request = {
+      id: '00000000-0000-4000-8000-0000000ac001', parentId: ACME, substreamId: '0', kind: 'channel',
+      title: 'Acme renewal', appearance: null, markId: ACME, requesterUserId: '00000000-0000-4000-8000-0000000ac013', requesterName: 'Samantha Lee', requestedAt: '2026-10-07T12:00:00.000Z',
+    };
+    const subject = harness();
+    subject.watch.start();
+    const socket = await subject.connected();
+    socket.message({ ...subscribeAnswer([GENERAL]), accessRequests: [request] });
+    await flush();
+    expect(subject.watch.snapshot().accessRequests.map((item) => item.requesterName)).toEqual(['Samantha Lee']);
+
+    socket.message({ type: 'workspace_access_requests', requests: [] });
+    await flush();
+    expect(subject.watch.snapshot().accessRequests).toEqual([]);
+  });
+
   it('forgets every row when stopped, so the next account starts empty', async () => {
     const subject = harness();
     subject.watch.start();
@@ -303,7 +320,7 @@ describe('channel directory watch', () => {
     subject.watch.stop();
 
     expect(subject.watch.running()).toBe(false);
-    expect(subject.watch.snapshot()).toEqual({ channels: [], breakouts: {}, complete: false });
+    expect(subject.watch.snapshot()).toEqual({ channels: [], breakouts: {}, complete: false, accessRequests: [] });
   });
 
   it('stays incomplete when the socket goes mid-walk, rather than calling a partial list whole', async () => {

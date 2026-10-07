@@ -36,6 +36,9 @@ export function menuBarContentFromDirectory(directory: ChannelDirectorySnapshot)
       : channel
   ));
   return {
+    accessRequests: directory.accessRequests.map((request) => ({
+      id: request.id, requesterName: request.requesterName, title: request.title,
+    })),
     attention: attentionItems(named, breakouts).map((item) => ({
       key: item.key,
       workstreamId: item.workstreamId,

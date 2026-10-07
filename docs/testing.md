@@ -130,7 +130,9 @@ against the checked-in migrations rather than against a stub:
 - `test/helpers/sqlite-d1.ts` — `migratedSqliteDatabase()` applies every
   `packages/db/migrations/*.sql` to a fresh in-memory `node:sqlite` database, and
   `sqliteD1()` presents it through the `D1Database` surface the services use.
-  Sixty-odd API test files already work this way.
+  Sixty-odd API test files already work this way. Its `run` answers a
+  statement's rows as D1's does, so a read placed inside a batch is read off
+  the batch's results in a test exactly as in production.
 - `test/helpers/sql-storage.ts` — `createTestSqlStorage()` presents a
   `node:sqlite` database through the object-local `SqlStorage` surface, and turns
   foreign keys on because `node:sqlite` defaults them off while workerd enforces

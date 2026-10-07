@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatDateTime } from '../lib/format';
 import { ApiError } from '../lib/api';
+import { CollaborationSessionProvider } from '../lib/collaboration-session';
 import {
   consumeDeepLinkWorkstreamNavigation,
   markDeepLinkWorkstreamNavigation,
@@ -2935,6 +2936,8 @@ describe('pinned channels', () => {
   ])('scrolls with $behavior when reduced motion is $reduced', async ({ reduced, behavior }) => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: reduced && query.includes('prefers-reduced-motion'),
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
     }));
     renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
@@ -3434,16 +3437,23 @@ describe('the sidebar without a recency list', () => {
   });
 
   /**
-   * The state the removed list was the only thing describing.
-   *
-   * A member of a brand-new Organization sees Spaces, General, and "No
-   * channels" under it — and then, without this line, nothing: a sidebar that
-   * has stopped talking rather than one that is empty.
+   * A member of a brand-new Organization sees the empty Pinned section and the
+   * Channels heading with its sort, not a "No channels yet" line.
    */
-  it('given a member with no channels at all, when the sidebar is drawn, then it says so', () => {
+  it('given a member with no channels at all, when the sidebar is drawn, then it shows the Channels heading and no empty line', () => {
     renderSidebar({ spaces: [space()], workstreams: [] });
 
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
+    expect(screen.getByRole('button', { name: /^Sorted / })).toBeVisible();
+    expect(screen.getByText('No channels yet')).toHaveClass('sr-only');
+  });
+
+  it('given a guest with no channels, when the sidebar is drawn, then it says so instead of drawing a slot', () => {
+    renderSidebar({ spaces: [space()], spacesReadOnly: true, workstreams: [] });
+
     expect(screen.getByText('No channels yet')).toBeVisible();
+    expect(screen.getByText('No channels yet')).not.toHaveClass('sr-only');
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
   });
 
   it('given Channels loaded a Space at a time, when the Space on screen has not answered, then it waits rather than saying it is empty', () => {
@@ -3453,12 +3463,12 @@ describe('the sidebar without a recency list', () => {
     renderSidebar({ spaces: [hiring], workstreams: [], loadedSpaceIds: new Set(), onViewSpace });
 
     expect(onViewSpace).toHaveBeenLastCalledWith(hiring.id);
-    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Loading your spaces and channels');
 
     cleanup();
     renderSidebar({ spaces: [hiring], workstreams: [], loadedSpaceIds: new Set([hiring.id]), onViewSpace });
-    expect(screen.getByText('No channels yet')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
   });
 
   it('given a channel being created in the selected Space, then it shows dimmed and inert in place of the empty line', () => {
@@ -3927,6 +3937,118 @@ describe('the sidebar Space filter', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  it('in a browser tab, draws New space alone in the top bar until the first Space exists', () => {
+    const renderIn = (spaces: ReturnType<typeof space>[]) => (
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              onSignOut={vi.fn()}
+              spaces={spaces}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(renderIn([home]));
+    const topBar = screen.getByRole('generic', { name: 'Rally actions' });
+
+    expect(within(topBar).getByRole('button', { name: 'New space' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+
+    rerender(renderIn([home, hiring]));
+
+    expect(within(topBar).queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Hiring' })).toBeVisible();
+  });
+
+  it('in a browser tab, moves New space between the top bar and the Space row as the window crosses phone width', () => {
+    let wide = false;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      get matches() { return query.includes('min-width') ? wide : false; },
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    }));
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              onSignOut={vi.fn()}
+              spaces={[home]}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    const topBar = screen.getByRole('generic', { name: 'Rally actions' });
+
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New space' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+
+    act(() => {
+      wide = true;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(within(topBar).getByRole('button', { name: 'New space' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+
+    act(() => {
+      wide = false;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+  });
+
+  it('in a browser tab, keeps an open restore dialog when the window crosses phone width', async () => {
+    let wide = true;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      get matches() { return query.includes('min-width') ? wide : false; },
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    }));
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              inactiveSpaces={[space(hiring.id, 'Hiring', { status: 'archived' })]}
+              onSignOut={vi.fn()}
+              spaces={[home]}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'New space' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Restore archived space' }));
+    expect(await screen.findByRole('dialog', { name: 'Restore archived space' })).toBeVisible();
+
+    act(() => {
+      wide = false;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(screen.getByRole('dialog', { name: 'Restore archived space' })).toBeVisible();
+  });
+
   function renderFiltered(props: Partial<React.ComponentProps<typeof Sidebar>> = {}): void {
     render(
       <MemoryRouter>
@@ -4166,12 +4288,17 @@ describe('the sidebar Space filter', () => {
       function CurrentRoute(): React.JSX.Element {
         return <output aria-label="Current route">{useLocation().pathname}</output>;
       }
+      function Elsewhere(): React.JSX.Element {
+        const navigate = useNavigate();
+        return <button onClick={() => void navigate(`/workstreams/${delta.id}`)} type="button">Search result</button>;
+      }
       render(
         <MemoryRouter initialEntries={[path]}>
           <Tooltip.Provider>
             <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[home, hiring, launch, empty]}
               workspace={workspace} workstreams={[alpha, bravo, charlie, delta]} />
             <CurrentRoute />
+            <Elsewhere />
           </Tooltip.Provider>
         </MemoryRouter>,
       );
@@ -4186,6 +4313,21 @@ describe('the sidebar Space filter', () => {
       expect(channelTitles()).toEqual(['Charlie', 'Delta']);
       await waitFor(() => expect(route()).toBe(`/workstreams/${charlie.id}`));
       expect(pill('Launch')).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('keeps the phone sheet open while it opens that Space\'s first Channel', async () => {
+      renderOpen(alpha.id);
+      const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      selectSpace('Launch');
+      await waitFor(() => expect(route()).toBe(`/workstreams/${charlie.id}`));
+      expect(navigation).toHaveClass('is-mobile-open');
+
+      // The pill's pass is spent: the next route change closes the sheet,
+      // even one from outside it.
+      fireEvent.click(screen.getByRole('button', { name: 'Search result' }));
+      expect(navigation).not.toHaveClass('is-mobile-open');
     });
 
     it('starts a Channel in that Space when it holds none', async () => {
@@ -4245,10 +4387,15 @@ describe('the sidebar Space filter', () => {
       });
     });
 
-    it('offers no import outside the desktop host', () => {
+    it('draws import disabled outside the desktop host and says why', async () => {
       renderFiltered();
 
-      expect(screen.queryByRole('button', { name: 'Import from ChatGPT or Claude' })).not.toBeInTheDocument();
+      const button = screen.getByRole('button', { name: 'Import from ChatGPT or Claude' });
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.focus(button);
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(
+        'Import from Claude/ChatGPT is only available in the macOS app as we use computer use to read your chat for accuracy',
+      );
     });
 
     it('offers a restart only once an update has been downloaded', async () => {

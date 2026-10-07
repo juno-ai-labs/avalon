@@ -24,6 +24,15 @@ another address fails. One challenge has both an OTP and a random magic-link
 secret. The link carries its secret in a fragment. Loading a link does not consume
 it; POST `/auth/email/redeem` takes the proof and a caller-generated redemption ID.
 
+A start may carry `returnPath`, the `/app/` path the browser was on. The link
+then opens that path instead of `/login/email`, with the same fragment, so a
+person who signs in from a shared Channel, Breakout, Space or Sidekick link
+lands back on it after signing in. `browserReturnUrl` keeps the path on the
+browser origin and drops any query or fragment; any other path falls back to
+`/login/email`. The browser client reads the proof on either path and takes the
+challenge's region from the fragment, not from the resource the path names.
+Code sign-in and Google sign-in already returned to the page they started on.
+
 The winning conditional SQL update records the verified user, one session ID and
 an encrypted refresh credential. The session is inserted idempotently afterwards.
 A crash between those operations resumes the recorded session. Repeating the same
@@ -55,6 +64,10 @@ Local setup copies `EMAIL_LOGIN_POLICY_JSON` and `BROWSER_APP_ORIGIN` from
 `scripts/sync-dev-env.mjs`, including deployment-specific overrides. Both are
 listed in `.env.example` without defaults: an absent policy or origin leaves
 email sign-in disabled. Production values must be chosen explicitly.
+
+## Signup measurement
+
+Signup uses the opaque first-account flow and stage contract in [complete signup measurement](telemetry.md#complete-signup-measurement).
 
 ## Invariants
 
@@ -119,6 +132,28 @@ identifier. Global is the currently configured identity deployment; email sign-i
 does not introduce cross-deployment membership or route grants.
 
 ## Changelog
+
+### 2026-10-07 — The emailed sign-in link returns to the shared link
+
+**What changed:** `POST /auth/email/start` takes an optional `returnPath`, and
+the magic link opens that `/app/` path with its proof in the fragment instead
+of `/login/email`.
+
+**Why:** Copied links now open in the web app. A signed-out reader who chose
+the email link from a shared Channel landed on the plain sign-in page and then
+the Organization root, losing the Channel; the code and Google paths kept it.
+
+**Considered and rejected:** Storing the destination in the browser that
+started sign-in: the link is often opened on another device or in a mail
+client's browser, where that storage is absent. A `next` field in the fragment
+beside the proof: the path itself already carries the destination, and every
+link reader parses it.
+
+**Consequences:** `EmailLoginStartSchema` is strict,
+so an API older than this change rejects a start that carries `returnPath`.
+Deploy the API before the browser client.
+
+Shipped in juno-ai-labs/avalon#1144.
 
 ### 2026-09-18 — Production email sign-in policy
 
