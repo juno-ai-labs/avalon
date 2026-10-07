@@ -22,7 +22,7 @@ import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
-const BREAKOUT_ID = asSubstreamId("00000000-0000-4000-8000-0000000000b1");
+const BREAKOUT_ID = asSubstreamId("00000000-0000-7000-8000-0000000000b1");
 const HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000003");
 
 /**
@@ -415,9 +415,6 @@ describe("Avalon connector connection tools", () => {
   });
 
   it("announces a breakout's question in the breakout's room, not the Channel's", async () => {
-    // A question opened by a Breakout's run used to be announced in Main's
-    // room: every Channel member saw it there, private Breakout or not, and an
-    // answer sent from Main reached an object that did not hold the question.
     const { objectStore, baseEnv } = fixture();
     const roomEvents: Array<{ room: string; event: Record<string, unknown> }> = [];
     const agents = testSubstreamAgentsBinding(objectStore);
