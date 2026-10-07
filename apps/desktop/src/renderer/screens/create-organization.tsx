@@ -1,5 +1,5 @@
 import { Building2, LoaderCircle } from 'lucide-react';
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { Button, InlineError, RallyMark } from '../components/primitives';
 import { isComposingKeyEvent } from '../lib/ime';
 import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
@@ -10,8 +10,16 @@ import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
  * created: the Mac app through its bridge, the browser through its cookie.
  * Organizations are created on Global, so no deployment is offered.
  */
-export function CreateOrganizationCard({ initialName = '', onCreate, children }: {
+export type CreateOrganizationOperation = { fingerprint: string; id: string } | null;
+
+export function CreateOrganizationCard({ initialName = '', onCreate, operation, children }: {
   initialName?: string;
+  /**
+   * Where the pending operation id lives. A host that can unmount the card
+   * mid-create passes its own, so a retry after coming back reuses the id and
+   * returns the same organization rather than a second one.
+   */
+  operation?: MutableRefObject<CreateOrganizationOperation>;
   /** Resolves once the organization is open, or rejects with what to show. */
   onCreate: (name: string, operationId: string) => Promise<void>;
   /** Below the button: who is signed in, and the way out. */
@@ -21,7 +29,8 @@ export function CreateOrganizationCard({ initialName = '', onCreate, children }:
   const [name, setName] = useState(initialName);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const createOperation = useRef<{ fingerprint: string; id: string } | null>(null);
+  const ownOperation = useRef<CreateOrganizationOperation>(null);
+  const createOperation = operation ?? ownOperation;
 
   const continueSetup = async (): Promise<void> => {
     // Holding Enter repeats it, and the button stays reachable while the first

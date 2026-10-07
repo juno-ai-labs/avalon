@@ -1,6 +1,6 @@
 import { clearAllDrafts as clearAllDraftsOnly } from '../../desktop/src/renderer/lib/draft-cache';
 import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
-import { CreateOrganizationCard } from '../../desktop/src/renderer/screens/create-organization';
+import { CreateOrganizationCard, type CreateOrganizationOperation } from '../../desktop/src/renderer/screens/create-organization';
 import { Building2, ChevronRight, KeyRound, LoaderCircle, Mail } from "lucide-react";
 import { Button, ConnectorMark, InlineError, RallyMark } from "@rally/ui/components/primitives";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
@@ -77,6 +77,10 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [googleNotice, setGoogleNotice] = useState<string | null>(null);
   // Whether the person asked to create an organization from the empty list.
   const [creating, setCreating] = useState(false);
+  // A create in flight keeps going if the card goes away, so Back waits for it,
+  // and the operation id outlives the card so a retry returns the same one.
+  const [createPending, setCreatePending] = useState(false);
+  const createOperation = useRef<CreateOrganizationOperation>(null);
   const issuance = useRef<{ email: string; id: string; redemptionId: string } | null>(null);
   const sessionRead = useRef(0);
   const sessionUser = useRef<string | null>(null);
@@ -134,7 +138,11 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
           ? await openWorkspace(selected, target.workspaceId)
           : await browserRequest(selected, "/session", BrowserSessionSchema);
         if (!active || read !== sessionRead.current) return;
-        if (sessionUser.current && sessionUser.current !== current.user.id) await clearAllDrafts();
+        if (sessionUser.current && sessionUser.current !== current.user.id) {
+          // Another account, from this tab or another, starts from its own list.
+          setCreating(false); createOperation.current = null;
+          await clearAllDrafts();
+        }
         if (!active || read !== sessionRead.current) return;
         sessionUser.current = current.user.id;
         setSession(current);
@@ -273,7 +281,10 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   /** The card owns the operation id, so a retry of the same name returns the same organization. */
   async function createOrganization(name: string, operationId: string): Promise<void> {
-    const created = await browserRequest(IDENTITY_REGION, "/workspace/create", BrowserWorkspaceCreatedSchema, { name: name.trim(), operationId });
+    setCreatePending(true);
+    let created;
+    try { created = await browserRequest(IDENTITY_REGION, "/workspace/create", BrowserWorkspaceCreatedSchema, { name: name.trim(), operationId }); }
+    catch (cause) { setCreatePending(false); throw cause; }
     // The new organization opens as any other does, and its setup continues
     // there. Stay pending until the page leaves, so the card keeps its spinner.
     location.assign(`/app/workspaces/${created.region}/${created.workspaceId}`);
@@ -335,9 +346,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   if (creating && session && !proof) {
     return <main className="onboarding-shell workspace-setup-shell entry">
-      <CreateOrganizationCard onCreate={createOrganization}>
+      <CreateOrganizationCard onCreate={createOrganization} operation={createOperation}>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
-        <button className="text-button onboarding-signout" type="button" onClick={() => setCreating(false)}>Back</button>
+        <button className="text-button onboarding-signout" type="button" disabled={createPending} onClick={() => setCreating(false)}>Back</button>
       </CreateOrganizationCard>
     </main>;
   }

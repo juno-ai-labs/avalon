@@ -122,6 +122,30 @@ the Node suite separately applies the checked-in migrations.
 
 ## Changelog
 
+### 2026-10-07 — Create an organization over the cookie
+
+**What changed.** `POST /browser/workspace/create` creates an organization on
+Global through the desktop's create path, revokes the bearer session that path
+returns, and answers only the new organization's region and id. The browser then
+selects it with `/workspace/select`.
+
+**Why.** A signed-in browser with nothing shared had no way to start an
+organization. The desktop route answers with a bearer session, which this
+adapter exists to keep out of JavaScript.
+
+**Considered and rejected.** Forwarding `onboarding/workspace` through the
+adapter, which would hand JavaScript a bearer; and a bridge method that mints a
+cookie in the target deployment, as activation does, which creation on Global
+does not need.
+
+**Consequences.** Every create mints one bearer session and revokes it at once.
+A future route that wraps a bearer-issuing path must do the same: nothing it
+returns may carry a credential. Creation outside Global answers 409
+`global_identity_required`. [`browser-client.md`](browser-client.md) has the
+client side.
+
+PR: [#1129](https://github.com/juno-ai-labs/avalon/pull/1129).
+
 ### 2026-10-06 — Claim shares when a browser session is registered
 
 **What changed.** `BrowserSessionService.register` claims every scoped share
