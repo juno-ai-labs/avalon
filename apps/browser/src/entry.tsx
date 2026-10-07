@@ -358,13 +358,14 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     <section className="signin-card entry-card" aria-busy={busy || checking}>
       <a className="entry-mark" href="/" aria-label="Rally"><RallyMark className="signin-mark" /></a>
       {session && !proof ? <>
-        <h1>Your shared work</h1>
+        <h1>Your organizations</h1>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
-        {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the conversation…" : "Loading your shared work…"}</p>
+        {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the conversation…" : "Loading your organizations…"}</p>
           : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) =>
           <a className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ChevronRight aria-hidden="true" size={16} /></a>)}</nav>
           : <>
-            <p className="entry-lead">Nothing has been shared with {session.user.email} yet.</p>
+            <p className="entry-lead">{session.user.email} is not part of an organization, and nothing has been shared with it yet.</p>
+            <p className="entry-lead">Ask a teammate to share a Channel or Breakout with you, or create a new organization.</p>
             <Button className="button-primary signin-button" type="button" disabled={busy} onClick={() => { setError(null); setCreating(true); }}><Building2 aria-hidden="true" size={16} />Create an organization</Button>
           </>}
         <button className="text-button onboarding-signout" disabled={busy} onClick={() => { void signOut(); }} type="button">Sign out</button>
