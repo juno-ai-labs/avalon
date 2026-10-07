@@ -67,7 +67,7 @@ Rally *hands out*, for three reasons:
 
 ### The handoff page
 
-The heading reads `Opening “<name>” in Rally`, with the name cut at 100
+The heading reads `Opening “<name>” in Rally`, with the name cut at 40
 characters. Holding a link is the permission to see the name of what it
 points at, private or not, so the page asks `GET /links/title?path=<its own
 path>` on the Global API with no sign-in. The route parses the path with the

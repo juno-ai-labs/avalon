@@ -106,7 +106,7 @@ function initializeWorkstreamHandoff(): void {
 }
 
 /** Past this many characters a name is cut, so a long one cannot push the buttons off the page. */
-const HEADING_NAME_LIMIT = 100;
+const HEADING_NAME_LIMIT = 40;
 
 /** The heading for a resource called `name`, cut at {@link HEADING_NAME_LIMIT} characters. */
 export function handoffHeading(name: string): string {
