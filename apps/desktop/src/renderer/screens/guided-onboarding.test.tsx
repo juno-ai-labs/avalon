@@ -7,6 +7,7 @@ import { act } from '@testing-library/react';
 import type { Workspace } from '../lib/types';
 import { connectorProviders } from '../lib/connector-catalog';
 import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
+import { CollaborationSessionProvider } from '../lib/collaboration-session';
 
 const state = vi.hoisted(() => ({
   signedIn: true,
@@ -181,6 +182,16 @@ describe('new-account learning paths', () => {
     await act(async () => { resolveLookup({ ...state.account, introduced: false }); });
     expect(await screen.findByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).toBeInTheDocument();
     expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
+  });
+  it('records the introduction without showing it in the browser, which the landing page already introduced', async () => {
+    state.getAccount.mockResolvedValue({ ...state.account, introduced: false });
+    state.saveAccount.mockResolvedValue({ ...state.account, introduced: true, revision: 1 });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<MemoryRouter><QueryClientProvider client={client}>
+      <CollaborationSessionProvider api={null} session={null} host="browser"><AccountOnboardingGate><WorkspaceView /></AccountOnboardingGate></CollaborationSessionProvider>
+    </QueryClientProvider></MemoryRouter>);
+    await waitFor(() => expect(state.saveAccount).toHaveBeenCalledWith({ expectedRevision: 0, introduced: true }));
+    expect(screen.queryByRole('heading', { name: 'Meet Rally. Work moves forward together.' })).not.toBeInTheDocument();
   });
   it('still introduces an eligible organization account when its background lookup completes', async () => {
     let resolveLookup!: (account: typeof state.account) => void;

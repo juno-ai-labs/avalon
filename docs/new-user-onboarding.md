@@ -24,7 +24,9 @@ ships directly for newly created accounts, with no feature flag.
 
 ## How it works
 
-The three introduction screens appear before sign-in. After authentication,
+The three introduction screens appear before sign-in. The browser never shows
+them: its visitors come from the landing page, so it records the introduction
+as seen. After authentication,
 completion is saved on the account before workspace activation; eligible accounts
 arriving through a signed-in handoff still receive the introduction.
 Existing [workspace discovery and invitation acceptance](multiple-workspaces.md)
