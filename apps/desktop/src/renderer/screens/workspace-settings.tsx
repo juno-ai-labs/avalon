@@ -1190,7 +1190,6 @@ export function WorkspaceSettingsScreen({
   );
   const workspaceConnections = installedConnections.filter((connection) => connection.scope === 'workspace');
   const personalConnections = installedConnections.filter((connection) => connection.scope === 'you');
-  const healthyConnections = installedConnections.filter((connection) => connection.status === 'healthy');
   const visibleProviders = connectorProviders.filter((provider) => {
     const connected = providerHasConnection(provider, connections.data ?? []);
     if (connectionFilter === 'connected') return connected;
@@ -1842,9 +1841,8 @@ export function WorkspaceSettingsScreen({
 
             {activeSection === 'connections' && (
               <section aria-labelledby="settings-title" className="settings-pane settings-connections-pane">
-                <div className="settings-pane-heading settings-pane-heading-count">
-                  <div><h2><SettingLabel setting={settings.connections} /></h2><p>Credentials currently available to you or this workspace.</p></div>
-                  <span>{installedConnections.length}</span>
+                <div className="settings-pane-heading">
+                  <h2><SettingLabel setting={settings.connections} /></h2>
                 </div>
                 <div className="settings-connection-tables">
                   {([
@@ -1866,7 +1864,6 @@ export function WorkspaceSettingsScreen({
                     <section className="settings-connection-group" key={group.id}>
                       <div className="settings-connection-group-heading">
                         <h3 id={group.id}>{group.title}</h3>
-                        <span>{group.items.length}</span>
                       </div>
                       <div className="settings-list-card settings-connection-table-frame">
                         <table aria-labelledby={group.id} className="settings-connection-table">
@@ -1971,7 +1968,6 @@ export function WorkspaceSettingsScreen({
                       ]}
                       value={connectionFilter}
                     />
-                    <span>{healthyConnections.length} connected</span>
                   </div>
                   <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Organization connections expose granted capabilities to every member; organization automations use only the connections explicitly bound to them.</p>
                   <div className="provider-grid">
