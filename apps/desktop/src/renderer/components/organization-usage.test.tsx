@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllLocalCache } from '../lib/local-cache';
 import { LocalCacheScopeProvider } from '../lib/local-cache-scope';
-import { usageCacheSlice, type OrganizationUsageApi } from '../lib/organization-usage';
+import { usageCacheSlice, type OrganizationPlanApi, type OrganizationUsageApi } from '../lib/organization-usage';
 import { OrganizationUsageMenuItem, UsageSettingsSection } from './organization-usage';
 
 const SCOPE = 'user-1:global:workspace-1';
@@ -26,7 +26,10 @@ function usage(quotaRemainingPercent: number, amountMicrousd = 0): OrganizationU
   };
 }
 
-function apiAnswering(...answers: Array<OrganizationUsage | Error>): OrganizationUsageApi & { getWorkspaceUsage: ReturnType<typeof vi.fn> } {
+function apiAnswering(...answers: Array<OrganizationUsage | Error>): OrganizationPlanApi & {
+  getWorkspaceUsage: ReturnType<typeof vi.fn>;
+  setWorkspacePlan: ReturnType<typeof vi.fn>;
+} {
   let call = 0;
   return {
     getWorkspaceUsage: vi.fn(async () => {
@@ -35,11 +38,15 @@ function apiAnswering(...answers: Array<OrganizationUsage | Error>): Organizatio
       if (answer instanceof Error) throw answer;
       return answer;
     }),
+    setWorkspacePlan: vi.fn(async () => { throw new Error('not expected'); }),
   };
 }
 
 /** A request that never answers: what the screen shows while it waits. */
-const pendingApi: OrganizationUsageApi = { getWorkspaceUsage: () => new Promise(() => undefined) };
+const pendingApi: OrganizationPlanApi = {
+  getWorkspaceUsage: () => new Promise(() => undefined),
+  setWorkspacePlan: () => new Promise(() => undefined),
+};
 
 function wrap(children: ReactNode, scope: string | null = SCOPE): React.JSX.Element {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -47,8 +54,8 @@ function wrap(children: ReactNode, scope: string | null = SCOPE): React.JSX.Elem
   return scope ? <LocalCacheScopeProvider scope={scope}>{tree}</LocalCacheScopeProvider> : tree;
 }
 
-function renderSection(api: OrganizationUsageApi, scope: string | null = SCOPE): void {
-  render(wrap(<UsageSettingsSection api={api} organizationName="Juno Labs" />, scope));
+function renderSection(api: OrganizationPlanApi, scope: string | null = SCOPE, canChangePlan = true): void {
+  render(wrap(<UsageSettingsSection api={api} canChangePlan={canChangePlan} organizationName="Juno Labs" />, scope));
 }
 
 beforeEach(async () => {
@@ -63,10 +70,10 @@ afterEach(() => {
 describe('Usage in Settings', () => {
   it("never shows the previous Organization's usage after a switch", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const tree = (scope: string, api: OrganizationUsageApi) => (
+    const tree = (scope: string, api: OrganizationPlanApi) => (
       <LocalCacheScopeProvider scope={scope}>
         <QueryClientProvider client={client}><Tooltip.Provider>
-          <UsageSettingsSection api={api} organizationName="Juno Labs" />
+          <UsageSettingsSection api={api} canChangePlan organizationName="Juno Labs" />
         </Tooltip.Provider></QueryClientProvider>
       </LocalCacheScopeProvider>
     );
@@ -92,6 +99,43 @@ describe('Usage in Settings', () => {
     expect(screen.getByText('Resets Thursday, October 8 at 9:00 AM')).toBeVisible();
     expect(screen.getByText('Shared by everyone in Juno Labs.')).toBeVisible();
     expect(screen.queryByText('Usage beyond quota this month')).not.toBeInTheDocument();
+  });
+
+  it('lets an administrator move the Organization to another plan and repaints from the answer', async () => {
+    const api = apiAnswering(usage(10));
+    api.setWorkspacePlan.mockResolvedValue({ ...usage(44), plan: 'growth' });
+    renderSection(api);
+
+    const picker = await screen.findByRole('combobox', { name: 'Plan' });
+    expect(picker).toHaveTextContent('Starter plan');
+    fireEvent.click(picker);
+    expect(screen.getByRole('option', { name: /Growth plan/ })).toHaveTextContent('$250 a month');
+    fireEvent.keyDown(screen.getByRole('option', { name: /Growth plan/ }), { key: 'Enter' });
+
+    expect(await screen.findByText("44% of this week's quota left")).toBeVisible();
+    expect(api.setWorkspacePlan).toHaveBeenCalledWith('growth');
+    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Growth plan');
+    expect(await usageCacheSlice.read(SCOPE, 'usage')).toMatchObject({ usage: { plan: 'growth', quotaRemainingPercent: 44 } });
+  });
+
+  it('says so when the plan could not be changed and keeps the plan it had', async () => {
+    const api = apiAnswering(usage(72));
+    api.setWorkspacePlan.mockRejectedValue(new Error('This action requires a workspace administrator'));
+    renderSection(api);
+
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Plan' }));
+    fireEvent.keyDown(screen.getByRole('option', { name: /Growth plan/ }), { key: 'Enter' });
+
+    expect(await screen.findByText('The plan could not be changed. This action requires a workspace administrator')).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Starter plan');
+  });
+
+  it('shows the plan to a member who is not an administrator but does not let them change it', async () => {
+    renderSection(apiAnswering(usage(72)), SCOPE, false);
+
+    const picker = await screen.findByRole('combobox', { name: 'Plan' });
+    expect(picker).toHaveTextContent('Starter plan');
+    expect(picker).toBeDisabled();
   });
 
   it('reads the reset in the viewer’s own time zone', async () => {
@@ -177,7 +221,7 @@ describe('Usage in Settings', () => {
   it('fetches again each time the section opens', async () => {
     const api = apiAnswering(usage(80), usage(61));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const section = <QueryClientProvider client={client}><UsageSettingsSection api={api} organizationName="Juno Labs" /></QueryClientProvider>;
+    const section = <QueryClientProvider client={client}><UsageSettingsSection api={api} canChangePlan organizationName="Juno Labs" /></QueryClientProvider>;
     const first = render(section);
     await screen.findByText("80% of this week's quota left");
     first.unmount();
@@ -193,7 +237,7 @@ describe('Usage in Settings', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const section = (openRequest: number): React.JSX.Element => (
       <QueryClientProvider client={client}>
-        <UsageSettingsSection api={api} openRequest={openRequest} organizationName="Juno Labs" />
+        <UsageSettingsSection api={api} canChangePlan openRequest={openRequest} organizationName="Juno Labs" />
       </QueryClientProvider>
     );
     const { rerender } = render(section(3));
