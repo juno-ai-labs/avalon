@@ -106,7 +106,9 @@ export function InlineEditableText({
 
   // Locked while a save is in flight, so two saves never race to be last. It
   // stays the same element, so focus returned to it survives the save.
-  if (saving !== null) return <strong ref={focusOnReturn} tabIndex={-1}>{shown}</strong>;
+  if (saving !== null) {
+    return <strong aria-busy="true" className="inline-editable-text" ref={focusOnReturn} tabIndex={-1}>{shown}</strong>;
+  }
 
   return (
     <strong
