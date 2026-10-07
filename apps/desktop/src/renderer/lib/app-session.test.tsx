@@ -27,6 +27,7 @@ import { useDraftText } from './use-draft-text';
 import { useCollaborationSession, type ConnectorSetupCapability } from './collaboration-session';
 import { RallyApi } from './api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
+import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { readDevicePreferences } from './device-preferences';
 import {
   consumeSurfaceEntrypoint,
@@ -43,6 +44,7 @@ let observedReconnectAccount: (() => Promise<void>) | null = null;
 let observedAbandonAccountSignIn: (() => void) | null = null;
 let observedSurrenderActiveWorkspace: (() => Promise<void>) | null = null;
 let observedActivateWorkspace: AppSessionValue['activateWorkspace'] | null = null;
+let observedFinishWorkspaceSetup: AppSessionValue['finishWorkspaceSetup'] | null = null;
 let observedLeaveWorkspace: ((
   workspaceId: string,
   expectedOutcome: 'left' | 'abandoned',
@@ -133,6 +135,7 @@ function SessionProbe(): React.JSX.Element {
   observedAbandonAccountSignIn = context.abandonAccountSignIn;
   observedSurrenderActiveWorkspace = context.surrenderActiveWorkspace;
   observedActivateWorkspace = context.activateWorkspace;
+  observedFinishWorkspaceSetup = context.finishWorkspaceSetup;
   observedLeaveWorkspace = context.leaveWorkspace;
   observedPendingConnectorOAuth = context.pendingConnectorOAuth;
   observedSetPendingConnectorOAuth = context.setPendingConnectorOAuth;
@@ -198,6 +201,7 @@ function resetDesktopBridge(): void {
   observedReconnectAccount = null;
   observedSurrenderActiveWorkspace = null;
   observedActivateWorkspace = null;
+  observedFinishWorkspaceSetup = null;
   observedLeaveWorkspace = null;
   observedPendingConnectorOAuth = null;
   observedSetPendingConnectorOAuth = null;
@@ -1119,6 +1123,74 @@ describe('single-platform desktop identity routing', () => {
 
     expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000034');
     getWorkspace.mockRestore();
+  });
+
+  it('lands a created organization the way a switch lands, without waiting on a record the session already describes', async () => {
+    const created = '00000000-0000-7000-8000-000000000035';
+    window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000036';
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: '00000000-0000-7000-8000-000000000037', name: 'Organization B', region: 'global', role: 'member' },
+    });
+    const session: DesktopSession = {
+      ...globalIdentitySession,
+      accessToken: 'created-access-token-longer-than-twenty',
+      user: { ...globalIdentitySession.user, timezone: 'America/New_York' },
+      workspace: { id: created, name: 'Created Organization', region: 'global', role: 'owner', timezone: 'America/New_York' },
+    };
+    let finishCreate!: () => void;
+    // Main announces the new workspace the moment it is persisted, before the
+    // creation call has returned to this renderer.
+    bridge.createWorkspace.mockImplementation(async () => {
+      sessionListener?.(session);
+      await new Promise<void>((resolve) => { finishCreate = resolve; });
+      return session;
+    });
+    const getWorkspace = vi.spyOn(RallyApi.prototype, 'getWorkspace');
+    const client = renderProvider();
+    expect(await screen.findByText('global:Organization B')).toBeVisible();
+    const flags = { developerSettings: true, multipleWorkspacesEnabled: true };
+    client.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, flags);
+    const account = { eligible: true, introduced: true, revision: 3 };
+    client.setQueryData(accountOnboardingQueryKey(session.user.email), account);
+
+    let creation!: Promise<void>;
+    await act(async () => { creation = observedFinishWorkspaceSetup!('Created Organization', 'global'); await Promise.resolve(); });
+    await waitFor(() => expect(bridge.createWorkspace).toHaveBeenCalledTimes(1));
+    // The early announcement did not take the previous workspace down.
+    expect(screen.getByText('global:Organization B')).toBeVisible();
+    expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000036');
+    await act(async () => { finishCreate(); await creation; });
+
+    expect(await screen.findByText('global:Created Organization')).toBeVisible();
+    expect(window.location.hash).toBe('#/');
+    expect(getWorkspace).not.toHaveBeenCalled();
+    expect(client.getQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY)).toEqual(flags);
+    expect(client.getQueryState(CLIENT_FEATURE_FLAGS_QUERY_KEY)?.dataUpdatedAt).toBe(0);
+    expect(client.getQueryData(accountOnboardingQueryKey(session.user.email))).toEqual(account);
+    expect(client.getQueryState(accountOnboardingQueryKey(session.user.email))?.dataUpdatedAt).toBe(0);
+    getWorkspace.mockRestore();
+  });
+
+  it('does not carry an ineligible account across a creation, which can make it eligible', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: '00000000-0000-7000-8000-000000000038', name: 'Organization B', region: 'global', role: 'member' },
+    });
+    const session: DesktopSession = {
+      ...globalIdentitySession,
+      user: { ...globalIdentitySession.user, timezone: 'UTC' },
+      workspace: { id: '00000000-0000-7000-8000-000000000039', name: 'First Organization', region: 'global', role: 'owner', timezone: 'UTC' },
+    };
+    bridge.createWorkspace.mockResolvedValueOnce(session);
+    const client = renderProvider();
+    expect(await screen.findByText('global:Organization B')).toBeVisible();
+    client.setQueryData(accountOnboardingQueryKey(session.user.email), { eligible: false, introduced: true, revision: 1 });
+
+    await act(async () => { await observedFinishWorkspaceSetup!('First Organization', 'global'); });
+
+    expect(await screen.findByText('global:First Organization')).toBeVisible();
+    expect(client.getQueryData(accountOnboardingQueryKey(session.user.email))).toBeUndefined();
   });
 
   it('keeps conversation OAuth results in the feed and clears terminal failures', async () => {

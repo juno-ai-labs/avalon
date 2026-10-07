@@ -1888,7 +1888,7 @@ default target.
 
 ## Changelog
 
-### 2026-10-07 — A new Organization opens General in its one object call
+### 2026-10-07: A new Organization opens General in its one object call
 
 **What changed:** `initializeWorkspace` takes an optional `general` (creator,
 space id, authority generation) and answers `{ spacesReady }`. With it, a new

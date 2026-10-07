@@ -660,7 +660,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     if (owners.length > 1) {
       throw new ApiError(409, "regional_identity_conflict", "This account's sign-in methods belong to different regional identities");
     }
-    let user: RegionalUserRow | null = owners[0] ?? null;
+    const user: RegionalUserRow | null = owners[0] ?? null;
     if (user) {
       if (user.platform_user_id && user.platform_user_id !== identity.platformUserId) {
         throw new ApiError(409, "regional_identity_conflict", "The regional identity is already linked to another account");
