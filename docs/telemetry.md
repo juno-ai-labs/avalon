@@ -582,6 +582,59 @@ in `WorkspaceDO` and its conversations for work-stream product data.
 - Raw crash access is by opaque crash ID, region-restricted, reason-coded, and
   audited. A missing raw object returns a fixed result and never exposes its key.
 
+## Complete signup measurement
+
+Signup follows a random UUIDv7 `flowId` from the sign-in screen through the
+existing OAuth state, email challenge, and desktop ticket. A new identity stores
+that same flow atomically on insertion, so retries, magic-link tabs, organization
+setup, and invitation acceptance remain one journey. A returning identity never
+replaces its first-signup lineage.
+
+The API emits closed product events: `signup_viewed`, `signup_started`,
+`signup_email_submitted` (email only), `signup_verification_requested`,
+`signup_verification_completed`, `authentication_completed`,
+`signup_account_created` (new accounts only), `signup_organization_requested`,
+`signup_organization_ready`, `signup_onboarding_completed`, `signup_completed`,
+and `signup_failed`. Google cancellation and rejected email/Google proofs report
+failure. Abandonment is the absence of the next stage, not a fabricated failure.
+Organization readiness is observed after successful creation, membership
+activation, organization invitation acceptance, or scoped guest invitation
+acceptance. Signup completion requires organization access and any required
+account introduction; email guest accounts skip that introduction. Both
+`new_organization` and `existing_organization` paths are recorded.
+
+`clientPlatform` identifies the surface performing the observed stage;
+`entryPlatform` preserves where the journey began. `source: api` identifies the
+producer. The sign-in view has a narrow observation endpoint; clients cannot
+submit arbitrary event names or forge successful verification or completion.
+Browser and desktop share the server-owned proof and setup observations. The
+current desktop screen offers Google; browser offers Google and email.
+
+The flow UUID is an anonymous analytics subject, not an account ID. Native
+PostHog unique-subject funnels therefore count signup journeys rather than unique
+people. Early entry counts include returning sign-ins; `signup_account_created`
+is the first stage exclusively identifying new accounts. Acquisition on the
+public site remains a separate anonymous journey. Do not infer a joined
+website-download-install-signup funnel from those separate subjects.
+
+No email address, identity ID, invitation credential, OAuth state, ticket, code,
+or arbitrary error text enters these events. Known-user stages use the existing
+product-analytics preference gate; pre-verification observations cannot resolve
+that preference. Delivery is best effort through the regional collector and
+runtime deferral, and cannot block authentication. Stage-specific event IDs (separate for each organization intent path) keep
+replays from inflating counts. The first accepted occurrence wins. Completion is
+marked once on the user row, with organization access and introduction checked
+atomically against current state, independently of analytics delivery. Progress
+events retain their observation time before deferred reads. Old proofs and
+users without lineage are not backfilled. Apply regional migration 0121 before
+deploying these producers; new dashboard funnels populate only after deployment.
+
+`test/signup-telemetry.test.ts` exercises proof/session creation, both organization
+paths, required introduction, retries, privacy, opt-out, and telemetry failure
+against the checked-in migrations. Google callback coverage lives in
+`test/browser-google-sign-in.test.ts`; client tests verify correlated start
+requests. These tests do not prove production delivery or cross-device linking.
+
 ## Testing
 
 Run focused suites from their package directories:
@@ -1968,6 +2021,15 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-10-07 — Observe the complete first signup journey
+
+Authentication alone hid drop-off during organization access and introduction.
+The API now follows an opaque flow through existing proof records and the new
+account, then records new-organization or existing-organization completion. We
+kept the regional collector and preference gate instead of adding client SDK
+capture; future producers must preserve proof privacy, first-flow lineage, and
+the distinction between authentication and signup completion.
 
 ### 2026-10-02 — Locate desktop-action waits and admit deterministic import runs
 

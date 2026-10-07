@@ -1,3 +1,4 @@
+import { uuidV7 } from '../../desktop/src/renderer/lib/telemetry';
 import { clearAllDrafts as clearAllDraftsOnly } from '../../desktop/src/renderer/lib/draft-cache';
 import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
 import { CreateOrganizationCard, type CreateOrganizationOperation } from '../../desktop/src/renderer/screens/create-organization';
@@ -57,6 +58,9 @@ export function BrowserBoot(): React.JSX.Element {
 
 /** This entry has no account setup step. Collaboration mounts after authentication. */
 export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void, onRevalidate: () => void) => ReactNode } = {}) {
+  const signupFlow = useRef<string | null>(null);
+  const signupViewed = useRef(false);
+  signupFlow.current ??= uuidV7();
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
   // What the restore path opens: the address the page loaded with, or an
   // organization opened in place since, which a later focus then restores.
@@ -248,6 +252,12 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   // during the request so a routine focus does not discard an unsent draft.
   }, [destination, session]);
 
+  useEffect(() => {
+    if (checking || session || proof || challenge || signupViewed.current) return;
+    signupViewed.current = true;
+    void browserRequest(IDENTITY_REGION, '/signup/view', z.undefined(), { flowId: signupFlow.current }).catch(() => undefined);
+  }, [checking, session, proof, challenge]);
+
   async function redeem(input: { challengeId: string; redemptionId: string; method: "otp" | "magic"; credential: string }) {
     const current = await browserRequest(proof?.region ?? IDENTITY_REGION, "/email/redeem", BrowserSessionSchema, input);
     const read = ++sessionRead.current;
@@ -284,7 +294,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
           : { email: normalizedEmail, id: crypto.randomUUID(), redemptionId: crypto.randomUUID() };
         issuance.current = next;
         const returnPath = location.pathname.startsWith("/app/") ? { returnPath: location.pathname } : {};
-        await browserRequest(IDENTITY_REGION, "/email/start", EmailLoginStartedSchema, { challengeId: next.id, email: normalizedEmail, ...returnPath });
+        await browserRequest(IDENTITY_REGION, "/email/start", EmailLoginStartedSchema, { challengeId: next.id, email: normalizedEmail, signupFlowId: signupFlow.current, ...returnPath });
         setChallenge(next);
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to continue. Please try again."); }
@@ -319,7 +329,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     setBusy(true); setError(null); setGoogleNotice(null);
     try {
       const returnPath = location.pathname.startsWith("/app/") ? location.pathname : "/";
-      const { url } = await browserRequest(IDENTITY_REGION, "/google/start", BrowserGoogleStartedSchema, { returnPath });
+      const { url } = await browserRequest(IDENTITY_REGION, "/google/start", BrowserGoogleStartedSchema, { returnPath, signupFlowId: signupFlow.current });
       location.assign(url);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to start Google sign-in. Try again.");
@@ -339,6 +349,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       await clearAllDrafts();
       if (read !== sessionRead.current) return;
       sessionUser.current = null;
+      signupFlow.current = uuidV7();
+      signupViewed.current = false;
       setSession(null); setWorkspaces(null); setCreating(false); setChallenge(null); setCode(""); issuance.current = null;
       sessionChannel.current?.postMessage("session-changed");
       if (unreached) setError("Signed out here, but a Rally deployment did not respond. Sign out again to finish.");
