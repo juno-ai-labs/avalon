@@ -150,8 +150,26 @@ A grant and a session start are recorded before they take effect, so access is
 never live without its record; a write that then fails leaves a record of an
 attempt. A revocation is recorded after it, since the failure there is the safe
 one.
-The represented person's ordinary actions inside the session are not audited
-separately; the session row is the record of who held it.
+Every write a support session makes is also recorded, after it runs and off
+the response path, so it adds no latency: a non-GET HTTP request as
+`support_session.request` (method, path, status) from `auditSupportWrites` in
+`apps/api/src/middleware/auth.ts`, and a Channel socket command that writes
+(sending a message, editing, reacting, and the like) as
+`support_session.socket_command` from `SubstreamAgent`. Both carry the staff
+member as actor, the person as target, and the session id. Reads are not
+recorded. A failed write to the audit database is logged
+(`support_action_audit_failed`) and does not fail the action; the session row
+still says who held the session.
+
+A support session looks without leaving a trace on the person's own state. It
+does not mark a Channel opened or read, does not advance or set unread
+(`acknowledge_read`, `mark_unread`, and `mark_read` batch updates succeed
+without an effect), does not record a visit in the Channel list's recency, and
+counts in nobody's presence or viewer list. The socket ticket carries the staff
+member (`imp`), and `SocketService` and `WorkspaceSocketService` pass it to the
+Durable Objects as `x-rally-socket-impersonator-id`, which store it on the
+socket. A message sent from the session still moves the person's seen marker
+past it, as anyone's own message does, and analytics are unchanged.
 
 ## Packaging, release, and updates
 
@@ -242,7 +260,12 @@ non-macOS, and non-arm64 builds never contact the production feed.
   other credential, or register a device for the person's notifications.
 - A support session is bound to the staff membership incarnation that opened
   it, as an ordinary session is to its own membership's.
-- A grant and a support session are audited before they exist.
+- A grant and a support session are audited before they exist. A write made
+  from the session is audited after it, in the background, and never waits on
+  or fails because of the audit database.
+- A support session leaves the person's read state, Channel recency and
+  presence alone. A new per-person mark (seen, opened, visited) checks
+  `impersonatorUserId` on the request or socket the same way.
 - A support session never outlives its grant. What it creates (an invitation,
   a connection) is the Organization's and stays, as anyone's would. Renewal is capped at the grant's
   expiry, which is also what lets the ordinary expiry sweep close its sockets.
@@ -302,7 +325,13 @@ impersonator and its expiry capped at the grant across a renewal, the refusal
 without a grant, who may grant, and that a revoke, an expired grant, or leaving
 Juno Labs each end a live session on the next request (and a revoke publishes
 its socket revocation). It also opens and ends a support session in a browser
-cookie's Organization slot. `apps/desktop/src/renderer/components/support-access.test.tsx`
+cookie's Organization slot, and records an audit row for a write made from
+the session and carries the staff member in its workspace socket ticket.
+`apps/api/test-workers/unseen-workstream-state.test.ts` proves in workerd that
+a support session's HTTP reads and socket do not mark a Channel opened or
+read, that a socket write command is audited, and that the socket is not a
+viewer; `durable-object-runtime.test.ts` proves its workspace socket records no
+Channel visit. `apps/desktop/src/renderer/components/support-access.test.tsx`
 covers the settings row's countdown and buttons and the account menu's rows,
 submenu and **End impersonation**; `src/main/workspace-directory.test.ts`
 covers how a stored support credential is told apart.
@@ -394,7 +423,9 @@ access, or minting another credential) reads `impersonatorUserId`. Durable
 things a session creates as an administrator (an invitation, a role change, a
 connection) outlive the grant like any administrator's. Identity-scoped account state (onboarding,
 profile, appearance) is the staff member's and is hidden on a support session.
-The represented person's actions are not separately audited. A second
+Each write from a support session is audited in the background, and the
+session leaves the person's read state, recency and presence alone: Adam asked
+for both, with the audit kept off the response path. A second
 deployment needs the staff check and grant list to cross regions.
 
 
