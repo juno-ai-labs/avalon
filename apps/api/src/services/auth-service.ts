@@ -663,7 +663,11 @@ export class AuthService {
         access_class: null,
       };
     }
-    const row = await this.env.DB.prepare(
+    return this.requireWorkspaceIdentity(await this.workspaceIdentityStatement(userId, workspaceId).first<IdentityRow>());
+  }
+
+  private workspaceIdentityStatement(userId: string, workspaceId: string): D1PreparedStatement {
+    return this.env.DB.prepare(
       `SELECT u.id AS user_id, u.email, u.name AS user_name, u.avatar_url,
          u.timezone AS user_timezone,
          u.created_at AS user_created_at, w.id AS workspace_id, w.name AS workspace_name,
@@ -673,13 +677,61 @@ export class AuthService {
        JOIN workspaces w ON w.id = m.workspace_id
        WHERE u.id = ? AND w.id = ? AND m.status = 'active'
          AND w.abandoned_at IS NULL`,
-    )
-      .bind(userId, workspaceId)
-      .first<IdentityRow>();
+    ).bind(userId, workspaceId);
+  }
+
+  private requireWorkspaceIdentity(row: IdentityRow | null | undefined): IdentityRow {
     if (!row || row.workspace_region !== this.env.AVALON_REGION) {
       throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
     }
     return row;
+  }
+
+  /**
+   * `createRegionalSession` for a caller that writes the workspace in the same
+   * D1 batch: `statements` go after the membership they need, and `issue`
+   * takes their results in order. The session row is written only for an
+   * active membership of a workspace in this region, which is what
+   * `loadIdentity` would have refused on, so a batch that made no membership
+   * leaves no session behind it.
+   */
+  async prepareWorkspaceSession(userId: string, workspaceId: string): Promise<{
+    statements: D1PreparedStatement[];
+    issue: (results: readonly D1Result[]) => Promise<Session>;
+  }> {
+    const sessionId = newId();
+    const refreshToken = randomToken(48);
+    const at = nowIso();
+    const insert = this.env.DB.prepare(
+      `INSERT INTO sessions
+       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
+       SELECT ?, m.user_id, m.workspace_id, ?, ?, ?, ?
+         FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id
+        WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active'
+          AND w.region = ? AND w.abandoned_at IS NULL`,
+    ).bind(
+      sessionId,
+      this.env.AVALON_REGION,
+      await sha256(refreshToken),
+      new Date(Date.parse(at) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(),
+      at,
+      userId,
+      workspaceId,
+      this.env.AVALON_REGION,
+    );
+    return {
+      statements: [insert, this.workspaceIdentityStatement(userId, workspaceId)],
+      issue: async (results) => {
+        const identity = this.requireWorkspaceIdentity(results[1]?.results?.[0] as IdentityRow | undefined);
+        const accessToken = await issueAccessToken(this.env, {
+          sessionId,
+          userId: asUserId(identity.user_id),
+          workspaceId: asWorkspaceId(workspaceId),
+          region: this.env.AVALON_REGION,
+        });
+        return this.formatSession(identity, accessToken, refreshToken);
+      },
+    };
   }
 
   /** Workspace discovery for provider-independent, region-local identities. */

@@ -757,10 +757,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
               clearPendingInvitation();
               await workspaceDirectory.refetch();
             }}
-            onCreateWorkspace={async (input, operationId, progress) => {
-              await finishWorkspaceSetup(input.name, input.region, operationId, progress);
-              await workspaceDirectory.refetch();
-            }}
+            // No directory refetch: the creation lands the new workspace, which
+            // remounts this shell, and the new one reads discovery itself.
+            onCreateWorkspace={(input, operationId, progress) => (
+              finishWorkspaceSetup(input.name, input.region, operationId, progress)
+            )}
             onDeclineInvitation={async (invitation) => {
               await declineInvitation(invitation.region, invitation.id);
               await workspaceDirectory.refetch();

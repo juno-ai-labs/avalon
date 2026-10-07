@@ -244,10 +244,12 @@ id and `workspace_create_requested` intent. The entry posts the name and
 operation id to `POST /browser/workspace/create` on Global. That route runs the
 Mac app's `PlatformOnboardingService.createWorkspace`, revokes the bearer session
 it returns without reading it into a response, and answers only
-`{ region, workspaceId }`. The entry then navigates to
-`/app/workspaces/<region>/<id>`, which opens through `/workspace/select` like
-any other organization, and the shell runs the creator's setup journey there:
-"This is you in Rally", then inviting teammates.
+`{ region, workspaceId }`. The entry then opens it in the same document: it
+replaces the address with `/app/workspaces/<region>/<id>` (replaced, not
+pushed, since nothing in the entry answers Back), makes that the destination
+a later restore reopens, and opens it through `/workspace/select` like any
+other organization. The shell runs the creator's setup journey there: "This
+is you in Rally", then inviting teammates.
 Any account can create one, whatever it signed in with; see
 [multiple workspaces](multiple-workspaces.md#authority-and-data-flow) for how a
 deployment links the account.
@@ -559,6 +561,32 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-07: A created organization opens in place
+
+**What changed:** After `POST /browser/workspace/create` the entry no longer
+calls `location.assign`. It replaces the address with the organization's
+path, records it as the destination the restore path reopens (a ref, where
+the restore used to read only the address the page loaded with), and sets
+the destination, so the existing effect selects the organization and mounts
+the shell.
+
+**Why:** The navigation downloaded and booted the page again, restored the
+session it already held, and only then made the one request the new
+organization needed: `/workspace/select` on Global.
+
+**Considered and rejected:** `history.pushState`, so Back would return to the
+empty list. Nothing in the entry answers `popstate`, so Back would change the
+address and leave the organization on screen.
+
+**Consequences:** The created organization is reached without a history
+entry, so Back leaves Rally rather than returning to the empty list. A focus
+or a session change while it is open reselects it, as for a page loaded at
+its address, rather than reading the organization list. The list read before
+the creation is dropped, so a select that fails shows its error rather than an
+empty list with Create on it again.
+
+Shipped in #1142.
 
 ### 2026-10-06 — Create an organization from the browser
 
