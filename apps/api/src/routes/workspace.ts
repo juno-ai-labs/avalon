@@ -24,6 +24,7 @@ import {
   PreviewTerminalNetworkPolicyRequestSchema,
   ApplyTerminalNetworkPolicyRequestSchema,
   SocketTicketSchema,
+  SupportAccessSchema,
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -31,6 +32,7 @@ import { requireCurrentClientContract } from "../lib/client-contract";
 import { getAuth, getWorkspaceAuth } from "../middleware/auth";
 import { SpaceService } from "../services/space-service";
 import { WorkspaceService } from "../services/workspace-service";
+import { SupportAccessService } from "../services/support-access";
 import { workspaceAttention } from "../services/workspace-attention-service";
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
 import { createTerminalProviderRpcClient } from "../services/terminal/provider-rpc-client";
@@ -106,6 +108,14 @@ workspaceRoutes.get("/usage", async (c) => {
 workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), async (c) =>
   c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).updateWorkspace(c.req.valid("json")))),
 );
+// Rally access (`docs/impersonation.md`). Every member reads it; the service
+// lets only an administrator who is not a support session change it.
+workspaceRoutes.get("/support-access", async (c) =>
+  c.json(SupportAccessSchema.parse(await new SupportAccessService(c.env, getAuth(c)).status())));
+workspaceRoutes.put("/support-access", async (c) =>
+  c.json(SupportAccessSchema.parse(await new SupportAccessService(c.env, getAuth(c)).grant())));
+workspaceRoutes.delete("/support-access", async (c) =>
+  c.json(SupportAccessSchema.parse(await new SupportAccessService(c.env, getAuth(c)).revoke())));
 workspaceRoutes.patch("/me", zValidator("json", UpdateUserTimezoneRequestSchema), async (c) =>
   c.json(WorkspaceMemberSchema.parse(
     await new WorkspaceService(c.env, getAuth(c)).updateMyTimezone(c.req.valid("json").timezone))),
