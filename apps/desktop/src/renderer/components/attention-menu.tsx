@@ -112,7 +112,7 @@ export function AttentionMenu({ items, complete = true, requests = [], onDecide,
           <Tip describesTrigger={false} label="Approve" side="top">
             <DropdownMenu.Item
               aria-label={`Approve ${request.requesterName}`}
-              className="attention-menu-decision is-approve"
+              className="decision-button is-approve"
               onSelect={(event) => { event.preventDefault(); onDecide?.(request, 'approve'); }}
             >
               <IconCheck aria-hidden="true" size={16} stroke={2} />
@@ -121,7 +121,7 @@ export function AttentionMenu({ items, complete = true, requests = [], onDecide,
           <Tip describesTrigger={false} label="Decline" side="top">
             <DropdownMenu.Item
               aria-label={`Decline ${request.requesterName}`}
-              className="attention-menu-decision is-decline"
+              className="decision-button is-decline"
               onSelect={(event) => { event.preventDefault(); onDecide?.(request, 'decline'); }}
             >
               <IconCancel aria-hidden="true" size={16} stroke={2} />

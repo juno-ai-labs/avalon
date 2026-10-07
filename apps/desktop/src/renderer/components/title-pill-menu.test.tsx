@@ -1,3 +1,4 @@
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ChannelMenu } from '@rally/ui/components/conversation-menus';
@@ -6,7 +7,7 @@ import { TitlePill } from '@rally/ui/components/title-pill';
 const member = { id: 'user-1', name: 'Adam', email: 'adam@example.test', timezone: 'UTC' };
 
 function renderChannelPill(overrides: Partial<React.ComponentProps<typeof ChannelMenu>> = {}): void {
-  render(<TitlePill level={{
+  render(<Tooltip.Provider><TitlePill level={{
     key: 'channel:c1',
     icon: null,
     title: 'Launch',
@@ -20,7 +21,7 @@ function renderChannelPill(overrides: Partial<React.ComponentProps<typeof Channe
       workstream={{ id: 'c1', title: 'Launch', scope: 'personal', participants: [member], resources: [] }}
       {...overrides}
     />,
-  }} />);
+  }} /></Tooltip.Provider>);
 }
 
 function openMenu(): void {
@@ -118,6 +119,39 @@ describe('a title pill menu with levels', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Add someone by name or email' }), { target: { value: 'jor' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add Jordan' }));
     expect(onAdd).toHaveBeenCalledWith(newcomer);
+  });
+
+  it('lists people who asked to join above Suggested, answered in place and not suggested again', async () => {
+    const onDecide = vi.fn();
+    const asker = { id: 'user-3', name: 'Samantha Lee', email: 'sam@example.test', timezone: 'UTC' };
+    const other = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
+    renderChannelPill({ people: {
+      candidates: [member, asker, other], onAdd: vi.fn(() => Promise.resolve()), adding: false, currentUserId: member.id,
+      requests: { items: [{ id: 'r1', userId: asker.id, name: asker.name }], onDecide },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+
+    const headings = [...document.querySelectorAll('.title-menu-section-heading')].map((node) => node.textContent);
+    expect(headings).toEqual(['Asked to join', 'Suggested']);
+    expect(screen.getByText('sam@example.test')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add Samantha Lee' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add Jordan' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve Samantha Lee' }));
+    expect(onDecide).toHaveBeenCalledWith('r1', 'approve');
+    fireEvent.click(screen.getByRole('button', { name: 'Decline Samantha Lee' }));
+    expect(onDecide).toHaveBeenLastCalledWith('r1', 'decline');
+  });
+
+  it('shows no Asked to join section when nobody asked', async () => {
+    renderChannelPill({ people: {
+      candidates: [member], onAdd: vi.fn(() => Promise.resolve()), adding: false, currentUserId: member.id,
+      requests: { items: [], onDecide: vi.fn() },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    expect(await screen.findByText('You')).toBeInTheDocument();
+    expect(screen.queryByText('Asked to join')).not.toBeInTheDocument();
   });
 
   it('invites new addresses as guests on Enter, adds people already in the organization, and stays open', async () => {
