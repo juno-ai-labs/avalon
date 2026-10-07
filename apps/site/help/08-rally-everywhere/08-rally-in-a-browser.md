@@ -97,7 +97,7 @@ has been shared with you.
 - Breakouts open beside their Channel, as on the Mac. See
   [Breakouts](../03-spaces-and-breakouts/03-breakouts.md#a-breakout-beside-its-channel).
 - The account menu has **Switch organization** and **Sign out**.
-- A **Download the Mac app** button sits above the account menu. The Mac app is for Macs with Apple silicon.
+- On a computer, a **Download the Mac app** button sits above the account menu. The Mac app is for Macs with Apple silicon. Phones and tablets do not show it.
 - You can rename a Channel or Breakout, and archive a Breakout, from its title
   pill menu. An archived Breakout shows **Restore breakout**. An archived Channel has to be
   restored before its conversations can reopen.
