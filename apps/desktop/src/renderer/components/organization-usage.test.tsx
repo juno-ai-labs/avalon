@@ -282,7 +282,8 @@ describe('Usage in the Organization menu', () => {
   it('shows a thin meter and how much is left this week, and opens Settings when chosen', async () => {
     const onSelect = renderMenuItem(apiAnswering(usage(72)));
 
-    const item = await screen.findByRole('menuitem', { name: 'Usage, 72% left this week' });
+    const item = await screen.findByRole('menuitem', { name: 'Quota, 72% left this week' });
+    expect(within(item).getByText('Quota')).toBeVisible();
     expect(within(item).getByText('72% left this week')).toBeVisible();
     expect(within(item).getByRole('meter', { name: 'Weekly quota left' })).toHaveClass('meter-thin');
 
