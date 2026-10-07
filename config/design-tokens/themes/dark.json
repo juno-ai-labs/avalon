@@ -124,6 +124,7 @@
     "sys.color.workstream.news": "#f0675d",
     "sys.color.workstream.unseen": "#a992e0",
     "sys.color.danger.tint": "rgba(204, 122, 106, 0.14)",
+    "sys.color.success.tint": "rgba(127, 174, 151, 0.16)",
     "sys.color.scrim.default": "rgba(6, 4, 2, 0.72)",
     "sys.color.scrim.subtle": "rgba(6, 4, 2, 0.5)",
     "sys.color.scrim.solid": "rgba(7, 5, 3, 0.98)",
