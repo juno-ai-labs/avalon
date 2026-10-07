@@ -8039,7 +8039,14 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             halt: "needs_input" as const,
           };
         }
-        await publishWorkstreamEvent(env, input.workspaceId, input.parentId, { type: "elicitation_created", elicitation });
+        // Announced in the room of the conversation that asked, not Main's.
+        await publishWorkstreamEvent(
+          env,
+          input.workspaceId,
+          input.parentId,
+          { type: "elicitation_created", elicitation },
+          input.substreamId ?? "0",
+        );
         emitProductUsageTelemetry(env, {
           workspaceId: input.workspaceId,
           ...(input.executionPrincipal.type === 'user'
