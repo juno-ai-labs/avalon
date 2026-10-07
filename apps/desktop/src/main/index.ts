@@ -5082,6 +5082,10 @@ function installApplicationMenu(): void {
       },
       checkForUpdates: () => autoUpdateController?.checkForUpdates(),
       installDownloadedUpdate: () => autoUpdateController?.installDownloadedUpdate(),
+      // Only the main window has the account menu that lists Organizations.
+      refreshOrganizationList: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('organizations:refresh-requested');
+      },
     },
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
