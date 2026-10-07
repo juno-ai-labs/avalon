@@ -7933,15 +7933,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * Pin the workspace identity before any child object can be resolved, and
-   * answer whether the Organization's Spaces are ready to draw.
-   *
-   * `general` is the opening path's General Space, whose D1 anchor the caller
-   * has already written at `authorityGeneration`: with it, an object that has
-   * no General creates it and closes the cutover in this same call, which is
-   * what `SpaceService.ensureGeneral` and `finalizeSpaceBootstrap` otherwise
-   * take three calls and three D1 reads to do. `spacesReady: false` sends the
-   * caller to that slower path, which also handles a cutover that cannot
-   * close yet. See docs/spaces.md#general.
+   * answer whether the Organization's Spaces are ready to draw. With
+   * `general` (whose D1 anchor the caller wrote), a new Organization's General
+   * is made and its cutover closed here. See docs/spaces.md#general.
    */
   async initializeWorkspace(
     workspaceId: string,

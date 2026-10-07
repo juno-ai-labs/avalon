@@ -675,16 +675,16 @@ export class WorkstreamObjectCreationService {
    * statements ignore an existing row, so an open after a reservation keeps
    * the active route and its activation `UPDATE` still matches it.
    */
-  private writeAnchorAndRoute(
+  private async writeAnchorAndRoute(
     workstreamId: string,
     generation: number,
     at: string,
     state: "verified" | "active",
   ): Promise<void> {
-    return writeRegionalWorkstreamAnchorBatch(
+    await writeRegionalWorkstreamAnchorBatch(
       this.env,
-      { workspaceId: this.auth.workspaceId, workstreamId, at },
-      () => [
+      { workspaceId: this.auth.workspaceId, workstreamId },
+      [
         this.env.DB.prepare(
           `INSERT OR IGNORE INTO workstream_authority_routes
              (workspace_id, workstream_id, generation, object_name, state, stage_index,

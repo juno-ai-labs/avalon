@@ -573,17 +573,16 @@ the shell.
 session it already held, and only then made the one request the new
 organization needed: `/workspace/select` on Global.
 
-**Considered and rejected:** Activating through Global before the first
-select in another deployment, to skip the 401 a deployment without this
-browser's cookie answers. A creation is always on Global, so it never takes
-that path; and for a link, the cookie is usually already there, where
-activating first would add a Global round trip and mint a regional session
-on every open and every focus restore.
+**Considered and rejected:** `history.pushState`, so Back would return to the
+empty list. Nothing in the entry answers `popstate`, so Back would change the
+address and leave the organization on screen.
 
 **Consequences:** The created organization is reached without a history
 entry, so Back leaves Rally rather than returning to the empty list. A focus
 or a session change while it is open reselects it, as for a page loaded at
-its address, rather than reading the organization list.
+its address, rather than reading the organization list. The list read before
+the creation is dropped, so a select that fails shows its error rather than an
+empty list with Create on it again.
 
 Shipped in #1142.
 

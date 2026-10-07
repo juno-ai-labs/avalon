@@ -337,10 +337,13 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     if (
       pending && nextSession?.workspace && nextSession.workspace.region === pending.region
       // A creation does not know its workspace's id until main answers, so it
-      // holds any workspace in the region it asked for. Its own answer is
-      // main's active session either way, so a broadcast held here is never
-      // left unapplied.
-      && (pending.workspaceId === null || nextSession.workspace.id === pending.workspaceId)
+      // holds any other workspace in the region it asked for; a renewal of the
+      // one on screen passes, since a browser sign-in can keep a creation
+      // waiting for minutes. Its own answer is main's active session, and a
+      // failed creation applies the last broadcast it held.
+      && (pending.workspaceId === null
+        ? nextSession.workspace.id !== sessionRef.current?.workspace?.id
+        : nextSession.workspace.id === pending.workspaceId)
     ) {
       pending.held = nextSession;
       return;
@@ -514,20 +517,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
    * The feature flags ride across the same way so the account menu keeps its
    * shape while the new workspace's answer is on its way.
    *
-   * The record is fetched only when the session cannot describe the workspace
-   * itself. A session that can (every activation and creation main answers
-   * with carries the timezones `workspaceFromSession` needs) already gives the
-   * shell its first paint as the `['workspace']` placeholder, so waiting on
-   * that read here would hold the old workspace on screen for a round trip
-   * the new shell makes anyway, in parallel with its socket and lists.
-   *
-   * The account's onboarding state is carried with the flags: it is read at
-   * identity scope, so it is the same account's answer in every workspace,
-   * and the journey gate below the shell needs it before it can start its
-   * own read. A creation can make an ineligible account eligible (its first
-   * organization), never the reverse, so a creation carries it only when it
-   * already says eligible; otherwise the gate waits for the fresh answer, as
-   * on a cold start, rather than admitting the creator on a stale `false`.
+   * The record is fetched first only for a session that cannot describe the
+   * workspace; otherwise the session is the shell's placeholder. The account's
+   * onboarding state (identity-scoped) rides with the flags, except across a
+   * creation that could make an ineligible account eligible.
    */
   const applyActivatedSession = useCallback(async (
     nextSession: DesktopSession,
@@ -642,7 +635,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // new workspace reached the listener before this call returned, cleared
     // the cache and remounted the shell on the previous workspace's route,
     // with the flags and the account's onboarding state gone.
-    const previous = sessionRef.current;
     const creation: { region: Region; workspaceId: null; held?: DesktopSession } = {
       region: selectedRegion, workspaceId: null,
     };
@@ -652,7 +644,9 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         () => bridge.createWorkspace({ region: selectedRegion, name: normalized, operationId }),
         progress,
       );
-      await applyActivatedSession(nextSession, previous, 'creation');
+      // What is on screen now, not when the creation began: a renewal may
+      // have landed while it waited.
+      await applyActivatedSession(nextSession, sessionRef.current, 'creation');
     } catch (error) {
       // A creation holds every broadcast in its region, so a workspace another
       // window activated there meanwhile was held for this call's answer. A

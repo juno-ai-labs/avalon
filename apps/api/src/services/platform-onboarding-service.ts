@@ -43,7 +43,7 @@ import {
   readWorkstreamAuthorityControl,
   type WorkstreamAuthorityControl,
 } from "./workstream-authority";
-import { batchWithRegionalWorkstreamAnchor, parentAnchorStatements } from "./workstream-runtime-database";
+import { parentRouteStatement, regionalWorkstreamAnchorStatement } from "./workstream-runtime-database";
 import type { WorkspaceGeneralOpening } from "../durable-objects/workspace-space-protocol";
 import { uuidV7 } from "../lib/uuid-v7";
 import {
@@ -242,11 +242,6 @@ export class RegionalIdentityBridgeClient implements RegionalIdentityBridgeBindi
     }
     return valueSchema.parse(envelope.value);
   }
-}
-
-interface PlacementAffinityRow {
-  region: Region;
-  placement_affinity: string;
 }
 
 interface RegionalUserRow {
@@ -476,15 +471,16 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   }
 
   /**
-   * The rows, the journal entry, the checks, General's anchor and the object,
-   * for both creators above. One D1 batch writes the workspace, its owner, the
-   * journal entry and General's anchor, and reads back the checks; `trailing`
-   * statements (the creator's session) go after the membership they need, and
-   * the batch's results from them on are returned. One object call then
-   * initializes the Organization and opens General in it. An authority that
-   * does not accept new work (closed, or mid-migration with a positive
-   * generation) gets no anchor here: General is left to the slower path,
-   * which asks again and refuses with a name.
+   * The rows, the journal entry, General's anchor and the object, for both
+   * creators above. One D1 batch writes the workspace, its owner, the journal
+   * entry and General's anchor and route; `trailing` statements (the
+   * creator's session) go last, after the membership they need, and their
+   * results are returned. The batch is all or nothing and the workspace insert
+   * has no conflict clause, so a committed batch is the proof of the rows: no
+   * read-back follows. One object call then initializes the Organization and
+   * opens General in it. An authority that does not accept new work (closed,
+   * or mid-migration with a positive generation) gets no anchor here, and
+   * General is left to the slower path, which asks again.
    */
   private async createOwnedWorkspace(
     userId: string,
@@ -494,12 +490,12 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   ): Promise<D1Result[]> {
     const at = nowIso();
     const slug = workspaceSlug(input.name, input.workspaceId);
-    const authorityGeneration = authority.generation;
-    const generalSpaceId = acceptsNewWorkstreamWork(authority) && authorityGeneration >= 1 ? uuidV7() : null;
-    const general = generalSpaceId === null ? null : parentAnchorStatements(this.env, {
-      workspaceId: input.workspaceId, parentId: generalSpaceId, parentKind: "space", generation: authorityGeneration, at,
-    });
-    const statements = (anchor: D1PreparedStatement | null) => [
+    // Minted here and never seen outside this call, so no Channel create can
+    // have claimed it and the claim read `claimParentAnchor` makes is not needed.
+    const general = acceptsNewWorkstreamWork(authority) && authority.generation >= 1
+      ? { creatorUserId: asUserId(userId), spaceId: asSpaceId(uuidV7()), authorityGeneration: authority.generation }
+      : undefined;
+    const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO workspaces
          (id, name, slug, region, timezone, placement_affinity,
@@ -523,34 +519,16 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = 'active'`,
       ).bind(input.workspaceId, userId, at, input.workspaceId, this.env.AVALON_REGION),
       this.operationStatement(input, "create", null, at),
-      this.membershipStatement(userId, input.workspaceId),
-      this.placementAffinityStatement(input.workspaceId),
-      ...(anchor && general ? [anchor, ...general.statements] : []),
+      ...(general ? [
+        regionalWorkstreamAnchorStatement(this.env, input.workspaceId, general.spaceId),
+        parentRouteStatement(this.env, {
+          workspaceId: input.workspaceId, parentId: general.spaceId, generation: general.authorityGeneration, at,
+        }),
+      ] : []),
       ...trailing,
-    ];
-    const results = generalSpaceId === null
-      ? await this.env.DB.batch(statements(null))
-      : await batchWithRegionalWorkstreamAnchor(
-        this.env,
-        { workspaceId: input.workspaceId, workstreamId: generalSpaceId, at },
-        statements,
-      );
-    this.requireMembershipRow(results[3]?.results?.[0]);
-    this.requirePlacementAffinityRow(results[4]?.results?.[0] as PlacementAffinityRow | undefined, input.placementAffinity);
-    const anchorCount = general ? 1 + general.statements.length : 0;
-    // A fresh id has not left this call, so no Channel create can have named
-    // it; the check runs anyway and only costs General its fast path.
-    let opening: WorkspaceGeneralOpening | undefined;
-    if (general && generalSpaceId) {
-      try {
-        general.requireUnclaimed(results.slice(6, 5 + anchorCount));
-        opening = { creatorUserId: asUserId(userId), spaceId: asSpaceId(generalSpaceId), authorityGeneration };
-      } catch (error) {
-        if (!(error instanceof ApiError)) throw error;
-      }
-    }
-    await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity, opening);
-    return results.slice(5 + anchorCount);
+    ]);
+    await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity, general);
+    return trailing.length === 0 ? [] : results.slice(-trailing.length);
   }
 
   async accept(rawInput: RegionalAcceptInput): Promise<Session> {
@@ -801,42 +779,25 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   }
 
   private async requireMembership(userId: string, workspaceId: string): Promise<void> {
-    this.requireMembershipRow(await this.membershipStatement(userId, workspaceId).first());
-  }
-
-  private membershipStatement(userId: string, workspaceId: string): D1PreparedStatement {
-    return this.env.DB.prepare(
+    const membership = await this.env.DB.prepare(
       `SELECT 1 AS present FROM workspace_members m
        JOIN workspaces w ON w.id = m.workspace_id
        WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active'
          AND w.region = ? AND w.abandoned_at IS NULL`,
-    ).bind(userId, workspaceId, this.env.AVALON_REGION);
-  }
-
-  private requireMembershipRow(row: unknown): void {
-    if (!row) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
+    ).bind(userId, workspaceId, this.env.AVALON_REGION).first<{ present: number }>();
+    if (!membership) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
   }
 
   private async requirePlacementAffinity(
     workspaceId: string,
     placementAffinity: WorkspacePlacementAffinity,
   ): Promise<void> {
-    this.requirePlacementAffinityRow(
-      await this.placementAffinityStatement(workspaceId).first<PlacementAffinityRow>(),
-      placementAffinity,
-    );
-  }
-
-  private placementAffinityStatement(workspaceId: string): D1PreparedStatement {
-    return this.env.DB.prepare(
+    const workspace = await this.env.DB.prepare(
       "SELECT region, placement_affinity FROM workspaces WHERE id = ? AND region = ?",
-    ).bind(workspaceId, this.env.AVALON_REGION);
-  }
-
-  private requirePlacementAffinityRow(
-    workspace: PlacementAffinityRow | null | undefined,
-    placementAffinity: WorkspacePlacementAffinity,
-  ): void {
+    ).bind(workspaceId, this.env.AVALON_REGION).first<{
+      region: Region;
+      placement_affinity: string;
+    }>();
     if (
       !workspace
       || workspace.placement_affinity !== placementAffinity
@@ -1351,10 +1312,14 @@ export class PlatformOnboardingService {
     requestLocation?: unknown,
     requestedOperationId?: string,
   ): Promise<Session> {
-    const [identity, requestFingerprint, requested] = await Promise.all([
+    // The preference is read here, beside the identity, rather than beside
+    // the reservation: a read that fails after the reservation commits would
+    // leave a pending binding nothing releases.
+    const [identity, requestFingerprint, requested, preference] = await Promise.all([
       this.loadPlatformIdentity(),
       sha256(JSON.stringify(["create", region, name])),
       requestedOperationId ? this.operations.get(requestedOperationId) : null,
+      this.canonicalPreference(),
     ]);
     let operationId: string;
     let existing = requested;
@@ -1398,6 +1363,7 @@ export class PlatformOnboardingService {
         placementAffinity,
         preference,
       }),
+      preference,
       () => this.makeFirstCreatorEligible(identity.platformUserId, region, workspaceId),
     );
     return session;
@@ -1427,8 +1393,11 @@ export class PlatformOnboardingService {
     region: Region,
     requestedOperationId?: string,
   ): Promise<Session> {
-    const identity = await this.loadPlatformIdentity();
-    const requestFingerprint = await sha256(JSON.stringify(["accept", region, invitationId]));
+    const [identity, requestFingerprint, preference] = await Promise.all([
+      this.loadPlatformIdentity(),
+      sha256(JSON.stringify(["accept", region, invitationId])),
+      this.canonicalPreference(),
+    ]);
     const operationId = requestedOperationId ?? this.createId();
     let operation = await this.operations.get(operationId);
     if (operation) {
@@ -1487,6 +1456,7 @@ export class PlatformOnboardingService {
         placementAffinity: operation.placement_affinity,
         preference,
       }),
+      preference,
     );
   }
 
@@ -1499,6 +1469,11 @@ export class PlatformOnboardingService {
     if (this.env.AVALON_REGION !== "global" || this.auth.region !== "global") {
       throw new ApiError(409, "global_identity_required", "Sign in through the Rally platform before choosing a workspace");
     }
+  }
+
+  /** The session names the canonical user, so its preference needs no identity read first. */
+  private canonicalPreference(): Promise<z.infer<typeof PreferenceProjectionSchema>> {
+    return loadOrCreateCanonicalPreferenceProjection(this.env, this.auth.userId);
   }
 
   private async loadPlatformIdentity(): Promise<PlatformIdentity> {
@@ -1607,13 +1582,13 @@ export class PlatformOnboardingService {
       operationId: string,
       preference: z.infer<typeof PreferenceProjectionSchema>,
     ) => Promise<Session>,
+    preference: z.infer<typeof PreferenceProjectionSchema>,
     /** Runs beside the binding's activation once the regional action has committed. */
     committed?: () => Promise<void>,
   ): Promise<Session> {
-    const [preference, reservation] = await Promise.all([
-      loadOrCreateCanonicalPreferenceProjection(this.env, identity.platformUserId),
-      this.bindings.reserve(identity.platformUserId, region, workspaceId, placementAffinity, operationId),
-    ]);
+    const reservation = await this.bindings.reserve(
+      identity.platformUserId, region, workspaceId, placementAffinity, operationId,
+    );
     if (!sameDestination({ region: reservation.region, workspaceId: reservation.workspace_id }, region, workspaceId)) {
       throw new ApiError(409, "workspace_binding_conflict", "The workspace route conflicts with this Rally account");
     }

@@ -546,6 +546,33 @@ it('creates an organization from the empty shared-work screen and opens it in pl
   } finally { view.unmount(); }
 });
 
+it('does not offer Create again when a created organization fails to open', async () => {
+  const createdId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef';
+  const expiresAt = new Date(Date.now() + 100_000).toISOString();
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt });
+    if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
+    if (input === '/regional/global/browser/workspace/create') return Response.json({ region: 'global', workspaceId: createdId }, { status: 201 });
+    if (input === '/regional/global/browser/workspace/select') {
+      return Response.json({ error: { code: 'regional_onboarding_unavailable', message: 'The region is unavailable' } }, { status: 503 });
+    }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.workspace?.name}`}</output>} />);
+  try {
+    await screen.findByText('guest@example.test is not part of an organization, and nothing has been shared with it yet.');
+    fireEvent.click(screen.getByRole('button', { name: 'Create an organization' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Acme Research' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Organization name' })).not.toBeInTheDocument());
+    await waitFor(() => expect(location.pathname).toBe(`/app/workspaces/global/${createdId}`));
+    // The select failed; the empty list read before the creation must not come
+    // back with Create on it.
+    expect(await screen.findByText('The region is unavailable')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create an organization' })).not.toBeInTheDocument();
+  } finally { view.unmount(); }
+});
+
 it('holds Back while an organization is being created and reuses its operation after an uncertain failure', async () => {
   const created: Array<{ operationId: string }> = [];
   let fail!: () => void;

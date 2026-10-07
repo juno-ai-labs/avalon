@@ -55,3 +55,12 @@ it("drops an email address Global no longer sends, so its next owner can link he
   await service().discover(identity(next,[{ provider:"email",subject:"old@example.test" }],"old@example.test"));
   expect(db.prepare("SELECT COUNT(*) AS n FROM users WHERE platform_user_id=?").get(next)).toEqual({ n:1 });
 });
+
+it("refuses a returning user's profile whose verified email another regional user holds, by name",async () => {
+  const platformUserId = crypto.randomUUID();
+  await service().discover(identity(platformUserId,[{ provider:"google",subject:"google-returning" }],"first@example.test"));
+  db.prepare("INSERT INTO users(id,email,name,created_at,updated_at) VALUES (?,'taken@example.test','Other',?,?)").run(crypto.randomUUID(),at,at);
+
+  await expect(service().discover(identity(platformUserId,[{ provider:"google",subject:"google-returning" }],"taken@example.test")))
+    .rejects.toMatchObject({ status:409, code:"regional_identity_conflict" });
+});
