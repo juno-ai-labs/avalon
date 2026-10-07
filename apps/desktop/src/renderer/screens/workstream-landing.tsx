@@ -122,7 +122,14 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
         : `/spaces/${encodeURIComponent(savedSpace.id)}`} />;
     }
   }
-  if (first) return <Navigate replace to={channelDestination(first)} />;
+  if (first) {
+    // A Space landing names the Space, which the sidebar selects, so the row
+    // landed on is the top row the reader sees.
+    const destination = channelDestination(first);
+    return <Navigate replace to={stayInSpace
+      ? `${destination}${destination.includes('?') ? '&' : '?'}space=${encodeURIComponent(stayInSpace.id)}`
+      : destination} />;
+  }
   if (stayInSpace) return <Navigate replace to={emptySpaceRoute(stayInSpace.id, !guest)} />;
   // No Channel to open. Every Channel is started from a Space, so an empty
   // Organization lands on starting one in General. A guest is not listed

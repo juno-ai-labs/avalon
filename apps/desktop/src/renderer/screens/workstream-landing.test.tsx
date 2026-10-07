@@ -91,7 +91,7 @@ describe('default channel landing', () => {
     ];
     spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
     render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['left'], spaceId: 'design' } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/older$/u);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/older\?space=design$/u);
   });
 
   it('lands a leave on the Space’s first pin, ahead of more recent Channels', async () => {
@@ -103,7 +103,7 @@ describe('default channel landing', () => {
     ];
     spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
     render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/first-pin$/u);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/first-pin\?space=design$/u);
   });
 
   it('lands a leave in a Space with no pins on the first row of the reader’s sort', async () => {
@@ -114,7 +114,7 @@ describe('default channel landing', () => {
     ];
     spaces.data = { items: [{ id: 'design' }] };
     render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/apple$/u);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/apple\?space=design$/u);
   });
 
   it('lands a leave on the Breakout the sidebar row opens when Main is not the reader’s', async () => {
@@ -125,7 +125,7 @@ describe('default channel landing', () => {
       conversations: [{ substreamId: 'risks', title: 'Risks', scope: 'personal', archived: false }],
     }] };
     render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/shared\?substream=risks$/u);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/shared\?substream=risks&space=design$/u);
   });
 
   it('waits for a Space loaded a Space at a time to finish before picking its first pin', async () => {
@@ -141,7 +141,7 @@ describe('default channel landing', () => {
     ];
     socket.loadedSpaceIds = new Set(['design']);
     view.rerender(<Router initial={initial} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/pinned$/u);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/pinned\?space=design$/u);
   });
 
   it('pages the directory until a Space’s rows are all in before picking its first row', () => {
@@ -173,7 +173,7 @@ describe('default channel landing', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Opening spaces');
     spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
     view.rerender(<Router initial={initial} />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/older$/u);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/older\?space=design$/u);
   });
 
   it('waits for the Space directory before resuming a saved Space', async () => {
