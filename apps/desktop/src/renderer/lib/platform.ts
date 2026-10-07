@@ -205,8 +205,6 @@ async function browserOnboardingSession(
   return installBrowserSession(raw, browserGlobalApiBaseUrl());
 }
 
-let browserSidekicksWindow: Window | null = null;
-
 const browserBridge: RallyDesktopBridge = {
   async getRuntimeConfig() {
     return {
@@ -616,22 +614,10 @@ const browserBridge: RallyDesktopBridge = {
     }
     return opened.length > 1;
   },
+  // A tab cannot keep a second window, so Sidekicks is a route of this one,
+  // as Settings is. See `window-surface.ts`.
   async openSidekicks(requested) {
-    const target = new URL(window.location.href);
-    target.searchParams.set('surface', 'sidekicks');
-    target.hash = requested ? `/sidekicks/${encodeURIComponent(requested)}` : '/sidekicks';
-    if (browserSidekicksWindow && !browserSidekicksWindow.closed) {
-      browserSidekicksWindow.location.href = target.toString();
-      browserSidekicksWindow.focus();
-      return;
-    }
-    // Open a same-origin blank window, sever its opener before navigating, and
-    // retain our reference: noopener would discard the named-window reuse.
-    browserSidekicksWindow = window.open('about:blank', 'rally-sidekicks');
-    if (browserSidekicksWindow) {
-      browserSidekicksWindow.opener = null;
-      browserSidekicksWindow.location.href = target.toString();
-    }
+    window.location.hash = requested ? `#/sidekicks/${encodeURIComponent(requested)}` : '#/sidekicks';
   },
   async openSettings(section) {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';
