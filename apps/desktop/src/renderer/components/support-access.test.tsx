@@ -35,7 +35,6 @@ function menu(overrides: Partial<React.ComponentProps<typeof WorkspaceAccountMen
     supportWorkspaces: [acme],
     loadSupportPeople: vi.fn(async () => people),
     onStartSupportSession: vi.fn(async () => undefined),
-    onSupportMenuOpen: vi.fn(),
     ...overrides,
   };
   renderWithQueries(<WorkspaceAccountMenu {...props} />);
@@ -108,7 +107,6 @@ describe('Rally access in the account menu', () => {
   it('lists a granting Organization and opens a session as the person chosen from its submenu', async () => {
     const props = menu();
     openMenu(/Morgan Ellis/u);
-    expect(props.onSupportMenuOpen).toHaveBeenCalledOnce();
     const row = screen.getByRole('menuitem', { name: 'Acme Robotics, Rally access' });
     fireEvent.keyDown(row, { key: 'ArrowRight' });
     const choice = await screen.findByRole('menuitem', { name: 'Bob Smith' });
