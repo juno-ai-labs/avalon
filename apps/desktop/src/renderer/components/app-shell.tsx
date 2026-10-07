@@ -75,6 +75,21 @@ export function useLayoutMountedRef(): React.RefObject<boolean> {
   return mounted;
 }
 
+/**
+ * The account directory with the active workspace's row named from
+ * `GET /workspace`. Discovery fills the directory and no sync topic reruns it,
+ * while the `workspace_profile` topic refreshes that read on a rename, so this
+ * is what keeps a renamed Organization's name current on the account menu.
+ */
+export function withActiveWorkspaceName(
+  rows: readonly DesktopWorkspaceSummary[],
+  active: { id: string; name: string; region: string },
+): DesktopWorkspaceSummary[] {
+  return rows.map((row) => (
+    row.id === active.id && row.region === active.region ? { ...row, name: active.name } : row
+  ));
+}
+
 /** Archive is writable only while this connection still owns a live Space snapshot. */
 export function hasLiveSpaceArchiveAuthority(
   state: WorkspaceSocketState,
@@ -620,8 +635,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     clearPendingInvitation();
     void desktopBridge().showDeepLinkError(mismatch);
   }, [clearPendingInvitation, pendingInvitationPreview.data, session]);
-  const activeWorkspace: DesktopWorkspaceSummary = workspaceDirectory.data?.workspaces
-    .find((candidate) => candidate.id === workspace.id && candidate.region === workspace.region) ?? {
+  const directoryWorkspaces = workspaceDirectory.data
+    ? withActiveWorkspaceName(workspaceDirectory.data.workspaces, workspace)
+    : undefined;
+  const activeWorkspace: DesktopWorkspaceSummary = directoryWorkspaces?.find((candidate) => (
+    candidate.id === workspace.id && candidate.region === workspace.region
+  )) ?? {
       id: workspace.id,
       name: workspace.name,
       slug: workspace.id,
@@ -630,9 +649,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       ...(session?.workspace?.accessClass === 'guest' ? { accessClass: 'guest' as const } : {}),
       createdAt: new Date(0).toISOString(),
     };
-  const knownWorkspaces = workspaceDirectory.data?.workspaces.length
-    ? workspaceDirectory.data.workspaces
-    : [activeWorkspace];
+  const knownWorkspaces = directoryWorkspaces?.length ? directoryWorkspaces : [activeWorkspace];
   const promptedInvitation = pendingInvitationPreview.data
     ? workspaceDirectory.data?.invitations.find((candidate) => (
       candidate.workspaceId === pendingInvitationPreview.data.workspaceId
