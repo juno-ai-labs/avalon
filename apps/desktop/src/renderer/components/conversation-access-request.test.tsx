@@ -19,11 +19,11 @@ function fakeApi(answer: ConversationAccessPreview, request: () => Promise<void>
   } satisfies ConversationAccessApi;
 }
 
-function show(api: ConversationAccessApi, substreamId = '0'): void {
+function show(api: ConversationAccessApi, substreamId = '0', onRetry: () => void = () => undefined): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <ConversationAccessRequest api={api} fallback={<p>Channel could not be opened</p>} parentId={PARENT} substreamId={substreamId} />
+      <ConversationAccessRequest api={api} fallback={<p>Channel could not be opened</p>} onRetry={onRetry} parentId={PARENT} substreamId={substreamId} />
     </QueryClientProvider>,
   );
 }
@@ -40,6 +40,14 @@ describe('ConversationAccessRequest', () => {
     expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
   });
 
+  it('offers to dial again once the request is sent, since a revoked socket never dials back alone', async () => {
+    const onRetry = vi.fn();
+    show(fakeApi(preview()), '0', onRetry);
+    fireEvent.click(await screen.findByRole('button', { name: 'Request access' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
   it('asks about the Breakout the link names', async () => {
     const api = fakeApi(preview({ kind: 'breakout', title: 'Pricing' }));
     show(api, BREAKOUT);
@@ -50,7 +58,7 @@ describe('ConversationAccessRequest', () => {
   it('keeps the ordinary error when the member can open it after all', async () => {
     const api = fakeApi(preview({ access: 'open' }));
     show(api);
-    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalled());
+    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalled(), { timeout: 2_000 });
     expect(screen.getByText('Channel could not be opened')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
   });

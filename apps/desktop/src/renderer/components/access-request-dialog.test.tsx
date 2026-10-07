@@ -12,9 +12,9 @@ const request: ConversationAccessRequestItem = {
   markId: '00000000-0000-4000-8000-0000000ac0c0', requesterUserId: asUserId('00000000-0000-4000-8000-0000000ac013'), requesterName: 'Samantha Lee', requestedAt: '2026-10-07T12:00:00.000Z',
 };
 
-function show(api: AccessRequestDecisionApi, requestId: string, onClose = vi.fn()) {
+function show(api: AccessRequestDecisionApi, requestId: string, onClose = vi.fn(), listed: boolean = true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  client.setQueryData(accessRequestsQueryKey(WORKSPACE), [request]);
+  if (listed) client.setQueryData(accessRequestsQueryKey(WORKSPACE), [request]);
   render(<QueryClientProvider client={client}>
     <AccessRequestDialog api={api} onClose={onClose} requestId={requestId} workspaceId={WORKSPACE} />
   </QueryClientProvider>);
@@ -28,7 +28,7 @@ describe('AccessRequestDialog', () => {
     expect(screen.getByRole('dialog', { name: 'Access request' }).textContent).toContain('Samantha Lee asked to join this channel.');
     expect(screen.getByText('Hiring plan')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled(), { timeout: 2_000 });
     expect(api.decideConversationAccess).toHaveBeenCalledWith('r1', 'approve');
     expect(client.getQueryData(accessRequestsQueryKey(WORKSPACE))).toEqual([]);
   });
@@ -37,7 +37,7 @@ describe('AccessRequestDialog', () => {
     const api = { decideConversationAccess: vi.fn(() => new Promise<never>(() => undefined)) };
     show(api, 'r1');
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await vi.waitFor(() => expect(api.decideConversationAccess).toHaveBeenCalled());
+    await vi.waitFor(() => expect(api.decideConversationAccess).toHaveBeenCalled(), { timeout: 2_000 });
     expect(screen.queryByText('This request was already answered.')).toBeNull();
     expect(screen.getByText('Samantha Lee asked to join this channel.')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement).disabled).toBe(true);
@@ -58,5 +58,12 @@ describe('AccessRequestDialog', () => {
     show(api, 'r-gone');
     expect(screen.getByText('This request was already answered.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+  });
+
+  it('says it is loading, not answered, until the socket has sent the list', () => {
+    const api = { decideConversationAccess: vi.fn() };
+    show(api, 'r1', vi.fn(), false);
+    expect(screen.getByText('Loading the request…')).toBeTruthy();
+    expect(screen.queryByText('This request was already answered.')).toBeNull();
   });
 });

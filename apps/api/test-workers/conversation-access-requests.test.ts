@@ -229,6 +229,24 @@ describe("stored access requests", () => {
     expect(await organization().resolveConversationAccessRequest({ workspaceId, id: request.id, status: "approved" })).toBeNull();
   });
 
+  it("names the conversation as it is now, sending the list again when it is renamed or archived", async () => {
+    await ask();
+    const approver = await connect(creator);
+    const renamed = approver.next((frame) => frame.type === "workspace_access_requests", "list after a rename");
+    await publish(privateChannel, common("Launch plan v2", { appearance: { icon: "rocket", color: "teal" } }));
+    expect(((await renamed).requests as Array<{ title: string }>).map((item) => item.title)).toEqual(["Launch plan v2"]);
+    const archived = approver.next((frame) => frame.type === "workspace_access_requests", "list after an archive");
+    await publish(privateChannel, common("Launch plan v2", { archivedAt: at }));
+    expect((await archived).requests).toEqual([]);
+  });
+
+  it("refuses a malformed request by the field it rejected, across the RPC", async () => {
+    await expect(organization().recordConversationAccessRequest({
+      workspaceId, parentId: "not-a-channel", substreamId: "0", requesterUserId: requester,
+      requesterName: "Samantha Lee", approverUserId: creator,
+    })).rejects.toThrow(/record_conversation_access_request_invalid.*parentId/u);
+  });
+
   it("pushes a new request to its approver alone", async () => {
     const approver = await connect(breakoutCreator);
     const bystander = await connect(creator);

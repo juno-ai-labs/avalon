@@ -1,5 +1,8 @@
-import { ConversationAccessRequestItemSchema, WorkstreamAppearanceSchema, type ConversationAccessRequestItem } from "@rally/contracts";
-import type { z } from "zod";
+import {
+  ConversationAccessRequestItemSchema, IdSchema, SubstreamIdSchema, WorkspaceIdSchema, WorkstreamAppearanceSchema,
+  type ConversationAccessRequestItem,
+} from "@rally/contracts";
+import { z } from "zod";
 
 /**
  * Requests by a member to join a Channel or Breakout, each addressed to one
@@ -50,16 +53,35 @@ export function conversationMark(input: {
   };
 }
 
-export interface StoredAccessRequest {
-  id: string;
-  parentId: string;
-  substreamId: string;
-  requesterUserId: string;
-  approverUserId: string;
-  status: "pending" | "approved" | "declined";
+/** Both sides of each request RPC, parsed by the Organization object (`parseRpcInput` on the way in). */
+export const AccessRequestSubjectRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema,
+});
+export const AccessRequestSubjectSchema = z.strictObject({
+  kind: z.enum(["channel", "breakout"]),
+  title: z.string(),
+  appearance: WorkstreamAppearanceSchema.nullable(),
+  markId: IdSchema,
+  createdByUserId: IdSchema.nullable(),
+}).nullable();
+export const RecordAccessRequestSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema,
+  requesterUserId: IdSchema, requesterName: z.string(), approverUserId: IdSchema,
+});
+export const AccessRequestRefSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, id: IdSchema });
+export const ResolveAccessRequestSchema = AccessRequestRefSchema.extend({ status: z.enum(["approved", "declined"]) });
+
+export const StoredAccessRequestSchema = z.strictObject({
+  id: IdSchema,
+  parentId: IdSchema,
+  substreamId: SubstreamIdSchema,
+  requesterUserId: IdSchema,
+  approverUserId: IdSchema,
+  status: z.enum(["pending", "approved", "declined"]),
   /** The approver's email went out; asking again sends nothing more. */
-  emailed: boolean;
-}
+  emailed: z.boolean(),
+});
+export type StoredAccessRequest = z.infer<typeof StoredAccessRequestSchema>;
 
 type Row = {
   id: string; parent_id: string; substream_id: string; requester_user_id: string;
@@ -68,7 +90,7 @@ type Row = {
 
 const COLUMNS = "id, parent_id, substream_id, requester_user_id, approver_user_id, status, emailed_at";
 
-const stored = (row: Row): StoredAccessRequest => ({
+const stored = (row: Row): StoredAccessRequest => StoredAccessRequestSchema.parse({
   id: row.id,
   parentId: row.parent_id,
   substreamId: row.substream_id,
@@ -124,6 +146,26 @@ export class ConversationAccessRequestStorage {
     return row ? stored(row) : null;
   }
 
+  /**
+   * Who is waiting to answer a request for any of these Channels: the people
+   * whose list names them, so a rename or an archive reaches it at once.
+   */
+  approversFor(parentIds: readonly string[]): string[] {
+    if (parentIds.length === 0 || !this.tablePresent()) return [];
+    return this.sql.exec<{ approver_user_id: string }>(
+      `SELECT DISTINCT approver_user_id FROM conversation_access_requests
+        WHERE status = 'pending' AND parent_id IN (SELECT value FROM json_each(?))`,
+      JSON.stringify(parentIds),
+    ).toArray().map((row) => row.approver_user_id);
+  }
+
+  /** Migration 95 has run here: an object held below it has nothing to list. */
+  private tablePresent(): boolean {
+    return this.sql.exec(
+      `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'conversation_access_requests'`,
+    ).toArray().length === 1;
+  }
+
   /** The approver's email went out. */
   markEmailed(id: string, now: number): void {
     this.sql.exec(`UPDATE conversation_access_requests SET emailed_at = ? WHERE id = ? AND emailed_at IS NULL`, now, id);
@@ -147,8 +189,27 @@ export class ConversationAccessRequestStorage {
   /**
    * One approver's pending requests, newest first, named by the conversation
    * as it is now. A request for a conversation since archived is left out.
+   *
+   * Read on every connect, so it answers rather than aborts on an object held
+   * below the schemas it reads: with no request table there is nothing to
+   * list, and without the Breakout projection (`breakoutsReady`) only Channel
+   * requests are. An unguarded read here does not hide requests, it stops the
+   * sidebar opening.
    */
-  pendingFor(approverUserId: string): ConversationAccessRequestItem[] {
+  pendingFor(approverUserId: string, breakoutsReady: boolean): ConversationAccessRequestItem[] {
+    if (!this.tablePresent()) return [];
+    // The Breakout projection predates its `appearance_json` column, so an
+    // object that has one may not have the other; a Breakout then wears its
+    // Channel's look, as one with no look of its own does.
+    const breakoutAppearance = breakoutsReady && this.sql.exec(
+      `SELECT 1 FROM pragma_table_info('breakouts') WHERE name = 'appearance_json'`,
+    ).toArray().length === 1;
+    const breakoutRows = !breakoutsReady
+      ? `SELECT NULL AS workstream_id, NULL AS substream_id, NULL AS title, NULL AS appearance_json, NULL AS archived_at WHERE 0`
+      : `SELECT workstream_id, substream_id, title, ${breakoutAppearance ? "appearance_json" : "NULL AS appearance_json"},
+           archived_at FROM breakouts`;
+    const breakoutJoin = `LEFT JOIN (${breakoutRows}) breakout ON request.substream_id != '0'
+          AND breakout.workstream_id = request.parent_id AND breakout.substream_id = request.substream_id`;
     return this.sql.exec<{
       id: string; parent_id: string; substream_id: string; requester_user_id: string; requester_name: string;
       created_at: number; title: string; appearance_json: string | null; parent_appearance_json: string | null;
@@ -161,8 +222,7 @@ export class ConversationAccessRequestStorage {
               channel.appearance_json AS parent_appearance_json
          FROM conversation_access_requests request
          JOIN channels channel ON channel.workstream_id = request.parent_id AND channel.archived_at IS NULL
-         LEFT JOIN breakouts breakout ON request.substream_id != '0'
-          AND breakout.workstream_id = request.parent_id AND breakout.substream_id = request.substream_id
+         ${breakoutJoin}
         WHERE request.approver_user_id = ? AND request.status = 'pending'
           AND (request.substream_id = '0' OR (breakout.substream_id IS NOT NULL AND breakout.archived_at IS NULL))
         ORDER BY request.created_at DESC, request.id`,
