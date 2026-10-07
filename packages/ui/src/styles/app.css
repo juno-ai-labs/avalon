@@ -539,6 +539,10 @@ pre {
   border-radius: var(--av-sys-size-radius-sm);
   color: var(--av-cmp-tooltip-foreground);
   font-size: 12px;
+  /* A long label wraps instead of running across the window. 280px is the
+     width the tooltips that already capped themselves had each settled on. */
+  max-width: 280px;
+  overflow-wrap: break-word;
   padding: 5px 8px;
   z-index: 1000;
 }
@@ -2982,7 +2986,7 @@ pre {
 .settings-connection-empty-row td { height: auto; padding: 0; }
 .settings-connection-empty-row .empty-state { min-height: 94px; }
 .settings-icon-tooltip-trigger { display: inline-flex; }
-.settings-connection-tooltip { max-width: 280px; text-align: center; }
+.settings-connection-tooltip { text-align: center; }
 .settings-github-pane,
 .settings-custom-mcp-pane { max-width: 760px; }
 .settings-github-connection,
@@ -3830,7 +3834,7 @@ pre {
 }
 /* The tooltip's own box supplies the ground and the shadow; this only stacks
    the source above its note, which a one-line tooltip does not need to do. */
-.citation-pill-popover { display: flex; flex-direction: column; gap: 3px; max-width: 280px; text-align: left; }
+.citation-pill-popover { display: flex; flex-direction: column; gap: 3px; text-align: left; }
 .citation-pill-source { font-weight: 600; }
 .citation-pill-note,
 .citation-pill-open { opacity: 0.72; }
@@ -7448,7 +7452,7 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .sidekick-section-list { list-style: none; margin: 0; padding: 0; }
 .sidekick-recommendation { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: 50%; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 24px; height: 24px; justify-content: center; margin-right: 8px; }
 .sidekick-recommendation:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
-.sidekick-recommendation-tooltip { max-width: 280px; white-space: normal; }
+.sidekick-recommendation-tooltip { white-space: normal; }
 .sidekick-picker-search { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 8px; padding: 10px 12px; width: 100%; }
 .sidekick-picker-list { display: grid; gap: 8px; list-style: none; margin: 12px 0 0; padding: 0; }
 .sidekick-picker-list .button { align-items: flex-start; display: flex; flex-direction: column; gap: 4px; text-align: left; white-space: normal; width: 100%; }
@@ -7670,6 +7674,10 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 }
 .sidebar-top-actions > .icon-button:hover:not(:disabled),
 .sidebar-top-action:hover:not(:disabled) { background: var(--av-sys-color-surface-raised-hover); }
+/* Import on the web host: shown so people learn it exists, but `aria-disabled`
+   rather than `disabled` so its tooltip still opens on hover and focus. */
+.sidebar-top-actions > .icon-button[aria-disabled='true'] { cursor: not-allowed; opacity: 0.48; }
+.sidebar-top-actions > .icon-button[aria-disabled='true']:hover { background: var(--av-sys-color-surface-raised); }
 /* The one action asking to be taken: a fixed blue fill, the same in both themes. */
 .sidebar-top-actions > .sidebar-top-update {
   background: var(--av-sys-color-project-blue);
