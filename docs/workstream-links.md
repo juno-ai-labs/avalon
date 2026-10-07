@@ -64,6 +64,25 @@ Rally *hands out*, for three reasons:
 - **It is dead for anyone without the app.** The canonical page can at least say
   what happened and point at the download.
 
+### The handoff page
+
+The page offers the desktop app first and the web app beside it. On a Mac it
+tries the deep link once on load, shows **Open in Rally for Mac**, then
+**Continue in browser**, which opens the same path on `app.rallywith.ai`; the
+browser client reads every addressed path this page does
+([`browser-client.md`](browser-client.md#the-shell)). Under them sits the Mac
+download. On an iPhone or iPad a Channel or Breakout opens the iOS app, with the
+browser as the second choice. Where no Rally app can open the link (Windows,
+Linux, Android, or a Space or Sidekick on iOS) the page skips the launch and the
+browser is the one button. An ID-only link from before workspace addressing
+names no Organization, so it gets no browser button.
+
+The page remembers in `localStorage` which button this browser last chose. After
+**Continue in browser** it stops launching the app on load, because for someone
+without the app that launch is an error prompt every time, but the app stays the
+first button. Clicking it switches back. Without storage the page launches the
+app every time, as it did before the browser option.
+
 ### Why the id is in the path
 
 The canonical link puts the work-stream id in its **path**, not in a `#fragment`.
@@ -271,7 +290,7 @@ open the same section in whichever workspace happens to be active. Give a new de
 canonical HTTPS form only when someone would reasonably paste it somewhere else.
 
 Every browser handoff reports only its closed type, `presented`/`automatic`/
-`manual` method, and local validity through the public-site telemetry boundary.
+`manual`/`browser` method, and local validity through the public-site telemetry boundary.
 The canonical work-stream UUID, custom-protocol target, query, fragment, and any
 single-use material are deliberately excluded. The desktop separately observes a
 successful deep-link activation; the site event is an attempt, not proof that the
@@ -342,8 +361,8 @@ Both Rally hosts serve `/.well-known/apple-app-site-association`. Desktop claims
 `/app/workstreams/*` paths until an iPhone release with the new parser is
 available. A canonical Channel or Breakout link opens the site handoff, which
 uses the old addressed iPhone reader; it does not send the new Base58 path to
-an installed old build. Space-only and Sidekick URLs stay on the web with a
-desktop-only explanation because the iPhone has no Space dashboard or Sidekick screen.
+an installed old build. Space-only and Sidekick URLs open in the web app on an
+iPhone because it has no Space dashboard or Sidekick screen.
 The desktop main process adapts these HTTPS links with `workstreamHttpsDeepLink`, then
 uses existing scheme navigation. The iPhone opens the Channel and Breakout paths
 into the native client. Legacy origins and other path families remain
@@ -352,6 +371,31 @@ checks both hosts after site deployment and before desktop release. Push clicks
 use the same adapter with notification attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-10-07 — A copied link opens in the web app too
+
+**What changed:** The `/app/*` handoff page adds **Continue in browser**, which
+opens the same path on `app.rallywith.ai`. Where no Rally app can open the link
+the browser becomes the only button and the page skips the launch. The page
+remembers a browser choice and then stops launching the app on load. The
+browser client now also reads the Sidekick path. Telemetry gains a `browser`
+handoff method.
+
+**Why:** The page was a dead end for anyone without the Mac app: a teammate on
+Windows, on a phone, or not yet installed got an app launch that did nothing
+and a pointer to the marketing site, though the web app could already open the
+same Organization, Space and Channel.
+
+**Considered and rejected:** Minting copied links on `app.rallywith.ai`. That
+drops the Slack unfurl and the Apple universal-link claim on `rallywith.ai`,
+and skips the desktop for the people who have it. Sending a remembered browser
+choice straight to the web app, which would end the nudge toward the desktop
+for good after one click.
+
+**What a future change has to respect:** The desktop stays the first choice
+wherever a Rally app can open the link. A new canonical path family needs the
+browser client's `shellLocation` and entry target to read it, or the browser
+button lands on the Organization root.
 
 ### 2026-09-25 — Sidekicks get a shareable link
 

@@ -50,7 +50,8 @@ to that visit's `$pageview` rather than being copied onto the click.
 A middle-click, which fires `auxclick` rather than `click`, counts too.
 
 `desktop_handoff_attempted` reports the handoff type,
-whether it was merely presented or actually attempted, and whether the local
+whether it was merely presented, actually attempted, or declined for the web
+app (`browser`, from a shared link's **Continue in browser**), and whether the local
 target parser considered it valid. Handoff query strings, URL fragments,
 single-use tickets, invitation tokens, Slack state, work-stream IDs, automation
 IDs, and settings values never enter an event.

@@ -10,7 +10,7 @@ import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceCreat
 import { browserRequest, BrowserApiError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 
-import { parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
+import { parseSidekickLinkPathTarget, parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
 
 import { WorkspaceIdSchema } from "@rally/contracts";
 
@@ -95,7 +95,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const workspacePath = /^\/app\/workspaces\/([^/]+)\/([^/]+)\/?$/u.exec(location.pathname);
     const workspaceTarget = workspacePath ? z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema })
       .safeParse({ region: workspacePath[1], workspaceId: workspacePath[2] }) : null;
-    const parsedTarget = parseWorkstreamLinkPathTarget(location.pathname) ?? parseSpaceLinkPathTarget(location.pathname);
+    const parsedTarget = parseWorkstreamLinkPathTarget(location.pathname) ?? parseSpaceLinkPathTarget(location.pathname)
+      ?? parseSidekickLinkPathTarget(location.pathname);
     const target = parsedTarget?.region && parsedTarget.workspaceId ? parsedTarget
       : workspaceTarget?.success ? workspaceTarget.data : null;
     if (target?.region && ConfiguredRegionSchema.safeParse(target.region).success) setDestination(target);
