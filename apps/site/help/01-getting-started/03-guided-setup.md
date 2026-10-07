@@ -25,8 +25,6 @@ This screen sets how you appear to your teammates: **Your team will see your ava
 3. Pick a colour under **Your color**. There are eight: rose, orange, lime, emerald, blue, violet, fuchsia and black.
 4. Click **Continue with this look**.
 
-A preview beside the form shows a sample sidebar, with **Your next idea starts here** and a **New channel** button, wearing your colour. Try a few. Nobody is watching. Yet.
-
 The button stays greyed out until both the name and the initials are filled in.
 
 Your look belongs to your account, not to this Mac, so it follows you to your other devices and to every Organization you belong to. To change it later, open **Settings → Account**, where changes save as you make them. [Light, dark and your own colour](../09-settings-and-shortcuts/02-appearance-and-icon.md) has more.
