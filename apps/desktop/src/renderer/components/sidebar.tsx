@@ -55,7 +55,7 @@ import { ManageAccessDialog } from './manage-access-dialog';
 import { ContextNestedMenu } from './nested-menu';
 import { SpacePills } from './space-pills';
 import { RelativeTime } from './relative-time';
-import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
+import { SidebarGhostChannelRow, SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { WorkstreamGlyph } from './workstream-glyph';
 import { AttentionMenu } from './attention-menu';
 
@@ -2288,30 +2288,6 @@ export function Sidebar({
           onScroll={loadMoreWhenNearBottom}
           scrollRef={scrollRef}
         >
-          {/*
-            A member with no Channels at all, told so.
-
-            The line the time-grouped list used to carry, in the one state that
-            list existed to describe: a brand-new Organization shows **Spaces →
-            General → No channels** and then, without this, nothing — a sidebar
-            that has stopped talking rather than one that is empty. It sits
-            under the hierarchy because that is where the reader has just been
-            told where Channels live, and it is one line rather than a section
-            because there is no list to head.
-
-            Nothing pinned and nothing unplaced are both implied by the test:
-            all three sections draw from the same rows.
-          */}
-          {spacesEnabled && !channelsLoading && visibleWorkstreams.length === 0 && (
-            // In a section of its own, for the gap every other section carries:
-            // hung directly off the nav it lands against the last Space's own
-            // "No channels" and reads as a second line of that Space's rather
-            // than as the sidebar's.
-            <div className="sidebar-section">
-              <p className="sidebar-empty">No channels yet</p>
-            </div>
-          )}
-
           {/* Always there once the Organization is open, empty or not: an
               empty section is where a Channel is dragged to pin it, so it has
               to exist before anything is pinned. */}
@@ -2444,14 +2420,17 @@ export function Sidebar({
                 <SidebarSkeletonGroup count={3} />
               </>
             ) : spacesEnabled ? (
-              unpinnedWorkstreams.length > 0 && (
-                /* The selected Space above is the heading for this rail. A
-                   second "Channels" label only restates the level the rail
-                   already represents and pushes its rows down. */
+              (unpinnedWorkstreams.length > 0 || pinnedWorkstreams.length === 0) && (
                 <>
                 {/* Named whenever the list has rows, pinned or not: the heading
                     carries the sort toggle, and a reader with no pins is the
-                    one who most needs Recent and Needs you to find their way. */}
+                    one who most needs Recent and Needs you to find their way.
+                    Named too when there are no Channels at all, in place of a
+                    "No channels yet" line: the empty Pinned section above
+                    already says there is nothing yet, and the heading keeps
+                    the sidebar's shape, with a ghost row, for the first
+                    Channel to land in. Only
+                    with everything pinned does it have nothing to head. */}
                 <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:channels">
                   <h2>Channels</h2>
                   <button
@@ -2466,15 +2445,21 @@ export function Sidebar({
                     <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
                   </button>
                 </div>
-                <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
-                  {unpinnedWorkstreams.map((workstream) => (
-                    <Fragment key={workstream.id}>{renderWorkstream(
-                      workstream,
-                      undefined,
-                      selectedSpaceId ?? undefined,
-                    )}</Fragment>
-                  ))}
-                </SidebarList>
+                {unpinnedWorkstreams.length === 0 ? (
+                  // Nothing at all to list: the outline of the row the first
+                  // Channel will fill, in place of a line saying so.
+                  <SidebarList><SidebarGhostChannelRow /></SidebarList>
+                ) : (
+                  <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
+                    {unpinnedWorkstreams.map((workstream) => (
+                      <Fragment key={workstream.id}>{renderWorkstream(
+                        workstream,
+                        undefined,
+                        selectedSpaceId ?? undefined,
+                      )}</Fragment>
+                    ))}
+                  </SidebarList>
+                )}
                 </>
               )
             ) : groups.length === 0 ? (

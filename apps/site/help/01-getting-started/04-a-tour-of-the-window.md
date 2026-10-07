@@ -48,7 +48,7 @@ Below the pills are your Channels.
 - Click a row to open that Channel. Hover for a moment to see its full name in a card.
 - Right-click a row for a menu of things you can do to it. Right-click an empty part of the list to start a new Channel.
 
-If you have no Channels yet, the list says **No channels yet**. That changes on the next page.
+If you have no Channels yet, the list shows one dashed outline under its **Channels** heading, where your first Channel will go. That changes on the next page.
 
 The sidebar does not fold away. To give the conversation more room, drag the sidebar's right edge to make it narrower; drag it back to widen it again.
 
