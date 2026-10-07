@@ -4,6 +4,7 @@ import {
   LIST_MOTION_TOTAL_MS,
   enterKeyframes,
   exitKeyframes,
+  layoutInsertIndex,
   layoutRowAt,
   longestIncreasingRun,
   moverKeyframes,
@@ -184,25 +185,30 @@ describe('translationOf', () => {
   });
 });
 
+/** A row laid out at `top`, currently drawn `drawnOffBy` pixels away from it. */
+function row(top: number, drawnOffBy = 0): HTMLElement {
+  const element = document.createElement('div');
+  element.getBoundingClientRect = () => ({
+    top: top + drawnOffBy, bottom: top + drawnOffBy + ROW, height: ROW, left: 0, right: 100, width: 100, x: 0, y: top + drawnOffBy, toJSON: () => ({}),
+  });
+  element.dataset.drawnOffBy = String(drawnOffBy);
+  return element;
+}
+
+/** Reads each row's drawn offset back as the transform its motion would apply. */
+function drawnTransforms(): void {
+  vi.spyOn(globalThis, 'getComputedStyle').mockImplementation((element) => ({
+    transform: `matrix(1, 0, 0, 1, 0, ${(element as HTMLElement).dataset.drawnOffBy})`,
+  }) as CSSStyleDeclaration);
+}
+
 describe('layoutRowAt', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  /** A row laid out at `top`, currently drawn `drawnOffBy` pixels away from it. */
-  function row(top: number, drawnOffBy = 0): HTMLElement {
-    const element = document.createElement('div');
-    element.getBoundingClientRect = () => ({
-      top: top + drawnOffBy, bottom: top + drawnOffBy + ROW, height: ROW, left: 0, right: 100, width: 100, x: 0, y: top + drawnOffBy, toJSON: () => ({}),
-    });
-    element.dataset.drawnOffBy = String(drawnOffBy);
-    return element;
-  }
-
   it('answers by where a row is laid out, not where its motion has drawn it', () => {
-    vi.spyOn(globalThis, 'getComputedStyle').mockImplementation((element) => ({
-      transform: `matrix(1, 0, 0, 1, 0, ${(element as HTMLElement).dataset.drawnOffBy})`,
-    }) as CSSStyleDeclaration);
+    drawnTransforms();
     // `b` is laid out in the second slot but drawn half a slot lower, over the
     // third; the third slot's layout owner is still `c`.
     const [a, b, c] = [row(0), row(ROW, 24), row(2 * ROW)];
@@ -215,5 +221,30 @@ describe('layoutRowAt', () => {
   it('answers nothing for rows that have no layout', () => {
     const empty = document.createElement('div');
     expect(layoutRowAt([empty], 0)).toBeUndefined();
+  });
+});
+
+describe('layoutInsertIndex', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('counts the rows whose middle is above the pointer, the middle itself included', () => {
+    drawnTransforms();
+    const rows = [row(0), row(ROW), row(2 * ROW)];
+    expect(layoutInsertIndex(rows, 0)).toBe(0);
+    expect(layoutInsertIndex(rows, ROW / 2 - 1)).toBe(0);
+    expect(layoutInsertIndex(rows, ROW / 2)).toBe(1);
+    expect(layoutInsertIndex(rows, ROW + ROW / 2)).toBe(2);
+    expect(layoutInsertIndex(rows, 3 * ROW)).toBe(3);
+  });
+
+  it('measures a row where it is laid out, not where its motion has drawn it', () => {
+    drawnTransforms();
+    // The second row is laid out in its slot but drawn a whole slot lower, as
+    // a row pushed aside is while it glides there. Read where it is drawn, its
+    // middle would sit below the pointer.
+    const rows = [row(0), row(ROW, ROW), row(2 * ROW)];
+    expect(layoutInsertIndex(rows, ROW + ROW / 2 + 4)).toBe(2);
   });
 });

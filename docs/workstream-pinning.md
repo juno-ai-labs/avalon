@@ -472,11 +472,23 @@ Space's run.
 
 **Why:** The drop zone only said "pin". With pins already present the reader
 could not tell where the Channel would land, and it always landed at the end,
-which then needed a second drag. The placeholder carries no `data-workstream-id`,
-so the reveal effect and the slot lookup never mistake it for a pinned row. A
-pin-and-place endpoint was the alternative; two existing writes cover it, and a
-release at the end of a Space's run, the common case, still costs one. Keep the preview order
-until the pin lands, or the new row flashes at the end first.
+which then needed a second drag. Reordering inside the section already showed
+the row in place, so a drag in from outside read as a cruder action.
+
+**Considered and rejected:** A pin-and-place endpoint that takes the slot.
+Two existing writes cover it, and a release at the end of a Space's run, the
+common case, still costs one.
+
+**Consequences:** The placeholder carries no `data-workstream-id`, so the
+reveal effect and the slot lookups never mistake it for a pinned row; keep it
+that way. Keep the preview order from the release until the pin lands, or the
+new row flashes at the end first. Under All an end drop must still save the
+order, because an unpin leaves the Channel in All's saved order. A second pin
+to the same Space issued while the first is in flight supersedes its response,
+and the first Channel then stays at the end; this was accepted rather than
+serializing the two writes.
+
+Shipped in juno-ai-labs/avalon#1166.
 
 ### 2026-10-07 — Leaving a Channel lands on its Space's top sidebar row
 

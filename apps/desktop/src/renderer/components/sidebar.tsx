@@ -1372,7 +1372,7 @@ export function Sidebar({
   // sees where it goes before letting go and the list does not close up and
   // open again while the server answers.
   const [pinDropIndex, setPinDropIndex] = useState<number | null>(null);
-  const [pinArrival, setPinArrival] = useState<{ workstream: WorkstreamSummary; index: number } | null>(null);
+  const [pinArrival, setPinArrival] = useState<{ index: number; scope: string | null; workstream: WorkstreamSummary } | null>(null);
   const motionMoveIntent = useRef<{ id: string; pinned: boolean } | null>(null);
   const [archiveWorkstreamTarget, setArchiveWorkstreamTarget] = useState<WorkstreamSummary | null>(null);
   const [archivingWorkstream, setArchivingWorkstream] = useState(false);
@@ -1465,8 +1465,10 @@ export function Sidebar({
       .sort(compareChannels(channelSort, heldOpen.heldId))
   ), [channelSort, heldOpen.heldId, visibleWorkstreams]);
   // Gone the moment the real row is pinned: from then on it holds the slot.
+  // Only in the list it was dropped into: switching Space mid-request leaves it behind.
   const pinGhost = pinArrival !== null
-    ? pinnedWorkstreams.some((pinned) => pinned.id === pinArrival.workstream.id) ? null : pinArrival
+    ? pinArrival.scope !== selectedSpaceId
+      || pinnedWorkstreams.some((pinned) => pinned.id === pinArrival.workstream.id) ? null : pinArrival
     : pinDropIndex === null || pinDropWorkstreamId === null ? null : (() => {
       const workstream = unpinnedWorkstreams.find((candidate) => candidate.id === pinDropWorkstreamId);
       return workstream ? { workstream, index: pinDropIndex } : null;
@@ -1912,7 +1914,7 @@ export function Sidebar({
       spaceId,
       itemIds: [...visible.slice(0, index), workstream.id, ...visible.slice(index)],
     };
-    setPinArrival({ workstream, index });
+    setPinArrival({ index, scope: selectedSpaceId, workstream });
     if (preview !== null) setDragOrder(preview);
     try {
       if (!await togglePin(workstream, true) || preview === null) return;
