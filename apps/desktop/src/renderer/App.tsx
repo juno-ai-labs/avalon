@@ -47,7 +47,7 @@ import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/gui
 import { NewWorkstreamScreen } from './screens/new-workstream';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
 import { SpaceDashboardScreen } from './screens/space-dashboard';
-import { SidekicksWindow, SidekicksWindowRedirect } from './screens/sidekicks-library';
+import { SidekicksLibraryRoute, SidekicksWindow } from './screens/sidekicks-library';
 import { BrowserImportWindow } from './screens/browser-import';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
 import { WorkstreamScreen } from './screens/workstream';
@@ -352,7 +352,9 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
             <Route element={<Navigate replace to="/" />} path="/workstreams/new" />
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
             <Route element={<AutomationScreen />} path="/automations/:id" />
-            <Route element={<SidekicksWindowRedirect />} path="/sidekicks" />
+            <Route element={<SidekicksLibraryRoute />} path="/sidekicks" />
+            {/* Creating a Sidekick is a member's, as in the Sidekicks window. */}
+            {guest && <Route element={<Navigate replace to="/sidekicks" />} path="/sidekicks/new" />}
             <Route element={<AutomationScreen />} path="/sidekicks/:id" />
             <Route element={<WorkspaceSettingsScreen workspace={workspace} />} path="/settings" />
             <Route element={<NotFoundScreen />} path="*" />
