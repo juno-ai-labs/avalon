@@ -2205,6 +2205,10 @@ pre {
   padding-left: 35px;
 }
 .settings-navigation-group button.settings-navigation-child svg { height: 14px; width: 14px; }
+.settings-navigation-group button.settings-navigation-child .connector-mark { flex: none; height: 14px; width: 14px; }
+/* A connection's name is its creator's, often with an account after it, so it
+   truncates rather than wrapping the sidebar row to two lines. */
+.settings-navigation-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-search-empty { color: var(--av-sys-color-text-muted); font-size: 11px; padding: 18px 9px; }
 
 .settings-search-results { min-height: 0; overflow-y: auto; padding-top: 14px; }
@@ -3020,16 +3024,12 @@ pre {
 .settings-connection-empty-row .empty-state { min-height: 94px; }
 .settings-icon-tooltip-trigger { display: inline-flex; }
 .settings-connection-tooltip { text-align: center; }
-.settings-github-pane,
-.settings-custom-mcp-pane { max-width: 760px; }
-.settings-github-connection,
-.settings-custom-mcp-connection { margin-bottom: 18px; max-width: 360px; }
+.settings-connection-page { max-width: 760px; }
+.settings-connection-facet-heading { margin-top: 28px; }
 .settings-github-policy { margin-bottom: 22px; }
 .settings-github-policy .settings-preference-row > select,
 .settings-github-repository-row > select,
-.settings-github-connection > select,
-.settings-custom-mcp-pane .settings-preference-row > select,
-.settings-custom-mcp-connection > select {
+.settings-connection-page .settings-preference-row > select {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-ref-color-line-4);
   border-radius: var(--av-cmp-control-radius);
@@ -3179,8 +3179,7 @@ pre {
   .invite-form { grid-template-columns: 1fr 120px; }
   .invite-form .button { grid-column: 1 / -1; }
   .settings-connection-table { min-width: 450px; }
-  .settings-github-policy .settings-preference-row,
-  .settings-custom-mcp-pane .settings-preference-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .settings-connection-page .settings-preference-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .settings-github-repository-heading,
   .settings-custom-mcp-tool-heading { align-items: stretch; flex-direction: column; gap: 10px; }
   .settings-github-search { flex-basis: auto; }

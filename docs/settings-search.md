@@ -44,9 +44,11 @@ its own definition (`accountAppearance`) gated on the `browser` availability, so
 search sends a browser reader to Account and a Mac reader to Application.
 
 `SettingsProvider` supplies entries with unique keys. The core provider derives
-entries from the definitions. Connection providers derive entries from the
-already-authorized connection snapshot: GitHub and MCP entries retain the
-connection ID, installed connections expose their management row, and digest
+entries from the definitions, leaving out those with a `connectionKind`.
+Connection providers derive entries from the already-authorized connection
+snapshot: each installed connection is an entry for its own page, its
+`connectionKind` definitions are repeated once per matching connection, both
+retaining the connection ID, and digest
 destinations use the same delivery capability that makes their control visible.
 The connector catalogue supplies setup entry points even before connecting.
 
@@ -58,9 +60,20 @@ inactive pages. Results replace navigation while the query is non-empty;
 typing does not change the active page.
 
 Sections are pages, and a page may be indented under the one it belongs to.
-`internet-access` sits under `workspace` and `github` under `connections`; the
-child is a section in its own right, with its own definitions, its own read and
-its own deep link, not a scroll position inside its parent. `sectionLabels` in
+`internet-access` sits under `workspace`; the child is a section in its own
+right, with its own definitions, its own read and its own deep link, not a
+scroll position inside its parent.
+
+Every installed connection is a page of its own under `connections`, drawn with
+its company's mark (`connectorBrandMark`), personal before organization as the
+tables list them. They share one section, `connection`, and the selected
+connection ID names the instance, the same pair a search result carries. Each
+page shows status, access, tool count and the row's own actions; a definition
+with a `connectionKind` adds its control to the page of every connection whose
+`settingsKind` matches, which is how GitHub repository access and custom MCP
+tools appear only where they apply. A connection with nothing else to configure
+still has its page. A deep link to `connection` with no connection, or a page
+whose connection was deleted, lands on Connections once the list has loaded. `sectionLabels` in
 `search-results.tsx` is typed as a total record of the section list, so adding a
 section that nobody named fails the build rather than shipping a search result
 whose page name is blank.
@@ -171,6 +184,33 @@ to land. `components/organization-usage.tsx` draws the section;
 [`local-cache.md`](local-cache.md) owns the row it paints from.
 
 ## Changelog
+
+### 2026-10-07 — Every connection gets its own page
+
+**What changed:** The Connections sidebar entry lists every installed
+connection beneath it, with its company mark, and each opens a page of its own.
+The `github` and `custom-mcp` sections, which showed one connection of their
+kind behind a dropdown, became the one `connection` section. A custom MCP server
+wears the mark of a company its name spells out, so "Cloudflare API" draws
+Cloudflare's.
+
+**Why:** A workspace with two MCP servers had one **MCP tools** page and had to
+pick a server from a dropdown on it, and a connection with no settings of its
+own had nowhere to be looked at but a table row. One page per connection gives
+each a place to be found, from the sidebar or from search, whatever its kind.
+
+**Considered and rejected:** A section per connector kind, as before, keeps the
+dropdown and leaves most connections without a page. Reading each custom
+server's URL to choose its mark would cost one live request per server to draw
+the sidebar; the name is already in the list.
+
+**Consequences:** `connection` is meaningless without a connection ID, so
+anything that opens it must also set one; the main process has no deep link to
+it. A setting tied to one kind of connection declares `connectionKind` rather
+than a section of its own. A server named for no known company draws the
+generic server icon.
+
+PR #1157.
 
 ### 2026-10-07 — Drop the Desktop app section from browser Settings
 
