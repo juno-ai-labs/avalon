@@ -13,6 +13,8 @@ and every one settles the same stored request:
   and **Decline**).
 - Choosing the row itself, which opens a dialog with **Decline** and
   **Approve**.
+- The same two buttons under **Asked to join**, above **Suggested**, on the
+  People level of that Channel's or Breakout's title menu.
 - A row in the macOS menu bar's **Needs attention**, which opens the same
   dialog in the main window.
 
@@ -31,6 +33,8 @@ The person who asked gets an email when the request is approved or declined.
 | `apps/desktop/src/renderer/components/conversation-access-request.tsx` | The requester's screen, shown in place of "Channel could not be opened". |
 | `apps/desktop/src/renderer/lib/access-requests.ts` | The approver's list in the query cache (written only by the workspace socket) and the approve/decline mutation, which drops the row at once and restores it if refused. |
 | `apps/desktop/src/renderer/components/attention-menu.tsx` | Request rows above the waiting conversations, with the two icon buttons; the row opens the dialog. |
+| `packages/ui/src/components/conversation-menus.tsx` | The People level's **Asked to join** section (`TitleMenuPeople.requests`); a requester is left out of **Suggested**. `conversation-surface.tsx` passes the requests for the conversation on screen. |
+| `packages/ui/src/styles/app.css` | `.decision-button`, the approve and decline buttons both surfaces share: green (`sys.color.success.tint`) and red (`sys.color.danger.tint`) on hover. |
 | `apps/desktop/src/renderer/components/access-request-dialog.tsx` | The dialog, opened from a row or from the menu bar's deep link. |
 | `apps/desktop/src/main/channel-directory-watch.ts`, `menu-bar-content.ts`, `menu-bar-menu.ts` | The main process's copy of the list and its menu bar rows. |
 | `packages/contracts/src/desktop-deep-link-intent.ts` | `access-requests/<id>`, the link a menu bar row emits to reach the main window. |
@@ -167,8 +171,8 @@ pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test
 not in sees its name, color and icon and a **Request access** button. The
 request is stored in the Organization object and addressed to the creator. The
 creator can approve from the email in one click, or approve or decline from
-the attention menu, its dialog, or the macOS menu bar. The requester is
-emailed either way.
+the attention menu, its dialog, the conversation's People level, or the
+macOS menu bar. The requester is emailed either way.
 
 **Why:** The link showed "Channel could not be opened" and nothing else, so the
 person had to find out who to ask somewhere other than Rally. Product asked for
