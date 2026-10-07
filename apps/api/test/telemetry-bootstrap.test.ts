@@ -88,6 +88,17 @@ describe("anonymous telemetry bootstrap", () => {
     database.close();
   });
 
+  it("accepts the first desktop opening with a content-free signup flow", async () => {
+    const database = migratedObservabilityFixture();
+    const service = new TelemetryBootstrapService(createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", SESSION_SIGNING_KEY: "test-telemetry-bootstrap-signing-key" }));
+    const bootstrap = await service.bootstrap(epochId);
+    const opening = { ...onboardingEvent(bootstrap.journeyId), name: "desktop_install_opened", source: "desktop-main", properties: { flowId: eventId, clientPlatform: "desktop" } } as TelemetryEnvelope;
+    await expect(service.accept(bootstrap.capability, [opening])).resolves.toEqual([{ result: "accepted", eventId }]);
+    const row = database.prepare("SELECT envelope_json FROM telemetry_accepted_events WHERE event_id = ?").get(eventId) as { envelope_json: string };
+    expect(JSON.parse(row.envelope_json)).toMatchObject({ name: "desktop_install_opened", source: "desktop-main", properties: { flowId: "018f22f2-4c22-7abc-8def-0123456789ac", clientPlatform: "desktop" } });
+    database.close();
+  });
+
   it("accepts a pre-workspace creation intent under the fixed anonymous epoch", async () => {
     const database = migratedObservabilityFixture();
     const service = new TelemetryBootstrapService(createTestEnv({
