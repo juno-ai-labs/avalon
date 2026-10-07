@@ -67,8 +67,6 @@ export interface WorkspaceAccountMenuProps {
   supportWorkspaces?: SupportWorkspace[];
   loadSupportPeople?: (workspaceId: string) => Promise<SupportPerson[]>;
   onStartSupportSession?: (workspace: SupportWorkspace, person: SupportPerson) => Promise<void>;
-  /** The menu opened: reread `supportWorkspaces`, whatever the Organizations flag says. */
-  onSupportMenuOpen?: () => void;
 }
 
 /** Deployment tags disambiguate workspaces when multiple deployments are configured. */
@@ -144,7 +142,6 @@ export function WorkspaceAccountMenu({
   supportWorkspaces = [],
   loadSupportPeople,
   onStartSupportSession,
-  onSupportMenuOpen,
 }: WorkspaceAccountMenuProps): React.JSX.Element {
   // A guest attaches the Sidekicks a conversation offers; the library is for
   // members, who author them.
@@ -239,7 +236,6 @@ export function WorkspaceAccountMenu({
         onOpenChange={(open) => {
           setMenuOpen(open);
           if (open && enabled) onMenuOpen();
-          if (open) onSupportMenuOpen?.();
         }}
         open={menuOpen}
       >

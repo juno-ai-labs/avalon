@@ -515,6 +515,8 @@ export interface RallyDesktopBridge {
   /** The import window's Spaces, as the main window last offered them. */
   getBrowserImportContext: () => Promise<BrowserImportContext | null>;
   onBrowserImportContextChanged: (listener: () => void) => () => void;
+  /** View → Refresh Organization List: reread the account menu's Organizations. */
+  onOrganizationListRefreshRequested: (listener: () => void) => () => void;
   /** The import window's hand-off: the main window opens the Channel and this window closes. */
   completeBrowserImport: (workstreamId: string) => Promise<void>;
   /**
