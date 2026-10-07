@@ -665,7 +665,7 @@ export function WorkspaceSettingsScreen({
       ...people.filter((member) => member.accessClass === 'guest').sort(byName),
     ];
   }, [members.data]);
-  const [suspension, setSuspension] = useState<{ id: string; name: string } | null>(null);
+  const [suspension, setSuspension] = useState<{ id: string; name: string; guest: boolean } | null>(null);
   // "Suspend" is the server's member removal: the row goes, access ends at
   // once, and an invitation brings them back. Their contributions stay.
   const suspendMember = useMutation({
@@ -1532,12 +1532,11 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-member-list settings-list-card">
                   {sortedMembers.map((member) => {
                     const isGuest = member.accessClass === 'guest';
-                    // The owner's menu is drawn but disabled, so every row lines
-                    // up: their role is the one the server refuses to reassign
-                    // or remove, so every item would fail. Someone still
-                    // invited is not a member to act on yet.
-                    const showsMenu = isAdmin && member.status !== 'invited';
-                    const owner = member.role === 'owner';
+                    // Every row draws the menu so they line up, but two are
+                    // disabled. The owner's role is not reassignable, and an
+                    // organization has one owner, so nobody here may remove
+                    // them. Someone still invited is not a member to act on yet.
+                    const menuDisabled = member.role === 'owner' || member.status === 'invited';
                     const canPromoteGuest = isGuest && Boolean(member.incarnation && member.revision);
                     const self = member.id === workspace.currentUser.id;
                     return (
@@ -1546,14 +1545,9 @@ export function WorkspaceSettingsScreen({
                         <span><strong>{member.name}</strong><small>{member.email}</small></span>
                         <div className="settings-member-actions">
                           <Badge className="role-badge">{isGuest ? 'Guest' : member.role ?? 'member'}</Badge>
-                          {showsMenu && owner && (
-                            <IconButton disabled label={`${member.name} (${member.email}) member actions`} showTooltip={false}>
-                              <Ellipsis size={16} />
-                            </IconButton>
-                          )}
-                          {showsMenu && !owner && (
+                          {isAdmin && (
                             <DropdownMenu.Root>
-                              <DropdownMenu.Trigger asChild>
+                              <DropdownMenu.Trigger asChild disabled={menuDisabled}>
                                 {/* The email is in the name because two people can share a display name. */}
                                 <IconButton label={`${member.name} (${member.email}) member actions`} showTooltip={false}>
                                   <Ellipsis size={16} />
@@ -1584,7 +1578,7 @@ export function WorkspaceSettingsScreen({
                                   {/* The server refuses removing yourself; leaving is its own control. */}
                                   {!self && (
                                     <DropdownMenu.Item className="menu-item menu-item-danger" disabled={suspendMember.isPending}
-                                      onSelect={() => { suspendMember.reset(); setSuspension({ id: member.id, name: member.name }); }}>
+                                      onSelect={() => { suspendMember.reset(); setSuspension({ id: member.id, name: member.name, guest: isGuest }); }}>
                                       Suspend
                                     </DropdownMenu.Item>
                                   )}
@@ -1601,7 +1595,10 @@ export function WorkspaceSettingsScreen({
 
                 <Modal open={suspension !== null} onOpenChange={(open) => { if (!open && !suspendMember.isPending) setSuspension(null); }}
                   title={`Suspend ${suspension?.name ?? 'this person'}?`}
-                  description="They lose access to this organization right away. Their conversations and contributions stay. You can invite them back later."
+                  // An organization invitation brings a member back. A guest
+                  // arrives through sharing instead, so the copy promises
+                  // nothing about their return.
+                  description={`They lose access to this organization right away. Their conversations and contributions stay.${suspension?.guest ? '' : ' You can invite them back later.'}`}
                   footer={<>
                     <Button disabled={suspendMember.isPending} onClick={() => setSuspension(null)}>Cancel</Button>
                     <Button className="button-danger" disabled={suspendMember.isPending} onClick={() => { if (suspension) suspendMember.mutate(suspension.id); }}>Suspend</Button>
