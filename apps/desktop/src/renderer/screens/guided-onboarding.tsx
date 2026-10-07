@@ -229,7 +229,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     setEmails((previous) => [...new Set([...previous, ...parts.map((email) => email.trim().toLowerCase()).filter(Boolean)])]);
     setEmailDraft(remaining);
   };
-  if (state.stage === 'people') return <OnboardingPage title="Invite your teammates" subtitle="Add email addresses to invite people to your organization." footer={<>
+  if (state.stage === 'people') return <OnboardingPage title="Invite your teammates" subtitle="Rally is designed to be multi-human. Rally lets teammates work with AI in shared (cooperative) chat so without your teammates it won't be as fun. Don't worry you can start using it even before they accept the invite." footer={<>
     <Button className="button-primary" disabled={busy || !inviteAddresses.length || invalidEmails} onClick={() => void perform(async () => {
       const addresses = inviteAddresses.filter((email) => !sent.includes(email));
       setEmailDraft('');
@@ -262,7 +262,6 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
       </div>
       <p id="invite-email-hint">Separate emails with a space, comma, or semicolon.</p>
       {invalidEmails && <p className="inline-error">Enter a complete email address for each teammate.</p>}
-      <p>Everyone invited joins as a Member and can use organization connections. Your private streams stay private.</p>
     </div>
     {sent.length > 0 && <p role="status">Invited: {sent.join(', ')}</p>}{error && <InlineError>{error}</InlineError>}
   </OnboardingPage>;
