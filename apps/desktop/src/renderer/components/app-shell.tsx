@@ -27,6 +27,7 @@ import { MemberPresentationContext } from '../lib/member-presentation';
 import { openLink } from '../lib/browser-rail-links';
 import { associativeWorkstreamsForSidebar, conversationDirectoryQueryKey } from '../lib/conversation-directory';
 import { desktopBridge } from '../lib/platform';
+import { useSupportWorkspaces } from '../lib/use-support-workspaces';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { uuidV7 } from '../lib/telemetry';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
@@ -414,8 +415,6 @@ export function applyPinnedWorkstreamsIfCurrent(
 
 /** How long the panes take to fade up on a new workspace; matches `workspace-enter` in `app.css`. */
 const WORKSPACE_ENTER_MS = 320;
-/** How often Rally staff's list of Organizations that granted Rally access is reread. */
-const SUPPORT_WORKSPACES_REFRESH_MS = 10 * 60 * 1_000;
 
 /**
  * Whether the active workspace shell has a Space rail. A session without an
@@ -615,25 +614,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryFn: getOnboardingState,
     enabled: multipleWorkspacesEnabled,
   });
-  // Organizations that granted Rally access, for Rally staff only
-  // (`docs/impersonation.md`). Anybody else gets `null` and is never asked
-  // again in this shell. Staff, and a read that failed, reread in the
-  // background on a timer rather than when the menu opens, so a new grant is
-  // already listed when the menu appears instead of popping in under it.
-  const supportWorkspaces = useQuery({
-    queryKey: ['support-workspaces', session?.impersonator?.id ?? session?.user.id],
-    queryFn: () => listSupportWorkspaces(),
-    retry: false,
-    staleTime: Infinity,
-    refetchInterval: (query) => query.state.data === null ? false : SUPPORT_WORKSPACES_REFRESH_MS,
-    refetchIntervalInBackground: true,
-  });
-  const refetchSupportWorkspaces = supportWorkspaces.refetch;
-  const refetchWorkspaceDirectory = workspaceDirectory.refetch;
-  useEffect(() => desktopBridge().onOrganizationListRefreshRequested(() => {
-    void refetchSupportWorkspaces();
-    if (multipleWorkspacesEnabled) void refetchWorkspaceDirectory();
-  }), [multipleWorkspacesEnabled, refetchSupportWorkspaces, refetchWorkspaceDirectory]);
+  const supportWorkspaces = useSupportWorkspaces(session?.impersonator?.id ?? session?.user.id, listSupportWorkspaces);
   const impersonator = session?.impersonator
     ? { id: session.impersonator.id, name: session.impersonator.name, email: session.impersonator.email,
         timezone: 'UTC', ...(session.impersonator.avatarUrl ? { avatarUrl: session.impersonator.avatarUrl } : {}) }
