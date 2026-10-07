@@ -54,6 +54,15 @@ def seam_point(
     return CANVAS_CENTRE + scale * across, CANVAS_CENTRE + scale * down
 
 
+def centre_line(samples: int) -> list[tuple[float, float]]:
+    """Points along the shipped mark's centre line, in canvas units, for raster renderers."""
+    tilt, spin = math.radians(TILT_DEGREES), math.radians(SPIN_DEGREES)
+    return [
+        seam_point(2 * math.pi * i / samples, SEAM_B, PERSPECTIVE, tilt, spin)
+        for i in range(samples)
+    ]
+
+
 def number(value: float) -> str:
     text = f"{value:.2f}".rstrip("0").rstrip(".")
     return "0" if text == "-0" else text

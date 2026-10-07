@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import math
 from pathlib import Path
 
@@ -17,14 +18,16 @@ APPLICATION_ICON_PREVIEW_DIRECTORY = (
 )
 MENU_BAR_ICON_DIRECTORY = ROOT / "apps" / "desktop" / "resources" / "menu-bar"
 MENU_BAR_ICON_POINT_SIZE = 16
-# One device pixel of breathing room at 1x. The mark is a full-bleed ring, and a
-# status item that touches its own bounds reads as clipped next to the system
-# extras, which all carry optical padding of their own.
+# One device pixel of breathing room at 1x. A status item that touches its own
+# bounds reads as clipped next to the system extras, which all carry optical
+# padding of their own.
 MENU_BAR_ICON_INSET = 1 / 16
-# The source mark carries a wide halo of near-zero alpha. Cropping on the raw
-# bounding box would keep it and shrink the visible ring to roughly two thirds of
-# the menu bar, so the crop is taken at a threshold instead.
-MENU_BAR_ICON_ALPHA_THRESHOLD = 16
+# Twice the mark's 15-unit stroke. At 16 pt the standard cut is under a pixel
+# wide and reads as faint next to the system glyphs.
+MENU_BAR_ICON_STROKE = 30
+# The glyph is drawn this many times larger, then reduced, to anti-alias it.
+MENU_BAR_ICON_SUPERSAMPLE = 8
+MENU_BAR_ICON_CURVE_SAMPLES = 4096
 PRIMARY = (204, 255, 0, 255)  # #CCFF00
 SECONDARY = (71, 199, 252, 255)  # #47C7FC
 DARK_CANVAS = (17, 18, 16, 255)  # #111210
@@ -126,21 +129,36 @@ def menu_bar_template_icon(size: int) -> Image.Image:
     only treatment that survives the translucent menu bar in macOS 26 and 27.
     Any colour baked in here would be discarded, so the artwork is pure black.
     """
-    source = Image.open(SOURCE).convert("RGBA")
-    alpha = source.getchannel("A")
-    box = alpha.point(
-        lambda value: 255 if value >= MENU_BAR_ICON_ALPHA_THRESHOLD else 0
-    ).getbbox()
-    if box is None:
-        raise ValueError("The Rally mark source has no visible artwork")
+    points = rally_mark().centre_line(MENU_BAR_ICON_CURVE_SAMPLES)
+    xs, ys = [x for x, _ in points], [y for _, y in points]
+    side = max(max(xs) - min(xs), max(ys) - min(ys)) + MENU_BAR_ICON_STROKE
+    left = (min(xs) + max(xs)) / 2 - side / 2
+    top = (min(ys) + max(ys)) / 2 - side / 2
     inset = round(size * MENU_BAR_ICON_INSET)
     extent = size - 2 * inset
-    glyph = alpha.crop(box).resize((extent, extent), Image.Resampling.LANCZOS)
+    scale = extent * MENU_BAR_ICON_SUPERSAMPLE / side
+    radius = MENU_BAR_ICON_STROKE / 2 * scale
+    canvas = Image.new("L", (extent * MENU_BAR_ICON_SUPERSAMPLE,) * 2, 0)
+    draw = ImageDraw.Draw(canvas)
+    for x, y in points:
+        cx, cy = (x - left) * scale, (y - top) * scale
+        draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=255)
+    glyph = canvas.resize((extent, extent), Image.Resampling.BOX)
     stencil = Image.new("RGBA", (extent, extent), (0, 0, 0, 255))
     stencil.putalpha(glyph)
     result = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     result.alpha_composite(stencil, (inset, inset))
     return result
+
+
+def rally_mark():
+    """The vector mark's generator, whose file name is not importable directly."""
+    spec = importlib.util.spec_from_file_location(
+        "generate_rally_mark", ROOT / "scripts" / "generate-rally-mark.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
