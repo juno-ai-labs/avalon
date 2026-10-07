@@ -63,14 +63,15 @@ in the Channel menu. The desktop remembers the filter per device
 Channel the filter would hide, or moving the open Channel out of the filtered
 Space, widens the list to All. Picking a pill that hides the open Channel
 filters as asked and opens the first Channel the filtered list draws, or the
-Space's dashboard when it holds none. Restoring an archived Space selects its
+new-Channel screen for that Space when it holds none; the new-Channel screen of
+another Space counts as hidden too. Restoring an archived Space selects its
 pill the same way, so it can navigate too.
 
-Every Space picker (**Start a new channel**, the import window, **Add to
+Every Space picker (the new-Channel screen's, the import window, **Add to
 space**) reads its list through `useSpaceChoices`: General first and named **All**,
-matching the first pill, then the rest A to Z. A picker starts on its first
-choice, so a new Channel goes to All unless the reader picks a Space or the
-sidebar is filtered to one.
+matching the first pill, then the rest A to Z. A new Channel starts in the Space
+the sidebar is filtered to, or in All when it is not, and the screen's picker
+can move it before it is sent.
 
 The list is **Pinned**, then every other Channel, A to Z by default. The rest
 is headed **Channels** whenever it has rows, pinned or not, because that heading

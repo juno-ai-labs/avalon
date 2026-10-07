@@ -1,0 +1,201 @@
+import clsx from 'clsx';
+import { ChevronDown, Plus, Search, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { mentionOptionId, useMentionNavigation } from '../lib/use-mention-navigation';
+import type { WorkspaceMember } from '../lib/types';
+import { Avatar, AvatarStack } from './primitives';
+
+/**
+ * The Participants row above the new-Channel composer.
+ *
+ * At rest it is a dashed **+** and one pill summing up who is in the Channel.
+ * The **+** widens into a search field in place, with its results opening
+ * upward, because the row sits directly above the composer. The pill opens the
+ * full list, which is where a person is taken back out. The creator is always
+ * in the Channel and has no remove control.
+ */
+export function NewChannelParticipants({
+  candidates,
+  creator,
+  loading,
+  onAdd,
+  onRemove,
+  selected,
+}: {
+  /** The Organization's active members, the creator and the picked left out. */
+  candidates: WorkspaceMember[];
+  creator: WorkspaceMember;
+  loading: boolean;
+  onAdd: (member: WorkspaceMember) => void;
+  onRemove: (memberId: string) => void;
+  selected: WorkspaceMember[];
+}): React.JSX.Element {
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState('');
+  const [rosterOpen, setRosterOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const addRef = useRef<HTMLButtonElement>(null);
+  const rosterRef = useRef<HTMLDivElement>(null);
+  const everyone = useMemo(() => [creator, ...selected], [creator, selected]);
+  const matches = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    return normalized
+      ? candidates.filter((member) => `${member.name} ${member.email}`.toLocaleLowerCase().includes(normalized))
+      : candidates;
+  }, [candidates, query]);
+  const add = useCallback((member: WorkspaceMember): void => {
+    onAdd(member);
+    setQuery('');
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [onAdd]);
+  const navigation = useMentionNavigation(searching ? matches.map((member) => member.id) : [], (index) => {
+    const member = matches[index];
+    if (member) add(member);
+  });
+  const stopSearching = (refocus: boolean): void => {
+    setSearching(false);
+    setQuery('');
+    if (refocus) requestAnimationFrame(() => addRef.current?.focus());
+  };
+  // The roster closes on any press outside it, as every popover here does.
+  useEffect(() => {
+    if (!rosterOpen) return;
+    const close = (event: PointerEvent): void => {
+      if (!rosterRef.current?.contains(event.target as Node)) setRosterOpen(false);
+    };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, [rosterOpen]);
+  // A remove that empties the list leaves nothing for the roster to show.
+  useEffect(() => {
+    if (selected.length === 0) setRosterOpen(false);
+  }, [selected.length]);
+
+  const firstName = (member: WorkspaceMember): string => member.name.split(/\s+/u)[0] || member.name;
+  // Searching takes room from the pill, so it shortens to first names, then to
+  // a count.
+  const summary = everyone.length === 1
+    ? creator.name
+    : searching
+      ? everyone.length <= 3 ? everyone.map(firstName).join(', ') : `${everyone.length} people`
+      : everyone.map((member) => member.name).join(', ');
+
+  return (
+    <div className="new-channel-participants">
+      <span className="new-channel-participants-label" id="new-channel-participants-label">Participants</span>
+      <span className={clsx('new-channel-add', searching && 'is-searching')}>
+        {searching ? <>
+          <Search aria-hidden="true" className="new-channel-add-icon" size={13} strokeWidth={1.8} />
+          <input
+            aria-activedescendant={navigation.activeOptionId}
+            aria-controls="new-channel-people"
+            aria-expanded
+            aria-label="Search people"
+            autoComplete="off"
+            autoFocus
+            onBlur={() => stopSearching(false)}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (navigation.handleKeyDown(event)) return;
+              if (event.key === 'Backspace' && query.length === 0 && selected.length > 0) {
+                event.preventDefault();
+                onRemove(selected[selected.length - 1]!.id);
+                return;
+              }
+              if (event.key !== 'Escape') return;
+              event.preventDefault();
+              event.stopPropagation();
+              stopSearching(true);
+            }}
+            ref={inputRef}
+            role="combobox"
+            type="text"
+            value={query}
+          />
+        </> : (
+          <button
+            aria-label="Add participant"
+            className="new-channel-add-button"
+            onClick={() => {
+              setRosterOpen(false);
+              setSearching(true);
+            }}
+            ref={addRef}
+            type="button"
+          >
+            <Plus aria-hidden="true" size={13} strokeWidth={1.8} />
+          </button>
+        )}
+        {searching && (
+          <div aria-label="People" className="new-channel-popover new-channel-people" id="new-channel-people" role="listbox">
+            {loading ? (
+              <p className="new-channel-popover-empty">Loading people…</p>
+            ) : matches.length > 0 ? matches.map((member, index) => (
+              <button
+                aria-label={`${member.name} — ${member.email}`}
+                aria-selected={index === navigation.activeIndex}
+                className={clsx('new-channel-popover-row', index === navigation.activeIndex && 'is-selected')}
+                id={mentionOptionId(member.id)}
+                key={member.id}
+                onClick={() => add(member)}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseMove={() => navigation.setActiveIndex(index)}
+                ref={index === navigation.activeIndex ? navigation.activeOptionRef : undefined}
+                role="option"
+                tabIndex={-1}
+                type="button"
+              >
+                <Avatar member={member} size="small" />
+                <span className="new-channel-popover-name">{member.name}</span>
+              </button>
+            )) : (
+              <p className="new-channel-popover-empty">
+                {query.trim() ? 'No matching people' : 'Everyone available is selected'}
+              </p>
+            )}
+          </div>
+        )}
+      </span>
+      <div className="new-channel-roster-anchor" ref={rosterRef}>
+        {everyone.length === 1 ? (
+          <span aria-labelledby="new-channel-participants-label" className="new-channel-roster" role="group">
+            <Avatar member={creator} size="small" />
+            <span className="new-channel-roster-names">{summary}</span>
+          </span>
+        ) : (
+          <button
+            aria-expanded={rosterOpen}
+            aria-label={`Participants: ${everyone.map((member) => member.name).join(', ')}`}
+            className="new-channel-roster"
+            onClick={() => setRosterOpen((open) => !open)}
+            type="button"
+          >
+            <AvatarStack members={everyone} showTooltip={false} />
+            <span className="new-channel-roster-names">{summary}</span>
+            {!searching && <ChevronDown aria-hidden="true" className="new-channel-roster-chevron" size={13} strokeWidth={1.7} />}
+          </button>
+        )}
+        {rosterOpen && (
+          <div aria-label="Participants in this channel" className="new-channel-popover new-channel-roster-list" role="group">
+            {everyone.map((member) => (
+              <div className="new-channel-popover-row" key={member.id}>
+                <Avatar member={member} size="small" />
+                <span className="new-channel-popover-name">{member.name}</span>
+                {member.id !== creator.id && (
+                  <button
+                    aria-label={`Remove ${member.name}`}
+                    className="new-channel-popover-remove"
+                    onClick={() => onRemove(member.id)}
+                    type="button"
+                  >
+                    <X aria-hidden="true" size={13} strokeWidth={1.7} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
