@@ -61,7 +61,8 @@ Keep both native and selectable source artwork unmasked:
 - Each selectable PNG must be square, full-bleed, and 1024×1024. The build stages it in an Icon Composer `.icon` package and macOS owns the final app-icon enclosure and rendering.
 - Keep the transparent Icon Composer mark source at 1024×1024. Default, Dark, and Mono remain appearance treatments within the one `.icon` asset.
 - The legacy `icon.icns` is the only asset that deliberately contains a baked silhouette, because it is used for the DMG volume.
-- The menu bar renditions are the one place colour is deliberately discarded: a macOS template image is an alpha mask, so `menu_bar_template_icon` renders the mark in pure black at 16 pt and 32 pt and lets AppKit paint it. It draws straight from the seam equation at twice the mark's stroke (30 units), because the standard cut is under a pixel wide at 16 pt. Both the `Template` filename suffix and the `@2x` sibling are load-bearing; see [`menu-bar.md`](menu-bar.md).
+- The menu bar renditions are the one place colour is deliberately discarded: a macOS template image is an alpha mask, so `menu_bar_template_icon` renders the mark in pure black at 16 pt and 32 pt and lets AppKit paint it. It draws straight from the seam equation at `THICK_STROKE` (30 units, twice the standard cut), because the standard cut is under a pixel wide at 16 pt.
+- The favicon is the same thick mark in volt on a black disc centred on the sphere. `favicon.svg` comes from `generate-rally-mark.py`, and its PNG fallback from `favicon_icon` in `generate-brand-assets.py`. Both the `Template` filename suffix and the `@2x` sibling are load-bearing; see [`menu-bar.md`](menu-bar.md).
 
 The renderer preview uses generated 128×128 copies and CSS rounding only to represent the macOS tile. That rounding is not written into the 1024px source files.
 
@@ -220,47 +221,51 @@ For a notarized release candidate, repeat the selected-icon test from an install
 - **Reset leaves a stale icon:** confirm the native bridge can resolve `SLSIconAppearanceConfiguration`. The default returns after the Dock cache is rebuilt even when the private best-effort refresh is unavailable.
 - **Packaging rejects nested code:** rebuild with `pnpm --filter @rally/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
 
-### 2026-10-07 — The mark is generated from its equation; the favicon is the bare mark; the menu bar glyph is twice as thick
+### 2026-10-07 — The mark is generated from its equation; the favicon is the thick mark on a black disc; the menu bar glyph is twice as thick
 
 **What changed:** `scripts/generate-rally-mark.py` now writes every vector copy
 of the mark from the seam equation and its projection (see
 [Where the mark comes from](#where-the-mark-comes-from)). It reproduces the
 committed `rally-mark.svg`, `rally-mark-ink.svg` and the motion kit's `mark.js`
 byte for byte. The site and the browser client now serve a generated
-`favicon.svg`: the 18-unit mark on transparency, volt on a dark tab bar and
-`#111210` on a light one. The browser client had no favicon before. The raster
-`favicon.png`, kept as the fallback, is now the transparent mark rather than
-the mark on a dark square. The touch icon stays an opaque square.
+`favicon.svg`: the mark at twice the standard stroke (`THICK_STROKE`, 30
+units), in volt, on a black disc centred on the sphere (`FAVICON_DISC_RADIUS`,
+160). The browser client had no favicon before. The raster `favicon.png`, kept
+as the fallback, is drawn the same way rather than as the mark on a dark
+square. The touch icon stays an opaque square. The menu bar template images
+are drawn from the same equation at the same thick stroke, still as the bare
+mark, instead of being cut from the raster mask.
 
-**Why:** Safari draws a light outline around an opaque dark favicon in its dark
-tab bar, so the dark square read as a white-ringed tile. A transparent mark
-gives it no square edge to outline. The path existed only as four hand copies
-of 96 baked spline points, and the derivation was not written down anywhere, so
-the parameters were recovered by fitting the equation to the committed path.
-Making a variant, such as a thicker cut, meant editing coordinates by hand,
-and `rally-mark-small.svg` had been made by changing the stroke without
+**Why:** The old favicon was the mark on an opaque dark square, which Safari
+outlined in white in its dark tab bar. The disc replaces that square with the
+ball the seam lies on: it keeps volt legible on light and dark tab bars alike,
+without the colour switch a bare mark would need. At favicon and 16 pt menu bar
+sizes the standard stroke is under a pixel wide and looked faint. The path
+existed only as four hand copies of 96 baked spline points, and the derivation
+was not written down anywhere, so the parameters were recovered by fitting the
+equation to the committed path. Making a variant meant editing coordinates by
+hand, and `rally-mark-small.svg` had been made by changing the stroke without
 widening the viewBox, which clipped about 1.4 units off its left and right
-edges. Its viewBox is now padded by its own stroke.
+edges; its viewBox is now padded by its own stroke. The raster menu bar path
+had also stretched the mark about 7% vertically, because it resized a
+non-square crop into a square.
 
-The menu bar template images are now drawn from the same equation at twice
-the mark's stroke instead of being cut from the raster mask. At 16 pt the
-standard stroke was under a pixel wide and looked faint beside the system
-glyphs. The raster path had also stretched the mark about 7% vertically,
-because it resized a non-square crop into a square.
+**Considered and rejected:** A bare transparent favicon that switches from volt
+to ink through `prefers-color-scheme`. It shipped briefly in this change. It
+needed an inline `<style>`, and with it a per-file CSP exception on the site;
+the disc needs neither. A transparent touch icon: iOS fills transparency with
+black. Folding the vector generator into `generate-brand-assets.py`: that
+script is raster-only and needs Pillow; the vector one needs only the standard
+library.
 
-**Considered and rejected:** Shrinking or lightening the dark square: any
-opaque dark tile still gets the outline. A transparent touch icon: iOS fills
-transparency with black. Folding the vector generator into
-`generate-brand-assets.py`: that script is raster-only and needs Pillow; the
-vector one needs only the standard library.
-
-**Consequences:** The SVG copies are generator output; edit the parameters, not
-the files. The raster source mask `assets/brand/rally-mark-source.png` is still
-drawn separately from the SVG. Safari versions without SVG favicon support fall
-back to the PNG, which also has no square to outline. The favicon's colour switch is an
-inline `<style>`, so the site serves `/favicon.svg` under its own CSP
-(`apps/site/public/_headers`), and the browser client's Worker passes
-`/favicon.svg` through to its static assets.
+**Consequences:** The SVG copies are generator output; edit the parameters,
+not the files. The raster renderers in `generate-brand-assets.py` read the
+centre line, `THICK_STROKE` and the disc radius from the vector generator, so
+the favicon PNG and the menu bar follow a parameter change. The raster source
+mask `assets/brand/rally-mark-source.png` is still drawn separately from the
+SVG. Whether Safari outlines a dark disc the way it outlined the dark square
+was not checked; the disc's transparent corners give it no square edge. The
+browser client's Worker passes `/favicon.svg` through to its static assets.
 
 PR: #1162.
 
