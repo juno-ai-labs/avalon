@@ -1843,13 +1843,12 @@ pre {
   padding: 6px 10px;
 }
 
-/* The active Organization's usage line, set under its name: the inset is the
-   row's padding plus the 18px mark and the row's 8px gap. After the popup's
-   rule above, which it has to override at the same specificity. */
-.menu-content .workspace-usage-item.menu-item { align-items: stretch; flex-direction: column; gap: 5px; min-height: 0; padding: 0 10px 8px 36px; }
+/* The Quota row under Settings: the meter spans the menu's width, past the
+   icon column the rows above it indent their labels to. After the popup's rule
+   above, which it has to override at the same specificity. */
+.menu-content .workspace-usage-item.menu-item { align-items: stretch; flex-direction: column; gap: 5px; min-height: 0; padding: 6px 10px 8px; }
 .workspace-usage-item small { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-font-size-meta); }
-/* With no Organizations list there is no row to indent under. */
-.menu-content .workspace-usage-standalone .workspace-usage-item.menu-item { padding: 6px 10px 8px; }
+.workspace-usage-title { color: var(--av-sys-color-text-default); }
 
 .account-menu-item-with-value.menu-item { grid-template-columns: 18px minmax(0, 1fr) auto 14px; }
 .account-menu-item.menu-item[data-highlighted] { background-image: var(--hover-layer); }
@@ -2299,14 +2298,15 @@ pre {
 .settings-pane-heading-count > span { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
 .settings-subsection { margin-top: 30px; }
 
-/* Settings → Organization → Usage. */
-.usage-summary { display: flex; flex-direction: column; gap: 4px; padding: 14px; }
-.usage-summary .meter { margin: 6px 0 4px; }
-.usage-plan { font-size: 13px; font-weight: 500; }
-.usage-remaining { display: flex; flex-wrap: wrap; font-size: 13px; gap: 6px; margin: 0; }
-.usage-as-of,
-.usage-summary small { color: var(--av-sys-color-text-muted); font-size: 12px; }
-.usage-summary + .usage-overage::before { background: var(--av-sys-color-border-subtle); content: ''; height: .5px; left: 14px; position: absolute; right: 14px; top: 0; }
+/* Settings → Organization → Usage. The meter fills in the text colour,
+   near-black in the light appearance and near-white in the dark, rather than
+   the brand accent; the warning fill still wins below the low-quota line. */
+.usage-quota-value .meter { --av-cmp-meter-fill: var(--av-sys-color-text-default); }
+/* The Weekly quota row's value: the meter over how much is left, right-aligned
+   like the other rows' values. */
+.usage-quota-value { display: flex; flex-direction: column; gap: 6px; text-align: right; width: 200px; }
+.usage-quota-value small { color: var(--av-sys-color-text-muted); font-size: 12px; }
+.usage-plan-error { color: var(--av-sys-color-danger-soft); }
 .usage-overage-value { align-items: center; display: inline-flex; font-size: 13px; gap: 8px; }
 .usage-overage-value s { color: var(--av-sys-color-text-muted); }
 .usage-not-billed:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 1px; }

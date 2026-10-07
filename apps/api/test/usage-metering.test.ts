@@ -213,6 +213,48 @@ describe("GET /workspace/usage", () => {
   });
 });
 
+describe("PUT /workspace/plan", () => {
+  it("lets an administrator change the plan, answers with the re-priced meter, and refuses a member", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-10-03T00:00:00.000Z") });
+    const { database, usage, env } = seed();
+    const ADMIN = "01900000-0000-7000-8000-000000000004";
+    const MEMBER = "01900000-0000-7000-8000-000000000002";
+    for (const [id, role] of [[ADMIN, "admin"], [MEMBER, "member"]] as const) {
+      database.prepare(
+        `INSERT INTO users(id, google_subject, email, name, created_at, updated_at) VALUES (?, ?, ?, 'Someone', ?, ?)`,
+      ).run(id, `google-${id}`, `${role}@example.test`, CREATED, CREATED);
+      database.prepare(
+        `INSERT INTO workspace_members(workspace_id, user_id, role, status, joined_at) VALUES (?, ?, ?, 'active', ?)`,
+      ).run(WORKSPACE, id, role, CREATED);
+    }
+    await applyUsageBatch(env, [event("inf:big", { costMicrousd: 70_000_000 })], RECEIVED);
+    const app = new Hono<HonoAppEnv>();
+    app.use("*", requireAuth);
+    app.route("/workspace", workspaceRoutes);
+    app.onError(errorHandler);
+    const routeEnv = createTestEnv({ ...env, APP_ENV: "development", RALLY_DEV_AUTH: "true" });
+    const choose = (userId: string, plan: string) => app.request("/workspace/plan", {
+      method: "PUT",
+      headers: { "content-type": "application/json", "x-rally-dev-user-id": userId, "x-rally-dev-workspace-id": WORKSPACE },
+      body: JSON.stringify({ plan }),
+    }, routeEnv);
+
+    const refused = await choose(MEMBER, "growth");
+    expect(refused.status).toBe(403);
+    await expect(refused.json()).resolves.toMatchObject({ error: { code: "workspace_admin_required" } });
+    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE)).toEqual({ plan: "starter" });
+
+    const changed = await choose(ADMIN, "growth");
+    expect(changed.status).toBe(200);
+    await expect(changed.json()).resolves.toMatchObject({ plan: "growth", quotaRemainingPercent: 44, overage: { amountMicrousd: 0 } });
+    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE)).toEqual({ plan: "growth" });
+    expect(usage.prepare(`SELECT plan, previous_plan FROM usage_plan_changes WHERE workspace_id = ?`).all(WORKSPACE))
+      .toEqual([{ plan: "growth", previous_plan: "starter" }]);
+
+    expect((await choose(ADMIN, "enterprise")).status).toBe(400);
+  });
+});
+
 describe("consumeUsageQueue", () => {
   it("applies valid events, acks an unreadable one and retries one from another region", async () => {
     const { usage, env } = seed();

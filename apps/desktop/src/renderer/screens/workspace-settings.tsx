@@ -1615,7 +1615,7 @@ export function WorkspaceSettingsScreen({
                 </div>
                 {renameWorkspace.error && <InlineError>{renameWorkspace.error.message}</InlineError>}
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
-                <UsageSettingsSection api={api ?? null} organizationName={workspace.name} openRequest={usageRequest} />
+                <UsageSettingsSection api={api ?? null} canChangePlan={isAdmin} organizationName={workspace.name} openRequest={usageRequest} />
                 <div className="settings-pane-heading settings-pane-heading-count settings-pane-heading-spaced">
                   <div><h2><SettingLabel setting={settings.members} /></h2><p>People with access to {workspace.name}.</p></div>
                   <span>{members.data?.length ?? 0}</span>

@@ -21,14 +21,14 @@ are in
 | `packages/contracts/src/usage.ts` | The single source for plans, the 18 metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
 | `apps/api/src/services/usage-metering.ts` | `emitUsage` and `emitInferenceUsage` (the only producers), `applyUsageBatch` (the only D1 ledger writer), `readOrganizationUsage` (the only reader), `setWorkspacePlan`, `pruneUsageEvents` and `USAGE_EVENTS_D1_RETENTION_DAYS`. |
 | `apps/api/src/queues/usage-consumer.ts` | The `avalon-<region>-usage` consumer: validates, rejects misrouted messages, applies the batch to D1, then sends it to the usage lakehouse, logs `usage_batch_applied`. `usageLakehouseRecord` shapes the R2 row. |
-| `apps/api/src/routes/workspace.ts` | `GET /workspace/usage`, for every member role. |
+| `apps/api/src/routes/workspace.ts` | `GET /workspace/usage`, for every member role, and `PUT /workspace/plan`, for administrators (`WorkspaceService.setPlan`). |
 | `apps/api/src/routes/workspace-operations.ts` | `POST /internal/workspaces/:id/plan`, the operator route Ace calls. |
 | `packages/db/migrations/0118_usage_quota_metering.sql` | `workspaces.plan`, in the regional `DB`. |
 | `packages/db/usage-migrations/` | `usage_events`, `usage_rollups` and `usage_plan_changes`, in `USAGE_DB` (`avalon-<region>-usage`). Applied by `pnpm --filter @rally/api db:usage:migrate` (local, part of `db:migrate`) and `db:usage:migrate:remote` (deploy). |
 | `config/usage-lakehouse.json`, `config/usage-lakehouse-stream-schema.json` | The usage lakehouse: the `USAGE_LAKEHOUSE` Pipeline into the Iceberg table `avalon.usage_events` in R2, provisioned by `scripts/ensure-cloudflare-inference-lakehouse.mjs` like the other lakehouses. |
 | `apps/ace/src/client/workspaces.tsx` | The plan control on Ace's workspaces tab. |
-| `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, the `usage` local-cache slice, and the formatters. |
-| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage, and the Organization menu's meter (under the active row, or on its own when the Organizations list is hidden). |
+| `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, `useSetOrganizationPlan`, the `usage` local-cache slice, and the formatters. |
+| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage with its plan picker, and the account menu's meter (a full row right under Settings). |
 | `packages/ui/src/components/primitives.tsx` (`Meter`) | The shared meter primitive and its `cmp.meter.*` tokens. |
 
 Each call site emits next to where its cost is already known; searching for
@@ -108,12 +108,16 @@ The weekly quota is twice the monthly price, divided by four
 left (`LOW_QUOTA_PERCENT`). Overage is priced at cost. All three are product
 decisions, set in `packages/contracts/src/usage.ts`.
 
-Every workspace starts on Starter. An operator changes the plan from Ace;
-`setWorkspacePlan` records the change in `usage_plan_changes` (with the plan it
+Every workspace starts on Starter. An administrator changes the plan from the
+picker at the top of Settings → Organization → Usage, and an operator from Ace;
+both reach `setWorkspacePlan`. There is no checkout behind either yet, so a
+change moves the quota and nothing is charged. `setWorkspacePlan` records the change in `usage_plan_changes` (with the plan it
 replaced) and rewrites `quota_microusd` on the current week's rollups, in one
 `USAGE_DB` transaction, so the meter re-prices the current week at once. Then it
-writes `workspaces.plan` in `DB`; if that second write fails, Ace shows the
-error and saving again finishes it.
+writes `workspaces.plan` in `DB`; if that second write fails, the caller shows
+the error and choosing again finishes it. The Settings route answers with the
+meter under the new plan, which the picker writes straight into the read and
+the cache.
 
 A new rollup row's quota is computed inside the consumer's insert from
 `usage_plan_changes`: the latest change before the row's week ended, else the
@@ -165,8 +169,9 @@ therefore keep the plan they had, even for an event that arrives late.
 ## Boundary
 
 This module owns the ledger, the meter's arithmetic, and the plan column. It
-exposes `emitInferenceUsage` to call sites, `GET /workspace/usage` to the
-desktop, and `POST /internal/workspaces/:id/plan` to Ace.
+exposes `emitInferenceUsage` to call sites, `GET /workspace/usage` and
+`PUT /workspace/plan` to the desktop, and `POST /internal/workspaces/:id/plan`
+to Ace.
 
 It does not stop, slow or gate any work when the quota is spent: the product
 never asks permission before a tool call (`AGENTS.md`), and no run reads the
@@ -214,7 +219,7 @@ desktop meter is owned by the settings screens and
 - `packages/contracts/src/usage.test.ts`: week and period boundaries,
   month-end clamping, overage derivation, plan re-pricing.
 - `apps/api/test/usage-metering.test.ts`: the consumer, the reader and
-  `GET /workspace/usage` against the real migrations, with the regional and
+  `GET /workspace/usage` and `PUT /workspace/plan` against the real migrations, with the regional and
   usage schemas on separate connections (`migratedUsageSqliteDatabase`), as in
   production.
 - `apps/api/test-workers/usage-ledger.test.ts`: the once-only count on real D1,
@@ -245,8 +250,11 @@ today.
 A usage event carries IDs, an activity, a model ID and a cost: no prompt,
 output or tool argument. Only server call sites produce events. The read route
 sits behind member-only workspace auth, and every role may read it, since
-usage is shared by design. The plan route sits behind the regional operator
-credential in the `demos` role, the same one Ace uses to retire a workspace.
+usage is shared by design. `PUT /workspace/plan` is for owners and
+administrators, like every other Organization-wide setting; a member gets
+`workspace_admin_required`. The operator plan route sits behind the regional
+operator credential in the `demos` role, the same one Ace uses to retire a
+workspace.
 
 ## Operations
 
@@ -255,6 +263,38 @@ credential in the `demos` role, the same one Ace uses to retire a workspace.
 - `usage_unpriced` and `usage_emit_failed` name what was not metered.
 
 ## Changelog
+
+### 2026-10-07 — Administrators choose the plan in Settings
+
+**What changed:** Settings → Organization → Usage is now two standard rows:
+Plan, with its picker, above Weekly quota, with the meter as its value. The
+Plan row is backed by `PUT /workspace/plan`. Owners and administrators can
+change the plan; other members see it locked. The account menu's meter fills
+in the viewer's own accent; the Settings meter fills in the text colour,
+near-black in light and near-white in dark. In that menu the meter moved from
+under the active Organization's row to a full row right under Settings, titled
+Quota.
+
+**Why:** The usage PRD deferred self-serve plan choice until checkout existed
+(non-goal 5), so every plan change needed an operator in Ace. The product owner
+chose to let administrators pick the plan now, before billing. The menu meter
+moved because under the active row it only appeared when the Organizations
+list was shown, and it had no label saying what the bar measured.
+
+**Considered and rejected:** Letting any member change the plan. The plan sets
+a quota the whole Organization shares, so it follows every other
+Organization-wide setting and needs an administrator. A second route with its
+own re-pricing logic was also rejected: the new route calls `setWorkspacePlan`,
+so the rule for re-pricing the current week stays in one place.
+
+**Consequences:** Nothing charges for a plan change yet; when checkout lands,
+this route is where payment has to gate the change. Two administrators choosing
+opposite plans at the same instant can leave `workspaces.plan` and the
+current week's quota on different plans, the same exposure Ace's route already
+had; choosing again repairs it. A usage read in flight is cancelled before a
+plan change, so a read that saw the old plan cannot overwrite the new one.
+
+Shipped in #1156. Design: `docs/PRDs/2026-10-03_usage-quota-metering/prd.md`.
 
 ### 2026-10-03 — Usage metering introduced (#1086)
 

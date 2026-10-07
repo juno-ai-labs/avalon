@@ -21,11 +21,8 @@ import { SupportWorkspaceMenuRow } from './support-workspace-menu';
 export interface WorkspaceAccountMenuProps {
   activeWorkspace: DesktopWorkspaceSummary;
   /**
-   * The active Organization's usage meter: under its row when the Organizations
-   * list is shown, and on its own when it is not, so every member sees it
-   * whichever way the multiple-Organizations flag resolves. It is a slot so the
-   * menu stays presentational: the host supplies the usage read, and the slot
-   * mounts with the menu's content, so opening the menu refreshes it.
+   * The active Organization's usage meter, a full row under Settings. A slot,
+   * so the host supplies the read and opening the menu refreshes it.
    */
   activeUsage?: ReactNode;
   attention: Record<string, WorkspaceAttention | undefined>;
@@ -275,9 +272,9 @@ export function WorkspaceAccountMenu({
                   <IconSettings aria-hidden="true" />
                   <span>Settings</span>
                 </DropdownMenu.Item>
+                {activeUsage}
               </>
             )}
-            {!enabled && activeUsage && <div className="workspace-usage-standalone">{activeUsage}</div>}
             {!enabled && supportRows.length > 0 && (
               <>
                 <DropdownMenu.Label className="menu-label workspace-menu-section">Organizations</DropdownMenu.Label>
@@ -348,7 +345,6 @@ export function WorkspaceAccountMenu({
                           </IndicatorTooltip>
                         )}
                       </DropdownMenu.Item>
-                      {active && activeUsage}
                     </Fragment>
                   );
                 })}
@@ -411,6 +407,7 @@ export function WorkspaceAccountMenu({
                 <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={onOpenSettings} type="button"><IconSettings size={14} /> Settings…</button>
                 </DropdownMenu.Item>
+                {activeUsage}
                 <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>
                   <IconLogout size={14} /> {impersonator ? 'End impersonation' : 'Sign out'}
                 </DropdownMenu.Item>
