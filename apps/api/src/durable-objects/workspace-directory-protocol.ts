@@ -235,6 +235,21 @@ export const WorkspaceDirectoryLookupResultSchema = deferredZodSchema(() => z.st
   items: z.array(WorkspaceDirectoryInternalItemSchema).max(250),
 }));
 
+/**
+ * The one resource a shared link names, for the public handoff page's heading.
+ * A Breakout names its Channel too, because breakouts are keyed by both.
+ */
+export const WorkspaceLinkTitleRequestSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: IdSchema,
+  target: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("channel"), workstreamId: IdSchema }),
+    z.strictObject({ kind: z.literal("breakout"), workstreamId: IdSchema, substreamId: IdSchema }),
+    z.strictObject({ kind: z.literal("space"), spaceId: IdSchema }),
+    z.strictObject({ kind: z.literal("sidekick"), sidekickId: IdSchema }),
+  ]),
+}));
+export type WorkspaceLinkTitleRequest = z.infer<typeof WorkspaceLinkTitleRequestSchema>;
+
 export const WorkspaceDirectoryAudienceSchema = deferredZodSchema(() => z.discriminatedUnion("scope", [
   z.strictObject({ scope: z.literal("workspace") }),
   z.strictObject({ scope: z.literal("user"), userId: IdSchema }),
