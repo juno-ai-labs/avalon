@@ -8,7 +8,7 @@ import {
   isSharedNotionIngress,
 } from "./lib/notion-ingress";
 import { apiOperationTelemetry } from "./middleware/api-operation-telemetry";
-import { refuseSupportSession, requireAuth, requireIdentityAuth, requireWorkspaceAuth } from "./middleware/auth";
+import { auditSupportWrites, refuseSupportSession, requireAuth, requireIdentityAuth, requireWorkspaceAuth } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/errors";
 import { requestContext, securityMiddleware } from "./middleware/request-context";
 import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
@@ -126,6 +126,7 @@ export function createApp(): Hono<HonoAppEnv> {
     await next();
   });
   app.use("*", apiOperationTelemetry());
+  app.use("*", auditSupportWrites);
 
   app.get("/", (c) => c.json({ service: "avalon-api", region: c.env.AVALON_REGION }));
   app.route("/health", healthRoutes);

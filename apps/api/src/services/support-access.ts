@@ -50,6 +50,47 @@ export function supportSessionLiveSql(alias: string): string {
         AND staff.status = 'active' AND staff.access_class = 'member')`;
 }
 
+/**
+ * One thing a Rally staff member did through a support session: an HTTP write
+ * or a socket command. The staff member is the actor and the represented
+ * person the target, as the impersonation audit already records them.
+ *
+ * Callers hand the promise to `waitUntil`, never await it on the request: an
+ * audit that slows the person's action down is the wrong trade here, and one
+ * that fails is logged rather than failing the action it describes.
+ */
+export async function recordSupportAction(env: Env, entry: {
+  workspaceId: string;
+  impersonatorUserId: string;
+  representedUserId: string;
+  sessionId: string;
+  action: "support_session.request" | "support_session.socket_command";
+  workstreamId?: string | null;
+  metadata: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    await env.AUDIT_DB.prepare(
+      `INSERT INTO audit_events
+         (id, workspace_id, actor_type, actor_user_id, workstream_id, action, target_type, target_id, metadata_json, request_id, created_at)
+       VALUES (?, ?, 'user', ?, ?, ?, 'represented_user', ?, ?, NULL, ?)`,
+    ).bind(
+      `${entry.action}:${newId()}`,
+      entry.workspaceId,
+      entry.impersonatorUserId,
+      entry.workstreamId ?? null,
+      entry.action,
+      entry.representedUserId,
+      JSON.stringify({ ...entry.metadata, sessionId: entry.sessionId }),
+      nowIso(),
+    ).run();
+  } catch (error) {
+    logWarn(env, "support_action_audit_failed", {
+      action: entry.action,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+  }
+}
+
 /** Whether support session `sessionId` still has a live grant and a live staff member. */
 export async function supportSessionLive(env: Env, sessionId: string, now: string): Promise<boolean> {
   const row = await env.DB.prepare(

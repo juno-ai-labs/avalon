@@ -13,6 +13,7 @@ import { ApiError } from "../lib/api-error";
 import { requestDeferral } from "../lib/defer";
 import { logWarn } from "../observability/logger";
 import { verifyAccessToken } from "../services/auth-service";
+import { recordSupportAction } from "../services/support-access";
 
 type Context = Parameters<MiddlewareHandler<HonoAppEnv>>[0];
 
@@ -178,6 +179,26 @@ export function getAuth(c: Context): AuthContext {
   }
   return auth as AuthContext;
 }
+
+/**
+ * Record every write a support session makes over HTTP (`docs/impersonation.md`),
+ * after the response and off the request's critical path. Mounted at the root:
+ * the auth context is set by whichever sub-app authenticated the request, and
+ * reads (GET, HEAD, OPTIONS) are not recorded.
+ */
+export const auditSupportWrites: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
+  await next();
+  const auth = c.get("auth");
+  if (!auth?.impersonatorUserId || !auth.workspaceId || ["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return;
+  requestDeferral(c)(recordSupportAction(c.env, {
+    workspaceId: auth.workspaceId,
+    impersonatorUserId: auth.impersonatorUserId,
+    representedUserId: auth.userId,
+    sessionId: auth.sessionId,
+    action: "support_session.request",
+    metadata: { method: c.req.method, path: c.req.path, status: c.res.status },
+  }));
+};
 
 /**
  * Refuse a support session (`docs/impersonation.md`) at a door that mints
