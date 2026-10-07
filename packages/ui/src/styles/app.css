@@ -1574,7 +1574,7 @@ pre {
 .skeleton-row:nth-child(5n+4) .skeleton-row-subline { width: 33%; }
 
 /* The empty Channel list's one row; the mark keeps the glyph's pebble. */
-.ghost-channel-row { cursor: default; }
+.ghost-channel-row { pointer-events: none; }
 .ghost-channel-mark { height: 40px; width: 40px; }
 .ghost-channel-mark > .workstream-glyph-shape {
   background: transparent;
