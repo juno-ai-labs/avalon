@@ -1,4 +1,4 @@
-import { ScopeSharingPanel } from "../components/scope-sharing-panel";
+import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -2028,6 +2028,11 @@ export function ConversationSurface({
     },
   });
 
+  // Guest invitations for the title menu's People level, loaded once it opens.
+  const [invitesWanted, setInvitesWanted] = useState(false);
+  const invitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId,
+    enabled: invitesWanted && Boolean(api && session?.workspace) && parentKind === 'workstream' });
+
   const removeParticipant = useMutation({
     mutationFn: ({ member, target }: { member: WorkspaceMember; target: string }) => target === '0'
       ? api!.removeParticipant(id, member.id)
@@ -2848,20 +2853,54 @@ export function ConversationSurface({
         replyCount,
         people: parentKind === 'workstream' ? {
           candidates: visibleMembers,
-          onAdd: (member) => {
+          onAdd: async (member) => {
             removeParticipant.reset();
-            addParticipant.mutate({ member, target: substreamId });
+            invitations.invite.reset();
+            invitations.remove.reset();
+            await addParticipant.mutateAsync({ member, target: substreamId });
           },
           adding: addParticipant.isPending,
           error: addParticipant.error
             ? refusalMessage(addParticipant.error) ?? 'That person couldn’t be added.'
-            : undefined,
+            : invitations.invite.error ? 'They couldn’t be invited. Try again.'
+              : invitations.remove.error
+                // They signed in between the list loading and the click: the invite is used.
+                ? invitations.remove.error instanceof ApiError && invitations.remove.error.code === 'scope_revision_conflict'
+                  ? 'They have already joined. Remove them from the people instead.'
+                  : 'That invite couldn’t be cancelled. Try again.'
+                : undefined,
           currentUserId: session?.user.id,
           onRemove: (member) => {
             addParticipant.reset();
             removeParticipant.reset();
             setRemoveConfirm({ member, parentId: id, target: substreamId });
           },
+          invites: api && session?.workspace ? {
+            pending: invitations.pending.data?.map((guest) => guest.email),
+            loadFailed: invitations.pending.isError,
+            onRetryLoad: () => { void invitations.pending.refetch(); },
+            onInvite: async (emails) => {
+              // A failed add earlier in the same submission stays reported.
+              invitations.remove.reset();
+              await invitations.invite.mutateAsync([...emails].sort());
+              // Someone who already had an account is claimed as they are invited, and joins the room.
+              await Promise.all([invitations.pending.refetch(), queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) })]);
+            },
+            onRevoke: (email) => {
+              const guest = invitations.pending.data?.find((candidate) => candidate.email === email);
+              if (!guest) return;
+              invitations.invite.reset();
+              addParticipant.reset();
+              invitations.remove.mutate(guest, {
+                onError: (error) => {
+                  if (error instanceof ApiError && error.code === 'scope_revision_conflict') {
+                    void queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) });
+                  }
+                },
+              });
+            },
+            onLoad: () => setInvitesWanted(true),
+          } : undefined,
         } : undefined,
         origin: origin ? {
           byline: `Started from ${origin.origin.authorType === 'agent' ? 'Rally’s' : `${origin.origin.author?.name ?? 'a'}’s`} message · ${formatDateTime(origin.origin.createdAt)}`,

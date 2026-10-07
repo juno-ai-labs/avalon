@@ -3,6 +3,7 @@ import { IconChevronDown, IconChevronRight, IconCornerDownRight, IconSearch, Ico
 
 import { IconButton } from './primitives';
 import clsx from 'clsx';
+import { isComposingKeyEvent } from '../lib/ime';
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 /**
@@ -112,10 +113,15 @@ export function TitleMenuMorph({ children }: { children: ReactNode }): React.JSX
  * take them), lets Tab and Escape through to the menu, takes focus when its
  * level opens, and hands the down arrow to the first result.
  */
-export function TitleMenuSearch({ label, onChange, value }: {
-  label: string; onChange: (value: string) => void; value: string;
+export function TitleMenuSearch({ className, label, onChange, onEnter, value }: {
+  className?: string | undefined;
+  label: string;
+  onChange: (value: string) => void;
+  /** Enter in the box; the menu stays open so it can be pressed again. */
+  onEnter?: (() => void) | undefined;
+  value: string;
 }): React.JSX.Element {
-  return <label className="title-menu-search">
+  return <label className={clsx('title-menu-search', className)}>
     <IconSearch aria-hidden="true" size={15} stroke={1.8} />
     <input
       aria-label={label}
@@ -124,6 +130,12 @@ export function TitleMenuSearch({ label, onChange, value }: {
       onKeyDown={(event) => {
         if (event.key === 'Escape' || event.key === 'Tab') return;
         event.stopPropagation();
+        // Enter that finishes an input method's composition is not a submit.
+        if (event.key === 'Enter' && onEnter && !isComposingKeyEvent(event.nativeEvent)) {
+          event.preventDefault();
+          onEnter();
+          return;
+        }
         if (event.key !== 'ArrowDown') return;
         const view = event.currentTarget.closest('.title-menu-view');
         const first = view?.querySelector<HTMLElement>('[role="menuitem"]:not([data-disabled])');
