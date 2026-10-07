@@ -30,12 +30,20 @@ const at = "2026-10-07T00:00:00.000Z";
 
 let database: DatabaseSync;
 let initialized: unknown[][];
+let spacesReady: boolean;
+let generalOpens: unknown[];
 
 function workspaceObjects(): Env["WORKSPACE_DOS"] {
   const stub = {
     initializeWorkspace: async (...args: unknown[]) => {
       initialized.push(args);
-      return { spacesReady: true };
+      return { spacesReady };
+    },
+    // The slower path's first step, reached only when the object answers not
+    // ready; answering `absent` is enough to see it was taken.
+    openGeneralSpace: async (input: unknown) => {
+      generalOpens.push(input);
+      return { ok: true, absent: true };
     },
   };
   const binding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
@@ -90,6 +98,8 @@ function openAuthority(): void {
 beforeEach(() => {
   database = migratedSqliteDatabase();
   initialized = [];
+  spacesReady = true;
+  generalOpens = [];
   database.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at, platform_user_id)
     VALUES (?, 'creator-google', 'creator@example.test', 'Creator', ?, ?, ?)`).run(platformUserId, at, at, platformUserId);
 });
@@ -119,11 +129,22 @@ describe("creating an Organization in its region", () => {
     expect(database.prepare("SELECT workspace_id FROM workstreams WHERE id = ?").get(generalId))
       .toEqual({ workspace_id: workspaceId });
 
+    expect(generalOpens).toEqual([]);
     expect(initialized).toEqual([[
       workspaceId,
       "wnam",
       { creatorUserId: platformUserId, spaceId: generalId, authorityGeneration: 1 },
     ]]);
+  });
+
+  it("takes the slower General path when the object answers not ready", async () => {
+    openAuthority();
+    spacesReady = false;
+
+    const session = await create();
+
+    expect(session.workspace).toMatchObject({ id: workspaceId });
+    expect(generalOpens[0]).toEqual({ workspaceId, userId: platformUserId });
   });
 
   it("leaves General to the slower path while the authority is mid-migration", async () => {

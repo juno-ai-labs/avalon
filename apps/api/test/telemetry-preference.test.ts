@@ -120,3 +120,19 @@ describe('canonical regional Product analytics preference', () => {
     enterpriseDatabase.close();
   });
 });
+
+it('writes nothing for a projection a deployment already holds, and still applies a newer one', async () => {
+  const database = migratedSqliteDatabase();
+  try {
+    seed(database, 'enterprise');
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: 'enterprise' });
+    const row = () => database.prepare(`SELECT product_analytics_enabled, product_analytics_preference_version, updated_at
+      FROM users WHERE id = 'enterprise-user'`).get();
+
+    await applyRegionalPreferenceProjection(env, 'enterprise-user', { preferenceSubjectHandle: handle, enabled: true, version: 1 });
+    expect(row()).toEqual({ product_analytics_enabled: 1, product_analytics_preference_version: 1, updated_at: '2026-08-01T00:00:00.000Z' });
+
+    await applyRegionalPreferenceProjection(env, 'enterprise-user', { preferenceSubjectHandle: handle, enabled: false, version: 2 });
+    expect(row()).toMatchObject({ product_analytics_enabled: 0, product_analytics_preference_version: 2 });
+  } finally { database.close(); }
+});

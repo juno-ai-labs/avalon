@@ -157,8 +157,9 @@ call returns; the renderer holds that announcement while its own creation is
 in flight, as a switch does, so the old shell is not torn down early on the
 previous workspace's route with an empty cache. A creation does not know its
 workspace's id until main answers, so it holds any workspace in the region it
-asked for; main's answer is its active session either way, and a creation
-that fails applies the last broadcast it held instead. The account
+asked for, though a renewal of the workspace on screen passes; main's answer
+is its active session, and a creation that fails applies the last broadcast it
+held instead. The account
 menu's create action does not refetch the directory afterwards: the landing
 remounts the shell, and the new one reads discovery itself.
 
@@ -367,6 +368,9 @@ Composer dictation remains tied to its composer lifecycle.
   it is not deletion.
 - Defensive polling cadence and device-count limits stay open until the team
   chooses their values.
+- Nothing reads a Global operation's `status`. That is what lets its
+  completion run beside the binding's activation; a reader of it would have to
+  order the two again.
 
 ## Boundary
 
@@ -395,6 +399,9 @@ never acquire a product WebSocket.
   The desktop keeps that ID across identity refresh and transport retries.
 - Queue publication after membership transition is best effort, as documented in
   `access-revocation.md`; authorization fences still refuse every reconnect.
+- A regional profile refresh reports `regional_identity_conflict` only for a
+  uniqueness refusal (another regional user holds the verified email). Any
+  other database failure keeps its own error.
 
 ## Data model
 
@@ -431,67 +438,35 @@ best-effort remote revocation.
 
 ### 2026-10-07: Creating an organization takes fewer round trips, and lands like a switch
 
-**What changed:** `finishWorkspaceSetup` now marks its creation pending and
-lands the session through `applyActivatedSession`, the switch's path: the
-route resets to the new work-stream page and the feature flags are carried
-across the cache reset. `applyActivatedSession` fetches `GET /workspace`
-before the swap only when `workspaceFromSession` cannot describe the
-workspace, and it also carries the account onboarding query
-(`account-onboarding-query.ts`) when the account is unchanged, on a creation
-only when it already says eligible. The account
-menu's create handler no longer refetches the directory from the shell it is
-tearing down. In main, `requestOnboardingSession` hands the identity it
-loaded to `onboardingIdentityRequest` instead of loading it a second time.
+**What changed:** `finishWorkspaceSetup` marks its creation pending and lands
+through `applyActivatedSession`, the switch's path, which now carries the
+account onboarding state with the flags and fetches `GET /workspace` before the
+swap only when the session cannot describe the workspace. The create handler no
+longer refetches the directory, and main loads the onboarding identity once. On
+the server, Global reads the identity, its sign-in methods, a replayed
+operation and the preference in parallel, `begin` and `reserve` are each one
+batch, and activation, completion and eligibility run together after the
+region commits; the region refreshes a returning user in one batch and creates
+the Organization, its session row and General's anchor in one more
+([`spaces.md`](spaces.md) has General's half).
 
-On the server, the create's coordination stops waiting on itself. Global reads
-the identity, its sign-in methods and a replayed operation in parallel;
-`operations.begin` and `bindings.reserve` are each one D1 batch; the
-preference projection loads beside the reservation; and the binding's
-activation, the operation's completion and `makeFirstCreatorEligible` run
-together once the region has committed. In the region, a returning user's
-profile, sign-in methods and onboarding profile are refreshed in one batch
-after one parallel pair of reads, a preference projection that matches what
-is stored writes nothing, and the create itself is one batch that also mints
-the session row ([`spaces.md`](spaces.md) has General's half of it).
-
-**Why:** Creating an organization was slower than switching to one. The
-server path made about thirty serial D1 round trips across Global and the
-region, most of them reads of rows the same request had just written or
-already held. Main's
-`session:changed` broadcast reached the renderer before the create call
-returned, so the cache was cleared and the shell remounted on the previous
-workspace's route with no flags; the account directory then waited on
-`/feature-flags` and the setup journey on the account onboarding read, a
-chain of round trips the new workspace did not need. The prefetch of the
-record predates the session placeholder: with it, the swap waited a round
-trip the new shell makes anyway.
+**Why:** Creating an organization was slower than switching to one. Most of
+the server's serial round trips read rows the same request had written or
+already held, and on desktop main's early broadcast cleared the cache and
+remounted the shell on the previous workspace's route before the create call
+returned, after which the directory and the setup journey each waited on
+another read.
 
 **Considered and rejected:** Prefetching the workspace socket ticket with the
-session, to dial before the shell mounts. With no blocking read left before
-the swap the shell mounts as soon as main answers, so the head start would be
-one React commit, and tickets live sixty seconds and are minted per dial,
-which a handed-over ticket would have to respect. Broadcasting from
-`writeSplitSessionFiles` after the credential write but before the profile
-cache write: the renderer that asked waits on the call's answer, not the
-broadcast, so nothing landed sooner, and letting the profile write run
-outside the session mutation would let a sign-out's deletion race it.
-Starting the journey read before the account's eligibility is known: an
-account that needs no setup is answered `409 onboarding_not_required`, so
-every existing member would pay a refused request on every cold start.
+session. With no blocking read left before the swap the head start is one
+React commit, and tickets are minted per dial with a sixty-second life.
 
-**Consequences:** A failed regional profile refresh is reported as
-`regional_identity_conflict` only for a uniqueness refusal; any other database
-failure keeps its own error rather than being called a conflict. Nothing reads
-a Global operation's `status`, which is what lets its completion run beside the
-binding's activation; a reader of it would have to order the two again.
-The pending mark of a creation matches by region alone. A
-broadcast for another workspace in that region arriving during a creation is
-held, and the creation's answer, which is main's active session at the end
-of its mutation, is applied instead; a creation that fails applies the held
-broadcast. A session that describes its workspace
-now lands without `GET /workspace` in hand; the shell draws from the
-placeholder and the read replaces it in place, as on a cold start. A journey
-read on a cold start still waits for the account's eligibility.
+**Consequences:** A creation's pending mark matches by region and holds any
+other workspace's broadcast there; a renewal of the workspace on screen passes,
+and a creation that fails applies the last one it held. A session that
+describes its workspace lands without `GET /workspace` in hand. The preference
+is read before the reservation, since a read failing after it would leave a
+pending binding nothing releases.
 
 Shipped in #1142.
 

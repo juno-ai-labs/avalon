@@ -35,7 +35,7 @@ them; the product design is in
 | `apps/api/src/durable-objects/workspace-space-default-publication.ts` | The Space's two arguments to it: default targets, and the cutover's next page of work. |
 | `apps/api/src/services/space-service.ts` | Creation, presentation, audience, membership, archive, restore, defaults, and the resume of an interrupted operation. |
 | `apps/api/src/services/channel-access-service.ts` | A Channel's own scope and readers: the Manage access read, removing a direct reader, and the narrowing announcement a Channel's scope change publishes. |
-| `apps/api/src/services/space-bootstrap-service.ts` | The one-time cutover, the new-Organization General, and the placement the two creation paths outside the coordinator take for themselves. |
+| `apps/api/src/services/space-bootstrap-service.ts` | The one-time cutover, the fallback that opens a new Organization's General when `initializeWorkspace` could not, and the placement the two creation paths outside the coordinator take for themselves. A new Organization's General is normally made by `initializeWorkspace` itself (see [General](#general)). |
 | `apps/api/src/services/workstream-object-creation-service.ts` | Where a Channel is born into its Spaces. [`workstream-creation.md`](workstream-creation.md) owns it. |
 | `apps/api/src/routes/spaces.ts` | `/spaces` mutations and the two paginated reads. |
 | `apps/api/src/routes/workspace.ts` | `PUT /workspace/order`, the one write for all three hand-arranged lists, and `PUT /workspace/pinned-order` for All's Pinned order. It is a workspace route because two of the three containers are not Spaces. |
@@ -1736,12 +1736,11 @@ region's D1:
   write**, when a Space is created or `ensureGeneral` finds no General:
   `bootstrapWorkstreamRuntimeEnvironment` reads the authority control row and
   writes the route anchor batch, and WorkspaceDO reads the control row again for
-  the generation the Space's parent is born at. This is the
+  the generation the Space's parent is born at. For General this is the
   fallback path (a new Organization's General is anchored in the create's own
-  batch and passed its generation) so it is not on an ordinary creation. The
-  anchor batch carries the Channel-receipt claim read, and the anchor's schema
-  probe is skipped once a database has answered the final shape, so a Space
-  create pays the control read and one batch.
+  batch and passed its generation), so it is not on an ordinary Organization
+  creation. The anchor batch carries the Channel-receipt claim read, so a
+  Space create pays two control reads and one batch.
 - **A second `workspace_members` read** in the cutover driver, which has no
   session and reads the Organization's owner or administrator in order to act as
   somebody.
@@ -1896,33 +1895,31 @@ default target.
 
 **What changed:** `initializeWorkspace` takes an optional `general` (creator,
 space id, authority generation) and answers `{ spacesReady }`. With it, a new
-Organization's object reserves General and closes the cutover in that call; the
-regional create writes General's D1 anchor and route in the same batch as the
-Organization's rows. `openGeneralSpace`'s write half is now `reserveGeneral`,
-shared by both. `claimParentAnchor` puts its Channel-receipt read in the anchor
-batch, and the `workstreams` schema probe is remembered per database once it
-answers the final shape. `openGeneralSpaceForNewWorkspace` is now the fallback
-when the object answers `spacesReady: false`.
+Organization's object reserves General through `reserveGeneral` (the write half
+of `openGeneralSpace`, now shared) and closes the cutover in that call, after
+the regional create wrote General's D1 anchor and route in the batch that made
+the Organization. The Space half of the call is best effort.
+`openGeneralSpaceForNewWorkspace` is now the fallback for `spacesReady: false`.
+`claimParentAnchor` puts its Channel-receipt read in the anchor batch, and the
+`workstreams` anchor writer lost its pre-0090 schema probe and retry.
 
-**Why:** Organization creation was slow. The old path made about twenty serial
-D1 round trips and five object calls in the region: `ensureGeneral` asked
-whether General existed on an Organization made a moment earlier, looked up the
-placement affinity twice although the caller had it, re-read the authority
-control row inside the object, and `runFinalize` was a call of its own. Every
-activation of an existing Organization also paid that path, plus a cutover
-close and snapshot publish, for nothing.
+**Why:** Organization creation was slow. `ensureGeneral` asked whether General
+existed in an Organization made a moment earlier, the placement affinity was
+looked up twice though the caller had it, the object re-read the authority
+control row, and `runFinalize` was a call of its own. Every activation of an
+existing Organization paid the same calls and a snapshot publish for nothing.
 
 **Considered and rejected:** Moving the D1 anchor write into the object. The
-object can read D1, but the anchor has to be in place before the object writes
-General (the order `ensureGeneral` keeps), and the create's batch already
-writes D1 in that order for free. Dropping the receipt claim read for a fresh
-id: it is free inside the batch, so it stays.
+anchor has to exist before the object writes General, the order
+`ensureGeneral` keeps, and the create's batch already writes D1 in that order
+at no cost.
 
 **Consequences:** `ensureGeneral` is no longer the only path that creates
-General. Both paths go through `reserveGeneral` and the same creator check, and
-the unique index still decides a race between them. A change to how General is
-made has to hold for both. The Node D1 shim's `run` now returns a statement's
-rows, as D1's does, so a read inside a batch is tested as it runs.
+General. Both go through `reserveGeneral` and the same creator check, and the
+unique index still decides a race between them; a change to how General is
+made has to hold for both. The fast path runs only while the authority accepts
+new work. The anchor writer assumes the post-0090 shape; a database still
+before 0090 can no longer be written to.
 
 Shipped in #1142.
 
