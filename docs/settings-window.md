@@ -146,7 +146,8 @@ half of one is a claim that is false.
 Mounting the screen starts `/workspace/members`, `/connections`,
 `/connections/catalog`, `/feature-flags`, `/workspace/invitations` for an admin,
 and `getApplicationSettings` over IPC. A section adds one more when it is
-selected: `/workspace/terminal`, GitHub repository access, or custom MCP tools.
+selected: `/workspace/terminal`, or, on a connection's own page, that
+connection's GitHub repository access or custom MCP tools.
 The Connections section adds none: each row's tool count arrives in
 `/connections` itself ([`connectors.md`](connectors.md#settings-tool-counts)).
 
