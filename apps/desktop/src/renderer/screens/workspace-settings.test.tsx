@@ -2239,6 +2239,33 @@ describe('Organization settings', () => {
     expect(screen.queryByRole('dialog', { name: 'Suspend Sam?' })).not.toBeInTheDocument();
   });
 
+  it('keeps the person when Suspend is cancelled, and lets a failed suspension be retried', async () => {
+    api.getWorkspaceMembers.mockResolvedValue([owner, member]);
+    api.removeWorkspaceMember
+      .mockRejectedValueOnce(new ApiError('The workspace membership changed. Check it and try again.', 409, 'membership_changed'))
+      .mockImplementationOnce(async () => { api.getWorkspaceMembers.mockResolvedValue([owner]); });
+    renderSettings();
+    openSettingsSection('Organization');
+
+    await openMemberActions('Sam (sam@example.com) member actions');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Suspend' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Suspend Sam?' })).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Suspend Sam?' })).not.toBeInTheDocument());
+    expect(api.removeWorkspaceMember).not.toHaveBeenCalled();
+
+    await openMemberActions('Sam (sam@example.com) member actions');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Suspend' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Suspend Sam?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Suspend' }));
+    expect(await within(dialog).findByText('The workspace membership changed. Check it and try again.')).toBeVisible();
+    expect(screen.getAllByText('Sam').length).toBeGreaterThan(0);
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Suspend' }));
+    await waitFor(() => expect(api.removeWorkspaceMember).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Suspend Sam?' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('Sam')).not.toBeInTheDocument());
+  });
+
   it('does not expose invitation management to regular members', async () => {
     renderSettings({ ...workspace, currentUser: member });
     openSettingsSection('Organization');
