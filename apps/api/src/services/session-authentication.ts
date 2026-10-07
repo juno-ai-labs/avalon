@@ -1,5 +1,7 @@
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
+import { asUserId } from "@rally/contracts";
+import { supportSessionLive } from "./support-access";
 
 /** One ordinary-session authority check, shared by bearer and browser transports. */
 export async function authenticateSession(env: Env, claims: Omit<IdentityAuthContext, "role">): Promise<IdentityAuthContext> {
@@ -16,9 +18,10 @@ export async function authenticateSession(env: Env, claims: Omit<IdentityAuthCon
   // authentication. A session without its user row is unreachable while the
   // foreign key holds, but the cost of being wrong about that is a signed-out
   // member, and the cost of the defence is nothing.
+  const now = new Date().toISOString();
   const session = await env.DB.prepare(
     `SELECT s.workspace_id, m.role, m.access_class, w.region AS workspace_region,
-            u.analytics_person_id, w.analytics_workspace_id
+            u.analytics_person_id, w.analytics_workspace_id, s.impersonator_user_id
      FROM sessions s
      LEFT JOIN users u ON u.id = s.user_id
      LEFT JOIN workspace_members m
@@ -28,7 +31,7 @@ export async function authenticateSession(env: Env, claims: Omit<IdentityAuthCon
      WHERE s.id = ? AND s.user_id = ? AND s.region = ?
        AND s.revoked_at IS NULL AND s.expires_at > ?`,
   )
-    .bind(claims.sessionId, claims.userId, claims.region, new Date().toISOString())
+    .bind(claims.sessionId, claims.userId, claims.region, now)
     .first<{
       workspace_id: string | null;
       access_class: "member" | "guest" | null;
@@ -36,8 +39,16 @@ export async function authenticateSession(env: Env, claims: Omit<IdentityAuthCon
       workspace_region: string | null;
       analytics_person_id: string | null;
       analytics_workspace_id: string | null;
+      impersonator_user_id: string | null;
     }>();
   if (!session || session.workspace_id !== claims.workspaceId) {
+    throw new ApiError(401, "session_revoked", "The session is no longer active");
+  }
+  // A support session must also name a live grant and a live staff member,
+  // read fresh on every request so a revoke or a removal from Juno Labs ends it
+  // on the next one with nothing to invalidate. It is a second statement so an
+  // ordinary session, nearly every request, pays nothing for it.
+  if (session.impersonator_user_id && !await supportSessionLive(env, claims.sessionId, now)) {
     throw new ApiError(401, "session_revoked", "The session is no longer active");
   }
   if (session.workspace_id && (!(session.access_class === "guest" || session.role) || session.workspace_region !== env.AVALON_REGION)) {
@@ -49,6 +60,7 @@ export async function authenticateSession(env: Env, claims: Omit<IdentityAuthCon
     ...(session.access_class ? { accessClass: session.access_class } : {}),
     analyticsPersonId: session.analytics_person_id,
     analyticsWorkspaceId: session.analytics_workspace_id,
+    ...(session.impersonator_user_id ? { impersonatorUserId: asUserId(session.impersonator_user_id) } : {}),
   };
 }
 

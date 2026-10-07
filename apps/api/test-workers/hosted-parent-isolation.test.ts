@@ -81,7 +81,7 @@ beforeEach(async () => {
       "INSERT INTO workspace_members VALUES (?, ?, 'guest', NULL, 'active', ?, 1)",
     ).bind(workspaceId, id, id)),
     env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL, workspace_incarnation TEXT)`),
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL, workspace_incarnation TEXT, impersonator_user_id TEXT)`),
     env.DB.prepare("INSERT INTO sessions VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z', ?)")
       .bind(sessionId, shared, workspaceId, shared),
   ]);

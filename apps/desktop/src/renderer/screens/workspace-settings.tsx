@@ -2,6 +2,7 @@ import { startConnectorAuthorization } from '../lib/start-connector-authorizatio
 import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
 import { CopyButton, CopyField } from '../components/copy-button';
+import { SupportAccessSetting } from '../components/support-access-setting';
 import { ServerCog } from 'lucide-react';
 import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
@@ -561,6 +562,7 @@ export function WorkspaceSettingsScreen({
     runtime,
     leaveWorkspace,
     signOut,
+    endSupportSession,
     pendingConnectorOAuth,
     setPendingConnectorOAuth,
   } = useAppSession();
@@ -1465,8 +1467,15 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Session</h2></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
-                    <SettingCopy setting={settings.signOut} />
-                    <Button onClick={() => void signOut()}>Sign out</Button>
+                    {session?.impersonator
+                      ? <>
+                          <SettingCopy setting={settings.signOut} description={`You are signed in as ${session.user.name}. Ending returns you to your own account.`} />
+                          <Button onClick={() => void endSupportSession()}>End impersonation</Button>
+                        </>
+                      : <>
+                          <SettingCopy setting={settings.signOut} />
+                          <Button onClick={() => void signOut()}>Sign out</Button>
+                        </>}
                   </div>
                 </div>
               </section>
@@ -1539,6 +1548,12 @@ export function WorkspaceSettingsScreen({
                       variant="secondary"
                     />
                   </label>
+                  <SupportAccessSetting
+                    api={api ?? null}
+                    impersonating={Boolean(session?.impersonator)}
+                    isAdmin={isAdmin}
+                    workspaceId={workspace.id}
+                  />
                 </div>
                 {renameWorkspace.error && <InlineError>{renameWorkspace.error.message}</InlineError>}
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}

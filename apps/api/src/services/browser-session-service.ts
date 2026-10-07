@@ -5,6 +5,7 @@ import { hmacSha256, sha256 } from "../lib/crypto";
 import { authenticateSession } from "./session-authentication";
 import { AuthService, verifyAccessToken, sessionRenewalPolicy } from "./auth-service";
 import { claimScopeInvitations } from "./scope-invitation-claims";
+import { SupportAccessService } from "./support-access";
 
 import { BrowserSessionSchema, type BrowserSession } from "@rally/contracts/browser-session";
 export { BrowserSessionSchema, BrowserWorkspacesSchema } from "@rally/contracts/browser-session";
@@ -42,7 +43,8 @@ export class BrowserSessionService {
     const join = workspaceId === undefined ? "" : "JOIN browser_workspace_sessions selected ON selected.browser_session_id=browser.session_id AND selected.workspace_id=?";
     const row = await this.env.DB.prepare(`SELECT target.id,target.user_id,target.workspace_id
       FROM browser_sessions browser JOIN sessions root ON root.id=browser.session_id
-      ${join} JOIN sessions target ON target.id=${selected} AND target.user_id=root.user_id
+      ${join} JOIN sessions target ON target.id=${selected}
+        AND (target.user_id=root.user_id OR target.impersonator_user_id=root.user_id)
       WHERE browser.credential_hash=? AND root.workspace_id IS NULL AND root.region=?
         AND root.revoked_at IS NULL AND root.expires_at>? AND target.region=?`)
       .bind(...(workspaceId === undefined ? [] : [workspaceId]),await sha256(credential),this.env.AVALON_REGION,
@@ -60,8 +62,12 @@ export class BrowserSessionService {
     const workspace = auth.workspaceId === null ? null
       : (await new AuthService(this.env).listRegionalWorkspaces(auth.userId)).find((entry) => entry.id === auth.workspaceId);
     if (auth.workspaceId !== null && !workspace) throw new ApiError(401,"session_revoked","Workspace access has ended");
+    const impersonator = auth.impersonatorUserId === undefined ? null
+      : await this.env.DB.prepare("SELECT id,email,name,avatar_url FROM users WHERE id=?")
+        .bind(auth.impersonatorUserId).first<{ id:string;email:string;name:string;avatar_url:string|null }>();
     return BrowserSessionSchema.parse({ user:UserSchema.parse({ id:row.id,email:row.email,name:row.name,
       avatarUrl:row.avatar_url,timezone:row.timezone,createdAt:row.created_at }),workspace,
+      ...(impersonator ? { impersonator:{ id:impersonator.id,email:impersonator.email,name:impersonator.name,avatarUrl:impersonator.avatar_url } } : {}),
       expiresAt:await this.expiry(auth.sessionId) });
   }
 
@@ -87,9 +93,43 @@ export class BrowserSessionService {
     return this.describe(await this.read(credential,workspaceId));
   }
 
+  /**
+   * Open a support session for this browser in `workspaceId`
+   * (`docs/impersonation.md`). It takes the Organization's slot in this
+   * browser, so the tab that opens it acts as the chosen person; whatever held
+   * the slot before is signed out, and `endSupport` gives it back.
+   */
+  async selectSupport(credential: string, input: { workspaceId: string; userId: string }) {
+    const root = await this.read(credential);
+    const { sessionId } = await new SupportAccessService(this.env,root).start(input);
+    const service = new AuthService(this.env);
+    await this.env.DB.prepare("UPDATE sessions SET expires_at=MIN(expires_at,(SELECT expires_at FROM sessions WHERE id=?)) WHERE id=?")
+      .bind(root.sessionId,sessionId).run();
+    const [previous] = await this.env.DB.batch([
+      this.env.DB.prepare("SELECT session_id FROM browser_workspace_sessions WHERE browser_session_id=? AND workspace_id=?")
+        .bind(root.sessionId,input.workspaceId),
+      this.env.DB.prepare(`INSERT INTO browser_workspace_sessions(browser_session_id,workspace_id,session_id)
+        VALUES (?,?,?) ON CONFLICT(browser_session_id,workspace_id) DO UPDATE SET session_id=excluded.session_id`)
+        .bind(root.sessionId,input.workspaceId,sessionId),
+    ]);
+    const replaced = (previous?.results?.[0] as { session_id?: string } | undefined)?.session_id;
+    if (replaced && replaced !== sessionId) await service.logout({ sessionId:replaced });
+    return this.describe(await this.read(credential,input.workspaceId));
+  }
+
+  /** End this browser's support session in `workspaceId`, if it holds one. */
+  async endSupport(credential: string, workspaceId: string): Promise<void> {
+    const root = await this.read(credential);
+    const row = await this.env.DB.prepare(`DELETE FROM browser_workspace_sessions
+      WHERE browser_session_id=? AND workspace_id=? AND session_id IN (
+        SELECT id FROM sessions WHERE impersonator_user_id=?) RETURNING session_id`)
+      .bind(root.sessionId,workspaceId,root.userId).first<{ session_id:string }>();
+    if (row) await new AuthService(this.env).logout({ sessionId:row.session_id });
+  }
+
   async renew(credential: string) {
     const root = await this.read(credential);
-    const renewal = sessionRenewalPolicy(this.env.AVALON_REGION);
+    const renewal = sessionRenewalPolicy(this.env);
     const results = await this.env.DB.batch([
       this.env.DB.prepare(`UPDATE sessions SET expires_at=${renewal.expirySql}
         WHERE id=? AND ${renewal.eligibilitySql}`)

@@ -51,6 +51,7 @@ export * from "./demo-operations";
 export * from "./demo-seed";
 export * from "./identifiers";
 export * from "./impersonation";
+export * from "./support-access";
 export * from './onboarding';
 export * from "./workspace-retirement";
 export * from "./appearance-icons";
@@ -1755,12 +1756,21 @@ export const ApiErrorSchema = z.object({
 export const CursorPageSchema = <T extends z.ZodType>(item: T) =>
   z.object({ items: z.array(item), nextCursor: z.string().nullable() });
 
+/**
+ * The Rally staff member acting as `user` in a support session
+ * (`docs/impersonation.md`). Present only on a session a staff member started
+ * from the account menu; every other session leaves it out.
+ */
+export const SessionImpersonatorSchema = UserSchema.pick({ id: true, email: true, name: true, avatarUrl: true });
+export type SessionImpersonator = z.infer<typeof SessionImpersonatorSchema>;
+
 export const SessionSchema = z.object({
   accessToken: z.string().min(20),
   refreshToken: z.string().min(20),
   expiresAt: TimestampSchema,
   user: UserSchema,
   workspace: WorkspaceSchema.nullable(),
+  impersonator: SessionImpersonatorSchema.optional(),
   apiBaseUrl: HttpUrlSchema
 });
 

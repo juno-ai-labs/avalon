@@ -1,4 +1,4 @@
-import type { AccountOnboarding } from '@rally/contracts';
+import type { AccountOnboarding, SupportPerson, SupportWorkspace } from '@rally/contracts';
 import { NETWORK_RECOVERY_IPC, NetworkRecoveryInbox } from '../common/network-recovery';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ApplicationIconId, DesktopApplicationIconState } from '../common/application-icons';
@@ -220,6 +220,10 @@ const bridge: RallyDesktopBridge = {
   getWorkspaceAttention: (input) => ipcRenderer.invoke('workspace:get-attention', input),
   leaveWorkspace: (input) => ipcRenderer.invoke('workspace:leave', input),
   activateWorkspace: (input) => ipcRenderer.invoke('onboarding:activate-workspace', input) as Promise<DesktopSession>,
+  listSupportWorkspaces: () => ipcRenderer.invoke('support:list-workspaces') as Promise<SupportWorkspace[]>,
+  listSupportPeople: (workspaceId) => ipcRenderer.invoke('support:list-people', workspaceId) as Promise<SupportPerson[]>,
+  startSupportSession: (input) => ipcRenderer.invoke('support:start', input) as Promise<DesktopSession>,
+  endSupportSession: () => ipcRenderer.invoke('support:end') as Promise<DesktopSession | null>,
   reselectActiveWorkspace: (input) => ipcRenderer.invoke('workspace:reselect-active', input) as Promise<DesktopSession | null>,
   createWorkspace: (input) => ipcRenderer.invoke('onboarding:create-workspace', input) as Promise<DesktopSession>,
   acceptInvitation: (input) => ipcRenderer.invoke('onboarding:accept-invitation', input) as Promise<DesktopSession>,

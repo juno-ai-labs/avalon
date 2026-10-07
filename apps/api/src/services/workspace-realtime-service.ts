@@ -145,6 +145,8 @@ export function workspaceSyncPublicationsForMutation(
     return organization("member_directory", "invitation_directory");
   }
   if (pathname === "/workspace") return organization("workspace_profile");
+  // Rally access is shown beside the profile, to every administrator.
+  if (pathname === "/workspace/support-access") return organization("workspace_profile");
   if (pathname === "/connections" || pathname.startsWith("/connections/")) return connectionPublications(pathname);
   // A digest belongs to one person (`routes/digest.ts`).
   if (pathname.startsWith("/digest")) return [{ topics: ["digest_schedule"], audience: ACTOR }];

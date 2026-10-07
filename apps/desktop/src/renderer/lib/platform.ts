@@ -465,6 +465,20 @@ const browserBridge: RallyDesktopBridge = {
       ? browserSession
       : null;
   },
+  // Rally access runs through the Mac app's main process or the browser
+  // app's cookie routes; this development stand-in offers none.
+  async listSupportWorkspaces() {
+    return [];
+  },
+  async listSupportPeople() {
+    return [];
+  },
+  async startSupportSession() {
+    throw new Error('Rally access is not available here.');
+  },
+  async endSupportSession() {
+    return browserSession;
+  },
   async activateWorkspace({ region, workspaceId }) {
     return browserOnboardingSession(
       '/onboarding/workspace/activate',

@@ -128,7 +128,8 @@ async function seedOpenAuthority(): Promise<void> {
       workspace_id TEXT NOT NULL,
       region TEXT NOT NULL,
       revoked_at TEXT,
-      expires_at TEXT NOT NULL
+      expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`INSERT INTO sessions
       (id, user_id, workspace_id, region, revoked_at, expires_at)
