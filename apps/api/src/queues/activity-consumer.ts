@@ -503,17 +503,13 @@ async function consumeOne(message: Message<unknown>, env: Env,
       message.ack();
       return;
     }
-    const actorIds = await workspace.spaceDefaultTargetActors(target);
-    if (actorIds.length === 0) {
-      message.ack();
-      return;
-    }
+    // The delivery runs as the person whose action staged it: whoever put the
+    // Channel in the Space, or added the default. A Space's own roster has no
+    // say over its Channels, so it is never the actor.
     const member = await env.DB.prepare(
       `SELECT user_id, role FROM workspace_members
-        WHERE workspace_id = ? AND status = 'active' AND access_class = 'member'
-          AND user_id IN (${actorIds.map(() => "?").join(",")})
-        ORDER BY CASE WHEN user_id = ? THEN 0 ELSE 1 END, user_id LIMIT 1`,
-    ).bind(target.workspaceId, ...actorIds, target.requestedByUserId)
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active' AND access_class = 'member'`,
+    ).bind(target.workspaceId, target.requestedByUserId)
       .first<{ user_id: string; role: AuthContext["role"] }>();
     if (!member) {
       await workspace.failSpaceDefaultTarget(target);
@@ -676,9 +672,8 @@ async function consumeOne(message: Message<unknown>, env: Env,
         return;
       }
       // Said out loud, and written down. A resume that keeps failing is
-      // republished by the alarm every `SPACE_INTENT_RESUME_DELAY_MS` and
-      // retried here as well, so a silent catch makes a half-applied audience
-      // or a half-finished archive a thing that shows up only as a dead-letter
+      // retried by the alarm and here as well, so a silent catch makes a
+      // half-finished operation a thing that shows up only as a dead-letter
       // message with no reason on it — which is the diagnosis this costs on the
       // way in. The code goes on the intent as well as into the log, the way a
       // default target's does: the row outlives the log line, and whoever finds

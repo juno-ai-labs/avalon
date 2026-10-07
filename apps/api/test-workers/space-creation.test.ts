@@ -111,7 +111,7 @@ beforeEach(async () => {
 }, 30_000);
 
 describe("a Channel created without a Space", () => {
-  it("lands in General with an active membership, a recorded source, and the audience that implies", async () => {
+  it("lands in General with an active membership and keeps the private audience it asked for", async () => {
     const created = await createChannel("no-space");
     const workstreamId = asWorkstreamId(created.workstream.id);
 
@@ -125,21 +125,9 @@ describe("a Channel created without a Space", () => {
       workspaceId: WORKSPACE_ID, userId: USER_ID, workstreamId,
     })).toEqual({ spaceIds: [general.generalSpaceId] });
 
-    // The Channel's own side: General is recorded as a source that reaches it,
-    // so a later retraction knows what it supplied. Read with the Channel as
-    // the creation left it, which is the observation the authority derives the
-    // direct source from.
-    const sources = await workspace().readAccessSources({
-      workspaceId: WORKSPACE_ID,
-      parentId: workstreamId,
-      channel: { readers: { scope: "workspace" }, participantUserIds: [USER_ID] },
-    });
-    expect(sources.spaces.map((source) => source.spaceId)).toEqual([general.generalSpaceId]);
-    // The direct source keeps what the caller asked for — a Channel somebody
-    // started is personal on its own account — while the effective audience is
-    // the union, which General makes Organization-wide.
-    expect(sources.direct.scope).toBe("personal");
-    expect(created.workstream.scope).toBe("workspace");
+    // General is Organization-wide and grants no reader, so a Channel somebody
+    // started privately is still private once it is in General.
+    expect(created.workstream.scope).toBe("personal");
 
     // And the row a client reads carries the placement, so the sidebar can
     // draw the Channel under General on the first paint rather than after a
@@ -209,31 +197,30 @@ describe("a creation's Organization-side birth", () => {
   });
 });
 
-describe("a creation whose Space source cannot be recorded", () => {
+describe("a creation whose Channel parent cannot be reserved", () => {
   it("publishes no directory row and leaves no placement or parent behind", async () => {
     // One placement first, so General exists and the failure below is about
     // the placement rather than about the Space.
     await createChannel("settles");
     const before = await visibleChannelIds();
 
-    // The way this breaks in production: the last write of the birth, the
-    // Channel's record of which Space reaches it, is refused after the
-    // membership, the parent row and the directory row were already written.
-    // A trigger is how a refusal is made to happen at exactly that statement
-    // rather than by stubbing the call that issues it.
+    // The way this breaks in production: the Channel's main conversation row
+    // is refused after the membership and the parent's metadata were already
+    // written in the same birth. A trigger is how a refusal is made to happen
+    // at exactly that statement rather than by stubbing the call that issues it.
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(
-        `CREATE TRIGGER fail_source_write BEFORE INSERT ON parent_space_sources
-           BEGIN SELECT RAISE(ABORT, 'space source write unavailable'); END`,
+        `CREATE TRIGGER fail_child_write BEFORE INSERT ON parent_children
+           BEGIN SELECT RAISE(ABORT, 'parent child write unavailable'); END`,
       );
     });
 
     const failure = await createChannel("cannot-place").then(() => null, (error: unknown) => error);
-    expect(String(failure)).toMatch(/source write unavailable/u);
+    expect(String(failure)).toMatch(/child write unavailable/u);
 
     // Nothing new is listable, and nothing is half-written: the membership,
-    // the parent's row, the directory row and the source are one transaction,
-    // so the refused source took the rest with it.
+    // the parent's rows and the directory row are one transaction, so the
+    // refused child took the rest with it.
     expect(await visibleChannelIds()).toEqual(before);
     await runInDurableObject(workspace(), (_instance, state) => {
       const listed = new Set(before);
@@ -245,7 +232,7 @@ describe("a creation whose Space source cannot be recorded", () => {
         "SELECT workstream_id FROM space_channel_memberships",
       ).toArray().map((row) => row.workstream_id);
       expect(placed.filter((id) => !listed.has(id))).toEqual([]);
-      state.storage.sql.exec("DROP TRIGGER fail_source_write");
+      state.storage.sql.exec("DROP TRIGGER fail_child_write");
     });
   });
 });
@@ -262,8 +249,8 @@ describe("a creation that fails after the Organization committed", () => {
     expect(failure).toBeInstanceOf(Error);
     await env.DB.prepare("ALTER TABLE routes_offline RENAME TO workstream_authority_routes").run();
 
-    // The residue the creation prefers: an active placement, the Channel's
-    // record of which Space reaches it, and its row in the directory. Nothing
+    // The residue the creation prefers: an active placement and its row in
+    // the directory. Nothing
     // was cancelled, because a Channel whose conversation may never open is a
     // better state than one whose placement was taken back under a retry.
     const receipt = await env.DB.prepare(
@@ -272,12 +259,6 @@ describe("a creation that fails after the Organization committed", () => {
     const workstreamId = asWorkstreamId(receipt?.workstream_id ?? "");
     expect(await workspace().channelSpaces({ workspaceId: WORKSPACE_ID, userId: USER_ID, workstreamId }))
       .toEqual({ spaceIds: [general.generalSpaceId] });
-    const sources = await workspace().readAccessSources({
-      workspaceId: WORKSPACE_ID,
-      parentId: workstreamId,
-      channel: { readers: { scope: "workspace" }, participantUserIds: [USER_ID] },
-    });
-    expect(sources.spaces.map((source) => source.spaceId)).toEqual([general.generalSpaceId]);
 
     // The retry reuses the id and settles on the same placement rather than
     // staging a second one.
@@ -292,11 +273,11 @@ describe("a creation that fails after the Organization committed", () => {
 });
 
 describe("a Channel created inside a Space", () => {
-  it("takes that Space's audience rather than General's", async () => {
+  it("keeps the private audience it asked for inside an Organization-wide Space", async () => {
     const reserved = await workspace().reserveSpace({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
-      space: { name: "Private", iconKey: "briefcase", colorKey: "blue", scope: "personal" },
+      space: { name: "Hiring", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
     });
     if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
     const spaceId = asSpaceId(reserved.space.id);
@@ -310,6 +291,8 @@ describe("a Channel created inside a Space", () => {
       userId: USER_ID,
       workstreamId: asWorkstreamId(created.workstream.id),
     })).toEqual({ spaceIds: [spaceId] });
+    // A Space grants no reader: the Channel is born with the audience its
+    // creator asked for, not the Space's.
     expect(created.workstream.scope).toBe("personal");
   });
 
@@ -317,7 +300,7 @@ describe("a Channel created inside a Space", () => {
     const reserved = await workspace().reserveSpace({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
-      space: { name: "Private", iconKey: "briefcase", colorKey: "blue", scope: "personal" },
+      space: { name: "Hiring", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
     });
     if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
     const spaceId = asSpaceId(reserved.space.id);

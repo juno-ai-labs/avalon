@@ -190,7 +190,6 @@ export function SpacePills({
             <ContextMenu.Root key={space.id}>
               <ContextMenu.Trigger asChild>
                 <SpacePill
-                  aria-description={space.scope === 'workspace' ? 'Public space' : undefined}
                   className={clsx(
                     channelDropTargetId === space.id && 'is-channel-drop-target',
                     acceptedChannelDropTargetId === space.id && 'is-channel-drop-accepted',

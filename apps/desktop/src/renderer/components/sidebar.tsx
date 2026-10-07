@@ -2115,8 +2115,9 @@ export function Sidebar({
     }
   }, [onCreateChannel]);
   const createSpaceFromSidebar = useCallback(async (name: string): Promise<void> => {
-    // No icon: Rally chooses one from the name a moment later.
-    const created = await onCreateSpace({ name, colorKey: 'blue', scope: 'personal' });
+    // No icon: Rally chooses one from the name a moment later. `workspace` is
+    // the only scope a Space can have.
+    const created = await onCreateSpace({ name, colorKey: 'blue', scope: 'workspace' });
     void navigate(`/spaces/${created.id}`);
   }, [navigate, onCreateSpace]);
 

@@ -33,7 +33,6 @@ const onlyB = asUserId("00000000-0000-4000-8000-0000000e0012");
 /** In neither until somebody shares a Channel with them. */
 const recipient = asUserId("00000000-0000-4000-8000-0000000e0013");
 const sessionId = "hosted-parent-isolation-session";
-const spaceId = "00000000-0000-4000-8000-0000000e0021";
 
 const whole = (parentId: string): ScopeGrantTarget => ({ kind: "workstream", workspaceId, parentId });
 const main = (parentId: string): ScopeGrantTarget => ({
@@ -151,26 +150,6 @@ describe("hosted parent isolation", () => {
     // The same person may leave Channel B, where somebody else remains.
     const leaveB = await share(channelB, shared, false, await grantRevision(channelB, shared));
     expect(leaveB).toMatchObject({ status: "committed", grant: { active: false } });
-  });
-
-  it("claims a Space-seated reader as direct in Channel A without touching Channel B's attribution", async () => {
-    await runInDurableObject(organization(), (_instance, state) => {
-      for (const parentId of [channelA, channelB]) {
-        state.storage.sql.exec(`INSERT INTO parent_space_sources
-          (parent_id, space_id, scope, participants_json, space_revision, membership_generation, operation_id, applied_at, updated_at)
-          VALUES (?, ?, 'personal', json(?), 1, 1, ?, 0, 0)`, parentId, spaceId, JSON.stringify([shared]), crypto.randomUUID());
-        state.storage.sql.exec("INSERT INTO parent_space_readers (parent_id, space_id, user_id) VALUES (?, ?, ?)",
-          parentId, spaceId, shared);
-      }
-    });
-
-    expect(await organization().noteDirectReader({ workspaceId, parentId: channelA, userId: shared })).toEqual({ ok: true });
-
-    await runInDurableObject(organization(), (_instance, state) => {
-      expect(state.storage.sql.exec(
-        "SELECT parent_id, user_id FROM parent_space_readers ORDER BY parent_id",
-      ).toArray()).toEqual([{ parent_id: channelB, user_id: shared }]);
-    });
   });
 
   it("closes Channel A's control socket on a revocation for Channel A and leaves Channel B's open", async () => {

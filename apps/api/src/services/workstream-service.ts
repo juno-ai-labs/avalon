@@ -52,7 +52,7 @@ import {
   wakeupExecutionPrincipal,
   type WorkstreamWakeupRow,
 } from "./workstream-wakeup-service";
-import { ChannelAccessService, publishChannelNarrowing, spaceAccessError } from "./channel-access-service";
+import { ChannelAccessService, publishChannelNarrowing } from "./channel-access-service";
 import { hostedParentStub } from "./conversation-parent-client";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
@@ -845,62 +845,26 @@ export class WorkstreamService {
 
 
   /**
-   * Change the Channel, recording an audience change as the Channel's *own*.
-   *
-   * A scope change goes through here rather than straight to the object client
-   * because `workstream_metadata.scope` stops being able to answer "what is
-   * this Channel's audience on its own account" the moment a Space widens it.
-   * Recording first and restoring on a refused update keeps the record from
-   * claiming an audience the Channel never took.
-   *
-   * The refusal it can raise replaces the Project one: a Channel that is
-   * Organization-wide through a Space cannot be made private, because the
-   * effective audience would stay Organization-wide and the record would then
-   * disagree with the Channel.
-   *
-   * A narrowing seats first, for the reason a retraction does. A personal
-   * Space applied while the Channel was Organization-wide seated nobody, so
-   * the readers it supplies exist only as its roster; narrowing without
-   * seating them revokes access a Space that has not changed still provides.
+   * Change the Channel. Its scope is its own to widen or narrow: a Space grants
+   * no reader, so nothing else has to agree.
    */
   async update(id: string, input: UpdateWorkstreamInput) {
     const client = await this.authoritativeClient(id);
     if (input.scope === undefined) return client.update(input);
-    // The conversation is asked before the Channel parent `WorkspaceDO` hosts
-    // is addressed at all.
-    // It is the object that knows which parent kind this id belongs to, and a
-    // Space's hidden main conversation refuses a Channel product request by
-    // name; reaching the Channel authority first would address a Space id as
-    // a Channel and record a direct scope on it. The title
-    // is what the refusals below need anyway.
-    const access = new ChannelAccessService(this.env, this.auth);
-    const title = await access.channelTitle(id);
-    if (input.scope === "personal") await access.narrowDirectScope(id);
-    const recorded = await access.recordDirectScope(id, input.scope);
-    if (!recorded.ok) throw spaceAccessError(recorded.code, title);
-    let result;
-    try {
-      result = await client.update(input);
-    } catch (error) {
-      await access.restoreDirectScope(id, recorded.previousScope, recorded.previousObserved);
-      throw error;
-    }
+    // Read before the write: whether this narrows is a question about the
+    // audience the Channel actually had, which only the conversation knows.
+    const before = await client.get();
+    const result = await client.update(input);
     // The room closes its own sockets for somebody it was told about, and a
     // narrowing tells it about nobody: the readers it drops are every member
     // who is not a participant. So the write publishes it, in the same
-    // request, exactly as `removeParticipant` does — and only once the
+    // request, exactly as `removeParticipant` does, and only once the
     // canonical update took, because until then nothing has narrowed.
     //
-    // Named rather than thrown, and rather than gated. The Space paths that
-    // narrow have a `space_intents` row behind them and can fail the step so
-    // the alarm republishes it; this one has nothing durable to retry from, and
-    // it did not before either — narrowing a Channel to personal published no
-    // revocation at all until this branch existed, so a send that does not
-    // leave is exactly the pre-existing gap rather than a regression this
-    // introduced. Building a durable gate for it is a change of its own, and it
-    // is recorded as an open gap in `docs/access-revocation.md` and
-    // `docs/spaces.md` rather than half-built here.
-    if (input.scope === "personal" && recorded.previousScope === "workspace"
+    // Named rather than thrown: there is nothing durable to retry from, and a
+    // send that does not leave is the open gap recorded in
+    // `docs/access-revocation.md` rather than something half-built here.
+    if (input.scope === "personal" && before.scope === "workspace"
       && !await publishChannelNarrowing(this.env, asWorkspaceId(this.auth.workspaceId), id)) {
       logWarn(this.env, "channel_narrowing_publish_unannounced", {
         workstream_id: id,
@@ -928,17 +892,9 @@ export class WorkstreamService {
     });
   }
 
-  /**
-   * Add a reader on the Channel's own account.
-   *
-   * The note is what makes the add *direct*: whichever Space seated this person
-   * first, the Channel has taken responsibility for them now, and a Space
-   * leaving must not take them with it.
-   */
+  /** Add a reader on the Channel's own account; no Space withdraws one. */
   async addParticipant(id: string, userId: string) {
-    const participant = await (await this.authoritativeClient(id)).addParticipant(userId);
-    await new ChannelAccessService(this.env, this.auth).noteDirectReader(id, userId);
-    return participant;
+    return (await this.authoritativeClient(id)).addParticipant(userId);
   }
 
   /**
@@ -946,9 +902,8 @@ export class WorkstreamService {
    *
    * The `projectEffect` flag this used to take is gone with the rule it
    * selected: a Project owned its member work streams' audiences and had to
-   * exempt its own fan-out from them. A Space does not own a Channel's
-   * audience, it supplies one source of it, so a removal here is simply the
-   * direct source losing a reader.
+   * exempt its own fan-out from them. A Space supplies no reader, so a removal
+   * here is simply the Channel losing one.
    */
   async removeParticipant(id: string, userId: string): Promise<void> {
     const accessLost = await new ChannelAccessService(this.env, this.auth)

@@ -48,70 +48,51 @@ function space(overrides: Partial<{
 }
 
 describe("starting a Channel inside a Space", () => {
-  it("given one personal Space, when creation resolves its start, then it seats that Space's roster", () => {
+  it("given a private request in an Organization-wide Space, when creation resolves its start, then the Channel stays private to whom it named", () => {
     expect(resolveSpaceWorkstreamStart({
-      spaces: [space()],
+      spaces: [space({ scope: "workspace" })],
       scope: "personal",
-      requestedParticipantUserIds: [participantId],
+      requestedParticipantUserIds: [participantId, participantId],
     })).toEqual({
       scope: "personal",
-      participantUserIds: [participantId, creatorId],
-      originResourceIds: [defaultResourceId],
-    });
-  });
-
-  it("given two personal Spaces, when creation resolves its start, then the audience is their union", () => {
-    const otherParticipant = asUserId("00000000-0000-7000-8000-000000000209");
-    expect(resolveSpaceWorkstreamStart({
-      spaces: [
-        space({ participantUserIds: [creatorId] }),
-        space({
-          id: "00000000-0000-7000-8000-00000000020a",
-          participantUserIds: [otherParticipant],
-          defaultResourceIds: ["00000000-0000-7000-8000-00000000020b"],
-        }),
-      ],
-      scope: "personal",
-      requestedParticipantUserIds: [],
-    })).toEqual({
-      scope: "personal",
-      participantUserIds: [creatorId, otherParticipant],
-      originResourceIds: [defaultResourceId, "00000000-0000-7000-8000-00000000020b"],
-    });
-  });
-
-  it("given one Organization-wide Space among several, when creation resolves its start, then the Channel is Organization-wide", () => {
-    expect(resolveSpaceWorkstreamStart({
-      spaces: [
-        space({ participantUserIds: [creatorId] }),
-        space({ id: "00000000-0000-7000-8000-00000000020a", scope: "workspace" }),
-      ],
-      scope: "personal",
-      requestedParticipantUserIds: [participantId],
-    })).toEqual({
-      scope: "workspace",
-      // Kept rather than dropped: a connector's resolved roster is the people
-      // the conversation contains, and an Organization-wide audience does not
-      // consult a roster to decide who may read.
       participantUserIds: [participantId],
       originResourceIds: [defaultResourceId],
     });
   });
 
-  it("given a direct participant outside every personal Space, when creation resolves its start, then the Channel seats them", () => {
-    expect(resolveSpaceWorkstreamStart({
-      spaces: [space()],
-      scope: "personal",
-      requestedParticipantUserIds: [outsiderId],
-    }).participantUserIds).toEqual([outsiderId, creatorId, participantId]);
-  });
-
-  it("given an Organization-wide Space, when a requested participant is outside its roster, then nothing is refused", () => {
+  it("given a Space with participants, when creation resolves its start, then none of them is seated", () => {
     expect(resolveSpaceWorkstreamStart({
       spaces: [space({ scope: "workspace", participantUserIds: [creatorId] })],
       scope: "personal",
       requestedParticipantUserIds: [outsiderId],
     }).participantUserIds).toEqual([outsiderId]);
+  });
+
+  it("given an Organization-wide request, when creation resolves its start, then the Channel is Organization-wide with its requested roster", () => {
+    expect(resolveSpaceWorkstreamStart({
+      spaces: [space({ scope: "workspace" })],
+      scope: "workspace",
+      requestedParticipantUserIds: [participantId],
+    })).toEqual({
+      scope: "workspace",
+      participantUserIds: [participantId],
+      originResourceIds: [defaultResourceId],
+    });
+  });
+
+  it("given two Spaces, when creation resolves its start, then the origin resources are both Spaces' defaults", () => {
+    expect(resolveSpaceWorkstreamStart({
+      spaces: [
+        space({ scope: "workspace" }),
+        space({
+          id: "00000000-0000-7000-8000-00000000020a",
+          scope: "workspace",
+          defaultResourceIds: ["00000000-0000-7000-8000-00000000020b"],
+        }),
+      ],
+      scope: "personal",
+      requestedParticipantUserIds: [],
+    }).originResourceIds).toEqual([defaultResourceId, "00000000-0000-7000-8000-00000000020b"]);
   });
 
   it("given an origin resource that is also a Space default, when creation resolves its start, then it deduplicates", () => {

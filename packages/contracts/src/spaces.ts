@@ -76,13 +76,30 @@ export type SpaceColorKey = z.infer<typeof SpaceColorKeySchema>;
  * directory row already uses.
  *
  * `workspace` is the Organization-wide audience. The product word on every
- * visible surface is **Organization**; the wire keeps `workspace` because
- * composing an Organization-wide Space source with a Channel's direct scope is
- * a comparison between two scope values, and two spellings of the same audience
- * would need a translation at every seam that compares them.
+ * visible surface is **Organization**; the wire keeps `workspace` because it is
+ * the same audience a Channel scope names, and two spellings of it would need a
+ * translation at every seam that compares them.
  */
 export const SpaceScopeSchema = z.enum(["personal", "workspace"]);
 export type SpaceScope = z.infer<typeof SpaceScopeSchema>;
+
+/**
+ * The only audience a Space may be given: every Space is Organization-wide.
+ *
+ * A product decision, not a default. `SpaceScopeSchema` still reads
+ * `personal` because rows written before WorkspaceDO migration 94 said so;
+ * nothing may write it again. A Space's audience also grants nothing to the
+ * Channels in it: each Channel owns its own (see `docs/spaces.md#every-space-is-organization-wide`).
+ */
+export const SpaceRequestScopeSchema = z.literal("workspace");
+
+/**
+ * A creation's scope. A desktop released before migration 94 sends
+ * `personal` for every Space its sidebar makes, and nothing refuses a client by
+ * version, so the old value is read as the only one there is rather than
+ * failing every creation from a build that has not updated.
+ */
+const SpaceCreationScopeSchema = z.enum(["personal", "workspace"]).transform((): "workspace" => "workspace");
 
 /**
  * A Space is active or archived, with nothing in between.
@@ -272,7 +289,7 @@ export const CreateSpaceRequestSchema = z.strictObject({
    */
   iconKey: SpaceIconKeySchema.optional(),
   colorKey: SpaceColorKeySchema,
-  scope: SpaceScopeSchema,
+  scope: SpaceCreationScopeSchema,
 });
 export type CreateSpaceRequest = z.infer<typeof CreateSpaceRequestSchema>;
 
@@ -284,7 +301,7 @@ export const UpdateSpacePresentationRequestSchema = z.strictObject({
 export type UpdateSpacePresentationRequest = z.infer<typeof UpdateSpacePresentationRequestSchema>;
 
 export const UpdateSpaceAudienceRequestSchema = z.strictObject({
-  scope: SpaceScopeSchema,
+  scope: SpaceRequestScopeSchema,
   /**
    * The whole participant set, never a delta.
    *
@@ -488,14 +505,9 @@ export const SpaceErrorCodeSchema = z.enum([
    * A member Channel's own conversation could not answer, so the question was
    * never asked.
    *
-   * Distinct from `space_membership_content_fence`, which is the same RPC
-   * saying *no*. `previewAudienceContainment` is a tri-state — `true`, `false`,
-   * or `null` when the object it reached is not that Channel's main
-   * conversation — and the two negatives need different remediations: a fence
-   * is a decision about content, an unreachable conversation is a Channel whose
-   * authority is missing or mis-addressed. The cutover has always read them
-   * apart, under `space_bootstrap_conversation_unreachable`; this is the
-   * request path's half of the same reading.
+   * Retired with the containment preview that asked it
+   * (`docs/space-access-sources.md`); kept so a desktop can still read it from
+   * an older server during a rolling deploy.
    */
   "space_conversation_unreachable",
   /**
