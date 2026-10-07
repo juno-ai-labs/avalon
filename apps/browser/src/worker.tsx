@@ -20,8 +20,8 @@ function deploymentCookies(header: string | null, region: string): string | null
   return kept.length > 0 ? kept.join("; ") : null;
 }
 
-/** The install manifest and its icons, which a browser reads from the root. */
-const INSTALL_FILES = new Set(["/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"]);
+/** The favicon, install manifest and icons, which a browser reads from the root. */
+const INSTALL_FILES = new Set(["/favicon.svg", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"]);
 
 const unavailable = () => new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
 
