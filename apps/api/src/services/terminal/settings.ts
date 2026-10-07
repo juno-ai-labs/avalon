@@ -150,7 +150,7 @@ export class TerminalSettingsService {
       })),
       warning: input.mode === "full_internet"
         ? "Full internet lets cloud computers access any website or internet service."
-        : "Trusted only applies Rally-managed platform access and workspace-approved domains. Active sandboxes will stop while Daytona applies the policy.",
+        : "Trusted only lets cloud computers reach Rally-managed services and domains your organization approves.",
     };
   }
 
