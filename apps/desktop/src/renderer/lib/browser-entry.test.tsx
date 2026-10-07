@@ -516,6 +516,28 @@ it('returns to the Google-first choice after an email sign-in signs out', async 
   expect(screen.queryByRole('textbox', { name: 'Email' })).toBeNull();
 });
 
+it.each([
+  ['an iOS Home Screen app, whose cookies the email link cannot reach, asks only for the code', true, 'Enter the code sent to person@example.test.'],
+  ['a browser tab also offers the sign-in link', undefined, 'Enter the code sent to person@example.test, or open the sign-in link in that email.'],
+])('%s', async (_name, standalone, instructions) => {
+  Object.defineProperty(navigator, 'standalone', { configurable: true, value: standalone });
+  try {
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      const path = input.split('/browser')[1];
+      if (path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+      if (path === '/email/start') return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: Date.now() + 600_000 }, { status: 202 });
+      throw new Error(`Unexpected browser request: ${input}`);
+    }));
+    render(<BrowserEntry />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with email' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: 'person@example.test' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
+    expect(await screen.findByText(instructions)).toBeVisible();
+  } finally {
+    Reflect.deleteProperty(navigator, 'standalone');
+  }
+});
+
 it('drops a returned Google failure once an email sign-in starts', async () => {
   vi.stubGlobal('fetch', vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
