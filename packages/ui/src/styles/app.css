@@ -2074,6 +2074,25 @@ pre {
 .screen-with-titlebar { height: 100%; position: relative; }
 .screen-drag-strip { height: var(--screen-drag-strip-height); left: 0; position: absolute; right: 0; top: 0; }
 .screen-error-state { align-items: center; display: flex; height: 100%; justify-content: center; }
+.conversation-access-request {
+  align-items: center;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 400px;
+  padding: 32px 20px;
+  text-align: center;
+}
+.conversation-access-request p { margin: 0; }
+.conversation-access-request-title {
+  color: var(--av-sys-color-text-default);
+  font-size: 18px;
+  font-weight: 620;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.conversation-access-request-sent { align-items: center; color: var(--av-sys-color-text-subtle); display: inline-flex; gap: 6px; }
 .screen-state-actions { align-items: center; display: flex; gap: 2px; position: absolute; right: 10px; top: 9px; }
 .muted-notice { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 

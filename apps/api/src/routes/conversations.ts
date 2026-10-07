@@ -21,7 +21,8 @@ import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { requestFlowSpan } from "../observability/tracing";
 import { ConversationService } from "../services/conversation-service";
 import { WorkstreamService } from "../services/workstream-service";
-import { SidekickAttachmentsSchema, SidekickRecommendationOptionsSchema } from "@rally/contracts";
+import { ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, SidekickAttachmentsSchema, SidekickRecommendationOptionsSchema } from "@rally/contracts";
+import { ConversationAccessRequestService } from "../services/conversation-access-request-service";
 import { telemetryOperationId } from "../telemetry/api-emitter";
 import { SubstreamCreationService } from "../services/substream-creation-service";
 import {
@@ -207,6 +208,22 @@ conversationRoutes.post("/:parentId/substreams/:substreamId/participants", zVali
       param.parentId, param.substreamId, c.req.valid("json"), true,
     )));
   });
+/**
+ * A Channel's or Breakout's name and mark for a member who holds its link, and
+ * whether they can open it already. Asked only after the socket ticket refuses.
+ */
+conversationRoutes.get("/:parentId/substreams/:substreamId/access-preview", zValidator("param", substreamSocketParam), async (c) => {
+  const param = c.req.valid("param");
+  return c.json(ConversationAccessPreviewSchema.parse(
+    await new ConversationAccessRequestService(c.env, getWorkspaceAuth(c)).preview(param.parentId, param.substreamId),
+  ));
+});
+/** Email the creator a one-click approval. `docs/channel-access-requests.md`. */
+conversationRoutes.post("/:parentId/substreams/:substreamId/access-requests", zValidator("param", substreamSocketParam), async (c) => {
+  const param = c.req.valid("param");
+  await new ConversationAccessRequestService(c.env, getWorkspaceAuth(c)).request(param.parentId, param.substreamId);
+  return c.json(ConversationAccessRequestResultSchema.parse({ status: "sent" }), 202);
+});
 conversationRoutes.post("/:parentId/substreams/:substreamId/participants/remove", zValidator("param", substreamSocketParam),
   zValidator("json", childParticipantBody), async (c) => {
     const param = c.req.valid("param");

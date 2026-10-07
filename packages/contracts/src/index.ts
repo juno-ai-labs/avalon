@@ -54,6 +54,7 @@ export * from './onboarding';
 export * from "./workspace-retirement";
 export * from "./appearance-icons";
 export * from "./workstream-appearance";
+export * from "./access-requests";
 export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
