@@ -26,6 +26,8 @@ export const BrowserGoogleStartedSchema = z.object({ url: HttpsUrlSchema });
 export const EmailLoginStartSchema = z.strictObject({
   challengeId: IdSchema,
   email: z.string().trim().email().transform((email) => email.toLowerCase()),
+  /** The `/app/` path on the browser host the emailed link lands on, so a shared link survives sign-in. */
+  returnPath: z.string().optional(),
 });
 export const EmailLoginRedeemSchema = z.strictObject({
   challengeId: IdSchema, redemptionId: IdSchema,

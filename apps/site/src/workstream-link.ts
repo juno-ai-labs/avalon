@@ -6,23 +6,35 @@ import {
   spaceDeepLink,
   workstreamDeepLinkFromParsedTarget,
   type ParsedWorkstreamLinkTarget,
+  type SidekickLinkTarget,
+  type SpaceLinkTarget,
 } from '@rally/contracts/workstream-links';
-import { reportDesktopHandoff } from './telemetry';
+import { apiBaseUrl, reportDesktopHandoff, storageRead, storageWrite } from './telemetry';
 
 export {};
+
+/** The web app, which opens every addressed path this page serves; the local one when this page is served locally. */
+function browserAppOrigin(): string {
+  return location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+    ? 'http://localhost:8794'
+    : 'https://app.rallywith.ai';
+}
+
+/** Which app this browser last chose for a shared link, so a web-only reader is not sent to an app they lack. */
+const OPEN_IN_KEY = 'rally.sharedLinks.openIn';
 
 /**
  * Current workspace-addressed and legacy ID-only work-stream paths are served by a
  * rewrite in `public/_redirects`: every id under that prefix renders this one
  * page, and the id stays in `window.location.pathname` for this script to read.
- * Nothing about the work stream is fetched or rendered here — the page only
- * hands off to the desktop app, which applies the viewer's own permissions.
+ * Nothing about the work stream is fetched or rendered here — the page hands off
+ * to the desktop app or the same path on the web app, and either one applies the
+ * viewer's own permissions.
  */
 function initializeWorkstreamHandoff(): void {
   const button = document.querySelector<HTMLAnchorElement>('#open-rally');
+  const browser = document.querySelector<HTMLAnchorElement>('#open-browser');
   const title = document.querySelector<HTMLElement>('#workstream-title');
-  const status = document.querySelector<HTMLElement>('#workstream-status');
-  const kindLabel = document.querySelector<HTMLElement>('#resource-kind');
   const help = document.querySelector<HTMLElement>('#workstream-help');
   const error = document.querySelector<HTMLElement>('#workstream-error');
   if (!button) return;
@@ -32,56 +44,135 @@ function initializeWorkstreamHandoff(): void {
   const sidekickTarget = parseSidekickLinkPathTarget(window.location.pathname);
   if (!workstreamTarget && !spaceTarget && !sidekickTarget) {
     reportDesktopHandoff('workstream', 'presented', 'invalid');
-    kindLabel?.setAttribute('hidden', '');
     button.setAttribute('hidden', '');
     help?.setAttribute('hidden', '');
     error?.removeAttribute('hidden');
     if (title) title.textContent = 'This link did not lead to a Rally resource';
-    if (status) status.textContent = 'Ask the sender for the link again.';
     return;
   }
 
   reportDesktopHandoff('workstream', 'presented', 'valid');
 
-  const kind = spaceTarget ? 'Space' : sidekickTarget ? 'Sidekick' : workstreamTarget?.substreamId ? 'Breakout' : 'Channel';
-  document.title = `Open ${kind.toLowerCase()} in Rally`;
-  if (kindLabel) kindLabel.textContent = kind;
-  if (title) title.textContent = `Opening this ${kind.toLowerCase()} in Rally`;
-  if (status) status.textContent = `This ${kind.toLowerCase()} opens with your existing Rally session and organization permissions.`;
+  // An ID-only link from before workspace addressing names no Organization,
+  // so there is no name to look up and no web app to open it in.
+  const addressed = workstreamTarget?.region !== null;
+  if (addressed && title) void showResourceName(title);
+  // Choosing the browser also cancels the app launch still pending on this page.
+  let attempted = false;
+  const webUrl = addressed ? new URL(window.location.pathname, browserAppOrigin()).toString() : null;
+  if (browser && webUrl) {
+    browser.href = webUrl;
+    browser.removeAttribute('hidden');
+    browser.addEventListener('click', () => {
+      attempted = true;
+      rememberOpenIn('browser');
+      reportDesktopHandoff('workstream', 'browser', 'valid');
+    });
+  }
 
-  // iOS has Channel and Breakout views but no Space or Sidekick screen. Leave
-  // those URLs on the web instead of launching the app into an unrelated
-  // conversation.
-  if ((spaceTarget || sidekickTarget) && isIosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints)) {
-    document.title = `Open this ${kind} on desktop`;
-    if (title) title.textContent = `Open this ${kind} on desktop`;
-    if (status) status.textContent = spaceTarget ? 'Space dashboards are available in Rally for Mac.' : 'Sidekicks are available in Rally for Mac.';
+  const target = handoffAppTarget(
+    handoffDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints),
+    { workstream: workstreamTarget, space: spaceTarget, sidekick: sidekickTarget },
+  );
+  if (!target) {
+    // No Rally app can open this here, so the web app is the way in.
     button.setAttribute('hidden', '');
-    help?.setAttribute('hidden', '');
+    if (browser && webUrl) {
+      help?.setAttribute('hidden', '');
+      browser.className = 'handoff-open';
+      browser.textContent = 'Open in browser';
+    } else if (help) {
+      help.textContent = 'This link opens only in Rally for Mac. Ask the sender for a new link to open it in a browser.';
+    }
     return;
   }
 
-  const target = workstreamTarget
-    ? isIosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints)
-      ? legacyIosWorkstreamHandoff(workstreamTarget)
-      : workstreamDeepLinkFromParsedTarget(workstreamTarget)
-    : spaceTarget ? spaceDeepLink(spaceTarget) : sidekickDeepLink(sidekickTarget!);
-  button.href = target;
+  button.href = target.href;
   button.setAttribute('aria-disabled', 'false');
+  if (target.app === 'ios') {
+    button.textContent = 'Open in Rally';
+    help?.setAttribute('hidden', '');
+  }
 
-  let attempted = false;
   const openOnce = (): void => {
     if (attempted) return;
     attempted = true;
     reportDesktopHandoff('workstream', 'automatic', 'valid');
-    window.location.assign(target);
+    window.location.assign(target.href);
   };
 
   button.addEventListener('click', () => {
     attempted = true;
+    rememberOpenIn('app');
     reportDesktopHandoff('workstream', 'manual', 'valid');
   });
-  window.setTimeout(openOnce, 120);
+  // The app stays the first choice, but a reader who last chose the browser
+  // gets to pick again rather than a launch prompt for an app they may lack.
+  if (readOpenIn() !== 'browser') window.setTimeout(openOnce, 120);
+}
+
+/** Past this many characters a name is cut, so a long one cannot push the buttons off the page. */
+const HEADING_NAME_LIMIT = 40;
+
+/** The heading for a resource called `name`, cut at {@link HEADING_NAME_LIMIT} characters. */
+export function handoffHeading(name: string): string {
+  const characters = Array.from(name.trim());
+  const shown = characters.length > HEADING_NAME_LIMIT
+    ? `${characters.slice(0, HEADING_NAME_LIMIT).join('').trimEnd()}…`
+    : characters.join('');
+  return `Opening “${shown}” in Rally`;
+}
+
+/**
+ * Put the linked resource's name in the heading. Holding the link is what
+ * lets anyone see its name, so the lookup needs no sign-in. A miss leaves the
+ * generic heading: the buttons work the same without it.
+ */
+async function showResourceName(heading: HTMLElement): Promise<void> {
+  try {
+    const response = await fetch(`${apiBaseUrl()}/links/title?${new URLSearchParams({ path: window.location.pathname })}`, { cache: 'no-store' });
+    if (!response.ok) return;
+    const body: unknown = await response.json();
+    const name = typeof body === 'object' && body !== null && 'title' in body ? body.title : null;
+    if (typeof name !== 'string' || !name.trim()) return;
+    heading.textContent = handoffHeading(name);
+    document.title = heading.textContent;
+  } catch {
+    // Offline or the API is down: the generic heading stands.
+  }
+}
+
+export type HandoffDevice = 'mac' | 'ios' | 'other';
+
+/** Which Rally app this device can run. Windows, Linux and Android have none, only the web app. */
+export function handoffDevice(userAgent: string, platform: string, maxTouchPoints: number): HandoffDevice {
+  if (isIosDevice(userAgent, platform, maxTouchPoints)) return 'ios';
+  return /Macintosh|Mac OS X/u.test(userAgent) ? 'mac' : 'other';
+}
+
+/**
+ * The app link this page opens on `device`, or null when no app there can.
+ * iOS has Channel and Breakout views but no Space or Sidekick screen, so those
+ * stay on the web instead of launching the app into an unrelated conversation.
+ */
+export function handoffAppTarget(
+  device: HandoffDevice,
+  targets: { workstream: ParsedWorkstreamLinkTarget | null; space: SpaceLinkTarget | null; sidekick: SidekickLinkTarget | null },
+): { app: 'mac' | 'ios'; href: string } | null {
+  if (device === 'other') return null;
+  if (device === 'ios') return targets.workstream ? { app: 'ios', href: legacyIosWorkstreamHandoff(targets.workstream) } : null;
+  if (targets.workstream) return { app: 'mac', href: workstreamDeepLinkFromParsedTarget(targets.workstream) };
+  if (targets.space) return { app: 'mac', href: spaceDeepLink(targets.space) };
+  return targets.sidekick ? { app: 'mac', href: sidekickDeepLink(targets.sidekick) } : null;
+}
+
+/** Without storage the page auto-opens the app every time, as it did before. */
+function readOpenIn(): string | null {
+  return storageRead(localStorage, OPEN_IN_KEY);
+}
+
+function rememberOpenIn(choice: 'app' | 'browser'): void {
+  storageWrite(localStorage, OPEN_IN_KEY, choice);
 }
 
 export function isIosDevice(userAgent: string, platform: string, maxTouchPoints: number): boolean {
