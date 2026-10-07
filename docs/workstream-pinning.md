@@ -458,7 +458,8 @@ first in that Space: its first pin, or else the first Channel under the
 reader's sort, opened the way that row opens (a Breakout when Main is not the
 reader's). A Space the leave emptied opens on starting a Channel there. The
 Space is the sidebar's filter when the Channel is in it, otherwise the
-Channel's first Space. The sidebar's order moved into
+Channel's first Space, and the destination carries `?space=` so the sidebar
+selects it and the landed row is the top row on screen. The sidebar's order moved into
 `sidebar-channel-order.ts` and the conversation directory's row rule into
 `conversation-directory.ts`, so the sidebar and the landing read one copy.
 
