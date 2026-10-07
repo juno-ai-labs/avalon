@@ -2,7 +2,7 @@ import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contrac
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
@@ -233,20 +233,6 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     }
   }, [location.pathname, returnTo, navigate]);
   const owningSpace = spaces.data?.items.find((space) => space.id === owningSpaceId);
-  // A personal Space decides who is in its Channels, so the bar shows the
-  // Space's own roster and offers no way to change it.
-  const participantsManagedBySpace = owningSpace?.scope === 'personal';
-  const personalSpaceParticipantIds = useMemo(() => new Set(
-    owningSpace?.scope === 'personal'
-      ? owningSpace.participants.map((participant) => participant.userId as string)
-      : [],
-  ), [owningSpace]);
-  useEffect(() => {
-    if (owningSpace?.scope !== 'personal') return;
-    setSelectedMembers((members.data ?? []).filter((member) => (
-      member.id !== workspace.currentUser.id && personalSpaceParticipantIds.has(member.id)
-    )));
-  }, [members.data, owningSpace?.scope, personalSpaceParticipantIds, workspace.currentUser.id]);
   // Opened on the keystroke that starts a work stream and closed once the
   // route change is requested. The surface is optimistic — the work stream is
   // already on screen — so what this spans is the round trip behind it. Held in
@@ -385,13 +371,13 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     // The sidebar lists the Channel on the same keystroke, under the id the
     // server will create it with, so its row there is already the real one
     // and the server's answer only fills it in. Placed in exactly the Space
-    // the request names; the directory supplies only the audience.
+    // the request names, and Organization-wide, as the route creates it.
     const workstreamId = uuidV7();
     addPendingWorkstream(queryClient, {
       id: workstreamId,
       ...(channelName ? { title: channelName } : {}),
       spaceIds: [owningSpaceId],
-      scope: owningSpace?.scope === 'personal' ? 'personal' : 'workspace',
+      scope: 'workspace',
       harnessStatus: 'running',
       createdAt,
     });
@@ -410,11 +396,11 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
 
   /**
    * The Channel the composer is writing into, before it exists: the people in
-   * the Participants bar, the Space's scope — which decides whether mentioning
-   * somebody outside them asks first — and no run to steer or stop.
+   * the Participants bar, Organization-wide as every new Channel is born, and
+   * no run to steer or stop.
    */
   const pendingChannel: ComposerConversation = {
-    scope: owningSpace?.scope === 'personal' ? 'personal' : 'workspace',
+    scope: 'workspace',
     harnessStatus: 'completed',
     stopRequested: false,
     participants: [
@@ -480,18 +466,16 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
                 <span className="new-chat-recipient-chip" key={member.id}>
                   <Avatar member={member} size="small" />
                   <span>{member.name}</span>
-                  {!participantsManagedBySpace && <button
+                  <button
                     aria-label={`Remove ${member.name}`}
                     onClick={() => removeRecipient(member.id)}
                     type="button"
                   >
                     <X aria-hidden="true" size={13} strokeWidth={1.7} />
-                  </button>}
+                  </button>
                 </span>
               ))}
-              {participantsManagedBySpace ? (
-                <span className="new-chat-recipient-note">Managed by the space</span>
-              ) : <input
+              <input
                 aria-activedescendant={recipientNavigation.activeOptionId}
                 aria-controls="new-chat-recipient-listbox"
                 aria-expanded={recipientPickerOpen}
@@ -528,7 +512,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
                 role="combobox"
                 type="text"
                 value={recipientQuery}
-              />}
+              />
             </div>
             {canCloseNewChat && <button aria-label="Close new channel" className="new-chat-close" onClick={closeNewChat} type="button">
               <X aria-hidden="true" size={16} strokeWidth={1.7} />
@@ -544,7 +528,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
             </div>
           </div>
         )}
-        {!launching && !participantsManagedBySpace && recipientPickerOpen && (
+        {!launching && recipientPickerOpen && (
           <div
             aria-label="People"
             className="new-chat-recipient-results window-no-drag"

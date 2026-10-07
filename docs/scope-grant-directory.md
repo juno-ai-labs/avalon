@@ -23,11 +23,11 @@ The lite browser consumes a canonical directory endpoint for shared navigation.
 
 Every *direct* grant mutation invokes the parent's existing projection writer
 within its SQLite transaction, including a claimed invitation. A grant a Space
-seats does not: it carries `scope_grants.source_kind = 'space'` and the writer
-is suppressed for it, because that reader discovers the Channel through the
-Organization's Space directory instead. See
-[authorization](authorization.md#space-derived-access) for why — General holds
-every Channel in the Organization, so publishing one row per Space-derived
+seated before WorkspaceDO migration 94 does not
+([a Space seats nobody now](authorization.md#space-derived-access)): it carries
+`scope_grants.source_kind = 'space'` and the writer is suppressed for it,
+because that reader discovers the Channel through the Organization's Space
+directory instead. General holds every Channel in the Organization, so publishing one row per Space-derived
 reader per Channel would size this index at the Organization times its
 Channels. Direct provenance wins where both apply, in both directions — a Space
 can neither claim such a row nor deactivate it — so a Channel a person also

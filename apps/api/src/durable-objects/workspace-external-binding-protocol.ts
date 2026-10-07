@@ -243,16 +243,15 @@ export const ExternalBindingMoveResultSchema = z.discriminatedUnion("outcome", [
  *
  * `spaceId` is the creation identity the caller anchored in D1 first, as
  * `SpaceService.create` does; it is used only when the room has no binding.
+ * The Space is Organization-wide whatever the room is: a private room's
+ * privacy belongs to the Channels its threads open, not to their Space.
  */
 export const ExternalRoomLinkRequestSchema = deferredZodSchema(() => BindingKeySchema.extend({
   userId: IdSchema,
   spaceId: IdSchema,
   space: z.strictObject({
     name: z.string().trim().min(1),
-    scope: z.enum(["personal", "workspace"]),
   }),
-  /** Seated beside the actor in a private room's Space. */
-  participantUserIds: z.array(IdSchema),
   /**
    * Present when the room may join an existing Space its name matches, which
    * the link decides. `matched`: `spaceId` is the Space `externalRoomSpaceMatch`
@@ -261,16 +260,7 @@ export const ExternalRoomLinkRequestSchema = deferredZodSchema(() => BindingKeyS
    */
   spaceMatch: z.enum(["matched", "unmatched"]).optional(),
   at: TimestampSchema,
-}).strict().superRefine((request, context) => {
-  // Only an Organization-wide room may join an existing Space: a private
-  // room's audience is its own.
-  if (request.spaceMatch && request.space.scope !== "workspace") {
-    context.addIssue({ code: "custom", path: ["space", "scope"], message: "space_match_requires_workspace_scope" });
-  }
-  if (request.spaceMatch && request.participantUserIds.length > 0) {
-    context.addIssue({ code: "custom", path: ["participantUserIds"], message: "space_match_requires_no_participants" });
-  }
-}));
+}).strict());
 export type ExternalRoomLinkRequest = z.infer<typeof ExternalRoomLinkRequestSchema>;
 
 export const ExternalRoomLinkResultSchema = z.discriminatedUnion("ok", [

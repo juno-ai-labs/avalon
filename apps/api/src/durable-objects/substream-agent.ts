@@ -403,19 +403,6 @@ const RuntimeReaderAudienceRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
 });
-/**
- * A proposed audience, asked about rather than applied.
- *
- * Read-only by construction: it names the audience a caller is *considering*,
- * and the answer is a boolean. A Space audience change reaches several Channels
- * and widening cannot be taken back, so every one of them is asked before any
- * of them is changed.
- */
-const PreviewAudienceContainmentRequestSchema = z.strictObject({
-  workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
-  audience: WorkstreamReaderAudienceSchema,
-});
 const RuntimeBootstrapRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   parentKind: ConversationParentKindSchema,
@@ -498,19 +485,15 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("import_source_checkpoint_get") }),
   productOperation({ operation: z.literal("import_source_update"),
     operationId: IdSchema, conversation: PreparedConversationSchema }),
-  // `spaceSourceId` names the Space a participant change is being made on
-  // behalf of. It changes nothing about admission — the same roster or grant
-  // row is written either way — only where the resulting grant is published,
-  // and it is carried here because nothing downstream can infer it.
   productOperation({ operation: z.literal("add_participant"), userId: IdSchema,
-    operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
+    operationId: IdSchema.optional() }),
   // The appearance write over the product request. A Space admits no feed
   // socket, so the socket command that carries this for a Channel cannot reach
   // it; the write itself is the same one.
   productOperation({ operation: z.literal("set_appearance"),
     operationId: IdSchema, patch: WorkstreamAppearancePatchSchema }),
   productOperation({ operation: z.literal("remove_participant"), userId: IdSchema,
-    operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
+    operationId: IdSchema.optional() }),
   productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("answer_elicitation"),
@@ -2359,35 +2342,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id);
   }
 
-  /**
-   * Whether this conversation's retained content would still be contained by a
-   * proposed audience.
-   *
-   * `null` when this object is not the addressed Channel's main conversation,
-   * the way `readerAudience` answers: a misaddressed call is a refusal rather
-   * than a wrong answer, and a preflight that read `false` as "no fences" would
-   * be the one place a fence could be skipped.
-   *
-   * It writes nothing and is not the fence. The fence is the canonical scope
-   * and participant operations, which run the same predicate inside the
-   * transaction that changes the audience; this only lets a caller stop before
-   * it has widened Channels it cannot un-widen.
-   */
-  async previewAudienceContainment(
-    input: z.input<typeof PreviewAudienceContainmentRequestSchema>,
-  ): Promise<boolean | null> {
-    await this.initialized;
-    const request = parseRpcInput(
-      PreviewAudienceContainmentRequestSchema, input, "preview_audience_containment",
-    );
-    const identity = this.objectStore.identity();
-    if (!identity
-      || identity.workspaceId !== request.workspaceId
-      || identity.parentId !== request.workstreamId
-      || this.externalSubstreamId() !== "0") return null;
-    return this.product.retainedContentContains(request.audience);
-  }
-
   async readerAudience(input: z.input<typeof RuntimeReaderAudienceRequestSchema>): Promise<WorkstreamReaderAudience | null> {
     await this.initialized;
     const request = RuntimeReaderAudienceRequestSchema.parse(input);
@@ -3570,8 +3524,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const substreamId = this.externalSubstreamId();
         const result = await parent.mutateParticipantGrant({ operationId: request.operationId ?? uuidV7(),
           actorUserId: current.userId, userId: UserIdSchema.parse(request.userId), active,
-          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId },
-          ...(request.spaceSourceId ? { spaceSourceId: request.spaceSourceId } : {}) });
+          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } });
         if (result.status === "denied") {
           if (result.reason === "inherited_access") throw new ApiError(409, "participant_inherited_access", "This person has work stream access. Remove that share from work stream sharing first.");
           if (result.reason === "participant_required") throw new ApiError(409, "workstream_participant_required", "At least one participant must remain in this work stream");

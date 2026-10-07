@@ -369,11 +369,11 @@ async function openChannelObject(workstreamId: WorkstreamId): Promise<void> {
   });
 }
 
-async function reserve(name: string, scope: "personal" | "workspace" = "workspace"): Promise<SpaceId> {
+async function reserve(name: string): Promise<SpaceId> {
   const result = await workspace().reserveSpace({
     workspaceId: WORKSPACE_ID,
     userId: OWNER,
-    space: { name, iconKey: "briefcase", colorKey: "blue", scope },
+    space: { name, iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
   });
   if (!result.ok) throw new Error(`reserveSpace refused: ${result.code}`);
   return asSpaceId(result.space.id);

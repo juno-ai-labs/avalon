@@ -5330,8 +5330,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .space-name-input { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-sys-color-border-highlight); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-default); font-size: 26px; font-weight: 700; line-height: 1.2; max-width: 100%; min-width: 180px; padding: 2px 6px; width: auto; }
 .space-dashboard-title { min-width: 0; }
 .space-dashboard-title > .inline-error { margin-top: 6px; }
-.space-dashboard-audience { align-items: center; display: flex; }
-.space-dashboard-audience .dropdown-select-trigger { color: inherit; font: inherit; justify-content: flex-start; margin: -8px 0 -8px -10px; min-width: 0; }
 .space-dashboard-header p,
 .space-dashboard-muted { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 5px 0 0; }
 .space-dashboard-blocked-channels { color: var(--av-sys-color-text-muted); font-size: 13px; list-style: disc; margin: 8px 0 0; padding-left: 18px; }
@@ -7107,15 +7105,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    control; the padding the control would have taken is given back. */
 .new-chat-recipient-chip:not(:has(> button)) { padding-right: 10px; }
 
-/* Stands where the search field would be when the Space owns the roster. */
-.new-chat-recipient-note {
-  color: var(--av-sys-color-text-muted);
-  flex: 1 0 auto;
-  font-size: 14px;
-  font-weight: 420;
-  line-height: 20px;
-  padding-left: 4px;
-}
 
 .new-chat-close {
   align-items: center;

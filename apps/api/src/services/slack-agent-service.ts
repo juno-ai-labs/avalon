@@ -1630,7 +1630,6 @@ export class SlackAgentService {
       ? {
           kind: "spawn",
           spaceId: resolution.spaceId,
-          spaceScope: resolution.space?.scope ?? "personal",
           spaceActorUserId: resolution.space?.createdByUserId ?? null,
           spaceMatched: resolution.spaceMatched,
           claim: {
@@ -1690,22 +1689,6 @@ export class SlackAgentService {
       : activityChannelResolution
         ?? roomChannel
         ?? await resolveSlackChannelType(this.env, token, channelId, event.channel_type);
-    // A room linked while it was public holds an Organization-wide Space. If
-    // it has since become private, a new Channel there would publish a
-    // private conversation to the whole Organization: refuse, and say why.
-    if (route?.kind === "spawn" && route.spaceScope === "workspace"
-      && channelResolution.failure === null && channelResolution.channelType !== "public") {
-      logWarn(this.env, "external_binding_placement_refused", {
-        workspace_id: connection.workspace_id,
-        connection_id: connection.id,
-        space_id: route.spaceId,
-        code: "room_narrower_than_space",
-      });
-      await this.postRoutingFailure(
-        token, channelId, channelResolution.threadable === false ? undefined : rootTs, "room_narrower_than_space", claimKey,
-      );
-      return;
-    }
     // A room that joined an existing Space by name, rather than getting its
     // own, may since have been shared through Slack Connect: an outside
     // organization's thread must not open work in this Organization's Space.
@@ -2027,8 +2010,7 @@ export class SlackAgentService {
         path: [channelId],
         userId: actorUserId,
         spaceId,
-        space: { name: room.displayName, scope: room.visibility === "public" ? "workspace" : "personal" },
-        participantUserIds: room.visibility === "private" ? audience.userIds : [],
+        space: { name: room.displayName },
         ...(matchable ? { spaceMatch: matched ? "matched" as const : "unmatched" as const } : {}),
         at: nowIso(),
       }));
@@ -2607,13 +2589,11 @@ export class SlackAgentService {
       input.teamId,
       input.channel,
     );
-    // Under a linked room the Space decides who the Channel is for: a public
-    // room's Space is Organization-wide, and a private room's or group DM's is
-    // personal whatever its member count. The member-count promotion applies
-    // only to a Channel with no linked Space.
-    const scope = spawn
-      ? spawn.spaceScope
-      : connectorWorkstreamScope({
+    // The room decides who the Channel is for, linked or not: its Space is
+    // Organization-wide and grants no reader, so a private room's thread is
+    // private to the room's members until the room passes the member-count
+    // promotion.
+    const scope = connectorWorkstreamScope({
         audience: input.source.channelType === "public" ? "public" : "private",
         memberCount: audience.memberCount,
         workspaceScopeThreshold: SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD,
@@ -4140,8 +4120,6 @@ function slackRoutingFailureText(reason: string): string {
   switch (reason) {
     case "space_archived":
       return "This conversation's Rally Space is archived, so Rally did not start work here. A Rally admin can restore the Space in Rally.";
-    case "room_narrower_than_space":
-      return "This conversation is private now, but its Rally Space is open to the whole organization, so Rally did not start work here. Make the conversation public again, or ask a Rally admin to make the Space private if nothing else uses it.";
     case "room_shared_externally":
       return "This conversation is now shared with another organization, and its Rally Space holds this organization's own work, so Rally did not start work here.";
     case "no_rally_member_in_private_room":
@@ -4169,7 +4147,6 @@ type SlackThreadRoute =
   | {
       kind: "spawn";
       spaceId: string;
-      spaceScope: "personal" | "workspace";
       spaceActorUserId: string | null;
       /** The room joined this Space by name rather than getting its own. */
       spaceMatched: boolean;

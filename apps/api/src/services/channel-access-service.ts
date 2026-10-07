@@ -3,38 +3,48 @@ import {
   asWorkspaceId,
   type ChannelAccessSources,
   type SpaceErrorCode,
-  type SpaceScope,
-  type UserId,
   type WorkstreamDetail,
+  type WorkspaceId,
 } from "@rally/contracts";
 
 import { workspaceDOName } from "../durable-objects/names";
-import type {
-  ObservedChannel,
-  SetChannelDirectScopeResult,
-} from "../durable-objects/workstream-access-protocol";
+import type { ObservedChannel } from "../lib/audience-containment";
 import type { AuthContext, Env } from "../env";
 import { ApiError, asApiError } from "../lib/api-error";
-import { effectiveChannelAudience } from "../lib/channel-audience";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { uuidV7 } from "../lib/uuid-v7";
-import { logWarn } from "../observability/logger";
-import {
-  publishChannelNarrowing,
-} from "./space-source-operations";
+import { publishAccessRevocation } from "./access-revocation";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 
-export { publishChannelNarrowing };
+/**
+ * Announce that a Channel stopped admitting the whole Organization.
+ *
+ * The room closes sockets for somebody it was told about, and nothing tells it
+ * that the audience it just took no longer covers whoever is reading, so the
+ * write that narrows publishes it, in the same request. It names nobody: the
+ * readers a narrowing drops are every member who is not a participant, and the
+ * hop asks the room which of them still has a socket open.
+ *
+ * Returns whether the message went out: `publishAccessRevocation` is not fatal
+ * to its caller, so the flag is the only signal that nothing was sent.
+ */
+export async function publishChannelNarrowing(
+  env: Env,
+  workspaceId: WorkspaceId,
+  workstreamId: string,
+): Promise<boolean> {
+  return publishAccessRevocation(env, {
+    reason: "workstream_participant_removed",
+    workspaceId,
+    userId: null,
+    sessionId: null,
+    target: { scope: "workstream_audience_narrowed", workstreamId },
+  });
+}
 
 /**
- * A Channel's own audience against the Space sources that reach it: reading
- * who supplies whom, and changing the Channel's direct scope and readers
- * without revoking what a Space still supplies.
- *
- * A Space's source itself is applied and withdrawn by WorkspaceDO
- * (`SpaceChannelAccess`), through the same canonical scope and participant
- * operations, which are where the retained-content containment preflight and
- * its SQL triggers run.
+ * Reading and changing who may read a Channel, for a caller who may manage it.
+ * A Space grants no reader, so the Channel's own scope and participants are
+ * the whole answer.
  */
 export class ChannelAccessService {
   constructor(
@@ -47,15 +57,6 @@ export class ChannelAccessService {
   }
 
   /** The Organization object, which hosts every Channel's parent. */
-  private async room() {
-    return durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
-    );
-  }
-
   private async workspace() {
     return durableObjectStubForWorkspace(
       this.env,
@@ -75,10 +76,8 @@ export class ChannelAccessService {
    *
    * Both halves come from one `WorkstreamDetail` rather than from
    * `readWorkstreamRuntimeAudience`, which answers `{ scope: "workspace" }` with
-   * no roster: an Organization-wide Channel still has participants, and they are
-   * what the *direct* source is once the readers a Space seated are taken out.
-   * A plan that could not see them would re-seat the whole audience on every
-   * narrowing or, worse, narrow without seating anyone.
+   * no roster: an Organization-wide Channel still has participants, and the
+   * access dialog lists them.
    */
   private observed(detail: WorkstreamDetail): ObservedChannel {
     const participantUserIds = detail.participants.map((participant) => asUserId(participant.user.id));
@@ -110,187 +109,48 @@ export class ChannelAccessService {
     return (await this.observation(workstreamId)).title;
   }
 
-  /**
-   * Every source that currently grants a reader access to this Channel.
-   *
-   * Gated on management access, which is the authority a direct audience change
-   * already requires: somebody who cannot change the audience has no reason to
-   * be shown which Space supplies which reader. The refusal is a 404 rather
-   * than a 403 because the Channel's own read decision has already been made by
-   * `get`, and saying "you may read this but not that" about a Channel is a
-   * disclosure the rest of this surface does not make.
-   */
+  /** Who may read this Channel, for a caller who may manage it. */
   async readSources(workstreamId: string): Promise<ChannelAccessSources> {
-    const room = await this.room();
-    const management = await room.readManagementAccess({
+    await this.assertManages(workstreamId);
+    // A Space supplies no reader, so the Channel's own observation is the whole
+    // answer and the parent has nothing to add.
+    const { channel } = await this.observation(workstreamId);
+    return {
+      direct: { scope: channel.readers.scope, participantUserIds: channel.participantUserIds },
+      spaces: [],
+    };
+  }
+
+  /**
+   * Take one reader out of the Channel. A Space supplies no reader, so the
+   * canonical removal is the whole change; the boolean says whether access
+   * was actually lost, which it is not on an Organization-wide Channel.
+   *
+   * Gated on management access first: the conversation's own `authorize`
+   * checks only that the caller may read and collaborate, and a member's
+   * access does not include changing who else is in the Channel.
+   */
+  async removeDirectReader(workstreamId: string, userId: string): Promise<boolean> {
+    await this.assertManages(workstreamId);
+    const { channel } = await this.observation(workstreamId);
+    await this.client(workstreamId).removeParticipant(userId);
+    return channel.readers.scope !== "workspace";
+  }
+
+  /**
+   * Refuse a caller who may not manage this Channel's audience, as a 404: the
+   * Channel's own read decision was already made, and saying "you may read this
+   * but not that" about it is a disclosure the rest of this surface does not
+   * make.
+   */
+  private async assertManages(workstreamId: string): Promise<void> {
+    const management = await (await this.workspace()).readManagementAccess({
       ...this.address(workstreamId),
       userId: asUserId(this.auth.userId),
     });
     if (!management.allowed) {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
-    const observed = await this.observation(workstreamId);
-    return room.readAccessSources({
-      ...this.address(workstreamId),
-      channel: observed.channel,
-    });
-  }
-
-  /**
-   * Remove the Channel's own claim on one reader without revoking a Space's.
-   *
-   * The canonical participant removal acts on the effective roster. When a
-   * Space still supplies the same person, put that reader back attributed to
-   * every surviving supplier before the caller publishes a revocation. The
-   * boolean says whether access was actually lost.
-   */
-  async removeDirectReader(workstreamId: string, userId: string): Promise<boolean> {
-    const sources = await this.readSources(workstreamId);
-    const reader = asUserId(userId);
-    const suppliers = sources.spaces.filter((space) => space.participantUserIds.includes(reader));
-    const client = this.client(workstreamId);
-    await client.removeParticipant(userId);
-    const room = await this.room();
-    for (const supplier of suppliers) {
-      await client.addParticipant(userId, { spaceSourceId: supplier.spaceId });
-      const confirmed = await room.confirmSpaceAccessSource({
-        ...this.address(workstreamId),
-        spaceId: supplier.spaceId,
-        operationId: uuidV7(),
-        seatedUserIds: [reader],
-      });
-      if (!confirmed.ok) throw spaceAccessError(confirmed.code, "Channel");
-    }
-    return sources.direct.scope !== "workspace" && suppliers.length === 0;
-  }
-
-  /**
-   * Record the Channel's own audience, refusing a narrowing a Space would
-   * override.
-   *
-   * Returns the scope that was recorded before, so a caller whose canonical
-   * update then fails can put the record back rather than leave it claiming an
-   * audience the Channel never took.
-   */
-  async recordDirectScope(
-    workstreamId: string,
-    scope: SpaceScope,
-    observed = true,
-  ): Promise<SetChannelDirectScopeResult> {
-    return (await this.room()).setDirectScope({
-      ...this.address(workstreamId),
-      scope,
-      observed,
-      operationId: uuidV7(),
-    });
-  }
-
-  /**
-   * Put the recorded direct scope back after a canonical update did not take.
-   *
-   * Both halves of the record, not just the scope. A Channel whose row was
-   * still the migration's guess has to go back to being a guess: restoring the
-   * scope alone would tell the first Space to reach it that somebody decided
-   * this audience, and stop it seeding the value it can still derive exactly
-   * from the readers it is handed.
-   *
-   * Best effort and never throws: the refusal the caller is about to see is the
-   * useful one, and a restore that is itself refused — the Channel is
-   * Organization-wide through a Space, so it cannot be recorded as private —
-   * leaves a record that is wrong in the safe direction and is named here.
-   */
-  async restoreDirectScope(workstreamId: string, scope: SpaceScope, observed: boolean): Promise<void> {
-    try {
-      const restored = await this.recordDirectScope(workstreamId, scope, observed);
-      if (restored.ok) return;
-      logWarn(this.env, "channel_direct_scope_restore_refused", {
-        workstream_id: workstreamId, scope, observed, code: restored.code,
-      });
-    } catch (error) {
-      logWarn(this.env, "channel_direct_scope_restore_failed", {
-        workstream_id: workstreamId,
-        scope,
-        observed,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  /**
-   * Seat everybody a Space still supplies, before the Channel's own audience
-   * stops being Organization-wide.
-   *
-   * The same gap `audienceSourceRetractionPlan` closes, on the other path into
-   * it. A personal Space applied while the Channel was Organization-wide seats
-   * nobody — everybody could already read, so a participant row would have
-   * added no access — and its readers therefore exist only as that source's
-   * roster. Narrowing the Channel's *own* scope with that still true revokes
-   * them, although the Space that supplies them has not changed at all.
-   *
-   * Returns the readers it seated, so a caller whose narrowing then fails can
-   * say what it left behind. It does not withdraw them: they are access a
-   * source still provides, and the next retraction of that source is what
-   * takes them out.
-   *
-   * Safe to run when nothing narrows. An audience that is still
-   * Organization-wide through some Space seats nobody here and is refused by
-   * `recordDirectScope` a moment later, which is the authority that decides.
-   */
-  async narrowDirectScope(workstreamId: string): Promise<UserId[]> {
-    const sources = await this.readSources(workstreamId);
-    // The direct source as it will be *after* the narrowing, which is the
-    // whole question: who is left once the Channel stops admitting everybody.
-    const audience = effectiveChannelAudience({
-      direct: { scope: "personal", participantUserIds: sources.direct.participantUserIds },
-      sources: sources.spaces.map((space) => ({
-        sourceId: space.spaceId, scope: space.scope, participantUserIds: space.participantUserIds,
-      })),
-    });
-    if (audience.scope === "workspace") return [];
-    const client = this.client(workstreamId);
-    const seated = new Set<string>((await client.get()).participants.map((participant) => participant.user.id));
-    const newlySeated: UserId[] = [];
-    for (const userId of audience.participantUserIds) {
-      if (seated.has(userId)) continue;
-      // Attributed to the Space that lists them, which is what keeps the grant
-      // out of the shared scope-grant directory and what lets that Space's
-      // departure take them with it. A reader the direct source lists is
-      // already seated, so anybody reached here has a supplier.
-      const supplier = sources.spaces.find((space) => space.participantUserIds.includes(userId));
-      if (!supplier) continue;
-      await client.addParticipant(userId, { spaceSourceId: supplier.spaceId });
-      newlySeated.push(userId);
-    }
-    // Attribute them to the source that supplied them, per Space, or the next
-    // retraction reads them as the Channel's own and leaves them behind.
-    const room = await this.room();
-    for (const space of sources.spaces) {
-      const supplied = newlySeated.filter((userId) => space.participantUserIds.includes(userId));
-      if (supplied.length === 0) continue;
-      const confirmed = await room.confirmSpaceAccessSource({
-        ...this.address(workstreamId),
-        spaceId: space.spaceId,
-        operationId: uuidV7(),
-        seatedUserIds: supplied,
-      });
-      if (!confirmed.ok) {
-        // Named rather than thrown: the readers are seated and can read, and
-        // failing the narrowing over an attribution would leave the Channel
-        // Organization-wide for a reason nobody asked about.
-        logWarn(this.env, "channel_narrowing_attribution_refused", {
-          workstream_id: workstreamId, space_id: space.spaceId, code: confirmed.code,
-        });
-      }
-    }
-    return newlySeated;
-  }
-
-  /** A direct add makes this reader the Channel's own, whichever Space seated them. */
-  async noteDirectReader(workstreamId: string, userId: string): Promise<void> {
-    await (await this.room()).noteDirectReader({
-      ...this.address(workstreamId),
-      userId: asUserId(userId),
-    });
   }
 }
 
