@@ -207,11 +207,13 @@ describe('public Rally site', () => {
 
   it('lists the section links, the download button and the mobile sign-in in the shared header, without Blog', () => {
     const nav = renderSiteChrome('<!-- rally:site-nav -->');
-    expect([...nav.matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/gu)].map(([, href, label]) => `${label} ${href}`)).toEqual([
+    const links = [...nav.matchAll(/<a [^>]*href="([^"]+)"([^>]*)>(.*?)<\/a>/gu)];
+    expect(links.map(([, href, attrs, body]) => `${/aria-label="([^"]+)"/u.exec(attrs ?? '')?.[1] ?? body} ${href}`)).toEqual([
       'Features /#features', 'Pricing /#pricing', 'Compare /#compare',
       'Download for Mac https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
-      'Sign in to Rally https://app.rallywith.ai',
+      'Sign in to Rally or sign up for Rally https://app.rallywith.ai',
     ]);
+    expect(nav).toContain('<span>Sign in to Rally</span><span>Sign up for Rally</span>');
   });
 
   it('renders a blog post from a dated Markdown file and refuses a bad name or front matter', () => {
