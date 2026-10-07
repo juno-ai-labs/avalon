@@ -22,7 +22,7 @@ This screen sets how you appear to your teammates.
 
 1. Check your **Name**. Rally fills it in from your Google account.
 2. Check your **Avatar initials**, the letters in your little round avatar. These start from your Google name too.
-3. Pick a colour under **Your color**. There are eight: rose, orange, lime, emerald, blue, violet, fuchsia and black.
+3. Pick a colour under **Your color**. There are eight: rose, orange, lime, emerald, blue, violet, fuchsia and black. Rally starts you on one at random.
 4. Click **Continue with this look**.
 
 The button stays greyed out until both the name and the initials are filled in.

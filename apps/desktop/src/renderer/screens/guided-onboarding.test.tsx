@@ -100,6 +100,15 @@ describe('new-account learning paths', () => {
     // landing ever redirects instead.
     await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent(/^REPLACE \/$/u));
   });
+  it('starts personal setup on a random color when the account has no saved look', async () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.3);
+    try {
+      show(); await screen.findByRole('heading', { name: 'This is you in Rally' });
+      const swatches = screen.getByRole('group', { name: 'Your color' });
+      expect(within(swatches).getByRole('button', { name: 'lime' })).toHaveAttribute('aria-pressed', 'true');
+      expect(within(swatches).getAllByRole('button').filter((button) => button.getAttribute('aria-pressed') === 'true')).toHaveLength(1);
+    } finally { random.mockRestore(); }
+  });
   it('retains personal setup when the account save fails', async () => {
     state.saveAccount.mockRejectedValue(new Error('Profile changed in another session')); show();
     await screen.findByRole('heading', { name: 'This is you in Rally' });
