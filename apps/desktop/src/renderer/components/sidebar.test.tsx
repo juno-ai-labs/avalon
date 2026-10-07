@@ -4288,12 +4288,17 @@ describe('the sidebar Space filter', () => {
       function CurrentRoute(): React.JSX.Element {
         return <output aria-label="Current route">{useLocation().pathname}</output>;
       }
+      function Elsewhere(): React.JSX.Element {
+        const navigate = useNavigate();
+        return <button onClick={() => void navigate(`/workstreams/${delta.id}`)} type="button">Search result</button>;
+      }
       render(
         <MemoryRouter initialEntries={[path]}>
           <Tooltip.Provider>
             <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[home, hiring, launch, empty]}
               workspace={workspace} workstreams={[alpha, bravo, charlie, delta]} />
             <CurrentRoute />
+            <Elsewhere />
           </Tooltip.Provider>
         </MemoryRouter>,
       );
@@ -4319,7 +4324,9 @@ describe('the sidebar Space filter', () => {
       await waitFor(() => expect(route()).toBe(`/workstreams/${charlie.id}`));
       expect(navigation).toHaveClass('is-mobile-open');
 
-      fireEvent.click(screen.getByRole('link', { name: /Delta/u }));
+      // The pill's pass is spent: the next route change closes the sheet,
+      // even one from outside it.
+      fireEvent.click(screen.getByRole('button', { name: 'Search result' }));
       expect(navigation).not.toHaveClass('is-mobile-open');
     });
 

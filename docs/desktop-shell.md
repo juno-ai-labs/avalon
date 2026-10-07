@@ -352,6 +352,8 @@ sheet would land somewhere the pills do not match.
 route-change effect consumes, so every other route change still closes the
 sheet.
 
+Shipped in [#1158](https://github.com/juno-ai-labs/avalon/pull/1158).
+
 ### 2026-10-07 — With no Spaces, the browser folds New space into the top bar and drops All
 
 **What changed:** In a browser tab wider than the phone layout, when the only
