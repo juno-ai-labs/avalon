@@ -8415,3 +8415,18 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 }
 .title-pill-menu-trigger:hover > .title-pill-menu-trigger-body { background: var(--av-sys-color-state-hover); }
 .title-pill-menu-trigger[data-state='open'] > .title-pill-menu-trigger-body { background: transparent; }
+
+/*
+ * iOS Safari zooms the page into any focused field whose text is under 16px,
+ * and leaves it zoomed after blur. Touch screens get 16px text in every text
+ * field instead, which is the only fix that keeps pinch zoom. The composer's
+ * highlight layer has to move with its textarea or the two drift apart.
+ * Important because the field rules it overrides are scoped deeper than any
+ * one rule here could be. A field already larger is left alone.
+ */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], .space-name-input),
+  textarea,
+  select,
+  .workstream-composer .composer-highlight { font-size: 16px !important; }
+}
