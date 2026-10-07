@@ -5,7 +5,7 @@ import { MemberPreferencesSchema, PersonalSystemPromptSchema, SessionImportRunSc
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
-import { ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, type ConversationAccessPreview } from "@rally/contracts";
+import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, type ConversationAccessDecisionResult, type ConversationAccessPreview } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
@@ -2118,6 +2118,14 @@ export class RallyApi {
     await this.request(`${this.substreamPath(parentId, substreamId)}/access-requests`, {
       method: 'POST',
       schema: ConversationAccessRequestResultSchema,
+    });
+  }
+
+  /** The approver settles a request: from the attention menu, or the menu bar's modal. */
+  async decideConversationAccess(requestId: string, decision: 'approve' | 'decline'): Promise<ConversationAccessDecisionResult> {
+    return this.request(`/conversations/access-requests/${encodeURIComponent(requestId)}/${decision}`, {
+      method: 'POST',
+      schema: ConversationAccessDecisionResultSchema,
     });
   }
 

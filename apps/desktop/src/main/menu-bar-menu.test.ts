@@ -15,6 +15,7 @@ function actions(): MenuBarActions {
   return {
     selected: vi.fn(),
     openConversation: vi.fn(),
+    openAccessRequest: vi.fn(),
     openRally: vi.fn(),
     quit: vi.fn(),
   };
@@ -91,6 +92,31 @@ describe('menu bar menu', () => {
     // The sidebar attention menu's detail line, with the Channel for a Breakout.
     expect(items[1]?.sublabel).toBe('You were mentioned');
     expect(items[2]?.sublabel).toBe('Unread in Pricing');
+  });
+
+  it('lists access requests first, counts them, and opens one in the main window', () => {
+    const subject = actions();
+    const items = template({
+      accessRequests: [{ id: 'r1', requesterName: 'Samantha Lee', title: 'Hiring plan' }],
+      attention: [main('a', 'Acme renewal', 'mentioned')],
+    }, { actions: subject });
+
+    expect(labels(items).slice(0, 3)).toEqual(['Needs attention', 'Samantha Lee asked to join Hiring plan', 'Acme renewal']);
+    expect(items[1]?.sublabel).toBe('Access request');
+    activate(items[1]);
+    expect(subject.openAccessRequest).toHaveBeenCalledWith('r1');
+    expect(subject.selected).toHaveBeenCalledWith('access_request');
+    expect(subject.openConversation).not.toHaveBeenCalled();
+  });
+
+  it('keeps the section to five rows when requests and conversations share it', () => {
+    const drawn = labels(template({
+      accessRequests: [0, 1].map((index) => ({ id: `r${index}`, requesterName: `Person ${index}`, title: 'Plan' })),
+      attention: waiting,
+    }));
+    expect(drawn.filter((label) => label?.startsWith('Person') || label?.startsWith('Waiting'))).toEqual([
+      'Person 0 asked to join Plan', 'Person 1 asked to join Plan', 'Waiting 0', 'Waiting 1', 'Waiting 2',
+    ]);
   });
 
   it('starts nothing', () => {

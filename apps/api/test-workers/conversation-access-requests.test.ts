@@ -29,6 +29,7 @@ const plainBreakout = asSubstreamId("00000000-0000-4000-8000-0000000ac0a1");
 const markedBreakout = asSubstreamId("00000000-0000-4000-8000-0000000ac0a2");
 const creator = asUserId("00000000-0000-4000-8000-0000000ac011");
 const breakoutCreator = asUserId("00000000-0000-4000-8000-0000000ac012");
+const requester = asUserId("00000000-0000-4000-8000-0000000ac013");
 const at = "2026-10-07T12:00:00.000Z";
 
 const organization = () => hostedParentStub(env, workspaceId);
@@ -71,6 +72,20 @@ beforeEach(async () => {
     env.DB.prepare(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT,
       abandoned_at TEXT, placement_affinity TEXT DEFAULT 'wnam')`),
     env.DB.prepare(`INSERT INTO workspaces (id, region) VALUES (?, 'global')`).bind(workspaceId),
+    env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member',
+      incarnation TEXT DEFAULT 'existing-member', workspace_id TEXT NOT NULL, user_id TEXT NOT NULL,
+      status TEXT NOT NULL, role TEXT NOT NULL, last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (workspace_id, user_id))`),
+    ...[creator, breakoutCreator, requester].map((userId) => env.DB.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, 'active', 'member')`,
+    ).bind(workspaceId, userId)),
+    env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member', id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, region TEXT NOT NULL, revoked_at TEXT,
+      expires_at TEXT NOT NULL)`),
+    ...[creator, breakoutCreator, requester].map((userId) => env.DB.prepare(
+      `INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`,
+    ).bind(`session-${userId}`, userId, workspaceId)),
   ]);
   await organization().initializeWorkspace(workspaceId, "wnam");
   await runInDurableObject(organization(), (_instance, state) => {
@@ -119,5 +134,83 @@ describe("accessRequestSubject", () => {
   it("names nothing archived or unknown", async () => {
     expect(await subject(archivedChannel, "0")).toBeNull();
     expect(await subject(privateChannel, "00000000-0000-4000-8000-0000000ac0ff")).toBeNull();
+  });
+});
+
+type Frame = Record<string, unknown> & { type?: string };
+let ticketSeq = 0;
+/** A real hibernating workspace socket for this person, subscribed; resolves with its subscribe answer. */
+async function connect(userId: string) {
+  ticketSeq += 1;
+  const response = await organization().fetch("https://workspace.test/socket", {
+    headers: {
+      Upgrade: "websocket",
+      "x-rally-workspace-id": workspaceId,
+      "x-rally-placement-affinity": "wnam",
+      "x-rally-user-id": userId,
+      "x-rally-session-id": `session-${userId}`,
+      "x-rally-socket-ticket-id": `00000000-0000-7000-8001-${String(ticketSeq).padStart(12, "0")}`,
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+    },
+  });
+  if (response.status !== 101 || !response.webSocket) throw new Error(`socket refused: ${response.status}`);
+  const socket = response.webSocket;
+  socket.accept();
+  const received: Frame[] = [];
+  const waiters: Array<{ match: (frame: Frame) => boolean; resolve: (frame: Frame) => void }> = [];
+  socket.addEventListener("message", (event) => {
+    if (String(event.data) === "pong") return;
+    const frame = JSON.parse(String(event.data)) as Frame;
+    received.push(frame);
+    const index = waiters.findIndex((waiter) => waiter.match(frame));
+    if (index >= 0) waiters.splice(index, 1)[0]!.resolve(frame);
+  });
+  const next = (match: (frame: Frame) => boolean, label: string) => new Promise<Frame>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no ${label} arrived`)), 5_000);
+    waiters.push({ match, resolve: (frame) => { clearTimeout(timer); resolve(frame); } });
+  });
+  const answer = next((frame) => frame.type === "workspace_sync", "subscribe answer");
+  socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+  return { socket, received, next, answer: await answer };
+}
+
+const ask = (substreamId: string = "0", approverUserId: string = creator) => organization().recordConversationAccessRequest({
+  workspaceId, parentId: privateChannel, substreamId, requesterUserId: requester,
+  requesterName: "Samantha Lee", approverUserId,
+});
+
+describe("stored access requests", () => {
+  it("keeps one pending request per person per conversation, so asking again sends nothing new", async () => {
+    const first = await ask();
+    const again = await ask();
+    expect(first.created).toBe(true);
+    expect(again).toEqual({ request: first.request, created: false });
+  });
+
+  it("lists a request to its approver on connect and pushes the empty list once it is settled", async () => {
+    const { request } = await ask();
+    const approver = await connect(creator);
+    expect(approver.answer.accessRequests).toEqual([{
+      id: request.id, parentId: privateChannel, substreamId: "0", kind: "channel", title: "Launch plan",
+      appearance: { icon: "rocket", color: "teal" }, markId: privateChannel, requesterUserId: requester,
+      requesterName: "Samantha Lee", requestedAt: expect.any(String),
+    }]);
+    const pushed = approver.next((frame) => frame.type === "workspace_access_requests", "request list");
+    expect(await organization().resolveConversationAccessRequest({ workspaceId, id: request.id, status: "declined" }))
+      .toMatchObject({ id: request.id, status: "declined" });
+    expect((await pushed).requests).toEqual([]);
+    // Settled once: a second answer finds nothing pending.
+    expect(await organization().resolveConversationAccessRequest({ workspaceId, id: request.id, status: "approved" })).toBeNull();
+  });
+
+  it("pushes a new request to its approver alone", async () => {
+    const approver = await connect(breakoutCreator);
+    const bystander = await connect(creator);
+    const pushed = approver.next((frame) => frame.type === "workspace_access_requests", "request list");
+    await ask(plainBreakout, breakoutCreator);
+    const frame = await pushed;
+    expect((frame.requests as Array<{ title: string; markId: string }>).map(({ title, markId }) => ({ title, markId })))
+      .toEqual([{ title: "Pricing", markId: privateChannel }]);
+    expect(bystander.received.some((received) => received.type === "workspace_access_requests")).toBe(false);
   });
 });

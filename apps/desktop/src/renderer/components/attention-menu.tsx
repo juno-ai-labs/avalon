@@ -1,5 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconBell } from '@tabler/icons-react';
+import type { ConversationAccessRequestItem } from '@rally/contracts';
+import { IconBell, IconCancel, IconCheck } from '@tabler/icons-react';
 import { forwardRef, useState, type ButtonHTMLAttributes } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -12,8 +13,18 @@ import { WorkstreamGlyph } from './workstream-glyph';
 const NOTHING_NEEDS_ATTENTION = 'Nothing needs your attention';
 const STILL_LOADING = 'Still loading channels';
 
-function attentionLabel(count: number): string {
-  return count === 1 ? '1 conversation needs your attention' : `${count} conversations need your attention`;
+function attentionLabel(count: number, requests: number): string {
+  const conversations = count - requests;
+  if (conversations === 0) return requests === 1 ? '1 access request' : `${requests} access requests`;
+  const waiting = conversations === 1 ? '1 conversation needs your attention' : `${conversations} conversations need your attention`;
+  return requests === 0 ? waiting : `${waiting}, and ${requests === 1 ? '1 access request' : `${requests} access requests`}`;
+}
+
+export type AccessDecision = 'approve' | 'decline';
+
+/** What a request row says: who asked, for what. */
+export function accessRequestSummary(request: ConversationAccessRequestItem): string {
+  return `${request.requesterName} asked to join ${request.title}`;
 }
 
 /**
@@ -42,8 +53,15 @@ const AttentionTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTML
  * The sidebar's attention menu: every Channel and Breakout waiting for this
  * reader, each a link to where it is waiting. `docs/attention-menu.md`.
  */
-export function AttentionMenu({ items, complete = true }: {
+export function AttentionMenu({ items, complete = true, requests = [], onDecide, onOpenRequest, decisionFailed = false }: {
   items: readonly AttentionItem[];
+  /** Access requests waiting on this person, listed first with their two buttons. */
+  requests?: readonly ConversationAccessRequestItem[];
+  onDecide?: (request: ConversationAccessRequestItem, decision: AccessDecision) => void;
+  /** Choosing the row rather than a button: open the request's dialog. */
+  onOpenRequest?: (request: ConversationAccessRequestItem) => void;
+  /** The last approve or decline was refused; its row is back in the list. */
+  decisionFailed?: boolean;
   /**
    * False while the Channel directory is still loading or partly unloaded, so
    * an empty list is not yet "nothing". The items are what has loaded.
@@ -51,8 +69,8 @@ export function AttentionMenu({ items, complete = true }: {
   complete?: boolean;
 }): React.JSX.Element {
   const navigate = useNavigate();
-  const count = items.length;
-  const label = count > 0 ? attentionLabel(count) : complete ? NOTHING_NEEDS_ATTENTION : STILL_LOADING;
+  const count = items.length + requests.length;
+  const label = count > 0 ? attentionLabel(count, requests.length) : complete ? NOTHING_NEEDS_ATTENTION : STILL_LOADING;
   const [open, setOpen] = useState(false);
   // The tip would sit over the menu's first row; it is closed while the menu is open.
   const [tipOpen, setTipOpen] = useState(false);
@@ -70,6 +88,46 @@ export function AttentionMenu({ items, complete = true }: {
     </Tip>
     <DropdownMenu.Portal>
       <DropdownMenu.Content align="start" aria-label="Needs your attention" className="menu-content attention-menu" collisionPadding={8} sideOffset={6}>
+        {decisionFailed && <div className="attention-menu-error" role="alert">That didn’t go through. Try again.</div>}
+        {requests.map((request) => <div
+          aria-label={accessRequestSummary(request)}
+          className="attention-menu-request"
+          key={`request:${request.id}`}
+          role="group"
+        >
+          {/* The row itself opens the request's dialog, with its full
+              wording and the two choices as labelled buttons. */}
+          <DropdownMenu.Item
+            className="attention-menu-request-open"
+            onSelect={() => onOpenRequest?.(request)}
+          >
+            <WorkstreamGlyph appearance={request.appearance ?? undefined} id={request.markId} size={20} />
+            <span className="attention-menu-text">
+              <span className="attention-menu-title">{request.title}</span>
+              <span className="attention-menu-detail">{request.requesterName} asked to join</span>
+            </span>
+          </DropdownMenu.Item>
+          {/* Items, so arrow keys reach them like any other row; selecting
+              one keeps the menu open for the next request. */}
+          <Tip describesTrigger={false} label="Approve" side="top">
+            <DropdownMenu.Item
+              aria-label={`Approve ${request.requesterName}`}
+              className="attention-menu-decision is-approve"
+              onSelect={(event) => { event.preventDefault(); onDecide?.(request, 'approve'); }}
+            >
+              <IconCheck aria-hidden="true" size={16} stroke={2} />
+            </DropdownMenu.Item>
+          </Tip>
+          <Tip describesTrigger={false} label="Decline" side="top">
+            <DropdownMenu.Item
+              aria-label={`Decline ${request.requesterName}`}
+              className="attention-menu-decision is-decline"
+              onSelect={(event) => { event.preventDefault(); onDecide?.(request, 'decline'); }}
+            >
+              <IconCancel aria-hidden="true" size={16} stroke={2} />
+            </DropdownMenu.Item>
+          </Tip>
+        </div>)}
         {count === 0
           ? <div className="attention-menu-empty">{complete ? NOTHING_NEEDS_ATTENTION : STILL_LOADING}</div>
           : items.map((item) => <DropdownMenu.Item
@@ -94,3 +152,4 @@ export function AttentionMenu({ items, complete = true }: {
     </DropdownMenu.Portal>
   </DropdownMenu.Root>;
 }
+

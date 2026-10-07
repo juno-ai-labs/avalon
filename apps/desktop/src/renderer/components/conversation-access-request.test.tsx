@@ -43,7 +43,7 @@ describe('ConversationAccessRequest', () => {
   it('asks about the Breakout the link names', async () => {
     const api = fakeApi(preview({ kind: 'breakout', title: 'Pricing' }));
     show(api, BREAKOUT);
-    expect(await screen.findByText('You’re not in this breakout. Ask for access and its creator gets an email to approve you.')).toBeTruthy();
+    expect(await screen.findByText('You’re not in this breakout, ask for access below')).toBeTruthy();
     expect(api.conversationAccessPreview).toHaveBeenCalledWith(PARENT, BREAKOUT);
   });
 

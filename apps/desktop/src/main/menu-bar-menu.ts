@@ -21,7 +21,16 @@ export interface MenuBarAttentionRow {
   readonly reason: ReaderMarkerStatus;
 }
 
+/** A request to join a Channel or Breakout, waiting on this person. */
+export interface MenuBarAccessRequestRow {
+  readonly id: string;
+  readonly requesterName: string;
+  readonly title: string;
+}
+
 export interface MenuBarContent {
+  /** Access requests waiting on this person, newest first; listed above the conversations and counted with them. */
+  readonly accessRequests: readonly MenuBarAccessRequestRow[];
   /** Every waiting conversation, in the sidebar's attention order. The menu draws the first few; the count is all of them. */
   readonly attention: readonly MenuBarAttentionRow[];
   /** False while the Channel directory is still being read, so an empty list is not yet "nothing". */
@@ -30,10 +39,11 @@ export interface MenuBarContent {
   readonly recents: readonly MenuBarWorkstream[];
 }
 
-export const emptyMenuBarContent: MenuBarContent = { attention: [], attentionComplete: false, recents: [] };
+export const emptyMenuBarContent: MenuBarContent = { accessRequests: [], attention: [], attentionComplete: false, recents: [] };
 
 export type MenuBarAction =
   | 'attention_conversation'
+  | 'access_request'
   | 'recent_workstream'
   | 'open_rally'
   | 'quit_rally';
@@ -43,6 +53,8 @@ export interface MenuBarActions {
   readonly selected: (action: MenuBarAction) => void;
   /** `substreamId` names a Breakout; null opens Main. */
   readonly openConversation: (workstreamId: string, substreamId: string | null) => void;
+  /** Opens the main window on this request's approve-or-decline dialog. */
+  readonly openAccessRequest: (requestId: string) => void;
   readonly openRally: () => void;
   readonly quit: () => void;
 }
@@ -191,7 +203,14 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
   if (!options.signedIn) {
     pushSection(ATTENTION_HEADER, [], 'Sign in to Rally');
   } else {
-    const attention = content.attention.slice(0, MENU_BAR_SECTION_LIMIT).map((row): MenuItemConstructorOptions => ({
+    // Requests first: each is somebody waiting on this person, and the menu
+    // cannot approve in place, so a row opens the decision in the main window.
+    const requests = content.accessRequests.slice(0, MENU_BAR_SECTION_LIMIT).map((row): MenuItemConstructorOptions => ({
+      label: menuBarLabel(`${row.requesterName} asked to join ${row.title}`),
+      sublabel: 'Access request',
+      click: tracked('access_request', () => actions.openAccessRequest(row.id)),
+    }));
+    const conversations = content.attention.slice(0, Math.max(0, MENU_BAR_SECTION_LIMIT - requests.length)).map((row): MenuItemConstructorOptions => ({
       label: menuBarLabel(row.title),
       // The sidebar menu's detail line: why it is waiting, and where for a Breakout.
       sublabel: menuBarLabel(row.channelTitle === null
@@ -201,6 +220,7 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     }));
     // The sidebar's own wording: "nothing" only once every Channel has been
     // read, and "still loading" under rows that may not be all of them.
+    const attention = [...requests, ...conversations];
     const attentionTrailing = !content.attentionComplete
       ? 'Still loading channels'
       : attention.length === 0 ? 'Nothing needs your attention' : null;
