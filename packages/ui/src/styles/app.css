@@ -7004,11 +7004,16 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    of state on it moves rather than jumps — the + widens into the search field,
    the lists rise into place, a person added arrives in the stack — on the same
    curve the launch hand-off uses. `prefers-reduced-motion` is cut globally. */
+/* The three rows share one left edge as the eye reads it, not as the boxes
+   measure it. A round end reads as starting inside its box: about 3px for the
+   composer's 44px capsule and 2px for the 32px Space pill, while the label's
+   text starts 1px inside its own box. So the pill sits 1px in from the
+   composer and the label 2px, and all three read at the composer's edge + 3. */
 .new-channel-setup {
   display: grid;
   gap: 10px;
   margin-bottom: 10px;
-  padding: 0 6px;
+  padding: 0 6px 0 1px;
 }
 
 .new-channel-participants {
@@ -7016,6 +7021,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   display: flex;
   gap: 8px;
   min-width: 0;
+  padding-left: 1px;
 }
 
 .new-channel-participants-label {
@@ -7238,6 +7244,9 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
   font-size: 13px;
   gap: 6px;
   height: 32px;
+  /* A whole pixel. The base 1.25 gives 16.25px, and the fraction rounds the
+     name 1px above the pill's centre and the name field's text beside it. */
+  line-height: 16px;
   max-width: 45%;
   min-width: 0;
   padding: 0 10px 0 12px;
@@ -7246,6 +7255,9 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 }
 
 .dropdown-select-trigger-pill > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The chevron's ink is its point, which sits 1px above the name's centre; the
+   nudge puts both on the pill's centre line. */
+.dropdown-select-trigger-pill .dropdown-select-chevron { transform: translateY(1px); }
 .dropdown-select-trigger-pill[data-state='open'] { background-image: var(--hover-layer); }
 [data-theme='dark'] .dropdown-select-trigger-pill { background: var(--av-sys-color-surface-subtle); }
 
