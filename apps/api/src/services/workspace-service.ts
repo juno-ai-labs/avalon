@@ -565,6 +565,22 @@ export class WorkspaceService {
   }
 
   /**
+   * Move this Organization to a plan. Administrators only, as with every other
+   * Organization-wide setting; there is no billing behind it yet, so the change
+   * is the quota alone (docs/usage-metering.md).
+   */
+  async setPlan(plan: PlanId): Promise<OrganizationUsage> {
+    this.requireAdmin();
+    const now = Date.now();
+    if (!await setWorkspacePlan(this.env, this.auth.workspaceId, plan, now)) {
+      throw new ApiError(404, "workspace_not_found", "Workspace not found");
+    }
+    const usage = await readOrganizationUsage(this.env, this.auth.workspaceId, now);
+    if (!usage) throw new ApiError(404, "workspace_not_found", "Workspace not found");
+    return usage;
+  }
+
+  /**
    * Set the role on a membership that already exists — the one way a workspace
    * grows a second administrator.
    *
@@ -598,22 +614,6 @@ export class WorkspaceService {
    * runs second finds the invariant it needed already gone, and changes
    * nothing.
    */
-  /**
-   * Move this Organization to a plan. Administrators only, as with every other
-   * Organization-wide setting; there is no billing behind it yet, so the change
-   * is the quota alone (docs/usage-metering.md).
-   */
-  async setPlan(plan: PlanId): Promise<OrganizationUsage> {
-    this.requireAdmin();
-    const now = Date.now();
-    if (!await setWorkspacePlan(this.env, this.auth.workspaceId, plan, now)) {
-      throw new ApiError(404, "workspace_not_found", "Workspace not found");
-    }
-    const usage = await readOrganizationUsage(this.env, this.auth.workspaceId, now);
-    if (!usage) throw new ApiError(404, "workspace_not_found", "Workspace not found");
-    return usage;
-  }
-
   async setMemberRole(userId: string, role: AssignableMemberRole): Promise<void> {
     this.requireAdmin();
     // Parsed rather than trusted. The route validates the body, but this is
