@@ -221,9 +221,11 @@ For a notarized release candidate, repeat the selected-icon test from an install
 - **Reset leaves a stale icon:** confirm the native bridge can resolve `SLSIconAppearanceConfiguration`. The default returns after the Dock cache is rebuilt even when the private best-effort refresh is unavailable.
 - **Packaging rejects nested code:** rebuild with `pnpm --filter @rally/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
 
+## Changelog
+
 ### 2026-10-07 — The favicon disc is wider, so the mark has room inside it
 
-`FAVICON_DISC_RADIUS` went from 160 to 204, and `favicon.svg` and
+**What changed:** `FAVICON_DISC_RADIUS` went from 160 to 204, and `favicon.svg` and
 `favicon.png` were regenerated from it.
 
 **Why:** The thick stroke reaches 142.3 units from the centre, which left a
@@ -234,9 +236,11 @@ the radius. 185 was tried first and judged still too tight.
 **Considered and rejected:** Thinning the stroke instead. `THICK_STROKE` is
 shared with the menu bar glyph, and the favicon needs the weight at 16 px.
 
-**What a future change has to respect:** The disc radius sets both the padding
-and the mark's size in the icon; a larger disc shrinks the mark. Raising it much
-further makes the mark too small to read at 16 px.
+**Consequences:** The disc radius sets both the padding and the mark's size in
+the icon; a larger disc shrinks the mark. Raising it much further makes the mark
+too small to read at 16 px.
+
+PR: #1165.
 
 ### 2026-10-07 — The mark is generated from its equation; the favicon is the thick mark on a black disc; the menu bar glyph is twice as thick
 
