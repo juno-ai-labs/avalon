@@ -1,5 +1,5 @@
-import { onlineManager, useQuery } from '@tanstack/react-query';
-import { LOW_QUOTA_PERCENT, OrganizationUsageSchema, PLANS, type OrganizationUsage } from '@rally/contracts/usage';
+import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { LOW_QUOTA_PERCENT, OrganizationUsageSchema, PLANS, type OrganizationUsage, type PlanId } from '@rally/contracts/usage';
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { RallyApi } from './api';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
@@ -18,6 +18,9 @@ import { useLocalCacheScope } from './local-cache-scope';
 
 /** The surface only needs this one call, not the whole renderer client. */
 export type OrganizationUsageApi = Pick<RallyApi, 'getWorkspaceUsage'>;
+
+/** What Settings needs on top of the read: an administrator choosing the plan. */
+export type OrganizationPlanApi = OrganizationUsageApi & Pick<RallyApi, 'setWorkspacePlan'>;
 
 /** One answer and when it arrived, which is what the offline label names. */
 export interface UsageReading {
@@ -107,12 +110,37 @@ export function useOrganizationUsage(api: OrganizationUsageApi | null): Organiza
   return reading ? { status: 'ready', reading, offline: false, retry } : { status: 'loading', retry };
 }
 
+/**
+ * Moves the Organization to a plan. The answer is the meter under the new plan,
+ * written straight into the read and the cache, so the section repaints at once
+ * without a second request.
+ */
+export function useSetOrganizationPlan(api: OrganizationPlanApi | null) {
+  const scope = useLocalCacheScope();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (plan: PlanId): Promise<UsageReading> => {
+      const epoch = localCacheEpoch();
+      const usage = await api!.setWorkspacePlan(plan);
+      const reading = { usage, fetchedAt: new Date().toISOString() };
+      if (scope) void usageCacheSlice.write(scope, USAGE_KEY, reading, USAGE_KEY, epoch);
+      return reading;
+    },
+    onSuccess: (reading) => queryClient.setQueryData(organizationUsageQueryKey(scope), reading),
+  });
+}
+
 export function usageTone(usage: OrganizationUsage): 'normal' | 'warning' {
   return usage.quotaRemainingPercent < LOW_QUOTA_PERCENT ? 'warning' : 'normal';
 }
 
-export function usagePlanLabel(usage: OrganizationUsage): string {
-  return `${PLANS[usage.plan].name} plan`;
+export function usagePlanLabel(plan: PlanId): string {
+  return `${PLANS[plan].name} plan`;
+}
+
+/** "$100 a month", under each plan in the picker. */
+export function usagePlanPriceLabel(plan: PlanId): string {
+  return `$${PLANS[plan].monthlyPriceUsd} a month`;
 }
 
 /** The line beside the meter in Settings. */

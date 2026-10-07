@@ -1,4 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { PLAN_IDS, PlanIdSchema } from '@rally/contracts/usage';
 import { useEffect, useRef } from 'react';
 import { settings } from '../settings/registry';
 import { SettingLabel } from '../settings/setting-label';
@@ -8,24 +9,34 @@ import {
   usageMenuLabel,
   usagePeriodLabel,
   usagePlanLabel,
+  usagePlanPriceLabel,
   usageRemainingLabel,
   usageResetLabel,
   usageTone,
   useOrganizationUsage,
+  useSetOrganizationPlan,
+  type OrganizationPlanApi,
   type OrganizationUsageApi,
   type UsageReading,
 } from '../lib/organization-usage';
-import { Badge, Button, Meter, Tip } from './primitives';
+import { Badge, Button, DropdownSelect, InlineError, Meter, Tip } from './primitives';
 
 const METER_LABEL = 'Weekly quota left';
+const PLAN_OPTIONS = PLAN_IDS.map((plan) => ({
+  value: plan,
+  label: usagePlanLabel(plan),
+  description: usagePlanPriceLabel(plan),
+}));
 export const NOT_BILLED_EXPLANATION = "Rally isn't charging for usage beyond your plan yet.";
 
 /**
  * Settings → Organization → Usage. Every member sees it, whatever their role:
- * the quota is shared, so everyone spending it should be able to see it.
+ * the quota is shared, so everyone spending it should be able to see it. Only
+ * an administrator can change the plan; everyone else sees the picker locked.
  */
-export function UsageSettingsSection({ api, openRequest = 0, organizationName }: {
-  api: OrganizationUsageApi | null;
+export function UsageSettingsSection({ api, canChangePlan, openRequest = 0, organizationName }: {
+  api: OrganizationPlanApi | null;
+  canChangePlan: boolean;
   /**
    * Counts the requests to open this section's pane. Mounting already fetches;
    * a change after that is the pane being asked for again in a window that
@@ -45,7 +56,13 @@ export function UsageSettingsSection({ api, openRequest = 0, organizationName }:
       <div className="settings-pane-heading"><h2><SettingLabel setting={settings.usage} /></h2></div>
       <div className="settings-list-card">
         {state.status === 'ready' ? (
-          <UsageReadingRows offline={state.offline} organizationName={organizationName} reading={state.reading} />
+          <UsageReadingRows
+            api={api}
+            canChangePlan={canChangePlan}
+            offline={state.offline}
+            organizationName={organizationName}
+            reading={state.reading}
+          />
         ) : state.status === 'loading' ? (
           <div className="usage-summary">
             <Meter label={METER_LABEL} value={null} />
@@ -62,15 +79,31 @@ export function UsageSettingsSection({ api, openRequest = 0, organizationName }:
   );
 }
 
-function UsageReadingRows({ offline, organizationName, reading }: {
+function UsageReadingRows({ api, canChangePlan, offline, organizationName, reading }: {
+  api: OrganizationPlanApi | null;
+  canChangePlan: boolean;
   offline: boolean;
   organizationName: string;
   reading: UsageReading;
 }): React.JSX.Element {
   const { usage, fetchedAt } = reading;
+  const setPlan = useSetOrganizationPlan(api);
   return <>
     <div className="usage-summary">
-      <strong className="usage-plan">{usagePlanLabel(usage)}</strong>
+      <div className="usage-plan">
+        <DropdownSelect
+          ariaLabel="Plan"
+          disabled={!canChangePlan || !api || offline || setPlan.isPending}
+          onValueChange={(value) => {
+            const plan = PlanIdSchema.parse(value);
+            if (plan !== usage.plan) setPlan.mutate(plan);
+          }}
+          options={PLAN_OPTIONS}
+          value={setPlan.isPending ? setPlan.variables ?? usage.plan : usage.plan}
+          variant="secondary"
+        />
+      </div>
+      {setPlan.error && <InlineError>The plan could not be changed. {setPlan.error.message}</InlineError>}
       <Meter label={METER_LABEL} tone={usageTone(usage)} value={usage.quotaRemainingPercent} />
       <p className="usage-remaining">
         <span>{usageRemainingLabel(usage.quotaRemainingPercent)}</span>
