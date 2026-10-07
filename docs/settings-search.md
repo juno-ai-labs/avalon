@@ -68,7 +68,9 @@ Every installed connection is a page of its own under `connections`, drawn with
 its company's mark (`connectorBrandMark`), personal before organization as the
 tables list them. They share one section, `connection`, and the selected
 connection ID names the instance, the same pair a search result carries. Each
-page shows status, access, tool count and the row's own actions; a definition
+row of the Connections tables opens its connection's page, and the page is the
+only place its actions (refresh, delete, manage events) are offered. Each page
+shows status, access, tool count and those actions; a definition
 with a `connectionKind` adds its control to the page of every connection whose
 `settingsKind` matches, which is how GitHub repository access and custom MCP
 tools appear only where they apply. A connection with nothing else to configure
@@ -197,7 +199,10 @@ Cloudflare's.
 **Why:** A workspace with two MCP servers had one **MCP tools** page and had to
 pick a server from a dropdown on it, and a connection with no settings of its
 own had nowhere to be looked at but a table row. One page per connection gives
-each a place to be found, from the sidebar or from search, whatever its kind.
+each a place to be found, from the sidebar, the table or search, whatever its
+kind. The table's inline actions moved onto the page, so the list is for finding
+a connection and the page is for acting on it, and the two never disagree about
+which actions a connection offers.
 
 **Considered and rejected:** A section per connector kind, as before, keeps the
 dropdown and leaves most connections without a page. Reading each custom

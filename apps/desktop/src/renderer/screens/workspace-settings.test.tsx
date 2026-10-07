@@ -195,6 +195,12 @@ function revealWindow(): void {
   window.dispatchEvent(new Event('visibilitychange'));
 }
 
+/** Opens a connection's own page from its row on Connections, where its actions are. */
+async function openConnection(name: string): Promise<void> {
+  fireEvent.click(await within(screen.getByRole('main')).findByRole('button', { name }));
+  await screen.findByRole('heading', { level: 1, name });
+}
+
 function openSettingsSection(
   name: 'Account' | 'Digest' | 'Organization' | 'Internet access' | 'Connections' | 'Application',
 ): void {
@@ -1038,7 +1044,11 @@ describe('Organization settings', () => {
     expect(screen.queryByRole('heading', { level: 2, name: 'Repository access' })).not.toBeInTheDocument();
     expect(api.getGitHubRepositoryAccessSettings).not.toHaveBeenCalled();
 
-    fireEvent.click(githubNavigation);
+    // A row on Connections opens the same page from anywhere along it.
+    openSettingsSection('Connections');
+    const table = await screen.findByRole('table', { name: 'Organization connections' });
+    fireEvent.click(within(table).getByRole('cell', { name: '20' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'GitHub · Rally' })).toBeVisible();
     expect(githubNavigation).toHaveAttribute('aria-current', 'page');
     expect(granolaNavigation).not.toHaveAttribute('aria-current');
     expect(await screen.findByRole('heading', { level: 2, name: 'Repository access' })).toBeVisible();
@@ -1416,6 +1426,7 @@ describe('Organization settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
+    await openConnection('Imported connection label');
     fireEvent.click(await screen.findByRole('button', { name: 'Refresh Imported connection label' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Refresh Imported connection label?' });
@@ -1447,6 +1458,7 @@ describe('Organization settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
+    await openConnection('Google · adam@example.com');
     fireEvent.click(await screen.findByRole('button', { name: 'Refresh Google · adam@example.com' }));
     const dialog = await screen.findByRole('dialog', { name: 'Refresh Google · adam@example.com?' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
@@ -1476,6 +1488,7 @@ describe('Organization settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
+    await openConnection('Google · adam@example.com');
     const reconnectButton = await screen.findByRole('button', { name: 'Refresh Google · adam@example.com' });
     fireEvent.click(reconnectButton);
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Continue' }));
@@ -1514,6 +1527,7 @@ describe('Organization settings', () => {
     fireEvent.click(await enabledConnectAction(mailCard!, 'Connect for me'));
 
     expect(await within(mailCard!).findByText('Waiting…')).toBeVisible();
+    await openConnection('Google · adam@example.com');
     expect(screen.getByRole('button', { name: 'Refresh Google · adam@example.com' }))
       .toHaveAttribute('aria-disabled', 'true');
   });
@@ -1673,6 +1687,7 @@ describe('Organization settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
+    await openConnection('Ashby organization events');
     fireEvent.click(await screen.findByRole('button', { name: 'Manage events for Ashby organization events' }));
     expect(await screen.findByRole('dialog', { name: 'Organization events' })).toBeVisible();
     await waitFor(() => expect(api.connectorInstallation).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000022'));
@@ -2055,7 +2070,11 @@ describe('Organization settings', () => {
     ]);
     expect(within(filter).getByRole('radio', { name: 'Not connected' })).toBeChecked();
     expect(screen.queryByText('Google Mail + Calendar')).not.toBeInTheDocument();
+    // The table opens a connection rather than acting on it.
+    expect(within(personalTable).queryByRole('button', { name: 'Refresh Google · adam@example.com' })).not.toBeInTheDocument();
+    expect(within(personalTable).queryByRole('button', { name: 'Delete Google · adam@example.com' })).not.toBeInTheDocument();
 
+    await openConnection('Google · adam@example.com');
     const reconnectButton = screen.getByRole('button', { name: 'Refresh Google · adam@example.com' });
     const disconnectButton = screen.getByRole('button', { name: 'Delete Google · adam@example.com' });
     fireEvent.click(reconnectButton);
@@ -2072,7 +2091,8 @@ describe('Organization settings', () => {
       '00000000-0000-7000-8000-000000000010',
     ));
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Connected' }));
+    openSettingsSection('Connections');
+    fireEvent.click(await screen.findByRole('radio', { name: 'Connected' }));
     await waitFor(() => expect(screen.getByText('Google Mail + Calendar')).toBeVisible());
     expect(screen.queryByText('Google Drive + Docs + Sheets')).not.toBeInTheDocument();
   });
@@ -2098,9 +2118,10 @@ describe('Organization settings', () => {
     openSettingsSection('Connections');
     fireEvent.click(screen.getByRole('radio', { name: 'All' }));
 
-    const rotateButton = await screen.findByRole('button', { name: 'Refresh Inbound webhook' });
-    expect(screen.getByRole('table', { name: 'Organization connections' })).toBeVisible();
+    expect(await screen.findByRole('table', { name: 'Organization connections' })).toBeVisible();
     expect(within(screen.getByRole('main')).getAllByText('Inbound webhook')).toHaveLength(2);
+    await openConnection('Inbound webhook');
+    const rotateButton = await screen.findByRole('button', { name: 'Refresh Inbound webhook' });
     expect(rotateButton).toBeVisible();
     fireEvent.focus(rotateButton);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
@@ -2151,9 +2172,12 @@ describe('Organization settings', () => {
 
     expect(await within(screen.getByRole('main')).findByText('Google · sam@example.com')).toBeVisible();
     expect(within(screen.getByRole('main')).getByText('Linear · Rally')).toBeVisible();
+    await openConnection('Google · sam@example.com');
     expect(screen.getByRole('button', { name: 'Refresh Google · sam@example.com' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Refresh Linear · Rally' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete Google · sam@example.com' })).toBeVisible();
+    openSettingsSection('Connections');
+    await openConnection('Linear · Rally');
+    expect(screen.queryByRole('button', { name: 'Refresh Linear · Rally' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Delete Linear · Rally' })).not.toBeInTheDocument();
   });
 
@@ -2174,6 +2198,7 @@ describe('Organization settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
+    await openConnection('Google · adam@example.com');
     const deleteButton = await screen.findByRole('button', { name: 'Delete Google · adam@example.com' });
     fireEvent.click(deleteButton);
     const dialog = await screen.findByRole('dialog', { name: 'Delete Google · adam@example.com?' });

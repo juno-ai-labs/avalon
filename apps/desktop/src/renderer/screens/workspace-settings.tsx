@@ -26,6 +26,7 @@ import {
   MonitorCog,
   Newspaper,
   Bell,
+  ChevronRight,
   Ellipsis,
   Plug,
   RefreshCcw,
@@ -1344,7 +1345,7 @@ export function WorkspaceSettingsScreen({
     });
   };
 
-  /** The management actions a connection offers, in its table row and on its page alike. */
+  /** The management actions a connection offers, on its own page. */
   const renderConnectionActions = (connection: WorkstreamConnection): React.JSX.Element => (
     <span className="settings-connection-actions">
       {isAdmin && connection.scope === 'workspace' && hasWorkspaceInstallationSurface(connection.connectorType) && (
@@ -1942,18 +1943,25 @@ export function WorkspaceSettingsScreen({
                               <th scope="col">Connection</th>
                               <th scope="col">Status</th>
                               <th className="settings-connection-tools" scope="col">Tools</th>
-                              <th scope="col"><span className="sr-only">Actions</span></th>
+                              <th scope="col"><span className="sr-only">Open</span></th>
                             </tr>
                           </thead>
                           <tbody>
                             {group.items.map((connection) => (
-                              <tr className="settings-connection-row" key={connection.id}>
+                              // The row is the way to a connection's page, where its
+                              // actions live. The name is the one focusable control;
+                              // the rest of the row forwards a click to it.
+                              <tr className="settings-connection-row" key={connection.id} onClick={() => {
+                                setSearchTarget(null);
+                                openConnectionPage(connection.id);
+                                setActiveSection('connection');
+                              }}>
                                 <td>
-                                  <span className="settings-connection-name">
+                                  <button className="settings-connection-name" type="button">
                                     <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
                                     <InstalledConnectionMark connection={connection} />
-                                    <span className="settings-connection-copy"><strong><SettingLabel setting={connectionSetting(connection, isAdmin)} /></strong></span>
-                                  </span>
+                                    <span className="settings-connection-copy"><strong>{connection.displayName}</strong></span>
+                                  </button>
                                 </td>
                                 <td><Badge>{connectionStatusLabel(connection)}</Badge></td>
                                 {/* From the list itself: a row with no count reads as a dash,
@@ -1967,7 +1975,7 @@ export function WorkspaceSettingsScreen({
                                 ) : (
                                   <td className="settings-connection-tools">{connection.toolCount}</td>
                                 )}
-                                <td>{renderConnectionActions(connection)}</td>
+                                <td><ChevronRight aria-hidden="true" className="settings-connection-chevron" size={15} /></td>
                               </tr>
                             ))}
                             {!connections.isLoading && group.items.length === 0 && (

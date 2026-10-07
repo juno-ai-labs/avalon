@@ -3011,7 +3011,22 @@ pre {
   padding: 8px 10px;
   vertical-align: middle;
 }
-.settings-connection-name { align-items: center; display: flex; gap: 9px; }
+.settings-connection-row { cursor: pointer; }
+.settings-connection-row:hover td { background: var(--av-sys-color-state-hover); }
+.settings-connection-name {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 9px;
+  padding: 0;
+  text-align: left;
+}
+.settings-connection-name:focus-visible { border-radius: 4px; box-shadow: var(--av-sys-focus-ring-default); outline: none; }
+.settings-connection-chevron { color: var(--av-sys-color-text-muted); vertical-align: middle; }
 /* Between the status dot and the name, at the row's own text colour, and sized
    through the row that owns it — a bare class here ties with `.connector-mark`
    and loses on order. The gap above spaces it from both without a rule of its
