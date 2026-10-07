@@ -2092,7 +2092,8 @@ pre {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
 }
-.conversation-access-request-sent { align-items: center; color: var(--av-sys-color-text-subtle); display: inline-flex; gap: 6px; }
+.conversation-access-request-sent { color: var(--av-sys-color-text-subtle); }
+.conversation-access-request-sent svg { display: inline-block; margin-right: 4px; vertical-align: -2px; }
 .screen-state-actions { align-items: center; display: flex; gap: 2px; position: absolute; right: 10px; top: 9px; }
 .muted-notice { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 
