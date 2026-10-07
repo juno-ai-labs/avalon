@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState, InlineError, LoadingState } from '../components/primitives';
-import { emptySpaceRoute, firstLandingWorkstream, skippedWorkstreamIds } from '../lib/workstream-landing';
+import { emptySpaceRoute, firstLandingWorkstream, landingSpaceId, skippedWorkstreamIds } from '../lib/workstream-landing';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useSpaceDirectories } from '../lib/use-space-directories';
@@ -32,14 +32,20 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   // directory has not caught up yet, and that row would otherwise be the
   // most recent one here.
   const loaded = workstreams.data;
+  // A screen that left a Channel in a Space names that Space, and the landing
+  // stays in it. A Space no longer listed, archived or never seen, lands across
+  // the Organization as a bare leave does.
+  const stayInSpaceId = useMemo(() => landingSpaceId(routeState), [routeState]);
+  const stayInSpace = stayInSpaceId === null ? undefined : spaces?.items.find((row) => row.id === stayInSpaceId);
   const candidates = useMemo(
-    () => loaded?.filter((workstream) => !skipped.has(workstream.id)) ?? [],
-    [loaded, skipped],
+    () => loaded?.filter((workstream) => !skipped.has(workstream.id)
+      && (stayInSpace === undefined || workstream.spaceIds.includes(stayInSpace.id))) ?? [],
+    [loaded, skipped, stayInSpace],
   );
   let savedSpaceId: string | null = null;
   try { if (savedSpace) savedSpaceId = decodeURIComponent(savedSpace[1]!); }
   catch { /* Ignore malformed local state. */ }
-  const awaitingSpace = savedSpaceId !== null && !spaces && state !== 'unavailable'
+  const awaitingSpace = (savedSpaceId ?? stayInSpaceId) !== null && !spaces && state !== 'unavailable'
     && sidebarConnect?.spacesLive !== false;
   // A batch can take a whole loaded page — the day's work streams, say — while
   // older ones sit beyond the cursor. No candidate on the pages held is then
@@ -73,6 +79,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
     return <LoadingState label="Opening channels…" />;
   }
   if (needsMore || awaitingSpaces) return <LoadingState label="Opening channels…" />;
+  if (stayInSpaceId !== null && awaitingSpace) return <LoadingState label="Opening spaces…" />;
   const first = firstLandingWorkstream(candidates);
   // Only a bare startup landing resumes the device's last view. A deliberate
   // leave carries state (including an empty skip list) and uses recency instead.
@@ -92,6 +99,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
     }
   }
   if (first) return <Navigate replace to={`/workstreams/${encodeURIComponent(first.id)}`} />;
+  if (stayInSpace) return <Navigate replace to={emptySpaceRoute(stayInSpace.id, !guest)} />;
   // No Channel to open. Every Channel is started from a Space, so an empty
   // Organization lands on starting one in General. A guest is not listed
   // General, and is told their shared Channels appear in the sidebar.

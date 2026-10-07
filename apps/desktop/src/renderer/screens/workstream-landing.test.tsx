@@ -68,6 +68,40 @@ describe('default channel landing', () => {
     expect(await screen.findByTestId('destination')).toHaveTextContent('/workstreams/recent');
   });
 
+  it('lands a leave in its Space, skipping the left Channel and other Spaces', async () => {
+    directory.data = [
+      { ...stream('elsewhere', null, '2026-09-09'), spaceIds: ['other'] },
+      { ...stream('left', null, '2026-09-08'), spaceIds: ['design'] },
+      { ...stream('older', null, '2026-09-01'), spaceIds: ['design'] },
+    ];
+    spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
+    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['left'], spaceId: 'design' } }} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/older$/u);
+  });
+
+  it('opens starting a Channel when a leave empties its Space', async () => {
+    directory.data = [
+      { ...stream('elsewhere', null, '2026-09-09'), spaceIds: ['other'] },
+      { ...stream('left', null, '2026-09-08'), spaceIds: ['design'] },
+    ];
+    spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
+    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['left'], spaceId: 'design' } }} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/spaces\/design\/workstreams\/new$/u);
+  });
+
+  it('waits for the Space directory before landing a leave in its Space', async () => {
+    directory.data = [
+      { ...stream('elsewhere', null, '2026-09-09'), spaceIds: ['other'] },
+      { ...stream('older', null, '2026-09-01'), spaceIds: ['design'] },
+    ];
+    const initial = { pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } };
+    const view = render(<Router initial={initial} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Opening spaces');
+    spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
+    view.rerender(<Router initial={initial} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/older$/u);
+  });
+
   it('waits for the Space directory before resuming a saved Space', async () => {
     directory.data = [stream('recent', null, '2026-09-05')];
     localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/spaces/saved');
