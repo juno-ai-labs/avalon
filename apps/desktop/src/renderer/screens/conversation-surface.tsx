@@ -2652,7 +2652,7 @@ export function ConversationSurface({
       // A member holding a link to a Channel or Breakout they are not in sees
       // its name and can ask to join; every other failure keeps its own screen.
       return parentKind === 'workstream' && !guest
-        ? <ConversationAccessRequest api={api} fallback={errorState} parentId={id} substreamId={substreamId} />
+        ? <ConversationAccessRequest api={api} fallback={errorState} onRetry={socketConnection.retryOpening} parentId={id} substreamId={substreamId} />
         : errorState;
     }
     const openingLabel = `Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`;

@@ -15,11 +15,19 @@ export function accessRequestsQueryKey(workspaceId: string): readonly unknown[] 
 const NONE: readonly ConversationAccessRequestItem[] = [];
 
 export function useAccessRequests(workspaceId: string | null | undefined): readonly ConversationAccessRequestItem[] {
-  return useQuery<readonly ConversationAccessRequestItem[]>({
+  return useAccessRequestList(workspaceId).requests;
+}
+
+/** The list, and whether the socket has sent it yet: before it has, an empty list means "not known", not "none". */
+export function useAccessRequestList(workspaceId: string | null | undefined): {
+  requests: readonly ConversationAccessRequestItem[]; loaded: boolean;
+} {
+  const data = useQuery<readonly ConversationAccessRequestItem[]>({
     queryKey: accessRequestsQueryKey(workspaceId ?? ''),
     queryFn: async () => NONE,
     enabled: false,
-  }).data ?? NONE;
+  }).data;
+  return { requests: data ?? NONE, loaded: data !== undefined };
 }
 
 export type AccessRequestDecisionApi = Pick<RallyApi, 'decideConversationAccess'>;

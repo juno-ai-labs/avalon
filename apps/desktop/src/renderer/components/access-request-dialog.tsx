@@ -2,7 +2,7 @@ import type { ConversationAccessRequestItem } from '@rally/contracts';
 import { IconCancel, IconCheck } from '@tabler/icons-react';
 import { useRef } from 'react';
 
-import { useAccessRequests, useDecideAccessRequest, type AccessRequestDecisionApi } from '../lib/access-requests';
+import { useAccessRequestList, useDecideAccessRequest, type AccessRequestDecisionApi } from '../lib/access-requests';
 import { Button, InlineError, Modal } from './primitives';
 import { WorkstreamGlyph } from './workstream-glyph';
 
@@ -22,7 +22,8 @@ export function AccessRequestDialog({ api, workspaceId, requestId, onClose }: {
   requestId: string | null;
   onClose: () => void;
 }): React.JSX.Element {
-  const requests = useAccessRequests(workspaceId);
+  // A menu bar click can open a fresh window before its socket has sent the list.
+  const { requests, loaded } = useAccessRequestList(workspaceId);
   const decide = useDecideAccessRequest(api, workspaceId);
   const listed = requests.find((item) => item.id === requestId) ?? null;
   // Answering drops the request from the list at once; the dialog keeps
@@ -40,7 +41,7 @@ export function AccessRequestDialog({ api, workspaceId, requestId, onClose }: {
     <Modal
       description={request
         ? `${request.requesterName} asked to join this ${request.kind}.`
-        : 'This request was already answered.'}
+        : loaded ? 'This request was already answered.' : 'Loading the request…'}
       footer={request ? (
         <>
           <Button disabled={decide.isPending} onClick={() => answer('decline')}>
