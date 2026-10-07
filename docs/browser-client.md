@@ -83,8 +83,10 @@ older shares itself, so signing in claims them like any other.
 
 For an unaddressed entry, the client lists the user's regional workspaces and can sign
 out through the ordinary browser-session logout. Workspace roots mount the shell,
-and canonical Space, Channel, and Breakout links activate the addressed
-workspace and open in it. A guest sees no setup or onboarding view.
+and canonical Space, Channel, Breakout and Sidekick links activate the addressed
+workspace and open in it. A copied link reaches here from the site's handoff
+page, whose **Continue in browser** keeps the path and swaps the host
+([`workstream-links.md`](workstream-links.md#the-handoff-page)). A guest sees no setup or onboarding view.
 
 Returning focus refreshes both the root session and the selected workspace
 relationship, even when the user ID is unchanged. The feed stays mounted while
@@ -219,7 +221,7 @@ authorizes every call. `GET /workspace` answers guests too, with
 else; the rest of `/workspace` stays member-only.
 
 The desktop shell routes by hash. Before its router mounts, the shell rewrites a
-canonical Channel or Space link, or an addressed Channel path such as an invitation email's, into
+canonical Channel, Space or Sidekick link, or an addressed Channel path such as an invitation email's, into
 the workspace path plus the hash the desktop's own deep links set
 (`shellLocation`). Losing access or a 401 asks the entry to re-read the server
 session, which unmounts the shell when the session is gone. The shell keeps

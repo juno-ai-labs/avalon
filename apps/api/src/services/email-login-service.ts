@@ -5,7 +5,7 @@ import { EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema 
 export { EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema } from "@rally/contracts/browser-session";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { browserOrigin } from "../lib/browser-origin";
+import { browserOrigin, browserReturnUrl } from "../lib/browser-origin";
 import { decryptString, encryptString, hmacSha256, randomToken, timingSafeEqualText } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
 import { resolveVerifiedEmailIdentity } from "./login-identity-service";
@@ -71,7 +71,11 @@ export async function startEmailLogin(env: Env, input: z.infer<typeof EmailLogin
   const policy = configuredEmailLoginPolicy(env);
   const token = randomToken();
   const code = otpCode(policy.otpDigits);
-  const url = new URL("/login/email",env.BROWSER_APP_ORIGIN);
+  // A sign-in started from a shared link lands back on it; the client reads
+  // the proof there as on the plain sign-in page.
+  const url = new URL(request.returnPath?.startsWith("/app/")
+    ? browserReturnUrl(env,request.returnPath)
+    : new URL("/login/email",env.BROWSER_APP_ORIGIN).toString());
   // Fragments do not reach the HTTP server, proxy logs or scanner GETs.
   url.hash = new URLSearchParams({ region:env.AVALON_REGION,challenge:request.challengeId,token }).toString();
   const now = Date.now();

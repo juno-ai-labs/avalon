@@ -6,7 +6,7 @@ import { asUserId, asWorkspaceId, RefreshTokenSchema, IdSchema, WorkspaceSchema,
 import { isDesktopDeepLinkProtocol, SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
-import { browserOrigin } from "../lib/browser-origin";
+import { browserOrigin, browserReturnUrl } from "../lib/browser-origin";
 import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { publishSessionRevocations, type RevokedSessionRow } from "./access-revocation";
 import { logWarn } from "../observability/logger";
@@ -192,16 +192,6 @@ function callbackUrl(env: Env, purpose: "identity" | "connector"): string {
  */
 function browserGoogleCallbackUrl(env: Env): string {
   return new URL(`/regional/${env.AVALON_REGION}/browser/google/callback`, browserOrigin(env)).toString();
-}
-
-/** Where a browser sign-in lands afterwards: a path on the browser host, nothing else. */
-function browserReturnUrl(env: Env, path: string | undefined): string {
-  const origin = browserOrigin(env).origin;
-  const target = new URL(path && path.startsWith("/") ? path : "/", origin);
-  if (target.origin !== origin || target.pathname.startsWith("//")) {
-    throw new ApiError(422, "invalid_return_uri", "The browser return path is not allowed");
-  }
-  return `${target.origin}${target.pathname}`;
 }
 
 interface GoogleCredentials {

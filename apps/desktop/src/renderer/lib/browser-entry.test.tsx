@@ -330,12 +330,14 @@ it('opens a shared conversation straight from sign-in, with nothing to accept', 
   const path = `/app/workspaces/global/${workspace.id}/workstreams/dddddddd-dddd-4ddd-8ddd-dddddddddddd`;
   history.replaceState(null, '', path);
   const requests: string[] = [];
+  let startBody: unknown = null;
   let signedIn = false;
   const expiresAt = new Date(Date.now() + 100_000).toISOString();
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
     const route = input.split('/browser')[1]!;
     requests.push(route);
     if (route === '/session' || (route === '/workspace/select' && !signedIn)) return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (route === '/email/start') startBody = JSON.parse(String(init?.body));
     if (route === '/email/start') return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: Date.now() + 600_000 }, { status: 202 });
     if (route === '/email/redeem') { signedIn = true; return Response.json({ user, workspace: null, expiresAt }); }
     if (route === '/workspace/select') return Response.json({ user, workspace, expiresAt });
@@ -351,6 +353,32 @@ it('opens a shared conversation straight from sign-in, with nothing to accept', 
   expect(await screen.findByText('Shared conversation')).toBeInTheDocument();
   expect(location.pathname).toBe(path);
   expect(requests.some((route) => route.includes('accept') || route === '/invitation')).toBe(false);
+  // The emailed link is minted on this page's path, so it lands back here too.
+  expect(startBody).toMatchObject({ returnPath: path });
+});
+
+it('signs in from an emailed link that landed on a shared path and opens what it names', async () => {
+  const path = `/app/workspaces/global/${workspace.id}/workstreams/dddddddd-dddd-4ddd-8ddd-dddddddddddd`;
+  history.replaceState(null, '', `${path}#region=global&challenge=cccccccc-cccc-4ccc-8ccc-cccccccccccc&token=proof-token`);
+  let signedIn = false;
+  const redeemed: unknown[] = [];
+  const expiresAt = new Date(Date.now() + 100_000).toISOString();
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const route = input.split('/browser')[1]!;
+    if (route === '/session' || (route === '/workspace/select' && !signedIn)) return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (route === '/email/redeem') { signedIn = true; redeemed.push(JSON.parse(String(init?.body))); return Response.json({ user, workspace: null, expiresAt }); }
+    if (route === '/workspace/select') return Response.json({ user, workspace, expiresAt });
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry renderCollaboration={() => <p>Shared conversation</p>} />);
+  expect(await screen.findByRole('heading', { name: 'Confirm your sign-in' })).toBeInTheDocument();
+  // The proof never stays in history; the path does.
+  expect(location.hash).toBe('');
+  expect(location.pathname).toBe(path);
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  expect(await screen.findByText('Shared conversation')).toBeInTheDocument();
+  expect(redeemed).toEqual([expect.objectContaining({ method: 'magic', credential: 'proof-token' })]);
+  expect(location.pathname).toBe(path);
 });
 
 it('treats an old token invitation link as a plain sign-in page', async () => {
