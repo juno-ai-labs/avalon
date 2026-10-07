@@ -15,6 +15,7 @@ import {
 } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { MacDownloadLink } from './mac-download-link';
+import { isMobileOs } from '../lib/browser-connectors';
 import type { RallyApi } from '../lib/api';
 import { workstreamRecencyAt } from '../lib/format';
 import { useAttentionItems } from '../lib/attention-items';
@@ -761,8 +762,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       <div className={shellClassName} style={shellStyle}>
       <Sidebar
         onOpenSearch={api ? () => setSearchOpen(true) : undefined}
-        // A browser tab always offers the Mac app, member or guest.
-        footerItems={host === 'browser' ? <MacDownloadLink /> : undefined}
+        // A desktop browser tab offers the Mac app, member or guest; a phone or tablet cannot run it.
+        footerItems={host === 'browser' && !isMobileOs(navigator.userAgent, navigator.platform, navigator.maxTouchPoints)
+          ? <MacDownloadLink />
+          : undefined}
         accountMenu={(
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}
