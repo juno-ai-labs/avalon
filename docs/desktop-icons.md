@@ -71,6 +71,9 @@ The renderer preview uses generated 128×128 copies and CSS rounding only to rep
    `assets/brand/rally-mark-source.png` together. Generated flat assets use the
    raster mask; the five supplied artworks must be updated separately if needed.
    Generated colours and composition live in `scripts/generate-brand-assets.py`.
+   The vector favicon, `favicon.svg` in both `apps/site/public/` and
+   `apps/browser/public/`, is a hand copy of `rally-mark-small.svg`'s path;
+   update it too.
 2. Regenerate the derived assets from the repository root:
 
    ```text
@@ -178,6 +181,30 @@ For a notarized release candidate, repeat the selected-icon test from an install
 - **The icon is square or double-masked:** confirm the source PNG is full-bleed and has no baked mask, inset, or platform shadow, then rebuild the selectable ICNS renditions with `pnpm --filter @rally/desktop build:macos-icons`.
 - **Reset leaves a stale icon:** confirm the native bridge can resolve `SLSIconAppearanceConfiguration`. The default returns after the Dock cache is rebuilt even when the private best-effort refresh is unavailable.
 - **Packaging rejects nested code:** rebuild with `pnpm --filter @rally/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
+
+### 2026-10-07 — The browser-tab favicon is the bare mark, in vector
+
+**What changed:** The site and the browser client now serve `favicon.svg`: the
+thick-stroke mark on transparency, volt on a dark tab bar and `#111210` on a
+light one through `prefers-color-scheme`. The generated `favicon.png`, kept as
+the fallback, is now the transparent mark rather than the mark on a dark
+square. The browser client had no favicon at all and now has the SVG. The
+touch icon stays an opaque square.
+
+**Why:** Safari draws a light outline around an opaque dark favicon in its dark
+tab bar, so the dark square read as a white-ringed tile next to icons with
+transparent backgrounds. A transparent mark gives Safari no square edge to
+outline. The SVG stays sharp at every tab size and can switch colour, which a
+PNG cannot, so the volt mark no longer washes out on a light tab bar.
+
+**Considered and rejected:** Shrinking or lightening the dark square. Any opaque
+dark tile still gets the outline. Making the touch icon transparent too: iOS
+fills transparency with black on the home screen.
+
+**Consequences:** `favicon.svg` is a copy of the canonical path, not generator
+output, so a mark change has to update it by hand (step 1 above). Safari
+versions without SVG favicon support fall back to the PNG, which has no square
+for the outline either.
 
 ### 2026-09-07 — Dock hosts read the installed icon catalog across upgrades
 

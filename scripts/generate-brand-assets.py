@@ -240,7 +240,10 @@ def main() -> None:
         menu_bar_template_icon(MENU_BAR_ICON_POINT_SIZE * 2),
         MENU_BAR_ICON_DIRECTORY / "rallyTemplate@2x.png",
     )
-    save(app_icon(64), ROOT / "apps" / "site" / "public" / "favicon.png")
+    # The favicon stays transparent. Safari outlines an opaque dark square in its
+    # dark tab bar; the bare mark gets no outline. The touch icon stays opaque
+    # because iOS fills transparency with black.
+    save(mark(64), ROOT / "apps" / "site" / "public" / "favicon.png")
     save(app_icon(180), ROOT / "apps" / "site" / "public" / "apple-touch-icon.png")
     # Off macOS the card would silently pick up a substitute typeface and
     # overwrite the committed one, which is a regression nobody reviewing an
