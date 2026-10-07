@@ -1530,13 +1530,8 @@ export function Sidebar({
     .sort(compareAlphabeticalName), [spaces, spacesReady]);
   const { host } = useShellCapabilities();
   const wideLayout = useWideLayout();
-  /**
-   * In a browser tab, an Organization with no Space but General draws New
-   * space at the end of the top bar, with no All, rather than a row of its
-   * own: a second row holding one filter that filters nothing is mostly
-   * empty. The first Space brings the row and All back. The phone sheet keeps the row, since its top bar shows
-   * while the sheet is shut and All means nothing there.
-   */
+  const [spaceActionSlot, setSpaceActionSlot] = useState<HTMLSpanElement | null>(null);
+  // The phone sheet keeps the row: its top bar shows while the sheet is shut.
   const spacePillsInline = host === 'browser'
     && wideLayout
     && spaces !== undefined
@@ -2146,27 +2141,6 @@ export function Sidebar({
     spacesReadOnly,
   ]);
 
-  const spacePills = spaces !== undefined && <SpacePills
-    inline={spacePillsInline}
-    inactiveSpaces={inactiveSpaces}
-    loading={directoryLoading}
-    readOnly={spacesReadOnly}
-    onArchive={onArchiveSpace}
-    onCreateChannel={createChannelFromSidebar}
-    onCreateSpace={createSpaceFromSidebar}
-    onMoveChannel={moveChannelFromSelectedSpace}
-    onRestore={onRestoreSpace}
-    onSelect={selectSpaceFromPill}
-    ready={spacesReady}
-    selectedSpaceId={selectedSpaceId}
-    revealSelection={activeDeepLinkReveal?.spaceId == null ? null : {
-      revision: activeDeepLinkReveal.revision,
-      spaceId: activeDeepLinkReveal.spaceId,
-    }}
-    spaces={placementSpaces}
-    workstreams={workstreams}
-  />;
-
   return (
     <>
       <ResizableSidebar
@@ -2231,9 +2205,29 @@ export function Sidebar({
               <IconMessagePlus aria-hidden="true" size={17} stroke={1.8} />
             </button>
           </NewWorkstreamMenu>}
-          {spacePillsInline && spacePills}
+          {/* Holds New space when the Space row folds into this bar. */}
+          <span className="sidebar-top-space-slot" ref={setSpaceActionSlot} />
         </SidebarTopActions>
-        {!spacePillsInline && spacePills}
+        {spaces !== undefined && <SpacePills
+          inlineTarget={spacePillsInline ? spaceActionSlot : null}
+          inactiveSpaces={inactiveSpaces}
+          loading={directoryLoading}
+          readOnly={spacesReadOnly}
+          onArchive={onArchiveSpace}
+          onCreateChannel={createChannelFromSidebar}
+          onCreateSpace={createSpaceFromSidebar}
+          onMoveChannel={moveChannelFromSelectedSpace}
+          onRestore={onRestoreSpace}
+          onSelect={selectSpaceFromPill}
+          ready={spacesReady}
+          selectedSpaceId={selectedSpaceId}
+          revealSelection={activeDeepLinkReveal?.spaceId == null ? null : {
+            revision: activeDeepLinkReveal.revision,
+            spaceId: activeDeepLinkReveal.spaceId,
+          }}
+          spaces={placementSpaces}
+          workstreams={workstreams}
+        />}
 
         {/* Right-clicking empty space in the channel list offers the header
             button's channel items, locked to the Space the list shows. Always
