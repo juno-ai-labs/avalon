@@ -6,6 +6,7 @@ import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepart
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
 import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, type ConversationAccessDecisionResult, type ConversationAccessPreview } from "@rally/contracts";
+import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
@@ -909,6 +910,19 @@ export class RallyApi {
    */
   updateWorkspace(input: { name?: string; timezone?: string }): Promise<{ name: string; timezone: string }> {
     return this.request('/workspace', { method: 'PATCH', body: input, schema: WireWorkspaceSchema });
+  }
+
+  /** Rally access for this Organization (`docs/impersonation.md`). */
+  async getSupportAccess(): Promise<SupportAccess> {
+    return this.request('/workspace/support-access', { schema: SupportAccessSchema });
+  }
+
+  async grantSupportAccess(): Promise<SupportAccess> {
+    return this.request('/workspace/support-access', { method: 'PUT', schema: SupportAccessSchema });
+  }
+
+  async revokeSupportAccess(): Promise<SupportAccess> {
+    return this.request('/workspace/support-access', { method: 'DELETE', schema: SupportAccessSchema });
   }
 
   async getTerminalWorkspaceSettings(signal?: AbortSignal): Promise<TerminalWorkspaceSettings> {

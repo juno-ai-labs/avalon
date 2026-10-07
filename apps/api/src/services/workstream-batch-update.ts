@@ -81,6 +81,11 @@ export class WorkstreamBatchUpdateService {
 
   async enqueue(rawRequest: ApplyWorkstreamBatchRequest) {
     const request = ApplyWorkstreamBatchRequestSchema.parse(rawRequest);
+    // Rally staff on a support session never move the person's read state
+    // (`docs/impersonation.md`); marking read is accepted and does nothing.
+    if (request.update.kind === "mark_read" && this.auth.impersonatorUserId) {
+      return { operationId: request.operationId, enqueuedCount: 0, archivedNoteCount: 0 };
+    }
     const requestHash = workstreamImportHash({
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,

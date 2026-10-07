@@ -28,9 +28,9 @@ class SessionDatabase {
         first: async <T>() => {
           if (sql.startsWith("UPDATE sessions SET previous_refresh_token_hash")) {
             // Positions follow the statement in `AuthService.refresh`: the
-            // renewed expiry and ceiling modifier sit between the rotation
-            // stamp and the presented hashes.
-            const [newHash, nextRotatedAt, , , presentedCurrent, presentedPrevious, graceStart] = values as string[];
+            // renewed expiry, ceiling modifier and support-grant fallback sit
+            // between the rotation stamp and the presented hashes.
+            const [newHash, nextRotatedAt, , , , presentedCurrent, presentedPrevious, graceStart] = values as string[];
             const currentMatches = presentedCurrent === this.currentHash;
             const previousMatches = presentedPrevious === this.previousHash
               && this.rotatedAt !== null
@@ -39,7 +39,7 @@ class SessionDatabase {
             this.previousHash = this.currentHash;
             this.currentHash = newHash!;
             this.rotatedAt = nextRotatedAt!;
-            return { id: "session-1", user_id: userId, workspace_id: null } as T;
+            return { id: "session-1", user_id: userId, workspace_id: null, impersonator_user_id: null } as T;
           }
           if (sql.startsWith("UPDATE sessions SET revoked_at = ? WHERE id = ?")) {
             this.revokedSessionIds.push(String(values[1]));

@@ -58,7 +58,8 @@ async function establishWorkspace(): Promise<void> {
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,

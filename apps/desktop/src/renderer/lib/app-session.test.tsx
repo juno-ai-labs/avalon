@@ -79,6 +79,10 @@ const bridge = vi.hoisted(() => ({
   reselectActiveWorkspace: vi.fn(),
   showDeepLinkError: vi.fn<RallyDesktopBridge['showDeepLinkError']>(async () => undefined),
   surrenderActiveWorkspace: vi.fn(),
+  listSupportWorkspaces: vi.fn(),
+  listSupportPeople: vi.fn(),
+  startSupportSession: vi.fn(),
+  endSupportSession: vi.fn(),
   reportTelemetryProductIntent: vi.fn(),
 }) satisfies AppSessionDesktopBridge & Pick<RallyDesktopBridge, 'reportTelemetryProductIntent'>);
 const markDeepLinkWorkstreamNavigation = vi.hoisted(() => vi.fn());

@@ -13,6 +13,7 @@ import { publishSessionRevocations, type RevokedSessionRow } from "./access-revo
 import { logWarn } from "../observability/logger";
 import { openString, randomToken, sealString, sha256, timingSafeEqualText } from "../lib/crypto";
 import { persistVerifiedGoogleIdentity } from "./login-identity-service";
+import { supportOrganizationId, supportSessionLiveSql } from "./support-access";
 
 const encoder = new TextEncoder();
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
@@ -43,12 +44,25 @@ export async function purgeExpiredEmailLoginChallenges(env: Env): Promise<void> 
           SELECT 1 FROM sessions s WHERE s.id = email_login_challenges.session_id))))`)
     .bind(now, new Date(now).toISOString(), now - SESSION_RENEWAL_WINDOW_SECONDS * 1_000).run();
 }
-/** Fixed SQL fragments for renewal of the ordinary sessions table. */
-export function sessionRenewalPolicy(region: Region, now = nowIso()) {
+/**
+ * Fixed SQL fragments for renewal of the ordinary sessions table.
+ *
+ * A support session (`impersonator_user_id` set) renews only while its grant
+ * and its staff member's membership are live, and never past the grant's
+ * expiry, so the seven days an Organization gave cannot be renewed past.
+ */
+export function sessionRenewalPolicy(env: Pick<Env, "AVALON_REGION" | "APP_ENV" | "RALLY_DEV_AUTH">, now = nowIso()) {
   const ceiling = `+${SESSION_MAX_LIFETIME_SECONDS} seconds`;
   return {
-    expirySql: "MIN(?, strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?))",
-    expiryValues: [new Date(Date.parse(now) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(), ceiling],
+    expirySql: `MIN(?, strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?), COALESCE((
+      SELECT support_grant.expires_at FROM support_access_grants support_grant
+      WHERE support_grant.workspace_id = sessions.workspace_id AND sessions.impersonator_user_id IS NOT NULL
+    ), ?))`,
+    expiryValues: [
+      new Date(Date.parse(now) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(),
+      ceiling,
+      "9999-12-31T23:59:59.999Z",
+    ],
     eligibilitySql: `region = ? AND revoked_at IS NULL AND expires_at > ?
       AND strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?) > ?
       AND (workspace_id IS NULL OR EXISTS (
@@ -56,8 +70,9 @@ export function sessionRenewalPolicy(region: Region, now = nowIso()) {
         WHERE member.workspace_id = sessions.workspace_id AND member.user_id = sessions.user_id
           AND member.status = 'active' AND member.incarnation = sessions.workspace_incarnation
           AND workspace.abandoned_at IS NULL
-      ))`,
-    eligibilityValues: [region, now, ceiling, now],
+      ))
+      AND (impersonator_user_id IS NULL OR (${supportSessionLiveSql("sessions")}))`,
+    eligibilityValues: [env.AVALON_REGION, now, ceiling, now, now, supportOrganizationId(env)],
   };
 }
 export const DEVELOPMENT_USER_ID = "00000000-0000-7000-8000-000000000001";
@@ -100,6 +115,8 @@ interface IdentityRow {
   workspace_timezone: string | null;
   workspace_created_at: string | null;
   role: "owner" | "admin" | "member" | null;
+  /** The staff member acting, on a support session only. */
+  impersonator?: Session["impersonator"];
 }
 
 function secretKey(env: Env): Uint8Array {
@@ -545,7 +562,7 @@ export class AuthService {
     const newHash = await sha256(newRefreshToken);
     const rotatedAt = nowIso();
     const replayGraceStart = new Date(Date.now() - 60_000).toISOString();
-    const renewal = sessionRenewalPolicy(this.env.AVALON_REGION, rotatedAt);
+    const renewal = sessionRenewalPolicy(this.env, rotatedAt);
     const row = await this.env.DB.prepare(
       `UPDATE sessions
        SET previous_refresh_token_hash = refresh_token_hash,
@@ -556,7 +573,7 @@ export class AuthService {
            OR (previous_refresh_token_hash = ? AND refresh_rotated_at >= ?)
          )
          AND ${renewal.eligibilitySql}
-       RETURNING id, user_id, workspace_id`,
+       RETURNING id, user_id, workspace_id, impersonator_user_id`,
     )
       .bind(
         newHash,
@@ -567,9 +584,12 @@ export class AuthService {
         replayGraceStart,
         ...renewal.eligibilityValues,
       )
-      .first<{ id: string; user_id: string; workspace_id: string | null }>();
+      .first<{ id: string; user_id: string; workspace_id: string | null; impersonator_user_id: string | null }>();
     if (!row) throw new ApiError(401, "invalid_refresh_token", "The refresh token is invalid or expired");
-    const identity = await this.loadIdentity(row.user_id, row.workspace_id);
+    const identity = {
+      ...await this.loadIdentity(row.user_id, row.workspace_id),
+      ...(row.impersonator_user_id ? { impersonator: await this.loadImpersonator(row.impersonator_user_id) } : {}),
+    };
     const accessToken = await issueAccessToken(this.env, {
       sessionId: row.id,
       userId: asUserId(row.user_id),
@@ -787,6 +807,73 @@ export class AuthService {
     return this.createSession(await this.loadIdentity(userId, workspaceId));
   }
 
+  /**
+   * Issues a support session: an ordinary session of `representedUserId` in
+   * `workspaceId`, carrying the staff member who is acting. The one statement
+   * that writes it admits nothing unless the grant is live, the operator is an
+   * active member of the staff Organization, and the represented person is an
+   * active member or guest, and it expires with the grant rather than slide
+   * past it. `SupportAccessService.start` is its only caller.
+   */
+  async createSupportSession(input: {
+    sessionId: string;
+    operatorUserId: string;
+    representedUserId: string;
+    workspaceId: string;
+    staffWorkspaceId: string;
+  }): Promise<Session> {
+    const sessionId = input.sessionId;
+    const refreshToken = randomToken(48);
+    const at = nowIso();
+    const inserted = await this.env.DB.prepare(
+      `INSERT INTO sessions
+       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at,
+        impersonator_user_id, impersonator_incarnation)
+       SELECT ?, m.user_id, m.workspace_id, ?, ?, MIN(?, g.expires_at), ?, staff.user_id, staff.incarnation
+         FROM workspace_members m
+         JOIN workspaces w ON w.id = m.workspace_id
+         JOIN support_access_grants g ON g.workspace_id = m.workspace_id AND g.expires_at > ?
+         JOIN workspace_members staff ON staff.workspace_id = ? AND staff.user_id = ?
+           AND staff.status = 'active' AND staff.access_class = 'member'
+        WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active'
+          AND w.region = ? AND w.abandoned_at IS NULL AND m.workspace_id != staff.workspace_id
+       RETURNING id`,
+    ).bind(
+      sessionId,
+      this.env.AVALON_REGION,
+      await sha256(refreshToken),
+      new Date(Date.parse(at) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(),
+      at,
+      at,
+      input.staffWorkspaceId,
+      input.operatorUserId,
+      input.representedUserId,
+      input.workspaceId,
+      this.env.AVALON_REGION,
+    ).first<{ id: string }>();
+    if (!inserted) {
+      throw new ApiError(403, "support_session_unavailable", "This person is not available for Rally access");
+    }
+    const identity = {
+      ...await this.loadIdentity(input.representedUserId, input.workspaceId),
+      impersonator: await this.loadImpersonator(input.operatorUserId),
+    };
+    const accessToken = await issueAccessToken(this.env, {
+      sessionId,
+      userId: asUserId(identity.user_id),
+      workspaceId: asWorkspaceId(input.workspaceId),
+      region: this.env.AVALON_REGION,
+    });
+    return this.formatSession(identity, accessToken, refreshToken);
+  }
+
+  async loadImpersonator(userId: string): Promise<NonNullable<Session["impersonator"]>> {
+    const row = await this.env.DB.prepare("SELECT id, email, name, avatar_url FROM users WHERE id = ?")
+      .bind(userId).first<{ id: string; email: string; name: string; avatar_url: string | null }>();
+    if (!row) throw new ApiError(401, "identity_not_found", "The signed-in user no longer exists");
+    return { id: row.id, email: row.email, name: row.name, avatarUrl: row.avatar_url };
+  }
+
   /** Issues a region-local identity session, bound to no workspace, for a
    * browser registration the Global control plane has already admitted. */
   async createIdentitySession(userId: string): Promise<Session> {
@@ -871,6 +958,7 @@ export class AuthService {
             createdAt: identity.workspace_created_at,
           }
         : null,
+      ...(identity.impersonator ? { impersonator: identity.impersonator } : {}),
       apiBaseUrl: this.env.PUBLIC_API_BASE_URL,
     };
   }

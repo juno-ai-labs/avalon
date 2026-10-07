@@ -1712,6 +1712,8 @@ pre {
 }
 
 .account-trigger:hover { background-image: var(--hover-layer); }
+/* A support session: the staff member acting, beside the person acted as. */
+.account-impersonator { display: flex; flex-shrink: 0; }
 .account-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .account-copy strong { font-size: 13px; font-weight: 500; line-height: 18px; overflow: hidden; white-space: nowrap; }
 .account-copy span { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; white-space: nowrap; }
@@ -1752,6 +1754,11 @@ pre {
 .workspace-menu-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-copy small { color: var(--av-sys-color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-error { color: var(--av-sys-color-danger-base) !important; }
+/* Rally access rows (docs/impersonation.md): another Organization's people. */
+.support-workspace-mark { color: var(--av-sys-color-text-muted); flex-shrink: 0; }
+.support-people-menu { max-height: var(--radix-dropdown-menu-content-available-height); min-width: 240px; overflow-y: auto; }
+.support-person-item { min-height: 38px; }
+.support-people-status { white-space: normal; }
 .workspace-region-tag {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-sys-color-border-subtle);
@@ -2359,6 +2366,9 @@ pre {
 }
 
 .settings-row-value { align-items: flex-end; display: flex; flex-direction: column; gap: 4px; text-align: right; }
+/* Allow Rally access: the time left sits before the button that ends it. */
+.support-access-controls { align-items: center; display: flex; flex-shrink: 0; gap: 12px; }
+.support-access-remaining { color: var(--av-sys-color-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .settings-row-value strong { font-size: 11.5px; }
 .workspace-settings-screen .settings-profile-card strong,
 .workspace-settings-screen .settings-member-row strong,
@@ -7509,6 +7519,7 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
 
 .settings-account-profile { display: grid; gap: 12px; }
+.settings-support-note { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 0; padding: 0 8px; }
 .settings-account-profile .settings-profile-card { border-radius: 0; }
 .settings-account-avatar { width: 38px; height: 38px; font-size: 13px; }
 .settings-account-profile .settings-preference-row { font-size: 13px; grid-template-columns: minmax(100px, 1fr) minmax(0, 280px); }

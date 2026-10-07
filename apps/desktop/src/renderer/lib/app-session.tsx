@@ -10,7 +10,7 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { AccountOnboarding, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
+import type { AccountOnboarding, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 import {
@@ -152,6 +152,17 @@ export interface AppSessionValue {
   signOut: () => Promise<void>;
   signOutIfCredentialCleared: () => Promise<void>;
   surrenderActiveWorkspace: () => Promise<void>;
+  /**
+   * Rally staff support access (`docs/impersonation.md`). The Organization
+   * list is `null` for anybody who is not Rally staff, and rejects only on a
+   * failure worth retrying.
+   * Starting a session makes the chosen person's view the active one, and
+   * ending it returns to the Organization used before.
+   */
+  listSupportWorkspaces: () => Promise<SupportWorkspace[] | null>;
+  listSupportPeople: (workspaceId: string) => Promise<SupportPerson[]>;
+  startSupportSession: (target: { region: Region; workspaceId: string }, userId: string) => Promise<void>;
+  endSupportSession: () => Promise<void>;
   clearDeepLinkError: () => void;
 }
 
@@ -185,6 +196,10 @@ export type AppSessionDesktopBridge = Pick<
   | 'reselectActiveWorkspace'
   | 'showDeepLinkError'
   | 'surrenderActiveWorkspace'
+  | 'listSupportWorkspaces'
+  | 'listSupportPeople'
+  | 'startSupportSession'
+  | 'endSupportSession'
 >;
 
 function configuredApiBase(runtime: RuntimeConfig, region: Region): string {
@@ -222,6 +237,15 @@ function sessionsShareDraftScope(
   return previousSession.apiBaseUrl === nextSession.apiBaseUrl
     && previousSession.user.email.toLocaleLowerCase('en-US') === nextSession.user.email.toLocaleLowerCase('en-US')
     && (previousSession.workspace?.id ?? null) === (nextSession.workspace?.id ?? null);
+}
+
+/**
+ * Send the main window home when a support session ends. Settings and the
+ * other auxiliary windows route by hash under a `?surface=`, so they keep
+ * their own route.
+ */
+function leaveSupportRoute(): void {
+  if (!new URLSearchParams(window.location.search).has('surface')) window.location.hash = '/';
 }
 
 export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.Element {
@@ -354,6 +378,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     }
     const previousSession = sessionRef.current;
     sessionRef.current = nextSession;
+    // A support session that ended underneath the window (revoked, expired,
+    // or ended in another window) leaves a route into somebody else's
+    // Organization; start over from the root of the one now in front.
+    if (previousSession?.impersonator && previousSession.user.id !== nextSession?.user.id) leaveSupportRoute();
     if (!sessionsShareCacheScope(previousSession, nextSession)) queryClient.clear();
     setSession(nextSession);
     if (nextSession) {
@@ -532,8 +560,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     landing: 'activation' | 'creation' = 'activation',
   ): Promise<void> => {
     const target = nextSession.workspace;
+    // A support session can be the same Organization as somebody else, which
+    // is a different view of it all the same.
     const workspaceChanged = !target || !previous?.workspace
-      || previous.workspace.id !== target.id || previous.workspace.region !== target.region;
+      || previous.workspace.id !== target.id || previous.workspace.region !== target.region
+      || previous.user.id !== nextSession.user.id;
     const prefetched = target && !workspaceFromSession(nextSession)
       ? await new RallyApi(nextSession.apiBaseUrl, nextSession).getWorkspace().catch(() => null)
       : null;
@@ -587,6 +618,34 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (pendingActivationRef.current === activation) pendingActivationRef.current = null;
     }
   }, [applyActivatedSession, bridge, withAccountIdentity]);
+
+  const startSupportSession = useCallback(async (
+    { region: targetRegion, workspaceId }: { region: Region; workspaceId: string },
+    userId: string,
+  ): Promise<void> => {
+    const previous = sessionRef.current;
+    // Held like an activation, so main's broadcast does not tear the shell
+    // down before the chosen person's view is ready to draw.
+    const activation = { region: targetRegion, workspaceId };
+    pendingActivationRef.current = activation;
+    try {
+      await applyActivatedSession(await bridge.startSupportSession({ workspaceId, userId }), previous);
+    } finally {
+      if (pendingActivationRef.current === activation) pendingActivationRef.current = null;
+    }
+  }, [applyActivatedSession, bridge]);
+
+  const endSupportSession = useCallback(async (): Promise<void> => {
+    const ending = sessionRef.current;
+    const nextSession = await bridge.endSupportSession();
+    // What the staff member saw as somebody else does not stay on this device.
+    if (ending?.impersonator && ending.workspace) {
+      await clearWorkspaceLocalCache(ending.user.id, ending.workspace.region, ending.workspace.id);
+    }
+    leaveSupportRoute();
+    queryClient.clear();
+    applySession(nextSession);
+  }, [applySession, bridge, queryClient]);
 
   const acceptInvitation = useCallback(async (
     invitationRegion: Region,
@@ -687,13 +746,25 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // discard the draft the last run left behind.
     if (previousSession && !sessionsShareDraftScope(previousSession, session)) {
       abandonPendingWorkstreamFeedOpen();
-      const sameAccount = session?.user.email.toLocaleLowerCase('en-US')
-        === previousSession.user.email.toLocaleLowerCase('en-US');
+      // The account is who signed in to this device: on a support session, the
+      // Rally staff member rather than the person shown.
+      const account = (value: DesktopSession) => (value.impersonator?.email ?? value.user.email).toLocaleLowerCase('en-US');
+      const sameAccount = session !== null && account(session) === account(previousSession);
       // The local cache is workspace content too — transcripts, not just the
       // sentence being typed — and leaves the device on the same transition.
       if (!sameAccount) {
         void clearAllDrafts();
         void clearAllLocalCache();
+      } else {
+        // Entering or leaving a support session keeps the staff member's own
+        // drafts elsewhere, but drafts are keyed by Organization and
+        // conversation, not person: those in the support Organization go, so
+        // nobody's unsent text is restored to, or sent as, somebody else.
+        for (const side of [previousSession, session]) {
+          if (!side.impersonator || !side.workspace) continue;
+          void clearWorkspaceDrafts(side.workspace.region, side.workspace.id);
+          void clearWorkspaceLocalCache(side.user.id, side.workspace.region, side.workspace.id);
+        }
       }
     }
     if (!legacyDraftMigrationStarted.current && session?.workspace) {
@@ -1313,6 +1384,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       signOut,
       signOutIfCredentialCleared,
       surrenderActiveWorkspace,
+      listSupportWorkspaces: () => bridge.listSupportWorkspaces(),
+      listSupportPeople: (workspaceId: string) => bridge.listSupportPeople(workspaceId),
+      startSupportSession,
+      endSupportSession,
       clearDeepLinkError: () => setDeepLinkError(null),
     }),
     [
@@ -1344,6 +1419,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       signOut,
       signOutIfCredentialCleared,
       surrenderActiveWorkspace,
+      startSupportSession,
+      endSupportSession,
       selectRegion,
       setWorkspaceName,
       editWorkspaceSetup,
