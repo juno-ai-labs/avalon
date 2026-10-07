@@ -28,6 +28,7 @@ describe('browser fallback single-platform identity boundary', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.location.hash = '';
   });
 
   it('opens Sidekicks as a route of this tab rather than a new one', async () => {

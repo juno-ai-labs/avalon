@@ -154,6 +154,14 @@ export default function BrowserShell(props: {
   useState(() => {
     const next = shellLocation(location.pathname, location.hash);
     if (next) history.replaceState(history.state, '', next);
+    // A tab opened as the former Sidekicks tab carries `?surface=sidekicks`,
+    // which would mount the Sidekicks window and never let its close button
+    // leave. Sidekicks is a route of this tab now (`window-surface.ts`).
+    const url = new URL(location.href);
+    if (url.searchParams.has('surface')) {
+      url.searchParams.delete('surface');
+      history.replaceState(history.state, '', url);
+    }
   });
   return <QueryClientProvider client={queryClient}>
     <Tooltip.Provider><BrowserSession {...props} /></Tooltip.Provider>
