@@ -1,4 +1,5 @@
-import { WorkstreamAppearanceSchema, type ConversationAccessRequestItem } from "@rally/contracts";
+import { ConversationAccessRequestItemSchema, WorkstreamAppearanceSchema, type ConversationAccessRequestItem } from "@rally/contracts";
+import type { z } from "zod";
 
 /**
  * Requests by a member to join a Channel or Breakout, each addressed to one
@@ -31,6 +32,23 @@ export const CONVERSATION_ACCESS_REQUESTS_MIGRATION: readonly string[] = [
   `CREATE INDEX conversation_access_requests_by_approver
     ON conversation_access_requests (approver_user_id, status)`,
 ];
+
+/**
+ * A conversation's mark as the sidebar and search draw it: a Breakout with no
+ * look of its own wears its Channel's, resolved from the Channel's id. The
+ * preview and the approver's list both name a conversation this way.
+ */
+export function conversationMark(input: {
+  parentId: string; substreamId: string; appearanceJson: string | null; parentAppearanceJson: string | null;
+}): { appearance: z.infer<typeof WorkstreamAppearanceSchema> | null; markId: string } {
+  const breakout = input.substreamId !== "0";
+  const borrowed = breakout && !input.appearanceJson;
+  const json = borrowed ? input.parentAppearanceJson : input.appearanceJson;
+  return {
+    appearance: json ? WorkstreamAppearanceSchema.parse(JSON.parse(json)) : null,
+    markId: borrowed || !breakout ? input.parentId : input.substreamId,
+  };
+}
 
 export interface StoredAccessRequest {
   id: string;
@@ -151,20 +169,20 @@ export class ConversationAccessRequestStorage {
       approverUserId,
     ).toArray().map((row) => {
       const breakout = row.substream_id !== "0";
-      const borrowed = breakout && !row.appearance_json;
-      const appearanceJson = borrowed ? row.parent_appearance_json : row.appearance_json;
-      return {
+      return ConversationAccessRequestItemSchema.parse({
         id: row.id,
         parentId: row.parent_id,
         substreamId: row.substream_id,
-        kind: breakout ? "breakout" as const : "channel" as const,
+        kind: breakout ? "breakout" : "channel",
         title: row.title,
-        appearance: appearanceJson ? WorkstreamAppearanceSchema.parse(JSON.parse(appearanceJson)) : null,
-        markId: borrowed || !breakout ? row.parent_id : row.substream_id,
+        ...conversationMark({
+          parentId: row.parent_id, substreamId: row.substream_id,
+          appearanceJson: row.appearance_json, parentAppearanceJson: row.parent_appearance_json,
+        }),
         requesterUserId: row.requester_user_id,
         requesterName: row.requester_name,
         requestedAt: new Date(row.created_at).toISOString(),
-      };
+      });
     });
   }
 }

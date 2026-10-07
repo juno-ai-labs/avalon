@@ -82,17 +82,20 @@ export class ConversationAccessRequestService {
       throw new ApiError(409, "access_request_no_approver", "Nobody can approve this request. Ask someone in it to add you.");
     }
     const people = await workspaceRegionalDatabase(this.env).prepare(
-      `SELECT user.id AS id, user.email AS email, user.name AS name, workspace.name AS workspace_name
+      `SELECT user.id AS id, user.email AS email, user.name AS name, member.role AS role, workspace.name AS workspace_name
          FROM users user
          JOIN workspace_members member ON member.user_id = user.id AND member.workspace_id = ?
           AND member.status = 'active' AND member.access_class = 'member'
          JOIN workspaces workspace ON workspace.id = member.workspace_id
         WHERE user.id IN (?, ?)`,
     ).bind(this.auth.workspaceId, approverUserId, this.auth.userId)
-      .all<{ id: string; email: string; name: string | null; workspace_name: string }>();
+      .all<{ id: string; email: string; name: string | null; role: AuthContext["role"]; workspace_name: string }>();
     const approver = people.results?.find((row) => row.id === approverUserId);
     const requester = people.results?.find((row) => row.id === this.auth.userId);
-    if (!approver) {
+    // A creator who left the conversation but not the Organization could
+    // never approve: every add they ran would be refused. They are asked the
+    // same question the socket ticket asks, as themselves.
+    if (!approver || !await canOpen(this.env, approverAuth(this.env, this.auth.workspaceId, approverUserId, approver.role), parentId, substreamId)) {
       throw new ApiError(409, "access_request_no_approver", "Nobody can approve this request. Ask someone in it to add you.");
     }
     const requesterName = singleLine(requester?.name || requester?.email || "Someone");
@@ -159,14 +162,8 @@ export class ConversationAccessRequestService {
   }
 
   /** Whether this person may open it already: the same decision the socket ticket asks. */
-  private async admitted(parentId: string, substreamId: string): Promise<boolean> {
-    try {
-      await new ConversationService(this.env, this.auth).authorizeViewer(parentId, substreamId);
-      return true;
-    } catch (error) {
-      if (error instanceof ApiError && error.code === "conversation_not_found") return false;
-      throw error;
-    }
+  private admitted(parentId: string, substreamId: string): Promise<boolean> {
+    return canOpen(this.env, this.auth, parentId, substreamId);
   }
 
   /** Organization members only: a guest is told nothing they do not take part in (`docs/listing-rules.md`). */
@@ -242,15 +239,7 @@ export async function approveConversationAccess(env: Env, token: string): Promis
   if (!approver) {
     return { status: "refused", code: "access_request_approver_inactive", message: "You are no longer a member of this organization." };
   }
-  const auth: AuthContext = {
-    sessionId: `conversation-access-approval:${request.id}`,
-    userId: asUserId(request.approverUserId),
-    workspaceId,
-    region: env.AVALON_REGION,
-    role: approver.role,
-    analyticsWorkspaceId: null,
-    principal: "connector",
-  };
+  const auth = approverAuth(env, workspaceId, request.approverUserId, approver.role);
   // Claimed before the grant, as `decide` does: a decline that lands first
   // wins, and this link then grants nothing.
   const claimed = await workspace.resolveConversationAccessRequest({ workspaceId, id: request.id, status: "approved" });
@@ -269,6 +258,35 @@ export async function approveConversationAccess(env: Env, token: string): Promis
   }
   await tellRequester(env, workspaceId, claimed);
   return named();
+}
+
+/** The socket ticket's question: may this person open this conversation? */
+async function canOpen(env: Env, auth: AuthContext, parentId: string, substreamId: string): Promise<boolean> {
+  try {
+    await new ConversationService(env, auth).authorizeViewer(parentId, substreamId);
+    return true;
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "conversation_not_found") return false;
+    throw error;
+  }
+}
+
+/**
+ * The approver, with nobody signed in as them: under the `connector`
+ * principal, which the objects verify against current membership rather than
+ * a login session (`IdentityAuthContext.principal` in `env.ts`). The caller has
+ * just read them as an active member.
+ */
+function approverAuth(env: Env, workspaceId: string, userId: string, role: AuthContext["role"]): AuthContext {
+  return {
+    sessionId: `conversation-access-approval:${userId}`,
+    userId: asUserId(userId),
+    workspaceId: asWorkspaceId(workspaceId),
+    region: env.AVALON_REGION,
+    role,
+    analyticsWorkspaceId: null,
+    principal: "connector",
+  };
 }
 
 async function workspaceStub(env: Env, id: string) {
