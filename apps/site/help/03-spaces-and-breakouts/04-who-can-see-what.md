@@ -93,6 +93,14 @@ A Breakout has its own participants and starts private to whoever made it.
 Adding someone to a Breakout lets them read that Breakout only, not the rest of
 the Channel. See [Breakouts](03-breakouts.md#who-can-see-a-breakout).
 
+### Asking to join from a link
+
+If you open a link to a private Channel or Breakout you are not in, Rally shows
+its name, color and icon and a **Request access** button. Pressing it emails
+whoever created it. When they press **Approve access** in that email, you are
+added, and the Channel opens on its own within about half a minute. Guests do
+not see this; they are shared in by email instead.
+
 ## Roles
 
 Who may change things depends on each person's role in the Organization.
