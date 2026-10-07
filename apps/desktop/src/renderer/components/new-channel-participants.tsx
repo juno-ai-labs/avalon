@@ -71,14 +71,12 @@ export function NewChannelParticipants({
     if (selected.length === 0) setRosterOpen(false);
   }, [selected.length]);
 
-  const firstName = (member: WorkspaceMember): string => member.name.split(/\s+/u)[0] || member.name;
-  // Searching takes room from the pill, so it shortens to first names, then to
-  // a count.
-  const summary = everyone.length === 1
-    ? creator.name
-    : searching
-      ? everyone.length <= 3 ? everyone.map(firstName).join(', ') : `${everyone.length} people`
-      : everyone.map((member) => member.name).join(', ');
+  // Searching takes room from the pill, so past three people it shortens to a
+  // count. Names are always shown whole: a name is one string, and the part
+  // before a space is not necessarily what anyone is called.
+  const summary = searching && everyone.length > 3
+    ? `${everyone.length} people`
+    : everyone.map((member) => member.name).join(', ');
 
   return (
     <div className="new-channel-participants">
