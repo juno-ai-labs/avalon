@@ -1,83 +1,115 @@
 # Channel access requests
 
 What an Organization member sees when they open a link to a Channel or Breakout
-they are not in, and how "Request access" gets them in. They see its name, color
-and icon and a **Request access** button. The button emails the conversation's
-creator, and the **Approve access** button in that email grants access in one
-click, with no sign-in.
+they are not in, and how they get in. They see its name, color and icon, the
+line "You're not in this channel, ask for access below", and a primary
+**Request access** button. The button records a request addressed to the
+conversation's creator and emails them. The creator can answer it four ways,
+and every one settles the same stored request:
+
+- **Approve access** in the email: one click, no sign-in.
+- The **check** and **cancel** icon buttons on the request's row in the
+  sidebar's attention menu (Tabler `check` and `cancel`, tooltips **Approve**
+  and **Decline**).
+- Choosing the row itself, which opens a dialog with **Decline** and
+  **Approve**.
+- A row in the macOS menu bar's **Needs attention**, which opens the same
+  dialog in the main window.
+
+The person who asked gets an email when the request is approved or declined.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/access-requests.ts` | `ConversationAccessPreviewSchema` (kind, title, appearance, `markId`, `open` or `requestable`) and the request's result. |
-| `apps/api/src/durable-objects/workspace-do.ts` | `accessRequestSubject`: one unarchived Channel's or Breakout's title, appearance and creator, read from the `channels` and `breakouts` directories with no viewer check. |
-| `apps/api/src/services/conversation-access-request-service.ts` | The preview, the request (finds the approver, seals the approval, sends the email) and `approveConversationAccess`, which opens the seal and runs the ordinary add as the approver. |
-| `apps/api/src/routes/conversations.ts` | `GET /conversations/:parentId/substreams/:substreamId/access-preview` and `POST …/access-requests`, both signed in. |
+| `packages/contracts/src/access-requests.ts` | The preview, the request item an approver is sent, the `workspace_access_requests` socket frame, and the decision result. |
+| `apps/api/src/durable-objects/conversation-access-request-storage.ts` | Migration 95's `conversation_access_requests` table and its reads and writes: record (or reuse the pending one), get, settle, and one approver's pending list joined to the Channel and Breakout directories. |
+| `apps/api/src/durable-objects/workspace-do.ts` | `accessRequestSubject` (a conversation's name, mark and creator, with no viewer check), the request RPCs, `publishAccessRequests` (the approver's list to their sockets only), and the list on the subscribe answer. |
+| `apps/api/src/services/conversation-access-request-service.ts` | The preview, the request (approver, row, email), `decide` (approve or decline from the app), `approveConversationAccess` (the email's link), `grant` (the ordinary add, as the approver) and `tellRequester` (the decision email). |
+| `apps/api/src/routes/conversations.ts` | `GET …/substreams/:substreamId/access-preview`, `POST …/substreams/:substreamId/access-requests`, and `POST /conversations/access-requests/:requestId/{approve,decline}`. |
 | `apps/api/src/routes/conversation-access.ts` | The public `GET` and `POST /conversation-access/approve` pages behind the email's button. |
-| `apps/desktop/src/renderer/components/conversation-access-request.tsx` | The screen with the mark, the name and the button. `conversation-surface.tsx` shows it in place of "Channel could not be opened". |
+| `apps/desktop/src/renderer/components/conversation-access-request.tsx` | The requester's screen, shown in place of "Channel could not be opened". |
+| `apps/desktop/src/renderer/lib/access-requests.ts` | The approver's list in the query cache (written only by the workspace socket) and the approve/decline mutation, which drops the row at once and restores it if refused. |
+| `apps/desktop/src/renderer/components/attention-menu.tsx` | Request rows above the waiting conversations, with the two icon buttons; the row opens the dialog. |
+| `apps/desktop/src/renderer/components/access-request-dialog.tsx` | The dialog, opened from a row or from the menu bar's deep link. |
+| `apps/desktop/src/main/channel-directory-watch.ts`, `menu-bar-content.ts`, `menu-bar-menu.ts` | The main process's copy of the list and its menu bar rows. |
+| `packages/contracts/src/desktop-deep-link-intent.ts` | `access-requests/<id>`, the link a menu bar row emits to reach the main window. |
 
 ## How it works
 
-1. **The refusal comes first.** Opening a Channel or Breakout asks for a socket
-   ticket. For someone who is not in it, the ticket answers 404
-   `conversation_not_found` and the socket hook keeps retrying with backoff, so
-   the surface shows its error state. Only then does
-   `ConversationAccessRequest` ask for the preview. Opening a conversation you
-   are in makes no extra request.
-2. **The preview.** The Worker refuses a guest (404) and asks the Organization
-   object for the subject. It then runs the same `authorizeViewer` the ticket
-   runs: `open` means the failure was something else and the client keeps the
-   old error screen. `requestable` shows the request screen. A Breakout with no
-   look of its own wears its Channel's, and `markId` is then the Channel's id,
-   so its mark matches the sidebar and search.
-3. **The request.** The approver is the conversation's `created_by_user_id`,
-   who must be an active member and not the requester. The approval (workspace,
-   parent, substream, requester, approver and a fresh operation id) is sealed
-   with AES-GCM under `OAUTH_STATE_ENCRYPTION_KEY`. Its additional data is
-   `rally-conversation-access-approval-v1`, so no other value sealed under that
-   key opens as an approval. The email links to the region's own API:
-   `PUBLIC_API_BASE_URL/conversation-access/approve?token=…`. Outside production
-   no mail is sent (`sendResendEmail`), and in development the link is logged
-   as `conversation_access_request_dev_link` so the flow can be tried locally.
-4. **The approval.** The `GET` grants nothing. It serves a page whose one
-   script, allowed by a per-response CSP nonce, posts the token straight back.
-   The approver's click approves, while a mail scanner or link preview that
-   only fetches the URL changes nothing. The `POST` opens the seal and re-reads
-   the approver as an active member. It then acts as them under
-   `principal: "connector"`, the authority the Space default delivery already
-   uses with nobody signed in. A Channel runs `WorkstreamService.addParticipant`;
-   a Breakout runs `SubstreamCreationService.changeParticipant`. Each enforces
-   every rule an add from the app enforces, at the moment of the click.
-5. **The requester gets in.** The ordinary add sends its usual "added you"
-   notification. Their open screen needs nothing: the socket's next retry
-   (backoff ceiling 30 seconds) is admitted and the conversation opens.
+1. **The refusal comes first.** Opening a conversation asks for a socket
+   ticket. For someone not in it, the ticket answers 404
+   `conversation_not_found` and the socket keeps retrying with backoff. Only
+   then does `ConversationAccessRequest` ask for the preview, so opening a
+   conversation you are in costs nothing extra.
+2. **The preview.** A guest is refused (404). For a member, the Organization
+   object names the conversation, and the Worker runs the same
+   `authorizeViewer` the ticket runs: `open` keeps the old error screen,
+   `requestable` shows the request screen. A Breakout with no look of its own
+   wears its Channel's, and `markId` is then the Channel's id.
+3. **The request.** The approver is the conversation's creator, who must be an
+   active member and not the requester. The Organization object records the
+   request, or returns the one already pending for this person and
+   conversation. Only a new row sends the email and pushes the approver's
+   list, so pressing again sends nothing twice. The requester's name is copied
+   into the row, since names live in D1 and the list is built in the object.
+4. **The approver's list.** The subscribe answer carries `accessRequests` on
+   every connect, and each change sends `workspace_access_requests` with the
+   whole list to that approver's sockets alone. Neither is on the waterline.
+   The renderer and the main process each keep it, so the attention menu, the
+   dock badge and the menu bar count it with no request of their own. A
+   request for a conversation since archived drops out of the list.
+5. **Answering in the app.** `POST /conversations/access-requests/:id/approve`
+   or `decline`, as the signed-in approver. Anyone else is told it does not
+   exist. Approving runs `WorkstreamService.addParticipant` (a Channel) or
+   `SubstreamCreationService.changeParticipant` (a Breakout) as that person,
+   then settles the row. A request already settled answers `settled`.
+6. **Answering in the email.** The link names the stored request and its
+   approver, sealed with AES-GCM under `OAUTH_STATE_ENCRYPTION_KEY` and the
+   purpose `rally-conversation-access-approval-v1`. The `GET` grants nothing:
+   it serves a page whose one script, allowed by a per-response CSP nonce,
+   posts the token back, so a mail scanner that fetches the link changes
+   nothing. The `POST` acts as the approver under `principal: "connector"`
+   and settles the row. A request already approved shows "Access approved"
+   without granting again. A declined one stays declined.
+7. **Telling the requester.** Whichever call settled the request sends
+   "You can now open …" (with an **Open in Rally** link) or "Your request to
+   join … was declined". A mail failure is logged as
+   `conversation_access_decision_email_failed` with its code and does not undo
+   the decision. Approving also runs the ordinary add, which sends its own
+   "added you" notification by Slack, push or email.
+8. **The requester gets in.** Their open screen needs nothing: the socket's
+   next retry (backoff ceiling 30 seconds) is admitted.
+
+Outside production no mail is sent (`sendResendEmail`). In development the
+approve link is logged as `conversation_access_request_dev_link` and each
+decision email as `conversation_access_decision_dev_email`.
 
 ## Invariants
 
-- **Only the creator's own add can let someone in.** The approval runs the
-  same add the app runs, as the approver, so it can never grant more than the
-  approver could grant by hand. Guard: the add paths' own tests. No test drives
-  an approval end to end.
-- **Fetching the link grants nothing.** Only the `POST` writes. Guard:
-  `test/conversation-access-approval.test.ts` "answers the link with a page
-  that posts the token back".
-- **No other sealed value is an approval.** Guard: the same file, "refuses a
-  value sealed under the same key for another purpose".
-- **The preview names, it never reads.** It carries the title and the mark,
-  never the description, roster, content or activity. Guard:
-  `test-workers/conversation-access-requests.test.ts` asserts the whole
-  subject, so a new field fails it.
-- **A guest is told nothing.** The preview and the request answer a guest 404,
-  per [`listing-rules.md`](listing-rules.md#invariants). Guard: none automated.
+- **Only the approver's own add can let someone in.** Every path runs the add
+  the app runs, as the approver, so an approval never grants more than they
+  could by hand. Guard: the add paths' own tests.
+- **A settled request is never granted again.** The email link checks the
+  row, so an old email cannot re-add someone removed since. Guard:
+  `test-workers/conversation-access-requests.test.ts` "lists a request to its
+  approver on connect and pushes the empty list once it is settled".
+- **An approver's list reaches only the approver.** Guard: the same file,
+  "pushes a new request to its approver alone".
+- **Fetching the link grants nothing.** Guard:
+  `test/conversation-access-approval.test.ts`.
+- **The preview names, it never reads.** Title and mark only. Guard: the
+  workerd file's `accessRequestSubject` cases assert the whole subject.
+- **A guest is told nothing** and has no list. Guard: none automated.
 
 ## Boundary
 
-Owns: the preview, the request email and the approval link. Does not own who
-may add a participant (the add paths in
-[`workstream-durable-object.md`](workstream-durable-object.md) and
-[`substream-creation.md`](substream-creation.md)), which conversations a person
-is listed ([`listing-rules.md`](listing-rules.md)), or link parsing
+Owns: the preview, the stored request, the emails, the approve page, and the
+request rows and dialog. Does not own who may add a participant (the add paths
+in [`workstream-durable-object.md`](workstream-durable-object.md) and
+[`substream-creation.md`](substream-creation.md)), what the attention menu
+lists otherwise ([`attention-menu.md`](attention-menu.md)), the menu bar
+([`menu-bar.md`](menu-bar.md)), or link parsing
 ([`workstream-links.md`](workstream-links.md)).
 
 ## Security and trust model
@@ -85,41 +117,47 @@ is listed ([`listing-rules.md`](listing-rules.md)), or link parsing
 A link is routing context, not a capability
 ([`workstream-links.md`](workstream-links.md#why-the-id-is-in-the-path)). The
 preview widens that one step on purpose: any active member who holds a Channel
-or Breakout id learns its title and mark. That is the same thing a Slack unfurl
-already shows anyone in the Slack channel, and less than a Channel reached
-through a Breakout shows.
+or Breakout id learns its title and mark. That is what a Slack unfurl already
+shows anyone in the Slack channel, and less than a Channel reached through a
+Breakout shows.
 
-The sealed approval is a bearer credential for one add, held in the approver's
-inbox. It names its approver, and the approval acts only as them.
+The sealed approval is a bearer credential for one pending request, held in
+the approver's inbox, and it acts only as the approver.
 
 ## Failure modes and limits
 
 - **No approver.** A creator who left, a missing creator, or a requester who
   created it gets 409 `access_request_no_approver`, and the screen says to ask
   someone in it.
-- **The approver lost the right to add.** The click shows "Access was not
-  changed" with the add's own message, for example a Breakout creator who
-  left the Breakout.
-- **No expiry and no replay guard.** An approval opens for as long as the key
-  is unchanged. If the requester is removed later, the old email adds them
-  again. Whether approvals expire, and after how long, is the team's call
+- **The approver lost the right to add.** The add's own refusal is shown: on
+  the approve page as "Access was not changed", in the app as the dialog's or
+  menu's error line, and the request stays pending.
+- **No expiry and no request cap.** A pending request and its email link stay
+  valid until answered. Whether either should expire, and whether asking needs
+  a cooldown after a decline, is the team's call
   ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
-- **No request cap.** Every press sends a new email; the screen hides the
-  button once one is sent. A cap or cooldown is likewise the team's call.
+- **The iOS badge leaves requests out.** The APNs badge is counted by
+  `readerAttentionCount` on the server, which counts conversations only. The
+  macOS dock badge and the menu bar include requests.
+- **Approving can send two emails.** The decision email, and the ordinary
+  "added you" email when the requester has no Slack link or push device.
 
 ## Testing
 
 ```bash
 pnpm --filter @rally/api exec vitest run test/conversation-access-approval.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/conversation-access-requests.test.ts
-pnpm --filter @rally/desktop exec vitest run src/renderer/components/conversation-access-request.test.tsx
+pnpm --filter @rally/desktop exec vitest run src/renderer/components/conversation-access-request.test.tsx \
+  src/renderer/components/attention-menu.test.tsx src/renderer/components/access-request-dialog.test.tsx \
+  src/main/menu-bar-menu.test.ts src/main/channel-directory-watch.test.ts
+pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test.ts
 ```
 
 ## Open questions
 
 - Should a request go to more than the creator, for example every member who
   can share, when the creator has left?
-- Should approvals expire, or be single-use?
+- Should requests and their links expire?
 
 ## Changelog
 
@@ -127,20 +165,25 @@ pnpm --filter @rally/desktop exec vitest run src/renderer/components/conversatio
 
 **What changed:** A member who opens a link to a Channel or Breakout they are
 not in sees its name, color and icon and a **Request access** button. The
-button emails the creator a one-click approval.
+request is stored in the Organization object and addressed to the creator. The
+creator can approve from the email in one click, or approve or decline from
+the attention menu, its dialog, or the macOS menu bar. The requester is
+emailed either way.
 
-**Why:** The link showed "Channel could not be opened" and nothing else, so
-the person had to find out who to ask somewhere other than Rally. Product asked
-for a request button, an email to approve, and approval without further steps.
+**Why:** The link showed "Channel could not be opened" and nothing else, so the
+person had to find out who to ask somewhere other than Rally. Product asked for
+a request button, a one-click email approval, the requests in the app's
+activity area with inline approve and decline, a dialog from the menu bar, and
+an email back to the requester.
 
-**Considered and rejected:** A stored request row with an inbox in the app. It
-needs a new table, a new notification kind and a screen to approve from, for
-the same outcome as an email the approver can act on from a phone. The sealed
-approval carries everything the add needs. A link that grants on `GET`. Mail
-scanners fetch links, so it would approve requests nobody read. Opening the
-approval in the desktop app. That adds a sign-in and an install between the
-approver and "approve", which is the fuss the request asked to avoid.
+**Considered and rejected:** An email-only request with no stored row. That
+was the first version: it could not be listed in the app, and an old approval
+link would re-add somebody removed since. Storing the request fixed both. A
+link that grants on `GET`: mail scanners fetch links, so it would approve
+requests nobody read. Buttons inside the macOS menu: a native menu row cannot
+hold them, so the row opens a dialog in the main window instead.
 
-**Consequences:** Approvals have no expiry or replay guard yet (see above). A
-later change that stores requests should keep the add-as-approver path, so an
-approval can never grant more than the approver could.
+**Consequences:** Requests and links do not expire, and asking again after a
+decline is not limited (see above). A later change that lets someone other
+than the creator approve should keep the add-as-approver path, so an approval
+can never grant more than the approver could.

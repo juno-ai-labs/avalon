@@ -21,7 +21,7 @@ import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { requestFlowSpan } from "../observability/tracing";
 import { ConversationService } from "../services/conversation-service";
 import { WorkstreamService } from "../services/workstream-service";
-import { ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, SidekickAttachmentsSchema, SidekickRecommendationOptionsSchema } from "@rally/contracts";
+import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, SidekickAttachmentsSchema, SidekickRecommendationOptionsSchema } from "@rally/contracts";
 import { ConversationAccessRequestService } from "../services/conversation-access-request-service";
 import { telemetryOperationId } from "../telemetry/api-emitter";
 import { SubstreamCreationService } from "../services/substream-creation-service";
@@ -216,6 +216,15 @@ conversationRoutes.get("/:parentId/substreams/:substreamId/access-preview", zVal
   const param = c.req.valid("param");
   return c.json(ConversationAccessPreviewSchema.parse(
     await new ConversationAccessRequestService(c.env, getWorkspaceAuth(c)).preview(param.parentId, param.substreamId),
+  ));
+});
+/** The approver settles a request from the app: the attention menu's buttons, or the menu bar's modal. */
+conversationRoutes.post("/access-requests/:requestId/:decision", zValidator("param", z.strictObject({
+  requestId: IdSchema, decision: z.enum(["approve", "decline"]),
+})), async (c) => {
+  const param = c.req.valid("param");
+  return c.json(ConversationAccessDecisionResultSchema.parse(
+    await new ConversationAccessRequestService(c.env, getWorkspaceAuth(c)).decide(param.requestId, param.decision),
   ));
 });
 /** Email the creator a one-click approval. `docs/channel-access-requests.md`. */

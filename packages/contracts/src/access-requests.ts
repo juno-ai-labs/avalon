@@ -28,3 +28,39 @@ export const ConversationAccessRequestResultSchema = z.strictObject({
   status: z.literal("sent"),
 });
 export type ConversationAccessRequestResult = z.infer<typeof ConversationAccessRequestResultSchema>;
+
+/**
+ * One pending request in its approver's list: who asked, for what, and the
+ * conversation's name and mark as they are now. Only the approver is sent it.
+ */
+export const ConversationAccessRequestItemSchema = z.strictObject({
+  id: z.string().min(1),
+  parentId: z.string().min(1),
+  substreamId: z.string().min(1),
+  kind: z.enum(["channel", "breakout"]),
+  title: z.string(),
+  appearance: WorkstreamAppearanceSchema.nullable(),
+  markId: z.string(),
+  requesterUserId: z.string().min(1),
+  requesterName: z.string(),
+  requestedAt: z.string().datetime(),
+});
+export type ConversationAccessRequestItem = z.infer<typeof ConversationAccessRequestItemSchema>;
+
+/**
+ * The approver's whole pending list, sent to their sockets only, whenever it
+ * changes. Outside the waterline and never replayed: the subscribe answer's
+ * `accessRequests` carries it again on every connect. Older clients ignore
+ * the unknown `type`.
+ */
+export const WorkspaceAccessRequestsEventSchema = z.strictObject({
+  type: z.literal("workspace_access_requests"),
+  requests: z.array(ConversationAccessRequestItemSchema),
+});
+export type WorkspaceAccessRequestsEvent = z.infer<typeof WorkspaceAccessRequestsEventSchema>;
+
+/** What approving or declining from the app did; `settled` means someone already had. */
+export const ConversationAccessDecisionResultSchema = z.strictObject({
+  status: z.enum(["approved", "declined", "settled"]),
+});
+export type ConversationAccessDecisionResult = z.infer<typeof ConversationAccessDecisionResultSchema>;

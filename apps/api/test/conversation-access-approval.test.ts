@@ -12,11 +12,8 @@ const env = createTestEnv({
 
 const approval = {
   workspaceId: "00000000-0000-4000-8000-0000000ac001",
-  parentId: "00000000-0000-4000-8000-0000000ac0a0",
-  substreamId: "0",
-  requesterUserId: "00000000-0000-4000-8000-0000000ac013",
+  requestId: "00000000-0000-4000-8000-0000000ac099",
   approverUserId: "00000000-0000-4000-8000-0000000ac011",
-  operationId: "00000000-0000-7000-8000-0000000ac099",
 };
 
 const tokenOf = (url: string) => new URL(url).searchParams.get("token")!;

@@ -92,6 +92,9 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     setWorkspaceName: () => undefined,
     editWorkspaceSetup: () => undefined,
     pendingInvitation: null,
+    // Only the macOS menu bar opens a request this way.
+    pendingAccessRequestId: null,
+    clearPendingAccessRequest: () => undefined,
     pendingConnectorOAuth,
     setPendingConnectorOAuth,
     updateCurrentUserName: () => { void queryClient.invalidateQueries({ queryKey: ['workspace'] }); },

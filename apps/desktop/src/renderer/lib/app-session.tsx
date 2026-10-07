@@ -115,6 +115,9 @@ export interface AppSessionValue {
   setWorkspaceName: (name: string) => void;
   editWorkspaceSetup: () => void;
   pendingInvitation: PendingInvitation | null;
+  /** An access request the menu bar asked the main window to decide; see `AccessRequestDialog`. */
+  pendingAccessRequestId: string | null;
+  clearPendingAccessRequest: () => void;
   pendingConnectorOAuth: PendingConnectorOAuth | null;
   updateCurrentUserName: (name: string) => void;
   setPendingConnectorOAuth: (attempt: PendingConnectorOAuth | null) => void;
@@ -227,6 +230,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const [workspaceName, setWorkspaceNameState] = useState(() => readDevicePreferences().workspaceName ?? '');
   const [session, setSession] = useState<DesktopSession | null>(null);
   const [pendingInvitation, setPendingInvitation] = useState<PendingInvitation | null>(null);
+  const [pendingAccessRequestId, setPendingAccessRequestId] = useState<string | null>(null);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const pendingConnectorOAuthRef = useRef(pendingConnectorOAuth);
   pendingConnectorOAuthRef.current = pendingConnectorOAuth;
@@ -1066,6 +1070,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         }
         return;
       }
+      if (intent.kind === 'access-request') {
+        const openRequest = (): void => {
+          setDeepLinkError(null);
+          setPendingAccessRequestId(intent.requestId);
+        };
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, openRequest);
+        else if (requireActiveWorkspace('Sign in before answering this access request.')) openRequest();
+        return;
+      }
       if (intent.kind === 'invitation') {
         setPendingInvitation({ token: intent.token, region: intent.region });
         setDeepLinkError(null);
@@ -1273,6 +1286,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       setWorkspaceName,
       editWorkspaceSetup,
       pendingInvitation,
+      pendingAccessRequestId,
+      clearPendingAccessRequest: () => setPendingAccessRequestId(null),
       pendingConnectorOAuth,
       setPendingConnectorOAuth,
       updateCurrentUserName,
@@ -1317,6 +1332,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       finishWorkspaceSetup,
       getOnboardingState,
       pendingInvitation,
+      pendingAccessRequestId,
       pendingConnectorOAuth,
       updateCurrentUserName,
       invitationApi,

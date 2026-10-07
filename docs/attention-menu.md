@@ -54,6 +54,15 @@ then title. A row shows the Channel's glyph (a Breakout uses its Channel's, as
 the Space dashboard does), the conversation's title, the state's label (with
 "in *Channel*" for a Breakout), its activity time and its marker dot.
 
+**Access requests** waiting on the reader come first, one row each: the
+conversation's mark and name, "*Name* asked to join", and two icon buttons,
+Tabler `check` (tooltip **Approve**) and `cancel` (tooltip **Decline**).
+Choosing a button answers the request and keeps the menu open for the next.
+Choosing the row opens the request's dialog instead. The list comes from the
+workspace socket like everything else here, and the count, the tooltip's
+label and the dock badge include it. [`channel-access-requests.md`](channel-access-requests.md)
+owns the requests.
+
 Choosing a row navigates to `/workstreams/:id`, adding `?substream=:id` for a
 Breakout. Opening the conversation is what clears it: the same read and
 first-open paths that clear the sidebar dot remove the row and lower the count.
@@ -76,13 +85,14 @@ first-open paths that clear the sidebar dot remove the row and lower the count.
 - **Opening the menu fetches nothing.** The Breakout queries are disabled
   observers; letting one fetch adds a request per waiting Channel to every
   shell render. Guard: none automated.
-- **The dock badge is this count.** `useDockBadge` sends `items.length`, and
+- **The dock badge is this count.** `useDockBadge` sends the items plus the
+  access requests, and
   `readerAttentionCount` in `workspace-space-storage.ts` counts the APNs badge
   with the same three states over Mains and Breakouts. A new reader-owned
   state goes in both. Guard: `workspace-attention.test.ts` for the server side
   only.
-- **Count and list are one array.** The trigger shows `items.length`, so the
-  number can never disagree with the rows under it. Guard:
+- **Count and list are one list.** The trigger shows the items plus the access
+  requests, the rows under it, so the number can never disagree with them. Guard:
   `attention-menu.test.tsx`.
 
 ## Boundary
@@ -129,6 +139,17 @@ Radix opens a dropdown on `pointerdown`, not `click`; the menu test sends
 and are checked in a real window.
 
 ## Changelog
+
+### 2026-10-07 — Access requests listed first, with approve and decline
+
+**What changed:** Requests to join one of the reader's Channels or Breakouts
+are listed above the waiting conversations, counted with them, and answered
+in place with two icon buttons or from a dialog the row opens.
+
+**Why:** Product asked for the requests in the activity area with inline
+approve and decline. Putting them here means the count, the dock badge and
+the menu bar agree on one number. The APNs badge, counted on the server,
+does not include them yet.
 
 ### 2026-10-05 — Attention menu added
 
