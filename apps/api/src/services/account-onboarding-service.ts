@@ -23,7 +23,7 @@ export class AccountOnboardingService {
     });
   }
 
-  async update(input: UpdateAccountOnboarding): Promise<AccountOnboarding> {
+  async update(input: UpdateAccountOnboarding, onIntroduced?: () => void): Promise<AccountOnboarding> {
     const current = await this.get();
     // Replaying a lost save response is harmless, including after a new session.
     if (current.revision !== input.expectedRevision) {
@@ -40,6 +40,7 @@ export class AccountOnboardingService {
     ).bind(presentation?.displayName ?? null, input.introduced || current.introduced ? 1 : 0, presentation ? JSON.stringify(presentation) : null,
       this.auth.userId, input.expectedRevision).run();
     if (result.meta.changes !== 1) throw new ApiError(409, 'profile_revision_conflict', 'Your profile changed in another session. Review it and try again.');
+    if (!current.introduced && input.introduced) onIntroduced?.();
     return this.get();
   }
 }

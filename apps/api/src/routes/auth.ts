@@ -79,8 +79,8 @@ authRoutes.get("/email/redeem", (c) => {
 });
 authRoutes.post("/email/redeem", authBodyLimit, zValidator("json",EmailLoginRedeemSchema), async (c) => {
   c.header("Cache-Control","no-store");
-  const receipt = await redeemEmailLogin(c.env,c.req.valid("json"));
-  return c.json(SessionSchema.parse(await new AuthService(c.env).resumeEmailLogin(receipt)));
+  const receipt = await redeemEmailLogin(c.env,c.req.valid("json"), 'desktop');
+  return c.json(SessionSchema.parse(await new AuthService(c.env).resumeEmailLogin(receipt, 'desktop')));
 });
 
 authRoutes.post("/dev/session", zValidator("json", developmentSessionBody), async (c) =>

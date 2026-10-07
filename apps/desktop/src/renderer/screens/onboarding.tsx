@@ -1,5 +1,5 @@
 import { LoaderCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RallyDesktopBridge } from '../../common/desktop';
 import { RallyMark, Button, ConnectorMark, InlineError } from '../components/primitives';
 import { CreateOrganizationCard } from './create-organization';
