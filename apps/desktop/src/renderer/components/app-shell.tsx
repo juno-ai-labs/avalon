@@ -468,6 +468,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     runtime,
     session,
     signOut,
+    listSupportWorkspaces,
+    listSupportPeople,
+    startSupportSession,
+    endSupportSession,
   } = useAppSession();
   const { host, guest: guestSession } = useShellCapabilities();
   const accessRequests = useAccessRequests(workspace.id);
@@ -608,6 +612,19 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryFn: getOnboardingState,
     enabled: multipleWorkspacesEnabled,
   });
+  // Organizations that granted Rally access, for Rally staff only
+  // (`docs/impersonation.md`). Anybody else is refused, which is held as
+  // `null` so the menu never asks again in this shell; staff reread on open.
+  const supportWorkspaces = useQuery({
+    queryKey: ['support-workspaces', session?.impersonator?.id ?? session?.user.id],
+    queryFn: () => listSupportWorkspaces().catch(() => null),
+    retry: false,
+    staleTime: Infinity,
+  });
+  const impersonator = session?.impersonator
+    ? { id: session.impersonator.id, name: session.impersonator.name, email: session.impersonator.email,
+        timezone: 'UTC', ...(session.impersonator.avatarUrl ? { avatarUrl: session.impersonator.avatarUrl } : {}) }
+    : null;
   // Main lists the stored set whatever happened to discovery. The account's
   // own state is not read here: a switch or a creation that finds the
   // identity credential missing signs in through the browser and continues
@@ -806,7 +823,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             onAbandonSignIn={abandonAccountSignIn}
             onInvitationPromptDismiss={clearPendingInvitation}
             onOpenSettings={() => { void desktopBridge().openSettings(); }}
-            onSignOut={() => { void signOut().catch(() => undefined); }}
+            onSignOut={() => {
+              if (impersonator) void endSupportSession().catch(() => undefined);
+              else void signOut().catch(() => undefined);
+            }}
+            impersonator={impersonator}
+            supportWorkspaces={supportWorkspaces.data ?? []}
+            loadSupportPeople={listSupportPeople}
+            onStartSupportSession={(target, person) => startSupportSession({ region: target.region, workspaceId: target.id }, person.id)}
+            onSupportMenuOpen={() => { if (supportWorkspaces.data) void supportWorkspaces.refetch(); }}
             onSwitchWorkspace={async (target) => {
               const targetKey = desktopWorkspaceIdentityKey(target.region, target.id);
               if (!navigator.onLine) {

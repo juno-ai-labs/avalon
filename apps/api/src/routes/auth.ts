@@ -10,6 +10,9 @@ import {
   RefreshRequestSchema,
   RefreshTokenSchema,
   SessionSchema,
+  StartSupportSessionRequestSchema,
+  SupportPeopleSchema,
+  SupportWorkspacesSchema,
   WorkspaceSchema,
   WorkspaceIdSchema,
   WorkspaceInvitationPreviewSchema,
@@ -22,6 +25,7 @@ import { ApiError } from "../lib/api-error";
 import { compatibleDesktopDeepLink, desktopHandoffUrl } from "../lib/desktop-handoff";
 import { AuthService, verifyAccessToken } from "../services/auth-service";
 import { previewInvitation } from "../services/workspace-service";
+import { SupportAccessService } from "../services/support-access";
 
 const startBody = z.object({
   returnUri: z.union([HttpOrDesktopDeepLinkUrlSchema, z.literal(SIDELINE_AUTH_CALLBACK_URI)]).optional(),
@@ -62,6 +66,24 @@ authRoutes.post("/workspace/select",requireIdentityAuth,authBodyLimit,zValidator
   observeSignupProgress(c.env, auth.userId, 'signup_organization_requested', 'existing_organization', 'desktop');
   const session = await new AuthService(c.env).createRegionalSession(auth.userId,c.req.valid("json").workspaceId);
   observeSignupProgress(c.env, auth.userId, 'signup_organization_ready', 'existing_organization', 'desktop');
+  return c.json(SessionSchema.parse(session));
+});
+
+// Rally staff acting in an Organization that granted Rally access
+// (`docs/impersonation.md`). Each call re-checks staff membership and the grant.
+const supportWorkspaceParam = z.object({ workspaceId: WorkspaceIdSchema });
+authRoutes.get("/support/workspaces", requireIdentityAuth, async (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(SupportWorkspacesSchema.parse(await new SupportAccessService(c.env, getIdentityAuth(c)).workspaces()));
+});
+authRoutes.get("/support/workspaces/:workspaceId/people", requireIdentityAuth, zValidator("param", supportWorkspaceParam), async (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(SupportPeopleSchema.parse(
+    await new SupportAccessService(c.env, getIdentityAuth(c)).people(c.req.valid("param").workspaceId)));
+});
+authRoutes.post("/support/session", requireIdentityAuth, authBodyLimit, zValidator("json", StartSupportSessionRequestSchema), async (c) => {
+  c.header("Cache-Control", "no-store");
+  const { session } = await new SupportAccessService(c.env, getIdentityAuth(c)).start(c.req.valid("json"));
   return c.json(SessionSchema.parse(session));
 });
 

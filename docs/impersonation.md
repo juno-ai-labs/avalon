@@ -1,11 +1,13 @@
 # Impersonation
 
-Impersonation is Rally's workspace-scoped authority for one authenticated member
-to act as another member on a product surface that explicitly supports it. The
-first surface is Sideline, an internal Electron host for sending an ordinary new
-message as the represented participant. Product data keeps that participant as
-the author; the audit database keeps the initiating operator and authorization
-basis.
+Impersonation is Rally's authority for one authenticated person to act as
+another. It has two surfaces. Sideline, an internal Electron host, sends one
+ordinary new message as a represented member of the operator's own workspace,
+through a workspace-scoped **can impersonate** relationship. **Rally access**
+lets Rally staff (members of Juno Labs) open a whole session as any member or
+guest of another Organization, for as long as that Organization's seven-day
+grant lasts. In both, product data keeps the represented person as the author;
+the audit database keeps who actually acted.
 
 ## Where the code lives
 
@@ -22,6 +24,14 @@ basis.
 | `packages/contracts/src/impersonation.ts` | Relationship, catalog, and send wire contracts. |
 | `packages/ui/src/components/sideline-composer.tsx` | Browser-safe card-stack presentation and searchable selectors. |
 | `packages/ui/src/components/sideline-sidebar.tsx` | The left rail: Rally's Spaces sidebar parts with one **Impersonate** row, the update button, and the account footer whose menu holds the Organization picker and **Sign out**. |
+| `packages/db/migrations/0121_support_access.sql` | `support_access_grants` and `sessions.impersonator_user_id`. |
+| `apps/api/src/services/support-access.ts` | Rally access: the hard-coded staff Organization, the seven-day grant, staff discovery and roster, starting a support session, `supportSessionLiveSql` (the one definition of a live support session) and `revokeSupportSessions`. |
+| `apps/api/src/services/session-authentication.ts`, `auth-service.ts` | Every request and every renewal re-checks a support session with `supportSessionLiveSql`; renewal never moves its expiry past the grant's. `createSupportSession` is the one writer. |
+| `apps/api/src/routes/workspace.ts`, `auth.ts`, `browser.ts` | `GET/PUT/DELETE /workspace/support-access`; `/auth/support/*` for the Mac app's identity credential; `/browser/support/*` for the browser cookie. |
+| `apps/desktop/src/main/index.ts`, `stored-auth.ts` | The support credential stored like any Organization credential and marked by its profile's `impersonator`; dropped whenever another Organization is selected; never registered for push. |
+| `apps/desktop/src/renderer/components/support-access-setting.tsx` | **Allow Rally access** under Organization preferences. |
+| `apps/desktop/src/renderer/components/support-workspace-menu.tsx`, `workspace-account-menu.tsx` | A granting Organization's row in the account menu and its submenu of people; **End impersonation** in place of signing out. |
+| `packages/ui/src/components/account-trigger.tsx` | The account footer shows the staff member's avatar on the right of a support session. |
 
 ## How it works
 
@@ -65,6 +75,66 @@ rereads the catalog in the background with the cards left on screen; events
 that arrive during a read collapse into the one read that follows it. A card
 whose participant or destination left the catalog keeps its draft, names what
 went away, and cannot send.
+
+### Support access
+
+Rally staff are the active **members** (not guests) of Juno Labs, whose
+Organization id is hard-coded as `SUPPORT_ORGANIZATION_ID`; local development
+uses its seeded Organization instead. Nothing else makes somebody staff.
+
+An owner or administrator of any other Organization presses **Grant access**
+under **Settings → Organization → Allow Rally access**. `PUT
+/workspace/support-access` upserts the Organization's one
+`support_access_grants` row with an expiry seven days out; pressing it again
+restarts the seven days, and `DELETE` removes the row. Every member can read the
+state, which the settings row counts down against the shared clock. A support
+session cannot grant (`support_access_grant_requires_member`), so staff cannot
+extend access nobody gave them; it can revoke.
+
+A staff member's account menu reads `GET /auth/support/workspaces` with the
+account's identity credential (the browser uses its cookie's identity session).
+It lists every Organization with a live grant, with a spy mark beside it.
+Opening a row reads that Organization's members, then guests. Choosing a person
+calls `POST /auth/support/session`, whose single `INSERT … SELECT` writes a
+session for the represented person only if the grant is live, the caller is
+staff, and the person is an active member or guest. Its
+`impersonator_user_id` names the staff member and its expiry is the grant's.
+The answer is an ordinary `Session` with an `impersonator`.
+
+From there the session is the represented person's in every way the platform
+checks: the token's subject, membership, role, incarnation, socket admission and
+every object's re-check all read the represented person, so staff see and do
+exactly what that person can. What sets it apart:
+
+- `authenticateSession` and renewal also require `supportSessionLiveSql`: a live
+  grant for the session's Organization and a live staff membership for its
+  `impersonator_user_id`. Renewal adds it to its own statement; authentication
+  reads `impersonator_user_id` in the statement it was already making and runs
+  the check as a second one only when that is set, so an ordinary session pays
+  nothing for it. The answer carries `impersonatorUserId` on the auth context.
+- Renewal keeps the session's expiry at or before the grant's.
+- `touchLastSeen` skips it: staff being around is not the person being around.
+- Revoking the grant, and a Juno Labs relationship delivery that ends a staff
+  membership, call `revokeSupportSessions`, which revokes the rows and publishes
+  [access revocations](access-revocation.md) so open sockets close.
+- The Mac app stores it as that Organization's credential with the impersonator
+  on its cached profile. It is left out of the Organizations list, push
+  registration and the account's own onboarding, profile and appearance (which
+  belong to the signed-in account, i.e. the staff member). Selecting any other
+  Organization drops and revokes it. **End impersonation** revokes it and
+  returns to the Organization the device used before.
+- The browser puts it in the Organization's slot of its cookie session
+  (`browser_workspace_sessions`), replacing whatever was there, and
+  `/browser/support/end` takes it out again.
+
+The footer shows the represented person and, on the right, the staff member's
+avatar; signing out reads **End impersonation**.
+
+Grants, revocations and session starts are written to `audit_events`
+(`support_access.granted`, `support_access.revoked`, `support_session.started`)
+with the acting person and, from a support session, the staff member behind it.
+The represented person's ordinary actions inside the session are not audited
+separately; the session row is the record of who held it.
 
 ## Packaging, release, and updates
 
@@ -145,6 +215,15 @@ non-macOS, and non-arm64 builds never contact the production feed.
   an authorization fact already owned by audit.
 - The same logical retry keeps the same client message id, so the existing
   admission receipt is the only duplicate-send authority.
+- A support session is an ordinary `sessions` row of the represented person.
+  Giving it a different principal would fork every authorization path that
+  re-reads `sessions`; the extra fact it carries is checked beside them.
+- Only a member of the staff Organization is staff, and only a live grant admits
+  a support session. Both are re-checked on every request and renewal, never
+  cached, so a revoke or a removal takes effect on the next request.
+- A support session cannot grant Rally access, and cannot start another one.
+- A support session never outlives its grant. Renewal is capped at the grant's
+  expiry, which is also what lets the ordinary expiry sweep close its sockets.
 - The sidecar never observes post-admission work. It opens no conversation feed
   and reads nothing from its workspace socket but membership nudges; a feed
   would make it a second conversation client and invite it to infer harness
@@ -159,6 +238,11 @@ participant's ordinary conversation authority remains in
 SubstreamAgent. Message
 addressing and harness execution remain owned by the standard durable
 conversation loop documented in [workstream-durable-object.md](workstream-durable-object.md).
+
+Rally access does not use the **can impersonate** relationship: its authority is
+the Organization's grant plus Juno Labs membership, and it covers every person
+in the Organization at once. The two share only the vocabulary and the audit
+database.
 
 Only trusted Worker code can write relationships. Sideline cannot administer
 them, retrieve transcript history, answer elicitations, choose a region or
@@ -189,6 +273,17 @@ discard drafts and direct results. A successful direct response is final from
 Sideline's perspective even when later addressing or harness work fails.
 
 ## Testing
+
+`apps/api/test/support-access.test.ts` runs Rally access against the
+checked-in migrations: staff-only discovery and roster order, the session's
+impersonator and its expiry capped at the grant across a renewal, the refusal
+without a grant, who may grant, and that a revoke, an expired grant, or leaving
+Juno Labs each end a live session on the next request (and a revoke publishes
+its socket revocation). It also opens and ends a support session in a browser
+cookie's Organization slot. `apps/desktop/src/renderer/components/support-access.test.tsx`
+covers the settings row's countdown and buttons and the account menu's rows,
+submenu and **End impersonation**; `src/main/workspace-directory.test.ts`
+covers how a stored support credential is told apart.
 
 `apps/api/test-workers/workspace-impersonation.test.ts` applies the real
 WorkspaceDO migrations and proves direction, self-pairs, idempotent setup, and
@@ -229,6 +324,12 @@ message body.
 
 ## Regional impact
 
+Rally access assumes the staff Organization and the granting Organization share
+a deployment, which is true while Global is the only one: discovery lists only
+Organizations in the caller's region, and a support session is written in the
+same D1 statement that checks staff membership. A second deployment needs the
+grant list and the staff check to cross the identity bridge.
+
 The selected regional session determines the immutable Organization region.
 Relationship authority lives in that Organization's WorkspaceDO; membership,
 destination admission, audit, message content, and conversation state stay in
@@ -246,6 +347,39 @@ operator key. It registers only `sideline:`, while **Open in Rally** emits the
 existing `rallywithai:` deep link for the main app.
 
 ## Changelog
+
+### 2026-10-07 — Rally access: staff sessions as another Organization's people
+
+**What changed:** An Organization's administrator can grant Rally access for
+seven days from Organization preferences, see it count down, and revoke it.
+Members of Juno Labs (hard-coded as the staff Organization) then see granting
+Organizations in their account menu and open a session as any member or guest
+there, on the Mac app and the web. The session is the represented person's
+ordinary session with `sessions.impersonator_user_id` naming the staff member;
+every request and renewal re-checks the grant and the staff membership (a
+second statement on authentication, paid only by support sessions), and
+the footer shows both people with **End impersonation** in place of signing
+out.
+
+**Why:** Rally staff set up, configure and support customers' Organizations
+hands-on, and need to see and do exactly what a given person can. Asked for
+by Adam on 2026-10-07, who named the seven calendar days, the hard-coded staff
+Organization, and the menu, footer and settings design.
+
+**Considered and rejected:** Reusing the **can impersonate** relationship,
+which would need a row per staff member per person per Organization and a
+producer to keep them in step with a grant, for an authority that is really
+"this Organization lets Juno Labs in". A separate principal for support
+sessions, which would fork every path that re-reads `sessions`. Caching the
+grant or staff check, which would let a revoke lag.
+
+**Consequences:** Anything that authorizes from `sessions` treats a support
+session as its person, by design; a new check that must not (like granting
+access) reads `impersonatorUserId`. Identity-scoped account state (onboarding,
+profile, appearance) is the staff member's and is hidden on a support session.
+The represented person's actions are not separately audited. A second
+deployment needs the staff check and grant list to cross regions.
+
 
 ### 2026-10-01 — R2 reads abort on idle, not on total time
 

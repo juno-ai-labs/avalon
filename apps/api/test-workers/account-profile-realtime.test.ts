@@ -29,7 +29,7 @@ it('streams committed profile changes to another member even when enterprise dis
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id,user_id,role,status,last_seen_at) VALUES (?, ?, 'owner', 'active', NULL), (?, ?, 'member', 'active', NULL)`).bind(workspaceId, userId, workspaceId, peerId),
     env.DB.prepare(`INSERT INTO workspaces VALUES ('abandoned', 'global', 'invalid', NULL, '2026-09-08'), ('foreign', 'enterprise', 'invalid', NULL, NULL)`),
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id,user_id,role,status,last_seen_at) VALUES ('abandoned', ?, 'owner', 'active', NULL), ('foreign', ?, 'owner', 'active', NULL)`).bind(userId, userId),
-    env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member', id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT, region TEXT, revoked_at TEXT, expires_at TEXT)`),
+    env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member', id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT, region TEXT, revoked_at TEXT, expires_at TEXT, impersonator_user_id TEXT)`),
     env.DB.prepare(`INSERT INTO sessions VALUES ('existing-member','peer-session', ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(peerId, workspaceId),
   ]);
   const stub = env.WORKSPACE_DOS.getByName(workspaceDOName('global', workspaceId));

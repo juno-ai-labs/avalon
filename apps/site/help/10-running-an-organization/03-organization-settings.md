@@ -15,13 +15,16 @@ preferences**, says it holds **organization details and defaults shared by
 organization automations**. "Automations" is the old name for Sidekicks; the
 screen has not caught up yet.
 
-It has two rows.
+It has three rows.
 
 - **Organization** shows the Organization's name. It is for reference only:
   there is no control to rename the Organization on this screen.
 - **Default timezone** is the time zone an Organization Sidekick uses when it
   does not name one of its own. Pick one from the list and it saves straight
   away.
+- **Allow Rally access** lets the Rally team help you set up and fix your
+  Organization by signing in as people in it. See
+  [Letting the Rally team in](#letting-the-rally-team-in) below.
 
 The default time zone matters for anything scheduled. A Sidekick set to run "at
 9 every weekday" needs to know whose 9 o'clock. If most of your team is in one
@@ -31,6 +34,28 @@ afternoon. Schedules are covered in [Triggers and schedules](../07-sidekicks/03-
 Your own time zone is a different setting, under **Settings → Account**,
 described in
 [The Settings window](../09-settings-and-shortcuts/01-the-settings-window.md).
+
+## Letting the Rally team in
+
+Sometimes the quickest way for us to help is to see Rally the way one of your
+people sees it: set up a Sidekick for them, check why a connection fails, or
+tidy up a Space. **Allow Rally access** lets the Rally team do that for seven
+calendar days.
+
+Press **Grant access**. The row then counts down how long is left (**6 days
+left**, then hours, then minutes) and shows **Revoke access**. Press **Revoke
+access** at any time and it ends at once, including for anyone on the Rally
+team who is signed in as one of your people at that moment. When the seven
+days run out, the row goes back to **Grant access** by itself.
+
+While access is on, someone on the Rally team can sign in as any member or
+guest of your Organization and act as them, with exactly what that person can
+see and do. What they do shows up as that person. Rally keeps a separate record
+of who on the Rally team started each session.
+
+Only owners and administrators can grant or revoke access. Someone on the Rally
+team signed in as one of your administrators can revoke it, but cannot grant it
+or extend it.
 
 ## Internet access for the Terminal
 

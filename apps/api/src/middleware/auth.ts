@@ -131,7 +131,8 @@ export const requireAuth: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
     throw new ApiError(403, "workspace_setup_required", "Choose or join a workspace to continue");
   }
   c.set("auth", auth);
-  requestDeferral(c)(touchLastSeen(c.env, auth.workspaceId, auth.userId));
+  // Staff acting as somebody is not that somebody being around.
+  if (!auth.impersonatorUserId) requestDeferral(c)(touchLastSeen(c.env, auth.workspaceId, auth.userId));
   await next();
 };
 
@@ -159,7 +160,7 @@ export const requireWorkspaceAuth: MiddlewareHandler<HonoAppEnv> = async (c,next
     accessClass: auth.accessClass ?? "member",
     validatedAt: Date.now(),
   });
-  requestDeferral(c)(touchLastSeen(c.env,auth.workspaceId,auth.userId));
+  if (!auth.impersonatorUserId) requestDeferral(c)(touchLastSeen(c.env,auth.workspaceId,auth.userId));
   await next();
 };
 

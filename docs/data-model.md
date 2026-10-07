@@ -63,6 +63,13 @@ authority and self-impersonation is an ordinary self-pair. Message rows remain
 unchanged; dual-principal correlation belongs to `audit_events`. See
 [impersonation](impersonation.md).
 
+D1 migration 0121 adds Rally access. `support_access_grants` holds at most one
+row per Organization: who granted it, when, and when it runs out; revoking
+deletes the row. `sessions.impersonator_user_id` marks a support session, an
+ordinary session of the represented person that names the Rally staff member
+acting. NULL means a login session, which every row written before 0121 is.
+See [impersonation](impersonation.md#support-access).
+
 ## Agent communication relationships
 
 WorkspaceDO migration 59 adds `agent_teams`, `agent_team_members`,

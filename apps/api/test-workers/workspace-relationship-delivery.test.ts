@@ -25,7 +25,7 @@ beforeEach(async () => {
     env.DB.prepare("INSERT INTO workspaces (id,region,placement_affinity) VALUES (?,'global','wnam')").bind(workspaceId),
     env.DB.prepare("CREATE TABLE workspace_members (incarnation TEXT DEFAULT 'existing-member', workspace_id TEXT,user_id TEXT,role TEXT,status TEXT,last_seen_at TEXT,revision INTEGER DEFAULT 1,access_class TEXT DEFAULT 'member')"),
     env.DB.prepare("INSERT INTO workspace_members (incarnation,workspace_id,user_id,role,status,last_seen_at) VALUES ('existing-member',?,?,'member','active',NULL)").bind(workspaceId,userId),
-    env.DB.prepare("CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member', id TEXT,user_id TEXT,workspace_id TEXT,region TEXT,revoked_at TEXT,expires_at TEXT)"),
+    env.DB.prepare("CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member', id TEXT,user_id TEXT,workspace_id TEXT,region TEXT,revoked_at TEXT,expires_at TEXT, impersonator_user_id TEXT)"),
     env.DB.prepare("INSERT INTO sessions VALUES ('existing-member','session',?,?,'global',NULL,'2099-01-01T00:00:00.000Z')").bind(userId,workspaceId),
     // Runtime tests declare the D1 slice they use; the Node suite separately
     // proves the actual migration, triggers and foreign-key preservation.
