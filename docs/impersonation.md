@@ -24,7 +24,7 @@ the audit database keeps who actually acted.
 | `packages/contracts/src/impersonation.ts` | Relationship, catalog, and send wire contracts. |
 | `packages/ui/src/components/sideline-composer.tsx` | Browser-safe card-stack presentation and searchable selectors. |
 | `packages/ui/src/components/sideline-sidebar.tsx` | The left rail: Rally's Spaces sidebar parts with one **Impersonate** row, the update button, and the account footer whose menu holds the Organization picker and **Sign out**. |
-| `packages/db/migrations/0121_support_access.sql` | `support_access_grants` and `sessions.impersonator_user_id`. |
+| `packages/db/migrations/0122_support_access.sql` | `support_access_grants` and `sessions.impersonator_user_id`. |
 | `apps/api/src/services/support-access.ts` | Rally access: the hard-coded staff Organization, the seven-day grant, staff discovery and roster, starting a support session, `supportSessionLiveSql` (the one definition of a live support session) and `revokeSupportSessions`. |
 | `apps/api/src/services/session-authentication.ts`, `auth-service.ts` | Every request and every renewal re-checks a support session with `supportSessionLiveSql`; renewal never moves its expiry past the grant's. `createSupportSession` is the one writer. |
 | `apps/api/src/routes/workspace.ts`, `auth.ts`, `browser.ts` | `GET/PUT/DELETE /workspace/support-access`; `/auth/support/*` for the Mac app's identity credential; `/browser/support/*` for the browser cookie. |
