@@ -80,7 +80,8 @@ export function useOrganizationUsage(api: OrganizationUsageApi | null): Organiza
       const epoch = localCacheEpoch();
       const usage = await api!.getWorkspaceUsage(signal);
       const reading = { usage, fetchedAt: new Date().toISOString() };
-      if (scope) void usageCacheSlice.write(scope, USAGE_KEY, reading, USAGE_KEY, epoch);
+      // A read cancelled for a plan change predates it; keep it off disk.
+      if (scope && !signal.aborted) void usageCacheSlice.write(scope, USAGE_KEY, reading, USAGE_KEY, epoch);
       return reading;
     },
     enabled: Boolean(api),
@@ -113,13 +114,15 @@ export function useOrganizationUsage(api: OrganizationUsageApi | null): Organiza
 /**
  * Moves the Organization to a plan. The answer is the meter under the new plan,
  * written straight into the read and the cache, so the section repaints at once
- * without a second request.
+ * without a second request. A read already in flight is cancelled first: it
+ * may have seen the old plan, and landing after the change would revert it.
  */
 export function useSetOrganizationPlan(api: OrganizationPlanApi | null) {
   const scope = useLocalCacheScope();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (plan: PlanId): Promise<UsageReading> => {
+      await queryClient.cancelQueries({ queryKey: organizationUsageQueryKey(scope) });
       const epoch = localCacheEpoch();
       const usage = await api!.setWorkspacePlan(plan);
       const reading = { usage, fetchedAt: new Date().toISOString() };

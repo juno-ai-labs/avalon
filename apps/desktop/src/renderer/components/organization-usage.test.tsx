@@ -117,6 +117,27 @@ describe('Usage in Settings', () => {
     expect(await usageCacheSlice.read(SCOPE, 'usage')).toMatchObject({ usage: { plan: 'growth', quotaRemainingPercent: 44 } });
   });
 
+  it('keeps the new plan when a read that started before the change answers after it', async () => {
+    await usageCacheSlice.write(SCOPE, 'usage', { usage: usage(72), fetchedAt: '2026-10-03T14:14:00.000Z' });
+    let answerRead: (value: OrganizationUsage) => void = () => undefined;
+    const api: OrganizationPlanApi = {
+      getWorkspaceUsage: () => new Promise((resolve) => { answerRead = resolve; }),
+      setWorkspacePlan: async () => ({ ...usage(44), plan: 'growth' }),
+    };
+    renderSection(api);
+
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Plan' }));
+    fireEvent.keyDown(screen.getByRole('option', { name: /Growth plan/ }), { key: 'Enter' });
+    expect(await screen.findByText('44% left')).toBeVisible();
+
+    answerRead(usage(72));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.getByText('44% left')).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Growth plan');
+    expect(await usageCacheSlice.read(SCOPE, 'usage')).toMatchObject({ usage: { plan: 'growth' } });
+  });
+
   it('says so when the plan could not be changed and keeps the plan it had', async () => {
     const api = apiAnswering(usage(72));
     api.setWorkspacePlan.mockRejectedValue(new Error('This action requires a workspace administrator'));
