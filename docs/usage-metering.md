@@ -266,12 +266,12 @@ workspace.
 
 ### 2026-10-07 — Administrators choose the plan in Settings
 
-**What changed:** Settings → Organization → Usage has a plan picker above the
+**What changed:** Settings → Organization → Usage has a Plan row above the
 meter, backed by `PUT /workspace/plan`. Owners and administrators can change
 the plan; other members see it locked. The meter, there and in the Organization
 menu, fills in the viewer's own accent instead of the brand colour. In that
 menu the meter moved from under the active Organization's row to a full row
-right under Settings, so it sits in one place whether or not the Organizations
+right under Settings, titled Quota, so it sits in one place whether or not the Organizations
 list is shown, next to the Settings section it opens.
 
 **Why:** The usage PRD deferred self-serve plan choice until checkout existed
