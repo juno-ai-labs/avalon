@@ -58,13 +58,14 @@ The code and the link each work for one sign-in only. If the email does not
 arrive, or you typed the wrong address, click **Use another email or request a
 new code** to start again.
 
-Once you are signed in you see **Your shared work**, or a list of your
-Organizations if you belong to any.
+Once you are signed in you see **Your organizations**, a list of the
+Organizations you belong to.
 
 ## Starting an Organization
 
-If nothing has been shared with you yet, **Your shared work** offers **Create an
-organization**. Click it, type a name and click **Create organization**. The new
+If you do not belong to an Organization yet, ask a teammate to share a Channel
+or Breakout with you, or start your own: **Your organizations** offers **Create
+an organization**. Click it, type a name and click **Create organization**. The new
 Organization opens and walks you through the same setup as the Mac app:
 how you look to your team, then inviting teammates. Click **Back** to
 return without creating one.
