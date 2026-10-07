@@ -788,6 +788,10 @@ describe("single-platform regional onboarding", () => {
       workspaceId: createdWorkspaceId,
     }));
     expect(subject.bindings.rows.filter((row) => row.workspace_id === createdWorkspaceId)).toHaveLength(1);
+    // The replay settles the creator's eligibility again, so one whose first
+    // attempt failed after the binding activated is not left ineligible.
+    expect(subject.database.statements.filter((statement) =>
+      statement.sql.startsWith("UPDATE users SET onboarding_eligible = 1"))).toHaveLength(2);
   });
 
   it("rejects reusing a client operation for different create input", async () => {
