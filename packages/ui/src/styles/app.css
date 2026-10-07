@@ -841,6 +841,7 @@ pre {
 }
 
 .empty-state p:not(.empty-state-title) { margin: 0 0 14px; }
+.empty-state-actions { display: flex; gap: 8px; justify-content: center; }
 
 .dialog-overlay {
   animation: fade-in 130ms ease-out;
@@ -7428,6 +7429,7 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .sidekicks-library-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 40px; }
 .sidekicks-library-heading h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -.5px; }
 .sidekicks-library-heading p { margin: 8px 0 0; font-size: 15px; color: var(--av-sys-color-text-muted); }
+.sidekicks-library-actions { align-items: center; display: flex; flex-shrink: 0; gap: 12px; }
 .sidekicks-library-heading .button { border-radius: var(--av-sys-size-radius-pill); text-decoration: none; flex-shrink: 0; padding: 10px 18px; }
 .sidekicks-library-controls .sidebar-search { height: auto; min-height: 44px; width: 100%; margin: 0; border-radius: var(--av-sys-size-radius-pill); padding: 12px 16px; }
 .sidekick-filters { display: flex; gap: 8px; }
@@ -7928,6 +7930,12 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   .app-shell .rail-surface,
   .app-shell .rail-scrim { top: var(--phone-top-bar-height); }
 }
+/* A window surface (Settings, Sidekicks) shown as a route in a browser tab
+   takes the whole tab, as its window would: no sidebar, and no room or phone
+   top bar left for one. See `lib/window-surface.ts`. After the phone rules
+   above so it outranks them at every width. */
+.workspace-shell.is-window-surface > .sidebar { display: none; }
+.workspace-shell.is-window-surface .main-pane { height: 100%; margin: 0; }
 @media (max-width: 640px) and (prefers-reduced-motion: reduce) {
   .app-shell .single-sidebar,
   .app-shell .single-sidebar > :not(.sidebar-top-bar),
