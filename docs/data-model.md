@@ -42,6 +42,17 @@ Passwordless challenge storage is defined by migration 0111 and documented in
 [email sign-in](email-login.md). Challenge redemption records an identity-only
 session receipt; workspace relationships and grants remain separate authorities.
 
+## Signup lineage
+
+Regional migration 0121 adds an opaque telemetry flow to OAuth state, desktop
+login tickets, and email challenges. Tickets and challenges preserve whether the
+proof created a new identity. Email challenges also preserve their entry surface.
+New user insertion records `signup_flow_id` and `signup_client_platform`;
+`signup_path` and `signup_completed_at` record first organization readiness and
+one completion. These are analytics bookkeeping, never authorization or a gate
+on authentication. Existing identities and old proofs remain without lineage.
+See [complete signup measurement](telemetry.md#complete-signup-measurement).
+
 ## Impersonation relationships
 
 WorkspaceDO migration 67 adds `workspace_impersonation_relationships`, keyed by

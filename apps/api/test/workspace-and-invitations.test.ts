@@ -1,3 +1,5 @@
+import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
+import { drainWaitUntil } from './helpers/cloudflare-workers';
 import "../../../tests/isolated-region";
 import { asWorkspaceId } from "@rally/contracts";
 import { asUserId } from "@rally/contracts";
@@ -630,36 +632,21 @@ describe("workspace invitation lifecycle", () => {
 });
 
 describe("organization setup intent", () => {
-  it("keeps workspace and invitation setup out of the identity OAuth state", async () => {
-    const database = new StubDatabase(() => undefined);
-    const authorize = await new AuthService(environment(database)).beginIdentity({
-      returnUri: "avalon://auth/complete",
-      desktopAttemptId: "a".repeat(43),
-      desktopCodeChallenge: "c".repeat(43),
-    });
-
-    expect(database.runs).toHaveLength(1);
-    const stateInsert = database.runs[0]!;
-    expect(stateInsert.sql).toContain("workspace_name, invitation_id");
-    // Workspace, name and invitation are written as NULL; only identity values are bound.
-    expect(stateInsert.sql).toContain("NULL, NULL, NULL, ?, ?, ?, ?)");
-    expect(stateInsert.values.slice(1, 3)).toEqual(["global", "identity"]);
-    expect(stateInsert.values.slice(4, 6)).toEqual(["a".repeat(43), "c".repeat(43)]);
-    expect(stateInsert.values).toHaveLength(8);
-    const google = new URL(authorize);
-    expect(google.hostname).toBe("accounts.google.com");
-    expect(google.searchParams.get("scope")).toBe("openid email profile");
-  });
-
-  it("allows identity-only sign-in before organization selection", async () => {
-    const database = new StubDatabase(() => undefined);
-    await expect(new AuthService(environment(database)).beginIdentity({
-      desktopAttemptId: "a".repeat(43),
-      desktopCodeChallenge: "c".repeat(43),
-    })).resolves.toContain("accounts.google.com");
-    expect(database.runs).toHaveLength(1);
-    expect(database.runs[0]!.sql).toContain("NULL, NULL, NULL, ?, ?, ?, ?)");
-    expect(database.runs[0]!.values).toHaveLength(8);
+  it.each(["avalon://auth/complete", undefined])("persists identity-only OAuth state for return URI %s", async returnUri => {
+    const database = migratedSqliteDatabase();
+    try {
+      const env = environment(new StubDatabase(() => undefined), { DB: sqliteD1(database), LOG_LEVEL: 'error', APP_ENV: 'development' });
+      const authorize = await new AuthService(env).beginIdentity({
+        ...(returnUri ? { returnUri } : {}), desktopAttemptId: "a".repeat(43), desktopCodeChallenge: "c".repeat(43),
+      });
+      const google = new URL(authorize);
+      expect(google.hostname).toBe("accounts.google.com");
+      expect(google.searchParams.get("scope")).toBe("openid email profile");
+      const state = database.prepare(`SELECT purpose,workspace_id,workspace_name,invitation_id,desktop_attempt_id,desktop_code_challenge
+        FROM oauth_states WHERE id=?`).get(google.searchParams.get('state'));
+      expect(state).toEqual({ purpose:'identity',workspace_id:null,workspace_name:null,invitation_id:null,
+        desktop_attempt_id:'a'.repeat(43),desktop_code_challenge:'c'.repeat(43) });
+    } finally { await drainWaitUntil(); database.close(); }
   });
 });
 
