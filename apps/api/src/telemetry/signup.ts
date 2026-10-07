@@ -1,5 +1,6 @@
 import type { TelemetryEventProperties } from '@rally/contracts/telemetry';
-import type { Env } from '../env';
+import type { Context } from 'hono';
+import type { Env, HonoAppEnv } from '../env';
 import { runtimeDeferral } from '../lib/defer';
 import { diagnosticErrorCode, logWarn } from '../observability/logger';
 import { apiTelemetryEnvelope } from './api-emitter';
@@ -11,11 +12,17 @@ export interface SignupFlow { flowId: string | null; clientPlatform: SignupPlatf
 type SignupEvent = 'signup_started' | 'signup_email_submitted' | 'signup_verification_requested'
   | 'signup_verification_completed' | 'authentication_completed' | 'signup_completed' | 'signup_failed'
   | 'signup_viewed' | 'signup_account_created' | 'signup_organization_requested' | 'signup_organization_ready' | 'signup_onboarding_completed';
-const namespaces: Record<SignupEvent, number> = {
-  signup_viewed: 8, signup_account_created: 9, signup_organization_requested: 10, signup_organization_ready: 11, signup_onboarding_completed: 12,
+// Stable event-id namespaces: changing these would count a replay as a new stage.
+const namespaces = {
   signup_started: 1, signup_email_submitted: 2, signup_verification_requested: 3,
   signup_verification_completed: 4, authentication_completed: 5, signup_completed: 6, signup_failed: 7,
-};
+  signup_viewed: 8, signup_account_created: 9, signup_organization_ready: 11, signup_onboarding_completed: 12,
+  organization_requested_new: 13, organization_requested_existing: 14,
+} as const;
+
+export function requestSignupPlatform(c: Context<HonoAppEnv>): SignupPlatform {
+  return c.env.BROWSER_APP_ORIGIN !== undefined && c.req.header('origin') === c.env.BROWSER_APP_ORIGIN ? 'browser' : 'desktop';
+}
 
 /** Server-observed stages share an opaque attempt identity, including across magic-link tabs.
  * Authentication never awaits analytics. Known accounts retain their collection preference. */
@@ -26,7 +33,7 @@ export function observeSignup(
 ): void {
   if (!flow.flowId) return; // Proofs issued before this instrumentation have no lineage.
   try {
-    const namespace = name === 'signup_organization_requested' ? (input.signupPath === 'new_organization' ? 13 : 14) : namespaces[name];
+    const namespace = name === 'signup_organization_requested' ? (input.signupPath === 'new_organization' ? namespaces.organization_requested_new : namespaces.organization_requested_existing) : namespaces[name];
     const event = apiTelemetryEnvelope(env, name, {
       flowId: flow.flowId, clientPlatform: input.clientPlatform ?? flow.clientPlatform, entryPlatform: flow.clientPlatform, method, result: input.result ?? 'success',
       ...(input.signupPath ? { signupPath: input.signupPath } : {}),
@@ -42,20 +49,22 @@ export function observeSignup(
   }
 }
 
-export function observeAuthenticationCompleted(env: Env, flow: SignupFlow, method: 'google' | 'email', userId: string, created: boolean): void {
-  observeSignup(env, flow, 'authentication_completed', method, { userId, created });
+export function observeAuthenticationCompleted(env: Env, flow: SignupFlow, method: 'google' | 'email', userId: string, created: boolean, clientPlatform: SignupPlatform = flow.clientPlatform): void {
+  observeSignup(env, flow, 'authentication_completed', method, { userId, created, clientPlatform });
   if (created) {
-    observeSignup(env, flow, 'signup_account_created', method, { userId, created });
+    observeSignup(env, flow, 'signup_account_created', method, { userId, created, clientPlatform });
   }
 }
 
 /** Join/setup observations run after the authoritative mutation and follow only a new account's first flow. */
-export function observeSignupProgress(env: Env, userId: string, name: 'signup_organization_requested' | 'signup_organization_ready' | 'signup_onboarding_completed', signupPath?: 'new_organization' | 'existing_organization', clientPlatform: SignupPlatform = 'desktop'): void {
-  const observedAt = new Date().toISOString();
+export function observeSignupProgress(env: Env, userId: string, name: 'signup_organization_requested' | 'signup_organization_ready' | 'signup_onboarding_completed', signupPath: 'new_organization' | 'existing_organization' | undefined, clientPlatform: SignupPlatform, observedAt = new Date().toISOString()): void {
   runtimeDeferral((async () => {
     const row = await env.DB.prepare(`SELECT signup_flow_id,signup_client_platform,signup_path,signup_completed_at
       FROM users WHERE id=?`).bind(userId).first<{ signup_flow_id:string|null;signup_client_platform:SignupPlatform;signup_path:'new_organization'|'existing_organization'|null;signup_completed_at:string|null }>();
-    if (!row?.signup_flow_id || row.signup_completed_at) return;
+    if (!row?.signup_flow_id) return;
+    // An introduction may commit before readiness completes, yet its deferred
+    // observer can start after completion. Completion dedup must not erase it.
+    if (row.signup_completed_at && observedAt > row.signup_completed_at && name !== 'signup_onboarding_completed') return;
     const flow = { flowId: row.signup_flow_id, clientPlatform: row.signup_client_platform };
     let path = signupPath ?? row.signup_path ?? undefined;
     if (name === 'signup_organization_ready' && signupPath) {

@@ -1316,13 +1316,6 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
 
-### 2026-10-07 — Keep first-signup lineage beside existing identity proofs
-
-Redirects, magic-link tabs, and organization setup previously lost signup
-correlation. Migration 0121 extends the existing proof and user rows instead of
-introducing another tracking ledger. Identity insertion owns lineage atomically;
-returning sign-ins must never replace it or count as new-account creation.
-
 ### 2026-09-21 — Scope Channel pins to Space placements
 
 WorkspaceDO migration 66 replaces the per-person Channel pin key with

@@ -104,13 +104,13 @@ export async function startEmailLogin(env: Env, input: z.infer<typeof EmailLogin
 }
 
 /** No GET calls this function. Both proof types consume the same challenge. */
-export async function redeemEmailLogin(env: Env, input: z.infer<typeof EmailLoginRedeemSchema>) {
+export async function redeemEmailLogin(env: Env, input: z.infer<typeof EmailLoginRedeemSchema>, clientPlatform: SignupPlatform) {
   configuredEmailLoginPolicy(env);
   const request = EmailLoginRedeemSchema.parse(input);
   const row = await env.DB.prepare("SELECT * FROM email_login_challenges WHERE id=?").bind(request.challengeId).first<ChallengeRow>();
   if (!row) throw refused();
   const flow = { flowId: row.telemetry_flow_id, clientPlatform: row.telemetry_client_platform };
-  observeSignup(env, flow, 'signup_verification_requested', request.method);
+  observeSignup(env, flow, 'signup_verification_requested', request.method, { clientPlatform });
   try {
   const proof = await digest(env,row.id,request.method,request.credential);
   const expected = request.method === "magic" ? row.magic_hash : row.otp_hash;
@@ -126,8 +126,8 @@ export async function redeemEmailLogin(env: Env, input: z.infer<typeof EmailLogi
     return { challengeId:row.id,redemptionId:request.redemptionId };
   }
   if (row.expires_at <= Date.now() || (row.max_failed_attempts !== null && row.failed_attempts >= row.max_failed_attempts)) throw refused();
-  const userId = await resolveVerifiedEmailIdentity(env.DB,row.email, undefined, flow);
-  observeSignup(env, flow, 'signup_verification_completed', request.method, { userId });
+  const userId = await resolveVerifiedEmailIdentity(env.DB,row.email, flow);
+  observeSignup(env, flow, 'signup_verification_completed', request.method, { userId, clientPlatform });
   const sessionId = uuidV7();
   const encrypted = await seal(env,row.id,{ refreshToken:randomToken(48) });
   // Persist the winning identity and session credentials with proof consumption.
@@ -143,7 +143,7 @@ export async function redeemEmailLogin(env: Env, input: z.infer<typeof EmailLogi
   }
   return { challengeId:row.id,redemptionId:request.redemptionId };
   } catch (error) {
-    observeSignup(env, flow, 'signup_failed', request.method, { result: 'failed' });
+    observeSignup(env, flow, 'signup_failed', request.method, { result: 'failed', clientPlatform });
     throw error;
   }
 }

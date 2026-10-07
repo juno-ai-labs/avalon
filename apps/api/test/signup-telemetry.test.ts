@@ -1,3 +1,9 @@
+import { AccountOnboardingService } from '../src/services/account-onboarding-service';
+import { Hono } from 'hono';
+import { asUserId } from '@rally/contracts';
+import type { HonoAppEnv } from '../src/env';
+import { onboardingRoutes } from '../src/routes/onboarding';
+import { createApp } from '../src/app';
 import { resolveVerifiedEmailIdentity } from '../src/services/login-identity-service';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
@@ -16,7 +22,7 @@ afterEach(async () => { await drainWaitUntil(); db.close(); });
 function bindings() {
   return createTestEnv({ DB: sqliteD1(db), TELEMETRY_DB: sqliteD1(db), APP_ENV: 'production', AVALON_REGION: 'global',
     LOG_LEVEL: 'error', SESSION_SIGNING_KEY: 'signup-test-signing-key', OAUTH_STATE_ENCRYPTION_KEY: 'signup-test-encryption-key',
-    BROWSER_APP_ORIGIN: 'https://app.example.test', RESEND_FROM_EMAIL: 'Rally <login@example.test>',
+    BROWSER_APP_ORIGIN: 'https://app.example.test', ALLOWED_ORIGINS: 'https://app.example.test', PUBLIC_API_BASE_URL: 'https://api.example.test', RESEND_FROM_EMAIL: 'Rally <login@example.test>',
     EMAIL_LOGIN_POLICY_JSON: '{"otpDigits":6,"ttlSeconds":600,"maxFailedAttempts":3}' });
 }
 function events() {
@@ -33,8 +39,8 @@ async function emailSignup(clientPlatform: 'browser' | 'desktop' = 'browser') {
   const payload = await openEmailLoginSecret(env, challengeId, String(row.delivery_payload_encrypted)) as { text: string };
   const credential = /code is (\d+)\./u.exec(payload.text)![1]!;
   const input = { challengeId, redemptionId: crypto.randomUUID(), credential, method: 'otp' as const };
-  const receipt = await redeemEmailLogin(env, input);
-  const session = await new AuthService(env).resumeEmailLogin(receipt);
+  const receipt = await redeemEmailLogin(env, input, clientPlatform);
+  const session = await new AuthService(env).resumeEmailLogin(receipt, clientPlatform);
   await drainWaitUntil();
   return { env, flowId, session, input };
 }
@@ -51,7 +57,7 @@ describe('complete signup analytics', () => {
     expect(events().some(event => event.name === 'signup_completed')).toBe(false);
     observeSignupProgress(env, session.user.id, 'signup_organization_ready', signupPath, 'browser');
     await drainWaitUntil();
-    await new AuthService(env).resumeEmailLogin(await redeemEmailLogin(env, input));
+    await new AuthService(env).resumeEmailLogin(await redeemEmailLogin(env, input, 'browser'), 'browser');
     observeSignupProgress(env, session.user.id, 'signup_organization_ready', signupPath, 'browser');
     await drainWaitUntil();
     expect(events().map(event => event.name)).toEqual(['signup_viewed', 'signup_started', 'signup_email_submitted',
@@ -61,6 +67,84 @@ describe('complete signup analytics', () => {
       properties: { flowId, clientPlatform: 'browser', entryPlatform: 'browser', accountStatus: 'new', signupPath, result: 'success' } });
     expect(JSON.stringify(events())).not.toContain('new@example.test');
     expect(JSON.stringify(events())).not.toContain(input.credential);
+  });
+
+  it('records browser verification and authentication for a desktop-issued magic link', async () => {
+    const env = bindings();
+    const challengeId = crypto.randomUUID();
+    await startEmailLogin(env, { challengeId, email: 'cross@example.test' }, 'desktop');
+    const row = db.prepare('SELECT delivery_payload_encrypted FROM email_login_challenges WHERE id=?').get(challengeId)!;
+    const payload = await openEmailLoginSecret(env, challengeId, String(row.delivery_payload_encrypted)) as { text: string };
+    const link = new URL(payload.text.match(/https:\/\/[^\s]+/u)![0]);
+    const credential = new URLSearchParams(link.hash.slice(1)).get('token')!;
+    const response = await createApp().request('https://api.example.test/browser/email/redeem', {
+      method: 'POST', headers: { origin: 'https://app.example.test', 'content-type': 'application/json' },
+      body: JSON.stringify({ challengeId, redemptionId: crypto.randomUUID(), method: 'magic', credential }),
+    }, env);
+    expect(response.status, await response.clone().text()).toBe(200);
+    await drainWaitUntil();
+    const stages = events().filter(event => ['signup_verification_requested', 'signup_verification_completed', 'authentication_completed', 'signup_account_created'].includes(event.name));
+    expect(stages.map(event => event.name)).toEqual(['signup_verification_requested', 'signup_verification_completed', 'authentication_completed', 'signup_account_created']);
+    for (const event of stages) expect(event.properties).toMatchObject({ clientPlatform: 'browser', entryPlatform: 'desktop' });
+  });
+
+  it('labels a browser organization activation request at the shared onboarding route', async () => {
+    const { env, session } = await emailSignup('desktop');
+    const app = new Hono<HonoAppEnv>();
+    app.use('*', async (c, next) => {
+      c.set('auth', { userId: asUserId(session.user.id), sessionId: 'test', workspaceId: null, region: 'global', role: null });
+      await next();
+    });
+    app.route('/onboarding', onboardingRoutes);
+    // A nonexistent organization cannot activate, but its observed request
+    // must still identify the browser at this shared route boundary.
+    const response = await app.request('/onboarding/workspace/activate', {
+      method: 'POST', headers: { origin: 'https://app.example.test', 'content-type': 'application/json' },
+      body: JSON.stringify({ region: 'global', workspaceId: newId() }),
+    }, env);
+    expect(response.ok).toBe(false);
+    await drainWaitUntil();
+    expect(events().filter(event => event.name === 'signup_organization_requested')).toMatchObject([
+      { properties: { clientPlatform: 'browser', entryPlatform: 'desktop', signupPath: 'existing_organization' } },
+    ]);
+  });
+
+  it('observes introduction only on its committed transition, not profile saves or replays', async () => {
+    const { env, session } = await emailSignup();
+    const service = new AccountOnboardingService(env, { userId: asUserId(session.user.id), sessionId: 'test', workspaceId: null, region: 'global', role: null });
+    db.prepare('UPDATE users SET onboarding_eligible=1 WHERE id=?').run(session.user.id);
+    observeSignupProgress(env, session.user.id, 'signup_organization_ready', 'existing_organization', 'browser');
+    await drainWaitUntil();
+    let observations = 0;
+    const observe = () => {
+      observations++;
+      observeSignupProgress(env, session.user.id, 'signup_onboarding_completed', undefined, 'browser');
+    };
+    await service.update({ expectedRevision: 0, introduced: true }, observe);
+    await drainWaitUntil();
+    await service.update({ expectedRevision: 0, introduced: true }, observe);
+    await service.update({ expectedRevision: 1, introduced: true }, observe);
+    expect(observations).toBe(1);
+    await drainWaitUntil();
+    expect(events().filter(event => event.name === 'signup_onboarding_completed')).toHaveLength(1);
+  });
+
+  it('preserves an introduction observer that starts after overlapping readiness has completed', async () => {
+    const { env, session } = await emailSignup('desktop');
+    db.prepare('UPDATE users SET onboarding_eligible=1,onboarding_introduced=1 WHERE id=?').run(session.user.id);
+    // The profile commit can precede readiness, while the account request is
+    // suspended before scheduling its observer. Drain readiness first to
+    // deterministically exercise the late observer rather than a likely race.
+    observeSignupProgress(env, session.user.id, 'signup_organization_ready', 'new_organization', 'desktop');
+    await drainWaitUntil();
+    expect(events().filter(event => event.name === 'signup_completed')).toHaveLength(1);
+    observeSignupProgress(env, session.user.id, 'signup_onboarding_completed', undefined, 'browser');
+    observeSignupProgress(env, session.user.id, 'signup_onboarding_completed', undefined, 'browser');
+    await drainWaitUntil();
+    expect(events().filter(event => event.name === 'signup_onboarding_completed')).toMatchObject([
+      { properties: { clientPlatform: 'browser', entryPlatform: 'desktop' } },
+    ]);
+    expect(events().filter(event => event.name === 'signup_completed')).toHaveLength(1);
   });
 
   it('waits for required onboarding and records the current platform separately from the entry platform', async () => {
@@ -87,6 +171,7 @@ describe('complete signup analytics', () => {
     observeSignupProgress(env, session.user.id, 'signup_onboarding_completed', undefined, 'desktop');
     await drainWaitUntil();
     expect(events().filter(event => event.name === 'signup_completed')).toHaveLength(1);
+    expect(events().filter(event => event.name === 'signup_onboarding_completed')).toHaveLength(1);
     expect(events().at(-1)).toMatchObject({ name: 'signup_completed', properties: { signupPath: 'new_organization' } });
   });
 
@@ -118,12 +203,12 @@ describe('complete signup analytics', () => {
     const { env, session } = await emailSignup();
     const challengeId = crypto.randomUUID();
     await startEmailLogin(env, { challengeId, email: 'new@example.test' });
-    await expect(redeemEmailLogin(env, { challengeId, redemptionId: crypto.randomUUID(), credential: 'incorrect', method: 'otp' }))
+    await expect(redeemEmailLogin(env, { challengeId, redemptionId: crypto.randomUUID(), credential: 'incorrect', method: 'otp' }, 'browser'))
       .rejects.toMatchObject({ code: 'email_login_invalid' });
     await drainWaitUntil();
     expect(events().at(-1)).toMatchObject({ name: 'signup_failed', properties: { method: 'otp', result: 'failed' } });
     const otherFlow = newId();
-    const user = await resolveVerifiedEmailIdentity(env.DB, 'new@example.test', undefined, { flowId: otherFlow, clientPlatform: 'desktop' });
+    const user = await resolveVerifiedEmailIdentity(env.DB, 'new@example.test', { flowId: otherFlow, clientPlatform: 'desktop' });
     expect(user).toBe(session.user.id);
     expect(db.prepare('SELECT signup_flow_id FROM users WHERE id=?').get(user)?.signup_flow_id).not.toBe(otherFlow);
   });

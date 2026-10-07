@@ -133,8 +133,8 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
   });
   routes.get("/email/redeem",(c) => { c.header("Allow","POST");return c.body(null,405); });
   routes.post("/email/redeem",authBodyLimit,zValidator("json",EmailLoginRedeemSchema),async (c) => {
-    const receipt = await redeemEmailLogin(c.env,c.req.valid("json"));
-    const session = await new AuthService(c.env).resumeEmailLogin(receipt);
+    const receipt = await redeemEmailLogin(c.env,c.req.valid("json"), 'browser');
+    const session = await new AuthService(c.env).resumeEmailLogin(receipt, 'browser');
     const service = new BrowserSessionService(c.env);
     const cookie = await service.register(session);
     writeCookie(c,cookie.credential,cookie.expiresAt);
@@ -219,7 +219,7 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     observeSignupProgress(c.env, auth.userId, 'signup_organization_requested', 'existing_organization', 'browser');
     const session = BrowserSessionSchema.parse(await service.select(credential(c),c.req.valid("json").workspaceId));
     observeSignupProgress(c.env, session.user.id, 'signup_organization_ready', 'existing_organization', 'browser');
-    return c.json(session);
+    return c.json(BrowserSessionSchema.parse(session));
   });
 
   routes.all("/api/:workspaceId/*",async (c) => {

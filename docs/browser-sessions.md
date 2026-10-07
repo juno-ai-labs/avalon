@@ -104,6 +104,10 @@ logout cannot authenticate through the revoked root, even if it already created
 a workspace session. Socket revocation uses the existing logout delivery path
 and inherits its documented publication-failure behavior.
 
+## Signup observations
+
+Signup uses the opaque first-account flow and stage contract in [complete signup measurement](telemetry.md#complete-signup-measurement).
+
 ## Testing
 
 Run `pnpm --filter @rally/api exec vitest run test/browser-sessions.test.ts`.

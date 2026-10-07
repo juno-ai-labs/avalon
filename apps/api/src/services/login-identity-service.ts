@@ -8,7 +8,7 @@ const EmailSchema = z.string().trim().email().transform((email) => email.toLower
 /** Call only after the provider or single-use mailbox challenge has been verified. */
 export async function persistVerifiedGoogleIdentity(db: D1Database, input: {
   subject: string; email: string; name: string; avatarUrl: string | null;
-}, onCreated?: (userId: string) => void, signup?: SignupFlow): Promise<string> {
+}, signup?: SignupFlow): Promise<{ id: string; created: boolean }> {
   const email = EmailSchema.parse(input.email);
   const candidateId = newId();
   const at = nowIso();
@@ -46,8 +46,7 @@ export async function persistVerifiedGoogleIdentity(db: D1Database, input: {
   ]);
   const row = await db.prepare("SELECT id, signup_flow_id FROM users WHERE google_subject = ?").bind(input.subject).first<{ id: string; signup_flow_id: string | null }>();
   if (!row) throw new ApiError(500, "identity_persistence_failed", "Could not persist the user identity");
-  if (row.id === candidateId || (signup?.flowId && row.signup_flow_id === signup.flowId)) onCreated?.(row.id);
-  return row.id;
+  return { id: row.id, created: row.id === candidateId || !!(signup?.flowId && row.signup_flow_id === signup.flowId) };
 }
 
 /**
@@ -56,7 +55,7 @@ export async function persistVerifiedGoogleIdentity(db: D1Database, input: {
  * never an account-linking operation. Concurrent first logins converge through
  * the unique email and provider-subject constraints in one D1 batch.
  */
-export async function resolveVerifiedEmailIdentity(db: D1Database, verifiedEmail: string, onCreated?: (userId: string) => void, signup?: SignupFlow): Promise<string> {
+export async function resolveVerifiedEmailIdentity(db: D1Database, verifiedEmail: string, signup?: SignupFlow): Promise<string> {
   const email = EmailSchema.parse(verifiedEmail);
   const id = newId();
   const at = nowIso();
@@ -78,6 +77,5 @@ export async function resolveVerifiedEmailIdentity(db: D1Database, verifiedEmail
     JOIN users u ON u.id = identity.user_id AND u.email = verified.email
     WHERE identity.provider = 'email' AND identity.subject = ?`).bind(email).first<{ user_id: string }>();
   if (!row) throw new ApiError(409, "verified_identity_required", "This address needs an explicit account link before email sign-in");
-  if (row.user_id === id) onCreated?.(row.user_id);
   return row.user_id;
 }

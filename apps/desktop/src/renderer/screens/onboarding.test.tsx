@@ -91,7 +91,10 @@ describe('identity-first onboarding screens', () => {
 
   it('uses one global identity entry and does not ask for a login region', async () => {
     sessionState.region = 'enterprise';
-    render(<SignInScreen />);
+    const view = render(<SignInScreen />);
+    await waitFor(() => expect(api.observeSignupView).toHaveBeenCalledWith(telemetry.operationId));
+    view.rerender(<SignInScreen />);
+    expect(api.observeSignupView).toHaveBeenCalledTimes(1);
 
     expect(screen.queryByRole('radio')).not.toBeInTheDocument();
     await waitFor(() => expect(sessionState.selectRegion).toHaveBeenCalledWith('global'));
