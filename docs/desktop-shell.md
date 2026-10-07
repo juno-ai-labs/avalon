@@ -132,6 +132,9 @@ through its `leading` slot. Electron's window has an 860px minimum, so only
 the browser reaches this width. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx`
 repeats the CSS's 640.
 
+On touch screens text fields render at 16px to stop iOS focus zoom; see the
+rule at the end of `app.css`.
+
 ### Pins under All
 
 A pin belongs to one placement, and the server keeps one ordered run per Space
