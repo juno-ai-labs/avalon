@@ -1573,14 +1573,12 @@ pre {
 .skeleton-row:nth-child(5n+2) .skeleton-row-subline { width: 62%; }
 .skeleton-row:nth-child(5n+4) .skeleton-row-subline { width: 33%; }
 
-/* The empty Channel list's one row: a Channel's outline, still, since nothing
-   is loading. The mark keeps the glyph's pebble so it reads as the slot a real
-   glyph fills. */
+/* The empty Channel list's one row; the mark keeps the glyph's pebble. */
 .ghost-channel-row { cursor: default; }
 .ghost-channel-mark { height: 40px; width: 40px; }
 .ghost-channel-mark > .workstream-glyph-shape {
   background: transparent;
-  border: 1.5px dashed var(--av-ref-color-neutral-6);
+  border: 1.5px dashed var(--av-sys-color-border-strong);
   box-shadow: none;
 }
 .ghost-channel-row .channel-row-heading { align-items: center; }
