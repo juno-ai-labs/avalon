@@ -8039,9 +8039,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             halt: "needs_input" as const,
           };
         }
-        // The question belongs to the conversation whose run asked it. Without
-        // the substream it lands in Main's room, where every Channel member,
-        // outside a private Breakout too, sees a question Main cannot answer.
+        // Announced in the room of the conversation that asked, not Main's.
         await publishWorkstreamEvent(
           env,
           input.workspaceId,
