@@ -70,14 +70,14 @@ describe("passwordless email login", () => {
   it("lets link and OTP race for exactly one identity session and resumes the winner", async () => {
     const { env,challengeId,otp,token } = await challenge();
     const requests = [attempt(challengeId,otp),attempt(challengeId,token,"magic")];
-    const results = await Promise.allSettled(requests.map((request) => redeemEmailLogin(env,request)));
+    const results = await Promise.allSettled(requests.map((request) => redeemEmailLogin(env,request, 'browser')));
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const winner = results.findIndex((result) => result.status === "fulfilled");
-    const receipt = await redeemEmailLogin(env,requests[winner]!);
+    const receipt = await redeemEmailLogin(env,requests[winner]!, 'browser');
     // The proof is already consumed here, but no session was inserted yet.
     expect(db.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n:0 });
     const service = new AuthService(env);
-    const [first,retry] = await Promise.all([service.resumeEmailLogin(receipt),service.resumeEmailLogin(receipt)]);
+    const [first,retry] = await Promise.all([service.resumeEmailLogin(receipt, 'browser'),service.resumeEmailLogin(receipt, 'browser')]);
     expect(first.refreshToken).toBe(retry.refreshToken);
     expect(first.user.id).toBe(retry.user.id);
     expect(first.workspace).toBeNull();
@@ -89,27 +89,27 @@ describe("passwordless email login", () => {
 
   it("enforces stored expiry and attempt policy without accepting another proof type after consumption", async () => {
     const first = await challenge();
-    for (let index=0;index<3;index++) await expect(redeemEmailLogin(first.env,attempt(first.challengeId,"wrong")))
+    for (let index=0;index<3;index++) await expect(redeemEmailLogin(first.env,attempt(first.challengeId,"wrong"), 'browser'))
       .rejects.toMatchObject({ code:"email_login_invalid" });
-    await expect(redeemEmailLogin(first.env,attempt(first.challengeId,first.token,"magic"))).rejects.toMatchObject({ code:"email_login_invalid" });
+    await expect(redeemEmailLogin(first.env,attempt(first.challengeId,first.token,"magic"), 'browser')).rejects.toMatchObject({ code:"email_login_invalid" });
     const second = await challenge();
     db.prepare("UPDATE email_login_challenges SET expires_at=0 WHERE id=?").run(second.challengeId);
-    await expect(redeemEmailLogin(second.env,attempt(second.challengeId,second.otp))).rejects.toMatchObject({ code:"email_login_invalid" });
+    await expect(redeemEmailLogin(second.env,attempt(second.challengeId,second.otp), 'browser')).rejects.toMatchObject({ code:"email_login_invalid" });
     const third = await challenge();
-    await redeemEmailLogin(third.env,attempt(third.challengeId,third.otp));
-    await expect(redeemEmailLogin(third.env,attempt(third.challengeId,third.token,"magic"))).rejects.toMatchObject({ code:"email_login_invalid" });
+    await redeemEmailLogin(third.env,attempt(third.challengeId,third.otp), 'browser');
+    await expect(redeemEmailLogin(third.env,attempt(third.challengeId,third.token,"magic"), 'browser')).rejects.toMatchObject({ code:"email_login_invalid" });
   });
 
   it("does not recreate a revoked or rotated session on redemption retry", async () => {
     const { env,challengeId,otp } = await challenge();
     const request = attempt(challengeId,otp);
-    const receipt = await redeemEmailLogin(env,request);
+    const receipt = await redeemEmailLogin(env,request, 'browser');
     const service = new AuthService(env);
-    const session = await service.resumeEmailLogin(receipt);
+    const session = await service.resumeEmailLogin(receipt, 'browser');
     await service.refresh(session.refreshToken);
-    await expect(service.resumeEmailLogin(await redeemEmailLogin(env,request))).rejects.toMatchObject({ code:"email_login_session_unavailable" });
+    await expect(service.resumeEmailLogin(await redeemEmailLogin(env,request, 'browser'), 'browser')).rejects.toMatchObject({ code:"email_login_session_unavailable" });
     db.exec("UPDATE sessions SET revoked_at='revoked'");
-    await expect(service.resumeEmailLogin(receipt)).rejects.toMatchObject({ code:"email_login_session_unavailable" });
+    await expect(service.resumeEmailLogin(receipt, 'browser')).rejects.toMatchObject({ code:"email_login_session_unavailable" });
     expect(db.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n:1 });
   });
 
@@ -166,10 +166,10 @@ it("keeps email login disabled without explicit policy and bounds both public tr
 it("purges unusable email receipts while preserving active response-loss recovery", async () => {
   const { env, challengeId, otp } = await challenge();
   const request = attempt(challengeId, otp);
-  const receipt = await redeemEmailLogin(env, request);
-  const session = await new AuthService(env).resumeEmailLogin(receipt);
+  const receipt = await redeemEmailLogin(env, request, 'browser');
+  const session = await new AuthService(env).resumeEmailLogin(receipt, 'browser');
   await purgeExpiredEmailLoginChallenges(env);
-  expect((await new AuthService(env).resumeEmailLogin(await redeemEmailLogin(env, request))).refreshToken).toBe(session.refreshToken);
+  expect((await new AuthService(env).resumeEmailLogin(await redeemEmailLogin(env, request, 'browser'), 'browser')).refreshToken).toBe(session.refreshToken);
   db.prepare("UPDATE sessions SET expires_at='2000-01-01T00:00:00.000Z'").run();
   await purgeExpiredEmailLoginChallenges(env);
   expect(db.prepare("SELECT id FROM email_login_challenges WHERE id=?").get(challengeId)).toBeUndefined();
