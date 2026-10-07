@@ -4,7 +4,8 @@ import { SessionSchema } from "@rally/contracts";
 import { createApp } from "../src/app";
 import { AuthService } from "../src/services/auth-service";
 import { BrowserSessionService } from "../src/services/browser-session-service";
-import { SUPPORT_ORGANIZATION_ID } from "../src/services/support-access";
+import { revokeSupportSessions, SUPPORT_ORGANIZATION_ID } from "../src/services/support-access";
+import { reapExpiredSessions } from "../src/services/access-revocation";
 import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 import { migratedObservabilityFixture, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -23,14 +24,18 @@ const CUSTOMER = "01a11778-0000-7000-8000-0000000000c1";
 let db: DatabaseSync;
 let revoked: unknown[];
 
-function bindings(overrides: { AUDIT_DB?: D1Database } = {}) {
-  return createTestEnv({ DB: sqliteD1(db), ...overrides, APP_ENV: "development", RALLY_DEV_AUTH: "false", AVALON_REGION: "global",
+function bindings(overrides: { AUDIT_DB?: D1Database; queueDown?: boolean } = {}) {
+  const { queueDown, ...bound } = overrides;
+  return createTestEnv({ DB: sqliteD1(db), ...bound, APP_ENV: "development", RALLY_DEV_AUTH: "false", AVALON_REGION: "global",
     ALLOWED_ORIGINS: origin, PUBLIC_API_BASE_URL: apiOrigin, LOG_LEVEL: "error",
     SESSION_SIGNING_KEY: "support-test-signing-key", OAUTH_STATE_ENCRYPTION_KEY: "support-test-encryption-key",
     BROWSER_APP_ORIGIN: origin,
     ACCESS_REVOCATION_QUEUE: {
-      send: async (body: unknown) => { revoked.push(body); },
-      sendBatch: async (messages: Array<{ body: unknown }>) => { revoked.push(...messages.map((message) => message.body)); },
+      send: async (body: unknown) => { if (queueDown) throw new Error("queue unavailable"); revoked.push(body); },
+      sendBatch: async (messages: Array<{ body: unknown }>) => {
+        if (queueDown) throw new Error("queue unavailable");
+        revoked.push(...messages.map((message) => message.body));
+      },
     } });
 }
 
@@ -204,4 +209,49 @@ it("grants nothing, and opens no session, when the audit record cannot be writte
     bindings({ AUDIT_DB: failing }));
   expect(started.status).toBe(500);
   expect(db.prepare("SELECT COUNT(*) AS sessions FROM sessions WHERE impersonator_user_id IS NOT NULL").get()).toEqual({ sessions: 0 });
+});
+
+it("refuses to trade a support session for another credential or a device registration", async () => {
+  await grant();
+  const session = await startAsBob();
+  for (const [path, body] of [
+    ["/auth/workspace/select", { workspaceId: CUSTOMER }],
+    ["/onboarding/workspace/activate", { region: "global", workspaceId: CUSTOMER }],
+  ] as const) {
+    const response = await call(path, session.accessToken, "POST", body);
+    expect(response.status, path).toBe(403);
+    expect(await errorCode(response)).toBe("support_session_not_allowed");
+  }
+  const devices = await call("/push-devices", session.accessToken);
+  expect(devices.status).toBe(403);
+  expect(db.prepare("SELECT COUNT(*) AS plain FROM sessions WHERE user_id = ? AND impersonator_user_id IS NULL").get(BOB))
+    .toEqual({ plain: 0 });
+});
+
+it("stops a revoked support session at once and leaves an unannounced one to the expiry sweep", async () => {
+  await grant();
+  const session = await startAsBob();
+  const admin = (await member(ADMIN, CUSTOMER)).accessToken;
+  expect((await call("/workspace/support-access", admin, "DELETE", undefined, bindings({ queueDown: true }))).status).toBe(200);
+  expect((await call("/workspace", session.accessToken)).status).toBe(401);
+  expect(revoked).toEqual([]);
+  expect(await reapExpiredSessions(bindings())).toBe(1);
+  expect(revoked).toEqual([expect.objectContaining({ userId: BOB, workspaceId: CUSTOMER })]);
+  expect(db.prepare("SELECT revoked_at IS NOT NULL AS marked FROM sessions WHERE impersonator_user_id = ?").get(STAFF))
+    .toEqual({ marked: 1 });
+});
+
+it("ends only the support sessions of the staff membership that was removed", async () => {
+  await grant();
+  const old = await startAsBob();
+  const oldIncarnation = String((db.prepare("SELECT incarnation FROM workspace_members WHERE workspace_id = ? AND user_id = ?")
+    .get(SUPPORT_ORGANIZATION_ID, STAFF) as { incarnation: string }).incarnation);
+  db.prepare("DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?").run(SUPPORT_ORGANIZATION_ID, STAFF);
+  db.prepare("INSERT INTO workspace_members(workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'member','member','active',?)")
+    .run(SUPPORT_ORGANIZATION_ID, STAFF, new Date().toISOString());
+  const current = await startAsBob();
+  // The removal of the earlier membership is delivered late.
+  await revokeSupportSessions(bindings(), { impersonatorUserId: STAFF, impersonatorIncarnation: oldIncarnation });
+  expect((await call("/workspace", current.accessToken)).status).toBe(200);
+  expect((await call("/workspace", old.accessToken)).status).toBe(401);
 });
