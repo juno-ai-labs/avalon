@@ -22,12 +22,10 @@ MENU_BAR_ICON_POINT_SIZE = 16
 # bounds reads as clipped next to the system extras, which all carry optical
 # padding of their own.
 MENU_BAR_ICON_INSET = 1 / 16
-# Twice the mark's 15-unit stroke. At 16 pt the standard cut is under a pixel
-# wide and reads as faint next to the system glyphs.
-MENU_BAR_ICON_STROKE = 30
-# The glyph is drawn this many times larger, then reduced, to anti-alias it.
-MENU_BAR_ICON_SUPERSAMPLE = 8
-MENU_BAR_ICON_CURVE_SAMPLES = 4096
+# Raster renderers draw the seam this many times larger, then reduce it, to
+# anti-alias it.
+SEAM_SUPERSAMPLE = 8
+SEAM_CURVE_SAMPLES = 4096
 PRIMARY = (204, 255, 0, 255)  # #CCFF00
 SECONDARY = (71, 199, 252, 255)  # #47C7FC
 DARK_CANVAS = (17, 18, 16, 255)  # #111210
@@ -129,26 +127,55 @@ def menu_bar_template_icon(size: int) -> Image.Image:
     only treatment that survives the translucent menu bar in macOS 26 and 27.
     Any colour baked in here would be discarded, so the artwork is pure black.
     """
-    points = rally_mark().centre_line(MENU_BAR_ICON_CURVE_SAMPLES)
+    rally = rally_mark()
+    points = rally.centre_line(SEAM_CURVE_SAMPLES)
     xs, ys = [x for x, _ in points], [y for _, y in points]
-    side = max(max(xs) - min(xs), max(ys) - min(ys)) + MENU_BAR_ICON_STROKE
+    side = max(max(xs) - min(xs), max(ys) - min(ys)) + rally.THICK_STROKE
     left = (min(xs) + max(xs)) / 2 - side / 2
     top = (min(ys) + max(ys)) / 2 - side / 2
     inset = round(size * MENU_BAR_ICON_INSET)
     extent = size - 2 * inset
-    scale = extent * MENU_BAR_ICON_SUPERSAMPLE / side
-    radius = MENU_BAR_ICON_STROKE / 2 * scale
-    canvas = Image.new("L", (extent * MENU_BAR_ICON_SUPERSAMPLE,) * 2, 0)
-    draw = ImageDraw.Draw(canvas)
-    for x, y in points:
-        cx, cy = (x - left) * scale, (y - top) * scale
-        draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=255)
-    glyph = canvas.resize((extent, extent), Image.Resampling.BOX)
+    glyph = seam_mask(extent, left, top, side, rally.THICK_STROKE)
     stencil = Image.new("RGBA", (extent, extent), (0, 0, 0, 255))
     stencil.putalpha(glyph)
     result = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     result.alpha_composite(stencil, (inset, inset))
     return result
+
+
+def favicon_icon(size: int) -> Image.Image:
+    """The PNG fallback for favicon.svg: the thick mark on the black disc."""
+    rally = rally_mark()
+    radius = rally.FAVICON_DISC_RADIUS
+    left = top = rally.CANVAS_CENTRE - radius
+    big = size * SEAM_SUPERSAMPLE
+    disc = Image.new("L", (big, big), 0)
+    ImageDraw.Draw(disc).ellipse((0, 0, big - 1, big - 1), fill=255)
+    result = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    backing = Image.new("RGBA", (size, size), hex_colour(rally.DISC))
+    backing.putalpha(disc.resize((size, size), Image.Resampling.BOX))
+    result.alpha_composite(backing)
+    glyph = Image.new("RGBA", (size, size), PRIMARY)
+    glyph.putalpha(seam_mask(size, left, top, 2 * radius, rally.THICK_STROKE))
+    result.alpha_composite(glyph)
+    return result
+
+
+def seam_mask(extent: int, left: float, top: float, side: float, stroke: float) -> Image.Image:
+    """An alpha mask of the seam's centre line at `stroke`, framed by a canvas-unit square."""
+    points = rally_mark().centre_line(SEAM_CURVE_SAMPLES)
+    scale = extent * SEAM_SUPERSAMPLE / side
+    radius = stroke / 2 * scale
+    canvas = Image.new("L", (extent * SEAM_SUPERSAMPLE,) * 2, 0)
+    draw = ImageDraw.Draw(canvas)
+    for x, y in points:
+        cx, cy = (x - left) * scale, (y - top) * scale
+        draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=255)
+    return canvas.resize((extent, extent), Image.Resampling.BOX)
+
+
+def hex_colour(value: str) -> tuple[int, int, int, int]:
+    return (int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16), 255)
 
 
 def rally_mark():
@@ -258,10 +285,9 @@ def main() -> None:
         menu_bar_template_icon(MENU_BAR_ICON_POINT_SIZE * 2),
         MENU_BAR_ICON_DIRECTORY / "rallyTemplate@2x.png",
     )
-    # The favicon stays transparent. Safari outlines an opaque dark square in its
-    # dark tab bar; the bare mark gets no outline. The touch icon stays opaque
-    # because iOS fills transparency with black.
-    save(mark(64), ROOT / "apps" / "site" / "public" / "favicon.png")
+    # The PNG fallback matches favicon.svg. The touch icon stays an opaque
+    # square because iOS fills transparency with black.
+    save(favicon_icon(64), ROOT / "apps" / "site" / "public" / "favicon.png")
     save(app_icon(180), ROOT / "apps" / "site" / "public" / "apple-touch-icon.png")
     # Off macOS the card would silently pick up a substitute typeface and
     # overwrite the committed one, which is a regression nobody reviewing an
