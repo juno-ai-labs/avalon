@@ -4271,9 +4271,16 @@ describe('the sidebar Space filter', () => {
     expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
   });
 
-  it('pins a Channel dropped on the Pinned section under All', async () => {
+  it('pins a Channel dropped at the end of All\'s Pinned section there, past its old saved slot', async () => {
     const onPinWorkstream = vi.fn(async () => true);
-    renderFiltered({ onPinWorkstream, onReorderAllPinned: vi.fn(async () => undefined) });
+    const onReorderAllPinned = vi.fn(async () => undefined);
+    renderFiltered({
+      // Charlie was pinned once and unpinned; All's saved order still names it first.
+      allPinnedOrder: [charlie.id, alpha.id],
+      onPinWorkstream,
+      onReorderAllPinned,
+      workstreams: [{ ...alpha, spacePins: [{ spaceId: home.id, position: 0 }] }, bravo, charlie, delta],
+    });
     // jsdom has no DataTransfer; the row reads and writes only these.
     const data = new Map<string, string>();
     const transfer = {
@@ -4287,11 +4294,15 @@ describe('the sidebar Space filter', () => {
 
     fireEvent.dragStart(source, { dataTransfer: transfer });
     const pinnedSection = screen.getByRole('region', { name: 'Pinned' });
-    fireEvent.dragOver(pinnedSection, { dataTransfer: transfer });
+    // Below every pinned row: the end. jsdom's plain drag Event drops `clientY`.
+    const over = createEvent.dragOver(pinnedSection, { dataTransfer: transfer });
+    Object.defineProperty(over, 'clientY', { value: 1000 });
+    fireEvent(pinnedSection, over);
     fireEvent.drop(pinnedSection, { dataTransfer: transfer });
     fireEvent.dragEnd(source, { dataTransfer: transfer });
 
-    await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(expect.objectContaining({ id: charlie.id }), hiring.id, true));
+    await waitFor(() => expect(onReorderAllPinned).toHaveBeenCalledWith([alpha.id, charlie.id]));
+    expect(onPinWorkstream).toHaveBeenCalledWith(expect.objectContaining({ id: charlie.id }), hiring.id, true);
   });
 
   it('widens a Space filter to All when the open Channel is not in that Space', () => {
