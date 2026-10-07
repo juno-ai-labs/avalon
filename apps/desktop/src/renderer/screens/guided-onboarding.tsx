@@ -113,13 +113,14 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
   const account = useOnboardingAccount();
   const { session, updateAccountOnboarding } = useAppSession();
   const queryClient = useQueryClient();
-  const [color, setColor] = useState<PersonalPresentation['color']>(account?.presentation?.color ?? 'blue');
+  // An account with no saved look starts on a random color.
+  const [color, setColor] = useState<PersonalPresentation['color']>(() => account?.presentation?.color ?? PERSONAL_COLOR_KEYS[Math.floor(Math.random() * PERSONAL_COLOR_KEYS.length)]!);
   const [name, setName] = useState(account?.presentation?.displayName ?? session?.user.name ?? '');
   const [initials, setInitials] = useState(account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase());
   const [draftRevision, setDraftRevision] = useState(account?.revision);
   useEffect(() => {
     if (!account || account.revision === draftRevision) return;
-    setColor(account.presentation?.color ?? 'blue');
+    setColor((current) => account.presentation?.color ?? current);
     setName(account.presentation?.displayName ?? session?.user.name ?? '');
     setInitials(account.presentation?.initials ?? '');
     setDraftRevision(account.revision);
