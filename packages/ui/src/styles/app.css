@@ -7833,7 +7833,24 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
   }
   .app-shell .single-sidebar > .space-pill-strip { padding-top: 12px; }
   .app-shell .single-sidebar .sidebar-resizer { display: none; }
-  .app-shell .sidebar-menu-toggle { color: var(--av-sys-color-text-default); display: inline-flex; height: 36px; margin-left: -6px; width: 36px; }
+  /* The same raised round fill as the actions opposite. Its glyph is a
+     menu while the sheet is shut and a close mark while it is open: on a
+     phone the open sheet covers the screen, so the button's one job is to
+     close it. The glyphs stack in one grid cell and turn into each other. */
+  .app-shell .sidebar-menu-toggle {
+    background: var(--av-sys-color-surface-raised);
+    border-radius: var(--av-sys-size-radius-pill);
+    box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong), var(--av-cmp-composer-shadow);
+    color: var(--av-sys-color-text-default);
+    display: inline-grid;
+    height: 32px;
+    place-items: center;
+    width: 32px;
+  }
+  .app-shell .sidebar-menu-toggle:hover:not(:disabled) { background: var(--av-sys-color-surface-raised-hover); }
+  .app-shell .sidebar-menu-glyph { grid-area: 1 / 1; transition: opacity 180ms ease, transform 180ms ease; }
+  .app-shell .sidebar-menu-toggle[aria-expanded="true"] .sidebar-menu-glyph.is-menu,
+  .app-shell .sidebar-menu-toggle[aria-expanded="false"] .sidebar-menu-glyph.is-close { opacity: 0; transform: rotate(90deg) scale(.6); }
   .app-shell .main-pane { height: calc(100% - var(--phone-top-bar-height)); margin-top: var(--phone-top-bar-height); }
   /* The right panel and its scrim are fixed to the window too, and start under the bar. */
   .app-shell .rail-surface,
@@ -7842,7 +7859,8 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 @media (max-width: 640px) and (prefers-reduced-motion: reduce) {
   .app-shell .single-sidebar,
   .app-shell .single-sidebar > :not(.sidebar-top-bar),
-  .app-shell .single-sidebar.is-mobile-open > :not(.sidebar-top-bar) { transition: none; }
+  .app-shell .single-sidebar.is-mobile-open > :not(.sidebar-top-bar),
+  .app-shell .sidebar-menu-glyph { transition: none; }
 }
 .sidebar-section-hint { color: var(--av-sys-color-text-disabled); flex: none; font-size: 11.5px; }
 /* The sort toggle borrows the group menu trigger's hover layer and focus
