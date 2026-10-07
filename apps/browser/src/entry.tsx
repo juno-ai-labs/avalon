@@ -112,14 +112,18 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     // Invitation emails once linked here with a token. A share no longer needs
     // one: signing in with its address claims it, so this is a sign-in page.
     if (location.pathname === "/invite") history.replaceState(null, "", "/");
-    const hasMagicProof = location.pathname === "/login/email" && fragment.has("token");
+    // A sign-in started from a shared link is emailed back to that link's path.
+    const hasMagicProof = (location.pathname === "/login/email" || location.pathname.startsWith("/app/")) && fragment.has("token");
     if (hasMagicProof) {
       const input = EmailLoginRedeemSchema.safeParse({ challengeId: fragment.get("challenge"),
         redemptionId: crypto.randomUUID(), method: "magic", credential: fragment.get("token") });
       // Keep the proof only in this document's memory, never in history or storage.
       history.replaceState(null, "", location.pathname);
-      if (input.success && selectedRegion.success) {
-        setProof({ region: selected, ...input.data });
+      // The challenge lives where it was issued, which the link names, not
+      // the region of the resource a shared path points at.
+      const proofRegion = ConfiguredRegionSchema.safeParse(fragment.get("region"));
+      if (input.success && proofRegion.success) {
+        setProof({ region: proofRegion.data, ...input.data });
       } else setError("This sign-in link is invalid. Request another email.");
       setChecking(false);
     }
@@ -273,7 +277,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         const next = issuance.current?.email === normalizedEmail ? issuance.current
           : { email: normalizedEmail, id: crypto.randomUUID(), redemptionId: crypto.randomUUID() };
         issuance.current = next;
-        await browserRequest(IDENTITY_REGION, "/email/start", EmailLoginStartedSchema, { challengeId: next.id, email: normalizedEmail });
+        const returnPath = location.pathname.startsWith("/app/") ? { returnPath: location.pathname } : {};
+        await browserRequest(IDENTITY_REGION, "/email/start", EmailLoginStartedSchema, { challengeId: next.id, email: normalizedEmail, ...returnPath });
         setChallenge(next);
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to continue. Please try again."); }
