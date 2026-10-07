@@ -8419,10 +8419,10 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 /*
  * iOS Safari zooms the page into any focused field whose text is under 16px,
  * and leaves it zoomed after blur. Touch screens get 16px text in every text
- * field instead, which is the only fix that keeps pinch zoom. The composer's
- * highlight layer has to move with its textarea or the two drift apart.
- * Important because the field rules it overrides are scoped deeper than any
- * one rule here could be. A field already larger is left alone.
+ * field instead; maximum-scale=1 would also stop it but takes pinch zoom away
+ * on Android. Important because the field rules it overrides are scoped deeper
+ * than any one rule here could be. That also shrinks a larger field to 16px,
+ * so a field styled above 16px has to be added to the :not() list.
  */
 @media (hover: none) and (pointer: coarse) {
   input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], .space-name-input),
