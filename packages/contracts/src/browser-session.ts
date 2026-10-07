@@ -1,3 +1,4 @@
+import { UuidV7Schema } from "./telemetry";
 import { z } from "zod";
 import { SessionSchema, WorkspaceIdSchema, WorkspaceSchema } from "./index";
 import { ConfiguredRegionSchema } from "./regions";
@@ -21,10 +22,11 @@ export const BrowserWorkspaceCreateSchema = z.strictObject({
 /** Where the browser opens the organization it just created. No credential crosses. */
 export const BrowserWorkspaceCreatedSchema = z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema });
 /** Starts Google sign-in for a browser; `returnPath` is a path on the browser host. */
-export const BrowserGoogleStartSchema = z.strictObject({ returnPath: z.string().optional() });
+export const BrowserGoogleStartSchema = z.strictObject({ returnPath: z.string().optional(), signupFlowId: UuidV7Schema.optional() });
 export const BrowserGoogleStartedSchema = z.object({ url: HttpsUrlSchema });
 export const EmailLoginStartSchema = z.strictObject({
   challengeId: IdSchema,
+  signupFlowId: UuidV7Schema.optional(),
   email: z.string().trim().email().transform((email) => email.toLowerCase()),
   /** The `/app/` path on the browser host the emailed link lands on, so a shared link survives sign-in. */
   returnPath: z.string().optional(),

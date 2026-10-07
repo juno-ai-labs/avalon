@@ -429,7 +429,7 @@ it('starts Google sign-in for the page it was opened on and explains a declined 
     expect(await screen.findByRole('alert')).toHaveTextContent('Google sign-in was cancelled.');
     expect(location.hash).toBe('');
     fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
-    await waitFor(() => expect(starts).toEqual([{ returnPath: `/app/workspaces/global/${workspace.id}` }]));
+    await waitFor(() => expect(starts).toEqual([{ returnPath: `/app/workspaces/global/${workspace.id}`, signupFlowId: expect.stringMatching(/^[0-9a-f-]{14}7/u) }]));
   } finally { view.unmount(); }
 });
 
