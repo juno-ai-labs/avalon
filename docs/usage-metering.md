@@ -270,9 +270,10 @@ workspace.
 Plan, with its picker, above Weekly quota, with the meter as its value. The
 Plan row is backed by `PUT /workspace/plan`. Owners and administrators can
 change the plan; other members see it locked. The account menu's meter fills
-in the viewer's own accent; the Settings meter keeps the theme's colour. In
-that menu the meter moved from under the active Organization's row to a full
-row right under Settings, titled Quota.
+in the viewer's own accent; the Settings meter fills in the text colour,
+near-black in light and near-white in dark. In that menu the meter moved from
+under the active Organization's row to a full row right under Settings, titled
+Quota.
 
 **Why:** The usage PRD deferred self-serve plan choice until checkout existed
 (non-goal 5), so every plan change needed an operator in Ace. The product owner
