@@ -46,6 +46,8 @@ export interface DesktopDeepLinkNavigation {
 }
 
 export interface RuntimeConfig {
+  /** Opaque first-install signup flow; absent after an account was observed. */
+  firstSignupFlowId?: string;
   appVersion: string;
   isPackaged: boolean;
   platform: string;

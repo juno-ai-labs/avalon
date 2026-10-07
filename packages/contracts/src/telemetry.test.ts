@@ -619,6 +619,9 @@ describe("telemetry registry", () => {
     ["site_page_left", "site", "anonymous-epoch", {
       page: "landing", pathname: "/", duration: "30s_2m",
     }],
+    ["desktop_install_opened", "desktop-main", "anonymous-epoch", {
+      flowId: "01a0ee73-d366-7fb9-b5c0-3ceb3156f70a", clientPlatform: "desktop",
+    }],
     ["site_action_selected", "site", "anonymous-epoch", {
       page: "landing", action: "secondary_cta", placement: "hero",
       flowId: "01a0ee73-d366-7fb9-b5c0-3ceb3156f70a",
