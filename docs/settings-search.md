@@ -60,9 +60,9 @@ inactive pages. Results replace navigation while the query is non-empty;
 typing does not change the active page.
 
 Sections are pages, and a page may be indented under the one it belongs to.
-`internet-access` sits under `workspace`; the child is a section in its own
-right, with its own definitions, its own read and its own deep link, not a
-scroll position inside its parent. `sectionLabels` in
+Installed connections sit under `connections`. A child page is not a scroll
+position inside its parent: it has its own definitions, its own read and its
+own deep link. `sectionLabels` in
 `search-results.tsx` is typed as a total record of the section list, so adding a
 section that nobody named fails the build rather than shipping a search result
 whose page name is blank.
@@ -73,6 +73,11 @@ sidebar items, table rows and search entries all set both. Definitions with a
 `connectionKind` appear only on the pages of connections whose `settingsKind`
 matches. A `connection` request with no live connection, including a deep link,
 lands on Connections once the list has loaded.
+
+A section's id is its deep link, so it outlives the label. The **Security** page
+keeps the id `internet-access` from when it was called Internet access. Search
+indexes the id, not the label, so a renamed page carries its visible name as an
+alias on its definitions.
 
 Both sidebars render `SidebarSearch` with the same sizing, typography, icon and
 focus treatment. The main window uses its button mode to open workspace search;

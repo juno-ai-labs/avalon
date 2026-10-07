@@ -19,7 +19,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
-  Globe,
   LockKeyhole,
   LoaderCircle,
   MailPlus,
@@ -393,11 +392,11 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       { id: 'digest', label: 'Digest', icon: Newspaper },
       { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'workspace', label: 'Organization', icon: Users },
-      // Under Workspace rather than beside it: the Terminal egress policy is a
-      // workspace-wide setting, but it is a page of its own — a review-then-
-      // confirm flow that stops running sandboxes, which does not belong in the
-      // middle of a list of names, timezones and invitations.
-      { id: 'internet-access', label: 'Internet access', icon: Globe, child: true },
+      // Its own top-level page rather than part of Organization: the Terminal
+      // egress policy is a review-then-confirm flow that stops running
+      // sandboxes, which does not belong in the middle of a list of names,
+      // timezones and invitations.
+      { id: 'internet-access', label: 'Security', icon: ShieldCheck },
       { id: 'connections', label: 'Connections', icon: Plug },
     ],
   },
@@ -1799,7 +1798,7 @@ export function WorkspaceSettingsScreen({
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading">
                   <h2><SettingLabel setting={settings.terminal} /></h2>
-                  <p>Choose where code running in Daytona may connect. Rally-managed platform access is applied automatically.</p>
+                  <p>{settings.terminal.description}</p>
                 </div>
                 {terminalSettings.isLoading ? (
                   <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading Terminal policy…</div>
@@ -1810,7 +1809,7 @@ export function WorkspaceSettingsScreen({
                     {terminalSettings.data.availability !== 'supported' && (
                       <div className="terminal-network-notice" role="status">
                         <ShieldCheck aria-hidden="true" size={17} />
-                        <span><strong>Terminal unavailable</strong><small>{terminalSettings.data.availability === 'emergency_disabled' ? 'Temporarily disabled by the regional safety switch.' : 'This regional service has not enabled Daytona Terminal.'}</small></span>
+                        <span><strong>Terminal unavailable</strong><small>{terminalSettings.data.availability === 'emergency_disabled' ? 'Temporarily disabled by the regional safety switch.' : 'Cloud computer not enabled.'}</small></span>
                       </div>
                     )}
                     <fieldset className="terminal-network-modes" disabled={!isAdmin || terminalSettings.data.availability !== 'supported' || previewTerminalPolicy.isPending || applyTerminalPolicy.isPending}>
