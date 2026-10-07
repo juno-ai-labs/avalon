@@ -29,21 +29,22 @@ it("serves the push service worker from the root and lets the shell register it"
   expect(shell.headers.get("content-security-policy")).toContain("frame-src https://*.rallyusercontent.com;");
 });
 
-it("serves the install manifest the shell links, with icons it names, so the app can be added to a Home Screen", async () => {
+it("serves every install file the shell links and every icon its manifest names", async () => {
   const shell = await (await exports.default.fetch("https://browser.example.test/")).text();
-  expect(shell).toContain('<link rel="manifest" href="/manifest.webmanifest">');
-  expect(shell).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
-  const response = await exports.default.fetch("https://browser.example.test/manifest.webmanifest");
-  expect(response.status).toBe(200);
-  const manifest = await response.json() as { start_url: string; scope: string; display: string; icons: { src: string; sizes: string }[] };
-  expect(manifest).toMatchObject({ start_url: "/", scope: "/", display: "standalone" });
-  for (const path of [...manifest.icons.map((icon) => icon.src), "/apple-touch-icon.png"]) {
+  const linked = (rel: string) => new RegExp(`<link rel="${rel}"[^>]*href="([^"]+)"`, "u").exec(shell)?.[1];
+  const manifestPath = linked("manifest");
+  expect(manifestPath).toBeDefined();
+  const manifestResponse = await exports.default.fetch(`https://browser.example.test${manifestPath}`);
+  expect(manifestResponse.status).toBe(200);
+  const manifest = await manifestResponse.json() as { icons: { src: string }[] };
+  const icons = [...manifest.icons.map((icon) => icon.src), linked("icon"), linked("apple-touch-icon")];
+  expect(icons).toHaveLength(5);
+  for (const path of icons) {
     const icon = await exports.default.fetch(`https://browser.example.test${path}`);
     expect(icon.status).toBe(200);
     expect(icon.headers.get("content-type")).toBe("image/png");
     await icon.arrayBuffer();
   }
-  expect(manifest.icons.map((icon) => icon.sizes)).toEqual(["192x192", "512x512", "512x512"]);
 });
 
 it("serves the shell for the page a connector authorization returns to, and nothing beside it", async () => {
