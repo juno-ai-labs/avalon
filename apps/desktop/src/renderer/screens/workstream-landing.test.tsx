@@ -5,6 +5,7 @@ import type { WorkstreamSummary } from '../lib/types';
 import { WorkstreamLandingScreen } from './workstream-landing';
 import { layoutKey } from '../lib/desktop-layout';
 import { useUiStore } from '../lib/ui-store';
+import type * as ConversationDirectoryModule from '../lib/conversation-directory';
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
   session: { user: { id: 'person' }, workspace: { id: 'org', accessClass: 'member' } },
@@ -12,7 +13,11 @@ vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
 const spaces = vi.hoisted(() => ({ data: undefined as { items: { id: string; systemRole?: string | null; channelCount?: number }[] } | undefined }));
 vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces, inactive: { data: undefined } }) }));
 
-const socket = vi.hoisted(() => ({ state: 'connecting', sidebarConnect: null as { spacesLive: boolean } | null }));
+const socket = vi.hoisted(() => ({
+  state: 'connecting',
+  sidebarConnect: null as { spacesLive: boolean; channelsBySpace?: boolean } | null,
+  loadedSpaceIds: new Set<string>(),
+}));
 vi.mock('../lib/workspace-socket', () => ({ useWorkspaceSocket: () => socket }));
 
 const directory = vi.hoisted(() => ({
@@ -22,6 +27,12 @@ const directory = vi.hoisted(() => ({
   isFetchingMore: false,
   fetchMore: vi.fn(),
 }));
+const conversationDirectory = vi.hoisted(() => ({ data: undefined as unknown }));
+vi.mock('../lib/conversation-directory', async (importOriginal) => ({
+  ...await importOriginal<typeof ConversationDirectoryModule>(),
+  useConversationDirectory: () => conversationDirectory.data,
+}));
+
 vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => directory }));
 
 function stream(id: string, pinPosition: number | null, lastActivityAt: string): WorkstreamSummary {
@@ -56,6 +67,8 @@ describe('default channel landing', () => {
     directory.fetchMore = vi.fn();
     socket.state = 'connecting';
     socket.sidebarConnect = null;
+    socket.loadedSpaceIds = new Set();
+    conversationDirectory.data = undefined;
     useUiStore.getState().setSidebarChannelSort('recent');
   });
 
@@ -102,6 +115,42 @@ describe('default channel landing', () => {
     spaces.data = { items: [{ id: 'design' }] };
     render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
     expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/apple$/u);
+  });
+
+  it('lands a leave on the Breakout the sidebar row opens when Main is not the reader’s', async () => {
+    directory.data = [{ ...stream('shared', null, '2026-09-09'), spaceIds: ['design'], mainWithheld: true }];
+    spaces.data = { items: [{ id: 'design' }] };
+    conversationDirectory.data = { spaces: [], workstreams: [{
+      parentId: 'shared', title: 'shared', scope: 'personal', archived: false,
+      conversations: [{ substreamId: 'risks', title: 'Risks', scope: 'personal', archived: false }],
+    }] };
+    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/shared\?substream=risks$/u);
+  });
+
+  it('waits for a Space loaded a Space at a time to finish before picking its first pin', async () => {
+    socket.sidebarConnect = { spacesLive: true, channelsBySpace: true };
+    directory.data = [{ ...stream('recent', null, '2026-09-09'), spaceIds: ['design'] }];
+    spaces.data = { items: [{ id: 'design', channelCount: 2 }] };
+    const initial = { pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } };
+    const view = render(<Router initial={initial} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
+    directory.data = [
+      ...directory.data,
+      { ...stream('pinned', null, '2026-08-01'), spaceIds: ['design'], spacePins: [{ spaceId: 'design', position: 0 }] },
+    ];
+    socket.loadedSpaceIds = new Set(['design']);
+    view.rerender(<Router initial={initial} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/pinned$/u);
+  });
+
+  it('pages the directory until a Space’s rows are all in before picking its first row', () => {
+    directory.data = [{ ...stream('recent', null, '2026-09-09'), spaceIds: ['design'] }];
+    directory.hasMore = true;
+    spaces.data = { items: [{ id: 'design', channelCount: 2 }] };
+    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Opening channels');
+    expect(directory.fetchMore).toHaveBeenCalled();
   });
 
   it('opens starting a Channel when a leave empties its Space', async () => {
