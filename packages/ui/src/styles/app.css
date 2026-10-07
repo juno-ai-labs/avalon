@@ -2918,7 +2918,6 @@ pre {
 }
 
 .settings-connection-toolbar { align-items: center; display: flex; justify-content: space-between; margin-bottom: 12px; }
-.settings-connection-toolbar > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 
 .settings-section-copy { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin: 0 0 14px; }
 .provider-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
@@ -2972,14 +2971,8 @@ pre {
 
 .settings-connection-tables { display: grid; gap: 18px; }
 .settings-connection-group { min-width: 0; }
-.settings-connection-group-heading {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  margin: 0 2px 7px;
-}
+.settings-connection-group-heading { margin: 0 2px 7px; }
 .settings-connection-group-heading h3 { font-size: var(--av-cmp-control-font-size); margin: 0; }
-.settings-connection-group-heading > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .settings-connection-table-frame { overflow-x: auto; }
 .settings-connection-table { border-collapse: collapse; min-width: 540px; width: 100%; }
 .settings-connection-table th {
