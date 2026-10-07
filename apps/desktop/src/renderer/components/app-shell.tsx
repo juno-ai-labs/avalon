@@ -16,6 +16,7 @@ import {
   WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY,
 } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
+import { isWindowSurfaceRoute } from '../lib/window-surface';
 import { MacDownloadLink } from './mac-download-link';
 import { MAC_APP_DOWNLOADABLE } from '../lib/browser-connectors';
 import type { RallyApi } from '../lib/api';
@@ -727,10 +728,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     'app-shell',
     windowControlsShellClass(runtime?.platform),
     showShellRail ? 'rail-open' : '',
-    // Settings is a route here only where there is no Settings window to open
-    // (a browser tab). It takes the whole window, as that window would; the
-    // sidebar stays mounted under it so closing Settings needs no reload.
-    location.pathname === '/settings' ? 'is-settings-route' : '',
+    // Where there is no window to open, a window surface takes the whole tab.
+    host === 'browser' && isWindowSurfaceRoute(location.pathname) ? 'is-window-surface' : '',
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
     enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',
   ].filter(Boolean).join(' ');
