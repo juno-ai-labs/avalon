@@ -96,7 +96,7 @@ import {
   type SubstreamPreparationPreview,
 } from '@rally/contracts/substream-creation';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
-import { OrganizationUsageSchema, type OrganizationUsage } from '@rally/contracts/usage';
+import { OrganizationUsageSchema, type OrganizationUsage, type PlanId } from '@rally/contracts/usage';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
@@ -958,6 +958,11 @@ export class RallyApi {
    */
   async getWorkspaceUsage(signal?: AbortSignal): Promise<OrganizationUsage> {
     return this.request('/workspace/usage', { schema: OrganizationUsageSchema, signal });
+  }
+
+  /** Administrators only. Answers with the meter as it reads under the new plan. */
+  async setWorkspacePlan(plan: PlanId): Promise<OrganizationUsage> {
+    return this.request('/workspace/plan', { method: 'PUT', body: { plan }, schema: OrganizationUsageSchema });
   }
 
   async getWorkspaceMembers(signal?: AbortSignal): Promise<WorkspaceMember[]> {

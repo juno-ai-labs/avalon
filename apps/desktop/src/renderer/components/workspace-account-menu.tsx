@@ -20,9 +20,9 @@ import { RelativeTime } from './relative-time';
 export interface WorkspaceAccountMenuProps {
   activeWorkspace: DesktopWorkspaceSummary;
   /**
-   * The active Organization's usage meter: under its row when the Organizations
-   * list is shown, and on its own when it is not, so every member sees it
-   * whichever way the multiple-Organizations flag resolves. It is a slot so the
+   * The active Organization's usage meter, as a full row right under Settings,
+   * where the Usage section it opens lives. It sits there whether or not the
+   * Organizations list is shown, so every member sees it in one place. It is a slot so the
    * menu stays presentational: the host supplies the usage read, and the slot
    * mounts with the menu's content, so opening the menu refreshes it.
    */
@@ -245,9 +245,9 @@ export function WorkspaceAccountMenu({
                   <IconSettings aria-hidden="true" />
                   <span>Settings</span>
                 </DropdownMenu.Item>
+                {activeUsage}
               </>
             )}
-            {!enabled && activeUsage && <div className="workspace-usage-standalone">{activeUsage}</div>}
             {enabled && (
               <>
                 <DropdownMenu.Label className="menu-label workspace-menu-section">Organizations</DropdownMenu.Label>
@@ -311,7 +311,6 @@ export function WorkspaceAccountMenu({
                           </IndicatorTooltip>
                         )}
                       </DropdownMenu.Item>
-                      {active && activeUsage}
                     </Fragment>
                   );
                 })}
@@ -373,6 +372,7 @@ export function WorkspaceAccountMenu({
                 <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={onOpenSettings} type="button"><IconSettings size={14} /> Settings…</button>
                 </DropdownMenu.Item>
+                {activeUsage}
                 <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>
                   <IconLogout size={14} /> Sign out
                 </DropdownMenu.Item>
