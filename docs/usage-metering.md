@@ -272,18 +272,28 @@ Plan row is backed by `PUT /workspace/plan`. Owners and administrators can
 change the plan; other members see it locked. The meter, there and in the
 account menu, fills in the viewer's own accent instead of the brand colour. In
 that menu the meter moved from under the active Organization's row to a full
-row right under Settings, titled Quota, so it sits in one place whether or not
-the Organizations list is shown, next to the Settings section it opens.
+row right under Settings, titled Quota.
 
 **Why:** The usage PRD deferred self-serve plan choice until checkout existed
-(non-goal 5), leaving every change to an operator. The product owner chose to
-let administrators pick the plan now, before billing. Members were rejected as
-deciders because the plan sets a quota the whole Organization shares. The
-route reuses `setWorkspacePlan`, so the re-pricing rule stays in one place.
+(non-goal 5), so every plan change needed an operator in Ace. The product owner
+chose to let administrators pick the plan now, before billing. The menu meter
+moved because under the active row it only appeared when the Organizations
+list was shown, and it had no label saying what the bar measured.
 
-**What a future change has to respect:** Nothing charges for a plan change
-yet. When checkout lands, this route is where payment has to gate the change;
-until then a plan change is free and immediate.
+**Considered and rejected:** Letting any member change the plan. The plan sets
+a quota the whole Organization shares, so it follows every other
+Organization-wide setting and needs an administrator. A second route with its
+own re-pricing logic was also rejected: the new route calls `setWorkspacePlan`,
+so the rule for re-pricing the current week stays in one place.
+
+**Consequences:** Nothing charges for a plan change yet; when checkout lands,
+this route is where payment has to gate the change. Two administrators choosing
+opposite plans at the same instant can leave `workspaces.plan` and the
+current week's quota on different plans, the same exposure Ace's route already
+had; choosing again repairs it. A usage read in flight is cancelled before a
+plan change, so a read that saw the old plan cannot overwrite the new one.
+
+Shipped in #1156. Design: `docs/PRDs/2026-10-03_usage-quota-metering/prd.md`.
 
 ### 2026-10-03 — Usage metering introduced (#1086)
 
