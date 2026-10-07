@@ -59,7 +59,7 @@ beforeEach(async () => {
     env.DB.prepare(`INSERT INTO users VALUES (?, 'person@example.test', 'Person')`).bind(userId),
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role)
       VALUES (?, ?, 'active', 'member')`).bind(workspaceId, userId),
-    env.DB.prepare(`INSERT INTO sessions VALUES ('session', ?, NULL, '2099-01-01')`).bind(userId),
+    env.DB.prepare(`INSERT INTO sessions VALUES ('session', ?, NULL, '2099-01-01', NULL)`).bind(userId),
     ...[migration, webPushMigration].flatMap(splitSqlStatements).map(sql => env.DB.prepare(sql)),
   ]);
   await workspace().initializeWorkspace(workspaceId, 'wnam');
