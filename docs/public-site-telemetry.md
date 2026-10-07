@@ -110,6 +110,24 @@ linked to a Rally login.
 - Campaign fields are 160-character allowlisted taxonomy values. The reporter
   ignores arbitrary query keys and never sends a complete URL.
 
+## Browser signup attribution
+
+The hero “Use the web app” and header sign-in links mint a new UUIDv7 for each
+click, keyboard activation, or middle-click. The same flow is reported in
+`site_action_selected.flowId` and passed to `app.rallywith.ai` as `signupFlowId`.
+Links stay clean before interaction and are restored after navigation dispatch,
+so copying a link does not distribute a shared signup attempt.
+
+Browser entry validates the ID, saves it in tab-scoped session storage, and
+removes it from the URL. Reloading before authentication keeps the attribution;
+a new incoming CTA replaces it, and authentication or sign-out retires it.
+Storage failures leave sign-in available. Signup events and site events retain
+separate anonymous subjects: reports must join by `properties.flowId`.
+
+Deploy the API reader before the site producer: old strict readers reject a
+batch containing the new optional property. Complete browser and fresh-install
+desktop flow stages are owned by [`telemetry.md`](telemetry.md#complete-signup-measurement).
+
 ## Testing
 
 ```bash
@@ -149,6 +167,24 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-10-07 — Connect web entry to complete signup
+
+**What changed:** Web entry activations mint and report an opaque flow ID and
+carry it to browser entry. The browser keeps the attempt through tab reloads.
+
+**Why:** Site clicks and signup stages used separate subjects, hiding where
+people left between the landing page and organization setup.
+
+**Considered and rejected:** Preparing an ID on page load allows copied links
+and repeated activations to collapse different people's signup events through
+the API's stage deduplication. Keeping it only in memory loses attribution on
+refresh. Each activation instead gets a fresh ID, retained only within its tab.
+
+**Consequences:** Preserve click/navigation correlation and the clean copyable
+URL. Deploy API readers first, and join stages by flow rather than subject.
+
+Shipped in [PR #1161](https://github.com/juno-ai-labs/avalon/pull/1161).
 
 ### 2026-09-30 — Pricing plans follow the per-organization tiers
 
