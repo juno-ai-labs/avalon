@@ -249,9 +249,11 @@ it("claims during regional discovery, which desktop sign-in and workspace switch
     env.DB.prepare(`CREATE TABLE workspace_invitations (id TEXT, workspace_id TEXT, email TEXT, role TEXT,
       invited_by_user_id TEXT, expires_at TEXT, accepted_at TEXT, revoked_at TEXT, created_at TEXT)`),
     env.DB.prepare("CREATE TABLE demo_operations (workspace_id TEXT, ready_at TEXT)"),
+    env.DB.prepare(`CREATE TABLE user_login_identities (provider TEXT NOT NULL, subject TEXT NOT NULL,
+      user_id TEXT NOT NULL, verified_at TEXT NOT NULL, PRIMARY KEY (provider, subject))`),
   ]);
   const discovery = await new RegionalOnboardingService(env).discover({ platformUserId: newcomerId,
-    googleSubject: "google-newcomer", email: "Newcomer@Example.test", name: "Newcomer", avatarUrl: null,
+    loginIdentities: [{ provider: "google", subject: "google-newcomer" }], email: "Newcomer@Example.test", name: "Newcomer", avatarUrl: null,
     timezone: "UTC", createdAt: at });
   expect(discovery.workspaces).toEqual([expect.objectContaining({ id: workspaceId, accessClass: "guest" })]);
   expect(await room().readScopeAccess({ userId: newcomerId, target: child })).toMatchObject({ allowed: true });

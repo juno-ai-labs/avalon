@@ -30,7 +30,7 @@ const invitationParam = z.object({ id: IdSchema });
 
 export const onboardingRoutes = new Hono<HonoAppEnv>();
 
-function deferOnboardingOutcome(
+export function deferOnboardingOutcome(
   c: Context<HonoAppEnv>,
   auth: IdentityAuthContext,
   session: Session | null,
@@ -70,7 +70,7 @@ function deferOnboardingOutcome(
   requestDeferral(c)(Promise.resolve(work).catch(() => undefined));
 }
 
-function onboardingFailureResult(
+export function onboardingFailureResult(
   error: unknown,
 ): 'validation_error' | 'conflict' | 'denied' | 'unavailable' | 'failed' {
   if (!(error instanceof ApiError)) return 'failed';

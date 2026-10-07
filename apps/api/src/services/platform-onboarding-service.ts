@@ -22,6 +22,8 @@ import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
+import { workspaceSlug } from "../lib/workspace-slug";
+import { diagnosticErrorCode } from "../observability/logger";
 import { sha256 } from "../lib/crypto";
 import {
   deriveWorkspacePlacementAffinity,
@@ -46,10 +48,21 @@ import {
   loadOrCreateCanonicalPreferenceProjection,
 } from "../telemetry/preference";
 
+/**
+ * One verified sign-in method: `google` and its subject, `email` and its
+ * address, or any provider added later. A deployment links a person by these,
+ * never by a provider-specific column.
+ */
+export const loginIdentitySchema = z.object({
+  provider: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/u),
+  subject: z.string().min(1).max(320),
+});
+export type LoginIdentity = z.infer<typeof loginIdentitySchema>;
+
 export const platformIdentitySchema = z.object({
   accountOnboarding: AccountOnboardingSchema.optional(),
   platformUserId: z.string().uuid(),
-  googleSubject: z.string().min(1).max(255),
+  loginIdentities: z.array(loginIdentitySchema),
   email: z.string().email().max(254),
   name: z.string().min(1).max(255),
   avatarUrl: HttpUrlSchema.nullable(),
@@ -224,7 +237,7 @@ export class RegionalIdentityBridgeClient implements RegionalIdentityBridgeBindi
 interface RegionalUserRow {
   id: string;
   platform_user_id: string | null;
-  google_subject: string;
+  google_subject: string | null;
   email: string;
 }
 
@@ -446,8 +459,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     input: OperationReference & { name: string; placementAffinity: WorkspacePlacementAffinity },
   ): Promise<void> {
     const at = nowIso();
-    const slugBase = input.name.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "workspace";
-    const slug = `${slugBase}-${input.workspaceId.slice(0, 8)}`;
+    const slug = workspaceSlug(input.name, input.workspaceId);
     await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO workspaces
@@ -542,16 +554,13 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       "SELECT id, platform_user_id, google_subject, email FROM users WHERE platform_user_id = ?",
     ).bind(identity.platformUserId).first<RegionalUserRow>();
     if (user) {
-      if (user.google_subject !== identity.googleSubject) {
-        throw new ApiError(409, "regional_identity_conflict", "The regional identity link does not match this account");
-      }
+      await this.requireLoginIdentitiesFree(user.id, identity);
       await this.syncRegionalProfile(user.id, identity);
+      await this.recordLoginIdentities(user.id, identity);
       return { ...user, email: identity.email };
     }
 
-    user = await this.env.DB.prepare(
-      "SELECT id, platform_user_id, google_subject, email FROM users WHERE google_subject = ?",
-    ).bind(identity.googleSubject).first<RegionalUserRow>();
+    user = await this.findUserByLoginIdentity(identity);
     if (user) {
       if (user.platform_user_id && user.platform_user_id !== identity.platformUserId) {
         throw new ApiError(409, "regional_identity_conflict", "The regional identity is already linked to another account");
@@ -571,11 +580,18 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       if (Number(result.meta.changes ?? 0) !== 1) {
         throw new ApiError(409, "regional_identity_conflict", "The regional identity could not be linked safely");
       }
+      await this.recordLoginIdentities(user.id, identity);
       return { ...user, platform_user_id: identity.platformUserId, email: identity.email };
     }
 
+    // Nothing to link a new regional user by; refuse rather than mint one that
+    // no later sign-in could ever be matched to.
+    if (identity.loginIdentities.length === 0) {
+      throw new ApiError(409, "login_identity_required", "This account has no sign-in method to link in this deployment");
+    }
     const id = newId();
     const at = nowIso();
+    const googleSubject = identity.loginIdentities.find((entry) => entry.provider === "google")?.subject ?? null;
     try {
       await this.env.DB.prepare(
         `INSERT INTO users
@@ -583,7 +599,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
-        identity.googleSubject,
+        googleSubject,
         identity.email,
         identity.name,
         identity.avatarUrl,
@@ -596,17 +612,72 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       const raced = await this.env.DB.prepare(
         "SELECT id, platform_user_id, google_subject, email FROM users WHERE platform_user_id = ?",
       ).bind(identity.platformUserId).first<RegionalUserRow>();
-      if (!raced || raced.google_subject !== identity.googleSubject) {
+      if (!raced) {
         throw new ApiError(409, "regional_identity_conflict", "The regional identity could not be linked safely");
       }
+      await this.requireLoginIdentitiesFree(raced.id, identity);
       return raced;
     }
+    await this.recordLoginIdentities(id, identity);
     return {
       id,
       platform_user_id: identity.platformUserId,
-      google_subject: identity.googleSubject,
+      google_subject: googleSubject,
       email: identity.email,
     };
+  }
+
+  /**
+   * The regional users these sign-in methods already belong to. `users.google_subject`
+   * is read too: regional users this bridge created before it recorded login
+   * identities carry their Google subject only there.
+   */
+  private async loginIdentityOwners(identity: PlatformIdentity): Promise<RegionalUserRow[]> {
+    if (identity.loginIdentities.length === 0) return [];
+    const pairs = identity.loginIdentities.map(() => "(provider = ? AND subject = ?)").join(" OR ");
+    const google = identity.loginIdentities.filter((entry) => entry.provider === "google").map((entry) => entry.subject);
+    const legacy = google.length > 0 ? ` OR google_subject IN (${google.map(() => "?").join(",")})` : "";
+    const rows = await this.env.DB.prepare(
+      `SELECT id, platform_user_id, google_subject, email FROM users
+       WHERE id IN (SELECT user_id FROM user_login_identities WHERE ${pairs})${legacy}`,
+    ).bind(...identity.loginIdentities.flatMap((entry) => [entry.provider, entry.subject]), ...google)
+      .all<RegionalUserRow>();
+    return rows.results ?? [];
+  }
+
+  private async findUserByLoginIdentity(identity: PlatformIdentity): Promise<RegionalUserRow | null> {
+    const owners = await this.loginIdentityOwners(identity);
+    if (owners.length > 1) {
+      throw new ApiError(409, "regional_identity_conflict", "This account's sign-in methods belong to different regional identities");
+    }
+    return owners[0] ?? null;
+  }
+
+  private async requireLoginIdentitiesFree(userId: string, identity: PlatformIdentity): Promise<void> {
+    if ((await this.loginIdentityOwners(identity)).some((owner) => owner.id !== userId)) {
+      throw new ApiError(409, "regional_identity_conflict", "The regional identity link does not match this account");
+    }
+  }
+
+  /**
+   * Global verified each of these; the deployment keeps them so a later sign-in
+   * links to the same user. An email address Global no longer sends is dropped,
+   * as Global drops it when the mailbox changes: a kept old address would block
+   * its next owner here with a conflict.
+   */
+  private async recordLoginIdentities(userId: string, identity: PlatformIdentity): Promise<void> {
+    const at = nowIso();
+    const emails = identity.loginIdentities.filter((entry) => entry.provider === "email").map((entry) => entry.subject);
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `DELETE FROM user_login_identities WHERE provider = 'email' AND user_id = ?
+         AND subject NOT IN (SELECT value FROM json_each(?))`,
+      ).bind(userId, JSON.stringify(emails)),
+      ...identity.loginIdentities.map((entry) => this.env.DB.prepare(
+        `INSERT INTO user_login_identities (provider, subject, user_id, verified_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(provider, subject) DO NOTHING`,
+      ).bind(entry.provider, entry.subject, userId, at)),
+    ]);
   }
 
   private async syncRegionalProfile(userId: string, identity: PlatformIdentity): Promise<void> {
@@ -1084,16 +1155,14 @@ export class PlatformOnboardingService {
 
   /**
    * Memberships in every other deployment, for the browser's list on Global.
-   * Only a Google identity is linked across deployments, so an email-only
-   * identity has none. Each deployment is asked on its own: one that fails is
-   * named in `failed` and the others still answer. Nothing is reconciled; the
-   * desktop's binding bookkeeping is not the browser's to change.
+   * A deployment links a person by their sign-in methods, so an account with
+   * none has nothing elsewhere. Each deployment is asked on its own: one that
+   * fails is named in `failed` and the others still answer. Nothing is
+   * reconciled; the desktop's binding bookkeeping is not the browser's to change.
    */
   async otherDeploymentWorkspaces(): Promise<{ workspaces: Workspace[]; failed: Array<{ region: Region; code: string }> }> {
-    const row = await this.env.DB.prepare("SELECT google_subject FROM users WHERE id = ?")
-      .bind(this.auth.userId).first<{ google_subject: string | null }>();
-    if (!row?.google_subject) return { workspaces: [], failed: [] };
     const identity = await this.loadPlatformIdentity();
+    if (identity.loginIdentities.length === 0) return { workspaces: [], failed: [] };
     const regions = configuredRegions.filter((region) => region !== this.env.AVALON_REGION);
     const settled = await Promise.allSettled(regions.map(async (region) => this.gateway(region).discover(identity)));
     return {
@@ -1164,7 +1233,7 @@ export class PlatformOnboardingService {
       workspaceId = existing.workspace_id;
       placementAffinity = existing.placement_affinity;
     }
-    return this.completeRegionalAction(
+    const session = await this.completeRegionalAction(
       identity,
       region,
       workspaceId,
@@ -1179,6 +1248,27 @@ export class PlatformOnboardingService {
         preference,
       }),
     );
+    await this.makeFirstCreatorEligible(identity.platformUserId, region, workspaceId);
+    return session;
+  }
+
+  /**
+   * Someone whose first organization this is sets it up as its creator, as a
+   * new Mac account does. An email sign-in starts ineligible, since most arrive
+   * as guests, and a guest relationship here does not exempt them. Runs only
+   * once the organization exists, so a failed create changes nothing. An
+   * active binding in another deployment keeps the exemption: the binding
+   * does not say member or guest, and an established member must not be sent
+   * through setup again.
+   */
+  private async makeFirstCreatorEligible(platformUserId: string, region: Region, workspaceId: string): Promise<void> {
+    await this.env.DB.prepare(
+      `UPDATE users SET onboarding_eligible = 1 WHERE id = ? AND onboarding_eligible = 0
+         AND NOT EXISTS (SELECT 1 FROM workspace_members WHERE user_id = users.id AND workspace_id <> ?
+           AND access_class = 'member' AND status = 'active')
+         AND NOT EXISTS (SELECT 1 FROM platform_workspace_bindings WHERE platform_user_id = ? AND region <> ?
+           AND status = 'active' AND NOT (region = ? AND workspace_id = ?))`,
+    ).bind(this.auth.userId, workspaceId, platformUserId, this.env.AVALON_REGION, region, workspaceId).run();
   }
 
   async acceptInvitation(
@@ -1266,7 +1356,7 @@ export class PlatformOnboardingService {
        FROM users WHERE id = ?`,
     ).bind(this.auth.userId).first<{
       id: string;
-      google_subject: string;
+      google_subject: string | null;
       email: string;
       name: string;
       avatar_url: string | null;
@@ -1294,10 +1384,19 @@ export class PlatformOnboardingService {
         }
       }
     }
+    const identities = await this.env.DB.prepare(
+      "SELECT provider, subject FROM user_login_identities WHERE user_id = ? ORDER BY provider, subject",
+    ).bind(row.id).all<LoginIdentity>();
+    const loginIdentities = identities.results ?? [];
+    // A Google account created before login identities were recorded has its
+    // subject only on the user row.
+    if (row.google_subject && !loginIdentities.some((entry) => entry.provider === "google" && entry.subject === row.google_subject)) {
+      loginIdentities.push({ provider: "google", subject: row.google_subject });
+    }
     return platformIdentitySchema.parse({
       accountOnboarding: { eligible: row.onboarding_eligible === 1, introduced: row.onboarding_introduced === 1, revision: row.onboarding_revision, presentation: row.presentation_json ? PersonalPresentationSchema.parse(JSON.parse(row.presentation_json)) : null },
       platformUserId: row.id,
-      googleSubject: row.google_subject,
+      loginIdentities,
       email: row.email,
       name: row.name,
       avatarUrl: row.avatar_url,
@@ -1479,7 +1578,9 @@ export class PlatformOnboardingService {
       // A later discovery reconciles it if the regional membership committed.
     }
     if (originalError instanceof ApiError) throw originalError;
-    throw new ApiError(503, "regional_onboarding_unavailable", "The regional onboarding action could not be confirmed");
+    // The log names what went wrong; the caller still learns only that it is unconfirmed.
+    throw new ApiError(503, "regional_onboarding_unavailable", "The regional onboarding action could not be confirmed",
+      undefined, diagnosticErrorCode(originalError, "regional_action_failed"));
   }
 
   private assertRegionalSession(session: Session, region: Region, workspaceId: string): void {

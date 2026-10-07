@@ -35,7 +35,7 @@ it('projects identity appearance into enterprise without letting older revisions
   const db = migratedSqliteDatabase();
   const env = createTestEnv({ DB: sqliteD1(db), AVALON_REGION: 'enterprise' });
   const service = new RegionalOnboardingService(env);
-  const identity = { platformUserId: userId, googleSubject: 'global-person', email: 'person@example.com',
+  const identity = { platformUserId: userId, loginIdentities: [{ provider: "google", subject: 'global-person' }], email: 'person@example.com',
     name: 'Person', avatarUrl: null, timezone: 'Europe/Paris', createdAt: new Date().toISOString() };
   await service.discover({ ...identity, accountOnboarding: { eligible: false, introduced: true, revision: 0, presentation: null } });
   expect(db.prepare('SELECT onboarding_eligible FROM users WHERE platform_user_id = ?').get(userId)).toMatchObject({ onboarding_eligible: 0 });
