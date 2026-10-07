@@ -59,6 +59,17 @@ The section is always drawn once the Organization is open. Empty, it is a
 dashed drop zone reading **Move a channel here to pin it**, which takes the
 accent while a Channel is being dragged; dropping one there pins it.
 
+While an unpinned Channel is dragged over the section, the section holds a slot
+open for it: a faded copy of its row, drawn as a pinned row being reordered is
+drawn, in the place a release would put it, with the pinned rows after it pushed
+down to make room. The slot is the count of pinned rows whose laid-out midpoint
+is above the pointer (`layoutInsertIndex` in `lib/list-motion.ts`). A release
+pins the Channel and, unless the slot is the end, then saves the order with the
+Channel in that slot. The server appends a new pin, so a slot at the end needs
+no second write. The slot stays open, and the order is previewed, from the
+release until the pinned row arrives, so the section does not close up and then
+open again around the round trip.
+
 All's order lives in `workspace_pinned_order` (WorkspaceDO migration 87) and
 reaches clients as `pinnedOrder` on the sidebar payload and the Space snapshot.
 It names Channels, not pins, and the read keeps only Channels the person can
@@ -450,6 +461,20 @@ Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
+
+### 2026-10-07 — Pinned holds a slot open for a Channel dragged into it
+
+**What changed:** Dragging an unpinned Channel over **Pinned** now draws a
+faded copy of it where it would land and pushes the pinned rows below aside. A
+release pins it there: the pin, then a reorder when the slot is not the end.
+
+**Why:** The drop zone only said "pin". With pins already present the reader
+could not tell where the Channel would land, and it always landed at the end,
+which then needed a second drag. The placeholder carries no `data-workstream-id`,
+so the reveal effect and the slot lookup never mistake it for a pinned row. A
+pin-and-place endpoint was the alternative; two existing writes cover it, and a
+release at the end, the common case, still costs one. Keep the preview order
+until the pin lands, or the new row flashes at the end first.
 
 ### 2026-10-07 — Leaving a Channel lands on its Space's top sidebar row
 
