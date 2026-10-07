@@ -123,7 +123,7 @@ of backend authorization; [settings search](settings-search.md) owns the contrac
 
 3. Open an invitation while signed out and confirm its workspace, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
 
-5. Open **Rally → Settings…** and press **Command-,**. Confirm both paths focus the same Settings window and show account/session, the app version under **About**, immutable region, members, and role-appropriate invitation controls. Confirm **Internet access** sits indented under **Workspace** and carries the Terminal outbound-access policy, and that **About** lists the version alone — no build, platform, API base URL, or realtime line.
+5. Open **Rally → Settings…** and press **Command-,**. Confirm both paths focus the same Settings window and show account/session, the app version under **About**, immutable region, members, and role-appropriate invitation controls. Confirm **Security** sits at the top level between **Organization** and **Connections** and carries the Terminal outbound-access policy, and that **About** lists the version alone — no build, platform, API base URL, or realtime line.
 
 6. The Developer section is served by the `developer-settings` flag, whose
 targeting rule matches on the account's **email domain**. Start signed in as a

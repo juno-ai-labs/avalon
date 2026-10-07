@@ -4,8 +4,8 @@ description: Set the Organization's name and time zone, decide where Rally's cod
 ---
 
 A handful of settings apply to everyone in the Organization at once. They live
-in three places in the Settings window: **Organization**, its child page
-**Internet access**, and **Connections**. Everyone can look at them. Only
+in three places in the Settings window: **Organization**, **Security**, and
+**Connections**. Everyone can look at them. Only
 owners and administrators can change them.
 
 ## Organization preferences
@@ -65,10 +65,9 @@ This setting decides where code running on that computer may connect on the
 internet. It is the one setting in this chapter that is mainly about security,
 so read this section slowly.
 
-Open **Settings → Organization → Internet access**. The page is headed
-**Terminal network access**, and its description mentions **Daytona**. Daytona
-is the company that runs the computers behind Rally's Terminal, so wherever
-you read "Daytona" on this page, think "Rally's Terminal".
+Open **Settings → Security** and find **Terminal network access**. The
+Terminal runs on cloud computers, so wherever the page says "cloud computers",
+it means Rally's Terminal.
 
 ### The two choices
 
@@ -142,7 +141,7 @@ The page may show **Terminal unavailable** with one of two explanations:
 
 - **Temporarily disabled by the regional safety switch.** Rally has switched
   the Terminal off for now, usually while fixing a problem. Try again later.
-- **This regional service has not enabled Daytona Terminal.** The Terminal is
+- **Cloud computer not enabled.** The Terminal is
   not available for your Organization's region.
 
 Either way the controls are greyed out until it comes back.
