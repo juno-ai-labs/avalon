@@ -20,6 +20,9 @@ function deploymentCookies(header: string | null, region: string): string | null
   return kept.length > 0 ? kept.join("; ") : null;
 }
 
+/** The favicon, install manifest and icons, which a browser reads from the root. */
+const INSTALL_FILES = new Set(["/favicon.svg", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"]);
+
 const unavailable = () => new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
 
 export default {
@@ -58,7 +61,7 @@ export default {
       response.headers.set("X-Content-Type-Options", "nosniff");
       return response;
     }
-    if (url.pathname.startsWith("/assets/") || url.pathname === "/favicon.svg") return env.ASSETS.fetch(request);
+    if (url.pathname.startsWith("/assets/") || INSTALL_FILES.has(url.pathname)) return env.ASSETS.fetch(request);
     if (url.pathname === "/sw.js") {
       // The push service worker, served from the root so its scope covers /app/.
       // Revalidated on every check so a deploy reaches open browsers.

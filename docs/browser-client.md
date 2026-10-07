@@ -18,6 +18,8 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/shell.tsx` | The signed-in application's one lazy boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
 | `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications and opens their links on this origin. |
+| `apps/browser/public/manifest.webmanifest`, `icon-*.png`, `apple-touch-icon.png` | The install manifest and icons that let the host be added to an iOS Home Screen or installed as an app window. |
+| `apps/desktop/src/renderer/lib/home-screen.ts` | On iPhone and iPad, whether the host runs as a Home Screen app or in a Safari tab. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
 | `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context, optional setup capabilities, and `useShellCapabilities`: which host is drawing and whether the reader is a guest. |
@@ -395,6 +397,23 @@ The host serves the push service worker at `/sw.js` from the root, with
 allows `worker-src 'self'` so the shell can register it. The worker
 caches nothing and answers no requests.
 
+The host can also be added to an iOS Home Screen, or installed as an app window
+in Chromium. The shell links `/manifest.webmanifest` (`display: standalone`,
+start and scope `/`) and `/apple-touch-icon.png`; the Worker serves those and
+the manifest's icons from the root, by name, beside `/assets/`. The icons are
+the Mac app icon, which is full-bleed with its mark inside the maskable safe
+zone, so one 512 px file serves as both the plain and the maskable icon.
+
+On iOS this is what makes notifications possible: Safari offers Web Push only to
+a Home Screen app, so in a Safari tab Settings reports `home-screen` and tells
+the member how to add Rally instead of saying the browser cannot. Safari also
+keeps a Home Screen app's cookies apart from its tabs, so the app signs in on
+its own, and a magic link from email opens in Safari and signs in Safari, not
+the app. In the Home Screen app the code screen therefore asks only for the
+code. `home-screen.ts` tells the cases apart with `navigator.standalone`, which
+only iOS Safari defines, rather than the user agent. An installed Chromium app
+shares its browser profile's cookies, so it keeps the email link.
+
 Forwarded HTTP responses retain their streaming bodies but add document sandbox
 CSP and `nosniff`: an uploaded HTML or SVG navigated on the cookie origin must
 never execute as the application. Socket upgrades remain untouched. The shell
@@ -507,7 +526,11 @@ member tab runs the desktop's feed swarm over native sockets.
 Production routing/configuration, external mailbox delivery and deployed stateful
 artifact serving remain release checks. Signing in over an existing cookie does
 not revoke the earlier session, so anything bound to it, such as a Web Push
-device, stays live until that session ends.
+device, stays live until that session ends. The Home Screen app supports iOS
+18 and later, so a Safari tab on an iOS too old for Home Screen Web Push (before
+16.4) is still shown the Home Screen hint. It works only
+online: nothing is cached for it, and invitation and Channel links from email
+open in Safari, not in the app.
 
 ## Testing
 
@@ -567,6 +590,21 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-07: Add Rally to the iOS Home Screen
+
+**What changed:** The host serves a web app manifest and icons. On iOS,
+Settings tells a Safari tab how to add Rally, and the Home Screen app's code
+screen drops the email link.
+
+**Why:** Safari delivers Web Push only to Home Screen apps, and the host had no
+manifest, so an iPhone member could not get notifications at all.
+
+**Considered and rejected:** An offline cache in the service worker. The shell
+HTML is private and `no-store`, and the app is not useful without its sockets.
+
+**Consequences:** A root file a browser fetches by name has to be added to
+`INSTALL_FILES` in the Worker, or it returns 404.
 
 ### 2026-10-07: Settings and Sidekicks take the whole tab
 

@@ -41,6 +41,17 @@ describe('web push', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     Reflect.deleteProperty(navigator, 'serviceWorker');
+    Reflect.deleteProperty(navigator, 'standalone');
+  });
+
+  it('points an iOS Safari tab to the Home Screen, where Safari offers Web Push', async () => {
+    // A Safari tab on iPhone: no PushManager, and navigator.standalone is false.
+    Object.defineProperty(navigator, 'standalone', { configurable: true, value: false });
+    const client = api();
+    expect(await webPushState(client as never)).toBe('home-screen');
+    Object.defineProperty(navigator, 'standalone', { configurable: true, value: undefined });
+    expect(await webPushState(client as never)).toBe('unsupported');
+    expect(client.getWebPushConfiguration).not.toHaveBeenCalled();
   });
 
   it('registers an existing subscription with this session before reporting it on', async () => {
