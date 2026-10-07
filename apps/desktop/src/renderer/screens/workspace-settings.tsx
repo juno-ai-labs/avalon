@@ -656,14 +656,13 @@ export function WorkspaceSettingsScreen({
     onSuccess: () => setPromotion(null),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
   });
-  // Members first, by name, then guests, by email: a guest's name is often
-  // just their address, and the address is what an admin knows them by.
+  // Members first, then guests, each by the name the row shows.
   const sortedMembers = useMemo(() => {
-    const byText = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' });
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
     const people = members.data ?? [];
     return [
-      ...people.filter((member) => member.accessClass !== 'guest').sort((a, b) => byText(a.name, b.name)),
-      ...people.filter((member) => member.accessClass === 'guest').sort((a, b) => byText(a.email ?? '', b.email ?? '')),
+      ...people.filter((member) => member.accessClass !== 'guest').sort(byName),
+      ...people.filter((member) => member.accessClass === 'guest').sort(byName),
     ];
   }, [members.data]);
   const [suspension, setSuspension] = useState<{ id: string; name: string } | null>(null);
@@ -1533,10 +1532,12 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-member-list settings-list-card">
                   {sortedMembers.map((member) => {
                     const isGuest = member.accessClass === 'guest';
-                    // The owner gets no menu: their role is the one the server
-                    // refuses to reassign or remove, so every item would fail.
-                    // Someone still invited is not a member to act on yet.
-                    const manageable = isAdmin && member.role !== 'owner' && member.status !== 'invited';
+                    // The owner's menu is drawn but disabled, so every row lines
+                    // up: their role is the one the server refuses to reassign
+                    // or remove, so every item would fail. Someone still
+                    // invited is not a member to act on yet.
+                    const showsMenu = isAdmin && member.status !== 'invited';
+                    const owner = member.role === 'owner';
                     const canPromoteGuest = isGuest && Boolean(member.incarnation && member.revision);
                     const self = member.id === workspace.currentUser.id;
                     return (
@@ -1545,7 +1546,12 @@ export function WorkspaceSettingsScreen({
                         <span><strong>{member.name}</strong><small>{member.email}</small></span>
                         <div className="settings-member-actions">
                           <Badge className="role-badge">{isGuest ? 'Guest' : member.role ?? 'member'}</Badge>
-                          {manageable && (
+                          {showsMenu && owner && (
+                            <IconButton disabled label={`${member.name} (${member.email}) member actions`} showTooltip={false}>
+                              <Ellipsis size={16} />
+                            </IconButton>
+                          )}
+                          {showsMenu && !owner && (
                             <DropdownMenu.Root>
                               <DropdownMenu.Trigger asChild>
                                 {/* The email is in the name because two people can share a display name. */}
