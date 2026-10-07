@@ -18,7 +18,7 @@ Every step is optional, and everything here can be done again later in Settings.
 
 ## This is you in Rally
 
-This screen sets how you appear to your teammates: **Your team will see your avatar and color. They follow you across devices.**
+This screen sets how you appear to your teammates.
 
 1. Check your **Name**. Rally fills it in from your Google account.
 2. Check your **Avatar initials**, the letters in your little round avatar. These start from your Google name too.
