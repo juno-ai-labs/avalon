@@ -67,7 +67,8 @@ D1 migration 0122 adds Rally access. `support_access_grants` holds at most one
 row per Organization: who granted it, when, and when it runs out; revoking
 deletes the row. `sessions.impersonator_user_id` marks a support session, an
 ordinary session of the represented person that names the Rally staff member
-acting. NULL means a login session, which every row written before 0122 is.
+acting, and `sessions.impersonator_incarnation` the staff membership that
+admitted them. NULL means a login session, which every row written before 0122 is.
 See [impersonation](impersonation.md#support-access).
 
 ## Agent communication relationships
