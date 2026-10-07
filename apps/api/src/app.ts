@@ -36,6 +36,7 @@ import { slackIngressRoutes } from "./routes/slack";
 import { socketRoutes } from "./routes/socket";
 import { speechRoutes } from "./routes/speech";
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
+import { linkRoutes } from "./routes/links";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
 import { workOpportunityRoutes } from "./routes/work-opportunities";
 import { workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
@@ -143,6 +144,7 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/socket", socketRoutes);
   app.route("/slack", slackIngressRoutes);
   app.route("/telemetry", publicTelemetryRoutes);
+  app.route("/links", linkRoutes);
   app.route('/internal/telemetry', telemetryOperatorRoutes);
   app.route('/internal/demos', demoOperatorRoutes);
   app.route('/internal/connector-maintenance', connectorMaintenanceOperatorRoutes);

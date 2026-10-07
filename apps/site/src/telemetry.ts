@@ -28,7 +28,8 @@ let leaveReported = false;
 let keepaliveWanted = false;
 let capabilityRefreshed = false;
 
-function apiBaseUrl(): string {
+/** The Global API, or the local one when the site itself is served locally. */
+export function apiBaseUrl(): string {
   return location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://127.0.0.1:8787'
     : 'https://api.rallywith.ai';
