@@ -153,12 +153,13 @@ export interface AppSessionValue {
   signOutIfCredentialCleared: () => Promise<void>;
   surrenderActiveWorkspace: () => Promise<void>;
   /**
-   * Rally staff support access (`docs/impersonation.md`). The lists are
-   * refused for anybody who is not Rally staff; a caller shows nothing then.
+   * Rally staff support access (`docs/impersonation.md`). The Organization
+   * list is `null` for anybody who is not Rally staff, and rejects only on a
+   * failure worth retrying.
    * Starting a session makes the chosen person's view the active one, and
    * ending it returns to the Organization used before.
    */
-  listSupportWorkspaces: () => Promise<SupportWorkspace[]>;
+  listSupportWorkspaces: () => Promise<SupportWorkspace[] | null>;
   listSupportPeople: (workspaceId: string) => Promise<SupportPerson[]>;
   startSupportSession: (target: { region: Region; workspaceId: string }, userId: string) => Promise<void>;
   endSupportSession: () => Promise<void>;

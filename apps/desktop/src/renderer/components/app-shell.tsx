@@ -613,11 +613,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     enabled: multipleWorkspacesEnabled,
   });
   // Organizations that granted Rally access, for Rally staff only
-  // (`docs/impersonation.md`). Anybody else is refused, which is held as
-  // `null` so the menu never asks again in this shell; staff reread on open.
+  // (`docs/impersonation.md`). Anybody else gets `null`, so the menu never
+  // asks again in this shell; staff, and a read that failed, reread on open.
   const supportWorkspaces = useQuery({
     queryKey: ['support-workspaces', session?.impersonator?.id ?? session?.user.id],
-    queryFn: () => listSupportWorkspaces().catch(() => null),
+    queryFn: () => listSupportWorkspaces(),
     retry: false,
     staleTime: Infinity,
   });
@@ -831,7 +831,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             supportWorkspaces={supportWorkspaces.data ?? []}
             loadSupportPeople={listSupportPeople}
             onStartSupportSession={(target, person) => startSupportSession({ region: target.region, workspaceId: target.id }, person.id)}
-            onSupportMenuOpen={() => { if (supportWorkspaces.data) void supportWorkspaces.refetch(); }}
+            onSupportMenuOpen={() => { if (supportWorkspaces.data !== null) void supportWorkspaces.refetch(); }}
             onSwitchWorkspace={async (target) => {
               const targetKey = desktopWorkspaceIdentityKey(target.region, target.id);
               if (!navigator.onLine) {

@@ -466,11 +466,12 @@ export interface RallyDesktopBridge {
   }) => Promise<WorkspaceDeparture>;
   activateWorkspace: (input: { region: RallyRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
   /**
-   * Rally staff support access (`docs/impersonation.md`). The two lists are
-   * refused for anybody who is not Rally staff. Starting a session makes it
-   * the active one; ending it returns to the Organization used before.
+   * Rally staff support access (`docs/impersonation.md`). The Organization
+   * list is `null` for anybody who is not Rally staff, and rejects only on a
+   * failure worth retrying. Starting a session makes it the active one;
+   * ending it returns to the Organization used before.
    */
-  listSupportWorkspaces: () => Promise<SupportWorkspace[]>;
+  listSupportWorkspaces: () => Promise<SupportWorkspace[] | null>;
   listSupportPeople: (workspaceId: string) => Promise<SupportPerson[]>;
   startSupportSession: (input: { workspaceId: string; userId: string }) => Promise<DesktopSession>;
   endSupportSession: () => Promise<DesktopSession | null>;

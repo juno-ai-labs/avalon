@@ -816,18 +816,20 @@ export class AuthService {
    * past it. `SupportAccessService.start` is its only caller.
    */
   async createSupportSession(input: {
+    sessionId: string;
     operatorUserId: string;
     representedUserId: string;
     workspaceId: string;
     staffWorkspaceId: string;
-  }): Promise<{ session: Session; sessionId: string }> {
-    const sessionId = newId();
+  }): Promise<Session> {
+    const sessionId = input.sessionId;
     const refreshToken = randomToken(48);
     const at = nowIso();
     const inserted = await this.env.DB.prepare(
       `INSERT INTO sessions
-       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at, impersonator_user_id)
-       SELECT ?, m.user_id, m.workspace_id, ?, ?, MIN(?, g.expires_at), ?, staff.user_id
+       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at,
+        impersonator_user_id, impersonator_incarnation)
+       SELECT ?, m.user_id, m.workspace_id, ?, ?, MIN(?, g.expires_at), ?, staff.user_id, staff.incarnation
          FROM workspace_members m
          JOIN workspaces w ON w.id = m.workspace_id
          JOIN support_access_grants g ON g.workspace_id = m.workspace_id AND g.expires_at > ?
@@ -862,7 +864,7 @@ export class AuthService {
       workspaceId: asWorkspaceId(input.workspaceId),
       region: this.env.AVALON_REGION,
     });
-    return { session: this.formatSession(identity, accessToken, refreshToken), sessionId };
+    return this.formatSession(identity, accessToken, refreshToken);
   }
 
   private async loadImpersonator(userId: string): Promise<NonNullable<Session["impersonator"]>> {

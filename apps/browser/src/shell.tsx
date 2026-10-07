@@ -21,7 +21,7 @@ import { createQueryClient } from '../../desktop/src/renderer/lib/query-client';
 import { useWindowActivationTracking } from '../../desktop/src/renderer/lib/window-activation';
 import { NEW_SIDEKICK_TARGET } from '../../desktop/src/common/sidekicks';
 import { shellLocation } from './session';
-import { browserRequest } from './transport';
+import { BrowserApiError, browserRequest } from './transport';
 
 const MAC_APP_ONLY = 'Available in the Mac app.';
 
@@ -129,7 +129,15 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     // Rally access over this browser's cookie (`docs/impersonation.md`): the
     // support session takes the Organization's slot in this browser, and the
     // page reloads into it, as switching Organization does here.
-    listSupportWorkspaces: async () => (await browserRequest(IDENTITY_REGION, '/support/workspaces', SupportWorkspacesSchema)).workspaces,
+    // A 403 here is the staff refusal, which is final; anything else throws so it is retried.
+    listSupportWorkspaces: async () => {
+      try {
+        return (await browserRequest(IDENTITY_REGION, '/support/workspaces', SupportWorkspacesSchema)).workspaces;
+      } catch (error) {
+        if (error instanceof BrowserApiError && error.status === 403) return null;
+        throw error;
+      }
+    },
     listSupportPeople: async (workspaceId) =>
       (await browserRequest(IDENTITY_REGION, `/support/workspaces/${encodeURIComponent(workspaceId)}/people`, SupportPeopleSchema)).people,
     startSupportSession: async (target, userId) => {

@@ -98,7 +98,8 @@ Opening a row reads that Organization's members, then guests. Choosing a person
 calls `POST /auth/support/session`, whose single `INSERT … SELECT` writes a
 session for the represented person only if the grant is live, the caller is
 staff, and the person is an active member or guest. Its
-`impersonator_user_id` names the staff member and its expiry is the grant's.
+`impersonator_user_id` names the staff member, `impersonator_incarnation` the
+staff membership that admitted them, and its expiry is the grant's.
 The answer is an ordinary `Session` with an `impersonator`.
 
 From there the session is the represented person's in every way the platform
@@ -108,7 +109,9 @@ exactly what that person can. What sets it apart:
 
 - `authenticateSession` and renewal also require `supportSessionLiveSql`: a live
   grant for the session's Organization and a live staff membership for its
-  `impersonator_user_id`. Renewal adds it to its own statement; authentication
+  `impersonator_user_id` with the same incarnation it was opened under, so a
+  staff member removed and invited back does not bring an old session back
+  with them. Renewal adds it to its own statement; authentication
   reads `impersonator_user_id` in the statement it was already making and runs
   the check as a second one only when that is set, so an ordinary session pays
   nothing for it. The answer carries `impersonatorUserId` on the auth context.
@@ -133,6 +136,10 @@ avatar; signing out reads **End impersonation**.
 Grants, revocations and session starts are written to `audit_events`
 (`support_access.granted`, `support_access.revoked`, `support_session.started`)
 with the acting person and, from a support session, the staff member behind it.
+A grant and a session start are recorded before they take effect, so access is
+never live without its record; a write that then fails leaves a record of an
+attempt. A revocation is recorded after it, since the failure there is the safe
+one.
 The represented person's ordinary actions inside the session are not audited
 separately; the session row is the record of who held it.
 
@@ -222,6 +229,9 @@ non-macOS, and non-arm64 builds never contact the production feed.
   a support session. Both are re-checked on every request and renewal, never
   cached, so a revoke or a removal takes effect on the next request.
 - A support session cannot grant Rally access, and cannot start another one.
+- A support session is bound to the staff membership incarnation that opened
+  it, as an ordinary session is to its own membership's.
+- A grant and a support session are audited before they exist.
 - A support session never outlives its grant. Renewal is capped at the grant's
   expiry, which is also what lets the ordinary expiry sweep close its sockets.
 - The sidecar never observes post-admission work. It opens no conversation feed

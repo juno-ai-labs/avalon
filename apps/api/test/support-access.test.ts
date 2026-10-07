@@ -5,7 +5,7 @@ import { createApp } from "../src/app";
 import { AuthService } from "../src/services/auth-service";
 import { BrowserSessionService } from "../src/services/browser-session-service";
 import { SUPPORT_ORGANIZATION_ID } from "../src/services/support-access";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 import { migratedObservabilityFixture, sqliteD1 } from "./helpers/sqlite-d1";
 
 // Rally access (`docs/impersonation.md`) against the checked-in migrations:
@@ -23,8 +23,8 @@ const CUSTOMER = "01a11778-0000-7000-8000-0000000000c1";
 let db: DatabaseSync;
 let revoked: unknown[];
 
-function bindings() {
-  return createTestEnv({ DB: sqliteD1(db), APP_ENV: "development", RALLY_DEV_AUTH: "false", AVALON_REGION: "global",
+function bindings(overrides: { AUDIT_DB?: D1Database } = {}) {
+  return createTestEnv({ DB: sqliteD1(db), ...overrides, APP_ENV: "development", RALLY_DEV_AUTH: "false", AVALON_REGION: "global",
     ALLOWED_ORIGINS: origin, PUBLIC_API_BASE_URL: apiOrigin, LOG_LEVEL: "error",
     SESSION_SIGNING_KEY: "support-test-signing-key", OAUTH_STATE_ENCRYPTION_KEY: "support-test-encryption-key",
     BROWSER_APP_ORIGIN: origin,
@@ -34,10 +34,10 @@ function bindings() {
     } });
 }
 
-function call(path: string, token: string, method = "GET", body?: unknown) {
+function call(path: string, token: string, method = "GET", body?: unknown, env = bindings()) {
   return createApp().request(`${apiOrigin}${path}`, { method, headers: { authorization: `Bearer ${token}`, origin,
     ...(body === undefined ? {} : { "content-type": "application/json" }) },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, bindings());
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, env);
 }
 
 async function errorCode(response: Response): Promise<string> {
@@ -181,4 +181,27 @@ it("gives a browser the support session in the Organization's slot and takes it 
   await expect(service.read(credential, CUSTOMER)).rejects.toMatchObject({ status: 401 });
   expect(db.prepare("SELECT COUNT(*) AS live FROM sessions WHERE impersonator_user_id = ? AND revoked_at IS NULL").get(STAFF))
     .toEqual({ live: 0 });
+});
+
+it("does not let an old support session back in when its staff member is removed and invited again", async () => {
+  await grant();
+  const session = await startAsBob();
+  // Removed, with the revocation lost, then invited back: a new membership.
+  db.prepare("DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?").run(SUPPORT_ORGANIZATION_ID, STAFF);
+  db.prepare("INSERT INTO workspace_members(workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'member','member','active',?)")
+    .run(SUPPORT_ORGANIZATION_ID, STAFF, new Date().toISOString());
+  expect((await call("/workspace", session.accessToken)).status).toBe(401);
+  expect((await call("/auth/refresh", session.accessToken, "POST", { refreshToken: session.refreshToken })).status).toBe(401);
+});
+
+it("grants nothing, and opens no session, when the audit record cannot be written", async () => {
+  const failing = createTestD1Database({ prepare: () => { throw new Error("audit database unavailable"); } });
+  const admin = (await member(ADMIN, CUSTOMER)).accessToken;
+  expect((await call("/workspace/support-access", admin, "PUT", undefined, bindings({ AUDIT_DB: failing }))).status).toBe(500);
+  expect(db.prepare("SELECT COUNT(*) AS grants FROM support_access_grants").get()).toEqual({ grants: 0 });
+  await grant();
+  const started = await call("/auth/support/session", await identity(STAFF), "POST", { workspaceId: CUSTOMER, userId: BOB },
+    bindings({ AUDIT_DB: failing }));
+  expect(started.status).toBe(500);
+  expect(db.prepare("SELECT COUNT(*) AS sessions FROM sessions WHERE impersonator_user_id IS NOT NULL").get()).toEqual({ sessions: 0 });
 });

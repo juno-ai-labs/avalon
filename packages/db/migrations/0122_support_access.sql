@@ -14,9 +14,12 @@ CREATE TABLE support_access_grants (
 
 -- A support session is an ordinary session of the represented person, so every
 -- existing check (membership, incarnation, revocation, socket admission) applies
--- to it unchanged. This column names the staff member actually acting, and is
--- what ties the session to a live grant and a live staff membership.
+-- to it unchanged. These columns name the staff member actually acting and the
+-- staff membership that admitted them, which is what ties the session to a live
+-- grant and to that membership: a staff member removed and invited back holds a
+-- new incarnation, so an old support session does not come back with them.
 ALTER TABLE sessions ADD COLUMN impersonator_user_id TEXT REFERENCES users(id);
+ALTER TABLE sessions ADD COLUMN impersonator_incarnation TEXT;
 
 CREATE INDEX sessions_impersonated_workspace_idx
   ON sessions(workspace_id) WHERE impersonator_user_id IS NOT NULL AND revoked_at IS NULL;
