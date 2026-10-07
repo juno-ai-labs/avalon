@@ -14445,6 +14445,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return resolved;
   }
 
+  /** The approver's email for this request went out. */
+  async markConversationAccessRequestEmailed(input: { workspaceId: string; id: string }): Promise<void> {
+    await this.initialized;
+    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
+    this.accessRequestStorage().markEmailed(input.id, Date.now());
+  }
+
+  /** An approval whose grant failed goes back to pending; the approver's sockets get it back. */
+  async reopenConversationAccessRequest(input: { workspaceId: string; id: string }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
+    const reopened = this.accessRequestStorage().reopen(input.id);
+    if (reopened) this.publishAccessRequests(reopened.approverUserId);
+    return reopened;
+  }
+
   /**
    * The approver's whole pending list, to their sockets only. Outside the
    * waterline: the subscribe answer carries it again on every connect.

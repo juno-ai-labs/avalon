@@ -187,6 +187,30 @@ describe("stored access requests", () => {
     expect(again).toEqual({ request: first.request, created: false });
   });
 
+  it("asks again by email until one went out, and then never again", async () => {
+    const first = await ask();
+    expect(first.request.emailed).toBe(false);
+    expect((await ask()).request.emailed).toBe(false);
+    await organization().markConversationAccessRequestEmailed({ workspaceId, id: first.request.id });
+    expect((await ask()).request).toMatchObject({ id: first.request.id, emailed: true });
+  });
+
+  it("puts a claimed approval back to pending when its grant fails, and lists it to the approver again", async () => {
+    const { request } = await ask();
+    const approver = await connect(creator);
+    const emptied = approver.next((frame) => frame.type === "workspace_access_requests", "list after the claim");
+    expect(await organization().resolveConversationAccessRequest({ workspaceId, id: request.id, status: "approved" }))
+      .toMatchObject({ status: "approved" });
+    expect((await emptied).requests).toEqual([]);
+    const restored = approver.next((frame) => frame.type === "workspace_access_requests", "list after reopening");
+    expect(await organization().reopenConversationAccessRequest({ workspaceId, id: request.id }))
+      .toMatchObject({ id: request.id, status: "pending" });
+    expect(((await restored).requests as Array<{ id: string }>).map((item) => item.id)).toEqual([request.id]);
+    // A decline is final: only an approval reopens.
+    await organization().resolveConversationAccessRequest({ workspaceId, id: request.id, status: "declined" });
+    expect(await organization().reopenConversationAccessRequest({ workspaceId, id: request.id })).toBeNull();
+  });
+
   it("lists a request to its approver on connect and pushes the empty list once it is settled", async () => {
     const { request } = await ask();
     const approver = await connect(creator);
