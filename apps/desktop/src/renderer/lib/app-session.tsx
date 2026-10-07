@@ -1057,7 +1057,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
               queryClient.invalidateQueries({ queryKey: ['automation'] }),
             ]);
             const stayInPlace = pendingMatches
-              && (pending.source === 'onboarding' || pending.source === 'conversation');
+              && pending.source === 'conversation';
             if (intent.target && !stayInPlace) await bridge.openSettings('connections');
           } else {
             reportDeepLinkFailure(

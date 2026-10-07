@@ -1,5 +1,3 @@
-import { startConnectorAuthorization } from '../lib/start-connector-authorization';
-import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOAD_URL, useConnectorStartAvailable } from '../lib/browser-connectors';
 import { ConversationAdmissionProvider } from '../lib/conversation-admission';
 import { AccountProfileEditor } from '../lib/account-profile-editor';
 import { settings } from '../settings/registry';
@@ -7,18 +5,15 @@ import { SettingLabel } from '../settings/setting-label';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useMemo, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
-import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Search, X } from 'lucide-react';
-import { ConnectorInstallationProviders, PERSONAL_COLOR_KEYS, OnboardingJourneySchema, personalColorKey, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
-import { Button, ConnectorMark, InlineError, RallyMark } from '../components/primitives';
+import { Check, X } from 'lucide-react';
+import { PERSONAL_COLOR_KEYS, personalColorKey, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
+import { Button, InlineError, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor, personalColorInk } from '../components/personal-avatar';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
-import { desktopBridge } from '../lib/platform';
 import { OnboardingIntroduction } from '../components/onboarding-introduction';
 import type { Workspace } from '../lib/types';
-import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 
 const AccountLoadingContext = createContext(false);
 const ProfileEditorContext = createContext<AccountProfileEditor | null>(null);
@@ -184,33 +179,19 @@ function AccountProfileFields({ editor, profileDetails }: { editor: AccountProfi
 
 export function WorkspaceOnboardingJourney({ workspace, children }: { workspace: Workspace | null; children: ReactNode }): React.JSX.Element {
   const account = useOnboardingAccount();
-  const { api, session, setPendingConnectorOAuth } = useAppSession();
+  const { api } = useAppSession();
   const { guest } = useShellCapabilities();
   // The journey sets up an Organization; a guest has none of theirs to set up.
   const eligible = Boolean(account?.eligible) && !guest;
-  const connectorStartAvailable = useConnectorStartAvailable(api, session);
   const queryClient = useQueryClient();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const key = ['onboarding-journey', workspace?.region, workspace?.id, workspace?.currentUser.id];
   const journey = useQuery({ queryKey: key, queryFn: () => api!.getOnboardingJourney(), enabled: Boolean(api && workspace && eligible) });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<string[]>([]);
-  const [configuring, setConfiguring] = useState(false);
-  const [connectorScope, setConnectorScope] = useState<'workspace' | 'you'>('workspace');
-  const hydratedSelections = useRef<string | null>(null);
-  useEffect(() => {
-    if (!workspace || !journey.data || hydratedSelections.current === workspace.id) return;
-    hydratedSelections.current = workspace.id;
-    setSelected(journey.data.connectorIds);
-    if (journey.data.connectorIds.some((id) => id.startsWith('you:'))) setConnectorScope('you');
-  }, [journey.data, workspace?.id]);
   const [emails, setEmails] = useState<string[]>([]);
   const [emailDraft, setEmailDraft] = useState('');
   const [sent, setSent] = useState<string[]>([]);
-  const connectors = useQuery({ queryKey: ['connector-catalog'], queryFn: () => api!.getAvailableConnectorTypes(), enabled: Boolean(api && journey.data?.stage === 'connectors') });
-  const connections = useQuery({ queryKey: ['connections'], queryFn: () => api!.getConnections(), enabled: Boolean(api && ['connectors'].includes(journey.data?.stage ?? '')), refetchOnWindowFocus: 'always' });
   const advance = async (stage: OnboardingJourney['stage']) => {
     if (!journey.data) return;
     const updated = await api!.updateOnboardingJourney({ expectedRevision: journey.data.revision, stage });
@@ -241,53 +222,6 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     openFirstWorkstream();
   };
   if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally" subtitle="Your team will see your avatar and color. They follow you across devices."><PersonalSetup onSaved={() => state.path === 'creator' ? advance('people') : finishOnboarding()} /></OnboardingPage>;
-  const changeConnectorPage = (scope: 'workspace' | 'you'): void => {
-    setConnectorScope(scope);
-    setConfiguring(false);
-    setSearch('');
-    setError(null);
-  };
-  const nextConnectorPage = (): void => {
-    if (connectorScope === 'workspace') changeConnectorPage('you');
-    else void perform(() => advance('profile'));
-  };
-  if (state.stage === 'connectors') return <OnboardingPage
-    title={connectorScope === 'workspace' ? 'Connect tools for your organization' : 'Connect your personal tools'}
-    subtitle={connectorScope === 'workspace'
-      ? 'Everyone in your organization can ask Rally to use these connections and the data you grant access to.'
-      : 'Only you can use these connections through Rally. Teammates do not gain access by sharing a stream with you.'}
-    footer={<>
-      <Button className="button-primary" disabled={busy} onClick={() => {
-        const pageSelected = connectorProviders.some((provider) => selected.includes(`${connectorScope}:${provider.id}`) && provider.scopes.some((scope) => scope === connectorScope));
-        if (!configuring && pageSelected) void perform(async () => {
-          // Nothing the picker produces can fail this: every tile's id is a
-          // compile-time proven selection and the rest was parsed on the way in.
-          // It stays a guard rather than a cast, so it owes a reason somebody can
-          // act on instead of a ZodError's JSON blob.
-          const connectorIds = OnboardingJourneySchema.shape.connectorIds.safeParse(selected);
-          if (!connectorIds.success) throw new Error(`Rally could not save these connections (${describeZodIssues(connectorIds.error)}). Try again, or skip for now.`);
-          const saved = await api!.updateOnboardingJourney({ expectedRevision: state.revision, stage: 'connectors', connectorIds: connectorIds.data });
-          queryClient.setQueryData(key, saved);
-          setConfiguring(true);
-        });
-        else nextConnectorPage();
-      }}>{configuring ? 'Continue' : 'Next'}</Button>
-      <Button disabled={busy} onClick={nextConnectorPage}>Skip for now</Button>
-      {(configuring || connectorScope === 'you') && <Button disabled={busy} onClick={() => configuring ? setConfiguring(false) : changeConnectorPage('workspace')}>Back</Button>}
-    </>}>
-    <p className="connector-access-note">{connectorScope === 'workspace' ? 'Organization connections · 1 of 2' : 'Personal connections · 2 of 2. Any results you post in a shared stream are visible to its participants.'}</p>
-    <label className="guided-search"><Search size={19} /><input aria-label="Search connectors" placeholder="Search" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-    <div className={configuring ? 'guided-connector-grid' : 'guided-connector-grid is-picking'}>{connectorProviders.filter((provider) => connectors.data?.includes(provider.provider) && provider.scopes.some((scope) => scope === connectorScope) && (!configuring || selected.includes(`${connectorScope}:${provider.id}`)) && provider.name.toLowerCase().includes(search.toLowerCase())).map((provider) => {
-      const connected = connections.data?.some((connection) => connection.connectorType === provider.provider && connection.scope === connectorScope && connection.status === 'healthy' && (connection.scope === 'you' && 'personalCapabilities' in provider ? provider.personalCapabilities : provider.capabilities).every((capability) => connection.capabilities?.includes(capability)));
-      return <div className="guided-connector" key={provider.id}><button type="button" aria-pressed={selected.includes(`${connectorScope}:${provider.id}`)} onClick={() => setSelected((values) => values.includes(`${connectorScope}:${provider.id}`) ? values.filter((value) => value !== `${connectorScope}:${provider.id}`) : [...values, `${connectorScope}:${provider.id}`])}>{'mark' in provider ? <ConnectorMark mark={provider.mark} /> : <provider.icon size={24} />}<span>{provider.name}</span>{(connected || selected.includes(`${connectorScope}:${provider.id}`)) && <Check size={17} />}</button>{configuring && <><p>{provider.description}</p>{provider.provider === 'canva' && <p>{CANVA_CONNECTION_DISCLOSURE}</p>}<div className="guided-connection-actions">{connected ? <span>Connected</span> : !connectorStartAvailable(connectorScope === 'you' && 'personalCapabilities' in provider ? provider.personalCapabilities : provider.capabilities) ? <a href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a> : provider.scopes.filter((scope) => scope === connectorScope).map((scope) => <Button key={scope} disabled={busy} onClick={() => void perform(async () => {
-        if (provider.provider === 'x') { await api!.createXConnection([...provider.capabilities]); await connections.refetch(); return; }
-        if (provider.provider === 'custom_mcp' || provider.provider === 'generic_webhook' || (ConnectorInstallationProviders.includes(provider.provider as (typeof ConnectorInstallationProviders)[number]) && scope === 'workspace')) { await desktopBridge().openSettings('connections'); return; }
-        const capabilities = scope === 'you' && 'personalCapabilities' in provider ? [...provider.personalCapabilities] : [...provider.capabilities];
-        const authorization = await startConnectorAuthorization(api!, provider.provider, scope, capabilities);
-        setPendingConnectorOAuth({ attemptId: authorization.attemptId, provider: provider.provider, region: workspace.region, workspaceId: workspace.id, source: 'onboarding' });
-      })}>{scope === 'you' ? PERSONAL_CONNECT_LABEL : 'Connect for organization'}</Button>)}</div></>}</div>;
-    })}</div>{connectors.isLoading && <p>Loading available connectors…</p>}{(error ?? connectors.error?.message ?? connections.error?.message) && <InlineError>{error ?? connectors.error?.message ?? connections.error?.message}</InlineError>}
-  </OnboardingPage>;
   const inviteAddresses = [...new Set([...emails, ...emailDraft.split(/[\s,;]+/u)].map((email) => email.trim().toLowerCase()).filter(Boolean))];
   const invalidEmails = inviteAddresses.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email));
   const addEmails = (value: string, commitLast: boolean): void => {
