@@ -31,10 +31,11 @@ describe("verified login identities", () => {
   it("reuses a verified Google user's identity and preserves authored presentation", async () => {
     const db = database();
     const binding = sqliteD1(db);
-    const id = await persistVerifiedGoogleIdentity(binding, google);
+    const { id, created } = await persistVerifiedGoogleIdentity(binding, google);
+    expect(created).toBe(true);
     db.prepare("UPDATE users SET presentation_json = ? WHERE id = ?").run('{"displayName":"Chosen name"}', id);
     expect(await resolveVerifiedEmailIdentity(binding, "PERSON@example.com")).toBe(id);
-    expect(await persistVerifiedGoogleIdentity(binding, google)).toBe(id);
+    expect(await persistVerifiedGoogleIdentity(binding, google)).toEqual({ id, created: false });
     expect(db.prepare("SELECT name FROM users WHERE id = ?").get(id)).toEqual({ name: "Chosen name" });
     expect(db.prepare("SELECT provider,user_id FROM user_login_identities ORDER BY provider").all())
       .toEqual([{ provider: "email", user_id: id }, { provider: "google", user_id: id }]);
@@ -43,9 +44,10 @@ describe("verified login identities", () => {
   it("removes old mailbox login bindings when a verified Google address changes", async () => {
     const db = database();
     const binding = sqliteD1(db);
-    const id = await persistVerifiedGoogleIdentity(binding, google);
+    const { id, created } = await persistVerifiedGoogleIdentity(binding, google);
+    expect(created).toBe(true);
     await resolveVerifiedEmailIdentity(binding, google.email);
-    expect(await persistVerifiedGoogleIdentity(binding, { ...google, email: "new@example.com" })).toBe(id);
+    expect(await persistVerifiedGoogleIdentity(binding, { ...google, email: "new@example.com" })).toEqual({ id, created: false });
     expect(await resolveVerifiedEmailIdentity(binding, "new@example.com")).toBe(id);
     const formerMailboxOwner = await resolveVerifiedEmailIdentity(binding, google.email);
     expect(formerMailboxOwner).not.toBe(id);
@@ -58,7 +60,7 @@ describe("verified login identities", () => {
     db.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES ('unverified','raw@example.com','Raw','now','now')").run();
     await expect(resolveVerifiedEmailIdentity(binding, "raw@example.com")).rejects.toMatchObject({ code: "verified_identity_required" });
     const guest = await resolveVerifiedEmailIdentity(binding, google.email);
-    expect(await persistVerifiedGoogleIdentity(binding, google)).toBe(guest);
+    expect(await persistVerifiedGoogleIdentity(binding, google)).toEqual({ id: guest, created: false });
     expect(await resolveVerifiedEmailIdentity(binding, google.email)).toBe(guest);
     expect(db.prepare("SELECT user_id FROM user_login_identities WHERE provider = 'google'").all()).toEqual([{ user_id: guest }]);
     expect(db.prepare("SELECT platform_user_id FROM users WHERE id = ?").get(guest)).toEqual({ platform_user_id: guest });
@@ -130,6 +132,9 @@ describe("verified login identities", () => {
     expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
     expect(() => db.exec("UPDATE users SET platform_user_id = 'another' WHERE id = 'u'"))
       .toThrow("platform_user_id_immutable");
-    expect(await resolveVerifiedEmailIdentity(sqliteD1(db), "mixed@example.com")).toBe("u");
+    // This fixture stops at 0108; exercise its persisted identity output rather
+    // than running the current service against a deliberately historical schema.
+    expect(db.prepare("SELECT user_id FROM user_verified_emails WHERE email = ?").get("mixed@example.com"))
+      .toEqual({ user_id: "u" });
   });
 });

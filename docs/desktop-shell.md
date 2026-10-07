@@ -68,6 +68,12 @@ new-Channel screen for that Space when it holds none; the new-Channel screen of
 another Space counts as hidden too. Restoring an archived Space selects its
 pill the same way, so it can navigate too.
 
+In a browser tab at desktop width, an Organization with no Space but General
+has no pill row: **New space** sits at the end of the top bar's actions, at
+the bar's 32px, and **All** is not drawn, since it would filter nothing. The
+first Space brings the row and All back. The phone sheet always keeps the row,
+since its top bar shows while the sheet is shut.
+
 Every Space picker (the new-Channel screen's, the import window, **Add to
 space**) reads its list through `useSpaceChoices`: General first and named **All**,
 matching the first pill, then the rest A to Z. A new Channel starts in the Space
@@ -328,6 +334,28 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-07 — With no Spaces, the browser folds New space into the top bar and drops All
+
+**What changed:** In a browser tab wider than the phone layout, when the only
+Space is General, `SpacePills` portals **New space** into a slot at the end of
+`SidebarTopActions` (`inlineTarget`) and draws no strip, so **All** is gone
+too. The first Space, or a restore, brings the strip back; archiving the last
+folds it again.
+
+**Why:** A new Organization's second row held one button and an All filter
+that filters nothing, and cost a row of height for it.
+
+**Considered and rejected:** Doing it on the Mac app too, where the top bar
+shares its space with the window controls. Moving the whole `SpacePills`
+between the two places, which remounted it and dropped an open archive or
+restore dialog when the window crossed the phone breakpoint; only the button
+moves now.
+
+**Consequences:** The New space menu itself still remounts when it moves, so a
+create-space form open while the window crosses 640px closes.
+
+Shipped in [#1148](https://github.com/juno-ai-labs/avalon/pull/1148).
 
 ### 2026-10-07 — Add people invites guests; Share and the Space header leave the title menu
 

@@ -16,7 +16,7 @@ export function apiTelemetryEnvelope(
   name: TelemetryEventName,
   properties: Record<string, unknown>,
   operationId: string,
-  identityScope: 'platform-user' | 'workspace-user' | 'workspace',
+  identityScope: 'platform-user' | 'workspace-user' | 'workspace' | 'anonymous-epoch',
   region: Region = env.AVALON_REGION,
   eventId?: string,
 ): TelemetryEnvelope {

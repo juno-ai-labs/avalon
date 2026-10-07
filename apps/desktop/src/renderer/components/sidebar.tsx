@@ -1,6 +1,6 @@
 import type { ConversationAccessRequestItem } from '@rally/contracts';
 import { ShareConversationDialog } from './scope-sharing-panel';
-import { useOptionalCollaborationSession } from '../lib/collaboration-session';
+import { useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { IconPin, IconShare2 } from '@tabler/icons-react';
 import { ChannelRowContent, NavigationRowContent } from '@rally/ui/components/navigation';
 import {
@@ -22,7 +22,7 @@ import { type CreateSpaceRequest, type SpaceSummary, type WorkstreamBatchFilter,
 import { IconArrowsSort, IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type TransitionEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
@@ -222,6 +222,18 @@ const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
 const NAVIGATION_SHEET_ID = 'rally-navigation';
 /** The `max-width` of the phone layout in `app.css`; the two move together. */
 const PHONE_LAYOUT_MAX_WIDTH = 640;
+const WIDE_LAYOUT_QUERY = `(min-width: ${PHONE_LAYOUT_MAX_WIDTH + 1}px)`;
+
+function subscribeWideLayout(onChange: () => void): () => void {
+  const query = window.matchMedia?.(WIDE_LAYOUT_QUERY);
+  query?.addEventListener('change', onChange);
+  return () => query?.removeEventListener('change', onChange);
+}
+
+/** Whether the sidebar is drawn as a column rather than the phone sheet. */
+function useWideLayout(): boolean {
+  return useSyncExternalStore(subscribeWideLayout, () => window.matchMedia?.(WIDE_LAYOUT_QUERY).matches ?? true);
+}
 
 /**
  * How long the sidebar will wait for the list to carry a pin before it stops
@@ -1528,6 +1540,16 @@ export function Sidebar({
    */
   const placementSpaces = useMemo(() => (spaces !== undefined && spacesReady ? [...spaces] : [])
     .sort(compareAlphabeticalName), [spaces, spacesReady]);
+  const { host } = useShellCapabilities();
+  const wideLayout = useWideLayout();
+  const [spaceActionSlot, setSpaceActionSlot] = useState<HTMLSpanElement | null>(null);
+  // The phone sheet keeps the row: its top bar shows while the sheet is shut.
+  const spacePillsInline = host === 'browser'
+    && wideLayout
+    && spaces !== undefined
+    && spacesReady
+    && directoryLoading !== true
+    && !placementSpaces.some((space) => space.systemRole !== 'general');
   /**
    * The line under a Channel's title: the Spaces it lives in, General left
    * out because General is where a Channel is when it is in no Space at all.
@@ -2132,7 +2154,6 @@ export function Sidebar({
     spacesReadOnly,
   ]);
 
-
   return (
     <>
       <ResizableSidebar
@@ -2210,8 +2231,11 @@ export function Sidebar({
               <IconMessagePlus aria-hidden="true" size={17} stroke={1.8} />
             </button>
           </NewWorkstreamMenu>}
+          {/* Holds New space when the Space row folds into this bar. */}
+          <span className="sidebar-top-space-slot" ref={setSpaceActionSlot} />
         </SidebarTopActions>
         {spaces !== undefined && <SpacePills
+          inlineTarget={spacePillsInline ? spaceActionSlot : null}
           inactiveSpaces={inactiveSpaces}
           loading={directoryLoading}
           readOnly={spacesReadOnly}

@@ -7756,6 +7756,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .access-request-dialog-title { color: var(--av-sys-color-text-default); font-size: 15px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 
 .space-pill-strip { align-items: center; display: flex; flex: 0 0 auto; gap: 6px; min-width: 0; padding: 0 14px 10px; }
+.sidebar-top-space-slot { display: contents; }
+.sidebar-top-space-slot .space-pill-add { height: 32px; width: 32px; }
 .space-pill-strip-scroll {
   display: flex;
   flex: 1;
