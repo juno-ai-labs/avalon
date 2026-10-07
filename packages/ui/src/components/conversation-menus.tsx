@@ -1,4 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { CreateScopeInvitationsSchema } from '@rally/contracts/scope-grants';
 import {
   IconArchive,
   IconChevronRight,
@@ -7,16 +8,15 @@ import {
   IconDots,
   IconHexagons,
   IconLink,
-  IconLock,
   IconPencil,
   IconPin,
-  IconShare2,
   IconUserMinus,
+  IconX,
   IconUserPlus,
   IconUsers,
   IconWorld,
 } from '@tabler/icons-react';
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { compareAlphabeticalTitle } from '../lib/alphabetical';
 import type { SidebarPresentation, WorkspaceMember } from '../lib/types';
@@ -40,7 +40,6 @@ export interface ConversationRowActions {
   publicDisabled?: boolean | undefined;
   onCopyLink?: ((target: ConversationRowTarget) => void) | undefined;
   onRename?: (target: ConversationRowTarget) => void;
-  onShare?: (target: ConversationRowTarget) => void;
   onArchive?: (target: ConversationRowTarget) => void;
 }
 
@@ -71,28 +70,42 @@ export interface TitleMenuPeople {
    * removes; absent where the host cannot remove people.
    */
   onRemove?: ((member: WorkspaceMember) => void) | undefined;
+  /** Inviting by email address as a guest; absent where the host cannot invite. */
+  invites?: TitleMenuInvites | undefined;
 }
 
 /**
- * A participant's own actions, behind a dots button on their row. The last
- * participant cannot leave: a room needs someone in it.
+ * Guest invitations from the People level's search: an address nobody in the
+ * Organization has is invited to this conversation as a guest, and waits
+ * among its people until they sign in with it.
  */
-function PersonActions({ member, noun, onRemove, self, sole }: {
-  member: WorkspaceMember;
-  noun: 'channel' | 'breakout';
-  onRemove: (member: WorkspaceMember) => void;
-  self: boolean;
-  sole: boolean;
+export interface TitleMenuInvites {
+  /** Addresses invited and not yet signed in, lower case; undefined until loaded. */
+  pending: readonly string[] | undefined;
+  /** Resolves once the addresses are invited; the host names a failure in `TitleMenuPeople.error`. */
+  onInvite: (emails: string[]) => Promise<void>;
+  /** Taking an invitation back before it is used; absent where the host cannot. */
+  onRevoke?: ((email: string) => void) | undefined;
+  /** The People level opened: the host loads pending invitations then, not on every open of the conversation. */
+  onLoad?: (() => void) | undefined;
+}
+
+/** What may separate addresses typed into the People search. */
+const ADDRESS_SEPARATORS = /[\s,;]+/u;
+const EMAIL = CreateScopeInvitationsSchema.shape.emails.element;
+
+/** One action on a person's row, behind a dots button. */
+function RowAction({ disabled, icon, label, name, onSelect }: {
+  disabled?: boolean | undefined; icon: ReactNode; label: string; name: string; onSelect: () => void;
 }): React.JSX.Element {
   return <DropdownMenu.Root modal={false}>
-    <DropdownMenu.Trigger aria-label={`${member.name} actions`} className="title-menu-person-actions">
+    <DropdownMenu.Trigger aria-label={`${name} actions`} className="title-menu-person-actions">
       <IconDots aria-hidden="true" size={16} stroke={1.8} />
     </DropdownMenu.Trigger>
     <DropdownMenu.Portal>
       <DropdownMenu.Content align="end" className="menu-content" sideOffset={4}>
-        <DropdownMenu.Item className="menu-item menu-item-danger" disabled={sole} onSelect={() => onRemove(member)}>
-          <IconUserMinus aria-hidden="true" size={16} stroke={1.8} />
-          {self ? `Leave the ${noun}` : `Remove from ${noun}`}
+        <DropdownMenu.Item className="menu-item menu-item-danger" disabled={disabled} onSelect={onSelect}>
+          {icon}{label}
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Portal>
@@ -130,25 +143,22 @@ function openLevel(nav: ReturnType<typeof useTitleMenuNav>, view: TitleMenuView)
   return (event: Event): void => { event.preventDefault(); nav.open(view); };
 }
 
-function scopeCopy(scope: 'personal' | 'workspace' | undefined, noun: 'channel' | 'breakout'): { title: string; detail: string; icon: ReactNode } {
-  return scope === 'workspace'
-    ? { title: 'Public to organization', detail: `Anyone in the organization can open this ${noun}`, icon: <IconWorld aria-hidden="true" size={18} stroke={1.7} /> }
-    : { title: 'Private', detail: `Only people added here can read this ${noun}`, icon: <IconLock aria-hidden="true" size={18} stroke={1.7} /> };
-}
-
 /**
- * Who is in the conversation, who could be, and who can see it: the scope with
- * its way to change, a search, the participants, and suggestions to add.
+ * Who is in the conversation and who could be: a search that also takes email
+ * addresses, the participants, invitations still waiting, and suggestions to
+ * add. Enter adds what was typed and keeps the menu open for the next one.
  */
-function PeopleView({ manage, members, noun, people, presentUserIds, scope }: {
-  manage?: (() => void) | undefined;
+function PeopleView({ members, noun, people, presentUserIds }: {
   members: readonly WorkspaceMember[];
   noun: 'channel' | 'breakout';
   people?: TitleMenuPeople | undefined;
   presentUserIds: readonly string[];
-  scope: 'personal' | 'workspace' | undefined;
 }): React.JSX.Element {
   const [query, setQuery] = useState('');
+  const [entryError, setEntryError] = useState<string | null>(null);
+  const invites = people?.invites;
+  const loadInvites = invites?.onLoad;
+  useEffect(() => { loadInvites?.(); }, [loadInvites]);
   const needle = query.trim().toLocaleLowerCase();
   const present = new Set(presentUserIds);
   const inRoom = new Set(members.map((member) => member.id));
@@ -156,18 +166,41 @@ function PeopleView({ manage, members, noun, people, presentUserIds, scope }: {
     && (member.status ?? 'active') === 'active'
     && (!needle || member.name.toLocaleLowerCase().includes(needle) || (member.email ?? '').toLocaleLowerCase().includes(needle)));
   const suggestions = needle ? addable : addable.slice(0, PEOPLE_SUGGESTIONS);
-  const copy = scopeCopy(scope, noun);
+  const tokens = needle.split(ADDRESS_SEPARATORS).filter(Boolean);
+  const typedEmails = tokens.length > 0 && tokens.every((token) => EMAIL.safeParse(token).success);
+  const change = (value: string): void => { setQuery(value); setEntryError(null); };
+  const submit = (): void => {
+    if (!people || tokens.length === 0) return;
+    if (!typedEmails) {
+      // A name narrowed to one person adds them, as clicking Add would.
+      const only = suggestions.length === 1 ? suggestions[0] : undefined;
+      if (only) { people.onAdd(only); setQuery(''); return; }
+      setEntryError('Enter email addresses separated by spaces, commas or semicolons.');
+      return;
+    }
+    const byEmail = new Map((people.candidates).flatMap((member) => (member.status ?? 'active') === 'active' && member.email
+      ? [[member.email.toLocaleLowerCase(), member] as const] : []));
+    const here = new Set([...members.flatMap((member) => member.email ? [member.email.toLocaleLowerCase()] : []), ...invites?.pending ?? []]);
+    const strangers: string[] = [];
+    for (const email of new Set(tokens)) {
+      if (here.has(email)) continue;
+      const member = byEmail.get(email);
+      if (member) people.onAdd(member);
+      else strangers.push(email);
+    }
+    if (strangers.length === 0 || !invites) {
+      if (strangers.length > 0) setEntryError(`Only people in the organization can be added here.`);
+      else setQuery('');
+      return;
+    }
+    const submitted = query;
+    // Cleared once invited, unless more was typed meanwhile; a failure keeps the addresses to retry.
+    invites.onInvite(strangers).then(() => setQuery((current) => current === submitted ? '' : current), () => undefined);
+  };
+  const error = entryError ?? people?.error;
   return <>
-    <div className="title-menu-scope">
-      {copy.icon}
-      <span className="title-menu-scope-copy">
-        <span className="title-menu-scope-title">{copy.title}</span>
-        <span className="title-menu-scope-detail">{copy.detail}</span>
-      </span>
-      {manage && <TitleMenuLink onSelect={manage}>Change</TitleMenuLink>}
-    </div>
-    {people && <TitleMenuSearch label="Add someone by name or email" onChange={setQuery} value={query} />}
-    {people?.error && <p className="title-menu-error" role="alert">{people.error}</p>}
+    {people && <TitleMenuSearch label="Add someone by name or email" onChange={change} onEnter={submit} value={query} />}
+    {error && <p className="title-menu-error" role="alert">{error}</p>}
     {!needle && members.map((member) => <div className="title-menu-person" key={member.id}>
       <Avatar member={member} size="medium" />
       <span className="title-menu-person-copy">
@@ -175,7 +208,27 @@ function PeopleView({ manage, members, noun, people, presentUserIds, scope }: {
         <span className="title-menu-person-detail">{member.id === people?.currentUserId ? 'You' : member.email}</span>
       </span>
       <span className="title-menu-person-role">{member.role === 'admin' ? 'Admin' : member.accessClass === 'guest' ? 'Guest' : 'Member'}</span>
-      {people?.onRemove && <PersonActions member={member} noun={noun} onRemove={people.onRemove} self={member.id === people.currentUserId} sole={members.length <= 1} />}
+      {people?.onRemove && <RowAction
+        disabled={members.length <= 1}
+        icon={<IconUserMinus aria-hidden="true" size={16} stroke={1.8} />}
+        label={member.id === people.currentUserId ? `Leave the ${noun}` : `Remove from ${noun}`}
+        name={member.name}
+        onSelect={() => people.onRemove?.(member)}
+      />}
+    </div>)}
+    {!needle && invites?.pending?.map((email) => <div className="title-menu-person" key={email}>
+      <Avatar member={{ id: email, name: email, email, timezone: 'UTC' }} size="medium" />
+      <span className="title-menu-person-copy">
+        <span className="title-menu-person-name">{email}</span>
+        <span className="title-menu-person-detail">Joins when they sign in</span>
+      </span>
+      <span className="title-menu-person-role">Invited</span>
+      {invites.onRevoke && <RowAction
+        icon={<IconX aria-hidden="true" size={16} stroke={1.8} />}
+        label="Cancel invite"
+        name={email}
+        onSelect={() => invites.onRevoke?.(email)}
+      />}
     </div>)}
     {people && suggestions.length > 0 && <>
       <div className="title-menu-section-heading">{needle ? 'Add to this ' + noun : 'Suggested'}</div>
@@ -194,7 +247,9 @@ function PeopleView({ manage, members, noun, people, presentUserIds, scope }: {
         >Add</button>
       </div>)}
     </>}
-    {people && needle && suggestions.length === 0 && <p className="title-menu-empty">Nobody else matches.</p>}
+    {people && needle && suggestions.length === 0 && <p className="title-menu-empty">{typedEmails && invites
+      ? `Press Enter to invite ${tokens.length === 1 ? 'them' : 'everyone'} as ${tokens.length === 1 ? 'a guest' : 'guests'}.`
+      : 'Nobody else matches.'}</p>}
   </>;
 }
 
@@ -301,8 +356,8 @@ function peopleMeta(count: number, scope: 'personal' | 'workspace' | undefined, 
 }
 
 /**
- * The Channel's title-pill menu. Its root is where the Channel lives, the
- * things most often done to it as tiles, and one row each for its people,
+ * The Channel's title-pill menu. Its root is the things most often done to
+ * it as tiles, and one row each for its people,
  * Sidekicks and Breakouts; each row and **More** opens a level in place,
  * which the pill names as a breadcrumb. It replaces the Channel sidebar, so
  * between its levels it carries all of that sidebar's sections.
@@ -328,7 +383,6 @@ export function ChannelMenu({
   renderAge,
   sidekickFailure,
   sidekicks,
-  space,
   workstream,
 }: {
   actions?: ConversationRowActions | undefined;
@@ -354,8 +408,6 @@ export function ChannelMenu({
   renderAge?: (breakout: BreakoutMark) => ReactNode;
   sidekickFailure?: SidekickSectionFailure | undefined;
   sidekicks?: SidekickRow[] | undefined;
-  /** The Space this menu names, or absent for a Channel only in General. */
-  space?: { icon: ReactNode; name: string; onOpen?: (() => void) | undefined } | undefined;
   workstream: SidebarPresentation;
 }): React.JSX.Element {
   const nav = useTitleMenuNav();
@@ -363,7 +415,7 @@ export function ChannelMenu({
   const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
   const otherResources = workstream.resources.filter((resource) => resource.direction !== 'artifact');
   if (nav.view?.key === 'people') {
-    return <PeopleView manage={onParticipants} members={workstream.participants} noun="channel" people={people} presentUserIds={presentUserIds} scope={workstream.scope} />;
+    return <PeopleView members={workstream.participants} noun="channel" people={people} presentUserIds={presentUserIds} />;
   }
   if (nav.view?.key === 'sidekicks') {
     return <SidekicksView addSidekick={addSidekick} failure={sidekickFailure} items={sidekicks} onMenuOpen={onSidekickMenuOpen} onOpen={onOpenSidekick} onRefresh={onRefreshSidekicks} />;
@@ -388,17 +440,10 @@ export function ChannelMenu({
     </>;
   }
   return <>
-    {space && <TitleMenuHeader
-      action={space.onOpen && <TitleMenuLink onSelect={space.onOpen}>Open space</TitleMenuLink>}
-      eyebrow="In space"
-      icon={space.icon}
-      title={space.name}
-    />}
     <ActionTiles>
       <ActionTile disabled={!onParticipants && !people} icon={<IconUserPlus aria-hidden="true" size={20} stroke={1.6} />} label="Add people" onSelect={openLevel(nav, PEOPLE_VIEW)} />
       {actions?.onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={() => actions.onRename?.(target)} />}
       {actions?.onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={() => actions.onCopyLink?.(target)} />}
-      {actions?.onShare && <ActionTile icon={<IconShare2 aria-hidden="true" size={20} stroke={1.6} />} label="Share" onSelect={() => actions.onShare?.(target)} />}
       <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />
     </ActionTiles>
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(workstream.participants.length, workstream.scope, participantsPending)} view={PEOPLE_VIEW} />
@@ -454,7 +499,7 @@ export function BreakoutMenu({
 }): React.JSX.Element {
   const nav = useTitleMenuNav();
   if (nav.view?.key === 'people') {
-    return <PeopleView manage={onParticipants} members={participants} noun="breakout" people={people} presentUserIds={presentUserIds} scope={scope} />;
+    return <PeopleView members={participants} noun="breakout" people={people} presentUserIds={presentUserIds} />;
   }
   if (nav.view?.key === 'sidekicks') {
     return <SidekicksView addSidekick={addSidekick} failure={sidekickFailure} items={sidekicks} onMenuOpen={onSidekickMenuOpen} onOpen={onOpenSidekick} onRefresh={onRefreshSidekicks} />;
@@ -484,7 +529,6 @@ export function BreakoutMenu({
       <ActionTile disabled={!onParticipants && !people} icon={<IconUserPlus aria-hidden="true" size={20} stroke={1.6} />} label="Add people" onSelect={openLevel(nav, PEOPLE_VIEW)} />
       {actions?.onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={() => actions.onRename?.(breakout)} />}
       {actions?.onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={() => actions.onCopyLink?.(breakout)} />}
-      {actions?.onShare && <ActionTile icon={<IconShare2 aria-hidden="true" size={20} stroke={1.6} />} label="Share" onSelect={() => actions.onShare?.(breakout)} />}
       {(appearance || actions?.onSetPublic || actions?.onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(participants.length, scope, participantsPending)} view={PEOPLE_VIEW} />
