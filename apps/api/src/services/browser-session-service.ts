@@ -63,11 +63,10 @@ export class BrowserSessionService {
       : (await new AuthService(this.env).listRegionalWorkspaces(auth.userId)).find((entry) => entry.id === auth.workspaceId);
     if (auth.workspaceId !== null && !workspace) throw new ApiError(401,"session_revoked","Workspace access has ended");
     const impersonator = auth.impersonatorUserId === undefined ? null
-      : await this.env.DB.prepare("SELECT id,email,name,avatar_url FROM users WHERE id=?")
-        .bind(auth.impersonatorUserId).first<{ id:string;email:string;name:string;avatar_url:string|null }>();
+      : await new AuthService(this.env).loadImpersonator(auth.impersonatorUserId);
     return BrowserSessionSchema.parse({ user:UserSchema.parse({ id:row.id,email:row.email,name:row.name,
       avatarUrl:row.avatar_url,timezone:row.timezone,createdAt:row.created_at }),workspace,
-      ...(impersonator ? { impersonator:{ id:impersonator.id,email:impersonator.email,name:impersonator.name,avatarUrl:impersonator.avatar_url } } : {}),
+      ...(impersonator ? { impersonator } : {}),
       expiresAt:await this.expiry(auth.sessionId) });
   }
 

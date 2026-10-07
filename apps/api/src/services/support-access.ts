@@ -183,6 +183,8 @@ export class SupportAccessService {
    */
   async start(input: { workspaceId: string; userId: string }): Promise<{ session: Session; sessionId: string }> {
     const operator = await this.requireStaff();
+    // The insert re-checks the grant; this read is what keeps an ungranted
+    // attempt from writing a `support_session.started` record ahead of it.
     await this.requireGrant(input.workspaceId);
     // Recorded before the session exists, for the same reason as a grant.
     const sessionId = newId();
