@@ -7712,6 +7712,13 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .attention-menu-empty { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); padding: 10px; }
 
 .space-pill-strip { align-items: center; display: flex; flex: 0 0 auto; gap: 6px; min-width: 0; padding: 0 14px 10px; }
+/* Drawn at the end of the top bar's actions, where the bar supplies the inset
+   and its 32px round buttons set the size. */
+.space-pill-strip.is-inline { gap: 8px; padding: 0; }
+.space-pill-strip.is-inline .space-pill-strip-scroll { gap: 8px; }
+.space-pill-strip.is-inline .space-pill,
+.space-pill-strip.is-inline .space-pill-add { height: 32px; }
+.space-pill-strip.is-inline .space-pill-add { width: 32px; }
 .space-pill-strip-scroll {
   display: flex;
   flex: 1;

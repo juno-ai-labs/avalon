@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatDateTime } from '../lib/format';
 import { ApiError } from '../lib/api';
+import { CollaborationSessionProvider } from '../lib/collaboration-session';
 import {
   consumeDeepLinkWorkstreamNavigation,
   markDeepLinkWorkstreamNavigation,
@@ -2935,6 +2936,8 @@ describe('pinned channels', () => {
   ])('scrolls with $behavior when reduced motion is $reduced', async ({ reduced, behavior }) => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: reduced && query.includes('prefers-reduced-motion'),
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
     }));
     renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
@@ -3933,6 +3936,36 @@ describe('the sidebar Space filter', () => {
   });
 
   afterEach(() => vi.unstubAllGlobals());
+
+  it('in a browser tab, draws New space alone in the top bar until the first Space exists', () => {
+    const renderIn = (spaces: ReturnType<typeof space>[]) => (
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              onSignOut={vi.fn()}
+              spaces={spaces}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(renderIn([home]));
+    const topBar = screen.getByRole('generic', { name: 'Rally actions' });
+
+    expect(within(topBar).getByRole('button', { name: 'New space' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+
+    rerender(renderIn([home, hiring]));
+
+    expect(within(topBar).queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Hiring' })).toBeVisible();
+  });
 
   function renderFiltered(props: Partial<React.ComponentProps<typeof Sidebar>> = {}): void {
     render(
