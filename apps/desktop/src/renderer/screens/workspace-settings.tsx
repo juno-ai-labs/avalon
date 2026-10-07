@@ -47,7 +47,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
-import { ConnectorEventConsoleProviders, ConnectorInstallationProviders, connectorApiKeyAcceptable } from '@rally/contracts';
+import { ConnectorEventConsoleProviders, ConnectorInstallationProviders, WorkspaceNameSchema, connectorApiKeyAcceptable } from '@rally/contracts';
 import type {
   ConnectorOAuthStart,
   CustomMcpToolPolicy,
@@ -62,6 +62,7 @@ import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
 import { DigestSettings } from '../components/digest-settings';
 import { UsageSettingsSection } from '../components/organization-usage';
+import { InlineEditableText } from '../components/inline-editable-text';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
@@ -1008,8 +1009,17 @@ export function WorkspaceSettingsScreen({
     onSuccess: (user) => setUserTimezone(user.timezone),
   });
   const updateWorkspaceTimezone = useMutation({
-    mutationFn: (timezone: string) => api!.updateWorkspaceTimezone(timezone),
+    mutationFn: (timezone: string) => api!.updateWorkspace({ timezone }),
     onSuccess: (updated) => setWorkspaceTimezone(updated.timezone),
+  });
+  const renameWorkspace = useMutation({
+    mutationFn: (name: string) => api!.updateWorkspace({ name }),
+    // Written straight into the read, so the name is in `workspace` before the
+    // field lets go of it, without a refetch; the sync echo refetches anyway.
+    onSuccess: (updated) => queryClient.setQueriesData<Workspace>(
+      { queryKey: ['workspace'] },
+      (current) => current && { ...current, name: updated.name },
+    ),
   });
   const applyApplicationSettingsMutation = (
     settings: DesktopApplicationSettings,
@@ -1505,7 +1515,15 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
                     <SettingCopy setting={settings.workspaceIdentity} />
-                    <span className="settings-row-value"><strong>{workspace.name}</strong></span>
+                    <span className="settings-row-value">
+                      <InlineEditableText
+                        ariaLabel="Organization name"
+                        disabled={!isAdmin || !api}
+                        onSave={(name) => renameWorkspace.mutateAsync(name)}
+                        validate={(name) => (WorkspaceNameSchema.safeParse(name).success ? null : 'Use 2 to 120 characters.')}
+                        value={workspace.name}
+                      />
+                    </span>
                   </div>
                   <label className="settings-preference-row">
                     <SettingCopy setting={settings.workspaceTimezone} />
@@ -1522,6 +1540,7 @@ export function WorkspaceSettingsScreen({
                     />
                   </label>
                 </div>
+                {renameWorkspace.error && <InlineError>{renameWorkspace.error.message}</InlineError>}
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
                 <UsageSettingsSection api={api ?? null} organizationName={workspace.name} openRequest={usageRequest} />
                 <div className="settings-pane-heading settings-pane-heading-count settings-pane-heading-spaced">

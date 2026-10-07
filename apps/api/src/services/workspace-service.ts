@@ -469,15 +469,17 @@ export class WorkspaceService {
     };
   }
 
-  async updateWorkspace(input: { timezone: string }) {
+  async updateWorkspace(input: { name?: string | undefined; timezone?: string | undefined }) {
     this.requireAdmin();
+    // One statement for either field: a field left out keeps its stored value.
     await this.env.DB.prepare(
       `UPDATE workspaces
-       SET timezone = ?, updated_at = ?
+       SET name = COALESCE(?, name), timezone = COALESCE(?, timezone), updated_at = ?
        WHERE id = ?`,
     )
       .bind(
-        input.timezone,
+        input.name ?? null,
+        input.timezone ?? null,
         nowIso(),
         this.auth.workspaceId,
       )
