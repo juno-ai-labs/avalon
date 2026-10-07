@@ -141,6 +141,8 @@ with one revision added, so a client holding its old revision gets a conflict
 and refetches. The connector enum and stored selections remain only to read old
 rows.
 
+PR: [#1129](https://github.com/juno-ai-labs/avalon/pull/1129).
+
 ### 2026-09-17 — Derive the selectable connector ids from the connection-card catalog
 
 The journey's connector enum was a hand-kept copy of the ids in the

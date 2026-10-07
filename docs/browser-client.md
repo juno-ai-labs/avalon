@@ -587,6 +587,8 @@ it, since the landing page that sent the person here already introduced Rally.
 so it costs one session row. The button shows only on the empty state; someone
 with organizations listed has no way to create another here yet.
 
+PR: [#1129](https://github.com/juno-ai-labs/avalon/pull/1129).
+
 ### 2026-10-06 — A shared link opens the conversation after sign-in, with no Accept screen
 
 **What changed:** The entry no longer has an invitation page. Its `/invite`
