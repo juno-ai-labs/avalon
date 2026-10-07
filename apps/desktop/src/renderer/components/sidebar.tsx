@@ -1089,9 +1089,16 @@ export function Sidebar({
     };
   }, [setSidebarOpen, sidebarOpen]);
   // Anything that opens somewhere new closes the sheet, whoever navigated: a
-  // row, a pill that had to leave the open Channel, a search result, or the
-  // New channel form, whose dialogs portal outside the sheet.
+  // row, a search result, or the New channel form, whose dialogs portal
+  // outside the sheet. A pill that had to leave the open Channel does not: the
+  // reader is switching Spaces to browse that Space's Channels, so the sheet
+  // stays open on the list they just picked.
+  const pillNavigating = useRef(false);
   useEffect(() => {
+    if (pillNavigating.current) {
+      pillNavigating.current = false;
+      return;
+    }
     setSidebarOpen(false);
   }, [location.pathname, setSidebarOpen]);
   const selectedSpaceFilter = useUiStore((state) => state.sidebarSpaceFilter);
@@ -1500,6 +1507,7 @@ export function Sidebar({
     const first = displayedWorkstreams.find((workstream) => !workstream.pending);
     if (!first && (hasMoreWorkstreams || loadingMoreWorkstreams)) return;
     setPendingPillNavigation(null);
+    pillNavigating.current = true;
     void navigate(first
       ? `/workstreams/${encodeURIComponent(first.id)}`
       : emptySpaceRoute(pendingPillNavigation.spaceId, !spacesReadOnly));
