@@ -20,7 +20,7 @@ Tagged links on the landing page, by `data-site-action` id:
 | Id | Link | Action · placement |
 | --- | --- | --- |
 | `download-header` | Header Download for Mac | download · header |
-| `sign-in-header` | Header Sign in to Rally (shown instead of Download for Mac on touch-only devices) | primary_cta · header |
+| `sign-in-header` | Header sign-in button, its label rolling between Sign in to Rally and Sign up for Rally (shown instead of Download for Mac on touch-only devices) | primary_cta · header |
 | `download-hero` | Hero Download the macOS beta | download · hero |
 | `web-app-hero` | Hero Use the web app (app.rallywith.ai) | secondary_cta · hero |
 | `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
