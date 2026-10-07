@@ -12,7 +12,7 @@ import {
   SidebarScroll,
 } from '@rally/ui/components/resizable-sidebar';
 import { SidebarTopActions } from '@rally/ui/components/space-pills';
-import { IconCloudDownload, IconDeviceDesktopDown, IconMenu2, IconMessagePlus, IconSearch } from '@tabler/icons-react';
+import { IconCloudDownload, IconDeviceDesktopDown, IconMenu2, IconMessagePlus, IconSearch, IconX } from '@tabler/icons-react';
 import { NewWorkstreamMenu } from './new-workstream-menu';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -2208,7 +2208,9 @@ export function Sidebar({
             ref={menuToggle}
             showTooltip={false}
           >
-            <IconMenu2 aria-hidden="true" size={20} stroke={1.8} />
+            {/* Both glyphs stay mounted so CSS can turn one into the other. */}
+            <IconMenu2 aria-hidden="true" className="sidebar-menu-glyph is-menu" size={18} stroke={1.8} />
+            <IconX aria-hidden="true" className="sidebar-menu-glyph is-close" size={18} stroke={1.8} />
           </IconButton>}
         >
           {downloadedUpdate !== null && <IconButton className="sidebar-top-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
