@@ -34,8 +34,17 @@ PHASE = 1.5 * math.pi
 CANVAS_CENTRE = 200.0
 SPHERE_RADIUS = 124.0
 
+# Twice the standard 15-unit stroke, for the menu bar glyph and the favicon,
+# where the standard cut is under a pixel wide.
+THICK_STROKE = 30
+# The favicon sits on a black disc centred on the sphere. The seam just touches
+# the sphere's outline (radius 127.3 at this perspective), so 160 clears the
+# thick stroke with a margin.
+FAVICON_DISC_RADIUS = 160
+
 VOLT = "#CCFF00"
 INK = "#111210"
+DISC = "#000000"
 
 
 def seam_point(
@@ -114,10 +123,14 @@ def svg(stroke_width: float, color: str, favicon: bool = False, **projection: fl
     left, top, side = view_box(values, stroke_width)
     stroke = f'stroke="{color}" stroke-width="{number(stroke_width)}" stroke-linecap="round" stroke-linejoin="round"'
     if favicon:
-        # A tab bar can be light or dark; volt washes out on light, so switch to ink.
+        # The disc keeps the mark legible on any tab bar, light or dark.
+        r = number(FAVICON_DISC_RADIUS)
+        corner = number(CANVAS_CENTRE - FAVICON_DISC_RADIUS)
+        diameter = number(2 * FAVICON_DISC_RADIUS)
+        centre = number(CANVAS_CENTRE)
         return (
-            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{left} {top} {side} {side}" fill="none">\n'
-            f"<style>@media (prefers-color-scheme: light) {{ path {{ stroke: {INK}; }} }}</style>\n"
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{corner} {corner} {diameter} {diameter}" fill="none">\n'
+            f'<circle cx="{centre}" cy="{centre}" r="{r}" fill="{DISC}"/>\n'
             f'<path d="{path}" {stroke}/>\n'
             "</svg>\n"
         )
@@ -170,8 +183,8 @@ def main() -> None:
         # The thicker cut for placements narrower than 24 px.
         brand / "rally-mark-small.svg": svg(18, VOLT),
         brand / "rally-mark-ink.svg": svg(15, INK),
-        ROOT / "apps" / "site" / "public" / "favicon.svg": svg(18, VOLT, favicon=True),
-        ROOT / "apps" / "browser" / "public" / "favicon.svg": svg(18, VOLT, favicon=True),
+        ROOT / "apps" / "site" / "public" / "favicon.svg": svg(THICK_STROKE, VOLT, favicon=True),
+        ROOT / "apps" / "browser" / "public" / "favicon.svg": svg(THICK_STROKE, VOLT, favicon=True),
         ROOT / ".agents" / "skills" / "rally-motion" / "kit" / "mark.js": motion_kit(),
     }
     for path, text in outputs.items():
