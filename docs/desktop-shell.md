@@ -103,7 +103,7 @@ list is, since they are outside its scroll, and each is a `SidebarRow`, so a
 compact rail collapses it to a tile like a Space row. Today the one item is
 **Download the Mac app**, which `AppShell` passes whenever the host is a
 desktop browser tab, for members and guests alike. A phone or tablet browser
-gets none, by `isMobileOs` in `lib/browser-connectors.ts`, and neither does the
+gets none, by `MAC_APP_DOWNLOADABLE` in `lib/browser-connectors.ts`, and neither does the
 Mac app. Tips or tutorials go here too.
 
 ### At phone width
@@ -313,7 +313,9 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 ### 2026-10-07 — No Mac download on phones and tablets
 
 **What changed:** The browser no longer passes **Download the Mac app** as a
-footer item on iOS, iPadOS or Android.
+footer item on iOS, iPadOS or Android. Connectors a browser cannot start say
+**Connect this from the Mac app.** there, as plain text, instead of linking the
+download.
 
 **Why:** A phone or tablet cannot run the Mac build, so the row was a dead end
 in a footer with little room.
