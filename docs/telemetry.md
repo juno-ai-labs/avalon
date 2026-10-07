@@ -537,8 +537,9 @@ snapshots.
 
 It does not own product state, authorization for the product action being
 observed, provider content, PostHog-side retention/access/configuration, legal
-approval, advertising, consent-law determinations, cross-site identity, or
-public-site analytics. The public site remains unchanged. Product analytics are
+approval, advertising, consent-law determinations, or cross-site account identity.
+Public-site acquisition reporting is owned by `public-site-telemetry.md`; its
+opaque flow correlation joins signup observations without joining identities. Product analytics are
 advisory and may be incomplete; regional product authority is canonical — D1
 for workspace/control data and, after its guarded cutover, the Channel's parent
 in `WorkspaceDO` and its conversations for work-stream product data.
@@ -603,13 +604,13 @@ signup began. Desktop-issued email links redeemed in a browser retain both.
 `source: api` names the producer. Desktop offers Google; browser offers Google
 and email. Native PostHog funnels count flow attempts, not unique people.
 Public-site acquisition retains a separate anonymous subject. The landing
-page's “Use the web app” and header sign-in links carry an opaque UUIDv7 in
-`signupFlowId`; `site_action_selected.flowId` and all subsequent signup stages
-share it. Browser entry validates and removes it from the address bar. Funnels
+page's “Use the web app” and header sign-in links mint a fresh opaque UUIDv7
+on each activation and carry it in `signupFlowId`; `site_action_selected.flowId` and all subsequent signup stages
+share it. Browser entry validates and saves it in tab-scoped session storage before
+removing it from the address bar. Reloads retain the attempt; a new incoming
+CTA replaces it, and authentication or sign-out retires the stored lineage.
+Unavailable storage never blocks sign-in. Funnels
 that include the CTA must aggregate by `properties.flowId` across subjects.
-“Download the macOS beta” is already reported as `action: download`,
-`placement: hero`. A static DMG carries no per-visitor attribution; download
-clicks and desktop signup remain separate measurements.
 
 The desktop flow starts at `desktop_install_opened`, emitted by main only when
 installation data is first created and no account is saved. Its random
@@ -2049,7 +2050,11 @@ reliably carry the visitor's identity, so its clicks remain separate.
 **Consequences:** Join cross-subject stages by flow ID, validate incoming IDs,
 retire first-install lineage after account changes, and deploy the API readers
 before site and desktop producers. Download
-clicks do not prove an installation or a completed desktop signup.
+clicks do not prove an installation or a completed desktop signup. Each CTA
+activation needs its own flow, and browser reloads must preserve the tab's
+attribution until authentication.
+
+Shipped in [PR #1161](https://github.com/juno-ai-labs/avalon/pull/1161).
 
 ### 2026-10-07 — Observe the complete first signup journey
 
