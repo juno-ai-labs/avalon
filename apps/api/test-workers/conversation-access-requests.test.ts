@@ -240,11 +240,15 @@ describe("stored access requests", () => {
     expect((await archived).requests).toEqual([]);
   });
 
-  it("refuses a malformed request by the field it rejected, across the RPC", async () => {
-    await expect(organization().recordConversationAccessRequest({
-      workspaceId, parentId: "not-a-channel", substreamId: "0", requesterUserId: requester,
-      requesterName: "Samantha Lee", approverUserId: creator,
-    })).rejects.toThrow(/record_conversation_access_request_invalid.*parentId/u);
+  it("refuses a malformed request by the field it rejected", async () => {
+    // On the instance: across a real RPC hop workerd also reports the remote
+    // rejection as unhandled. The message asserted is the one that crosses.
+    await runInDurableObject(organization(), async (instance) => {
+      await expect(instance.recordConversationAccessRequest({
+        workspaceId, parentId: "not-a-channel", substreamId: "0", requesterUserId: requester,
+        requesterName: "Samantha Lee", approverUserId: creator,
+      })).rejects.toThrow(/record_conversation_access_request_invalid:parentId/u);
+    });
   });
 
   it("pushes a new request to its approver alone", async () => {
