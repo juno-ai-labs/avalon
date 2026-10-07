@@ -63,8 +63,9 @@ Organizations you belong to.
 
 ## Starting an Organization
 
-If you do not belong to an Organization yet, **Your organizations** offers
-**Create an organization**. Click it, type a name and click **Create organization**. The new
+If you do not belong to an Organization yet, ask a teammate to share a Channel
+or Breakout with you, or start your own: **Your organizations** offers **Create
+an organization**. Click it, type a name and click **Create organization**. The new
 Organization opens and walks you through the same setup as the Mac app:
 how you look to your team, then inviting teammates. Click **Back** to
 return without creating one.
