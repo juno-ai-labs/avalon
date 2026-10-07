@@ -138,7 +138,8 @@ async function seedControlPlane(): Promise<void> {
       .bind(DEMO_TEMPLATE_WORKSPACE_ID, PRESENTER_ID, NOW),
     env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, region TEXT NOT NULL,
-      revoked_at TEXT, expires_at TEXT NOT NULL
+      revoked_at TEXT, expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`CREATE TABLE regional_onboarding_operations (
       operation_id TEXT PRIMARY KEY, platform_user_id TEXT NOT NULL, action TEXT NOT NULL,

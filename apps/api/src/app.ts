@@ -8,7 +8,7 @@ import {
   isSharedNotionIngress,
 } from "./lib/notion-ingress";
 import { apiOperationTelemetry } from "./middleware/api-operation-telemetry";
-import { requireAuth, requireIdentityAuth, requireWorkspaceAuth } from "./middleware/auth";
+import { auditSupportWrites, refuseSupportSession, requireAuth, requireIdentityAuth, requireWorkspaceAuth } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/errors";
 import { requestContext, securityMiddleware } from "./middleware/request-context";
 import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
@@ -126,6 +126,7 @@ export function createApp(): Hono<HonoAppEnv> {
     await next();
   });
   app.use("*", apiOperationTelemetry());
+  app.use("*", auditSupportWrites);
 
   app.get("/", (c) => c.json({ service: "avalon-api", region: c.env.AVALON_REGION }));
   app.route("/health", healthRoutes);
@@ -157,6 +158,10 @@ export function createApp(): Hono<HonoAppEnv> {
   // Both sub-apps are root-mounted. Hono runs their wildcard middleware in
   // order for protected routes, so `requireAuth` reuses this identity result.
   identityApi.use("*", requireIdentityAuth);
+  // Account setup and device registration mint or bind beyond one
+  // Organization; a support session may do neither.
+  identityApi.use("/onboarding/*", refuseSupportSession);
+  identityApi.use("/push-devices/*", refuseSupportSession);
   identityApi.route("/onboarding", onboardingRoutes);
   // Before the member-only `/workspace` routes, so a guest reaches these too.
   identityApi.get("/workspace/socket", requireWorkspaceAuth, workspaceSocketTicket);

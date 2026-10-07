@@ -24,6 +24,12 @@ A stale request returns a conflict and refreshes the roster. Promotion retains
 identity and session bindings; the durable relationship delivery invalidates
 participant/directory views without closing valid conversations.
 
+A Rally access support session ([`impersonation.md`](impersonation.md#support-access))
+is stored in the same set as the Organization's credential, marked by an
+`impersonator` on its cached profile. It is not one of the account's
+Organizations: the directory, push registration and background reads skip it,
+and selecting any other Organization drops it.
+
 ## Where the code lives
 
 | Path | Responsibility |
