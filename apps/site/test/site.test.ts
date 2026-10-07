@@ -24,10 +24,10 @@ describe('public Rally site', () => {
     expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 5)).toBe(true);
     expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 0)).toBe(false);
   });
-  it('quotes the linked name in the handoff heading and cuts it past 100 characters', () => {
+  it('quotes the linked name in the handoff heading and cuts it past 40 characters', () => {
     expect(handoffHeading('Q3 launch plan')).toBe('Opening “Q3 launch plan” in Rally');
-    expect(handoffHeading('x'.repeat(100))).toBe(`Opening “${'x'.repeat(100)}” in Rally`);
-    expect(handoffHeading(`${'x'.repeat(99)} tail`)).toBe(`Opening “${'x'.repeat(99)}…” in Rally`);
+    expect(handoffHeading('x'.repeat(40))).toBe(`Opening “${'x'.repeat(40)}” in Rally`);
+    expect(handoffHeading(`${'x'.repeat(39)} tail`)).toBe(`Opening “${'x'.repeat(39)}…” in Rally`);
   });
   it('names which Rally app a shared link can open on each device', () => {
     expect(handoffDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 0)).toBe('mac');
