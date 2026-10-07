@@ -21,6 +21,8 @@ export type DesktopDeepLinkIntent =
   | ({ kind: "space"; spaceId: string } & Targeted)
   | ({ kind: "workstream"; workstreamId: string; spaceId?: string; substreamId?: string } & Targeted)
   | { kind: "new-workstream" }
+  /** The menu bar's request row: open the main window on this request's approve-or-decline dialog. */
+  | ({ kind: "access-request"; requestId: string } & Targeted)
   | ({ kind: "settings"; section: "workspace" | "connections" | "digest" } & Targeted)
   | ({ kind: "new-automation" } & Targeted)
   | { kind: "sidekick"; sidekickId: string; target: WorkspaceTarget }
@@ -183,6 +185,12 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
     if (segment !== undefined && (segment !== "substreams" || !substreamId || !UUID_PATTERN.test(substreamId) || extra.length)) return null;
     return UUID_PATTERN.test(workstreamId) && !url.search
       ? { kind: "workstream", workstreamId, target, ...(substreamId ? { substreamId } : {}) }
+      : null;
+  }
+  if (url.hostname === "access-requests") {
+    const [requestId = "", ...extra] = url.pathname.slice(1).split("/");
+    return UUID_PATTERN.test(requestId) && !extra.length && !url.search
+      ? { kind: "access-request", requestId, target }
       : null;
   }
   if (url.hostname === "settings") {

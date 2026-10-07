@@ -25,9 +25,16 @@ function bindings() {
     BROWSER_APP_ORIGIN: 'https://app.example.test', ALLOWED_ORIGINS: 'https://app.example.test', PUBLIC_API_BASE_URL: 'https://api.example.test', RESEND_FROM_EMAIL: 'Rally <login@example.test>',
     EMAIL_LOGIN_POLICY_JSON: '{"otpDigits":6,"ttlSeconds":600,"maxFailedAttempts":3}' });
 }
+// Each stage is accepted in its own deferred write, and stages emitted together
+// (started and email submitted, authenticated and account created) race to the
+// table. Read them back in funnel order; repeats of a stage keep their row order.
+const funnel = ['signup_viewed', 'signup_started', 'signup_email_submitted', 'signup_verification_requested',
+  'signup_verification_completed', 'authentication_completed', 'signup_account_created', 'signup_organization_requested',
+  'signup_organization_ready', 'signup_onboarding_completed', 'signup_completed', 'signup_failed'];
 function events() {
   return db.prepare('SELECT envelope_json FROM telemetry_accepted_events ORDER BY rowid').all()
-    .map(row => TelemetryEnvelopeSchema.parse(JSON.parse(String(row.envelope_json))));
+    .map(row => TelemetryEnvelopeSchema.parse(JSON.parse(String(row.envelope_json))))
+    .sort((a, b) => funnel.indexOf(a.name) - funnel.indexOf(b.name));
 }
 async function emailSignup(clientPlatform: 'browser' | 'desktop' = 'browser') {
   const env = bindings();

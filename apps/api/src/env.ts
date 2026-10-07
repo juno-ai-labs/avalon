@@ -316,6 +316,11 @@ export interface IdentityAuthContext {
    * correlation value and the objects verify the member it acts as against
    * current membership (`docs/spaces.md`).
    *
+   * A Channel access request's approver has no login session either: their
+   * one-click email approval, and the check that they can still open what
+   * they are asked about, act as them after the Worker re-reads their active
+   * membership (`conversation-access-request-service.ts`).
+   *
    * A consumed resource-authorization callback also has no login session. The
    * Worker verifies its sealed provider state, connection, and membership,
    * then the room re-checks membership under `"resource_authorization"`.

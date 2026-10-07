@@ -30,7 +30,7 @@ const breakout = WorkstreamPrivateChildSchema.parse({
 describe('menu bar content', () => {
   it('lists the sidebar\'s attention rows, most urgent first', () => {
     const content = menuBarContentFromDirectory({
-      complete: true,
+      complete: true, accessRequests: [],
       channels: [
         channel('a', 'Unread', { hasUnread: true, lastActivityAt: '2026-10-06T12:00:00.000Z' }),
         channel('b', 'New to you', { unseen: true, lastActivityAt: '2026-10-06T09:00:00.000Z' }),
@@ -48,7 +48,7 @@ describe('menu bar content', () => {
 
   it('reads a Channel\'s Breakouts only when its row counts one, as the sidebar does', () => {
     const counted = menuBarContentFromDirectory({
-      complete: true,
+      complete: true, accessRequests: [],
       channels: [channel('a', 'Pricing', { breakoutAttentionCount: 1 })],
       breakouts: { a: [breakout] },
     });
@@ -62,7 +62,7 @@ describe('menu bar content', () => {
     }]);
 
     const uncounted = menuBarContentFromDirectory({
-      complete: true,
+      complete: true, accessRequests: [],
       channels: [channel('a', 'Pricing')],
       breakouts: { a: [breakout] },
     });
@@ -71,7 +71,7 @@ describe('menu bar content', () => {
 
   it('orders Most recent by last activity, ties A to Z, with no Space filter and no archived or system rows', () => {
     const content = menuBarContentFromDirectory({
-      complete: true,
+      complete: true, accessRequests: [],
       channels: [
         channel('a', 'Beta', { lastActivityAt: '2026-10-06T10:00:00.000Z' }),
         channel('b', 'Alpha', { lastActivityAt: '2026-10-06T10:00:00.000Z' }),
@@ -91,7 +91,7 @@ describe('menu bar content', () => {
 
   it('names a Channel Rally is still naming rather than showing its placeholder', () => {
     const content = menuBarContentFromDirectory({
-      complete: true,
+      complete: true, accessRequests: [],
       channels: [channel('a', 'placeholder', { titleStatus: 'naming', hasUnread: true })],
       breakouts: {},
     });
@@ -102,9 +102,9 @@ describe('menu bar content', () => {
 
   it('opens the Breakout for a Channel listed only through one, and leaves it out until its list arrives', () => {
     const withheld = channel('a', 'Pricing', { mainWithheld: true });
-    expect(menuBarContentFromDirectory({ complete: true, channels: [withheld], breakouts: { a: [breakout] } }).recents)
+    expect(menuBarContentFromDirectory({ complete: true, accessRequests: [], channels: [withheld], breakouts: { a: [breakout] } }).recents)
       .toEqual([{ id: 'a', title: 'Pricing', substreamId: breakout.substreamId }]);
     // Main is not this reader's, so a row with no Breakout to open would lead nowhere.
-    expect(menuBarContentFromDirectory({ complete: true, channels: [withheld], breakouts: {} }).recents).toEqual([]);
+    expect(menuBarContentFromDirectory({ complete: true, accessRequests: [], channels: [withheld], breakouts: {} }).recents).toEqual([]);
   });
 });
