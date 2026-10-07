@@ -4,7 +4,7 @@ import { settings } from '../settings/registry';
 import { SettingLabel } from '../settings/setting-label';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
-import { createContext, useCallback, useContext, useEffect, useRef, useState, useMemo, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, X } from 'lucide-react';
 import { PERSONAL_COLOR_KEYS, personalColorKey, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
@@ -143,7 +143,6 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
     {colorPicker}
     <label className="guided-email-field">Name<input data-saved-value={account?.presentation?.displayName ?? session?.user.name ?? ''} value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" /></label>
     <label className="guided-email-field">Avatar initials<input data-saved-value={account?.presentation?.initials ?? (session?.user.name ?? '').split(/\s+/u).map((part) => part[0]).join('').slice(0, 2).toUpperCase()} value={initials} onChange={(event) => setInitials(event.target.value)} /></label>
-    <div className="personal-shell-preview" style={{ '--personal-preview-color': personalColor(color) } as CSSProperties}><aside><PersonalAvatar color={color} initials={initials} /><span>{name} · You</span><i /><i /></aside><div><strong>Your next idea starts here</strong><span>One place for your team to get work done.</span><button type="button" tabIndex={-1}>New channel</button></div></div>
     {error && <InlineError>{error}</InlineError>}
     <Button className="button-primary" disabled={busy || !name.trim() || !initials.trim()} onClick={() => void save()}>{busy ? 'Saving…' : onSaved ? 'Continue with this look' : 'Save appearance'}</Button>
   </div>;
