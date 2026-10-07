@@ -7935,6 +7935,11 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   .app-shell .rail-surface,
   .app-shell .rail-scrim { top: var(--phone-top-bar-height); }
 }
+/* Settings, as a route in the main window, takes the whole window the way the
+   Settings window does: no sidebar, and no room or phone top bar left for one.
+   After the phone rules above so it outranks them at every width. */
+.workspace-shell.is-settings-route > .sidebar { display: none; }
+.workspace-shell.is-settings-route .main-pane { height: 100%; margin: 0; }
 @media (max-width: 640px) and (prefers-reduced-motion: reduce) {
   .app-shell .single-sidebar,
   .app-shell .single-sidebar > :not(.sidebar-top-bar),
