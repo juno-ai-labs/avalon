@@ -57,3 +57,30 @@ export function useConversationDirectoryQuery(): UseQueryResult<SharedNavigation
     enabled: false,
   });
 }
+
+/**
+ * The Channel rail: the socket's rows, the same list for a member and a guest.
+ *
+ * The workspace socket lists a Channel when any conversation in it is this
+ * person's to open (see `docs/listing-rules.md`). Where Main is not one of
+ * them, the conversation directory says which are, and the row opens on the
+ * first it lists rather than on Main. The directory adds no rows of its own.
+ */
+export function associativeWorkstreamsForSidebar(
+  directory: SharedNavigationDirectory | undefined,
+  workstreams: readonly WorkstreamSummary[] | undefined,
+): WorkstreamSummary[] {
+  if (!workstreams) return [];
+  if (!directory) return [...workstreams];
+  const entryPoints = new Map<string, WorkstreamSummary['associativeSubstreamId']>();
+  for (const entry of directory.workstreams) {
+    if (!mainOmitted(entry)) continue;
+    const first = entry.conversations.find((item) => !item.archived) ?? entry.conversations[0];
+    if (first) entryPoints.set(entry.parentId, first.substreamId);
+  }
+  if (entryPoints.size === 0) return [...workstreams];
+  return workstreams.map((workstream) => {
+    const associativeSubstreamId = entryPoints.get(workstream.id);
+    return associativeSubstreamId ? { ...workstream, associativeSubstreamId } : workstream;
+  });
+}

@@ -2037,9 +2037,24 @@ export function ConversationSurface({
     mutationFn: ({ member, target }: { member: WorkspaceMember; target: string }) => target === '0'
       ? api!.removeParticipant(id, member.id)
       : api!.removeSubstreamParticipant(id, target, member.id),
-    onSuccess: (_result, { member, target }) => {
+    // Read before the request, not after it. Leaving a personal Main revokes
+    // this reader's socket, and its close evicts the cached detail, usually
+    // before the DELETE answers: read in `onSuccess`, the scope was gone, the
+    // screen stayed, and the reader was left on "could not be opened".
+    onMutate: ({ target }) => {
+      const previous = queryClient.getQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target));
+      const filter = useUiStore.getState().sidebarSpaceFilter;
+      const spaceIds = previous?.spaceIds ?? [];
+      return {
+        previous,
+        // The Space the reader is looking at when the Channel is in it, and
+        // otherwise the Channel's own first Space.
+        spaceId: filter !== null && spaceIds.includes(filter) ? filter : spaceIds[0],
+      };
+    },
+    onSuccess: (_result, { member, target }, context) => {
       const targetKey = workstreamDetailQueryKey(id, target);
-      const previous = queryClient.getQueryData<WorkstreamDetail>(targetKey);
+      const previous = context?.previous;
       queryClient.setQueryData<WorkstreamDetail>(targetKey, (current) => current ? {
         ...current,
         participants: current.participants.filter((participant) => participant.id !== member.id),
@@ -2059,7 +2074,7 @@ export function ConversationSurface({
       }
       if (previous?.scope === 'personal') {
         evictCachedWorkstream(queryClient, id);
-        openFirstWorkstream([id]);
+        openFirstWorkstream([id], context?.spaceId);
       }
     },
   });

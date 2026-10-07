@@ -27,6 +27,11 @@ export const WORKSTREAM_LANDING_ROUTE = '/';
  */
 export interface WorkstreamLandingState {
   skipWorkstreamIds: string[];
+  /**
+   * The Space to land in: its first Channel, or starting one there when it has
+   * none. Absent lands across the whole Organization.
+   */
+  spaceId?: string;
 }
 
 /** The ids a landing entry's `location.state` asks it to pass over; none for a bare visit. */
@@ -37,15 +42,24 @@ export function skippedWorkstreamIds(state: unknown): ReadonlySet<string> {
   return new Set(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : []);
 }
 
+/** The Space a landing entry's `location.state` asks it to stay in, if any. */
+export function landingSpaceId(state: unknown): string | null {
+  const id = typeof state === 'object' && state !== null && 'spaceId' in state ? state.spaceId : undefined;
+  return typeof id === 'string' ? id : null;
+}
+
 /**
  * Leave the current screen for the first work stream. Always replaces, so Back
  * cannot return to a screen the API no longer serves, or reopen and thereby
  * read a work stream that was just marked unread.
  */
-export function useOpenFirstWorkstream(): (skipWorkstreamIds?: readonly string[]) => void {
+export function useOpenFirstWorkstream(): (skipWorkstreamIds?: readonly string[], spaceId?: string) => void {
   const navigate = useNavigate();
-  return useCallback((skipWorkstreamIds: readonly string[] = []) => {
-    const state: WorkstreamLandingState = { skipWorkstreamIds: [...skipWorkstreamIds] };
+  return useCallback((skipWorkstreamIds: readonly string[] = [], spaceId?: string) => {
+    const state: WorkstreamLandingState = {
+      skipWorkstreamIds: [...skipWorkstreamIds],
+      ...(spaceId === undefined ? {} : { spaceId }),
+    };
     void navigate(WORKSTREAM_LANDING_ROUTE, { replace: true, state });
   }, [navigate]);
 }

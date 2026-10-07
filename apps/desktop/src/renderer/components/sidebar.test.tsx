@@ -3434,16 +3434,23 @@ describe('the sidebar without a recency list', () => {
   });
 
   /**
-   * The state the removed list was the only thing describing.
-   *
-   * A member of a brand-new Organization sees Spaces, General, and "No
-   * channels" under it — and then, without this line, nothing: a sidebar that
-   * has stopped talking rather than one that is empty.
+   * A member of a brand-new Organization sees the empty Pinned section and the
+   * Channels heading with its sort, not a "No channels yet" line.
    */
-  it('given a member with no channels at all, when the sidebar is drawn, then it says so', () => {
+  it('given a member with no channels at all, when the sidebar is drawn, then it shows the Channels heading and no empty line', () => {
     renderSidebar({ spaces: [space()], workstreams: [] });
 
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
+    expect(screen.getByRole('button', { name: /^Sorted / })).toBeVisible();
+    expect(screen.getByText('No channels yet')).toHaveClass('sr-only');
+  });
+
+  it('given a guest with no channels, when the sidebar is drawn, then it says so instead of drawing a slot', () => {
+    renderSidebar({ spaces: [space()], spacesReadOnly: true, workstreams: [] });
+
     expect(screen.getByText('No channels yet')).toBeVisible();
+    expect(screen.getByText('No channels yet')).not.toHaveClass('sr-only');
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
   });
 
   it('given Channels loaded a Space at a time, when the Space on screen has not answered, then it waits rather than saying it is empty', () => {
@@ -3453,12 +3460,12 @@ describe('the sidebar without a recency list', () => {
     renderSidebar({ spaces: [hiring], workstreams: [], loadedSpaceIds: new Set(), onViewSpace });
 
     expect(onViewSpace).toHaveBeenLastCalledWith(hiring.id);
-    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Loading your spaces and channels');
 
     cleanup();
     renderSidebar({ spaces: [hiring], workstreams: [], loadedSpaceIds: new Set([hiring.id]), onViewSpace });
-    expect(screen.getByText('No channels yet')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
   });
 
   it('given a channel being created in the selected Space, then it shows dimmed and inert in place of the empty line', () => {
