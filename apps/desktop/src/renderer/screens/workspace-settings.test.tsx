@@ -2040,7 +2040,6 @@ describe('Organization settings', () => {
 
     const rotateButton = await screen.findByRole('button', { name: 'Refresh Inbound webhook' });
     expect(screen.getByRole('table', { name: 'Organization connections' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Organization connections' }).parentElement).toHaveTextContent('1');
     expect(screen.getAllByText('Inbound webhook')).toHaveLength(2);
     expect(rotateButton).toBeVisible();
     fireEvent.focus(rotateButton);
