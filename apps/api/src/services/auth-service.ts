@@ -867,7 +867,7 @@ export class AuthService {
     return this.formatSession(identity, accessToken, refreshToken);
   }
 
-  private async loadImpersonator(userId: string): Promise<NonNullable<Session["impersonator"]>> {
+  async loadImpersonator(userId: string): Promise<NonNullable<Session["impersonator"]>> {
     const row = await this.env.DB.prepare("SELECT id, email, name, avatar_url FROM users WHERE id = ?")
       .bind(userId).first<{ id: string; email: string; name: string; avatar_url: string | null }>();
     if (!row) throw new ApiError(401, "identity_not_found", "The signed-in user no longer exists");
