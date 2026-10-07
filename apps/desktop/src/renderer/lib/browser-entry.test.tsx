@@ -397,7 +397,8 @@ it('treats an old token invitation link as a plain sign-in page', async () => {
   // in with the invited address is what claims the share.
   expect(location.pathname).toBe('/');
   expect(location.hash).toBe('');
-  expect(requests).toEqual(['/session', '/signup/view']);
+  // The sign-in page reports its view from an effect, after it has rendered.
+  await waitFor(() => expect(requests).toEqual(['/session', '/signup/view']));
 });
 
 it('waits for the organization list before saying nothing has been shared', async () => {
