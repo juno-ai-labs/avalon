@@ -55,6 +55,25 @@ afterEach(() => {
 });
 
 describe('site telemetry reporter', () => {
+  it('joins the web CTA to its destination flow without changing the direct Mac download', async () => {
+    const api = stubApi();
+    await start('<a id="web" data-site-action="web-app-hero" href="https://app.rallywith.ai">Use the web app</a><a id="mac" data-site-action="download-hero" href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download>Download the macOS beta</a>');
+    const web = document.querySelector<HTMLAnchorElement>('#web')!;
+    const flowId = new URL(web.href).searchParams.get('signupFlowId');
+    expect(flowId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    web.addEventListener('click', (event) => event.preventDefault());
+    web.click();
+    const mac = document.querySelector<HTMLAnchorElement>('#mac')!;
+    mac.addEventListener('click', (event) => event.preventDefault());
+    mac.click();
+    await vi.waitFor(() => expect(api.clicks()).toHaveLength(2));
+    expect(api.clicks().map((event) => event.properties)).toEqual([
+      { page: 'landing', action: 'secondary_cta', placement: 'hero', flowId },
+      { page: 'landing', action: 'download', placement: 'hero' },
+    ]);
+    expect(mac.href).toBe('https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg');
+  });
+
   it('reports a click inside a tagged link with its closed values and keepalive', async () => {
     const api = stubApi();
     await start('<a data-site-action="download-pricing-grow" href="#"><span>Download</span></a>');
