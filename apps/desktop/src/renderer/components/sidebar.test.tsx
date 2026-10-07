@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatDateTime } from '../lib/format';
 import { ApiError } from '../lib/api';
+import { CollaborationSessionProvider } from '../lib/collaboration-session';
 import {
   consumeDeepLinkWorkstreamNavigation,
   markDeepLinkWorkstreamNavigation,
@@ -2935,6 +2936,8 @@ describe('pinned channels', () => {
   ])('scrolls with $behavior when reduced motion is $reduced', async ({ reduced, behavior }) => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: reduced && query.includes('prefers-reduced-motion'),
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
     }));
     renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
@@ -3933,6 +3936,118 @@ describe('the sidebar Space filter', () => {
   });
 
   afterEach(() => vi.unstubAllGlobals());
+
+  it('in a browser tab, draws New space alone in the top bar until the first Space exists', () => {
+    const renderIn = (spaces: ReturnType<typeof space>[]) => (
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              onSignOut={vi.fn()}
+              spaces={spaces}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(renderIn([home]));
+    const topBar = screen.getByRole('generic', { name: 'Rally actions' });
+
+    expect(within(topBar).getByRole('button', { name: 'New space' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+
+    rerender(renderIn([home, hiring]));
+
+    expect(within(topBar).queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Hiring' })).toBeVisible();
+  });
+
+  it('in a browser tab, moves New space between the top bar and the Space row as the window crosses phone width', () => {
+    let wide = false;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      get matches() { return query.includes('min-width') ? wide : false; },
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    }));
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              onSignOut={vi.fn()}
+              spaces={[home]}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    const topBar = screen.getByRole('generic', { name: 'Rally actions' });
+
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New space' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+
+    act(() => {
+      wide = true;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(within(topBar).getByRole('button', { name: 'New space' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+
+    act(() => {
+      wide = false;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+  });
+
+  it('in a browser tab, keeps an open restore dialog when the window crosses phone width', async () => {
+    let wide = true;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      get matches() { return query.includes('min-width') ? wide : false; },
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    }));
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              inactiveSpaces={[space(hiring.id, 'Hiring', { status: 'archived' })]}
+              onSignOut={vi.fn()}
+              spaces={[home]}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'New space' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Restore archived space' }));
+    expect(await screen.findByRole('dialog', { name: 'Restore archived space' })).toBeVisible();
+
+    act(() => {
+      wide = false;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(screen.getByRole('dialog', { name: 'Restore archived space' })).toBeVisible();
+  });
 
   function renderFiltered(props: Partial<React.ComponentProps<typeof Sidebar>> = {}): void {
     render(
