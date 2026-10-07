@@ -8,6 +8,8 @@ import { useSpaceDirectories } from '../lib/use-space-directories';
 import { layoutKey, readLayout } from '../lib/desktop-layout';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
+import { firstSidebarChannelInSpace } from '../lib/sidebar-channel-order';
+import { useUiStore } from '../lib/ui-store';
 
 /** Resolve only the default route; live list updates never replace an open conversation. */
 export function WorkstreamLandingScreen(): React.JSX.Element {
@@ -17,6 +19,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   const inactiveSpaces = spaceDirectories.inactive.data;
   const { session } = useAppSession();
   const { guest } = useShellCapabilities();
+  const channelSort = useUiStore((ui) => ui.sidebarChannelSort);
   const { state, sidebarConnect, loadedSpaceIds } = useWorkspaceSocket();
   const routeState: unknown = useLocation().state;
   const savedRoute = routeState == null && session?.workspace && session.user
@@ -33,7 +36,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   // most recent one here.
   const loaded = workstreams.data;
   // A screen that left a Channel in a Space names that Space, and the landing
-  // stays in it. A Space no longer listed, archived or never seen, lands across
+  // stays in it, on the row the sidebar draws first there. A Space no longer listed, archived or never seen, lands across
   // the Organization as a bare leave does.
   const stayInSpaceId = useMemo(() => landingSpaceId(routeState), [routeState]);
   const stayInSpace = stayInSpaceId === null ? undefined : spaces?.items.find((row) => row.id === stayInSpaceId);
@@ -80,7 +83,9 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   }
   if (needsMore || awaitingSpaces) return <LoadingState label="Opening channels…" />;
   if (stayInSpaceId !== null && awaitingSpace) return <LoadingState label="Opening spaces…" />;
-  const first = firstLandingWorkstream(candidates);
+  const first = stayInSpace
+    ? firstSidebarChannelInSpace(candidates, stayInSpace.id, channelSort)
+    : firstLandingWorkstream(candidates);
   // Only a bare startup landing resumes the device's last view. A deliberate
   // leave carries state (including an empty skip list) and uses recency instead.
   if (savedRoute) {

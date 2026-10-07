@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { WorkstreamLandingScreen } from './workstream-landing';
 import { layoutKey } from '../lib/desktop-layout';
+import { useUiStore } from '../lib/ui-store';
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
   session: { user: { id: 'person' }, workspace: { id: 'org', accessClass: 'member' } },
@@ -55,6 +56,7 @@ describe('default channel landing', () => {
     directory.fetchMore = vi.fn();
     socket.state = 'connecting';
     socket.sidebarConnect = null;
+    useUiStore.getState().setSidebarChannelSort('recent');
   });
 
   it('resumes the last reachable breakout and ignores a stale Channel', async () => {
@@ -77,6 +79,29 @@ describe('default channel landing', () => {
     spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
     render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: ['left'], spaceId: 'design' } }} />);
     expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/older$/u);
+  });
+
+  it('lands a leave on the Space’s first pin, ahead of more recent Channels', async () => {
+    directory.data = [
+      { ...stream('recent', null, '2026-09-09'), spaceIds: ['design'] },
+      { ...stream('second-pin', null, '2026-09-05'), spaceIds: ['design'], spacePins: [{ spaceId: 'design', position: 2 }] },
+      { ...stream('first-pin', null, '2026-09-01'), spaceIds: ['design', 'other'], spacePins: [{ spaceId: 'design', position: 1 }] },
+      { ...stream('pinned-elsewhere', null, '2026-08-01'), spaceIds: ['design', 'other'], spacePins: [{ spaceId: 'other', position: 0 }] },
+    ];
+    spaces.data = { items: [{ id: 'design' }, { id: 'other' }] };
+    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/first-pin$/u);
+  });
+
+  it('lands a leave in a Space with no pins on the first row of the reader’s sort', async () => {
+    useUiStore.getState().setSidebarChannelSort('alphabetical');
+    directory.data = [
+      { ...stream('zebra', null, '2026-09-09'), title: 'Zebra', spaceIds: ['design'] },
+      { ...stream('apple', null, '2026-09-01'), title: 'Apple', spaceIds: ['design'] },
+    ];
+    spaces.data = { items: [{ id: 'design' }] };
+    render(<Router initial={{ pathname: '/', state: { skipWorkstreamIds: [], spaceId: 'design' } }} />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/workstreams\/apple$/u);
   });
 
   it('opens starting a Channel when a leave empties its Space', async () => {
