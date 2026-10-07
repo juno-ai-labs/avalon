@@ -727,6 +727,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     'app-shell',
     windowControlsShellClass(runtime?.platform),
     showShellRail ? 'rail-open' : '',
+    // Settings is a route here only where there is no Settings window to open
+    // (a browser tab). It takes the whole window, as that window would; the
+    // sidebar stays mounted under it so closing Settings needs no reload.
+    location.pathname === '/settings' ? 'is-settings-route' : '',
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
     enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',
   ].filter(Boolean).join(' ');

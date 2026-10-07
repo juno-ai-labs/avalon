@@ -203,7 +203,10 @@ Breakouts, the details rail and the Settings route. The value carries
 `_` workspace of the cookie adapter. Anything only the Mac app can do (accepting
 a workspace invitation from the desktop flow, desktop sign-in) rejects with
 "Available in the Mac app." Creating an organization is the entry's, not the
-shell's; see below. In Settings, Application shows
+shell's; see below. A browser tab has no Settings window to open, so Settings
+is the main window's `#/settings` route; like that window, it takes the whole
+tab and hides the sidebar, which stays mounted so closing Settings returns to
+the workspace without reloading it. In Settings, Application shows
 Appearance and names the Mac app for the rest, and Notifications offers
 "In this browser". The sidebar always shows **Download the Mac app** above the
 account menu, as a footer item ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
