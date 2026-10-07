@@ -5,6 +5,7 @@ import { MemberPreferencesSchema, PersonalSystemPromptSchema, SessionImportRunSc
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
+import { ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, type ConversationAccessPreview } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
@@ -2102,6 +2103,21 @@ export class RallyApi {
       method: 'POST',
       body: { userId, operationId: uuidV7() },
       schema: MutatePrivateChildParticipantResultSchema,
+    });
+  }
+
+  /** Name, mark and whether this person can open it: asked only once the socket refuses. */
+  async conversationAccessPreview(parentId: string, substreamId: string): Promise<ConversationAccessPreview> {
+    return this.request(`${this.substreamPath(parentId, substreamId)}/access-preview`, {
+      schema: ConversationAccessPreviewSchema,
+    });
+  }
+
+  /** Emails the creator a one-click approval. */
+  async requestConversationAccess(parentId: string, substreamId: string): Promise<void> {
+    await this.request(`${this.substreamPath(parentId, substreamId)}/access-requests`, {
+      method: 'POST',
+      schema: ConversationAccessRequestResultSchema,
     });
   }
 

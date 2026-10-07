@@ -108,6 +108,7 @@ import { ArtifactSidebar, InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
+import { ConversationAccessRequest } from '../components/conversation-access-request';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import {
@@ -2632,7 +2633,7 @@ export function ConversationSurface({
       socketConnection.state === 'reconnecting'
       || socketConnection.state === 'unavailable'
     ) {
-      return (
+      const errorState = (
         <WorkstreamErrorState
           description={socketConnection.openingError
             ?? (socketConnection.state === 'reconnecting'
@@ -2643,6 +2644,11 @@ export function ConversationSurface({
           workstreamId={id}
         />
       );
+      // A member holding a link to a Channel or Breakout they are not in sees
+      // its name and can ask to join; every other failure keeps its own screen.
+      return parentKind === 'workstream' && !guest
+        ? <ConversationAccessRequest api={api} fallback={errorState} parentId={id} substreamId={substreamId} />
+        : errorState;
     }
     const openingLabel = `Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`;
     const openingRail = renderSidebar ? renderOpeningSidebar?.() : null;

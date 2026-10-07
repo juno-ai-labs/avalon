@@ -14361,6 +14361,50 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { title: row?.title.trim() || null };
   }
 
+  /**
+   * The name, mark and creator of one unarchived Channel or Breakout, for an
+   * access request. Asks nothing of the viewer: the caller has already proved
+   * an active member and holds the id, and this names only what a Channel
+   * reached through a Breakout already names (`docs/channel-access-requests.md`).
+   */
+  async accessRequestSubject(input: { workspaceId: string; parentId: string; substreamId: string }): Promise<{
+    kind: "channel" | "breakout";
+    title: string;
+    appearance: z.infer<typeof WorkstreamAppearanceSchema> | null;
+    markId: string;
+    createdByUserId: string | null;
+  } | null> {
+    await this.initialized;
+    const request = z.object({ workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: z.string().min(1) }).parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const breakout = request.substreamId !== "0";
+    const row = this.state.storage.sql.exec<{
+      title: string; appearance_json: string | null; created_by_user_id: string | null; parent_appearance_json?: string | null;
+    }>(
+      breakout
+        ? `SELECT breakout.title, breakout.appearance_json, breakout.created_by_user_id,
+              parent.appearance_json AS parent_appearance_json
+             FROM breakouts breakout JOIN channels parent ON parent.workstream_id = breakout.workstream_id
+            WHERE breakout.workstream_id = ? AND breakout.substream_id = ?
+              AND breakout.archived_at IS NULL AND parent.archived_at IS NULL`
+        : `SELECT title, appearance_json, created_by_user_id FROM channels
+            WHERE workstream_id = ? AND archived_at IS NULL`,
+      ...(breakout ? [request.parentId, request.substreamId] : [request.parentId]),
+    ).toArray()[0];
+    if (!row) return null;
+    // A Breakout with no look of its own wears its Channel's, resolved from the
+    // Channel's id, the way search and the sidebar draw it.
+    const borrowed = breakout && !row.appearance_json;
+    const appearanceJson = borrowed ? row.parent_appearance_json ?? null : row.appearance_json;
+    return {
+      kind: breakout ? "breakout" : "channel",
+      title: row.title,
+      appearance: appearanceJson ? WorkstreamAppearanceSchema.parse(JSON.parse(appearanceJson)) : null,
+      markId: borrowed || !breakout ? request.parentId : request.substreamId,
+      createdByUserId: row.created_by_user_id,
+    };
+  }
+
   async recentWorkstreamDirectory(
     input: WorkspaceDirectoryRecentRequest,
   ): Promise<WorkspaceDirectoryLookupResult> {
