@@ -19,7 +19,7 @@ import {
   type OrganizationUsageApi,
   type UsageReading,
 } from '../lib/organization-usage';
-import { Badge, Button, DropdownSelect, InlineError, Meter, Tip } from './primitives';
+import { Badge, Button, DropdownSelect, Meter, Tip } from './primitives';
 
 const METER_LABEL = 'Weekly quota left';
 const PLAN_OPTIONS = PLAN_IDS.map((plan) => ({
@@ -64,9 +64,9 @@ export function UsageSettingsSection({ api, canChangePlan, openRequest = 0, orga
             reading={state.reading}
           />
         ) : state.status === 'loading' ? (
-          <div className="usage-summary">
-            <Meter label={METER_LABEL} value={null} />
-            <p className="usage-remaining" role="status">Checking usage…</p>
+          <div className="settings-preference-row">
+            <SettingCopy setting={settings.quota} description={<span role="status">Checking usage…</span>} />
+            <span className="usage-quota-value"><Meter label={METER_LABEL} value={null} /></span>
           </div>
         ) : (
           <div className="settings-preference-row">
@@ -90,7 +90,12 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
   const setPlan = useSetOrganizationPlan(api);
   return <>
     <label className="settings-preference-row">
-      <SettingCopy setting={settings.plan} />
+      <SettingCopy
+        setting={settings.plan}
+        description={setPlan.error
+          ? <span className="usage-plan-error" role="alert">The plan could not be changed. {setPlan.error.message}</span>
+          : undefined}
+      />
       <DropdownSelect
         ariaLabel="Plan"
         disabled={!canChangePlan || !api || offline || setPlan.isPending}
@@ -103,15 +108,18 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
         variant="secondary"
       />
     </label>
-    <div className="usage-summary">
-      {setPlan.error && <InlineError>The plan could not be changed. {setPlan.error.message}</InlineError>}
-      <Meter label={METER_LABEL} tone={usageTone(usage)} value={usage.quotaRemainingPercent} />
-      <p className="usage-remaining">
-        <span>{usageRemainingLabel(usage.quotaRemainingPercent)}</span>
-        {offline && <span className="usage-as-of">{usageAsOfLabel(fetchedAt)}</span>}
-      </p>
-      <small>{usageResetLabel(usage.weekResetsAt)}</small>
-      <small>Shared by everyone in {organizationName}.</small>
+    <div className="settings-preference-row">
+      <SettingCopy
+        setting={settings.quota}
+        description={`${usageResetLabel(usage.weekResetsAt)}. Shared by everyone in ${organizationName}.`}
+      />
+      <span className="usage-quota-value">
+        <Meter label={METER_LABEL} tone={usageTone(usage)} value={usage.quotaRemainingPercent} />
+        <small>
+          {usageRemainingLabel(usage.quotaRemainingPercent)}
+          {offline && <span className="usage-as-of"> {usageAsOfLabel(fetchedAt)}</span>}
+        </small>
+      </span>
     </div>
     {usage.overage.amountMicrousd > 0 && (
       <div className="settings-preference-row usage-overage">

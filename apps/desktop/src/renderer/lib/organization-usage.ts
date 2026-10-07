@@ -143,9 +143,9 @@ export function usagePlanPriceLabel(plan: PlanId): string {
   return `$${PLANS[plan].monthlyPriceUsd} a month`;
 }
 
-/** The line beside the meter in Settings. */
+/** The value under the meter on the Weekly quota row in Settings. */
 export function usageRemainingLabel(percent: number): string {
-  return percent === 0 ? 'Quota used for this week' : `${percent}% of this week's quota left`;
+  return percent === 0 ? 'All used' : `${percent}% left`;
 }
 
 /** The one line under the active Organization in its menu. */

@@ -2292,14 +2292,13 @@ pre {
    Organization menu, fills in the viewer's own accent (`--personal-color`,
    onboarding.css), falling back to the brand fill before a profile loads. The
    warning fill still wins below the low-quota line. */
-.usage-summary .meter,
+.usage-quota-value .meter,
 .workspace-usage-item .meter { --av-cmp-meter-fill: var(--personal-color, var(--av-sys-color-brand-base)); }
-.usage-summary { display: flex; flex-direction: column; gap: 4px; padding: 14px; }
-.usage-summary .meter { margin: 6px 0 4px; }
-.usage-remaining { display: flex; flex-wrap: wrap; font-size: 13px; gap: 6px; margin: 0; }
-.usage-as-of,
-.usage-summary small { color: var(--av-sys-color-text-muted); font-size: 12px; }
-.usage-summary + .usage-overage::before { background: var(--av-sys-color-border-subtle); content: ''; height: .5px; left: 14px; position: absolute; right: 14px; top: 0; }
+/* The Weekly quota row's value: the meter over how much is left, right-aligned
+   like the other rows' values. */
+.usage-quota-value { display: flex; flex-direction: column; gap: 6px; text-align: right; width: 200px; }
+.usage-quota-value small { color: var(--av-sys-color-text-muted); font-size: 12px; }
+.usage-plan-error { color: var(--av-sys-color-danger-soft); }
 .usage-overage-value { align-items: center; display: inline-flex; font-size: 13px; gap: 8px; }
 .usage-overage-value s { color: var(--av-sys-color-text-muted); }
 .usage-not-billed:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 1px; }
