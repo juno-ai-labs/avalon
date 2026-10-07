@@ -190,6 +190,8 @@ definitions are fixed at module load.
 **Consequences:** A setting that lives in different sections per host needs one
 definition per section, each gated on the host that shows it.
 
+PR #1155.
+
 ### 2026-09-15 — Make the desktop release channel a searchable device preference
 
 **What changed:** Application settings gained a Stable/Faster update-channel
