@@ -58,7 +58,7 @@ export default {
       response.headers.set("X-Content-Type-Options", "nosniff");
       return response;
     }
-    if (url.pathname.startsWith("/assets/")) return env.ASSETS.fetch(request);
+    if (url.pathname.startsWith("/assets/") || url.pathname === "/favicon.svg") return env.ASSETS.fetch(request);
     if (url.pathname === "/sw.js") {
       // The push service worker, served from the root so its scope covers /app/.
       // Revalidated on every check so a deploy reaches open browsers.

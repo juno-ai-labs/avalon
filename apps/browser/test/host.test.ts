@@ -29,6 +29,12 @@ it("serves the push service worker from the root and lets the shell register it"
   expect(shell.headers.get("content-security-policy")).toContain("frame-src https://*.rallyusercontent.com;");
 });
 
+it("serves the favicon the shell links from the root", async () => {
+  const favicon = await exports.default.fetch("https://browser.example.test/favicon.svg");
+  expect(favicon.status).toBe(200);
+  expect(favicon.headers.get("content-type")).toContain("image/svg+xml");
+});
+
 it("serves the shell for the page a connector authorization returns to, and nothing beside it", async () => {
   const complete = await exports.default.fetch("https://browser.example.test/connections/complete?status=connected&provider=google");
   expect(complete.status).toBe(200);
