@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
-import type { ConversationAccessRequestItem } from '@rally/contracts';
+import { asSubstreamId, asUserId, asWorkstreamId, type ConversationAccessRequestItem } from '@rally/contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 import { accessRequestsQueryKey, type AccessRequestDecisionApi } from '../lib/access-requests';
@@ -8,8 +8,8 @@ import { AccessRequestDialog } from './access-request-dialog';
 
 const WORKSPACE = 'w1';
 const request: ConversationAccessRequestItem = {
-  id: 'r1', parentId: 'c', substreamId: '0', kind: 'channel', title: 'Hiring plan', appearance: null,
-  markId: 'c', requesterUserId: 'u-sam', requesterName: 'Samantha Lee', requestedAt: '2026-10-07T12:00:00.000Z',
+  id: 'r1', parentId: asWorkstreamId('00000000-0000-4000-8000-0000000ac0c0'), substreamId: asSubstreamId('0'), kind: 'channel', title: 'Hiring plan', appearance: null,
+  markId: '00000000-0000-4000-8000-0000000ac0c0', requesterUserId: asUserId('00000000-0000-4000-8000-0000000ac013'), requesterName: 'Samantha Lee', requestedAt: '2026-10-07T12:00:00.000Z',
 };
 
 function show(api: AccessRequestDecisionApi, requestId: string, onClose = vi.fn()) {
@@ -31,6 +31,16 @@ describe('AccessRequestDialog', () => {
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(api.decideConversationAccess).toHaveBeenCalledWith('r1', 'approve');
     expect(client.getQueryData(accessRequestsQueryKey(WORKSPACE))).toEqual([]);
+  });
+
+  it('keeps showing the request while its answer is in flight', async () => {
+    const api = { decideConversationAccess: vi.fn(() => new Promise<never>(() => undefined)) };
+    show(api, 'r1');
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await vi.waitFor(() => expect(api.decideConversationAccess).toHaveBeenCalled());
+    expect(screen.queryByText('This request was already answered.')).toBeNull();
+    expect(screen.getByText('Samantha Lee asked to join this channel.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('declines, and puts the request back when the server refuses', async () => {

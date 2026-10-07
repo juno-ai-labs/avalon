@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { encryptString, sealString } from "../src/lib/crypto";
 import { conversationAccessRoutes } from "../src/routes/conversation-access";
-import { approvalUrl, openApproval } from "../src/services/conversation-access-request-service";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { approvalUrl, ConversationAccessRequestService, openApproval } from "../src/services/conversation-access-request-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 const env = createTestEnv({
@@ -58,5 +59,27 @@ describe("approve page", () => {
     }, env);
     expect(response.status).toBe(400);
     expect(await response.text()).toContain("This link is not valid");
+  });
+});
+
+describe("a guest", () => {
+  // A guest is told nothing it does not take part in (docs/listing-rules.md):
+  // not a private conversation's name, and not whether it exists. The refusal
+  // comes before any read, so this needs no Organization object.
+  const guest = new ConversationAccessRequestService(createTestEnv({}), {
+    sessionId: "session-guest",
+    userId: asUserId("00000000-0000-4000-8000-0000000ac014"),
+    workspaceId: asWorkspaceId("00000000-0000-4000-8000-0000000ac001"),
+    region: "global",
+    role: null,
+  });
+  const channel = "00000000-0000-4000-8000-0000000ac0a0";
+
+  it("is told a conversation does not exist rather than shown its name", async () => {
+    await expect(guest.preview(channel, "0")).rejects.toMatchObject({ status: 404, code: "conversation_not_found" });
+  });
+
+  it("cannot ask to join", async () => {
+    await expect(guest.request(channel, "0")).rejects.toMatchObject({ status: 404, code: "conversation_not_found" });
   });
 });

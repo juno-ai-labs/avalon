@@ -102,7 +102,7 @@ opens on its own within about half a minute, and you get an email. You get an
 email if they decline, too. Guests do not see this; they are shared in by email
 instead.
 
-If you created it, the request reaches you three ways:
+If you created it, the request reaches you in four places:
 
 - **By email**, with an **Approve access** button that works in one click.
 - **In the attention button** left of search in the sidebar. The request is
@@ -110,6 +110,9 @@ If you created it, the request reaches you three ways:
   the request itself to see it in a dialog with **Approve** and **Decline**.
 - **In the Mac menu bar**, under **Needs attention**. Choosing it opens Rally
   on the same dialog.
+- **Among the conversation's people.** Open the Channel's or Breakout's menu
+  and choose **Add people**: requests are listed under **Asked to join**,
+  above **Suggested**, with the same check and cancel buttons.
 
 ## Roles
 

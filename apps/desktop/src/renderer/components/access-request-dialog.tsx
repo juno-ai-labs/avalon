@@ -1,4 +1,6 @@
+import type { ConversationAccessRequestItem } from '@rally/contracts';
 import { IconCancel, IconCheck } from '@tabler/icons-react';
+import { useRef } from 'react';
 
 import { useAccessRequests, useDecideAccessRequest, type AccessRequestDecisionApi } from '../lib/access-requests';
 import { Button, InlineError, Modal } from './primitives';
@@ -22,7 +24,14 @@ export function AccessRequestDialog({ api, workspaceId, requestId, onClose }: {
 }): React.JSX.Element {
   const requests = useAccessRequests(workspaceId);
   const decide = useDecideAccessRequest(api, workspaceId);
-  const request = requests.find((item) => item.id === requestId) ?? null;
+  const listed = requests.find((item) => item.id === requestId) ?? null;
+  // Answering drops the request from the list at once; the dialog keeps
+  // showing it while that answer is in flight or was refused, rather than
+  // flashing "already answered" over its own pending decision.
+  const held = useRef<ConversationAccessRequestItem | null>(null);
+  if (listed) held.current = listed;
+  else if (held.current?.id !== requestId) held.current = null;
+  const request = listed ?? (decide.isPending || decide.isError ? held.current : null);
   const answer = (decision: 'approve' | 'decline'): void => {
     if (!request) return;
     decide.mutate({ id: request.id, decision }, { onSuccess: onClose });
