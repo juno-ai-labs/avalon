@@ -2470,6 +2470,23 @@ describe('Organization settings', () => {
     expect(screen.getByRole('switch', { name: /Notify me about mentions and additions/ })).toBeDisabled();
   });
 
+  it('tells an iOS Safari tab to add Rally to the Home Screen for notifications', async () => {
+    // An iOS Safari tab: no service worker push, and navigator.standalone is false.
+    Object.defineProperty(navigator, 'standalone', { configurable: true, value: false });
+    try {
+      sessionHost.current = 'browser';
+      api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
+      renderSettings();
+      const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+      fireEvent.click(await within(navigation).findByRole('button', { name: 'Notifications' }));
+      expect(await screen.findByText(/tap Share, then Add to Home Screen/)).toBeVisible();
+      expect(screen.queryByText('This browser cannot show Rally notifications.')).toBeNull();
+      expect(screen.getByRole('switch', { name: /Notify me about mentions and additions/ })).toBeDisabled();
+    } finally {
+      Reflect.deleteProperty(navigator, 'standalone');
+    }
+  });
+
   it.each([
     ['denied', 'unknown', 'Turned off in macOS'],
     ['enabled', 'disabled', 'Badges turned off in macOS'],

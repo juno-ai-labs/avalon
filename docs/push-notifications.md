@@ -122,7 +122,9 @@ gets the VAPID public key from `GET /push-devices/web-push`, subscribes through
 `/sw.js` at the browser host's root, and registers with `PUT /push-devices/:id`;
 one installation id per browser profile lives in `localStorage`. Settings →
 Notifications shows "In this browser" with a toggle instead of the Mac's
-section.
+section. Safari on iPhone and iPad offers Web Push only to a Home Screen app, so
+an iOS Safari tab reports `home-screen` and the section explains how to add
+Rally ([`browser-client.md`](browser-client.md)).
 
 The consumer renders both payloads and sends each device the one for its
 transport. `web-push-transport.ts` encrypts one `aes128gcm` record to the
