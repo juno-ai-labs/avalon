@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState, InlineError, LoadingState } from '../components/primitives';
-import { firstLandingWorkstream, skippedWorkstreamIds } from '../lib/workstream-landing';
+import { emptySpaceRoute, firstLandingWorkstream, skippedWorkstreamIds } from '../lib/workstream-landing';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useSpaceDirectories } from '../lib/use-space-directories';
@@ -86,10 +86,10 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   }
   if (first) return <Navigate replace to={`/workstreams/${encodeURIComponent(first.id)}`} />;
   // No Channel to open. Every Channel is started from a Space, so an empty
-  // Organization lands on General, whose dashboard says so. A guest is not
-  // listed General, and is told their shared Channels appear in the sidebar.
+  // Organization lands on starting one in General. A guest is not listed
+  // General, and is told their shared Channels appear in the sidebar.
   const general = spaces?.items.find((row) => row.systemRole === 'general');
-  if (general) return <Navigate replace to={`/spaces/${encodeURIComponent(general.id)}`} />;
+  if (general) return <Navigate replace to={emptySpaceRoute(general.id)} />;
   if (!spaces && state !== 'unavailable'
     && sidebarConnect?.spacesLive !== false) return <LoadingState label="Opening spaces…" />;
   return <EmptyState title="No channels yet" description="Channels shared with you appear in the sidebar." />;

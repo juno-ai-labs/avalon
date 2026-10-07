@@ -66,6 +66,16 @@ export function openWorkstreamId(pathname: string): string | null {
   }
 }
 
+/**
+ * Where a Space with no Channel to open sends its reader: the screen that
+ * starts one there. A reader who cannot start Channels gets the Space's
+ * dashboard instead, which is all that route would hand them.
+ */
+export function emptySpaceRoute(spaceId: string, canCreate = true): string {
+  const encoded = encodeURIComponent(spaceId);
+  return canCreate ? `/spaces/${encoded}/workstreams/new` : `/spaces/${encoded}`;
+}
+
 /** Shared by startup warming and the Space-less root route; recency is its only order. */
 export function firstLandingWorkstream(workstreams: WorkstreamSummary[]): WorkstreamSummary | undefined {
   // Never a create still in flight, which has no screen to land on yet.

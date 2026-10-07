@@ -1,12 +1,10 @@
 import type { SpaceSummary } from '@rally/contracts';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { cloneElement, useEffect, useId, useMemo, useState, type MouseEvent, type ReactElement } from 'react';
+import { cloneElement, useId, useMemo, useState, type MouseEvent, type ReactElement } from 'react';
 
 import { useSpaceChoices } from '../lib/space-choices';
-import { Button, DropdownSelect, InlineError, Modal, Tip } from './primitives';
-
-type CreationKind = 'channel' | 'space';
+import { Button, InlineError, Modal, Tip } from './primitives';
 
 /**
  * The one creation launcher shared by the expanded sidebar, the compact rail
@@ -15,9 +13,13 @@ type CreationKind = 'channel' | 'space';
  * list's empty space: a click on a link or button, or on a row with its own
  * menu, is not empty space. `offer` narrows the items to the channel ones or
  * the Space one. `lockedSpaceId` is the
- * Space the reader is looking at: both the channel form and the import window
- * start on it and do not offer another. `trigger="direct"` skips the menu: the
- * child opens the one form `offer` names, for a button that only ever does that.
+ * Space the reader is looking at: a new Channel starts in it, and the import
+ * window starts on it and offers no other. Under **All** a new Channel starts
+ * in General, which every picker lists first. Starting a Channel opens the
+ * new-Channel screen straight away, which names and places it beside its
+ * composer; only a Space is created through a dialog. `trigger="direct"` skips
+ * the menu: the child does the one thing `offer` names, for a button that only
+ * ever does that.
  */
 export function NewWorkstreamMenu({
   children,
@@ -41,20 +43,16 @@ export function NewWorkstreamMenu({
   trigger?: 'dropdown' | 'context' | 'direct';
   tooltipSide?: 'bottom' | 'right';
   spaces?: SpaceSummary[];
-  onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
+  onCreateChannel: (input: { spaceId: string }) => void;
   onCreateSpace: (name: string) => Promise<void>;
   tooltipLabel?: string;
 }): React.JSX.Element {
   const formId = useId();
-  const [kind, setKind] = useState<CreationKind | null>(null);
-  const [spaceId, setSpaceId] = useState('');
+  const [spaceDialogOpen, setSpaceDialogOpen] = useState(false);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  // The lock the dialog opened under. The live one follows the sidebar's
-  // selection, and an open dialog must not move to a Space nobody chose.
-  const [openedLock, setOpenedLock] = useState<string | null>(null);
-  const lock = kind === null ? lockedSpaceId ?? null : openedLock;
+  const lock = lockedSpaceId ?? null;
   // A locked Space is the only choice; one reached only through a shared
   // Channel leaves none, which disables the items.
   const spaceLocked = lock !== null;
@@ -64,45 +62,35 @@ export function NewWorkstreamMenu({
       && (lock === null || space.id === lock)),
     [choices, lock],
   );
-  useEffect(() => {
-    if (kind === null || kind === 'space') return;
-    const nextSpaceId = selectableSpaces.some((space) => space.id === spaceId)
-      ? spaceId
-      : selectableSpaces[0]?.id ?? '';
-    if (nextSpaceId !== spaceId) setSpaceId(nextSpaceId);
-  }, [kind, selectableSpaces, spaceId]);
 
-  const open = (next: CreationKind): void => {
-    setKind(next);
-    setOpenedLock(lock);
-    setSpaceId(selectableSpaces[0]?.id ?? '');
+  const startChannel = (): void => {
+    const spaceId = selectableSpaces[0]?.id;
+    if (spaceId) onCreateChannel({ spaceId });
+  };
+  const openSpaceDialog = (): void => {
+    setSpaceDialogOpen(true);
     setName('');
     setFailure(null);
   };
   const close = (): void => {
     if (saving) return;
-    setKind(null);
+    setSpaceDialogOpen(false);
     setFailure(null);
   };
-  const selectedSpaceExists = selectableSpaces.some((space) => space.id === spaceId);
-  const valid = Boolean(name.trim())
-    && (kind === 'space' ? canCreateSpace : selectedSpaceExists);
+  const valid = Boolean(name.trim()) && canCreateSpace;
   const submit = async (): Promise<void> => {
-    if (!kind || !valid || saving) return;
+    if (!valid || saving) return;
     setSaving(true);
     setFailure(null);
     try {
-      if (kind === 'channel') await onCreateChannel({ name: name.trim(), spaceId });
-      else await onCreateSpace(name.trim());
+      await onCreateSpace(name.trim());
       setSaving(false);
       close();
     } catch (error) {
-      const fallback = kind === 'space' ? 'The space couldn’t be created.' : 'The channel couldn’t be created.';
-      setFailure(error instanceof Error && error.message.trim() ? error.message : fallback);
+      setFailure(error instanceof Error && error.message.trim() ? error.message : 'The space couldn’t be created.');
       setSaving(false);
     }
   };
-  const title = kind === 'channel' ? 'Start a new channel' : 'Create a new space';
   // Importing reads the conversation in Rally's own browser, which only the
   // desktop host has; the web host offers no import.
   const openBrowserImport = window.rally?.openBrowserImport;
@@ -110,7 +98,7 @@ export function NewWorkstreamMenu({
   const Item = trigger === 'context' ? ContextMenu.Item : DropdownMenu.Item;
   const items = <>
     {offer !== 'space' && <>
-      <Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => open('channel')}>Start New Channel</Item>
+      <Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={startChannel}>Start New Channel</Item>
       {openBrowserImport && <Item className="menu-item" disabled={selectableSpaces.length === 0} onSelect={() => {
         void openBrowserImport({
           spaces: selectableSpaces.map((space) => ({ id: space.id, name: space.name })),
@@ -118,14 +106,14 @@ export function NewWorkstreamMenu({
         });
       }}>Import Channel from Claude or ChatGPT</Item>}
     </>}
-    {offer !== 'channel' && <Item className="menu-item" disabled={!canCreateSpace} onSelect={() => open('space')}>Create New Space</Item>}
+    {offer !== 'channel' && <Item className="menu-item" disabled={!canCreateSpace} onSelect={openSpaceDialog}>Create New Space</Item>}
   </>;
 
   const direct = trigger === 'direct' && offer !== 'all'
     ? <Tip describesTrigger={false} label={tooltipLabel} side={tooltipSide}>
       {cloneElement(children as ReactElement<{ disabled?: boolean; onClick?: (event: MouseEvent) => void }>, {
         disabled: offer === 'space' ? !canCreateSpace : selectableSpaces.length === 0,
-        onClick: () => open(offer),
+        onClick: offer === 'space' ? openSpaceDialog : startChannel,
       })}
     </Tip>
     : null;
@@ -158,17 +146,13 @@ export function NewWorkstreamMenu({
         <Button className="button-primary" disabled={saving || !valid} form={formId} type="submit">{saving ? 'Creating…' : 'Create'}</Button>
       </>}
       onOpenChange={(next) => { if (!next) close(); }}
-      open={kind !== null}
-      title={title}
+      open={spaceDialogOpen}
+      title="Create a new space"
     >
       <form className="space-create-form" id={formId} onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-        {kind !== 'space' && <label className="form-field">
-          <span>Space</span>
-          <DropdownSelect ariaLabel="Space" disabled={saving || spaceLocked} onValueChange={setSpaceId} options={selectableSpaces.map((space) => ({ label: space.name, value: space.id }))} value={spaceId} />
-        </label>}
         <label className="form-field">
-          <span>{kind === 'space' ? 'Name of space' : 'Name of channel'}</span>
-          <input autoFocus disabled={saving} maxLength={kind === 'space' ? undefined : 180} onChange={(event) => setName(event.target.value)} required value={name} />
+          <span>Name of space</span>
+          <input autoFocus disabled={saving} onChange={(event) => setName(event.target.value)} required value={name} />
         </label>
         {failure && <InlineError>{failure}</InlineError>}
       </form>

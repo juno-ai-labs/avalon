@@ -210,7 +210,7 @@ describe('token references', () => {
     // A picker swatch's ink dot, set per swatch from markColors().
     '--swatch-ink',
     '--radix-dropdown-menu-content-available-height', '--radix-dropdown-menu-content-available-width',
-    '--radix-select-content-available-height', '--radix-select-trigger-width'];
+    '--radix-select-content-available-height', '--radix-select-content-transform-origin', '--radix-select-trigger-width'];
 
   it('names only tokens the registry declares', () => {
     const referenced = new Set(

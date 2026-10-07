@@ -683,11 +683,14 @@ interface DropdownSelectProps {
   onValueChange: (value: string) => void;
   options: DropdownOption[];
   value: string;
-  variant?: 'primary' | 'secondary';
+  variant?: 'primary' | 'secondary' | 'pill';
+  /** Where the list opens; it flips when there is no room. */
+  side?: 'top' | 'bottom';
 }
 
 /** Shared settings selector: bordered for primary form controls, text-only for
- * compact preference rows. Radix supplies native keyboard and screen-reader behavior. */
+ * compact preference rows, and a filled pill for a choice set inline in a row
+ * (the new-Channel Space). Radix supplies native keyboard and screen-reader behavior. */
 export function DropdownSelect({
   ariaLabel,
   disabled = false,
@@ -695,6 +698,7 @@ export function DropdownSelect({
   options,
   value,
   variant = 'primary',
+  side = 'bottom',
 }: DropdownSelectProps): React.JSX.Element {
   return (
     <Select.Root disabled={disabled} onValueChange={onValueChange} value={value}>
@@ -704,7 +708,7 @@ export function DropdownSelect({
       >
         <Select.Value />
         <Select.Icon aria-hidden="true" className="dropdown-select-chevron">
-          <ChevronDown size={15} strokeWidth={1.7} />
+          <ChevronDown size={variant === 'pill' ? 13 : 15} strokeWidth={1.7} />
         </Select.Icon>
       </Select.Trigger>
       <Select.Portal>
@@ -712,6 +716,7 @@ export function DropdownSelect({
           className={clsx('dropdown-select-content', `dropdown-select-content-${variant}`)}
           collisionPadding={10}
           position="popper"
+          side={side}
           sideOffset={6}
         >
           <Select.Viewport className="dropdown-select-viewport">

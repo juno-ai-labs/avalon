@@ -950,9 +950,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
           return api.previewWorkstreamBatch(filter);
         }}
-        onCreateChannel={async ({ name, spaceId }) => {
+        onCreateChannel={({ spaceId }) => {
           void navigate(`/spaces/${spaceId}/workstreams/new`, {
-            state: { channelName: name, returnTo: location.pathname },
+            state: { returnTo: location.pathname },
           });
         }}
         onCreateSpace={async (input: CreateSpaceRequest) => {

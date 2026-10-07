@@ -122,9 +122,10 @@ screen goes when what it was showing is no longer there to show: an archived
 work stream, note, or project, a deleted automation or archived draft, a work
 stream the reader left, one they marked unread, the not-found screen's way out,
 the end of onboarding, and the main window's hand-off to the Sidekicks window.
-A workspace with nothing in it lands on General's dashboard, or on an empty
-state for a guest, who has no Space directory. The composer is reached by the
-sidebar's creation dialog alone, which names the Space the Channel starts in.
+A workspace with nothing in it lands on starting a Channel in General, or on an
+empty state for a guest, who has no Space directory. The composer is reached by
+the sidebar's **New channel**, or by a Space with no Channel to open, and
+always names the Space the Channel starts in.
 The `workstreams/new` and `automations/new` deep links name no Space, so they
 open the app rather than a composer. The macOS status menu no longer offers
 one — see [`menu-bar.md`](menu-bar.md).
