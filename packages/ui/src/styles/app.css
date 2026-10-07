@@ -2362,6 +2362,15 @@ pre {
 .workspace-settings-screen .settings-profile-card strong,
 .workspace-settings-screen .settings-member-row strong,
 .workspace-settings-screen .settings-row-value strong { font-size: 13px; font-weight: 400; }
+.inline-editable-text { border-radius: 6px; cursor: text; margin: -3px -6px; padding: 3px 6px; }
+/* Hover previews the field it opens into; a plain tint is lost on a Settings card. */
+.inline-editable-text:hover { background: var(--av-sys-color-surface-sunken); box-shadow: inset 0 0 0 1px var(--av-ref-color-line-3); }
+.inline-editable-text[aria-busy="true"] { cursor: progress; }
+.inline-editable-text[aria-busy="true"]:hover { background: none; box-shadow: none; }
+.inline-editable-field { align-items: flex-end; display: flex; flex-direction: column; gap: 4px; width: min(240px, 100%); }
+.inline-editable-reason { color: var(--av-sys-color-danger-soft); font-size: 12px; }
+/* The box itself is the Settings text field, shared with `.invite-form input` below. */
+.inline-editable-input { font-size: 13px; min-width: 0; }
 .workspace-settings-screen .settings-profile-card small,
 .workspace-settings-screen .settings-member-row small { font-size: 12px; }
 
@@ -3100,7 +3109,8 @@ pre {
 .invite-form label { display: grid; gap: 5px; }
 .invite-form label > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .invite-form input,
-.invite-form select {
+.invite-form select,
+.inline-editable-input {
   background: var(--av-sys-color-surface-sunken);
   border: 1px solid var(--av-ref-color-line-3);
   border-radius: var(--av-cmp-control-radius);
@@ -3111,7 +3121,9 @@ pre {
   width: 100%;
 }
 .invite-form input:focus,
-.invite-form select:focus { border-color: var(--av-sys-color-focus-default); }
+.invite-form select:focus,
+.inline-editable-input:focus { border-color: var(--av-sys-color-focus-default); }
+.inline-editable-input[aria-invalid="true"] { border-color: var(--av-sys-color-danger-soft); }
 .invite-form .button { height: 34px; }
 .invite-link-result {
   align-items: center;

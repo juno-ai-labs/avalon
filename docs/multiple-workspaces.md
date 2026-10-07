@@ -361,6 +361,11 @@ Composer dictation remains tied to its composer lifecycle.
   device that opened either while it was reachable reconciles its stored
   credential away on the next complete answer; that is the withholding working
   as designed, not a lost membership.
+- The active workspace's row on the account menu takes its name from
+  `GET /workspace`, not from discovery. Discovery is rerun by no sync topic,
+  while the `workspace_profile` topic refreshes that read when an
+  administrator renames the Organization, so dropping the overlay in
+  `app-shell.tsx` would leave the old name showing until the next discovery.
 - This device rotates one refresh token at most once at a time.
 - Leaving one workspace cannot delete another workspace's credential, profile,
   query state, or draft.
