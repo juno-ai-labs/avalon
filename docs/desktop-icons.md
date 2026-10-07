@@ -65,15 +65,53 @@ Keep both native and selectable source artwork unmasked:
 
 The renderer preview uses generated 128×128 copies and CSS rounding only to represent the macOS tile. That rounding is not written into the 1024px source files.
 
+## Where the mark comes from
+
+The mark is the seam of a tennis ball lying on a unit sphere. Only the seam is
+drawn: no sphere, no circle, no enclosure. It is one closed path at even
+weight, which is why it holds up at favicon size.
+
+The seam, for t from 0 to 2π, with a + b = 1:
+
+```text
+x = a·cos t + b·cos 3t
+y = a·sin t − b·sin 3t
+z = 2·√(ab)·sin 2t
+```
+
+Every point of it lies on the unit sphere. The shipped mark uses b = 0.19, seen
+in perspective from 4.4 radii, tilted −18° and spun 20° about the seam's own
+axis. The camera therefore sits 18° above the seam's equator, at 20° around it.
+`scripts/generate-rally-mark.py` holds these numbers and the exact projection.
+It samples 96 even steps of t from 3π/2, scales the sphere to radius 124 on a
+400 × 400 canvas, and joins the samples with a closed Catmull-Rom spline. The
+viewBox is the square around the path's points, padded by the stroke width.
+
+These numbers were recovered from the committed path rather than read from a
+design file. Fitting the equation to the 96 points left an error of 0.005
+canvas units, which is the path's two-decimal rounding. A second projection is
+still under consideration and the choice between the two is not settled. The
+shipped files use the one above.
+
+Because the path is a centre line, a thicker or thinner mark is the same path
+with another `stroke-width`. `rally-mark-small.svg` is the 18-unit cut for
+placements narrower than 24 px. To try a variant without touching the
+committed files:
+
+```text
+python3 scripts/generate-rally-mark.py --stdout --stroke 24 --tilt -18 --spin 20
+```
+
 ## Change the current Rally icon
 
-1. Update `apps/site/public/brand/rally-mark.svg` and
-   `assets/brand/rally-mark-source.png` together. Generated flat assets use the
-   raster mask; the five supplied artworks must be updated separately if needed.
-   Generated colours and composition live in `scripts/generate-brand-assets.py`.
-   The vector favicon, `favicon.svg` in both `apps/site/public/` and
-   `apps/browser/public/`, is a hand copy of `rally-mark-small.svg`'s path;
-   update it too.
+1. Change the mark's parameters in `scripts/generate-rally-mark.py` and run it.
+   It rewrites every vector copy: the three `apps/site/public/brand/rally-mark*.svg`
+   cuts, `favicon.svg` in `apps/site/public/` and `apps/browser/public/`, and
+   the rally-motion kit's `mark.js`. Never edit those files by hand. Then redraw
+   `assets/brand/rally-mark-source.png` from the new `rally-mark.svg`.
+   Generated flat assets use that raster mask; the five supplied artworks must
+   be updated separately if needed. Generated colours and composition live in
+   `scripts/generate-brand-assets.py`.
 2. Regenerate the derived assets from the repository root:
 
    ```text
@@ -182,29 +220,38 @@ For a notarized release candidate, repeat the selected-icon test from an install
 - **Reset leaves a stale icon:** confirm the native bridge can resolve `SLSIconAppearanceConfiguration`. The default returns after the Dock cache is rebuilt even when the private best-effort refresh is unavailable.
 - **Packaging rejects nested code:** rebuild with `pnpm --filter @rally/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
 
-### 2026-10-07 — The browser-tab favicon is the bare mark, in vector
+### 2026-10-07 — The mark's vectors are generated from its equation; the favicon is the bare mark
 
-**What changed:** The site and the browser client now serve `favicon.svg`: the
-thick-stroke mark on transparency, volt on a dark tab bar and `#111210` on a
-light one through `prefers-color-scheme`. The generated `favicon.png`, kept as
-the fallback, is now the transparent mark rather than the mark on a dark
-square. The browser client had no favicon at all and now has the SVG. The
-touch icon stays an opaque square.
+**What changed:** `scripts/generate-rally-mark.py` now writes every vector copy
+of the mark from the seam equation and its projection (see
+[Where the mark comes from](#where-the-mark-comes-from)). It reproduces the
+committed `rally-mark.svg`, `rally-mark-ink.svg` and the motion kit's `mark.js`
+byte for byte. The site and the browser client now serve a generated
+`favicon.svg`: the 18-unit mark on transparency, volt on a dark tab bar and
+`#111210` on a light one. The browser client had no favicon before. The raster
+`favicon.png`, kept as the fallback, is now the transparent mark rather than
+the mark on a dark square. The touch icon stays an opaque square.
 
 **Why:** Safari draws a light outline around an opaque dark favicon in its dark
-tab bar, so the dark square read as a white-ringed tile next to icons with
-transparent backgrounds. A transparent mark gives Safari no square edge to
-outline. The SVG stays sharp at every tab size and can switch colour, which a
-PNG cannot, so the volt mark no longer washes out on a light tab bar.
+tab bar, so the dark square read as a white-ringed tile. A transparent mark
+gives it no square edge to outline. The path existed only as four hand copies
+of 96 baked spline points, and the derivation was not written down anywhere, so
+the parameters were recovered by fitting the equation to the committed path.
+Making a variant, such as a thicker cut, meant editing coordinates by hand,
+and `rally-mark-small.svg` had been made by changing the stroke without
+widening the viewBox, which clipped about 1.4 units off its left and right
+edges. Its viewBox is now padded by its own stroke.
 
-**Considered and rejected:** Shrinking or lightening the dark square. Any opaque
-dark tile still gets the outline. Making the touch icon transparent too: iOS
-fills transparency with black on the home screen.
+**Considered and rejected:** Shrinking or lightening the dark square: any
+opaque dark tile still gets the outline. A transparent touch icon: iOS fills
+transparency with black. Folding the vector generator into
+`generate-brand-assets.py`: that script is raster-only and needs Pillow; the
+vector one needs only the standard library.
 
-**Consequences:** `favicon.svg` is a copy of the canonical path, not generator
-output, so a mark change has to update it by hand (step 1 above). Safari
-versions without SVG favicon support fall back to the PNG, which has no square
-for the outline either.
+**Consequences:** The SVG copies are generator output; edit the parameters, not
+the files. The raster source mask `assets/brand/rally-mark-source.png` is still
+drawn separately from the SVG. Safari versions without SVG favicon support fall
+back to the PNG, which also has no square to outline.
 
 ### 2026-09-07 — Dock hosts read the installed icon catalog across upgrades
 
