@@ -1115,7 +1115,9 @@ export function WorkspaceSettingsScreen({
       (!guest || GUEST_SETTINGS_SECTIONS.has(item.id))
       && (item.id !== 'digest' || digestSettingsAvailable)
       && (item.id !== 'notifications' || featureFlags.data?.pushNotificationsEnabled === true)) };
-  }), [guest, githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable, featureFlags.data?.pushNotificationsEnabled]);
+  // Every Application setting but appearance is about the Mac app itself, so a
+  // browser drops the whole Desktop app group and shows appearance in Account.
+  }).filter((group) => !browserHost || group.label !== 'Desktop app'), [browserHost, guest, githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable, featureFlags.data?.pushNotificationsEnabled]);
   const availableSections = useMemo(
     () => new Set(settingsNavigationWithConnectors.flatMap((group) => group.items.map((item) => item.id))),
     [settingsNavigationWithConnectors],
@@ -1127,7 +1129,8 @@ export function WorkspaceSettingsScreen({
     menuBar: applicationSettings?.menuBarAvailable !== false,
     login: applicationSettings?.launchAtLoginAvailable !== false,
     releaseChannel: applicationSettings?.releaseChannelAvailable !== false,
-  }), [availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable, applicationSettings?.releaseChannelAvailable]);
+    browser: browserHost,
+  }), [browserHost, availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable, applicationSettings?.releaseChannelAvailable]);
   const [searchTarget, setSearchTarget] = useState<SettingSearchResult | null>(null);
   const searchEntries = useMemo(() => collectSettings([
     {
@@ -1459,6 +1462,10 @@ export function WorkspaceSettingsScreen({
                     <AgentWorkSetting api={api} workspaceId={workspace.id} />
                   </div>
                 </>}
+                </>}
+                {browserHost && <>
+                  <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2></div>
+                  <ThemePicker setting={settings.accountAppearance} />
                 </>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Session</h2></div>
                 <div className="settings-list-card">
@@ -2373,17 +2380,6 @@ export function WorkspaceSettingsScreen({
                 {(customMcpSettings.error || updateCustomMcpToolPolicy.error) && (
                   <InlineError>{customMcpSettings.error?.message ?? updateCustomMcpToolPolicy.error?.message}</InlineError>
                 )}
-              </section>
-            )}
-
-            {/* In a browser the rest of this section is about the Mac app itself:
-                its keystore, crash reports, icon, updates and startup. Say so
-                rather than offer switches that cannot work here. */}
-            {activeSection === 'application' && browserHost && (
-              <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Appearance</h2><p>Keep Rally light or dark, or follow your system.</p></div>
-                <ThemePicker />
-                <p className="settings-oauth-status">Security, diagnostics, app icon, update and startup settings are available in the Mac app.</p>
               </section>
             )}
 
