@@ -901,8 +901,9 @@ export class RallyApi {
     return mapUser(user);
   }
 
-  async updateWorkspaceTimezone(timezone: string): Promise<Workspace> {
-    await this.request('/workspace', { method: 'PATCH', body: { timezone }, schema: WireWorkspaceSchema });
+  /** Saves only the fields given; the server keeps the rest. */
+  async updateWorkspace(input: { name?: string; timezone?: string }): Promise<Workspace> {
+    await this.request('/workspace', { method: 'PATCH', body: input, schema: WireWorkspaceSchema });
     return this.getWorkspace();
   }
 

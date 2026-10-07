@@ -2342,6 +2342,19 @@ pre {
 .workspace-settings-screen .settings-profile-card strong,
 .workspace-settings-screen .settings-member-row strong,
 .workspace-settings-screen .settings-row-value strong { font-size: 13px; font-weight: 400; }
+.inline-editable-text { border-radius: 6px; cursor: text; margin: -3px -6px; padding: 3px 6px; }
+.inline-editable-text:hover { background: var(--av-sys-color-state-hover); }
+.inline-editable-input {
+  background: var(--av-sys-color-surface-subtle);
+  border: 1px solid var(--av-ref-color-line-4);
+  border-radius: 8px;
+  color: var(--av-sys-color-text-default);
+  font-size: 13px;
+  min-width: 0;
+  padding: 5px 8px;
+  text-align: right;
+  width: min(240px, 100%);
+}
 .workspace-settings-screen .settings-profile-card small,
 .workspace-settings-screen .settings-member-row small { font-size: 12px; }
 

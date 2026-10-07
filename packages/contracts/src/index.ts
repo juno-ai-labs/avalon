@@ -371,8 +371,10 @@ export const WorkspaceOnboardingStateSchema = z.object({
   workspaces: value.workspaces ?? (value.workspace ? [value.workspace] : []),
   invitations: value.invitations,
 }));
+/** An Organization's display name, as chosen at creation and on every rename. */
+export const WorkspaceNameSchema = z.string().trim().min(2).max(120);
 export const CreateWorkspaceRequestSchema = z.object({
-  name: z.string().trim().min(2).max(120),
+  name: WorkspaceNameSchema,
   region: ConfiguredRegionSchema
 });
 export const OnboardingRegionRequestSchema = z.object({ region: ConfiguredRegionSchema });
@@ -1804,7 +1806,13 @@ export const MemberPreferencesSchema = z.object({
 });
 export type MemberPreferences = z.infer<typeof MemberPreferencesSchema>;
 export const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = { showAgentWork: true };
-export const UpdateWorkspaceRequestSchema = z.object({ timezone: IanaTimezoneSchema });
+/** Each field is optional so one control can save its own; an empty body changes nothing and is refused. */
+export const UpdateWorkspaceRequestSchema = z.object({
+  name: WorkspaceNameSchema.optional(),
+  timezone: IanaTimezoneSchema.optional(),
+}).refine((value) => value.name !== undefined || value.timezone !== undefined, {
+  message: "Name or timezone is required.",
+});
 
 // --- Digest ---------------------------------------------------------------
 

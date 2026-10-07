@@ -312,6 +312,11 @@ describe("boundary contracts", () => {
     expect(UpdateWorkspaceRequestSchema.safeParse({}).success).toBe(false);
   });
 
+  it("accepts a trimmed workspace name on its own and refuses a blank one", () => {
+    expect(UpdateWorkspaceRequestSchema.parse({ name: "  Juno Labs  " })).toEqual({ name: "Juno Labs" });
+    expect(UpdateWorkspaceRequestSchema.safeParse({ name: "   " }).success).toBe(false);
+  });
+
   it("accepts selected, custom, and skipped elicitation responses", () => {
     expect(AnswerElicitationRequestSchema.parse({ answer: "first" })).toEqual({ answer: "first" });
     expect(AnswerElicitationRequestSchema.parse({
