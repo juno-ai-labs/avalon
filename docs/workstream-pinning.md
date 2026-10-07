@@ -26,6 +26,7 @@ the different question of who a work stream is *for*.
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The flat-array cache key and the only typed write boundary for it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` derives the new pin positions before handing the list update to the cache boundary. |
 | `apps/desktop/src/renderer/screens/workstream-landing.tsx` | The Space-less root route: resolves to the most recent row, else the composer. |
+| `apps/desktop/src/renderer/lib/sidebar-channel-order.ts` | The order the sidebar draws a Space's Channels in (pins by position, then the reader's sort), and `firstSidebarChannelInSpace`, its top row, for the landing to agree with. |
 | `apps/desktop/src/renderer/lib/workstream-landing.ts` | Shared landing selection and `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` and optional `spaceId` state it carries. |
 
 ### Pinning
@@ -462,10 +463,12 @@ boundary in `docs/access-revocation.md`, and the leave only needs two facts it
 already had.
 
 The landing gained an optional `spaceId` so the leave stays where the reader
-was: the most recent Channel in that Space, or starting one there when the
-leave emptied it. The Space is the sidebar's filter when the Channel is in it,
-and otherwise the Channel's first Space. Recency, not the pinned order, picks
-the Channel, the same single order the landing already used. An unlisted Space
+was: the top row the sidebar draws for that Space, or starting one there when
+the leave emptied it. The Space is the sidebar's filter when the Channel is in
+it, and otherwise the Channel's first Space. "Top row" means pins first, then
+the reader's own sort, so the sidebar's order moved out of `sidebar.tsx` into
+`sidebar-channel-order.ts` and both read it; a copy in the landing would drift
+the first time a sort changed. An unlisted Space
 lands across the Organization, as a bare leave does. Leaving an
 Organization-wide Channel still stays put, since the reader keeps read access.
 
