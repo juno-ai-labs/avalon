@@ -26,7 +26,7 @@ the different question of who a work stream is *for*.
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The flat-array cache key and the only typed write boundary for it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` derives the new pin positions before handing the list update to the cache boundary. |
 | `apps/desktop/src/renderer/screens/workstream-landing.tsx` | The Space-less root route: resolves to the most recent row, else the composer. |
-| `apps/desktop/src/renderer/lib/workstream-landing.ts` | Shared landing selection and `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` state it carries. |
+| `apps/desktop/src/renderer/lib/workstream-landing.ts` | Shared landing selection and `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` and optional `spaceId` state it carries. |
 
 ### Pinning
 
@@ -449,6 +449,25 @@ Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
+
+### 2026-10-07 — Leaving a Channel lands in its Space
+
+Leaving a personal Channel left the reader on "Channel could not be opened".
+The server closes the leaver's socket before it answers the DELETE, and that
+close evicts the cached detail; the leave handler read the scope from the cache
+in `onSuccess`, found nothing, and never left the route. It now snapshots the
+scope and the Space in `onMutate`, before the request. A fix that kept the
+detail through the revocation was rejected: evicting on revoke is the access
+boundary in `docs/access-revocation.md`, and the leave only needs two facts it
+already had.
+
+The landing gained an optional `spaceId` so the leave stays where the reader
+was: the most recent Channel in that Space, or starting one there when the
+leave emptied it. The Space is the sidebar's filter when the Channel is in it,
+and otherwise the Channel's first Space. Recency, not the pinned order, picks
+the Channel, the same single order the landing already used. An unlisted Space
+lands across the Organization, as a bare leave does. Leaving an
+Organization-wide Channel still stays put, since the reader keeps read access.
 
 ### 2026-10-02 — All's Pinned section keeps an order of its own, and is always there
 
