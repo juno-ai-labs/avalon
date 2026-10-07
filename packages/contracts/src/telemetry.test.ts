@@ -620,6 +620,10 @@ describe("telemetry registry", () => {
       page: "landing", pathname: "/", duration: "30s_2m",
     }],
     ["site_action_selected", "site", "anonymous-epoch", {
+      page: "landing", action: "secondary_cta", placement: "hero",
+      flowId: "01a0ee73-d366-7fb9-b5c0-3ceb3156f70a",
+    }],
+    ["site_action_selected", "site", "anonymous-epoch", {
       page: "landing", action: "download", placement: "hero",
     }],
     ["site_action_selected", "site", "anonymous-epoch", {

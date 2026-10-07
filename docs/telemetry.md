@@ -602,7 +602,14 @@ the organization setup funnel when the user selects their organization.
 signup began. Desktop-issued email links redeemed in a browser retain both.
 `source: api` names the producer. Desktop offers Google; browser offers Google
 and email. Native PostHog funnels count flow attempts, not unique people.
-Public-site acquisition has a separate subject and is not linked to signup.
+Public-site acquisition retains a separate anonymous subject. The landing
+page's “Use the web app” and header sign-in links carry an opaque UUIDv7 in
+`signupFlowId`; `site_action_selected.flowId` and all subsequent signup stages
+share it. Browser entry validates and removes it from the address bar. Funnels
+that include the CTA must aggregate by `properties.flowId` across subjects.
+“Download the macOS beta” is already reported as `action: download`,
+`placement: hero`. A static DMG carries no per-visitor attribution; download
+clicks and desktop signup remain separate measurements.
 
 The unauthenticated view endpoint accepts only a UUIDv7, but callers can submit
 fresh IDs to inflate view counts; it has no new issuance limit. Successful stages
@@ -2007,6 +2014,22 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-10-07 — Connect landing web entry to signup
+
+**What changed:** Web entry links propagate an opaque signup flow to browser
+entry and report it on the existing site action event.
+
+**Why:** Separate anonymous site and signup subjects hid abandonment between
+selecting the web CTA and completing organization setup.
+
+**Considered and rejected:** Replacing the direct Mac download with browser
+registration would change the acquisition experience. A static DMG cannot
+reliably carry the visitor's identity, so its clicks remain separate.
+
+**Consequences:** Join cross-subject stages by flow ID, validate incoming IDs,
+and deploy the optional-property API reader before the site producer. Download
+clicks do not prove an installation or a completed desktop signup.
 
 ### 2026-10-07 — Observe the complete first signup journey
 

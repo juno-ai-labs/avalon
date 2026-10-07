@@ -440,6 +440,29 @@ it('starts Google sign-in for the page it was opened on and explains a declined 
   } finally { view.unmount(); }
 });
 
+it.each(['01a0ee73-d366-7fb9-b5c0-3ceb3156f70a', 'invalid'])('handles landing signup flow %s without retaining it in the URL', async incoming => {
+  const views: Array<{ flowId: string }> = [];
+  const starts: Array<{ signupFlowId: string }> = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ error: { message: 'Sign in' } }, { status: 401 });
+    if (path === '/signup/view') { views.push(JSON.parse(String(init?.body))); return new Response(null, { status: 204 }); }
+    if (path === '/google/start') { starts.push(JSON.parse(String(init?.body))); return Response.json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=s' }); }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  history.replaceState(null, '', `/?signupFlowId=${incoming}`);
+  const view = render(<BrowserEntry />);
+  try {
+    await waitFor(() => expect(views).toHaveLength(1));
+    expect(location.search).toBe('');
+    if (incoming === 'invalid') expect(views[0]!.flowId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7/u);
+    else expect(views[0]!.flowId).toBe('01a0ee73-d366-7fb9-b5c0-3ceb3156f70a');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
+    await waitFor(() => expect(starts).toHaveLength(1));
+    expect(starts[0]!.signupFlowId).toBe(views[0]!.flowId);
+  } finally { view.unmount(); }
+});
+
 it.each(['google', 'email'] as const)('keeps %s sign-in available on an older strict start API', async method => {
   const starts: Array<Record<string, unknown>> = [];
   const path = `/${method}/start`;
