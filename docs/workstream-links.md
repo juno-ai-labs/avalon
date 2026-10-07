@@ -24,6 +24,7 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | Choose a Channel's current Space placement for server-generated links | `WorkspaceDO.canonicalChannelSpace`, `apps/api/src/services/workstream-link-service.ts` |
 | Serve current and legacy work-stream paths | `apps/site/app/workstreams/index.html`, `apps/site/src/workstream-link.ts` |
 | Make the dynamic path resolve | `apps/site/public/_redirects` |
+| The signed-out name lookup the page's heading shows | `apps/api/src/routes/links.ts`, `WorkspaceDO.linkTitle` |
 | Style every desktop-handoff page like the desktop sign-in screen | `apps/site/src/desktop-handoff.css` |
 | Slack unfurl | `unfurlRallyLinks` in `apps/api/src/services/slack-agent-service.ts` |
 | The card's blocks and its one status table | `slack-workstream-card.ts` |
@@ -65,6 +66,17 @@ Rally *hands out*, for three reasons:
   what happened and point at the download.
 
 ### The handoff page
+
+The heading reads `Opening “<name>” in Rally`, with the name cut at 100
+characters. Holding a link is the permission to see the name of what it
+points at, private or not, so the page asks `GET /links/title?path=<its own
+path>` on the Global API with no sign-in. The route parses the path with the
+same readers the page uses and asks the Organization's object for that one
+title: a Channel, Breakout, Space, or a Sidekick that is not deleted. It reads
+no viewer, no contents and no other field. An unknown Organization is refused
+from D1 before any object opens. Until the answer lands, or when it misses,
+the heading is plain `Opening in Rally`, and the buttons work the same either
+way. A link minted in a second region needs the page to ask that region's API.
 
 The page offers the desktop app first and the web app beside it. On a Mac it
 tries the deep link once on load, shows **Open in Rally for Mac**, then
@@ -379,18 +391,23 @@ opens the same path on `app.rallywith.ai`. Where no Rally app can open the link
 the browser becomes the only button and the page skips the launch. The page
 remembers a browser choice and then stops launching the app on load. The
 browser client now also reads the Sidekick path. Telemetry gains a `browser`
-handoff method.
+handoff method. The heading names the linked resource through a new
+signed-out `GET /links/title`, and the kind label and sub-line are gone.
 
 **Why:** The page was a dead end for anyone without the Mac app: a teammate on
 Windows, on a phone, or not yet installed got an app launch that did nothing
 and a pointer to the marketing site, though the web app could already open the
-same Organization, Space and Channel.
+same Organization, Space and Channel. Naming the resource signed out is safe
+because holding the link is already the permission to see its name; the lookup
+returns that one field and nothing inside the resource.
 
 **Considered and rejected:** Minting copied links on `app.rallywith.ai`. That
 drops the Slack unfurl and the Apple universal-link claim on `rallywith.ai`,
 and skips the desktop for the people who have it. Sending a remembered browser
 choice straight to the web app, which would end the nudge toward the desktop
-for good after one click.
+for good after one click. Carrying the name in the link's fragment, which
+every link reader refuses today, goes stale on a rename, and shows whatever an
+edited link says.
 
 **What a future change has to respect:** The desktop stays the first choice
 wherever a Rally app can open the link. A new canonical path family needs the

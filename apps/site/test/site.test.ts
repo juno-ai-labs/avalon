@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
-import { handoffAppTarget, handoffDevice, isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
+import { handoffAppTarget, handoffDevice, handoffHeading, isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
 import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
@@ -23,6 +23,11 @@ describe('public Rally site', () => {
     expect(isIosDevice('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', 'iPhone', 5)).toBe(true);
     expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 5)).toBe(true);
     expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 0)).toBe(false);
+  });
+  it('quotes the linked name in the handoff heading and cuts it past 100 characters', () => {
+    expect(handoffHeading('Q3 launch plan')).toBe('Opening “Q3 launch plan” in Rally');
+    expect(handoffHeading('x'.repeat(100))).toBe(`Opening “${'x'.repeat(100)}” in Rally`);
+    expect(handoffHeading(`${'x'.repeat(99)} tail`)).toBe(`Opening “${'x'.repeat(99)}…” in Rally`);
   });
   it('names which Rally app a shared link can open on each device', () => {
     expect(handoffDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 0)).toBe('mac');

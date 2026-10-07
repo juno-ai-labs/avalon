@@ -9,7 +9,7 @@ import {
   type SidekickLinkTarget,
   type SpaceLinkTarget,
 } from '@rally/contracts/workstream-links';
-import { reportDesktopHandoff } from './telemetry';
+import { apiBaseUrl, reportDesktopHandoff } from './telemetry';
 
 export {};
 
@@ -31,8 +31,6 @@ function initializeWorkstreamHandoff(): void {
   const button = document.querySelector<HTMLAnchorElement>('#open-rally');
   const browser = document.querySelector<HTMLAnchorElement>('#open-browser');
   const title = document.querySelector<HTMLElement>('#workstream-title');
-  const status = document.querySelector<HTMLElement>('#workstream-status');
-  const kindLabel = document.querySelector<HTMLElement>('#resource-kind');
   const help = document.querySelector<HTMLElement>('#workstream-help');
   const error = document.querySelector<HTMLElement>('#workstream-error');
   if (!button) return;
@@ -42,27 +40,20 @@ function initializeWorkstreamHandoff(): void {
   const sidekickTarget = parseSidekickLinkPathTarget(window.location.pathname);
   if (!workstreamTarget && !spaceTarget && !sidekickTarget) {
     reportDesktopHandoff('workstream', 'presented', 'invalid');
-    kindLabel?.setAttribute('hidden', '');
     button.setAttribute('hidden', '');
     help?.setAttribute('hidden', '');
     error?.removeAttribute('hidden');
     if (title) title.textContent = 'This link did not lead to a Rally resource';
-    if (status) status.textContent = 'Ask the sender for the link again.';
     return;
   }
 
   reportDesktopHandoff('workstream', 'presented', 'valid');
 
-  const kind = spaceTarget ? 'Space' : sidekickTarget ? 'Sidekick' : workstreamTarget?.substreamId ? 'Breakout' : 'Channel';
-  const noun = kind.toLowerCase();
-  document.title = `Open ${noun} in Rally`;
-  if (kindLabel) kindLabel.textContent = kind;
-  if (title) title.textContent = `Opening this ${noun} in Rally`;
-  if (status) status.textContent = `This ${noun} opens with your existing Rally session and organization permissions.`;
-
   // An ID-only link from before workspace addressing names no Organization,
-  // and the web app opens a resource only inside one.
-  const webUrl = workstreamTarget?.region === null ? null : new URL(window.location.pathname, BROWSER_APP_ORIGIN).toString();
+  // so there is no name to look up and no web app to open it in.
+  const addressed = workstreamTarget?.region !== null;
+  if (addressed && title) void showResourceName(title);
+  const webUrl = addressed ? new URL(window.location.pathname, BROWSER_APP_ORIGIN).toString() : null;
   if (browser && webUrl) {
     browser.href = webUrl;
     browser.removeAttribute('hidden');
@@ -79,14 +70,12 @@ function initializeWorkstreamHandoff(): void {
   if (!target) {
     // No Rally app can open this here, so the web app is the way in.
     button.setAttribute('hidden', '');
-    help?.setAttribute('hidden', '');
-    if (title) title.textContent = `Open this ${noun} in Rally`;
     if (browser && webUrl) {
+      help?.setAttribute('hidden', '');
       browser.className = 'handoff-open';
       browser.textContent = 'Open in browser';
-      if (status) status.textContent = `This ${noun} opens in your browser with your Rally account.`;
-    } else if (status) {
-      status.textContent = `This ${noun} opens in Rally for Mac. Ask the sender for a new link to open it in a browser.`;
+    } else if (help) {
+      help.textContent = 'This link opens only in Rally for Mac. Ask the sender for a new link to open it in a browser.';
     }
     return;
   }
@@ -114,6 +103,37 @@ function initializeWorkstreamHandoff(): void {
   // The app stays the first choice, but a reader who last chose the browser
   // gets to pick again rather than a launch prompt for an app they may lack.
   if (readOpenIn() !== 'browser') window.setTimeout(openOnce, 120);
+}
+
+/** Past this many characters a name is cut, so a long one cannot push the buttons off the page. */
+const HEADING_NAME_LIMIT = 100;
+
+/** The heading for a resource called `name`, cut at {@link HEADING_NAME_LIMIT} characters. */
+export function handoffHeading(name: string): string {
+  const characters = Array.from(name.trim());
+  const shown = characters.length > HEADING_NAME_LIMIT
+    ? `${characters.slice(0, HEADING_NAME_LIMIT).join('').trimEnd()}…`
+    : characters.join('');
+  return `Opening “${shown}” in Rally`;
+}
+
+/**
+ * Put the linked resource's name in the heading. Holding the link is what
+ * lets anyone see its name, so the lookup needs no sign-in. A miss leaves the
+ * generic heading: the buttons work the same without it.
+ */
+async function showResourceName(heading: HTMLElement): Promise<void> {
+  try {
+    const response = await fetch(`${apiBaseUrl()}/links/title?${new URLSearchParams({ path: window.location.pathname })}`, { cache: 'no-store' });
+    if (!response.ok) return;
+    const body: unknown = await response.json();
+    const name = typeof body === 'object' && body !== null && 'title' in body ? body.title : null;
+    if (typeof name !== 'string' || !name.trim()) return;
+    heading.textContent = handoffHeading(name);
+    document.title = heading.textContent;
+  } catch {
+    // Offline or the API is down: the generic heading stands.
+  }
 }
 
 export type HandoffDevice = 'mac' | 'ios' | 'other';

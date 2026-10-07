@@ -402,6 +402,7 @@ import {
   WorkspaceDirectoryDueRequestSchema,
   WorkspaceDirectoryListRequestSchema,
   WorkspaceDirectoryLookupRequestSchema,
+  WorkspaceLinkTitleRequestSchema,
   WorkspaceDirectoryLookupResultSchema,
   WorkspaceDirectoryRecentRequestSchema,
   WorkspaceDirectoryReadableIdsRequestSchema,
@@ -14266,6 +14267,36 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceDirectoryLookupResultSchema.parse({
       items: rows.map(internalDirectoryItem),
     });
+  }
+
+  /**
+   * The title of whatever a shared link names, or null when nothing here has
+   * that id. Holding the link is the permission: a link's title is shown to
+   * anyone who has it, so this reads no viewer and checks no scope. A deleted
+   * Sidekick is gone; an archived Channel, Breakout or Space keeps its name.
+   */
+  async linkTitle(input: unknown): Promise<{ title: string | null }> {
+    await this.initialized;
+    const { workspaceId, target } = parseRpcInput(WorkspaceLinkTitleRequestSchema, input, "link_title");
+    // An object no Organization ever opened, reached only where placement
+    // falls back outside production: it holds nothing to name.
+    if (this.workspaceId() === null) return { title: null };
+    this.assertWorkspace(workspaceId);
+    const sql = this.state.storage.sql;
+    const row = target.kind === "channel"
+      ? sql.exec<{ title: string }>(`SELECT title FROM channels WHERE workstream_id = ?`, target.workstreamId).toArray()[0]
+      : target.kind === "breakout"
+        ? sql.exec<{ title: string }>(
+          `SELECT title FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
+          target.workstreamId, target.substreamId,
+        ).toArray()[0]
+        : target.kind === "space"
+          ? sql.exec<{ title: string }>(`SELECT title FROM spaces WHERE space_id = ?`, target.spaceId).toArray()[0]
+          : sql.exec<{ title: string }>(
+            `SELECT title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+            target.sidekickId,
+          ).toArray()[0];
+    return { title: row?.title.trim() || null };
   }
 
   async recentWorkstreamDirectory(
