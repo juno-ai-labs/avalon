@@ -746,13 +746,25 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // discard the draft the last run left behind.
     if (previousSession && !sessionsShareDraftScope(previousSession, session)) {
       abandonPendingWorkstreamFeedOpen();
-      const sameAccount = session?.user.email.toLocaleLowerCase('en-US')
-        === previousSession.user.email.toLocaleLowerCase('en-US');
+      // The account is who signed in to this device: on a support session, the
+      // Rally staff member rather than the person shown.
+      const account = (value: DesktopSession) => (value.impersonator?.email ?? value.user.email).toLocaleLowerCase('en-US');
+      const sameAccount = session !== null && account(session) === account(previousSession);
       // The local cache is workspace content too — transcripts, not just the
       // sentence being typed — and leaves the device on the same transition.
       if (!sameAccount) {
         void clearAllDrafts();
         void clearAllLocalCache();
+      } else {
+        // Entering or leaving a support session keeps the staff member's own
+        // drafts elsewhere, but drafts are keyed by Organization and
+        // conversation, not person: those in the support Organization go, so
+        // nobody's unsent text is restored to, or sent as, somebody else.
+        for (const side of [previousSession, session]) {
+          if (!side.impersonator || !side.workspace) continue;
+          void clearWorkspaceDrafts(side.workspace.region, side.workspace.id);
+          void clearWorkspaceLocalCache(side.user.id, side.workspace.region, side.workspace.id);
+        }
       }
     }
     if (!legacyDraftMigrationStarted.current && session?.workspace) {

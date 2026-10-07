@@ -61,7 +61,9 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
   const updateAccountOnboarding = useCallback((input: UpdateAccountOnboarding) => identityApi.updateAccountOnboarding(input), [identityApi]);
   // A notification subscription from an earlier sign-in delivers nothing until
   // this session registers it. Settings re-checks and shows any failure.
-  useEffect(() => { void reconcileWebPush(api).catch(() => undefined); }, [api]);
+  // A support session never registers this browser for the person's
+  // notifications (`docs/impersonation.md`); the API refuses it as well.
+  useEffect(() => { if (!session.impersonator) void reconcileWebPush(api).catch(() => undefined); }, [api, session.impersonator]);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [resourceAuthorizationAttempts, setResourceAuthorizationAttempts] = useState<Readonly<Record<string, PendingConnectorOAuth>>>({});
   const setResourceAuthorizationAttempt = useCallback((key: string, attempt: PendingConnectorOAuth | null) => {
@@ -140,13 +142,18 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     },
     listSupportPeople: async (workspaceId) =>
       (await browserRequest(IDENTITY_REGION, `/support/workspaces/${encodeURIComponent(workspaceId)}/people`, SupportPeopleSchema)).people,
+    // Drafts are keyed by Organization and conversation, not person, and the
+    // reload below skips the shell's account-change cleanup, so the
+    // Organization's drafts go on the way in and on the way out.
     startSupportSession: async (target, userId) => {
       await browserRequest(target.region, '/support/session', BrowserSessionSchema, { workspaceId: target.workspaceId, userId });
+      await clearWorkspaceDrafts(target.region, target.workspaceId);
       location.assign(`/app/workspaces/${target.region}/${target.workspaceId}`);
     },
     endSupportSession: async () => {
       if (session.workspace) {
         await browserRequest(session.workspace.region, '/support/end', z.undefined(), { workspaceId: session.workspace.id });
+        await clearWorkspaceDrafts(session.workspace.region, session.workspace.id);
         await clearWorkspaceLocalCache(session.user.id, session.workspace.region, session.workspace.id);
       }
       location.assign('/');

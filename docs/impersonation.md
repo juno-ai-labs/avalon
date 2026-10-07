@@ -117,15 +117,25 @@ exactly what that person can. What sets it apart:
   nothing for it. The answer carries `impersonatorUserId` on the auth context.
 - Renewal keeps the session's expiry at or before the grant's.
 - `touchLastSeen` skips it: staff being around is not the person being around.
+- `refuseSupportSession` turns it away from `/auth/workspaces`,
+  `/auth/workspace/select`, `/onboarding/*` and `/push-devices/*`. Those mint
+  another credential or bind a device to the person, which would outlive the
+  grant or reach beyond the Organization.
 - Revoking the grant, and a Juno Labs relationship delivery that ends a staff
-  membership, call `revokeSupportSessions`, which revokes the rows and publishes
-  [access revocations](access-revocation.md) so open sockets close.
+  membership (for that membership's incarnation only), call
+  `revokeSupportSessions`. It expires the sessions at once and publishes
+  [access revocations](access-revocation.md) so open sockets close; one whose
+  announcement fails is left to the expiry sweep, which retries.
 - The Mac app stores it as that Organization's credential with the impersonator
   on its cached profile. It is left out of the Organizations list, push
   registration and the account's own onboarding, profile and appearance (which
   belong to the signed-in account, i.e. the staff member). Selecting any other
-  Organization drops and revokes it. **End impersonation** revokes it and
-  returns to the Organization the device used before.
+  Organization, or another person in the same one, drops and revokes it.
+  **End impersonation** revokes it and returns to the Organization the device
+  used before.
+- Composer drafts are keyed by Organization and conversation, not person, so
+  entering or leaving a support session clears that Organization's drafts on
+  both hosts, while the staff member's drafts elsewhere stay.
 - The browser puts it in the Organization's slot of its cookie session
   (`browser_workspace_sessions`), replacing whatever was there, and
   `/browser/support/end` takes it out again.
@@ -228,7 +238,8 @@ non-macOS, and non-arm64 builds never contact the production feed.
 - Only a member of the staff Organization is staff, and only a live grant admits
   a support session. Both are re-checked on every request and renewal, never
   cached, so a revoke or a removal takes effect on the next request.
-- A support session cannot grant Rally access, and cannot start another one.
+- A support session cannot grant Rally access, start another one, mint any
+  other credential, or register a device for the person's notifications.
 - A support session is bound to the staff membership incarnation that opened
   it, as an ordinary session is to its own membership's.
 - A grant and a support session are audited before they exist.

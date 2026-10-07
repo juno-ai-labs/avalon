@@ -179,6 +179,22 @@ export function getAuth(c: Context): AuthContext {
   return auth as AuthContext;
 }
 
+/**
+ * Refuse a support session (`docs/impersonation.md`) at a door that mints
+ * another credential or binds a device to the person. A support session is
+ * the person's own authority inside one Organization for as long as its grant
+ * lasts; exchanging it for an ordinary session, opening another Organization,
+ * or registering for the person's notifications would outlive or exceed that.
+ */
+export const refuseSupportSession: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
+  const auth = c.get("auth") ?? await timedAuthenticate(c);
+  c.set("auth", auth);
+  if (auth.impersonatorUserId) {
+    throw new ApiError(403, "support_session_not_allowed", "This is not available while signed in through Rally access");
+  }
+  await next();
+};
+
 export function requireWorkspaceAdmin(c: Context): void {
   const auth = getAuth(c);
   if (auth.role !== "owner" && auth.role !== "admin") {

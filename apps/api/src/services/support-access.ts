@@ -58,23 +58,37 @@ export async function supportSessionLive(env: Env, sessionId: string, now: strin
   return row !== null;
 }
 
-/** Revoke support sessions and close their sockets; `filter` picks which. */
+/**
+ * End support sessions and close their sockets; `filter` picks which: every
+ * one in an Organization, or one staff membership's (by its incarnation, so a
+ * late delivery for an old membership spares sessions opened after rejoining).
+ *
+ * The sessions are expired rather than revoked first. That stops them at once,
+ * like a revocation, but leaves any whose socket announcement fails for the
+ * expiry sweep (`reapExpiredSessions`), which announces and marks them on its
+ * next run. Marking them revoked here and failing to announce would leave their
+ * sockets open with nothing left to retry. See `docs/access-revocation.md`.
+ */
 export async function revokeSupportSessions(
   env: Env,
-  filter: { workspaceId: string } | { impersonatorUserId: string },
+  filter: { workspaceId: string } | { impersonatorUserId: string; impersonatorIncarnation: string },
 ): Promise<void> {
-  const [column, value] = "workspaceId" in filter
-    ? ["workspace_id", filter.workspaceId]
-    : ["impersonator_user_id", filter.impersonatorUserId];
+  const [match, values] = "workspaceId" in filter
+    ? ["workspace_id = ?", [filter.workspaceId]]
+    : ["impersonator_user_id = ? AND impersonator_incarnation = ?", [filter.impersonatorUserId, filter.impersonatorIncarnation]];
+  const now = nowIso();
   const rows = await env.DB.prepare(
-    `UPDATE sessions SET revoked_at = ?
-     WHERE ${column} = ? AND impersonator_user_id IS NOT NULL AND revoked_at IS NULL
+    `UPDATE sessions SET expires_at = ?
+     WHERE ${match} AND impersonator_user_id IS NOT NULL AND revoked_at IS NULL AND expires_at > ?
      RETURNING id, user_id, workspace_id`,
-  ).bind(nowIso(), value).all<RevokedSessionRow>();
-  const revoked = rows.results ?? [];
-  const announced = await publishSessionRevocations(env, revoked, "session_revoked");
-  if (announced.length !== revoked.length) {
-    logWarn(env, "support_session_revocation_unannounced", { revoked: revoked.length, announced: announced.length });
+  ).bind(now, ...values, now).all<RevokedSessionRow>();
+  const ended = rows.results ?? [];
+  const announced = await publishSessionRevocations(env, ended, "session_revoked");
+  for (const row of announced) {
+    await env.DB.prepare("UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").bind(now, row.id).run();
+  }
+  if (announced.length !== ended.length) {
+    logWarn(env, "support_session_revocation_deferred_to_expiry_sweep", { ended: ended.length, announced: announced.length });
   }
 }
 
