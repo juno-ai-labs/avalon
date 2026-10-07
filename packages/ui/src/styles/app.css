@@ -1835,11 +1835,9 @@ pre {
   padding: 6px 10px;
 }
 
-/* The active Organization's usage line, set under its name: the inset is the
-   row's padding plus the 18px mark and the row's 8px gap. After the popup's
-   rule above, which it has to override at the same specificity. */
-/* A full row under Settings: the meter spans the menu's width, past the icon
-   column the rows above it indent their labels to. */
+/* The Quota row under Settings: the meter spans the menu's width, past the
+   icon column the rows above it indent their labels to. After the popup's rule
+   above, which it has to override at the same specificity. */
 .menu-content .workspace-usage-item.menu-item { align-items: stretch; flex-direction: column; gap: 5px; min-height: 0; padding: 6px 10px 8px; }
 .workspace-usage-item small { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-font-size-meta); }
 .workspace-usage-title { color: var(--av-sys-color-text-default); }
@@ -2288,13 +2286,7 @@ pre {
 .settings-pane-heading-count > span { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
 .settings-subsection { margin-top: 30px; }
 
-/* Settings → Organization → Usage. The quota meter, here and in the
-   Organization menu, fills in the viewer's own accent (`--personal-color`,
-   onboarding.css), falling back to the brand fill before a profile loads. The
-   warning fill still wins below the low-quota line. */
-.usage-quota-value .meter,
-.workspace-usage-item .meter { --av-cmp-meter-fill: var(--personal-color, var(--av-sys-color-brand-base)); }
-/* The Weekly quota row's value: the meter over how much is left, right-aligned
+/* Settings → Organization → Usage. The Weekly quota row's value: the meter over how much is left, right-aligned
    like the other rows' values. */
 .usage-quota-value { display: flex; flex-direction: column; gap: 6px; text-align: right; width: 200px; }
 .usage-quota-value small { color: var(--av-sys-color-text-muted); font-size: 12px; }
