@@ -1366,11 +1366,8 @@ export function Sidebar({
   const [dragOrder, setDragOrder] = useState<{ spaceId: string; itemIds: string[] } | null>(null);
   const pinnedDrag = useRef<{ dropped: boolean; workstreamId: string } | null>(null);
   const [pinDropWorkstreamId, setPinDropWorkstreamId] = useState<string | null>(null);
-  // The slot in Pinned an unpinned Channel dragged over the section would land
-  // in, and, once released, the Channel itself until its pin comes back. The
-  // section holds that slot open with a faded copy of the row, so the reader
-  // sees where it goes before letting go and the list does not close up and
-  // open again while the server answers.
+  // Where an unpinned Channel dragged over Pinned would land, and, once
+  // released, that Channel until its pin comes back.
   const [pinDropIndex, setPinDropIndex] = useState<number | null>(null);
   const [pinArrival, setPinArrival] = useState<{ index: number; scope: string | null; workstream: WorkstreamSummary } | null>(null);
   const motionMoveIntent = useRef<{ id: string; pinned: boolean } | null>(null);
@@ -1464,15 +1461,15 @@ export function Sidebar({
       .filter((workstream) => workstream.pinPosition === null)
       .sort(compareChannels(channelSort, heldOpen.heldId))
   ), [channelSort, heldOpen.heldId, visibleWorkstreams]);
-  // Gone the moment the real row is pinned: from then on it holds the slot.
-  // Only in the list it was dropped into: switching Space mid-request leaves it behind.
-  const pinGhost = pinArrival !== null
-    ? pinArrival.scope !== selectedSpaceId
-      || pinnedWorkstreams.some((pinned) => pinned.id === pinArrival.workstream.id) ? null : pinArrival
-    : pinDropIndex === null || pinDropWorkstreamId === null ? null : (() => {
-      const workstream = unpinnedWorkstreams.find((candidate) => candidate.id === pinDropWorkstreamId);
-      return workstream ? { workstream, index: pinDropIndex } : null;
-    })();
+  let pinGhost: { index: number; workstream: WorkstreamSummary } | null = null;
+  if (pinArrival !== null) {
+    // Only in the list it was dropped into, and gone once the real row is pinned.
+    const arrived = pinnedWorkstreams.some((pinned) => pinned.id === pinArrival.workstream.id);
+    if (pinArrival.scope === selectedSpaceId && !arrived) pinGhost = pinArrival;
+  } else if (pinDropIndex !== null && pinDropWorkstreamId !== null) {
+    const workstream = unpinnedWorkstreams.find((candidate) => candidate.id === pinDropWorkstreamId);
+    if (workstream) pinGhost = { index: pinDropIndex, workstream };
+  }
   const displayedWorkstreams = useMemo(
     () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
     [pinnedWorkstreams, unpinnedWorkstreams],
@@ -1895,12 +1892,9 @@ export function Sidebar({
     }
   };
 
-  // A Channel released into Pinned goes to the slot the section held open for
-  // it. A Space's run appends a new pin, so there a slot anywhere but the end
-  // is a pin followed by a reorder. All's saved order keeps a Channel's old
-  // slot after it is unpinned, so under All even a drop at the end is saved.
-  // The arrangement is previewed from the release on so the row lands in its
-  // slot rather than somewhere else first.
+  // A pin, then a reorder into the slot. A Space's run appends a new pin, so an
+  // end drop there needs no reorder; All's saved order keeps an unpinned
+  // Channel's old slot, so under All it does.
   const pinAt = async (workstream: WorkstreamSummary, index: number): Promise<void> => {
     const spaceId = pinOrderSpaceId;
     const visible = pinnedWorkstreams.map((pinned) => pinned.id);
@@ -2389,7 +2383,8 @@ export function Sidebar({
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
                 if (pinnedDrag.current || pinDropWorkstreamId === null || pinArrival !== null) return;
-                setPinDropIndex(layoutInsertIndex(
+                // A list with no order to save can only take a new pin at the end.
+                setPinDropIndex(pinOrderSpaceId === null ? pinnedWorkstreams.length : layoutInsertIndex(
                   event.currentTarget.querySelectorAll('.sidebar-list > [data-workstream-id]'),
                   event.clientY,
                 ));
