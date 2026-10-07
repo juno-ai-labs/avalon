@@ -1,3 +1,5 @@
+import { AccessRequestDialog } from './access-request-dialog';
+import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
 import type { CreateSpaceRequest, PinnedOrder, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
@@ -439,11 +441,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     acceptInvitation,
     activateWorkspace,
     api,
+    clearPendingAccessRequest,
     clearPendingInvitation,
     declineInvitation,
     finishWorkspaceSetup,
     getOnboardingState,
     invitationApi,
+    pendingAccessRequestId,
     pendingInvitation,
     abandonAccountSignIn,
     runtime,
@@ -451,6 +455,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     signOut,
   } = useAppSession();
   const { host, guest: guestSession } = useShellCapabilities();
+  const accessRequests = useAccessRequests(workspace.id);
+  const decideAccessRequest = useDecideAccessRequest(api ?? null, workspace.id);
+  // A request row chosen in the attention menu; the menu bar's arrives as
+  // `pendingAccessRequestId` instead. Either opens the one dialog.
+  const [openAccessRequestId, setOpenAccessRequestId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
@@ -553,7 +562,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     && !workstreams.isFetching && !workstreams.isError;
   // A Breakout list still on its way would make the count a floor, and the
   // dock would then lower the badge APNs set from the full count.
-  useDockBadge(attentionItems.length, attentionComplete && breakoutListsLoaded);
+  // The attention button's number: waiting conversations and access requests.
+  useDockBadge(attentionItems.length + accessRequests.length, attentionComplete && breakoutListsLoaded);
   const visibleSpaces = spaces.data?.items ?? [];
   // While search is open, a Breakout list the socket writes re-reads the
   // places, so a Breakout created or renamed meanwhile shows at once.
@@ -732,6 +742,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
 
   return (
     <>
+      <AccessRequestDialog
+        api={api ?? null}
+        onClose={() => { setOpenAccessRequestId(null); clearPendingAccessRequest(); }}
+        requestId={openAccessRequestId ?? pendingAccessRequestId}
+        workspaceId={workspace.id}
+      />
       <div className={shellClassName} style={shellStyle}>
       <Sidebar
         onOpenSearch={api ? () => setSearchOpen(true) : undefined}
@@ -975,6 +991,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         workspace={workspace}
         attentionItems={attentionItems}
         attentionComplete={attentionComplete}
+        accessRequests={accessRequests}
+        accessDecisionFailed={decideAccessRequest.isError}
+        onDecideAccessRequest={(request, decision) => decideAccessRequest.mutate({ id: request.id, decision })}
+        onOpenAccessRequest={(request) => setOpenAccessRequestId(request.id)}
         workstreams={sidebarWorkstreams}
       />
         <span aria-live="polite" className="sr-only">

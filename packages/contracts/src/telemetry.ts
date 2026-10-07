@@ -187,6 +187,8 @@ export const TELEMETRY_MENU_BAR_ACTIONS = [
   "recent_workstream", "pinned_workstream", "open_rally", "quit_rally",
   // A row of the Needs attention section: a Channel's Main or a Breakout.
   "attention_conversation",
+  // A request to join a Channel or Breakout, which opens its decision in the main window.
+  "access_request",
 ] as const;
 
 export type TelemetryMenuBarAction = (typeof TELEMETRY_MENU_BAR_ACTIONS)[number];

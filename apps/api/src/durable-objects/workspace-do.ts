@@ -134,6 +134,8 @@ import {
   type UpdateOnboardingJourney,
 } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { WorkspaceAccessRequestsEventSchema } from "@rally/contracts";
+import { CONVERSATION_ACCESS_REQUESTS_MIGRATION, ConversationAccessRequestStorage, type StoredAccessRequest } from "./conversation-access-request-storage";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 import {
@@ -1086,6 +1088,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   'search_authorization_push', 'search_authorization_keys', 'search_authorization_dependencies',
   "resource_search_versions",
   "onboarding_journeys",
+  "conversation_access_requests",
   "workstream_notification_intents",
   "workspace_socket_unheard", // The first-frame watch's ledger.
   // Converted to typed methods, so a generic statement naming one is a
@@ -4172,6 +4175,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // Every Space is Organization-wide. A Space grants no reader to its
   // Channels, so no Channel changes; see docs/spaces.md#every-space-is-organization-wide.
   statements: SPACE_PUBLIC_ONLY_MIGRATION,
+}, {
+  version: 95,
+  description: "requests to join a Channel or Breakout, addressed to an approver",
+  statements: CONVERSATION_ACCESS_REQUESTS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -14405,6 +14412,60 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     };
   }
 
+  private accessRequestStorage(): ConversationAccessRequestStorage {
+    return new ConversationAccessRequestStorage(this.state.storage.sql);
+  }
+
+  /** Record a request, or return the one already pending; the approver's sockets get their new list. */
+  async recordConversationAccessRequest(input: {
+    workspaceId: string; parentId: string; substreamId: string; requesterUserId: string;
+    requesterName: string; approverUserId: string;
+  }): Promise<{ request: StoredAccessRequest; created: boolean }> {
+    await this.initialized;
+    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
+    const recorded = this.accessRequestStorage().record({ ...input, id: uuidV7(), now: Date.now() });
+    if (recorded.created) this.publishAccessRequests(input.approverUserId);
+    return recorded;
+  }
+
+  async conversationAccessRequest(input: { workspaceId: string; id: string }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
+    return this.accessRequestStorage().get(input.id);
+  }
+
+  /** Settle a pending request; null when it was already settled. The approver's sockets get their new list. */
+  async resolveConversationAccessRequest(input: {
+    workspaceId: string; id: string; status: "approved" | "declined";
+  }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
+    const resolved = this.accessRequestStorage().resolve(input.id, input.status, Date.now());
+    if (resolved) this.publishAccessRequests(resolved.approverUserId);
+    return resolved;
+  }
+
+  /**
+   * The approver's whole pending list, to their sockets only. Outside the
+   * waterline: the subscribe answer carries it again on every connect.
+   */
+  private publishAccessRequests(approverUserId: string): void {
+    let payload: string | null = null;
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed || attachment.userId !== approverUserId) continue;
+      payload ??= JSON.stringify(WorkspaceAccessRequestsEventSchema.parse({
+        type: "workspace_access_requests",
+        requests: this.accessRequestStorage().pendingFor(approverUserId),
+      }));
+      try {
+        socket.send(payload);
+      } catch {
+        // Hibernation owns cleanup; a reconnecting client is sent the list again.
+      }
+    }
+  }
+
   async recentWorkstreamDirectory(
     input: WorkspaceDirectoryRecentRequest,
   ): Promise<WorkspaceDirectoryLookupResult> {
@@ -16490,6 +16551,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const sidebar = this.sidebarPayload(attachment);
     this.logWorkspaceSocketHandshake(attachment, "sidebar_built", diagnosticAttemptId);
     const viewerPreferences = this.readMemberPreferences(attachment.userId);
+    // Only a member is ever an approver; a guest's answer carries no list.
+    const accessRequests = attachment.accessClass === "guest"
+      ? undefined : this.accessRequestStorage().pendingFor(attachment.userId);
     let events: WorkspaceSocketSyncEvent[];
     if (afterWaterline === 0) {
       events = [{
@@ -16563,7 +16627,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
     this.logWorkspaceSocketHandshake(attachment, "flags_resolved", diagnosticAttemptId);
     for (const event of events) {
-      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({ ...event, featureFlags, viewerPreferences })));
+      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({
+        ...event, featureFlags, viewerPreferences, ...(accessRequests ? { accessRequests } : {}),
+      })));
     }
     this.logWorkspaceSocketHandshake(attachment, "sync_sent", diagnosticAttemptId);
     socket.serializeAttachment({

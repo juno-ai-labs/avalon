@@ -1,10 +1,11 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
+import type { ConversationAccessRequestItem } from '@rally/contracts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AttentionItem } from '../lib/attention-items';
-import { AttentionMenu } from './attention-menu';
+import { AttentionMenu, type AccessDecision } from './attention-menu';
 
 function Location(): React.JSX.Element {
   const location = useLocation();
@@ -83,5 +84,61 @@ describe('AttentionMenu', () => {
     renderMenu(many);
 
     expect(screen.getByRole('button', { name: '150 conversations need your attention' }).textContent).toBe('99+');
+  });
+});
+
+const request: ConversationAccessRequestItem = {
+  id: '00000000-0000-4000-8000-0000000ac0r1',
+  parentId: 'c',
+  substreamId: '0',
+  kind: 'channel',
+  title: 'Hiring plan',
+  appearance: null,
+  markId: 'c',
+  requesterUserId: 'u-sam',
+  requesterName: 'Samantha Lee',
+  requestedAt: '2026-10-07T12:00:00.000Z',
+};
+
+describe('AttentionMenu access requests', () => {
+  afterEach(cleanup);
+
+  function renderWithRequests(
+    onDecide: (request: ConversationAccessRequestItem, decision: AccessDecision) => void,
+    onOpenRequest: (request: ConversationAccessRequestItem) => void = () => undefined,
+  ): void {
+    render(<MemoryRouter initialEntries={['/']}>
+      <Tooltip.Provider><AttentionMenu items={[unread]} onDecide={onDecide} onOpenRequest={onOpenRequest} requests={[request]} /></Tooltip.Provider>
+      <Location />
+    </MemoryRouter>);
+  }
+
+  it('counts a request with the conversations and lists it first with approve and decline', () => {
+    const onDecide = vi.fn();
+    renderWithRequests(onDecide);
+    const trigger = screen.getByRole('button', { name: '1 conversation needs your attention, and 1 access request' });
+    expect(trigger.textContent).toBe('2');
+    openMenu(trigger);
+    const row = screen.getByRole('group', { name: 'Samantha Lee asked to join Hiring plan' });
+    expect(row.textContent).toContain('Samantha Lee asked to join');
+    const rows = screen.getAllByText(/Hiring plan|Weekly sync/u).map((node) => node.textContent);
+    expect(rows).toEqual(['Hiring plan', 'Weekly sync']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Approve Samantha Lee' }));
+    expect(onDecide).toHaveBeenCalledWith(request, 'approve');
+    // The menu stays open for the next request, and nothing navigated.
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Decline Samantha Lee' }));
+    expect(onDecide).toHaveBeenLastCalledWith(request, 'decline');
+    expect(screen.getByTestId('location').textContent).toBe('/');
+  });
+
+  it('opens the request itself when the row, not a button, is chosen', () => {
+    const onDecide = vi.fn();
+    const onOpenRequest = vi.fn();
+    renderWithRequests(onDecide, onOpenRequest);
+    openMenu(screen.getByRole('button', { name: '1 conversation needs your attention, and 1 access request' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Hiring plan/u }));
+    expect(onOpenRequest).toHaveBeenCalledWith(request);
+    expect(onDecide).not.toHaveBeenCalled();
+    expect(screen.getByTestId('location').textContent).toBe('/');
   });
 });

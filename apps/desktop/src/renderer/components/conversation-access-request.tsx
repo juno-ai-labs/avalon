@@ -44,13 +44,13 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
       <div className="conversation-access-request window-no-drag">
         <WorkstreamGlyph appearance={appearance ?? undefined} id={markId} size={40} />
         <h1 className="conversation-access-request-title">{title}</h1>
-        <p>You’re not in this {noun}. Ask for access and its creator gets an email to approve you.</p>
+        <p>You’re not in this {noun}, ask for access below</p>
         {request.isSuccess ? (
           <p className="conversation-access-request-sent" role="status">
             <Check aria-hidden="true" size={14} /> Request sent. This {noun} opens once you’re approved.
           </p>
         ) : (
-          <Button disabled={request.isPending} onClick={() => request.mutate()}>
+          <Button className="button-primary" disabled={request.isPending} onClick={() => request.mutate()}>
             {request.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />} Request access
           </Button>
         )}

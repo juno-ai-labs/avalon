@@ -1435,6 +1435,10 @@ const menuBarController = new MenuBarController({
         'menu_bar',
       );
     },
+    openAccessRequest: (requestId) => {
+      activateFromMenuBar();
+      emitDeepLink(`${customProtocol}://access-requests/${requestId}`, 'menu_bar');
+    },
     openRally: openMainWindowFromMenuBar,
     quit: () => app.quit(),
   },
