@@ -256,6 +256,11 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.on('browser-import:context-changed', handler);
     return () => ipcRenderer.removeListener('browser-import:context-changed', handler);
   },
+  onOrganizationListRefreshRequested: (listener) => {
+    const handler = (): void => listener();
+    ipcRenderer.on('organizations:refresh-requested', handler);
+    return () => ipcRenderer.removeListener('organizations:refresh-requested', handler);
+  },
   completeBrowserImport: (workstreamId) => ipcRenderer.invoke('browser-import:imported', workstreamId) as Promise<void>,
   reportBrowserImport: (progress) => ipcRenderer.invoke('browser-import:progress', progress) as Promise<void>,
   onBrowserImportProgress: (listener) => {
