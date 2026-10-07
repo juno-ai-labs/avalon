@@ -486,8 +486,20 @@ fresh id and asks again with that id, and WorkspaceDO creates General and its
 hosted parent in one transaction; the unique partial index still decides a
 race, the loser is answered with the winner's General and its anchor names an id
 nothing else will. Everything that needs General (the cutover, a Channel created without
-a Space, a new Organization, the connector path) goes through it, so the steps
+a Space, the connector path) goes through it, so the steps
 are never half-done by somebody re-deriving them.
+
+**A new Organization takes the same steps in fewer calls.** The regional create
+already knows General is absent, who its creator is and the authority
+generation, so it writes General's anchor in the batch that creates the
+Organization and passes it to `initializeWorkspace`. The object then checks the
+creator the way `openGeneralSpace` does, reserves General under that id through
+the same `reserveGeneral` step, and closes the cutover, all in that one call.
+It answers `spacesReady`; anything short of `true` (the authority closed, a
+guest creator, a cutover that cannot close) sends the caller to
+`openGeneralSpaceForNewWorkspace`, which is `ensureGeneral` as above. An
+Organization whose cutover is already complete answers `true` without any of
+this, so activating one costs the one call and no D1 read for Spaces.
 
 ### The cutover
 
@@ -561,8 +573,10 @@ however the Channel was remediated.
 [`runbook.md`](runbook.md) holds the operator's version.
 
 Two paths place a Channel outside a page, and both are the same step a page
-would take. `openGeneralSpaceForNewWorkspace` runs inline on the path that
-initializes a new WorkspaceDO: the alarm would get there within a Queue round
+would take. Opening General and closing the cutover runs inline on the path that
+initializes a new WorkspaceDO, inside `initializeWorkspace` itself when the
+create hands it General's anchor and through `openGeneralSpaceForNewWorkspace`
+otherwise: the alarm would get there within a Queue round
 trip, but the first session inside that window would be shown the
 Organization-opening card for an Organization that has nothing to open. It is
 best effort on purpose — a Space failure must not cost somebody the Organization
@@ -1526,11 +1540,12 @@ belongs in the route suite as well as wherever its authority is proved.
 | Suite | What it proves |
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation (Organization-wide, including when a released client asks for a personal Space; a caller WorkspaceDO refuses writes no D1 anchor), audience (a participant change stages nothing for a member Channel and leaves its audience alone; a personal audience is refused), rename, archive and restore, and an equal-audience one-request Channel move whose returned summaries match the settled memberships. That a Space whose parent reservation fails commits no Space row, and that `openGeneralSpace` writes General once and is reused. `POST /workstreams` in a Space makes an Organization-wide Channel. The WorkspaceDO-driven membership calls: a private Channel added to a Space that lists somebody else stays private and settles; a private or Organization-wide Channel leaving a Space keeps every reader. A Space created without an icon gets the one the naming double answers, and keeps the icon a person picks while that call is still in flight. |
-| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, that a placement reaches an already-open socket rather than waiting for a reload, that an archive whose only leftover Channel is archived is accepted, that an archive whose only Channel has no directory row is refused, and that one `addSpaceChannel` call activates the membership and stages the Space's defaults with no intent left behind. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — an audience that leaves its own caller out refused before anything is written, the single-Space read refusing a Space this viewer has no reach into rather than labelling it one, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, and archive taking neither — the arrangement is still there when the Space is restored. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
+| `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, that a placement reaches an already-open socket rather than waiting for a reload, that an archive whose only leftover Channel is archived is accepted, that an archive whose only Channel has no directory row is refused, and that one `addSpaceChannel` call activates the membership and stages the Space's defaults with no intent left behind. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — an audience that leaves its own caller out refused before anything is written, the single-Space read refusing a Space this viewer has no reach into rather than labelling it one, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, and archive taking neither — the arrangement is still there when the Space is restored. Opening a new Organization: `initializeWorkspace` with General's anchor answers `spacesReady` with General listed and the cutover complete, without one answers not ready and creates nothing, refuses a guest creator, and answers an already-open Organization ready with no anchor. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
 | `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, Channel badge totals respecting that parent boundary and requiring an explicit guest grant, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that what a Space's retired conversation still publishes is acknowledged and applied nowhere, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at a Space's conversation is refused by name. |
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
+| `apps/api/test/regional-workspace-create.test.ts` | The regional create against the real migrations: one batch writes the Organization, its owner, General's anchor and route at the authority generation, and a session row the returned refresh token hashes to, and the object is handed that anchor; with the authority closed, no route is written and the object is handed none. |
 | `apps/api/test/space-service.test.ts` | The service's *ordering* against capability doubles: what is not written when an earlier step refuses (a D1 anchor failure reserves nothing), that a move, an add, an archive and a restore are each one WorkspaceDO call that reaches no Channel, that each kind of structured refusal is rendered with its own code, that a queued resume calls WorkspaceDO until the intent stops progressing, and that a refused creation anchors and reserves nothing. |
 | `apps/api/test/workspace-space-move-migration.test.ts` | Migration 68 preserving existing intents while adding the move kind and requiring all three source-side fences on every move row. |
 | `apps/api/test/workspace-space-public-migration.test.ts` | Migration 94 against the real ledger: every private Space widened, archived ones too, with nothing staged for their Channels; a private Space's resource defaults retired and every other default kept; the four Space-source tables dropped; an Organization with no private Space left as it was; and a stale directory effect that still says personal not narrowing a Space. |
@@ -1718,8 +1733,11 @@ region's D1:
   `bootstrapWorkstreamRuntimeEnvironment` reads the authority control row and
   writes the route anchor batch, and WorkspaceDO reads the control row again for
   the generation the Space's parent is born at. This is the
-  fallback path — `openGeneralSpaceForNewWorkspace` is meant to have run when the
-  Organization opened — so it is not on an ordinary creation.
+  fallback path (a new Organization's General is anchored in the create's own
+  batch and passed its generation) so it is not on an ordinary creation. The
+  anchor batch carries the Channel-receipt claim read, and the anchor's schema
+  probe is skipped once a database has answered the final shape, so a Space
+  create pays the control read and one batch.
 - **A second `workspace_members` read** in the cutover driver, which has no
   session and reads the Organization's owner or administrator in order to act as
   somebody.
@@ -1869,6 +1887,38 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-10-07 — A new Organization opens General in its one object call
+
+**What changed:** `initializeWorkspace` takes an optional `general` (creator,
+space id, authority generation) and answers `{ spacesReady }`. With it, a new
+Organization's object reserves General and closes the cutover in that call; the
+regional create writes General's D1 anchor and route in the same batch as the
+Organization's rows. `openGeneralSpace`'s write half is now `reserveGeneral`,
+shared by both. `claimParentAnchor` puts its Channel-receipt read in the anchor
+batch, and the `workstreams` schema probe is remembered per database once it
+answers the final shape. `openGeneralSpaceForNewWorkspace` is now the fallback
+when the object answers `spacesReady: false`.
+
+**Why:** Organization creation was slow. The old path made about twenty serial
+D1 round trips and five object calls in the region: `ensureGeneral` asked
+whether General existed on an Organization made a moment earlier, looked up the
+placement affinity twice although the caller had it, re-read the authority
+control row inside the object, and `runFinalize` was a call of its own. Every
+activation of an existing Organization also paid that path, plus a cutover
+close and snapshot publish, for nothing.
+
+**Considered and rejected:** Moving the D1 anchor write into the object. The
+object can read D1, but the anchor has to be in place before the object writes
+General (the order `ensureGeneral` keeps), and the create's batch already
+writes D1 in that order for free. Dropping the receipt claim read for a fresh
+id: it is free inside the batch, so it stays.
+
+**Consequences:** `ensureGeneral` is no longer the only path that creates
+General. Both paths go through `reserveGeneral` and the same creator check, and
+the unique index still decides a race between them. A change to how General is
+made has to hold for both. The Node D1 shim's `run` now returns a statement's
+rows, as D1's does, so a read inside a batch is tested as it runs.
 
 ### 2026-10-06 — Every Space is Organization-wide and grants no reader
 

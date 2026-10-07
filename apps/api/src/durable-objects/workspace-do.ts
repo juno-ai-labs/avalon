@@ -661,6 +661,8 @@ import {
   WorkspaceSpaceListRequestSchema,
   WorkspaceSpaceGeneralOpenResultSchema,
   WorkspaceSpaceGeneralRequestSchema,
+  WorkspaceGeneralOpeningSchema,
+  type WorkspaceGeneralOpening,
   WorkspaceSpaceMembershipMoveOutcomeSchema,
   WorkspaceSpaceMembershipMoveRequestSchema,
   WorkspaceSpaceMutationResultSchema,
@@ -7929,13 +7931,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().map((row) => row.workstream_id);
   }
 
-  /** Pin the workspace identity before any child object can be resolved. */
+  /**
+   * Pin the workspace identity before any child object can be resolved, and
+   * answer whether the Organization's Spaces are ready to draw.
+   *
+   * `general` is the opening path's General Space, whose D1 anchor the caller
+   * has already written at `authorityGeneration`: with it, an object that has
+   * no General creates it and closes the cutover in this same call, which is
+   * what `SpaceService.ensureGeneral` and `finalizeSpaceBootstrap` otherwise
+   * take three calls and three D1 reads to do. `spacesReady: false` sends the
+   * caller to that slower path, which also handles a cutover that cannot
+   * close yet. See docs/spaces.md#general.
+   */
   async initializeWorkspace(
     workspaceId: string,
     placementAffinity: WorkspacePlacementAffinity,
-  ): Promise<void> {
+    general?: WorkspaceGeneralOpening,
+  ): Promise<{ spacesReady: boolean }> {
     await this.initialized;
     this.ensureIdentity(workspaceId, placementAffinity);
+    const storage = this.spaceStorage();
+    if (!storage.ready()) return { spacesReady: false };
+    if (storage.bootstrapStatus().ready) return { spacesReady: true };
+    if (storage.generalSpaceId() === null) {
+      if (general === undefined) return { spacesReady: false };
+      const opening = parseRpcInput(WorkspaceGeneralOpeningSchema, general, "initialize_workspace_general");
+      if (await this.spaceRefusalCode(workspaceId, opening.creatorUserId, "write")) return { spacesReady: false };
+      const opened = await this.reserveGeneral(
+        { workspaceId, userId: opening.creatorUserId },
+        opening.spaceId,
+        opening.authorityGeneration,
+      );
+      if (!opened.ok) return { spacesReady: false };
+    }
+    if (storage.completeBootstrap() !== "complete") return { spacesReady: false };
+    this.publishSpaceSnapshot();
+    return { spacesReady: true };
   }
 
   /** Which room owns an automation, and which of its conversations is home, for a caller resolving participation. */
@@ -8759,7 +8790,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * `space_not_found`, the answer an identity the caller cannot use as a Space
    * always gets; a generation D1 cannot supply is `space_authority_unreachable`.
    */
-  private async spaceParentReservation(spaceId: string): Promise<
+  private async spaceParentReservation(spaceId: string, authorityGeneration?: number): Promise<
     | { ok: false; code: "space_not_found" | "space_authority_unreachable" }
     | { ok: true; reserve: (userId: string, space: SpaceSummary) => void }
   > {
@@ -8767,7 +8798,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       "SELECT parent_kind FROM parent_metadata WHERE parent_id = ?", spaceId,
     ).toArray()[0]?.parent_kind;
     if (known !== undefined && known !== "space") return { ok: false, code: "space_not_found" };
-    const authority = await readWorkstreamAuthorityControl(this.env);
+    const authority = authorityGeneration === undefined
+      ? await readWorkstreamAuthorityControl(this.env)
+      : { generation: authorityGeneration };
     if (authority.generation < 1) return { ok: false, code: "space_authority_unreachable" };
     const workspaceId = this.workspaceId();
     if (!workspaceId) throw new Error("workspace_identity_unknown");
@@ -8814,32 +8847,46 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (refusal) return { ok: false, code: refusal };
     const storage = this.spaceStorage();
     const existing = storage.generalSpaceId();
-    let general: { space: SpaceSummary; created: boolean };
     if (existing !== null) {
       const space = storage.readable(member(request.userId), existing);
       if (space === false) return { ok: false, code: "space_not_found" };
-      general = { space, created: false };
-    } else if (request.spaceId === undefined) {
-      return { ok: true, absent: true };
-    } else {
-      const spaceId = request.spaceId;
-      const parent = await this.spaceParentReservation(spaceId);
-      if (!parent.ok) return { ok: false, code: parent.code };
-      general = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
-        const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId);
-        if (ensured.created) parent.reserve(request.userId, ensured.space);
-        return ensured;
-      }));
-      if (!general.created && storage.readable(member(request.userId), general.space.id) === false) {
-        return { ok: false, code: "space_not_found" };
-      }
+      storage.noteGeneralSpace(space.id);
+      return WorkspaceSpaceGeneralOpenResultSchema.parse({ ok: true, space, created: false });
+    }
+    if (request.spaceId === undefined) return { ok: true, absent: true };
+    const general = await this.reserveGeneral(request, request.spaceId);
+    if (!general.ok) return general;
+    return WorkspaceSpaceGeneralOpenResultSchema.parse({ ok: true, space: general.space, created: general.created });
+  }
+
+  /**
+   * Write General and its hosted parent under `spaceId`, whose D1 anchor the
+   * caller has written, or answer with the General a concurrent caller made.
+   * The caller has passed `spaceRefusalCode`. `authorityGeneration` is the
+   * generation that anchor was written at, when the caller already read it.
+   */
+  private async reserveGeneral(
+    request: { workspaceId: string; userId: string },
+    spaceId: string,
+    authorityGeneration?: number,
+  ): Promise<{ ok: true; space: SpaceSummary; created: boolean } | { ok: false; code: SpaceErrorCode }> {
+    const storage = this.spaceStorage();
+    const parent = await this.spaceParentReservation(spaceId, authorityGeneration);
+    if (!parent.ok) return { ok: false, code: parent.code };
+    const general = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
+      const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId);
+      if (ensured.created) parent.reserve(request.userId, ensured.space);
+      return ensured;
+    }));
+    if (!general.created && storage.readable(member(request.userId), general.space.id) === false) {
+      return { ok: false, code: "space_not_found" };
     }
     storage.noteGeneralSpace(general.space.id);
     if (general.created) {
       this.publishSpaceSnapshot();
       await this.afterParentWrite();
     }
-    return WorkspaceSpaceGeneralOpenResultSchema.parse({ ok: true, space: general.space, created: general.created });
+    return { ok: true, ...general };
   }
 
   private static generalReservation(request: { workspaceId: string; userId: string }): WorkspaceSpaceReserveRequest {
