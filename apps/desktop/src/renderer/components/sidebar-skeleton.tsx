@@ -65,3 +65,22 @@ export function SidebarSkeletonGroup({ count }: { count: number }): React.JSX.El
     </div>
   );
 }
+
+/** Where the first Channel will land: a Channel row's outline, still because nothing is loading. */
+export function SidebarGhostChannelRow(): React.JSX.Element {
+  return (
+    <SidebarRow as="div" aria-hidden="true" className="workstream-row channel-row ghost-channel-row">
+      <span className="sidebar-row-icon">
+        <span className="workstream-glyph ghost-channel-mark">
+          <span className="workstream-glyph-shape" />
+        </span>
+      </span>
+      <span className="sidebar-row-main channel-row-main">
+        <span className="channel-row-heading">
+          <span className="skeleton-bar ghost-channel-title" />
+          <span className="skeleton-bar ghost-channel-time" />
+        </span>
+      </span>
+    </SidebarRow>
+  );
+}
