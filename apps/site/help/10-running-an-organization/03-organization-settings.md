@@ -66,9 +66,8 @@ internet. It is the one setting in this chapter that is mainly about security,
 so read this section slowly.
 
 Open **Settings → Security**. The page is headed
-**Terminal network access**, and its description mentions **Daytona**. Daytona
-is the company that runs the computers behind Rally's Terminal, so wherever
-you read "Daytona" on this page, think "Rally's Terminal".
+**Terminal network access**. The Terminal runs on cloud computers, so wherever
+the page says "cloud computers", it means Rally's Terminal.
 
 ### The two choices
 
@@ -142,7 +141,7 @@ The page may show **Terminal unavailable** with one of two explanations:
 
 - **Temporarily disabled by the regional safety switch.** Rally has switched
   the Terminal off for now, usually while fixing a problem. Try again later.
-- **This regional service has not enabled Daytona Terminal.** The Terminal is
+- **Cloud computer not enabled.** The Terminal is
   not available for your Organization's region.
 
 Either way the controls are greyed out until it comes back.

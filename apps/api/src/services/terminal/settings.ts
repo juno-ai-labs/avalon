@@ -149,7 +149,7 @@ export class TerminalSettingsService {
         title: sandboxes.find((sandbox) => sandbox.workstream_id === id)!.title,
       })),
       warning: input.mode === "full_internet"
-        ? "Full internet lets Terminal code contact arbitrary public destinations. Active sandboxes will stop and stay stopped until the next Terminal tool call."
+        ? "Full internet lets cloud computers access any website or internet service."
         : "Trusted only applies Rally-managed platform access and workspace-approved domains. Active sandboxes will stop while Daytona applies the policy.",
     };
   }
