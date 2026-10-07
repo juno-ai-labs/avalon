@@ -19,7 +19,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
-  Globe,
   LockKeyhole,
   LoaderCircle,
   MailPlus,
@@ -393,11 +392,11 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       { id: 'digest', label: 'Digest', icon: Newspaper },
       { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'workspace', label: 'Organization', icon: Users },
-      // Under Workspace rather than beside it: the Terminal egress policy is a
-      // workspace-wide setting, but it is a page of its own — a review-then-
-      // confirm flow that stops running sandboxes, which does not belong in the
-      // middle of a list of names, timezones and invitations.
-      { id: 'internet-access', label: 'Internet access', icon: Globe, child: true },
+      // Its own top-level page rather than part of Organization: the Terminal
+      // egress policy is a review-then-confirm flow that stops running
+      // sandboxes, which does not belong in the middle of a list of names,
+      // timezones and invitations.
+      { id: 'internet-access', label: 'Security', icon: ShieldCheck },
       { id: 'connections', label: 'Connections', icon: Plug },
     ],
   },

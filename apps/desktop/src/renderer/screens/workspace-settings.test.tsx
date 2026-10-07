@@ -202,7 +202,7 @@ async function openConnection(name: string): Promise<void> {
 }
 
 function openSettingsSection(
-  name: 'Account' | 'Digest' | 'Organization' | 'Internet access' | 'Connections' | 'Application',
+  name: 'Account' | 'Digest' | 'Organization' | 'Security' | 'Connections' | 'Application',
 ): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
@@ -629,13 +629,13 @@ describe('Organization settings', () => {
     expect(api.rotateWebhookSecret).not.toHaveBeenCalled();
   });
 
-  it('keeps the network policy on its own page under Organization', async () => {
+  it('keeps the network policy on its own top-level Security page', async () => {
     renderSettings();
 
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    const internetAccess = within(navigation).getByRole('button', { name: 'Internet access' });
-    expect(internetAccess).toHaveClass('settings-navigation-child');
-    // Indented under Workspace, so it has to follow it and precede Connections.
+    const internetAccess = within(navigation).getByRole('button', { name: 'Security' });
+    expect(internetAccess).not.toHaveClass('settings-navigation-child');
+    // Between Organization and Connections.
     const workspaceNavigation = within(navigation).getByRole('button', { name: 'Organization' });
     expect(workspaceNavigation.compareDocumentPosition(internetAccess) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(internetAccess.compareDocumentPosition(
@@ -652,14 +652,14 @@ describe('Organization settings', () => {
 
     fireEvent.click(internetAccess);
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'Internet access' })).toBeVisible();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Security' })).toBeVisible();
     expect(await screen.findByRole('radio', { name: /^Trusted only/ }, { timeout: 10_000 })).toBeChecked();
     await waitFor(() => expect(api.getTerminalWorkspaceSettings).toHaveBeenCalled());
   }, 30_000);
 
   it('previews and confirms full Terminal internet access before applying it', async () => {
     renderSettings();
-    openSettingsSection('Internet access');
+    openSettingsSection('Security');
     // 10s rather than the suite's 5s `asyncUtilTimeout` (src/renderer/test/setup.ts),
     // and 30s rather than its 15s `testTimeout` on the `it` below. These panes
     // settle several queries deep, and on a CPU-loaded machine — a CI runner, or
@@ -698,7 +698,7 @@ describe('Organization settings', () => {
       warning: 'Trusted only applies managed and organization-approved access.',
     });
     renderSettings();
-    openSettingsSection('Internet access');
+    openSettingsSection('Security');
 
     expect(await screen.findByText('Organization-approved domains', undefined, { timeout: 10_000 })).toBeVisible();
     expect(screen.queryByText('Required targets')).not.toBeInTheDocument();
@@ -730,7 +730,7 @@ describe('Organization settings', () => {
       },
     ));
     renderSettings();
-    openSettingsSection('Internet access');
+    openSettingsSection('Security');
     fireEvent.click(await screen.findByRole('radio', { name: /^Full internet/ }, { timeout: 10_000 }));
     fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm network change' }, { timeout: 10_000 }));
@@ -3228,7 +3228,7 @@ describe('Closing the settings window with Escape', () => {
     // to render a saved value into a writable text field would make Escape
     // permanently dead in that section, and the symptom is a key that quietly
     // stopped working rather than a failing assertion anywhere near the cause.
-    for (const section of ['Account', 'Digest', 'Organization', 'Internet access', 'Connections', 'Application'] as const) {
+    for (const section of ['Account', 'Digest', 'Organization', 'Security', 'Connections', 'Application'] as const) {
       openSettingsSection(section);
       await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(section));
 
@@ -3244,7 +3244,7 @@ describe('Closing the settings window with Escape', () => {
       customDomains: ['packages.example.com'], remainingCustomSlots: 6, failureCode: null,
     });
     renderSettings(workspace, createTestQueryClient(), true);
-    openSettingsSection('Internet access');
+    openSettingsSection('Security');
     const domains = await screen.findByLabelText('Additional Terminal domains');
 
     fireEvent.keyDown(document.body, { key: 'Escape' });
