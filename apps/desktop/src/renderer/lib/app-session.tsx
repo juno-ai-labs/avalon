@@ -248,7 +248,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   sessionRef.current = session;
   /** The workspace a switch or a creation is in the middle of landing; see the
    * session-changed listener. A creation's `workspaceId` is `null`. */
-  const pendingActivationRef = useRef<{ region: Region; workspaceId: string | null } | null>(null);
+  const pendingActivationRef = useRef<{
+    region: Region;
+    workspaceId: string | null;
+    /** The last broadcast held for this mark, for a creation that fails to apply. */
+    held?: DesktopSession;
+  } | null>(null);
   /** Whoever is waiting on the browser sign-in this renderer last started, and the attempt it is waiting on. */
   const pendingAccountSignInRef = useRef<{
     attemptId: string;
@@ -337,6 +342,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       // left unapplied.
       && (pending.workspaceId === null || nextSession.workspace.id === pending.workspaceId)
     ) {
+      pending.held = nextSession;
       return;
     }
     const previousSession = sessionRef.current;
@@ -637,7 +643,9 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // the cache and remounted the shell on the previous workspace's route,
     // with the flags and the account's onboarding state gone.
     const previous = sessionRef.current;
-    const creation = { region: selectedRegion, workspaceId: null };
+    const creation: { region: Region; workspaceId: null; held?: DesktopSession } = {
+      region: selectedRegion, workspaceId: null,
+    };
     pendingActivationRef.current = creation;
     try {
       const nextSession = await withAccountIdentity(
@@ -645,10 +653,19 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         progress,
       );
       await applyActivatedSession(nextSession, previous, 'creation');
+    } catch (error) {
+      // A creation holds every broadcast in its region, so a workspace another
+      // window activated there meanwhile was held for this call's answer. A
+      // failed creation has no answer: that broadcast is main's session now.
+      if (creation.held && pendingActivationRef.current === creation) {
+        pendingActivationRef.current = null;
+        applySession(creation.held);
+      }
+      throw error;
     } finally {
       if (pendingActivationRef.current === creation) pendingActivationRef.current = null;
     }
-  }, [applyActivatedSession, bridge, withAccountIdentity]);
+  }, [applyActivatedSession, applySession, bridge, withAccountIdentity]);
 
   /**
    * Drafted text and cached attachment bytes are workspace content, so a device
