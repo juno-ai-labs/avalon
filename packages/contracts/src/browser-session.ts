@@ -10,6 +10,16 @@ export type BrowserSession = z.infer<typeof BrowserSessionSchema>;
 export const BrowserWorkspacesSchema = z.object({ workspaces: z.array(WorkspaceSchema) });
 /** Asks Global to open a workspace in another deployment for this browser. */
 export const BrowserWorkspaceActivateSchema = z.strictObject({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema });
+/**
+ * Creates an organization for a signed-in browser on Global. `operationId` makes
+ * a retry of the same name return the same organization rather than a second.
+ */
+export const BrowserWorkspaceCreateSchema = z.strictObject({
+  name: z.string().trim().min(2).max(120),
+  operationId: IdSchema,
+});
+/** Where the browser opens the organization it just created. No credential crosses. */
+export const BrowserWorkspaceCreatedSchema = z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema });
 /** Starts Google sign-in for a browser; `returnPath` is a path on the browser host. */
 export const BrowserGoogleStartSchema = z.strictObject({ returnPath: z.string().optional() });
 export const BrowserGoogleStartedSchema = z.object({ url: HttpsUrlSchema });

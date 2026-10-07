@@ -440,7 +440,7 @@ describe("leaving a workspace", () => {
 
     await expect(new RegionalOnboardingService(env).discover({
       platformUserId: MEMBER,
-      googleSubject: `google-${MEMBER}`,
+      loginIdentities: [{ provider: "google", subject: `google-${MEMBER}` }],
       email: "member@example.test",
       name: "Member",
       avatarUrl: null,

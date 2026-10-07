@@ -59,8 +59,17 @@ retained, but an intent generation prevents the late response from taking over
 the window.
 
 Regional user IDs are regional identifiers, not account identifiers: the same
-Google account may have different user UUIDs in configured deployments. The verified
-email in the Global identity session links discovery to the regional account.
+account may have different user UUIDs in configured deployments. Global sends a
+deployment the account's platform user ID and every sign-in method it has
+verified, as `loginIdentities` of provider and subject (`google` and its
+subject, `email` and its address). The deployment finds its user by platform ID,
+or else by any of those methods (and, for a user this bridge made before it
+recorded them, by `users.google_subject`), and records the methods it was sent.
+A method already held by a different regional user is a 409
+`regional_identity_conflict`, and an account with no method at all is refused a
+new regional user with `login_identity_required`. A new provider, such as Apple
+or GitHub, needs only its sign-in code: neither the bridge nor the table names
+the providers.
 An older version-1 workspace-only envelope can be reconnected in place after one
 Google exchange, preserving its selected workspace rather than forcing setup.
 
@@ -400,6 +409,43 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-10-06 — A deployment links a person by any sign-in method
+
+**What changed:** The platform identity carries `loginIdentities`, every verified
+provider and subject from Global's `user_login_identities`, instead of one
+`googleSubject`. `RegionalOnboardingService` resolves a regional user by
+platform ID, then by any of those methods, and records them on the user.
+Migration 0120 replaces the table's fixed `google`/`email` provider list with a
+check on the provider name's shape. `otherDeploymentWorkspaces` now asks other
+deployments for any account with a sign-in method, not only a Google one.
+`createWorkspace` also marks an account eligible for the creator's setup journey
+when it is a member of no organization yet, and the ambiguous-action 503 now
+logs the cause it replaced. Organization slugs take the random tail of the
+UUIDv7 id rather than its timestamp head.
+
+**Why:** Creating an organization from the browser failed for an email-only
+account: the schema required a Google subject, though on Global the user is
+already linked by platform ID. Product asked for the identity to take any
+provider now, with Apple and GitHub next. The slug change fixes a collision
+found while testing: two organizations of the same name created within about
+a minute shared a slug, and the second create failed as an unconfirmed 503.
+
+**Considered and rejected:** Making `googleSubject` nullable and confining an
+email-only identity to Global. It unblocked the browser but left the bridge
+keyed on one provider, which the next provider would have had to undo.
+
+**Consequences:** Linking by email trusts that Global verified the mailbox, as
+it does for the email login identity itself. A deployment keeps only the email
+addresses Global currently sends, as Global does, so a changed mailbox cannot
+block its next owner. Email-only accounts, mostly guests, now get the same
+discovery Google accounts already had: the browser's list asks each other
+deployment in parallel, and each creates a regional user for the account on
+first contact. With Global the only deployment this costs nothing today. Every regional user the bridge
+touches gains login identity rows. A new provider's name must fit the shape
+migration 0120 checks and the API's `loginIdentitySchema`.
+
+PR: [#1129](https://github.com/juno-ai-labs/avalon/pull/1129).
 
 ### 2026-10-05 — A terminal account failure ends the desktop session
 

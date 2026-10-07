@@ -506,3 +506,75 @@ it('shows the opening mark while a sign-in activates a linked organization in an
     expect(await screen.findByText('Enterprise team')).toBeInTheDocument();
   } finally { view.unmount(); }
 });
+
+it('creates an organization from the empty shared-work screen through the cookie route', async () => {
+  const created: unknown[] = [];
+  const createdId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
+    if (input === '/regional/global/browser/workspace/create') {
+      created.push(JSON.parse(String(init?.body)));
+      return Response.json({ region: 'global', workspaceId: createdId }, { status: 201 });
+    }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry />);
+  try {
+    await screen.findByText('Nothing has been shared with guest@example.test yet.');
+    fireEvent.click(screen.getByRole('button', { name: 'Create an organization' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: ' Acme Research ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await waitFor(() => expect(created).toEqual([{ name: 'Acme Research', operationId: expect.stringMatching(/^[0-9a-f-]{14}7/u) }]));
+  } finally { view.unmount(); }
+});
+
+it('holds Back while an organization is being created and reuses its operation after an uncertain failure', async () => {
+  const created: Array<{ operationId: string }> = [];
+  let fail!: () => void;
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
+    if (input === '/regional/global/browser/workspace/create') {
+      created.push(JSON.parse(String(init?.body)));
+      if (created.length === 1) return new Promise<Response>((resolve) => { fail = () => resolve(Response.json({ error: { message: 'The regional onboarding action could not be confirmed' } }, { status: 503 })); });
+      return Response.json({ error: { message: 'Still unavailable' } }, { status: 503 });
+    }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry />);
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'Create an organization' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Acme Research' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await waitFor(() => expect(created).toHaveLength(1));
+    expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
+    await act(async () => { fail(); });
+    await screen.findByText('The regional onboarding action could not be confirmed');
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Create an organization' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Acme Research' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await waitFor(() => expect(created).toHaveLength(2));
+    expect(created[1]!.operationId).toBe(created[0]!.operationId);
+  } finally { view.unmount(); }
+});
+
+it('drops the organization form when another account signs in elsewhere', async () => {
+  let current = user;
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    if (input === '/regional/global/browser/session') return Response.json({ user: current, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const channel = new BroadcastChannel('rally-browser-session');
+  const view = render(<BrowserEntry />);
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'Create an organization' }));
+    await screen.findByRole('textbox', { name: 'Organization name' });
+    current = { ...user, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', email: 'other@example.test' };
+    await act(async () => { channel.postMessage('session-changed'); });
+    await screen.findByText('Nothing has been shared with other@example.test yet.');
+    expect(screen.queryByRole('textbox', { name: 'Organization name' })).not.toBeInTheDocument();
+  } finally { view.unmount(); channel.close(); }
+});

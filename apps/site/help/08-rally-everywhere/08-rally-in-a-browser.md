@@ -1,6 +1,6 @@
 ---
 title: Rally in a web browser
-description: Use the lightweight browser version to join conversations someone shared with you.
+description: Use the lightweight browser version to join conversations someone shared with you, or to start an Organization.
 ---
 
 Rally has a lightweight version that runs in an ordinary web browser, at
@@ -9,10 +9,9 @@ someone has shared with you. A client you invited into a single Channel, a
 contractor helping with one Breakout, or a teammate on a computer without the
 Mac app can all open the browser version and join in, with nothing to install.
 
-It is the light option on purpose. You cannot create an Organization, set up
-connections or make Sidekicks there, and there is no guided setup. All of that
-stays on the Mac. The conversations, though, are the same ones everyone else
-sees.
+It is the light option on purpose, and a few things stay on the Mac (see [the
+conversation itself](#the-conversation-itself)). You can start an Organization
+there, though. The conversations are the same ones everyone else sees.
 
 [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md)
 covers the other side of this: how you invite someone, and how you take that
@@ -61,6 +60,14 @@ new code** to start again.
 
 Once you are signed in you see **Your shared work**, or a list of your
 Organizations if you belong to any.
+
+## Starting an Organization
+
+If nothing has been shared with you yet, **Your shared work** offers **Create an
+organization**. Click it, type a name and click **Create organization**. The new
+Organization opens and walks you through the same setup as the Mac app:
+how you look to your team, then inviting teammates. Click **Back** to
+return without creating one.
 
 ### Staying signed in
 

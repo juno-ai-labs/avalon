@@ -197,8 +197,9 @@ and `WorkspaceApp`: the workspace socket provider, the sidebar, the Channel feed
 Breakouts, the details rail and the Settings route. The value carries
 `host: "browser"`. Account onboarding is identity-scoped, so it goes through the
 `_` workspace of the cookie adapter. Anything only the Mac app can do (accepting
-a workspace invitation from the desktop flow, creating a workspace, desktop
-sign-in) rejects with "Available in the Mac app." In Settings, Application shows
+a workspace invitation from the desktop flow, desktop sign-in) rejects with
+"Available in the Mac app." Creating an organization is the entry's, not the
+shell's; see below. In Settings, Application shows
 Appearance and names the Mac app for the rest, and Notifications offers
 "In this browser". The sidebar always shows **Download the Mac app** above the
 account menu, as a footer item ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
@@ -229,6 +230,23 @@ The cookie adapter forwards the member route families (`spaces`, `projects`,
 checks; the adapter adds no permission of its own. The rest of `onboarding`
 stays out: creating, activating or joining a workspace there answers with a
 bearer session, and a browser holds only its HttpOnly cookie.
+
+### Creating an organization
+
+When the signed-in entry has nothing to list, it offers **Create an
+organization**, which shows `CreateOrganizationCard`: the Mac app's organization
+step, shared with `RegionOnboarding`, with the same name rules, UUIDv7 operation
+id and `workspace_create_requested` intent. The entry posts the name and
+operation id to `POST /browser/workspace/create` on Global. That route runs the
+Mac app's `PlatformOnboardingService.createWorkspace`, revokes the bearer session
+it returns without reading it into a response, and answers only
+`{ region, workspaceId }`. The entry then navigates to
+`/app/workspaces/<region>/<id>`, which opens through `/workspace/select` like
+any other organization, and the shell runs the creator's setup journey there:
+"This is you in Rally", then inviting teammates.
+Any account can create one, whatever it signed in with; see
+[multiple workspaces](multiple-workspaces.md#authority-and-data-flow) for how a
+deployment links the account.
 
 A member can turn on Web Push for this browser, delivered as described in
 [push-notifications.md](push-notifications.md#web-push-for-browser-members).
@@ -537,6 +555,36 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-06 — Create an organization from the browser
+
+**What changed:** The signed-in entry's empty state offers **Create an
+organization**. It shows the Mac app's organization step, extracted as
+`CreateOrganizationCard`, and creates through the new cookie route
+`POST /browser/workspace/create`. The route reuses the Mac app's create path on
+Global, revokes the bearer session that path issues, and returns only where to
+open the organization.
+
+**Why:** A person who signs in on the web with nothing shared reached a dead
+end: the only way to start an organization was the Mac app. Product asked for
+setup to start in the browser, following the Mac app's process.
+
+**Considered and rejected:** Forwarding `onboarding/workspace` through the
+cookie adapter. It answers with a bearer session, which browser JavaScript must
+never hold. A browser-only bridge method that registers a cookie in the target
+deployment, as activation does, was more machinery than needed while
+organizations are created on Global: the browser's existing Global cookie can
+select the new organization.
+
+The browser also records the account introduction as seen instead of showing
+it, since the landing page that sent the person here already introduced Rally.
+
+**Consequences:** Creation runs only on Global; another deployment answers 409
+`global_identity_required`. The bearer the create path mints is revoked at once,
+so it costs one session row. The button shows only on the empty state; someone
+with organizations listed has no way to create another here yet.
+
+PR: [#1129](https://github.com/juno-ai-labs/avalon/pull/1129).
 
 ### 2026-10-06 — A shared link opens the conversation after sign-in, with no Accept screen
 
