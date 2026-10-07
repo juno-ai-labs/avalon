@@ -257,7 +257,10 @@ vector one needs only the standard library.
 **Consequences:** The SVG copies are generator output; edit the parameters, not
 the files. The raster source mask `assets/brand/rally-mark-source.png` is still
 drawn separately from the SVG. Safari versions without SVG favicon support fall
-back to the PNG, which also has no square to outline.
+back to the PNG, which also has no square to outline. The favicon's colour switch is an
+inline `<style>`, so the site serves `/favicon.svg` under its own CSP
+(`apps/site/public/_headers`), and the browser client's Worker passes
+`/favicon.svg` through to its static assets.
 
 ### 2026-09-07 — Dock hosts read the installed icon catalog across upgrades
 
