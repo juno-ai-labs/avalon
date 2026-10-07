@@ -51,6 +51,22 @@ describe("passwordless email login", () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM users").get()).toEqual({ n:0 });
   });
 
+  it("emails a sign-in started from a shared link back to that link's path", async () => {
+    const env = bindings();
+    const link = async (returnPath?: string) => {
+      const challengeId = crypto.randomUUID();
+      await startEmailLogin(env,{ challengeId,email:"guest@example.test",...(returnPath === undefined ? {} : { returnPath }) });
+      const row = db.prepare("SELECT delivery_payload_encrypted FROM email_login_challenges WHERE id=?").get(challengeId)!;
+      const payload = await openEmailLoginSecret(env,challengeId,String(row.delivery_payload_encrypted)) as { text:string };
+      const url = new URL(/https:\/\/[^\s]+/u.exec(payload.text)![0]);
+      return `${url.origin}${url.pathname}`;
+    };
+    expect(await link("/app/global/2ZtR/s/3abc/c/4def/b/5ghi?x=1")).toBe("https://app.example.test/app/global/2ZtR/s/3abc/c/4def/b/5ghi");
+    expect(await link()).toBe("https://app.example.test/login/email");
+    expect(await link("/settings")).toBe("https://app.example.test/login/email");
+    expect(await link("//evil.example/app/")).toBe("https://app.example.test/login/email");
+  });
+
   it("lets link and OTP race for exactly one identity session and resumes the winner", async () => {
     const { env,challengeId,otp,token } = await challenge();
     const requests = [attempt(challengeId,otp),attempt(challengeId,token,"magic")];
