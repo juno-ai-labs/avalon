@@ -243,10 +243,7 @@ it returns without reading it into a response, and answers only
 `{ region, workspaceId }`. The entry then navigates to
 `/app/workspaces/<region>/<id>`, which opens through `/workspace/select` like
 any other organization, and the shell runs the creator's setup journey there:
-"This is you in Rally", then inviting teammates. The browser skips the three introduction screens: people
-reach it from the landing page, which already introduced Rally, so the gate
-records the introduction as seen, as the Mac app does after a pre-sign-in
-preview.
+"This is you in Rally", then inviting teammates.
 Any account can create one, whatever it signed in with; see
 [multiple workspaces](multiple-workspaces.md#authority-and-data-flow) for how a
 deployment links the account.

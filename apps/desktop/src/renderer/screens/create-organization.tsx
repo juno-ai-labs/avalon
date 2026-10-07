@@ -25,7 +25,6 @@ export function CreateOrganizationCard({ initialName = '', onCreate, operation, 
   /** Below the button: who is signed in, and the way out. */
   children?: ReactNode;
 }): React.JSX.Element {
-  const selected = 'global';
   const [name, setName] = useState(initialName);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +39,7 @@ export function CreateOrganizationCard({ initialName = '', onCreate, operation, 
     // per keystroke. The button's own `disabled` covers only the pointer.
     if (working) return;
     if (name.trim().length < 2) return;
-    const fingerprint = JSON.stringify({ name: name.trim(), region: selected });
+    const fingerprint = JSON.stringify({ name: name.trim(), region: 'global' });
     const operation = createOperation.current?.fingerprint === fingerprint
       ? createOperation.current
       : { fingerprint, id: uuidV7() };
@@ -48,7 +47,7 @@ export function CreateOrganizationCard({ initialName = '', onCreate, operation, 
     const operationId = operation.id;
     reportTelemetryProductIntent({
       kind: 'workspace_create_requested',
-      selectedRegion: selected,
+      selectedRegion: 'global',
       entrypoint: 'first_run',
       operationId,
     });
