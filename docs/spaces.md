@@ -1245,12 +1245,13 @@ the cutover never makes navigation disappear.
 workstream loader when its own scroll approaches the end. There is no second
 endpoint: this is the same `['workstreams']` page the former flat list used.
 
-**A member with no Channels at all is told so.** "No channels yet" — the one
-line of the removed list's copy that is kept — sits under the Spaces, in a
-section of its own so it does not land against the last Space's own "No
-channels". The state it describes is a brand-new Organization: **Spaces →
-General → No channels**, and without it nothing under that, which reads as a
-sidebar that has stopped talking rather than one that is empty.
+**A member with no Channels at all sees the empty sections, not a line.** The
+sidebar draws the empty Pinned section, the Channels heading with its sort
+toggle, and one ghost row under it: the glyph's pebble dashed and unfilled with
+no symbol, and still skeleton bars for the title and time. There is no "No
+channels yet" line, except as screen-reader text. The heading is hidden when
+every Channel is pinned. A guest, who cannot create a Channel, still sees "No
+channels yet" instead.
 
 **A Channel reached only through a Breakout is a socket row like any other**,
 for a member or a guest. The conversation directory (`/sharing/navigation`)

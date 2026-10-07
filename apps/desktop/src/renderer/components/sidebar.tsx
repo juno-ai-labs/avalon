@@ -17,7 +17,7 @@ import { NewWorkstreamMenu } from './new-workstream-menu';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { conversationNeedsViewer, type CreateSpaceRequest, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
+import { type CreateSpaceRequest, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconArrowsSort, IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
@@ -31,9 +31,8 @@ import {
 } from '../lib/deep-link-navigation';
 import { formatDateTime, formatSidebarActivityTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
 import { layoutRowAt } from '../lib/list-motion';
-import { committedOrder, moveWithin, orderByStoredIds } from '../lib/personal-order';
-import { compareAlphabeticalName, compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
-import { compareRecentChannels } from '../../common/recency-groups';
+import { committedOrder, moveWithin } from '../lib/personal-order';
+import { compareAlphabeticalName } from '@rally/ui/lib/alphabetical';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import type { AttentionItem } from '../lib/attention-items';
 import { desktopBridge } from '../lib/platform';
@@ -41,6 +40,13 @@ import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNav
 import { spaceFailureOf, spaceFailureSentence } from '../lib/space-failure-copy';
 import { useSpaceChoices } from '../lib/space-choices';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import {
+  compareChannels,
+  orderPinnedWorkstreams,
+  spacePinPosition,
+  workstreamAttentionCount,
+  workstreamHasActivityForViewer,
+} from '../lib/sidebar-channel-order';
 import { MIN_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, type SidebarChannelSort, useUiStore } from '../lib/ui-store';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { layoutKey, useSemanticScroll } from '../lib/desktop-layout';
@@ -55,7 +61,7 @@ import { ManageAccessDialog } from './manage-access-dialog';
 import { ContextNestedMenu } from './nested-menu';
 import { SpacePills } from './space-pills';
 import { RelativeTime } from './relative-time';
-import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
+import { SidebarGhostChannelRow, SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { WorkstreamGlyph } from './workstream-glyph';
 import { AttentionMenu } from './attention-menu';
 
@@ -90,7 +96,7 @@ interface SidebarProps {
   /**
    * The Spaces whose Channels have been loaded, when they load a Space at a
    * time. A Space missing here with no rows yet draws placeholders rather than
-   * "No channels yet". Absent means every Channel held is all there is.
+   * the empty list. Absent means every Channel held is all there is.
    */
   loadedSpaceIds?: ReadonlySet<string>;
   /** The Space on screen changed: load its Channels ahead of the others. */
@@ -180,53 +186,18 @@ function batchSubject(target: WorkstreamBatchTarget): string {
 }
 
 /**
- * How many of this Channel's conversations need this reader: its Breakouts,
- * plus Main when the row shows Main. One count for the row's bold title, its
- * dot, and the Needs you sort, so the three cannot disagree.
- */
-function workstreamAttentionCount(workstream: WorkstreamSummary): number {
-  const mainVisible = !workstream.associativeSubstreamId || workstream.associativeSubstreamId === '0';
-  return (workstream.breakoutAttentionCount ?? 0)
-    + Number(mainVisible && conversationNeedsViewer(workstream));
-}
-
-/** Whether the row reads as unread: the input to its bold title. */
-function workstreamHasActivityForViewer(workstream: WorkstreamSummary): boolean {
-  return workstream.hasUnread === true || workstreamAttentionCount(workstream) > 0;
-}
-
-/** The sidebar's Recent sort, shared with the menu bar. */
-const compareRecent = compareRecentChannels;
-
-type WorkstreamComparator = (left: WorkstreamSummary, right: WorkstreamSummary) => number;
-
-/**
- * The sort toggle's cycle: each order's label, how it is read aloud, its
- * comparator, and what a click moves to. `heldId` is the open Channel that was
- * bold when the reader opened it; only Needs you reads it.
+ * The sort toggle's cycle: each order's label, how it is read aloud, and what
+ * a click moves to. The comparators are `compareChannels`, shared with the
+ * landing a leave opens.
  */
 const CHANNEL_SORTS: Record<SidebarChannelSort, {
   label: string;
   spoken: string;
-  compare: (heldId: string | null) => WorkstreamComparator;
   next: SidebarChannelSort;
 }> = {
-  alphabetical: { label: 'A–Z', spoken: 'A to Z', compare: () => compareAlphabeticalTitle, next: 'recent' },
-  recent: { label: 'Recent', spoken: 'by recent activity', compare: () => compareRecent, next: 'needs_you' },
-  // Every bold row first, then the rest, each half in Recent order. Opening a
-  // bold row reads it, and without the hold it would drop out from under the
-  // pointer while the reader is still in it; it stays until they move on.
-  needs_you: {
-    label: 'Needs you',
-    spoken: 'by what needs you',
-    compare: (heldId) => {
-      const needsYou = (workstream: WorkstreamSummary): number => Number(
-        workstream.id === heldId || workstreamHasActivityForViewer(workstream),
-      );
-      return (left, right) => needsYou(right) - needsYou(left) || compareRecent(left, right);
-    },
-    next: 'alphabetical',
-  },
+  alphabetical: { label: 'A–Z', spoken: 'A to Z', next: 'recent' },
+  recent: { label: 'Recent', spoken: 'by recent activity', next: 'needs_you' },
+  needs_you: { label: 'Needs you', spoken: 'by what needs you', next: 'alphabetical' },
 };
 
 /** How close the pointer comes to the navigation's edge before its pill shows. */
@@ -942,35 +913,6 @@ function WorkstreamRow({
 }
 
 /**
- * The pinned work streams, in the order to render them.
- *
- * `pinPosition` is the server's answer and the only order that survives a
- * reload. `dragOrder` is the arrangement a drag is currently building, and wins
- * while it exists so rows move under the pointer rather than after the round
- * trip. Ids in `dragOrder` that are no longer pinned — unpinned in another
- * window mid-drag — drop out, and anything pinned that the drag never saw is
- * appended, so the section always shows every pin exactly once.
- */
-export function orderPinnedWorkstreams(
-  workstreams: WorkstreamSummary[],
-  dragOrder: readonly string[] | null,
-): WorkstreamSummary[] {
-  const pinned = workstreams
-    .filter((workstream) => workstream.pinPosition !== null)
-    // The id breaks a tie the way both server readers do. Positions are unique
-    // today, so this cannot fire — it is here because "readers of this list
-    // agree on the order" is stated as an invariant, and a third reader that
-    // fell back to arrival order would be the one place it was not true.
-    .sort((left, right) =>
-      (left.pinPosition ?? 0) - (right.pinPosition ?? 0) || left.id.localeCompare(right.id));
-  // The same arrangement rule every other hand-ordered list in the app is
-  // drawn by, with the drag standing in for the stored order: ids it names
-  // first, then everything it never saw, and an id that is no longer pinned —
-  // unpinned in another window mid-drag — dropped rather than drawn as a gap.
-  return orderByStoredIds(pinned, dragOrder ?? [], (workstream) => workstream.id);
-}
-
-/**
  * Where a Channel sits in **All**'s Pinned section, or null when it is pinned
  * nowhere.
  *
@@ -1385,9 +1327,7 @@ export function Sidebar({
         ...workstream,
         pinPosition: selectedSpaceId === null
           ? allPinPosition(workstream, generalSpaceId)
-          : workstream.spaceIds.includes(selectedSpaceId)
-            ? workstream.spacePins?.find((pin) => pin.spaceId === selectedSpaceId)?.position ?? null
-            : null,
+          : spacePinPosition(workstream, selectedSpaceId),
       }))
   ), [generalSpaceId, selectedSpaceId, spaces, spacesReady, workstreams]);
   const selectedSpace = spaces?.find((space) => space.id === selectedSpaceId);
@@ -1458,7 +1398,7 @@ export function Sidebar({
   const unpinnedWorkstreams = useMemo(() => (
     visibleWorkstreams
       .filter((workstream) => workstream.pinPosition === null)
-      .sort(CHANNEL_SORTS[channelSort].compare(heldOpen.heldId))
+      .sort(compareChannels(channelSort, heldOpen.heldId))
   ), [channelSort, heldOpen.heldId, visibleWorkstreams]);
   const displayedWorkstreams = useMemo(
     () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
@@ -2288,30 +2228,6 @@ export function Sidebar({
           onScroll={loadMoreWhenNearBottom}
           scrollRef={scrollRef}
         >
-          {/*
-            A member with no Channels at all, told so.
-
-            The line the time-grouped list used to carry, in the one state that
-            list existed to describe: a brand-new Organization shows **Spaces →
-            General → No channels** and then, without this, nothing — a sidebar
-            that has stopped talking rather than one that is empty. It sits
-            under the hierarchy because that is where the reader has just been
-            told where Channels live, and it is one line rather than a section
-            because there is no list to head.
-
-            Nothing pinned and nothing unplaced are both implied by the test:
-            all three sections draw from the same rows.
-          */}
-          {spacesEnabled && !channelsLoading && visibleWorkstreams.length === 0 && (
-            // In a section of its own, for the gap every other section carries:
-            // hung directly off the nav it lands against the last Space's own
-            // "No channels" and reads as a second line of that Space's rather
-            // than as the sidebar's.
-            <div className="sidebar-section">
-              <p className="sidebar-empty">No channels yet</p>
-            </div>
-          )}
-
           {/* Always there once the Organization is open, empty or not: an
               empty section is where a Channel is dragged to pin it, so it has
               to exist before anything is pinned. */}
@@ -2444,14 +2360,10 @@ export function Sidebar({
                 <SidebarSkeletonGroup count={3} />
               </>
             ) : spacesEnabled ? (
-              unpinnedWorkstreams.length > 0 && (
-                /* The selected Space above is the heading for this rail. A
-                   second "Channels" label only restates the level the rail
-                   already represents and pushes its rows down. */
+              unpinnedWorkstreams.length > 0 || (pinnedWorkstreams.length === 0 && !spacesReadOnly) ? (
                 <>
-                {/* Named whenever the list has rows, pinned or not: the heading
-                    carries the sort toggle, and a reader with no pins is the
-                    one who most needs Recent and Needs you to find their way. */}
+                {/* Also shown with no Channels at all, over a ghost row; hidden
+                    when everything is pinned. */}
                 <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:channels">
                   <h2>Channels</h2>
                   <button
@@ -2466,16 +2378,24 @@ export function Sidebar({
                     <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
                   </button>
                 </div>
-                <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
-                  {unpinnedWorkstreams.map((workstream) => (
-                    <Fragment key={workstream.id}>{renderWorkstream(
-                      workstream,
-                      undefined,
-                      selectedSpaceId ?? undefined,
-                    )}</Fragment>
-                  ))}
-                </SidebarList>
+                {unpinnedWorkstreams.length === 0 ? <>
+                  <SidebarList><SidebarGhostChannelRow /></SidebarList>
+                  <p className="sr-only">No channels yet</p>
+                </> : (
+                  <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
+                    {unpinnedWorkstreams.map((workstream) => (
+                      <Fragment key={workstream.id}>{renderWorkstream(
+                        workstream,
+                        undefined,
+                        selectedSpaceId ?? undefined,
+                      )}</Fragment>
+                    ))}
+                  </SidebarList>
+                )}
                 </>
+              ) : (
+                // A guest cannot create a Channel, so there is no slot to show.
+                pinnedWorkstreams.length === 0 && <p className="sidebar-empty">No channels yet</p>
               )
             ) : groups.length === 0 ? (
               // Pinned work streams are work streams, so the empty line only

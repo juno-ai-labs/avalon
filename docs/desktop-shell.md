@@ -41,7 +41,8 @@ drags it), clamped to the shared minimum and maximum and to what
 the window leaves the conversation. Dragging below the minimum stops there.
 
 Its top bar holds the macOS window controls' inset and the host's actions. The
-desktop's are **Restart to update** (only when `useDownloadedUpdate` has
+actions sit at the bar's end on macOS and at phone width, and at its start where
+no window controls are drawn (the browser). The desktop's are **Restart to update** (only when `useDownloadedUpdate` has
 one), the **attention menu** (a red count, or a bell when nothing is waiting;
 [`attention-menu.md`](attention-menu.md)), **Search organization**, **Import from ChatGPT or Claude** (the browser
 import window, locked to the selected Space), and **New channel** (the Start a
