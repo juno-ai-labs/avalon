@@ -369,6 +369,8 @@ export interface WorkstreamRowDrag {
  * change what the control makes.
  */
 const NEW_STREAM_LABEL = 'New channel';
+const IMPORT_LABEL = 'Import from ChatGPT or Claude';
+const IMPORT_DESKTOP_ONLY = 'Import from Claude/ChatGPT is only available in the macOS app as we use computer use to read your chat for accuracy';
 
 /**
  * How a public row says so. The row carries no badge: its glyph matches the
@@ -1524,7 +1526,8 @@ export function Sidebar({
     .filter((space) => space.systemRole !== 'general')
     .map((space) => [space.id, space.name])), [placementSpaces]);
   // Importing reads the conversation in Rally's own browser, which only the
-  // desktop host has. Under a Space the import starts there and offers no other.
+  // desktop host has; the web host draws the button disabled and says why.
+  // Under a Space the import starts there and offers no other.
   const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
   const importSpaces = useSpaceChoices(placementSpaces).filter((space) => space.reach !== 'through_channel'
     && (selectedSpaceId === null || space.id === selectedSpaceId));
@@ -2160,16 +2163,22 @@ export function Sidebar({
           <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
             <IconSearch aria-hidden="true" size={16} stroke={1.9} />
           </IconButton>
-          {!spacesReadOnly && openBrowserImport && <IconButton
+          {!spacesReadOnly && (openBrowserImport ? <IconButton
             disabled={importSpaces.length === 0}
-            label="Import from ChatGPT or Claude"
+            label={IMPORT_LABEL}
             onClick={() => void openBrowserImport({
               spaces: importSpaces.map((space) => ({ id: space.id, name: space.name })),
               ...(selectedSpaceId !== null ? { spaceLocked: true } : {}),
             })}
           >
             <IconCloudDownload aria-hidden="true" size={17} stroke={1.8} />
-          </IconButton>}
+          </IconButton> : <Tip label={IMPORT_DESKTOP_ONLY}>
+            {/* `aria-disabled` rather than `disabled`: a disabled button takes
+                no hover or focus, so the reason would never show. */}
+            <IconButton aria-disabled="true" label={IMPORT_LABEL} showTooltip={false}>
+              <IconCloudDownload aria-hidden="true" size={17} stroke={1.8} />
+            </IconButton>
+          </Tip>)}
           {!spacesReadOnly && <NewWorkstreamMenu
             canCreateSpace={spaces !== undefined && spacesReady}
             lockedSpaceId={selectedSpaceId}

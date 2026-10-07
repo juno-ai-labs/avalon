@@ -4252,10 +4252,15 @@ describe('the sidebar Space filter', () => {
       });
     });
 
-    it('offers no import outside the desktop host', () => {
+    it('draws import disabled outside the desktop host and says why', async () => {
       renderFiltered();
 
-      expect(screen.queryByRole('button', { name: 'Import from ChatGPT or Claude' })).not.toBeInTheDocument();
+      const button = screen.getByRole('button', { name: 'Import from ChatGPT or Claude' });
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.focus(button);
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(
+        'Import from Claude/ChatGPT is only available in the macOS app as we use computer use to read your chat for accuracy',
+      );
     });
 
     it('offers a restart only once an update has been downloaded', async () => {

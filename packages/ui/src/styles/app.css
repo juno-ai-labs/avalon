@@ -7670,6 +7670,10 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 }
 .sidebar-top-actions > .icon-button:hover:not(:disabled),
 .sidebar-top-action:hover:not(:disabled) { background: var(--av-sys-color-surface-raised-hover); }
+/* Import on the web host: shown so people learn it exists, but `aria-disabled`
+   rather than `disabled` so its tooltip still opens on hover and focus. */
+.sidebar-top-actions > .icon-button[aria-disabled='true'] { cursor: not-allowed; opacity: 0.48; }
+.sidebar-top-actions > .icon-button[aria-disabled='true']:hover { background: var(--av-sys-color-surface-raised); }
 /* The one action asking to be taken: a fixed blue fill, the same in both themes. */
 .sidebar-top-actions > .sidebar-top-update {
   background: var(--av-sys-color-project-blue);
