@@ -536,6 +536,9 @@ const browserBridge: RallyDesktopBridge = {
   onBrowserImportContextChanged() {
     return () => undefined;
   },
+  onOrganizationListRefreshRequested() {
+    return () => undefined;
+  },
   async completeBrowserImport() {},
   async reportBrowserImport() {},
   onBrowserImportProgress() {

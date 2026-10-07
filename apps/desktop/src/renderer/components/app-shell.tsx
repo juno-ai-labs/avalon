@@ -414,6 +414,8 @@ export function applyPinnedWorkstreamsIfCurrent(
 
 /** How long the panes take to fade up on a new workspace; matches `workspace-enter` in `app.css`. */
 const WORKSPACE_ENTER_MS = 320;
+/** How often Rally staff's list of Organizations that granted Rally access is reread. */
+const SUPPORT_WORKSPACES_REFRESH_MS = 10 * 60 * 1_000;
 
 /**
  * Whether the active workspace shell has a Space rail. A session without an
@@ -614,14 +616,24 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     enabled: multipleWorkspacesEnabled,
   });
   // Organizations that granted Rally access, for Rally staff only
-  // (`docs/impersonation.md`). Anybody else gets `null`, so the menu never
-  // asks again in this shell; staff, and a read that failed, reread on open.
+  // (`docs/impersonation.md`). Anybody else gets `null` and is never asked
+  // again in this shell. Staff, and a read that failed, reread in the
+  // background on a timer rather than when the menu opens, so a new grant is
+  // already listed when the menu appears instead of popping in under it.
   const supportWorkspaces = useQuery({
     queryKey: ['support-workspaces', session?.impersonator?.id ?? session?.user.id],
     queryFn: () => listSupportWorkspaces(),
     retry: false,
     staleTime: Infinity,
+    refetchInterval: (query) => query.state.data === null ? false : SUPPORT_WORKSPACES_REFRESH_MS,
+    refetchIntervalInBackground: true,
   });
+  const refetchSupportWorkspaces = supportWorkspaces.refetch;
+  const refetchWorkspaceDirectory = workspaceDirectory.refetch;
+  useEffect(() => desktopBridge().onOrganizationListRefreshRequested(() => {
+    void refetchSupportWorkspaces();
+    if (multipleWorkspacesEnabled) void refetchWorkspaceDirectory();
+  }), [multipleWorkspacesEnabled, refetchSupportWorkspaces, refetchWorkspaceDirectory]);
   const impersonator = session?.impersonator
     ? { id: session.impersonator.id, name: session.impersonator.name, email: session.impersonator.email,
         timezone: 'UTC', ...(session.impersonator.avatarUrl ? { avatarUrl: session.impersonator.avatarUrl } : {}) }
@@ -834,7 +846,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             supportWorkspaces={supportWorkspaces.data ?? []}
             loadSupportPeople={listSupportPeople}
             onStartSupportSession={(target, person) => startSupportSession({ region: target.region, workspaceId: target.id }, person.id)}
-            onSupportMenuOpen={() => { if (supportWorkspaces.data !== null) void supportWorkspaces.refetch(); }}
             onSwitchWorkspace={async (target) => {
               const targetKey = desktopWorkspaceIdentityKey(target.region, target.id);
               if (!navigator.onLine) {
