@@ -2,6 +2,7 @@ import { startConnectorAuthorization } from '../lib/start-connector-authorizatio
 import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
 import { CopyButton, CopyField } from '../components/copy-button';
+import { SupportAccessSetting } from '../components/support-access-setting';
 import { ServerCog } from 'lucide-react';
 import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
@@ -15,16 +16,17 @@ import { SettingsSearchResults, useRevealSetting } from '../settings/search-resu
 import { SidebarSearch } from '../components/sidebar-search';
 import { digestDeliverySetting } from '../settings/digest-provider';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
-  GitBranch,
-  Globe,
   LockKeyhole,
   LoaderCircle,
   MailPlus,
   MonitorCog,
   Newspaper,
   Bell,
+  ChevronRight,
+  Ellipsis,
   Plug,
   RefreshCcw,
   Search,
@@ -32,12 +34,12 @@ import {
   Trash2,
   UserRound,
   Users,
+  Webhook,
   Wifi,
   X,
   type LucideIcon,
 } from 'lucide-react';
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -45,7 +47,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
-import { ConnectorEventConsoleProviders, ConnectorInstallationProviders, connectorApiKeyAcceptable } from '@rally/contracts';
+import { ConnectorEventConsoleProviders, ConnectorInstallationProviders, WorkspaceNameSchema, connectorApiKeyAcceptable } from '@rally/contracts';
 import type {
   ConnectorOAuthStart,
   CustomMcpToolPolicy,
@@ -54,19 +56,21 @@ import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { parseDesktopReleaseChannel, type DesktopReleaseChannel } from '../../common/release-channels';
-import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, InlineError, Modal, SegmentedControl } from '../components/primitives';
-import { connectorBrandMark } from '../lib/plugin-marks';
+import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, IconButton, InlineError, Modal, SegmentedControl, Tip } from '../components/primitives';
+import { connectorBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
 import { DigestSettings } from '../components/digest-settings';
 import { UsageSettingsSection } from '../components/organization-usage';
+import { InlineEditableText } from '../components/inline-editable-text';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
+import { useCloseWindowSurface } from '../lib/window-surface';
 import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError, type RallyApi } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { desktopBridge } from '../lib/platform';
-import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOAD_URL, useConnectorStartAvailable } from '../lib/browser-connectors';
+import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, useConnectorStartAvailable } from '../lib/browser-connectors';
 import { disableWebPush, enableWebPush, webPushState } from '../lib/web-push';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useEscapeClosesWindow } from '../lib/window-escape';
@@ -358,7 +362,18 @@ interface SettingsNavItem {
   id: SettingsSection;
   label: string;
   icon: LucideIcon;
+  /** Drawn in place of `icon` when the item is a company's. */
+  mark?: PluginBrandMark | null;
+  /** Set on a `connection` page's item, which is one of many sharing its section. */
+  connectionId?: string;
   child?: boolean;
+}
+
+/** The icon a connection's page wears when its company has no mark to draw. */
+function fallbackConnectionIcon(connection: WorkstreamConnection): LucideIcon {
+  if (connection.connectorType === 'custom_mcp') return ServerCog;
+  if (connection.connectorType === 'generic_webhook') return Webhook;
+  return Plug;
 }
 
 /**
@@ -378,11 +393,11 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       { id: 'digest', label: 'Digest', icon: Newspaper },
       { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'workspace', label: 'Organization', icon: Users },
-      // Under Workspace rather than beside it: the Terminal egress policy is a
-      // workspace-wide setting, but it is a page of its own — a review-then-
-      // confirm flow that stops running sandboxes, which does not belong in the
-      // middle of a list of names, timezones and invitations.
-      { id: 'internet-access', label: 'Internet access', icon: Globe, child: true },
+      // Its own top-level page rather than part of Organization: the Terminal
+      // egress policy is a review-then-confirm flow that stops running
+      // sandboxes, which does not belong in the middle of a list of names,
+      // timezones and invitations.
+      { id: 'internet-access', label: 'Security', icon: ShieldCheck },
       { id: 'connections', label: 'Connections', icon: Plug },
     ],
   },
@@ -408,8 +423,8 @@ function providerSetting(provider: { id: string; name: string; description: stri
 }
 function connectionSetting(connection: WorkstreamConnection, admin: boolean) {
   return defineSetting({
-    id: 'connection:' + connection.id, section: 'connections', kind: 'custom',
-    label: connection.displayName, description: 'Manage this installed connection.',
+    id: 'connection:' + connection.id, section: 'connection', kind: 'custom',
+    label: connection.displayName, description: 'Status, access, tools and management for this installed connection.',
     options: [
       ...(admin && reconnectableConnectorTypes.has(connection.connectorType)
         && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') ? ['Refresh', 'Reconnect'] : []),
@@ -429,6 +444,16 @@ function missingToolCountLabel(connection: WorkstreamConnection): string {
     case 'counting': return 'No tool count yet: counting this connection’s tools';
     case 'not_counted': return 'No tool count: the last tool discovery did not succeed';
     default: return 'No tool count available';
+  }
+}
+function connectionStatusLabel(connection: WorkstreamConnection): string {
+  return connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status;
+}
+function connectionStatusDescription(connection: WorkstreamConnection): string {
+  switch (connection.status) {
+    case 'healthy': return 'Rally can use this connection.';
+    case 'reconnect_required': return 'The provider no longer accepts this connection’s authorization. Refresh it to keep using its tools.';
+    case 'disabled': return 'This connection is disabled and exposes no tools.';
   }
 }
 const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
@@ -559,6 +584,7 @@ export function WorkspaceSettingsScreen({
     runtime,
     leaveWorkspace,
     signOut,
+    endSupportSession,
     pendingConnectorOAuth,
     setPendingConnectorOAuth,
   } = useAppSession();
@@ -584,7 +610,9 @@ export function WorkspaceSettingsScreen({
   const activeSection: SettingsSection = guest && !GUEST_SETTINGS_SECTIONS.has(requestedSection) ? 'account' : requestedSection;
   const [navigationQuery, setNavigationQuery] = useState('');
   const [connectionFilter, setConnectionFilter] = useState<ConnectionFilter>('not_connected');
-  const [githubSettingsConnectionId, setGitHubSettingsConnectionId] = useState<string | null>(null);
+  // Which connection the `connection` page is showing. A section names a page
+  // and this names the instance, the same way search results carry both.
+  const [connectionPageId, setConnectionPageId] = useState<string | null>(null);
   const [githubRepositorySearch, setGitHubRepositorySearch] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'member'>('member');
@@ -628,7 +656,6 @@ export function WorkspaceSettingsScreen({
     [{ name: '', value: '' }],
   );
   const [customMcpToolPolicy, setCustomMcpToolPolicy] = useState<CustomMcpToolPolicy>('all_tools');
-  const [customMcpSettingsConnectionId, setCustomMcpSettingsConnectionId] = useState<string | null>(null);
   const [leaveConfirmationOpen, setLeaveConfirmationOpen] = useState(false);
   const timezoneOptions = useMemo(
     () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone])].sort(),
@@ -653,6 +680,23 @@ export function WorkspaceSettingsScreen({
     mutationFn: (guest: { id: string; incarnation: string; revision: number }) =>
       api!.promoteWorkspaceGuest(guest.id, { incarnation: guest.incarnation, expectedRevision: guest.revision }),
     onSuccess: () => setPromotion(null),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
+  });
+  // Members first, then guests, each by the name the row shows.
+  const sortedMembers = useMemo(() => {
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    const people = members.data ?? [];
+    return [
+      ...people.filter((member) => member.accessClass !== 'guest').sort(byName),
+      ...people.filter((member) => member.accessClass === 'guest').sort(byName),
+    ];
+  }, [members.data]);
+  const [suspension, setSuspension] = useState<{ id: string; name: string; guest: boolean } | null>(null);
+  // "Suspend" is the server's member removal: the row goes, access ends at
+  // once, and an invitation brings them back. Their contributions stay.
+  const suspendMember = useMutation({
+    mutationFn: (userId: string) => api!.removeWorkspaceMember(workspace.id, userId),
+    onSuccess: () => setSuspension(null),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['workspace-members'] }),
   });
   const leavingClosesWorkspace = members.data?.length === 1;
@@ -681,31 +725,20 @@ export function WorkspaceSettingsScreen({
     refetchOnWindowFocus: true,
     staleTime: 5_000,
   });
-  const githubSettingsConnections = useMemo(
-    () => (connections.data ?? []).filter((connection) => (
-      connection.settingsKind === 'github_repository_access'
-      && connection.status !== 'disabled'
-    )),
+  const installedConnections = useMemo(
+    () => (connections.data ?? []).filter((connection) => installedConnectorTypes.has(connection.connectorType)),
     [connections.data],
   );
-  const customMcpSettingsConnections = useMemo(
-    () => (connections.data ?? []).filter((connection) => (
-      connection.settingsKind === 'custom_mcp_tools'
-      && connection.status !== 'disabled'
-    )),
-    [connections.data],
-  );
-  useEffect(() => {
-    if (
-      githubSettingsConnectionId
-      && githubSettingsConnections.some((connection) => connection.id === githubSettingsConnectionId)
-    ) return;
-    setGitHubSettingsConnectionId(githubSettingsConnections[0]?.id ?? null);
-  }, [githubSettingsConnectionId, githubSettingsConnections]);
+  const pageConnection = installedConnections.find((connection) => connection.id === connectionPageId);
+  // A disabled connection keeps its page, but its kind-specific settings read
+  // through credentials it no longer has.
+  const pageSettingsKind = pageConnection?.status === 'disabled' ? null : pageConnection?.settingsKind ?? null;
+  const githubSettingsConnectionId = pageSettingsKind === 'github_repository_access' ? pageConnection!.id : null;
+  const customMcpSettingsConnectionId = pageSettingsKind === 'custom_mcp_tools' ? pageConnection!.id : null;
   const githubRepositorySettings = useQuery({
     queryKey: ['github-repository-access', githubSettingsConnectionId],
     queryFn: ({ signal }) => api!.getGitHubRepositoryAccessSettings(githubSettingsConnectionId!, signal),
-    enabled: Boolean(api && activeSection === 'github' && githubSettingsConnectionId),
+    enabled: Boolean(api && activeSection === 'connection' && githubSettingsConnectionId),
     staleTime: 10_000,
   });
   const updateGitHubRepositorySettings = useMutation({
@@ -724,20 +757,13 @@ export function WorkspaceSettingsScreen({
       await queryClient.invalidateQueries({ queryKey: ['github-repository-access', githubSettingsConnectionId] });
     },
   });
-  useEffect(() => {
-    if (
-      customMcpSettingsConnectionId
-      && customMcpSettingsConnections.some((connection) => connection.id === customMcpSettingsConnectionId)
-    ) return;
-    setCustomMcpSettingsConnectionId(customMcpSettingsConnections[0]?.id ?? null);
-  }, [customMcpSettingsConnectionId, customMcpSettingsConnections]);
   // The catalog is read live from a third-party server on every open, so it is
   // never served from cache: a tool the server withdrew an hour ago is exactly
   // what somebody opening this screen is trying to find out about.
   const customMcpSettings = useQuery({
     queryKey: ['custom-mcp-settings', customMcpSettingsConnectionId],
     queryFn: ({ signal }) => api!.getCustomMcpSettings(customMcpSettingsConnectionId!, signal),
-    enabled: Boolean(api && activeSection === 'custom-mcp' && customMcpSettingsConnectionId),
+    enabled: Boolean(api && activeSection === 'connection' && customMcpSettingsConnectionId),
     staleTime: 0,
   });
   const updateCustomMcpToolPolicy = useMutation({
@@ -990,8 +1016,17 @@ export function WorkspaceSettingsScreen({
     onSuccess: (user) => setUserTimezone(user.timezone),
   });
   const updateWorkspaceTimezone = useMutation({
-    mutationFn: (timezone: string) => api!.updateWorkspaceTimezone(timezone),
+    mutationFn: (timezone: string) => api!.updateWorkspace({ timezone }),
     onSuccess: (updated) => setWorkspaceTimezone(updated.timezone),
+  });
+  const renameWorkspace = useMutation({
+    mutationFn: (name: string) => api!.updateWorkspace({ name }),
+    // Written straight into the read, so the name is in `workspace` before the
+    // field lets go of it, without a refetch; the sync echo refetches anyway.
+    onSuccess: (updated) => queryClient.setQueriesData<Workspace>(
+      { queryKey: ['workspace'] },
+      (current) => current && { ...current, name: updated.name },
+    ),
   });
   const applyApplicationSettingsMutation = (
     settings: DesktopApplicationSettings,
@@ -1046,46 +1081,37 @@ export function WorkspaceSettingsScreen({
     [invitations.data],
   );
   const developerSettingsAvailable = applicationSettings?.developerSettingsAvailable ?? false;
+  // Every installed connection is a page of its own beneath Connections, in
+  // the order the tables list them, whether or not it has settings beyond its
+  // status: the page is where a connection is looked at and managed, and a
+  // connection with nothing to configure is still one somebody looks for.
+  const connectionNavigationItems = useMemo<SettingsNavItem[]>(() => [
+    ...installedConnections.filter((connection) => connection.scope === 'you'),
+    ...installedConnections.filter((connection) => connection.scope === 'workspace'),
+  ].map((connection) => ({
+    id: 'connection' as const,
+    connectionId: connection.id,
+    label: connection.displayName,
+    icon: fallbackConnectionIcon(connection),
+    mark: connectorBrandMark(connection.connectorType, connection.displayName),
+    child: true,
+  })), [installedConnections]);
   const settingsNavigationWithConnectors = useMemo(() => settingsNavigation.map((group) => {
-    const withGithub = group.label !== 'Settings' || githubSettingsConnections.length === 0
+    const withConnections = group.label !== 'Settings'
       ? group
-      : {
-          ...group,
-          items: group.items.flatMap((item) => item.id === 'connections'
-            ? [item, {
-                id: 'github' as const,
-                label: 'GitHub',
-                icon: GitBranch,
-                child: true,
-              }]
-            : [item]),
-        };
-    // Beneath Connections like GitHub's, and only once a server is connected:
-    // a pane whose whole content is one server's live tool catalog has nothing
-    // to say until there is a server.
-    const withCustomMcp = group.label !== 'Settings' || customMcpSettingsConnections.length === 0
-      ? withGithub
-      : {
-          ...withGithub,
-          items: withGithub.items.flatMap((item) => item.id === 'connections'
-            ? [item, {
-                id: 'custom-mcp' as const,
-                label: 'MCP tools',
-                icon: ServerCog,
-                child: true,
-              }]
-            : [item]),
-        };
+      : { ...group, items: group.items.flatMap((item) => item.id === 'connections' ? [item, ...connectionNavigationItems] : [item]) };
     // Dropped from the list entirely rather than shown disabled: their digest
     // has in fact stopped arriving (`fireDigestSchedule` reads this same flag
     // and returns `flag_disabled`), but there is no copy in this screen for a
     // paused state, and an absent section is still an honest answer to "is
     // this available to me."
-    return { ...withCustomMcp, items: withCustomMcp.items.filter((item) =>
+    return { ...withConnections, items: withConnections.items.filter((item) =>
       (!guest || GUEST_SETTINGS_SECTIONS.has(item.id))
       && (item.id !== 'digest' || digestSettingsAvailable)
       && (item.id !== 'notifications' || featureFlags.data?.pushNotificationsEnabled === true)) };
-  }), [guest, githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable, featureFlags.data?.pushNotificationsEnabled]);
+  // Every Application setting but appearance is about the Mac app itself, so a
+  // browser drops the whole Desktop app group and shows appearance in Account.
+  }).filter((group) => !browserHost || group.label !== 'Desktop app'), [browserHost, guest, connectionNavigationItems, digestSettingsAvailable, featureFlags.data?.pushNotificationsEnabled]);
   const availableSections = useMemo(
     () => new Set(settingsNavigationWithConnectors.flatMap((group) => group.items.map((item) => item.id))),
     [settingsNavigationWithConnectors],
@@ -1097,7 +1123,8 @@ export function WorkspaceSettingsScreen({
     menuBar: applicationSettings?.menuBarAvailable !== false,
     login: applicationSettings?.launchAtLoginAvailable !== false,
     releaseChannel: applicationSettings?.releaseChannelAvailable !== false,
-  }), [availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable, applicationSettings?.releaseChannelAvailable]);
+    browser: browserHost,
+  }), [browserHost, availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable, applicationSettings?.releaseChannelAvailable]);
   const [searchTarget, setSearchTarget] = useState<SettingSearchResult | null>(null);
   const searchEntries = useMemo(() => collectSettings([
     {
@@ -1108,15 +1135,14 @@ export function WorkspaceSettingsScreen({
           return { key: definition.id, definition };
         }),
     },
-    { ...coreSettingsProvider, entries: coreSettingsProvider.entries.filter((entry) =>
-      entry.definition.section !== 'github' && entry.definition.section !== 'custom-mcp')
+    { ...coreSettingsProvider, entries: coreSettingsProvider.entries.filter((entry) => !entry.definition.connectionKind)
       .map((entry) => ({ ...entry, instanceLabel: connectorProviders.find((provider) =>
         'provider:' + provider.id === entry.definition.entryPoint)?.name })) },
     {
       id: 'connected-settings',
-      entries: [...githubSettingsConnections, ...customMcpSettingsConnections].flatMap((connection) =>
-        coreSettingsProvider.entries.filter((entry) => entry.definition.section ===
-          (connection.settingsKind === 'github_repository_access' ? 'github' : 'custom-mcp'))
+      entries: installedConnections.filter((connection) => connection.settingsKind && connection.status !== 'disabled')
+        .flatMap((connection) => coreSettingsProvider.entries
+          .filter((entry) => entry.definition.connectionKind === connection.settingsKind)
           .map((entry) => ({ ...entry, key: entry.key + ':' + connection.id,
             instanceId: connection.id, instanceLabel: connection.displayName }))),
     },
@@ -1128,12 +1154,12 @@ export function WorkspaceSettingsScreen({
     },
     {
       id: 'installed-connections',
-      entries: (connections.data ?? []).filter((connection) => installedConnectorTypes.has(connection.connectorType))
-        .map((connection) => ({
-          key: 'connection:' + connection.id, definition: connectionSetting(connection, isAdmin),
-        })),
+      entries: installedConnections.map((connection) => ({
+        key: 'connection:' + connection.id, definition: connectionSetting(connection, isAdmin),
+        instanceId: connection.id,
+      })),
     },
-  ], settingsContext), [connections.data, githubSettingsConnections, customMcpSettingsConnections, isAdmin, settingsContext]);
+  ], settingsContext), [connections.data, installedConnections, isAdmin, settingsContext]);
   const searchResults = useMemo(() => {
     const action = navigationQuery.trim().toLowerCase();
     const exactConnectAction = [PERSONAL_CONNECT_LABEL, 'Connect for organization'].some((label) => label.toLowerCase() === action);
@@ -1141,15 +1167,13 @@ export function WorkspaceSettingsScreen({
       !exactConnectAction || !entry.key.startsWith('provider:')
       || entry.definition.options?.some((option) => option.toLowerCase() === action));
   }, [searchEntries, navigationQuery]);
+  const openConnectionPage = (connectionId: string): void => {
+    if (connectionId !== connectionPageId) setGitHubRepositorySearch('');
+    setConnectionPageId(connectionId);
+  };
   const selectSearchResult = (result: SettingSearchResult): void => {
     if (!searchEntries.some((entry) => entry.key === result.key)) return;
-    if (result.definition.section === 'github' && result.instanceId) {
-      setGitHubSettingsConnectionId(result.instanceId);
-      setGitHubRepositorySearch('');
-    }
-    if (result.definition.section === 'custom-mcp' && result.instanceId) {
-      setCustomMcpSettingsConnectionId(result.instanceId);
-    }
+    if (result.definition.section === 'connection' && result.instanceId) openConnectionPage(result.instanceId);
     if (result.definition.section === 'connections') setConnectionFilter('all');
     setActiveSection(result.definition.section);
     setNavigationQuery('');
@@ -1157,12 +1181,8 @@ export function WorkspaceSettingsScreen({
   };
   useRevealSetting(contentRef, searchTarget && activeSection === searchTarget.definition.section && searchEntries.some((entry) => entry.key === searchTarget.key)
     ? searchTarget : null);
-  const installedConnections = (connections.data ?? []).filter((connection) =>
-    installedConnectorTypes.has(connection.connectorType),
-  );
   const workspaceConnections = installedConnections.filter((connection) => connection.scope === 'workspace');
   const personalConnections = installedConnections.filter((connection) => connection.scope === 'you');
-  const healthyConnections = installedConnections.filter((connection) => connection.status === 'healthy');
   const visibleProviders = connectorProviders.filter((provider) => {
     const connected = providerHasConnection(provider, connections.data ?? []);
     if (connectionFilter === 'connected') return connected;
@@ -1171,8 +1191,14 @@ export function WorkspaceSettingsScreen({
     }
     return true;
   });
+  // A connection's page outlives the connection only until the list says so:
+  // deleting it from its own page, or a deep link to no connection, lands on
+  // the list it belonged to. Waits for the list, so a cold open does not bounce.
   useEffect(() => {
-    if (availableSections.has(activeSection)) return;
+    if (activeSection === 'connection' && connections.data && !pageConnection) setActiveSection('connections');
+  }, [activeSection, connections.data, pageConnection]);
+  useEffect(() => {
+    if (activeSection === 'connection' || availableSections.has(activeSection)) return;
     const first = settingsNavigationWithConnectors[0]?.items[0]?.id;
     if (first) setActiveSection(first);
   }, [activeSection, availableSections, settingsNavigationWithConnectors]);
@@ -1186,10 +1212,7 @@ export function WorkspaceSettingsScreen({
   // once this window is gone.
   // A browser tab cannot close itself: there Settings is a route, and closing
   // it returns to the workspace.
-  const closeSettings = useCallback(() => {
-    if (browserHost) window.location.hash = '#/';
-    else window.close();
-  }, [browserHost]);
+  const closeSettings = useCloseWindowSurface();
   useEscapeClosesWindow({ enabled: standaloneWindow, unsavedTextScope: contentRef, onClose: closeSettings });
 
   // The settings window is kept and reused, so a pane already on screen does
@@ -1201,6 +1224,9 @@ export function WorkspaceSettingsScreen({
     if (!nextSection) return;
     setNavigationQuery('');
     setSearchTarget(null);
+    // A section request names no connection, so it must not reopen whichever
+    // page was last shown; `connection` without one lands on Connections.
+    setConnectionPageId(null);
     setActiveSection(nextSection);
     if (nextSection === 'workspace') setUsageRequest((count) => count + 1);
   }), [bridge]);
@@ -1282,10 +1308,7 @@ export function WorkspaceSettingsScreen({
   };
 
   const githubSettings = githubRepositorySettings.data;
-  const selectedGitHubSettingsConnection = githubSettingsConnections.find((connection) => (
-    connection.id === githubSettingsConnectionId
-  ));
-  const canEditGitHubSettings = selectedGitHubSettingsConnection?.scope === 'you' || isAdmin;
+  const canEditGitHubSettings = pageConnection?.scope === 'you' || isAdmin;
   const visibleGitHubRepositories = useMemo(() => {
     const query = githubRepositorySearch.trim().toLowerCase();
     const repositories = githubSettings?.availableRepositories ?? [];
@@ -1325,9 +1348,57 @@ export function WorkspaceSettingsScreen({
     });
   };
 
-  const sectionTitle = settingsNavigationWithConnectors
-    .flatMap((group) => group.items)
-    .find((item) => item.id === activeSection)?.label ?? 'Settings';
+  /** The management actions a connection offers, on its own page. */
+  const renderConnectionActions = (connection: WorkstreamConnection): React.JSX.Element => (
+    <span className="settings-connection-actions">
+      {isAdmin && connection.scope === 'workspace' && hasWorkspaceInstallationSurface(connection.connectorType) && (
+        <Button aria-label={`Manage events for ${connection.displayName}`} onClick={() => setInstallationTarget(connection.id)}>Manage events</Button>
+      )}
+      {(isAdmin || connection.scope === 'you') && reconnectableConnectorTypes.has(connection.connectorType)
+        && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') && (
+        <ConnectionIconAction
+          disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
+          icon={<RefreshCcw aria-hidden="true" size={14} />}
+          label={`Refresh ${connection.displayName}`}
+          onClick={() => setReconnectTarget(connection)}
+          tooltip="Refresh authorization with the provider."
+        />
+      )}
+      {isAdmin && connection.connectorType === 'generic_webhook' && (
+        <ConnectionIconAction
+          disabled={rotateWebhookSecret.isPending}
+          icon={<RefreshCcw aria-hidden="true" size={14} />}
+          label={`Refresh ${connection.displayName}`}
+          onClick={() => {
+            setWebhookModalScope(connection.scope);
+            setWebhookDisplayName(connection.displayName);
+            setWebhookEventTypes('');
+            setWebhookSecretResult(null);
+            setWebhookRotationTarget(connection);
+          }}
+          tooltip="Refresh this webhook by replacing its signing secret."
+        />
+      )}
+      {(connection.scope === 'you' || isAdmin) && (
+        <ConnectionIconAction
+          disabled={disconnectConnection.isPending}
+          icon={<Trash2 aria-hidden="true" size={14} />}
+          label={`Delete ${connection.displayName}`}
+          onClick={() => {
+            disconnectConnection.reset();
+            setDisconnectTarget(connection);
+          }}
+          tooltip="Delete this connection from Rally."
+        />
+      )}
+    </span>
+  );
+
+  const sectionTitle = activeSection === 'connection'
+    ? pageConnection?.displayName ?? 'Connections'
+    : settingsNavigationWithConnectors
+      .flatMap((group) => group.items)
+      .find((item) => item.id === activeSection)?.label ?? 'Settings';
 
   return (
     <div className="workspace-settings-screen screen-with-titlebar">
@@ -1372,18 +1443,29 @@ export function WorkspaceSettingsScreen({
                 <span>{group.label}</span>
                 {group.items.map((item) => {
                   const Icon = item.icon;
-                  return (
+                  const current = activeSection === item.id
+                    && (!item.connectionId || item.connectionId === connectionPageId);
+                  const button = (
                     <button
-                      aria-current={activeSection === item.id ? 'page' : undefined}
+                      aria-current={current ? 'page' : undefined}
                       className={item.child ? 'settings-navigation-child' : undefined}
-                      key={item.id}
-                      onClick={() => { setSearchTarget(null); setActiveSection(item.id); }}
+                      key={item.connectionId ?? item.id}
+                      onClick={() => {
+                        setSearchTarget(null);
+                        if (item.connectionId) openConnectionPage(item.connectionId);
+                        setActiveSection(item.id);
+                      }}
                       type="button"
                     >
-                      <Icon aria-hidden="true" size={16} />
-                      {item.label}
+                      {item.mark ? <ConnectorMark mark={item.mark} /> : <Icon aria-hidden="true" size={16} />}
+                      <span className="settings-navigation-label">{item.label}</span>
                     </button>
                   );
+                  // A connection's name is cut to the sidebar's width, and two
+                  // accounts of one company differ only in the part cut off.
+                  return item.connectionId
+                    ? <Tip describesTrigger={false} key={item.connectionId} label={item.label} side="right">{button}</Tip>
+                    : button;
                 })}
               </div>
             ))}
@@ -1392,7 +1474,9 @@ export function WorkspaceSettingsScreen({
 
         <main className="settings-content" ref={contentRef}>
           <header className="settings-content-header window-drag">
-            <h1 id="settings-title">{sectionTitle}</h1>
+            <h1 id="settings-title">{activeSection === 'connection' && pageConnection
+              ? <SettingLabel setting={connectionSetting(pageConnection, isAdmin)} instanceId={pageConnection.id} />
+              : sectionTitle}</h1>
             <button aria-label="Close settings" className="settings-close window-no-drag" onClick={closeSettings} type="button">
               <X aria-hidden="true" size={18} />
             </button>
@@ -1434,11 +1518,22 @@ export function WorkspaceSettingsScreen({
                   </div>
                 </>}
                 </>}
+                {browserHost && <>
+                  <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2></div>
+                  <ThemePicker setting={settings.accountAppearance} />
+                </>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Session</h2></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
-                    <SettingCopy setting={settings.signOut} />
-                    <Button onClick={() => void signOut()}>Sign out</Button>
+                    {session?.impersonator
+                      ? <>
+                          <SettingCopy setting={settings.signOut} description={`You are signed in as ${session.user.name}. Ending returns you to your own account.`} />
+                          <Button onClick={() => void endSupportSession()}>End impersonation</Button>
+                        </>
+                      : <>
+                          <SettingCopy setting={settings.signOut} />
+                          <Button onClick={() => void signOut()}>Sign out</Button>
+                        </>}
                   </div>
                 </div>
               </section>
@@ -1487,7 +1582,15 @@ export function WorkspaceSettingsScreen({
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
                     <SettingCopy setting={settings.workspaceIdentity} />
-                    <span className="settings-row-value"><strong>{workspace.name}</strong></span>
+                    <span className="settings-row-value">
+                      <InlineEditableText
+                        ariaLabel="Organization name"
+                        disabled={!isAdmin || !api}
+                        onSave={(name) => renameWorkspace.mutateAsync(name)}
+                        validate={(name) => (WorkspaceNameSchema.safeParse(name).success ? null : 'Use 2 to 120 characters.')}
+                        value={workspace.name}
+                      />
+                    </span>
                   </div>
                   <label className="settings-preference-row">
                     <SettingCopy setting={settings.workspaceTimezone} />
@@ -1503,63 +1606,97 @@ export function WorkspaceSettingsScreen({
                       variant="secondary"
                     />
                   </label>
+                  <SupportAccessSetting
+                    api={api ?? null}
+                    impersonating={Boolean(session?.impersonator)}
+                    isAdmin={isAdmin}
+                    workspaceId={workspace.id}
+                  />
                 </div>
+                {renameWorkspace.error && <InlineError>{renameWorkspace.error.message}</InlineError>}
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
-                <UsageSettingsSection api={api ?? null} organizationName={workspace.name} openRequest={usageRequest} />
+                <UsageSettingsSection api={api ?? null} canChangePlan={isAdmin} organizationName={workspace.name} openRequest={usageRequest} />
                 <div className="settings-pane-heading settings-pane-heading-count settings-pane-heading-spaced">
                   <div><h2><SettingLabel setting={settings.members} /></h2><p>People with access to {workspace.name}.</p></div>
                   <span>{members.data?.length ?? 0}</span>
                 </div>
                 {members.error && <InlineError>{members.error.message}</InlineError>}
                 <div className="settings-member-list settings-list-card">
-                  {(members.data ?? []).map((member) => (
-                    <div className="settings-member-row" key={member.id}>
-                      <Avatar member={member} size="medium" />
-                      <span><strong>{member.name}</strong><small>{member.email}</small></span>
-                      <div className="settings-member-actions">
-                        <Badge className="role-badge">{member.accessClass === 'guest' ? 'Guest' : member.role ?? 'member'}</Badge>
-                        {/*
-                          * Two promotions meet on this row and neither is the
-                          * other: a guest holds no role at all and is made a
-                          * member first, while a member is handed the same
-                          * powers the viewer is using right now. The owner has
-                          * no control beside them either way — their role is
-                          * the one the server refuses to reassign, so drawing a
-                          * button that can only fail is worse than drawing none.
-                          */}
-                        {isAdmin && member.accessClass === 'guest' && member.incarnation && member.revision && (
-                          <Button disabled={promoteGuest.isPending} aria-label={`Make ${member.name} a member`}
-                            onClick={() => { promoteGuest.reset(); setPromotion({ id: member.id, name: member.name, incarnation: member.incarnation!, revision: member.revision! }); }}>
-                            Make member
-                          </Button>
-                        )}
-                        {isAdmin && member.role !== 'owner' && member.status !== 'invited'
-                          && member.accessClass !== 'guest' && (
-                          <Button
-                            // The visible label is the same on every row, which is
-                            // all a sighted reader needs — the row it sits in says
-                            // who it acts on. A screen reader announces the button
-                            // alone, so the accessible name carries the person.
-                            // The email is in it because two people can share a
-                            // display name, and the roster is exactly where that
-                            // collision shows up.
-                            aria-label={member.role === 'admin'
-                              ? `Remove administrator access from ${member.name} (${member.email})`
-                              : `Make ${member.name} (${member.email}) an administrator`}
-                            disabled={setMemberRole.isPending}
-                            onClick={() => setMemberRole.mutate({
-                              userId: member.id,
-                              role: member.role === 'admin' ? 'member' : 'admin',
-                            })}
-                          >
-                            {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
-                          </Button>
-                        )}
+                  {sortedMembers.map((member) => {
+                    const isGuest = member.accessClass === 'guest';
+                    // Every row draws the menu so they line up, but two are
+                    // disabled. The owner's role is not reassignable, and an
+                    // organization has one owner, so nobody here may remove
+                    // them. Someone still invited is not a member to act on yet.
+                    const menuDisabled = member.role === 'owner' || member.status === 'invited';
+                    const canPromoteGuest = isGuest && Boolean(member.incarnation && member.revision);
+                    const self = member.id === workspace.currentUser.id;
+                    return (
+                      <div className="settings-member-row" key={member.id}>
+                        <Avatar member={member} size="medium" />
+                        <span><strong>{member.name}</strong><small>{member.email}</small></span>
+                        <div className="settings-member-actions">
+                          <Badge className="role-badge">{isGuest ? 'Guest' : member.role ?? 'member'}</Badge>
+                          {isAdmin && (
+                            <DropdownMenu.Root>
+                              <DropdownMenu.Trigger asChild disabled={menuDisabled}>
+                                {/* The email is in the name because two people can share a display name. */}
+                                <IconButton label={`${member.name} (${member.email}) member actions`} showTooltip={false}>
+                                  <Ellipsis size={16} />
+                                </IconButton>
+                              </DropdownMenu.Trigger>
+                              <DropdownMenu.Portal>
+                                <DropdownMenu.Content align="end" className="menu-content" sideOffset={6}>
+                                  {/*
+                                    * Two promotions meet here and neither is the
+                                    * other: a guest holds no role at all and is
+                                    * made a member first, while a member is handed
+                                    * the same powers the viewer is using now.
+                                    */}
+                                  {isGuest ? (
+                                    <DropdownMenu.Item className="menu-item" disabled={!canPromoteGuest || promoteGuest.isPending}
+                                      onSelect={() => { promoteGuest.reset(); setPromotion({ id: member.id, name: member.name, incarnation: member.incarnation!, revision: member.revision! }); }}>
+                                      Make member
+                                    </DropdownMenu.Item>
+                                  ) : (
+                                    <DropdownMenu.Item className="menu-item" disabled={setMemberRole.isPending}
+                                      onSelect={() => setMemberRole.mutate({
+                                        userId: member.id,
+                                        role: member.role === 'admin' ? 'member' : 'admin',
+                                      })}>
+                                      {member.role === 'admin' ? 'Remove administrator' : 'Make administrator'}
+                                    </DropdownMenu.Item>
+                                  )}
+                                  {/* The server refuses removing yourself; leaving is its own control. */}
+                                  {!self && (
+                                    <DropdownMenu.Item className="menu-item menu-item-danger" disabled={suspendMember.isPending}
+                                      onSelect={() => { suspendMember.reset(); setSuspension({ id: member.id, name: member.name, guest: isGuest }); }}>
+                                      Suspend
+                                    </DropdownMenu.Item>
+                                  )}
+                                </DropdownMenu.Content>
+                              </DropdownMenu.Portal>
+                            </DropdownMenu.Root>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 {setMemberRole.error && <InlineError>{setMemberRole.error.message}</InlineError>}
+
+                <Modal open={suspension !== null} onOpenChange={(open) => { if (!open && !suspendMember.isPending) setSuspension(null); }}
+                  title={`Suspend ${suspension?.name ?? 'this person'}?`}
+                  // An organization invitation brings a member back. A guest
+                  // arrives through sharing instead, so the copy promises
+                  // nothing about their return.
+                  description={`They lose access to this organization right away. Their conversations and contributions stay.${suspension?.guest ? '' : ' You can invite them back later.'}`}
+                  footer={<>
+                    <Button disabled={suspendMember.isPending} onClick={() => setSuspension(null)}>Cancel</Button>
+                    <Button className="button-danger" disabled={suspendMember.isPending} onClick={() => { if (suspension) suspendMember.mutate(suspension.id); }}>Suspend</Button>
+                  </>}>
+                  {suspendMember.error && <InlineError>{suspendMember.error.message}</InlineError>}
+                </Modal>
 
                 <Modal open={promotion !== null} onOpenChange={(open) => { if (!open) setPromotion(null); }} title="Make guest a member"
                   description={`${promotion?.name ?? 'This guest'} will gain normal organization membership. Existing conversations and contributions stay with their account.`}>
@@ -1662,7 +1799,7 @@ export function WorkspaceSettingsScreen({
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading">
                   <h2><SettingLabel setting={settings.terminal} /></h2>
-                  <p>Choose where code running in Daytona may connect. Rally-managed platform access is applied automatically.</p>
+                  <p>{settings.terminal.description}</p>
                 </div>
                 {terminalSettings.isLoading ? (
                   <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading Terminal policy…</div>
@@ -1673,7 +1810,7 @@ export function WorkspaceSettingsScreen({
                     {terminalSettings.data.availability !== 'supported' && (
                       <div className="terminal-network-notice" role="status">
                         <ShieldCheck aria-hidden="true" size={17} />
-                        <span><strong>Terminal unavailable</strong><small>{terminalSettings.data.availability === 'emergency_disabled' ? 'Temporarily disabled by the regional safety switch.' : 'This regional service has not enabled Daytona Terminal.'}</small></span>
+                        <span><strong>Terminal unavailable</strong><small>{terminalSettings.data.availability === 'emergency_disabled' ? 'Temporarily disabled by the regional safety switch.' : 'Cloud computer not enabled.'}</small></span>
                       </div>
                     )}
                     <fieldset className="terminal-network-modes" disabled={!isAdmin || terminalSettings.data.availability !== 'supported' || previewTerminalPolicy.isPending || applyTerminalPolicy.isPending}>
@@ -1778,9 +1915,8 @@ export function WorkspaceSettingsScreen({
 
             {activeSection === 'connections' && (
               <section aria-labelledby="settings-title" className="settings-pane settings-connections-pane">
-                <div className="settings-pane-heading settings-pane-heading-count">
-                  <div><h2><SettingLabel setting={settings.connections} /></h2><p>Credentials currently available to you or this workspace.</p></div>
-                  <span>{installedConnections.length}</span>
+                <div className="settings-pane-heading">
+                  <h2><SettingLabel setting={settings.connections} /></h2>
                 </div>
                 <div className="settings-connection-tables">
                   {([
@@ -1802,7 +1938,6 @@ export function WorkspaceSettingsScreen({
                     <section className="settings-connection-group" key={group.id}>
                       <div className="settings-connection-group-heading">
                         <h3 id={group.id}>{group.title}</h3>
-                        <span>{group.items.length}</span>
                       </div>
                       <div className="settings-list-card settings-connection-table-frame">
                         <table aria-labelledby={group.id} className="settings-connection-table">
@@ -1811,20 +1946,27 @@ export function WorkspaceSettingsScreen({
                               <th scope="col">Connection</th>
                               <th scope="col">Status</th>
                               <th className="settings-connection-tools" scope="col">Tools</th>
-                              <th scope="col"><span className="sr-only">Actions</span></th>
+                              <th scope="col"><span className="sr-only">Open</span></th>
                             </tr>
                           </thead>
                           <tbody>
                             {group.items.map((connection) => (
-                              <tr className="settings-connection-row" key={connection.id}>
+                              // The row is the way to a connection's page, where its
+                              // actions live. The name is the one focusable control;
+                              // the rest of the row forwards a click to it.
+                              <tr className="settings-connection-row" key={connection.id} onClick={() => {
+                                setSearchTarget(null);
+                                openConnectionPage(connection.id);
+                                setActiveSection('connection');
+                              }}>
                                 <td>
-                                  <span className="settings-connection-name">
+                                  <button className="settings-connection-name" type="button">
                                     <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
                                     <InstalledConnectionMark connection={connection} />
-                                    <span className="settings-connection-copy"><strong><SettingLabel setting={connectionSetting(connection, isAdmin)} /></strong></span>
-                                  </span>
+                                    <span className="settings-connection-copy"><strong>{connection.displayName}</strong></span>
+                                  </button>
                                 </td>
-                                <td><Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge></td>
+                                <td><Badge>{connectionStatusLabel(connection)}</Badge></td>
                                 {/* From the list itself: a row with no count reads as a dash,
                                     never 0, and its label says why. */}
                                 {connection.toolCount === undefined ? (
@@ -1836,50 +1978,7 @@ export function WorkspaceSettingsScreen({
                                 ) : (
                                   <td className="settings-connection-tools">{connection.toolCount}</td>
                                 )}
-                                <td>
-                                  <span className="settings-connection-actions">
-                                    {isAdmin && connection.scope === 'workspace' && hasWorkspaceInstallationSurface(connection.connectorType) && (
-                                      <Button aria-label={`Manage events for ${connection.displayName}`} onClick={() => setInstallationTarget(connection.id)}>Manage events</Button>
-                                    )}
-                                    {(isAdmin || connection.scope === 'you') && reconnectableConnectorTypes.has(connection.connectorType)
-                                      && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') && (
-                                      <ConnectionIconAction
-                                        disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
-                                        icon={<RefreshCcw aria-hidden="true" size={14} />}
-                                        label={`Refresh ${connection.displayName}`}
-                                        onClick={() => setReconnectTarget(connection)}
-                                        tooltip="Refresh authorization with the provider."
-                                      />
-                                    )}
-                                    {isAdmin && connection.connectorType === 'generic_webhook' && (
-                                      <ConnectionIconAction
-                                        disabled={rotateWebhookSecret.isPending}
-                                        icon={<RefreshCcw aria-hidden="true" size={14} />}
-                                        label={`Refresh ${connection.displayName}`}
-                                        onClick={() => {
-                                          setWebhookModalScope(connection.scope);
-                                          setWebhookDisplayName(connection.displayName);
-                                          setWebhookEventTypes('');
-                                          setWebhookSecretResult(null);
-                                          setWebhookRotationTarget(connection);
-                                        }}
-                                        tooltip="Refresh this webhook by replacing its signing secret."
-                                      />
-                                    )}
-                                    {(connection.scope === 'you' || isAdmin) && (
-                                      <ConnectionIconAction
-                                        disabled={disconnectConnection.isPending}
-                                        icon={<Trash2 aria-hidden="true" size={14} />}
-                                        label={`Delete ${connection.displayName}`}
-                                        onClick={() => {
-                                          disconnectConnection.reset();
-                                          setDisconnectTarget(connection);
-                                        }}
-                                        tooltip="Delete this connection from Rally."
-                                      />
-                                    )}
-                                  </span>
-                                </td>
+                                <td><ChevronRight aria-hidden="true" className="settings-connection-chevron" size={15} /></td>
                               </tr>
                             ))}
                             {!connections.isLoading && group.items.length === 0 && (
@@ -1907,7 +2006,6 @@ export function WorkspaceSettingsScreen({
                       ]}
                       value={connectionFilter}
                     />
-                    <span>{healthyConnections.length} connected</span>
                   </div>
                   <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Organization connections expose granted capabilities to every member; organization automations use only the connections explicitly bound to them.</p>
                   <div className="provider-grid">
@@ -1969,7 +2067,7 @@ export function WorkspaceSettingsScreen({
                           <p>{provider.description}</p>
                           {((provider.scopes.includes('you' as never) && !personalStartsHere)
                             || (provider.scopes.includes('workspace' as never) && isAdmin && !workspaceStartsHere)) && (
-                            <p className="settings-oauth-status"><a href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a></p>
+                            <p className="settings-oauth-status">{MAC_APP_DOWNLOADABLE ? <a href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a> : MAC_APP_CONNECT_NOTE}</p>
                           )}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
                             <p className="settings-search-guidance" role="status">
@@ -2043,275 +2141,259 @@ export function WorkspaceSettingsScreen({
               </section>
             )}
 
-            {activeSection === 'github' && (
-              <section aria-labelledby="settings-title" className="settings-pane settings-github-pane">
-                <div className="settings-pane-heading">
-                  <h2><SettingLabel setting={settings.githubAccess} instanceId={githubSettingsConnectionId ?? undefined} /></h2>
-                  <p>Choose which GitHub repositories Rally may use and whether it may change the remote repository.</p>
+            {activeSection === 'connection' && pageConnection && (
+              <section aria-labelledby="settings-title" className="settings-pane settings-connection-page">
+                <div className="settings-list-card settings-connection-overview">
+                  <div className="settings-preference-row">
+                    <span className="settings-row-copy">
+                      <strong>Status</strong>
+                      <small>{connectionStatusDescription(pageConnection)}</small>
+                    </span>
+                    <Badge>{connectionStatusLabel(pageConnection)}</Badge>
+                  </div>
+                  <div className="settings-preference-row">
+                    <span className="settings-row-copy">
+                      <strong>Access</strong>
+                      <small>
+                        {pageConnection.scope === 'you'
+                          ? 'Available only to you, acting with your provider identity.'
+                          : 'Its granted capabilities are available to every member of this organization.'}
+                        {pageConnection.ownerName ? ` Connected by ${pageConnection.ownerName}.` : ''}
+                      </small>
+                    </span>
+                    <Badge>{pageConnection.scope === 'you' ? 'Personal' : 'Organization'}</Badge>
+                  </div>
+                  <div className="settings-preference-row">
+                    <span className="settings-row-copy">
+                      <strong>Tools</strong>
+                      <small>{pageConnection.toolCount === undefined
+                        ? missingToolCountLabel(pageConnection)
+                        : `${pageConnection.toolCount} ${pageConnection.toolCount === 1 ? 'tool' : 'tools'} available to Rally through this connection.`}</small>
+                    </span>
+                    {renderConnectionActions(pageConnection)}
+                  </div>
                 </div>
-                {githubSettingsConnections.length > 1 && (
-                  <label className="settings-field settings-github-connection">
-                    <span>Connection</span>
-                    <select
-                      aria-label="GitHub connection"
-                      disabled={updateGitHubRepositorySettings.isPending}
-                      onChange={(event) => {
-                        setGitHubSettingsConnectionId(event.currentTarget.value);
-                        setGitHubRepositorySearch('');
-                      }}
-                      value={githubSettingsConnectionId ?? ''}
-                    >
-                      {githubSettingsConnections.map((connection) => (
-                        <option key={connection.id} value={connection.id}>{connection.displayName} · {connection.scope === 'you' ? 'Personal' : 'Organization'}</option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                {githubRepositorySettings.isLoading ? (
-                  <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading GitHub repositories…</div>
-                ) : githubSettings ? (
+                {githubSettingsConnectionId && (
                   <>
-                    {!canEditGitHubSettings && (
-                      <p className="settings-section-copy">Organization repository access is read-only here. Ask an organization administrator to change it.</p>
-                    )}
-                    <div className="settings-list-card settings-github-policy">
-                      <label className="settings-preference-row">
-                        <SettingCopy setting={settings.githubAvailability} instanceId={githubSettingsConnectionId ?? undefined} />
-                        <select
-                          aria-label="Repository availability"
-                          disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
-                          onChange={(event) => saveGitHubRepositoryPolicy({
-                            mode: event.currentTarget.value as GitHubRepositoryAccessSettings['mode'],
-                            defaultRemoteAccess: githubSettings.defaultRemoteAccess,
-                            repositories: githubSettings.repositories,
-                          })}
-                          value={githubSettings.mode}
-                        >
-                          <option value="all_repositories">{githubAvailabilityLabels.all_repositories}</option>
-                          <option value="selected_repositories">{githubAvailabilityLabels.selected_repositories}</option>
-                        </select>
-                      </label>
-                      {githubSettings.mode !== 'all_repositories' && searchTarget?.definition.id === 'githubRemote' && (
-                        <div className="settings-preference-row">
-                          <SettingCopy setting={settings.githubRemote} instanceId={githubSettingsConnectionId ?? undefined}
-                            description="A default applies only to All repositories. Configure individual access under Repositories below." />
+                    <div className="settings-pane-heading settings-connection-facet-heading">
+                      <h2><SettingLabel setting={settings.githubAccess} instanceId={githubSettingsConnectionId} /></h2>
+                      <p>Choose which GitHub repositories Rally may use and whether it may change the remote repository.</p>
+                    </div>
+                    {githubRepositorySettings.isLoading ? (
+                      <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading GitHub repositories…</div>
+                    ) : githubSettings ? (
+                      <>
+                        {!canEditGitHubSettings && (
+                          <p className="settings-section-copy">Organization repository access is read-only here. Ask an organization administrator to change it.</p>
+                        )}
+                        <div className="settings-list-card settings-github-policy">
+                          <label className="settings-preference-row">
+                            <SettingCopy setting={settings.githubAvailability} instanceId={githubSettingsConnectionId} />
+                            <select
+                              aria-label="Repository availability"
+                              disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                              onChange={(event) => saveGitHubRepositoryPolicy({
+                                mode: event.currentTarget.value as GitHubRepositoryAccessSettings['mode'],
+                                defaultRemoteAccess: githubSettings.defaultRemoteAccess,
+                                repositories: githubSettings.repositories,
+                              })}
+                              value={githubSettings.mode}
+                            >
+                              <option value="all_repositories">{githubAvailabilityLabels.all_repositories}</option>
+                              <option value="selected_repositories">{githubAvailabilityLabels.selected_repositories}</option>
+                            </select>
+                          </label>
+                          {githubSettings.mode !== 'all_repositories' && searchTarget?.definition.id === 'githubRemote' && (
+                            <div className="settings-preference-row">
+                              <SettingCopy setting={settings.githubRemote} instanceId={githubSettingsConnectionId}
+                                description="A default applies only to All repositories. Configure individual access under Repositories below." />
+                            </div>
+                          )}
+                          {githubSettings.mode === 'all_repositories' && (
+                            <label className="settings-preference-row">
+                              <SettingCopy setting={settings.githubRemote} instanceId={githubSettingsConnectionId} />
+                              <select
+                                aria-label="Default remote access"
+                                disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                                onChange={(event) => saveGitHubRepositoryPolicy({
+                                  mode: githubSettings.mode,
+                                  defaultRemoteAccess: event.currentTarget.value as GitHubRepositoryAccessSettings['defaultRemoteAccess'],
+                                  repositories: githubSettings.repositories,
+                                })}
+                                value={githubSettings.defaultRemoteAccess}
+                              >
+                                <option value="read_only">{githubRemoteLabels.read_only}</option>
+                                <option value="full_access">{githubRemoteLabels.full_access}</option>
+                              </select>
+                            </label>
+                          )}
                         </div>
-                      )}
-                      {githubSettings.mode === 'all_repositories' && (
-                        <label className="settings-preference-row">
-                          <SettingCopy setting={settings.githubRemote} instanceId={githubSettingsConnectionId ?? undefined} />
-                          <select
-                            aria-label="Default remote access"
-                            disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
-                            onChange={(event) => saveGitHubRepositoryPolicy({
-                              mode: githubSettings.mode,
-                              defaultRemoteAccess: event.currentTarget.value as GitHubRepositoryAccessSettings['defaultRemoteAccess'],
-                              repositories: githubSettings.repositories,
-                            })}
-                            value={githubSettings.defaultRemoteAccess}
-                          >
-                            <option value="read_only">{githubRemoteLabels.read_only}</option>
-                            <option value="full_access">{githubRemoteLabels.full_access}</option>
-                          </select>
-                        </label>
-                      )}
-                    </div>
-                    <div className="settings-github-repository-heading">
-                      <div>
-                        <strong><SettingLabel setting={settings.githubRepositories} instanceId={githubSettingsConnectionId ?? undefined} /></strong>
-                        <small>{githubSettings.availableRepositories.length} available through {githubSettings.connectionName}</small>
-                      </div>
-                      <label className="settings-search settings-github-search">
-                        <Search aria-hidden="true" size={15} />
-                        <span className="sr-only">Search GitHub repositories</span>
-                        <input
-                          data-saved-value={githubRepositorySearch}
-                          onChange={(event) => setGitHubRepositorySearch(event.currentTarget.value)}
-                          placeholder="Search repositories"
-                          type="search"
-                          value={githubRepositorySearch}
-                        />
-                      </label>
-                    </div>
-                    <div className="settings-list-card settings-github-repository-list">
-                      {visibleGitHubRepositories.map((repository) => {
-                        const configured = githubSettings.repositories.find((candidate) => (
-                          candidate.repositoryId === repository.repositoryId
-                        ));
-                        const selected = githubSettings.mode === 'all_repositories' || Boolean(configured);
-                        const effectiveAccess = configured?.remoteAccess
-                          ?? (githubSettings.mode === 'all_repositories' ? githubSettings.defaultRemoteAccess : 'read_only');
-                        return (
-                          <div className="settings-github-repository-row" key={repository.repositoryId}>
-                            <span>
-                              <strong>{repository.repositoryFullName}</strong>
-                              <small>{repository.private ? 'Private repository' : 'Public repository'}</small>
-                            </span>
-                            {selected ? (
-                              <>
-                                <select
-                                  aria-label={`Remote access for ${repository.repositoryFullName}`}
-                                  disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
-                                  onChange={(event) => setGitHubRepositoryRemoteAccess(
-                                    repository,
-                                    event.currentTarget.value as 'read_only' | 'full_access',
-                                  )}
-                                  value={effectiveAccess}
-                                >
-                                  <option value="read_only">{githubRemoteLabels.read_only}</option>
-                                  <option value="full_access">{githubRemoteLabels.full_access}</option>
-                                </select>
-                                {githubSettings.mode === 'selected_repositories' && (
+                        <div className="settings-github-repository-heading">
+                          <div>
+                            <strong><SettingLabel setting={settings.githubRepositories} instanceId={githubSettingsConnectionId} /></strong>
+                            <small>{githubSettings.availableRepositories.length} available through {githubSettings.connectionName}</small>
+                          </div>
+                          <label className="settings-search settings-github-search">
+                            <Search aria-hidden="true" size={15} />
+                            <span className="sr-only">Search GitHub repositories</span>
+                            <input
+                              data-saved-value={githubRepositorySearch}
+                              onChange={(event) => setGitHubRepositorySearch(event.currentTarget.value)}
+                              placeholder="Search repositories"
+                              type="search"
+                              value={githubRepositorySearch}
+                            />
+                          </label>
+                        </div>
+                        <div className="settings-list-card settings-github-repository-list">
+                          {visibleGitHubRepositories.map((repository) => {
+                            const configured = githubSettings.repositories.find((candidate) => (
+                              candidate.repositoryId === repository.repositoryId
+                            ));
+                            const selected = githubSettings.mode === 'all_repositories' || Boolean(configured);
+                            const effectiveAccess = configured?.remoteAccess
+                              ?? (githubSettings.mode === 'all_repositories' ? githubSettings.defaultRemoteAccess : 'read_only');
+                            return (
+                              <div className="settings-github-repository-row" key={repository.repositoryId}>
+                                <span>
+                                  <strong>{repository.repositoryFullName}</strong>
+                                  <small>{repository.private ? 'Private repository' : 'Public repository'}</small>
+                                </span>
+                                {selected ? (
+                                  <>
+                                    <select
+                                      aria-label={`Remote access for ${repository.repositoryFullName}`}
+                                      disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                                      onChange={(event) => setGitHubRepositoryRemoteAccess(
+                                        repository,
+                                        event.currentTarget.value as 'read_only' | 'full_access',
+                                      )}
+                                      value={effectiveAccess}
+                                    >
+                                      <option value="read_only">{githubRemoteLabels.read_only}</option>
+                                      <option value="full_access">{githubRemoteLabels.full_access}</option>
+                                    </select>
+                                    {githubSettings.mode === 'selected_repositories' && (
+                                      <Button
+                                        disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
+                                        onClick={() => setGitHubRepositoryRemoteAccess(repository, null)}
+                                      >Remove</Button>
+                                    )}
+                                  </>
+                                ) : (
                                   <Button
                                     disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
-                                    onClick={() => setGitHubRepositoryRemoteAccess(repository, null)}
-                                  >Remove</Button>
+                                    onClick={() => setGitHubRepositoryRemoteAccess(repository, 'read_only')}
+                                  >Add</Button>
                                 )}
-                              </>
-                            ) : (
-                              <Button
-                                disabled={!canEditGitHubSettings || updateGitHubRepositorySettings.isPending}
-                                onClick={() => setGitHubRepositoryRemoteAccess(repository, 'read_only')}
-                              >Add</Button>
-                            )}
-                          </div>
-                        );
-                      })}
-                      {visibleGitHubRepositories.length === 0 && (
-                        <EmptyState title="No repositories found" description="Try a different repository name." />
-                      )}
-                    </div>
-                    <p className="settings-section-copy settings-github-footnote">
-                      Models see the effective remote access when they search or check out a repository. The Terminal harness always permits local edits and local commits; read-only blocks remote publication, while full access allows native Git and GitHub remote operations.
-                    </p>
+                              </div>
+                            );
+                          })}
+                          {visibleGitHubRepositories.length === 0 && (
+                            <EmptyState title="No repositories found" description="Try a different repository name." />
+                          )}
+                        </div>
+                        <p className="settings-section-copy settings-github-footnote">
+                          Models see the effective remote access when they search or check out a repository. The Terminal harness always permits local edits and local commits; read-only blocks remote publication, while full access allows native Git and GitHub remote operations.
+                        </p>
                   </>
                 ) : null}
                 {(githubRepositorySettings.error || updateGitHubRepositorySettings.error) && (
                   <InlineError>{githubRepositorySettings.error?.message ?? updateGitHubRepositorySettings.error?.message}</InlineError>
                 )}
-              </section>
-            )}
-
-            {activeSection === 'custom-mcp' && (
-              <section aria-labelledby="settings-title" className="settings-pane settings-custom-mcp-pane">
-                <div className="settings-pane-heading">
-                  <h2><SettingLabel setting={settings.mcpTools} instanceId={customMcpSettingsConnectionId ?? undefined} /></h2>
-                  <p>What each connected MCP server currently offers, and how much of it Rally may use.</p>
-                </div>
-                {customMcpSettingsConnections.length > 1 && (
-                  <label className="settings-field settings-custom-mcp-connection">
-                    <span>Connection</span>
-                    <select
-                      aria-label="MCP connection"
-                      onChange={(event) => setCustomMcpSettingsConnectionId(event.currentTarget.value)}
-                      value={customMcpSettingsConnectionId ?? ''}
-                    >
-                      {customMcpSettingsConnections.map((connection) => (
-                        <option key={connection.id} value={connection.id}>
-                          {connection.displayName} · {connection.scope === 'you' ? 'Personal' : 'Organization'}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  </>
                 )}
-                {customMcpSettings.isLoading ? (
-                  <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Reading this server’s tools…</div>
-                ) : customMcpSettings.data ? (
+                {customMcpSettingsConnectionId && (
                   <>
-                    <div className="settings-list-card">
-                      <div className="settings-preference-row">
-                        <span className="settings-row-copy">
-                          <strong><SettingLabel setting={settings.mcpServer} instanceId={customMcpSettingsConnectionId ?? undefined} /></strong>
-                          <span>{customMcpSettings.data.serverUrl}</span>
-                          <small>
+                    <div className="settings-pane-heading settings-connection-facet-heading">
+                      <h2><SettingLabel setting={settings.mcpTools} instanceId={customMcpSettingsConnectionId} /></h2>
+                      <p>What this MCP server currently offers, and how much of it Rally may use.</p>
+                    </div>
+                    {customMcpSettings.isLoading ? (
+                      <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Reading this server’s tools…</div>
+                    ) : customMcpSettings.data ? (
+                      <>
+                        <div className="settings-list-card">
+                          <div className="settings-preference-row">
+                            <span className="settings-row-copy">
+                              <strong><SettingLabel setting={settings.mcpServer} instanceId={customMcpSettingsConnectionId} /></strong>
+                              <span>{customMcpSettings.data.serverUrl}</span>
+                              <small>
+                                {customMcpSettings.data.authMode === 'oauth'
+                                  ? 'Authorized through the server’s own OAuth. Rally registered itself as a client and holds a token for this connection.'
+                                  : 'Authenticated with the request headers configured for this connection. Rally never shows their values again.'}
+                              </small>
+                            </span>
                             {customMcpSettings.data.authMode === 'oauth'
-                              ? 'Authorized through the server’s own OAuth. Rally registered itself as a client and holds a token for this connection.'
-                              : 'Authenticated with the request headers configured for this connection. Rally never shows their values again.'}
-                          </small>
-                        </span>
-                        {customMcpSettings.data.authMode === 'oauth'
-                          && (customMcpSettings.data.scope === 'personal' || isAdmin) && (
-                          <Button
-                            disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
-                            onClick={() => {
-                              const connection = customMcpSettingsConnections
-                                .find((candidate) => candidate.id === customMcpSettings.data.connectionId);
-                              if (connection) setReconnectTarget(connection);
-                            }}
-                          >
-                            <RefreshCcw aria-hidden="true" size={14} />
-                            Authorize again
-                          </Button>
-                        )}
-                      </div>
-                      <label className="settings-preference-row">
-                        <SettingCopy setting={settings.mcpPolicy} instanceId={customMcpSettingsConnectionId ?? undefined} description={<> {customMcpSettings.data.toolPolicyEditable
-                              ? 'Read-only exposes just the tools this server marks as read-only. The marking is the server’s own claim, which Rally cannot verify; it grants no additional access.'
-                              : 'A personal connection is only ever yours and acts with your own identity on that server, so it exposes everything the server offers you.'} </>} />
-                        <select
-                          aria-label="Tools Rally may use"
-                          disabled={!customMcpSettings.data.toolPolicyEditable || updateCustomMcpToolPolicy.isPending}
-                          onChange={(event) => updateCustomMcpToolPolicy.mutate(
-                            event.currentTarget.value as CustomMcpToolPolicy,
-                          )}
-                          value={customMcpSettings.data.toolPolicy}
-                        >
-                          <option value="all_tools">All tools</option>
-                          <option value="read_only_tools">Read-only tools</option>
-                        </select>
-                      </label>
-                    </div>
-                    <div className="settings-custom-mcp-tool-heading">
-                      <div>
-                        <strong><SettingLabel setting={settings.mcpCatalog} instanceId={customMcpSettingsConnectionId ?? undefined} /></strong>
-                        <small>
-                          {customMcpSettings.data.toolsUnavailable
-                            ? 'Read live from the server each time this screen opens.'
-                            : `${customMcpSettings.data.tools.filter((tool) => tool.available).length} of ${customMcpSettings.data.tools.length} available to Rally right now`}
-                        </small>
-                      </div>
-                    </div>
-                    <div className="settings-list-card settings-custom-mcp-tool-list">
-                      {customMcpSettings.data.toolsUnavailable ? (
-                        <EmptyState
-                          description={customMcpSettings.data.toolsUnavailable}
-                          title="This server’s tools could not be read"
-                        />
-                      ) : customMcpSettings.data.tools.length === 0 ? (
-                        <EmptyState
-                          description="The server responded but advertises no tools."
-                          title="No tools offered"
-                        />
-                      ) : customMcpSettings.data.tools.map((tool) => (
-                        <div className="settings-custom-mcp-tool-row" key={tool.name}>
-                          <span>
-                            <strong>{tool.name}</strong>
-                            <small>{tool.description || 'This server gave the tool no description.'}</small>
-                          </span>
-                          <Badge>{tool.readOnly ? 'Read-only' : tool.destructive ? 'Destructive' : 'Write'}</Badge>
-                          <Badge>{tool.available ? 'Available' : 'Withheld'}</Badge>
+                              && (customMcpSettings.data.scope === 'personal' || isAdmin) && (
+                              <Button
+                                disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
+                                onClick={() => setReconnectTarget(pageConnection)}
+                              >
+                                <RefreshCcw aria-hidden="true" size={14} />
+                                Authorize again
+                              </Button>
+                            )}
+                          </div>
+                          <label className="settings-preference-row">
+                            <SettingCopy setting={settings.mcpPolicy} instanceId={customMcpSettingsConnectionId} description={<> {customMcpSettings.data.toolPolicyEditable
+                                  ? 'Read-only exposes just the tools this server marks as read-only. The marking is the server’s own claim, which Rally cannot verify; it grants no additional access.'
+                                  : 'A personal connection is only ever yours and acts with your own identity on that server, so it exposes everything the server offers you.'} </>} />
+                            <select
+                              aria-label="Tools Rally may use"
+                              disabled={!customMcpSettings.data.toolPolicyEditable || updateCustomMcpToolPolicy.isPending}
+                              onChange={(event) => updateCustomMcpToolPolicy.mutate(
+                                event.currentTarget.value as CustomMcpToolPolicy,
+                              )}
+                              value={customMcpSettings.data.toolPolicy}
+                            >
+                              <option value="all_tools">All tools</option>
+                              <option value="read_only_tools">Read-only tools</option>
+                            </select>
+                          </label>
                         </div>
-                      ))}
-                    </div>
-                    <p className="settings-section-copy settings-custom-mcp-footnote">
-                      Tool names, descriptions, and markings come from the server itself and are shown as it sent them. Rally treats them as information, never as instructions. Tools run within the connection's granted access and your request, without per-tool confirmation prompts.
-                    </p>
+                        <div className="settings-custom-mcp-tool-heading">
+                          <div>
+                            <strong><SettingLabel setting={settings.mcpCatalog} instanceId={customMcpSettingsConnectionId} /></strong>
+                            <small>
+                              {customMcpSettings.data.toolsUnavailable
+                                ? 'Read live from the server each time this screen opens.'
+                                : `${customMcpSettings.data.tools.filter((tool) => tool.available).length} of ${customMcpSettings.data.tools.length} available to Rally right now`}
+                            </small>
+                          </div>
+                        </div>
+                        <div className="settings-list-card settings-custom-mcp-tool-list">
+                          {customMcpSettings.data.toolsUnavailable ? (
+                            <EmptyState
+                              description={customMcpSettings.data.toolsUnavailable}
+                              title="This server’s tools could not be read"
+                            />
+                          ) : customMcpSettings.data.tools.length === 0 ? (
+                            <EmptyState
+                              description="The server responded but advertises no tools."
+                              title="No tools offered"
+                            />
+                          ) : customMcpSettings.data.tools.map((tool) => (
+                            <div className="settings-custom-mcp-tool-row" key={tool.name}>
+                              <span>
+                                <strong>{tool.name}</strong>
+                                <small>{tool.description || 'This server gave the tool no description.'}</small>
+                              </span>
+                              <Badge>{tool.readOnly ? 'Read-only' : tool.destructive ? 'Destructive' : 'Write'}</Badge>
+                              <Badge>{tool.available ? 'Available' : 'Withheld'}</Badge>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="settings-section-copy settings-custom-mcp-footnote">
+                          Tool names, descriptions, and markings come from the server itself and are shown as it sent them. Rally treats them as information, never as instructions. Tools run within the connection's granted access and your request, without per-tool confirmation prompts.
+                        </p>
                   </>
                 ) : null}
                 {(customMcpSettings.error || updateCustomMcpToolPolicy.error) && (
                   <InlineError>{customMcpSettings.error?.message ?? updateCustomMcpToolPolicy.error?.message}</InlineError>
                 )}
-              </section>
-            )}
-
-            {/* In a browser the rest of this section is about the Mac app itself:
-                its keystore, crash reports, icon, updates and startup. Say so
-                rather than offer switches that cannot work here. */}
-            {activeSection === 'application' && browserHost && (
-              <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Appearance</h2><p>Keep Rally light or dark, or follow your system.</p></div>
-                <ThemePicker />
-                <p className="settings-oauth-status">Security, diagnostics, app icon, update and startup settings are available in the Mac app.</p>
+                  </>
+                )}
               </section>
             )}
 

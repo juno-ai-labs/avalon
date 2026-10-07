@@ -28,6 +28,7 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import { type SidekickDirectoryRow, writeSidekickDirectoryRow } from "./helpers/sidekick";
@@ -128,7 +129,8 @@ async function seedOpenAuthority(): Promise<void> {
       workspace_id TEXT NOT NULL,
       region TEXT NOT NULL,
       revoked_at TEXT,
-      expires_at TEXT NOT NULL
+      expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`INSERT INTO sessions
       (id, user_id, workspace_id, region, revoked_at, expires_at)
@@ -1430,7 +1432,7 @@ describe("Durable Objects in the Workers runtime", () => {
         throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
       }
       expect(response.status).toBe(101);
-      await expect(stub.initializeWorkspace(WORKSPACE_ID, "wnam")).resolves.toBeUndefined();
+      await expect(stub.initializeWorkspace(WORKSPACE_ID, "wnam")).resolves.toEqual({ spacesReady: false });
       const socket = response.webSocket;
       expect(socket).toBeDefined();
       socket!.accept();
@@ -1489,9 +1491,11 @@ describe("Durable Objects in the Workers runtime", () => {
     ticketId: string,
     sessionId: string = SESSION_ID,
     userId: string = USER_ID,
+    impersonatorUserId?: string,
   ): Promise<WebSocket> {
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
+        ...(impersonatorUserId ? { [RALLY_HEADERS.SOCKET_IMPERSONATOR_ID]: impersonatorUserId } : {}),
         Upgrade: "websocket",
         "x-rally-workspace-id": WORKSPACE_ID,
         "x-rally-placement-affinity": "wnam",
@@ -1601,6 +1605,16 @@ describe("Durable Objects in the Workers runtime", () => {
       first.send(JSON.stringify({ type: "set_presence", revision: 2,
         applicationState: "foreground", foregroundWorkstreamId: null }));
       await appliedRevision(2);
+      expect((await workspace.listWorkstreams({ ...request, limit: 20 })).items
+        .find((item) => item.id === WORKSTREAM_ID)?.lastAccessedAt).toBeNull();
+      // A Rally access support session as this person opens the channel without
+      // recording that they visited it (docs/impersonation.md).
+      const support = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-000000000419",
+        SESSION_ID, USER_ID, otherUserId);
+      support.send(JSON.stringify({ type: "set_presence", revision: 9,
+        applicationState: "foreground", foregroundWorkstreamId: WORKSTREAM_ID }));
+      await appliedRevision(9);
+      support.close();
       expect((await workspace.listWorkstreams({ ...request, limit: 20 })).items
         .find((item) => item.id === WORKSTREAM_ID)?.lastAccessedAt).toBeNull();
       const delivered = nextMessageOfType(peer, "workspace_workstream_recency");

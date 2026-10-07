@@ -93,6 +93,27 @@ A Breakout has its own participants and starts private to whoever made it.
 Adding someone to a Breakout lets them read that Breakout only, not the rest of
 the Channel. See [Breakouts](03-breakouts.md#who-can-see-a-breakout).
 
+### Asking to join from a link
+
+If you open a link to a private Channel or Breakout you are not in, Rally shows
+its name, color and icon and a **Request access** button. Pressing it sends the
+request to whoever created it. Once they approve, you are added, the Channel
+opens on its own within about half a minute, and you get an email. You get an
+email if they decline, too. Guests do not see this; they are shared in by email
+instead.
+
+If you created it, the request reaches you in four places:
+
+- **By email**, with an **Approve access** button that works in one click.
+- **In the attention button** left of search in the sidebar. The request is
+  listed first, with a check to approve and a cancel sign to decline. Click
+  the request itself to see it in a dialog with **Approve** and **Decline**.
+- **In the Mac menu bar**, under **Needs attention**. Choosing it opens Rally
+  on the same dialog.
+- **Among the conversation's people.** Open the Channel's or Breakout's menu
+  and choose **Add people**: requests are listed under **Asked to join**,
+  above **Suggested**, with the same check and cancel buttons.
+
 ## Roles
 
 Who may change things depends on each person's role in the Organization.

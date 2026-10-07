@@ -19,10 +19,11 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/shell.tsx` | The signed-in application's one lazy boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
 | `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications and opens their links on this origin. |
 | `apps/browser/public/manifest.webmanifest`, `icon-*.png`, `apple-touch-icon.png` | The install manifest and icons that let the host be added to an iOS Home Screen or installed as an app window. |
-| `apps/desktop/src/renderer/lib/home-screen.ts` | Whether the host runs as a Home Screen app, or in an iOS Safari tab that could be one. |
+| `apps/desktop/src/renderer/lib/home-screen.ts` | On iPhone and iPad, whether the host runs as a Home Screen app or in a Safari tab. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
 | `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context, optional setup capabilities, and `useShellCapabilities`: which host is drawing and whether the reader is a guest. |
+| `apps/desktop/src/renderer/lib/window-surface.ts` | The surfaces the Mac app opens in their own window (Settings, Sidekicks), which a browser tab shows as full-tab routes, and how each closes. |
 | `apps/desktop/src/renderer/components/mac-download-link.tsx` | The Mac app download row, the sidebar's footer item when the host is a browser tab. |
 | `packages/contracts/src/browser-session.ts` | Shared credential-free session and email exchange schemas. |
 | `apps/browser/wrangler.jsonc` | Assets and the explicit Global API service binding. |
@@ -85,8 +86,10 @@ older shares itself, so signing in claims them like any other.
 
 For an unaddressed entry, the client lists the user's regional workspaces and can sign
 out through the ordinary browser-session logout. Workspace roots mount the shell,
-and canonical Space, Channel, and Breakout links activate the addressed
-workspace and open in it. A guest sees no setup or onboarding view.
+and canonical Space, Channel, Breakout and Sidekick links activate the addressed
+workspace and open in it. A copied link reaches here from the site's handoff
+page, whose **Continue in browser** keeps the path and swaps the host
+([`workstream-links.md`](workstream-links.md#the-handoff-page)). A guest sees no setup or onboarding view.
 
 Returning focus refreshes both the root session and the selected workspace
 relationship, even when the user ID is unchanged. The feed stays mounted while
@@ -171,6 +174,8 @@ with Docs and Sheets. A connection is offered only when every capability it asks
 for is listed (`browserCanConnect`). Every other connector, in Settings, account
 onboarding and a conversation's connection card, is shown with its buttons
 disabled and "Download the Mac app to connect this." linking to the Mac build.
+On a phone or tablet (`MAC_APP_DOWNLOADABLE` false) it reads "Connect this from
+the Mac app." with no link, since the build cannot run there.
 The list is presentation only; the connection routes do not read it.
 
 A cookie session's `RallyApi` starts with `?handoff=browser`. The API stores
@@ -201,7 +206,12 @@ Breakouts, the details rail and the Settings route. The value carries
 `_` workspace of the cookie adapter. Anything only the Mac app can do (accepting
 a workspace invitation from the desktop flow, desktop sign-in) rejects with
 "Available in the Mac app." Creating an organization is the entry's, not the
-shell's; see below. In Settings, Application shows
+shell's; see below. A browser tab cannot keep a window of its own, so the
+surfaces the Mac app opens in one, Settings and Sidekicks (the library and each
+Sidekick's screen), are routes of the main window here (`#/settings`,
+`#/sidekicks`). `lib/window-surface.ts` lists them; on such a route the shell
+takes the whole tab and hides the sidebar, which stays mounted so closing the
+surface returns to the workspace without reloading it. In Settings, Application shows
 Appearance and names the Mac app for the rest, and Notifications offers
 "In this browser". The sidebar always shows **Download the Mac app** above the
 account menu, as a footer item ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
@@ -219,7 +229,7 @@ authorizes every call. `GET /workspace` answers guests too, with
 else; the rest of `/workspace` stays member-only.
 
 The desktop shell routes by hash. Before its router mounts, the shell rewrites a
-canonical Channel or Space link, or an addressed Channel path such as an invitation email's, into
+canonical Channel, Space or Sidekick link, or an addressed Channel path such as an invitation email's, into
 the workspace path plus the hash the desktop's own deep links set
 (`shellLocation`). Losing access or a 401 asks the entry to re-read the server
 session, which unmounts the shell when the session is gone. The shell keeps
@@ -242,10 +252,12 @@ id and `workspace_create_requested` intent. The entry posts the name and
 operation id to `POST /browser/workspace/create` on Global. That route runs the
 Mac app's `PlatformOnboardingService.createWorkspace`, revokes the bearer session
 it returns without reading it into a response, and answers only
-`{ region, workspaceId }`. The entry then navigates to
-`/app/workspaces/<region>/<id>`, which opens through `/workspace/select` like
-any other organization, and the shell runs the creator's setup journey there:
-"This is you in Rally", then inviting teammates.
+`{ region, workspaceId }`. The entry then opens it in the same document: it
+replaces the address with `/app/workspaces/<region>/<id>` (replaced, not
+pushed, since nothing in the entry answers Back), makes that the destination
+a later restore reopens, and opens it through `/workspace/select` like any
+other organization. The shell runs the creator's setup journey there: "This
+is you in Rally", then inviting teammates.
 Any account can create one, whatever it signed in with; see
 [multiple workspaces](multiple-workspaces.md#authority-and-data-flow) for how a
 deployment links the account.
@@ -399,7 +411,8 @@ keeps a Home Screen app's cookies apart from its tabs, so the app signs in on
 its own, and a magic link from email opens in Safari and signs in Safari, not
 the app. In the Home Screen app the code screen therefore asks only for the
 code. `home-screen.ts` tells the cases apart with `navigator.standalone`, which
-only iOS Safari defines, rather than the user agent.
+only iOS Safari defines, rather than the user agent. An installed Chromium app
+shares its browser profile's cookies, so it keeps the email link.
 
 Forwarded HTTP responses retain their streaming bodies but add document sandbox
 CSP and `nosniff`: an uploaded HTML or SVG navigated on the cookie origin must
@@ -513,7 +526,9 @@ member tab runs the desktop's feed swarm over native sockets.
 Production routing/configuration, external mailbox delivery and deployed stateful
 artifact serving remain release checks. Signing in over an existing cookie does
 not revoke the earlier session, so anything bound to it, such as a Web Push
-device, stays live until that session ends. The Home Screen app works only
+device, stays live until that session ends. The Home Screen app supports iOS
+18 and later, so a Safari tab on an iOS too old for Home Screen Web Push (before
+16.4) is still shown the Home Screen hint. It works only
 online: nothing is cached for it, and invitation and Channel links from email
 open in Safari, not in the app.
 
@@ -576,31 +591,69 @@ Substream Archive stays in the right-click menu, away from the header Share cont
 
 ## Changelog
 
-### 2026-10-07 — Add Rally to the iOS Home Screen
+### 2026-10-07: Add Rally to the iOS Home Screen
 
-**What changed:** The host serves a web app manifest and icons, so Safari on
-iPhone and iPad can add Rally to the Home Screen and Chromium can install it as
-an app window. In an iOS Safari tab, Settings → Notifications explains how to
-add Rally to the Home Screen; in the Home Screen app, the sign-in code screen no
-longer offers the email link.
+**What changed:** The host serves a web app manifest and icons. On iOS,
+Settings tells a Safari tab how to add Rally, and the Home Screen app's code
+screen drops the email link.
 
-**Why:** Safari delivers Web Push only to Home Screen apps, so an iPhone member
-of the browser host could not get notifications at all. Rally's native iOS app
-is a prototype; the browser host already had push, a phone-width layout and a
-root service worker, and lacked only the manifest.
+**Why:** Safari delivers Web Push only to Home Screen apps, and the host had no
+manifest, so an iPhone member could not get notifications at all.
 
 **Considered and rejected:** An offline cache in the service worker. The shell
-HTML is private and `no-store`, and the app needs its sockets to be useful, so
-caching would break the HTML invariant for no working offline mode.
-Registering the service worker on every load: install no longer requires one,
-and push already registers it when the member turns notifications on. Reading
-the user agent to find iOS: `navigator.standalone` answers the exact question.
-A fixed `theme-color`: the shell has a light theme, which a dark bar would
-contradict.
+HTML is private and `no-store`, and the app is not useful without its sockets.
 
-**Consequences:** A Home Screen app holds its own session, separate from
-Safari's. Email links still open in Safari. A new root file the browser must
-fetch by name has to be added to `INSTALL_FILES` in the Worker, or it 404s.
+**Consequences:** A root file a browser fetches by name has to be added to
+`INSTALL_FILES` in the Worker, or it returns 404.
+
+### 2026-10-07: Settings and Sidekicks take the whole tab
+
+**What changed:** Settings and Sidekicks, which the Mac app opens in their own
+windows, are routes of the main window in a browser tab, listed in
+`lib/window-surface.ts`. On those routes the shell hides the sidebar and gives
+the surface the whole tab. Sidekicks used to open in a second, named tab; it now
+opens at `#/sidekicks` in the same one, and its library gains a close button.
+
+**Why:** Settings drew in a pane beside the sidebar, which read as a channel
+rather than as its own place. Sidekicks opened a tab of its own, which a person
+then had to find and close.
+
+**Considered and rejected:** Mounting these routes outside the shell. Leaving
+would then remount the sidebar and reconnect the workspace socket; hiding it
+keeps the return instant.
+
+**Consequences:** A surface added to the list gets both behaviors. The sidebar
+stays mounted, and its socket open, while a surface is on screen. A tab left
+open on the former Sidekicks tab's `?surface=sidekicks` address drops that query
+when the shell loads.
+
+Shipped in [#1154](https://github.com/juno-ai-labs/avalon/pull/1154).
+
+### 2026-10-07: A created organization opens in place
+
+**What changed:** After `POST /browser/workspace/create` the entry no longer
+calls `location.assign`. It replaces the address with the organization's
+path, records it as the destination the restore path reopens (a ref, where
+the restore used to read only the address the page loaded with), and sets
+the destination, so the existing effect selects the organization and mounts
+the shell.
+
+**Why:** The navigation downloaded and booted the page again, restored the
+session it already held, and only then made the one request the new
+organization needed: `/workspace/select` on Global.
+
+**Considered and rejected:** `history.pushState`, so Back would return to the
+empty list. Nothing in the entry answers `popstate`, so Back would change the
+address and leave the organization on screen.
+
+**Consequences:** The created organization is reached without a history
+entry, so Back leaves Rally rather than returning to the empty list. A focus
+or a session change while it is open reselects it, as for a page loaded at
+its address, rather than reading the organization list. The list read before
+the creation is dropped, so a select that fails shows its error rather than an
+empty list with Create on it again.
+
+Shipped in #1142.
 
 ### 2026-10-06 — Create an organization from the browser
 

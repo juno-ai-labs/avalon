@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import '../../../../../tests/isolated-region';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -330,12 +331,14 @@ it('opens a shared conversation straight from sign-in, with nothing to accept', 
   const path = `/app/workspaces/global/${workspace.id}/workstreams/dddddddd-dddd-4ddd-8ddd-dddddddddddd`;
   history.replaceState(null, '', path);
   const requests: string[] = [];
+  let startBody: unknown = null;
   let signedIn = false;
   const expiresAt = new Date(Date.now() + 100_000).toISOString();
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
     const route = input.split('/browser')[1]!;
     requests.push(route);
     if (route === '/session' || (route === '/workspace/select' && !signedIn)) return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (route === '/email/start') startBody = JSON.parse(String(init?.body));
     if (route === '/email/start') return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: Date.now() + 600_000 }, { status: 202 });
     if (route === '/email/redeem') { signedIn = true; return Response.json({ user, workspace: null, expiresAt }); }
     if (route === '/workspace/select') return Response.json({ user, workspace, expiresAt });
@@ -351,6 +354,32 @@ it('opens a shared conversation straight from sign-in, with nothing to accept', 
   expect(await screen.findByText('Shared conversation')).toBeInTheDocument();
   expect(location.pathname).toBe(path);
   expect(requests.some((route) => route.includes('accept') || route === '/invitation')).toBe(false);
+  // The emailed link is minted on this page's path, so it lands back here too.
+  expect(startBody).toMatchObject({ returnPath: path });
+});
+
+it('signs in from an emailed link that landed on a shared path and opens what it names', async () => {
+  const path = `/app/workspaces/global/${workspace.id}/workstreams/dddddddd-dddd-4ddd-8ddd-dddddddddddd`;
+  history.replaceState(null, '', `${path}#region=global&challenge=cccccccc-cccc-4ccc-8ccc-cccccccccccc&token=proof-token`);
+  let signedIn = false;
+  const redeemed: unknown[] = [];
+  const expiresAt = new Date(Date.now() + 100_000).toISOString();
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const route = input.split('/browser')[1]!;
+    if (route === '/session' || (route === '/workspace/select' && !signedIn)) return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (route === '/email/redeem') { signedIn = true; redeemed.push(JSON.parse(String(init?.body))); return Response.json({ user, workspace: null, expiresAt }); }
+    if (route === '/workspace/select') return Response.json({ user, workspace, expiresAt });
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry renderCollaboration={() => <p>Shared conversation</p>} />);
+  expect(await screen.findByRole('heading', { name: 'Confirm your sign-in' })).toBeInTheDocument();
+  // The proof never stays in history; the path does.
+  expect(location.hash).toBe('');
+  expect(location.pathname).toBe(path);
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  expect(await screen.findByText('Shared conversation')).toBeInTheDocument();
+  expect(redeemed).toEqual([expect.objectContaining({ method: 'magic', credential: 'proof-token' })]);
+  expect(location.pathname).toBe(path);
 });
 
 it('treats an old token invitation link as a plain sign-in page', async () => {
@@ -368,7 +397,8 @@ it('treats an old token invitation link as a plain sign-in page', async () => {
   // in with the invited address is what claims the share.
   expect(location.pathname).toBe('/');
   expect(location.hash).toBe('');
-  expect(requests).toEqual(['/session']);
+  // The sign-in page reports its view from an effect, after it has rendered.
+  await waitFor(() => expect(requests).toEqual(['/session', '/signup/view']));
 });
 
 it('waits for the organization list before saying nothing has been shared', async () => {
@@ -388,10 +418,12 @@ it('waits for the organization list before saying nothing has been shared', asyn
 });
 
 it('starts Google sign-in for the page it was opened on and explains a declined one on return', async () => {
-  const starts: unknown[] = [];
+  const starts: Array<{ signupFlowId: string; returnPath: string }> = [];
+  const views: Array<{ flowId: string }> = [];
   vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
     const path = input.split('/browser')[1];
     if (path === '/workspace/select' || path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/signup/view') { views.push(JSON.parse(String(init?.body))); return new Response(null, { status: 204 }); }
     if (path === '/google/start') { starts.push(JSON.parse(String(init?.body))); return Response.json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=s' }); }
     throw new Error(`Unexpected browser request: ${input}`);
   }));
@@ -400,9 +432,65 @@ it('starts Google sign-in for the page it was opened on and explains a declined 
   try {
     expect(await screen.findByRole('alert')).toHaveTextContent('Google sign-in was cancelled.');
     expect(location.hash).toBe('');
+    await waitFor(() => expect(views).toHaveLength(1));
+    view.rerender(<BrowserEntry />);
     fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
-    await waitFor(() => expect(starts).toEqual([{ returnPath: `/app/workspaces/global/${workspace.id}` }]));
+    await waitFor(() => expect(starts).toEqual([{ returnPath: `/app/workspaces/global/${workspace.id}`, signupFlowId: expect.stringMatching(/^[0-9a-f-]{14}7/u) }]));
+    expect(views).toEqual([{ flowId: starts[0]!.signupFlowId }]);
   } finally { view.unmount(); }
+});
+
+it.each(['google', 'email'] as const)('keeps %s sign-in available on an older strict start API', async method => {
+  const starts: Array<Record<string, unknown>> = [];
+  const path = `/${method}/start`;
+  const legacy = method === 'google'
+    ? z.strictObject({ returnPath: z.string() })
+    : z.strictObject({ challengeId: z.string().uuid(), email: z.string().email() });
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const requestedPath = input.split('/browser')[1];
+    if (requestedPath === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (requestedPath === '/signup/view') return Response.json({ error: { message: 'Not found' } }, { status: 404 });
+    if (requestedPath === path) {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      starts.push(body);
+      if (!legacy.safeParse(body).success) return Response.json({ error: { code: 'invalid_request', message: 'The request is invalid' } }, { status: 400 });
+      return method === 'google' ? Response.json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=s' })
+        : Response.json({ challengeId: body.challengeId, expiresAt: Date.now() + 600_000 }, { status: 202 });
+    }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry />);
+  if (method === 'google') fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
+  else {
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with email' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: 'new@example.test' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
+  }
+  await waitFor(() => expect(starts).toHaveLength(2));
+  expect(starts[0]).toHaveProperty('signupFlowId');
+  const expected = { ...starts[0] };
+  delete expected.signupFlowId;
+  expect(starts[1]).toEqual(expected);
+  expect(screen.queryByRole('alert')).toBeNull();
+  if (method === 'email') expect(await screen.findByRole('textbox', { name: 'Sign-in code' })).toBeVisible();
+});
+
+it.each([[503, 'unavailable'], [400, 'not_a_validation_error']] as const)('does not retry a signup start rejected with %s %s', async (status, code) => {
+  const starts: unknown[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/signup/view') return new Response(null, { status: 204 });
+    if (path === '/google/start') {
+      starts.push(JSON.parse(String(init?.body)));
+      return Response.json({ error: { code, message: 'Start unavailable' } }, { status });
+    }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Start unavailable');
+  expect(starts).toHaveLength(1);
 });
 
 it('returns to the Google-first choice after an email sign-in signs out', async () => {
@@ -508,25 +596,68 @@ it('shows the opening mark while a sign-in activates a linked organization in an
   } finally { view.unmount(); }
 });
 
-it('creates an organization from the empty shared-work screen through the cookie route', async () => {
+it('creates an organization from the empty shared-work screen and opens it in place', async () => {
   const created: unknown[] = [];
+  const calls: string[] = [];
   const createdId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const expiresAt = new Date(Date.now() + 100_000).toISOString();
+  const owned = { ...workspace, id: createdId, name: 'Acme Research', accessClass: 'member', role: 'owner' };
   vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
-    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    calls.push(input);
+    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt });
     if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
     if (input === '/regional/global/browser/workspace/create') {
       created.push(JSON.parse(String(init?.body)));
       return Response.json({ region: 'global', workspaceId: createdId }, { status: 201 });
     }
+    if (input === '/regional/global/browser/workspace/select') {
+      expect(JSON.parse(String(init?.body))).toEqual({ workspaceId: createdId });
+      return Response.json({ user, workspace: owned, expiresAt });
+    }
     throw new Error(`Unexpected request ${input}`);
   }));
-  const view = render(<BrowserEntry />);
+  const view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.workspace?.name}`}</output>} />);
   try {
     await screen.findByText('guest@example.test is not part of an organization, and nothing has been shared with it yet.');
     fireEvent.click(screen.getByRole('button', { name: 'Create an organization' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: ' Acme Research ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
     await waitFor(() => expect(created).toEqual([{ name: 'Acme Research', operationId: expect.stringMatching(/^[0-9a-f-]{14}7/u) }]));
+    // The organization opens in this document, at its own address.
+    expect(await screen.findByText('global:Acme Research')).toBeInTheDocument();
+    expect(location.pathname).toBe(`/app/workspaces/global/${createdId}`);
+    // A later restore reopens the organization rather than reading the list.
+    calls.length = 0;
+    fireEvent.focus(window);
+    await waitFor(() => expect(calls).toEqual(['/regional/global/browser/workspace/select']));
+    expect(screen.getByText('global:Acme Research')).toBeInTheDocument();
+  } finally { view.unmount(); }
+});
+
+it('does not offer Create again when a created organization fails to open', async () => {
+  const createdId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef';
+  const expiresAt = new Date(Date.now() + 100_000).toISOString();
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt });
+    if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
+    if (input === '/regional/global/browser/workspace/create') return Response.json({ region: 'global', workspaceId: createdId }, { status: 201 });
+    if (input === '/regional/global/browser/workspace/select') {
+      return Response.json({ error: { code: 'regional_onboarding_unavailable', message: 'The region is unavailable' } }, { status: 503 });
+    }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.workspace?.name}`}</output>} />);
+  try {
+    await screen.findByText('guest@example.test is not part of an organization, and nothing has been shared with it yet.');
+    fireEvent.click(screen.getByRole('button', { name: 'Create an organization' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Acme Research' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Organization name' })).not.toBeInTheDocument());
+    await waitFor(() => expect(location.pathname).toBe(`/app/workspaces/global/${createdId}`));
+    // The select failed; the empty list read before the creation must not come
+    // back with Create on it.
+    expect(await screen.findByText('The region is unavailable')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create an organization' })).not.toBeInTheDocument();
   } finally { view.unmount(); }
 });
 

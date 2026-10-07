@@ -8,6 +8,7 @@ function actions() {
     openWebsite: vi.fn(),
     checkForUpdates: vi.fn(),
     installDownloadedUpdate: vi.fn(),
+    refreshOrganizationList: vi.fn(),
   };
 }
 
@@ -82,5 +83,19 @@ describe('application menu update lifecycle', () => {
     expect(template.filter((item) => item.label === 'File')).toHaveLength(1);
     expect(leadingItems.some((item) => item.role === 'close')).toBe(false);
     expect(template.some((item) => item.role === 'windowMenu')).toBe(true);
+  });
+
+  it('adds Refresh Organization List to View and keeps Electron\'s View items', () => {
+    const callbacks = actions();
+    const viewItems = (platform: NodeJS.Platform) => {
+      const template = applicationMenuTemplate({ appName: 'Rally', platform, updateStatus: { kind: 'idle' }, actions: callbacks });
+      return template.find((item) => item.label === 'View')!.submenu as MenuItemConstructorOptions[];
+    };
+    const shared = ['separator', 'reload', 'forceReload', 'toggleDevTools', 'separator', 'resetZoom', 'zoomIn', 'zoomOut'];
+
+    expect(viewItems('darwin')[0]).toMatchObject({ label: 'Refresh Organization List', click: callbacks.refreshOrganizationList });
+    expect(viewItems('linux').slice(1).map((item) => item.role ?? item.type)).toEqual([...shared, 'separator', 'togglefullscreen']);
+    // macOS supplies its own full-screen item in View; a second one is a duplicate.
+    expect(viewItems('darwin').slice(1).map((item) => item.role ?? item.type)).toEqual(shared);
   });
 });

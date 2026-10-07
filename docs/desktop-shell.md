@@ -41,7 +41,8 @@ drags it), clamped to the shared minimum and maximum and to what
 the window leaves the conversation. Dragging below the minimum stops there.
 
 Its top bar holds the macOS window controls' inset and the host's actions. The
-desktop's are **Restart to update** (only when `useDownloadedUpdate` has
+actions sit at the bar's end on macOS and at phone width, and at its start where
+no window controls are drawn (the browser). The desktop's are **Restart to update** (only when `useDownloadedUpdate` has
 one), the **attention menu** (a red count, or a bell when nothing is waiting;
 [`attention-menu.md`](attention-menu.md)), **Search organization**, **Import from ChatGPT or Claude** (the browser
 import window, locked to the selected Space), and **New channel** (the Start a
@@ -66,6 +67,12 @@ filters as asked and opens the first Channel the filtered list draws, or the
 new-Channel screen for that Space when it holds none; the new-Channel screen of
 another Space counts as hidden too. Restoring an archived Space selects its
 pill the same way, so it can navigate too.
+
+In a browser tab at desktop width, an Organization with no Space but General
+has no pill row: **New space** sits at the end of the top bar's actions, at
+the bar's 32px, and **All** is not drawn, since it would filter nothing. The
+first Space brings the row and All back. The phone sheet always keeps the row,
+since its top bar shows while the sheet is shut.
 
 Every Space picker (the new-Channel screen's, the import window, **Add to
 space**) reads its list through `useSpaceChoices`: General first and named **All**,
@@ -102,21 +109,24 @@ the sidebar's **footer items**: rows the host passes as `footerItems`, drawn by
 list is, since they are outside its scroll, and each is a `SidebarRow`, so a
 compact rail collapses it to a tile like a Space row. Today the one item is
 **Download the Mac app**, which `AppShell` passes whenever the host is a
-browser tab, for members and guests alike; the Mac app passes none and draws
-nothing there. Tips or tutorials go here too.
+desktop browser tab, for members and guests alike. A phone or tablet browser
+gets none, by `MAC_APP_DOWNLOADABLE` in `lib/browser-connectors.ts`, and neither does the
+Mac app. Tips or tutorials go here too.
 
 ### At phone width
 
 At 640px and narrower the sidebar becomes a 56px top bar over the
-conversation: the **menu button** (tabler `menu-2`) at its left, the round top
-actions at its right. Everything else in the sidebar (pills, list, footer
+conversation: the **menu button** at its left, the round top actions at its
+right. The menu button has the same raised round fill as those actions, and
+its glyph is tabler `menu-2` while the sheet is shut and `x` while it is open;
+the two turn into each other over 180ms, and reduced motion swaps them. Everything else in the sidebar (pills, list, footer
 items, account) is a full-screen sheet under the bar. The menu button toggles
 `useUiStore.sidebarOpen`; the sheet drops in and out with a clip over 260ms,
 and reduced motion cuts it. Any route change closes it, whoever navigated (a
-row, a search result, the New channel form, a pill that had to leave the open
-Channel), as do Escape, the button, and widening past 640px. Picking a pill
-that only filters, or re-sorting, does not, since the reader is still
-choosing. While it is open, `AppShell` makes `.main-pane` `inert`, so Tab and
+row, a search result, the New channel form), as do Escape, the button, and
+widening past 640px. Picking a pill does not, even one that had to leave the
+open Channel for that Space's first one, and neither does re-sorting, since
+the reader is still choosing. While it is open, `AppShell` makes `.main-pane` `inert`, so Tab and
 a screen reader stay in the sheet, and Escape hands focus back to the button.
 Escape is heard in the capture phase and stands down while a menu or dialog
 is open, so it closes that first; a tooltip does not count, though Radix marks
@@ -128,6 +138,9 @@ tab order once the close finishes. `SidebarTopActions` takes the button
 through its `leading` slot. Electron's window has an 860px minimum, so only
 the browser reaches this width. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx`
 repeats the CSS's 640.
+
+On touch screens text fields render at 16px to stop iOS focus zoom; see the
+rule at the end of `app.css`.
 
 ### Pins under All
 
@@ -154,8 +167,8 @@ one per turn of what people and Rally said); its own icon and colour are chosen
 from **Icon and color** in its menu (`AppearanceSubmenu`). An open pill fills
 solid and drops its lift to the bare ring.
 
-Each menu has a root and levels. The root is a header, a row of action tiles
-(Add people, Rename, Copy link, Share, More) and one row each for People,
+Each menu has a root and levels. The root is a row of action tiles (Add people,
+Rename, Copy link, More), under a header on a Breakout, and one row each for People,
 Sidekicks and, on a Channel, Breakouts, with a count beside each. A row, or the
 Add people and More tiles, opens its level in place (`useTitleMenuNav`), and the
 pill becomes a breadcrumb, the title quietened and the level after it. The
@@ -165,19 +178,32 @@ and travels the popout's width and height between them over 320ms while the
 level's rows arrive on a 22ms stagger, sliding in from the side the move came
 from; reduced motion turns both off.
 
-- **Channel menu:** root header is the Space it lives in (with **Open space**). People is the scope (with **Change**, which
-  opens the full roster dialog), a search, the participants and suggestions
-  to add inline (`TitleMenuPeople`). Each participant's dots menu offers
+- **Channel menu:** no header; the tiles come first. People is a search, the
+  participants (members and guests), invitations still waiting, and
+  suggestions to add inline (`TitleMenuPeople`). Enter in the search takes
+  addresses separated by spaces, commas or semicolons: an address someone in
+  the Organization has adds them, any other is invited to the conversation as
+  a guest (`TitleMenuInvites`, backed by `useScopeInvitations`), and the menu
+  stays open for the next. Adds run one at a time, then the invite, and only
+  what failed stays in the box. A name narrowed to one person adds them; an
+  address whose Organization account is not active is refused rather than
+  invited. Pending invitations load only once People opens, and new addresses
+  wait for them, since they decide who is already invited; a failed load
+  shows **Try again**. Enter that finishes an input method's composition does
+  not submit. Each participant's dots menu offers
   **Remove from channel**, or **Leave the channel** on the reader's own row,
   disabled for the last participant; the host confirms in a Cancel/Continue
-  dialog before it removes. Sidekicks is the Sidekick section. Breakouts
-  is the list, newest activity first, filtered past six. More is **Pinned in
+  dialog before it removes. A waiting invitation's dots menu offers **Cancel
+  invite**. Sidekicks is the Sidekick section. Breakouts
+  is the list, newest activity first, filtered past six. More is **Icon and
+  color** (the same choice as the pill's icon), **Pinned in
   my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
   **Public to organization** (a switch both ways; a refusal to make it private
   names what holds it public), Import updates, host extras, the Channel's artifacts, and
   **Archive channel** last.
 - **Breakout menu:** root header is the Channel it belongs to (with **Show in
-  channel**) and the message it started from. People and Sidekicks as above;
+  channel**) and the message it started from. People (inviting to the
+  Breakout alone) and Sidekicks as above;
   More is Icon and color, **Public to organization**, and **Archive breakout** last.
 
 ### Breakouts
@@ -308,6 +334,110 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-07 — Switching Spaces keeps the phone sheet open
+
+**What changed:** At phone width, a pill that leaves the open Channel for its
+Space's first Channel (or its new-Channel screen) no longer closes the sheet.
+
+**Why:** A reader picks a Space to browse its Channels. Closing the sheet on
+that hop dropped them into a Channel they never chose, and they had to open
+the menu again to pick the one they wanted.
+
+**Considered and rejected:** Not navigating at all on a phone. The open
+Channel would then sit behind a list that no longer shows it, and closing the
+sheet would land somewhere the pills do not match.
+
+**Consequences:** The pill's own navigation sets a one-shot flag the
+route-change effect consumes, so every other route change still closes the
+sheet.
+
+Shipped in [#1158](https://github.com/juno-ai-labs/avalon/pull/1158).
+
+### 2026-10-07 — With no Spaces, the browser folds New space into the top bar and drops All
+
+**What changed:** In a browser tab wider than the phone layout, when the only
+Space is General, `SpacePills` portals **New space** into a slot at the end of
+`SidebarTopActions` (`inlineTarget`) and draws no strip, so **All** is gone
+too. The first Space, or a restore, brings the strip back; archiving the last
+folds it again.
+
+**Why:** A new Organization's second row held one button and an All filter
+that filters nothing, and cost a row of height for it.
+
+**Considered and rejected:** Doing it on the Mac app too, where the top bar
+shares its space with the window controls. Moving the whole `SpacePills`
+between the two places, which remounted it and dropped an open archive or
+restore dialog when the window crossed the phone breakpoint; only the button
+moves now.
+
+**Consequences:** The New space menu itself still remounts when it moves, so a
+create-space form open while the window crosses 640px closes.
+
+Shipped in [#1148](https://github.com/juno-ai-labs/avalon/pull/1148).
+
+### 2026-10-07 — Add people invites guests; Share and the Space header leave the title menu
+
+**What changed:** The People level's search takes email addresses. Enter adds
+anyone already in the Organization and invites any other address as a guest
+of that Channel or Breakout, without closing the menu, and pending invitations
+list beside the participants with **Cancel invite**. The **Share** tile, the
+scope row with **Change**, the Channel menu's **In space** header and **Copy
+channel email address** are gone. The Channel's More gains **Icon and
+color**, as the Breakout's has.
+
+**Why:** Share and Add people were two doors to one job, inviting someone in,
+and Share's dialog closed after each send. Folding the guest invite into the
+People search makes one place to bring anyone in, and keeping the menu open
+lets several be added in a row. The scope row repeated what **More** already
+switches, and the Space header pushed the actions down for a link the sidebar
+already gives.
+
+**Considered and rejected:** Keeping the Share dialog behind the tile. It
+duplicated the People level and could not show members and invitations
+together.
+
+**Consequences:** `useScopeInvitations` is the one client for a
+conversation's invitations; the share panel and the People level read one
+cache entry, so a cancel in either shows in both. It keeps one retry id per
+batch, so a retried invite replays its own operation rather than making a
+second. A submission's adds run in order because each add returns the whole
+roster and the cache takes the last one to arrive. The roster dialog
+(`AddParticipantDialog`) is no longer reachable from the title menus.
+
+### 2026-10-07 — The phone menu button shows when the sheet is open
+
+**What changed:** At phone width the menu button turns from a menu glyph into
+a close mark while the sheet is open, and wears the same 32px raised round
+fill as the top actions beside it.
+
+**Why:** The button looked the same open or shut; only its accessible name
+changed. The open sheet covers the screen, so the button's one job then is to
+close it, and a close mark says so. Without a fill it was the one bare control
+in a row of round buttons.
+
+**Considered and rejected:** Tinting the button while open. It reads as a
+pressed or hover state, and sits next to the red attention count. A
+sidebar-collapse glyph, which suits a sidebar beside content but not a sheet
+over it.
+
+**Consequences:** Both glyphs stay mounted and CSS keys on `aria-expanded`, so
+the state the button shows cannot drift from the state it announces.
+
+Shipped in [#1134](https://github.com/juno-ai-labs/avalon/pull/1134).
+
+### 2026-10-07 — No Mac download on phones and tablets
+
+**What changed:** The browser no longer passes **Download the Mac app** as a
+footer item on iOS, iPadOS or Android. Connectors a browser cannot start say
+**Connect this from the Mac app.** there, as plain text, instead of linking the
+download.
+
+**Why:** A phone or tablet cannot run the Mac build, so the row was a dead end
+in a footer with little room.
+
+**What to respect:** iPadOS reports itself as a Mac; only a touch count above
+one marks it, so a check on the user agent alone would show the row there.
 
 ### 2026-10-06 — No tick bar at phone width
 

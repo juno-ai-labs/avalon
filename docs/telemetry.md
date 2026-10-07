@@ -582,6 +582,45 @@ in `WorkspaceDO` and its conversations for work-stream product data.
 - Raw crash access is by opaque crash ID, region-restricted, reason-coded, and
   audited. A missing raw object returns a fixed result and never exposes its key.
 
+## Complete signup measurement
+
+A random UUIDv7 `flowId` follows the sign-in screen through OAuth state, email
+challenges, desktop tickets, and the new account's first signup. Existing users
+and old proofs are not backfilled; returning sign-ins cannot replace lineage.
+
+The closed API stages are `signup_viewed`, `signup_started`,
+`signup_email_submitted`, `signup_verification_requested`,
+`signup_verification_completed`, `authentication_completed`,
+`signup_account_created`, `signup_organization_requested`,
+`signup_organization_ready`, `signup_onboarding_completed`, `signup_completed`,
+and `signup_failed`. New-account events exclude returning sign-ins. Completion
+requires first organization access and any required introduction, for either
+`new_organization` or `existing_organization`. Automatically claimed shares enter
+the organization setup funnel when the user selects their organization.
+
+`clientPlatform` is the surface executing the stage; `entryPlatform` is where
+signup began. Desktop-issued email links redeemed in a browser retain both.
+`source: api` names the producer. Desktop offers Google; browser offers Google
+and email. Native PostHog funnels count flow attempts, not unique people.
+Public-site acquisition has a separate subject and is not linked to signup.
+
+The unauthenticated view endpoint accepts only a UUIDv7, but callers can submit
+fresh IDs to inflate view counts; it has no new issuance limit. Successful stages
+remain server-owned. No mailbox, account ID, proof, invitation credential, or raw
+error is captured. Known users respect the existing analytics preference gate;
+pre-verification observations cannot resolve it. Delivery is deferred and best
+effort, never an authentication gate or delivery outbox. Stable event IDs dedupe
+stages and each organization intent path. Completion is claimed atomically from
+current organization/introduction state; a late introduction observer still emits
+its stage after completion. Observation timestamps precede deferred reads.
+
+Deploy regional migration `0121_signup_telemetry.sql` first, then every configured
+API deployment, then the browser and desktop producers. Google/email start
+schemas are strict: a validation-only `400 invalid_request` retries start once
+without `signupFlowId` for an older API. Authentication remains available during
+client/API skew, with flow correlation unavailable until the API is upgraded.
+Network failures and other errors are not retried. New funnels populate after rollout.
+
 ## Testing
 
 Run focused suites from their package directories:
@@ -1968,6 +2007,29 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-10-07 — Observe the complete first signup journey
+
+**What changed:** An opaque first-account flow connects verification,
+organization access, and required introduction across browser and desktop.
+Completion is deduped independently of late stage observers.
+
+**Why:** Authentication counts could not locate abandonment during email
+verification, joining an existing organization, or completing a new organization.
+Using the entry platform for browser redemption also hid actual surface changes.
+
+**Considered and rejected:** Client SDK capture would expose destination
+authority on proof-handling pages; the existing regional collector already owns
+closed events and analytics preferences. A new delivery ledger was unnecessary
+for best-effort product analytics.
+
+**Consequences:** Preserve first-flow lineage, proof privacy, current versus
+entry platform, and stage emission even when completion wins a race. Deploy
+migrations and all APIs before producers for complete correlation; older strict
+start schemas receive a narrow validation-only fallback. View counts
+are observational and can be inflated by unauthenticated callers.
+
+PR: [#1146](https://github.com/juno-ai-labs/avalon/pull/1146).
 
 ### 2026-10-02 — Locate desktop-action waits and admit deterministic import runs
 

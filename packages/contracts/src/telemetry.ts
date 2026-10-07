@@ -187,6 +187,8 @@ export const TELEMETRY_MENU_BAR_ACTIONS = [
   "recent_workstream", "pinned_workstream", "open_rally", "quit_rally",
   // A row of the Needs attention section: a Channel's Main or a Breakout.
   "attention_conversation",
+  // A request to join a Channel or Breakout, which opens its decision in the main window.
+  "access_request",
 ] as const;
 
 export type TelemetryMenuBarAction = (typeof TELEMETRY_MENU_BAR_ACTIONS)[number];
@@ -282,7 +284,39 @@ function productEvent<
   return registryEntry;
 }
 
+const signupEventProperties = deferredZodSchema(() => z.strictObject({
+      flowId: UuidV7Schema,
+      clientPlatform: z.enum(["browser", "desktop"]),
+      entryPlatform: z.enum(["browser", "desktop"]),
+      method: z.enum(["google", "email", "otp", "magic", "unknown"]),
+      result: z.enum(["success", "failed", "denied"]),
+      accountStatus: z.enum(["new", "existing"]).optional(),
+      signupPath: z.enum(["new_organization", "existing_organization"]).optional(),
+    }));
+
+function signupEvent<Name extends string>(name: Name, definition: string) {
+  return productEvent({
+    name, definition,
+    productQuestion: "Where do browser and desktop signup attempts drop off?",
+    sources: ["api"], authoritativeSource: "api", identityScopes: ["anonymous-epoch"],
+    properties: signupEventProperties, priority: "high",
+  });
+}
+
 export const TELEMETRY_EVENTS = {
+  signup_onboarding_completed: signupEvent("signup_onboarding_completed", "A new user completed the account introduction."),
+  signup_organization_ready: signupEvent("signup_organization_ready", "A new user gained access to a new or existing organization."),
+  signup_organization_requested: signupEvent("signup_organization_requested", "A new user requested organization creation or invitation acceptance."),
+  signup_account_created: signupEvent("signup_account_created", "A new account received an authenticated session."),
+  signup_viewed: signupEvent("signup_viewed", "The browser or desktop sign-in screen became visible."),
+  signup_started: signupEvent("signup_started", "A sign-in or signup request reached the API."),
+  signup_email_submitted: signupEvent("signup_email_submitted", "A mailbox challenge was issued after email submission."),
+  signup_verification_requested: signupEvent("signup_verification_requested", "A code, magic link, or Google callback reached verification."),
+  signup_verification_completed: signupEvent("signup_verification_completed", "The API verified the mailbox or Google identity."),
+  authentication_completed: signupEvent("authentication_completed", "The API issued an authenticated session for a new or returning account."),
+  signup_completed: signupEvent("signup_completed", "A new user gained organization access and completed any required account introduction."),
+  signup_failed: signupEvent("signup_failed", "An observed authentication stage failed or was declined."),
+
   application_lifecycle: event({
     ...common,
     name: "application_lifecycle",
@@ -2011,7 +2045,7 @@ export const TELEMETRY_EVENTS = {
     identityScopes: ["anonymous-epoch"],
     properties: deferredZodSchema(() => z.strictObject({
       handoffType: z.enum(["auth", "invite", "workstream", "slack", "settings", "automation", "unknown"]),
-      method: z.enum(["presented", "automatic", "manual"]),
+      method: z.enum(["presented", "automatic", "manual", "browser"]),
       validity: z.enum(["valid", "invalid"]),
     })),
   }),
@@ -2074,7 +2108,7 @@ export type TelemetryEventProperties<TName extends TelemetryEventName> = z.infer
 >;
 export const telemetryEventNames = Object.keys(TELEMETRY_EVENTS) as TelemetryEventName[];
 
-const UuidV7Schema = z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7");
+export const UuidV7Schema = z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7");
 const SafeReleaseSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u);
 
 export const TelemetryBreadcrumbSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [

@@ -4,7 +4,7 @@ import { collectSettings, coreSettingsProvider, defineSetting, searchSettings, s
 
 const context: SettingsSearchContext = {
   sections: new Set(desktopSettingsSections),
-  admin: true, developer: true, menuBar: true, login: true, releaseChannel: true,
+  admin: true, developer: true, menuBar: true, login: true, releaseChannel: true, browser: false,
 };
 describe('settings registry', () => {
   it('makes a new definition searchable without a keyword list', () => {
@@ -16,7 +16,7 @@ describe('settings registry', () => {
     }
   });
   it('finds every core definition by its displayed label before any screen mounts', () => {
-    const entries = collectSettings([coreSettingsProvider], context);
+    const entries = collectSettings([coreSettingsProvider], { ...context, browser: true });
     for (const setting of Object.values(settings)) {
       expect(searchSettings(entries, setting.label).some((entry) => entry.definition.id === setting.id)).toBe(true);
     }
@@ -27,9 +27,15 @@ describe('settings registry', () => {
       sections: new Set(['account', 'workspace', 'application']),
     });
     expect(entries.some((entry) => entry.definition.id === 'lockdown')).toBe(true);
-    for (const id of ['debug', 'telemetry', 'menuBar', 'login', 'releaseChannel', 'invitations', 'inviteEmail', 'digestDays']) {
+    for (const id of ['debug', 'telemetry', 'menuBar', 'login', 'releaseChannel', 'invitations', 'inviteEmail', 'digestDays', 'accountAppearance']) {
       expect(entries.some((entry) => entry.definition.id === id)).toBe(false);
     }
+  });
+  it('finds appearance under Account in a browser, where there is no Application section', () => {
+    const entries = collectSettings([coreSettingsProvider], {
+      ...context, browser: true, sections: new Set(['account', 'workspace']),
+    });
+    expect(searchSettings(entries, 'theme').map((entry) => entry.definition.id)).toEqual(['accountAppearance']);
   });
   it('ranks labels before descriptions and shares selectable option labels', () => {
     const entries = collectSettings([coreSettingsProvider], context);
@@ -38,6 +44,10 @@ describe('settings registry', () => {
     expect(searchSettings(entries, 'dark').some((entry) => entry.definition.id === 'appearance')).toBe(true);
     expect(searchSettings(entries, 'time zone').some((entry) => entry.definition.id === 'personalTimezone')).toBe(true);
     expect(searchSettings(entries, '')).toEqual([]);
+  });
+  it('finds the Security page by its page name', () => {
+    const entries = collectSettings([coreSettingsProvider], context);
+    expect(searchSettings(entries, 'security').map((entry) => entry.definition.id)).toContain('terminal');
   });
   it('keeps provider instances distinct and ignores replayed metadata', () => {
     const entries = ['first', 'second'].map((instanceId) => ({

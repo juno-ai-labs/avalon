@@ -1733,3 +1733,13 @@ describe('browser cookie collaboration transport', () => {
     expect(CookieUpload.current.headers.get('X-Rally-Draft-Id')).toBe('draft-1');
   });
 });
+
+it('reports the signup view through its narrow endpoint and accepts the no-content receipt', async () => {
+  const flowId = '00000000-0000-7000-8000-000000000019';
+  const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+  vi.stubGlobal('fetch', fetchMock);
+  const api = new RallyApi('https://api.rally.test', session);
+  await expect(api.observeSignupView(flowId)).resolves.toBeUndefined();
+  expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://api.rally.test/auth/signup/view');
+  expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ flowId }) });
+});

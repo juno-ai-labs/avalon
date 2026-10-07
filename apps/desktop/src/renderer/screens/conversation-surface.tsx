@@ -1,4 +1,4 @@
-import { ScopeSharingPanel } from "../components/scope-sharing-panel";
+import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -108,6 +108,8 @@ import { ArtifactSidebar, InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
+import { ConversationAccessRequest } from '../components/conversation-access-request';
+import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import {
@@ -1234,6 +1236,10 @@ export function ConversationSurface({
     setResourcePreview({ resourceId, returnFocus, workstreamScoped: true });
   }, []);
   const workspaceId = session?.workspace?.id ?? 'unbound';
+  // Requests to join waiting on this reader, kept by the workspace socket; the
+  // People level lists the ones for the conversation on screen.
+  const accessRequests = useAccessRequests(workspaceId);
+  const decideAccessRequest = useDecideAccessRequest(api ?? null, workspaceId);
   const workspaceRegion = session?.workspace?.region ?? 'global';
   const attachmentDraft = useFileAttachments(api, workstreamDraftKey(workspaceRegion, workspaceId, id, substreamId));
   const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
@@ -2028,13 +2034,33 @@ export function ConversationSurface({
     },
   });
 
+  // Guest invitations for the title menu's People level, loaded once it opens.
+  const [invitesWanted, setInvitesWanted] = useState(false);
+  const invitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId,
+    enabled: invitesWanted && Boolean(api && session?.workspace) && parentKind === 'workstream' });
+
   const removeParticipant = useMutation({
     mutationFn: ({ member, target }: { member: WorkspaceMember; target: string }) => target === '0'
       ? api!.removeParticipant(id, member.id)
       : api!.removeSubstreamParticipant(id, target, member.id),
-    onSuccess: (_result, { member, target }) => {
+    // Read before the request, not after it. Leaving a personal Main revokes
+    // this reader's socket, and its close evicts the cached detail, usually
+    // before the DELETE answers: read in `onSuccess`, the scope was gone, the
+    // screen stayed, and the reader was left on "could not be opened".
+    onMutate: ({ target }) => {
+      const previous = queryClient.getQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target));
+      const filter = useUiStore.getState().sidebarSpaceFilter;
+      const spaceIds = previous?.spaceIds ?? [];
+      return {
+        previous,
+        // The Space the reader is looking at when the Channel is in it, and
+        // otherwise the Channel's own first Space.
+        spaceId: filter !== null && spaceIds.includes(filter) ? filter : spaceIds[0],
+      };
+    },
+    onSuccess: (_result, { member, target }, context) => {
       const targetKey = workstreamDetailQueryKey(id, target);
-      const previous = queryClient.getQueryData<WorkstreamDetail>(targetKey);
+      const previous = context?.previous;
       queryClient.setQueryData<WorkstreamDetail>(targetKey, (current) => current ? {
         ...current,
         participants: current.participants.filter((participant) => participant.id !== member.id),
@@ -2054,7 +2080,7 @@ export function ConversationSurface({
       }
       if (previous?.scope === 'personal') {
         evictCachedWorkstream(queryClient, id);
-        openFirstWorkstream([id]);
+        openFirstWorkstream([id], context?.spaceId);
       }
     },
   });
@@ -2612,7 +2638,7 @@ export function ConversationSurface({
       socketConnection.state === 'reconnecting'
       || socketConnection.state === 'unavailable'
     ) {
-      return (
+      const errorState = (
         <WorkstreamErrorState
           description={socketConnection.openingError
             ?? (socketConnection.state === 'reconnecting'
@@ -2623,6 +2649,11 @@ export function ConversationSurface({
           workstreamId={id}
         />
       );
+      // A member holding a link to a Channel or Breakout they are not in sees
+      // its name and can ask to join; every other failure keeps its own screen.
+      return parentKind === 'workstream' && !guest
+        ? <ConversationAccessRequest api={api} fallback={errorState} onRetry={socketConnection.retryOpening} parentId={id} substreamId={substreamId} />
+        : errorState;
     }
     const openingLabel = `Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`;
     const openingRail = renderSidebar ? renderOpeningSidebar?.() : null;
@@ -2833,20 +2864,62 @@ export function ConversationSurface({
         replyCount,
         people: parentKind === 'workstream' ? {
           candidates: visibleMembers,
-          onAdd: (member) => {
+          onAdd: async (member) => {
             removeParticipant.reset();
-            addParticipant.mutate({ member, target: substreamId });
+            invitations.invite.reset();
+            invitations.remove.reset();
+            await addParticipant.mutateAsync({ member, target: substreamId });
           },
           adding: addParticipant.isPending,
-          error: addParticipant.error
+          error: decideAccessRequest.error
+            ? 'That request couldn’t be answered. Try again.'
+            : addParticipant.error
             ? refusalMessage(addParticipant.error) ?? 'That person couldn’t be added.'
-            : undefined,
+            : invitations.invite.error ? 'They couldn’t be invited. Try again.'
+              : invitations.remove.error
+                // They signed in between the list loading and the click: the invite is used.
+                ? invitations.remove.error instanceof ApiError && invitations.remove.error.code === 'scope_revision_conflict'
+                  ? 'They have already joined. Remove them from the people instead.'
+                  : 'That invite couldn’t be cancelled. Try again.'
+                : undefined,
           currentUserId: session?.user.id,
+          requests: {
+            items: accessRequests
+              .filter((request) => request.parentId === id && request.substreamId === substreamId)
+              .map((request) => ({ id: request.id, userId: request.requesterUserId, name: request.requesterName })),
+            onDecide: (requestId, decision) => decideAccessRequest.mutate({ id: requestId, decision }),
+          },
           onRemove: (member) => {
             addParticipant.reset();
             removeParticipant.reset();
             setRemoveConfirm({ member, parentId: id, target: substreamId });
           },
+          invites: api && session?.workspace ? {
+            pending: invitations.pending.data?.map((guest) => guest.email),
+            loadFailed: invitations.pending.isError,
+            onRetryLoad: () => { void invitations.pending.refetch(); },
+            onInvite: async (emails) => {
+              // A failed add earlier in the same submission stays reported.
+              invitations.remove.reset();
+              await invitations.invite.mutateAsync([...emails].sort());
+              // Someone who already had an account is claimed as they are invited, and joins the room.
+              await Promise.all([invitations.pending.refetch(), queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) })]);
+            },
+            onRevoke: (email) => {
+              const guest = invitations.pending.data?.find((candidate) => candidate.email === email);
+              if (!guest) return;
+              invitations.invite.reset();
+              addParticipant.reset();
+              invitations.remove.mutate(guest, {
+                onError: (error) => {
+                  if (error instanceof ApiError && error.code === 'scope_revision_conflict') {
+                    void queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) });
+                  }
+                },
+              });
+            },
+            onLoad: () => setInvitesWanted(true),
+          } : undefined,
         } : undefined,
         origin: origin ? {
           byline: `Started from ${origin.origin.authorType === 'agent' ? 'Rally’s' : `${origin.origin.author?.name ?? 'a'}’s`} message · ${formatDateTime(origin.origin.createdAt)}`,

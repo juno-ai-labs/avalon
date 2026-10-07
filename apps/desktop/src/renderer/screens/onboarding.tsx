@@ -1,5 +1,5 @@
 import { LoaderCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RallyDesktopBridge } from '../../common/desktop';
 import { RallyMark, Button, ConnectorMark, InlineError } from '../components/primitives';
 import { CreateOrganizationCard } from './create-organization';
@@ -34,6 +34,9 @@ export function SignInScreen(): React.JSX.Element {
     runtime,
     selectRegion,
   } = useAppSession();
+  const signupFlow = useRef<string | null>(null);
+  const signupViewed = useRef(false);
+  signupFlow.current ??= uuidV7();
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
@@ -41,6 +44,12 @@ export function SignInScreen(): React.JSX.Element {
     // Global owns identity; existing workspace assignments come from discovery.
     selectRegion('global');
   }, [selectRegion]);
+
+  useEffect(() => {
+    if (!api || signupViewed.current) return;
+    signupViewed.current = true;
+    void api.observeSignupView(signupFlow.current!).catch(() => undefined);
+  }, [api]);
 
   const beginGoogleLogin = async (): Promise<void> => {
     if (!api) return;
@@ -55,7 +64,7 @@ export function SignInScreen(): React.JSX.Element {
         region: 'global',
       });
       attemptId = authAttempt.attemptId;
-      const url = await api.beginGoogleLogin('global', 'rallywithai://auth/complete', { authAttempt });
+      const url = await api.beginGoogleLogin('global', 'rallywithai://auth/complete', { authAttempt, signupFlowId: signupFlow.current! });
       await bridge.openExternal(url);
     } catch (caught) {
       if (attemptId) await bridge.cancelDesktopAuthAttempt(attemptId).catch(() => undefined);

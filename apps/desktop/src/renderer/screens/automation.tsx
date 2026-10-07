@@ -6,7 +6,8 @@ import type { AutomationDetail } from '../lib/types';
 import { SidekickDetailLayout } from '../components/sidekick-detail-layout';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
 import { Button, EmptyState, OpeningState } from '../components/primitives';
-import { useCollaborationSession } from '../lib/collaboration-session';
+import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
+import { useCloseWindowSurface } from '../lib/window-surface';
 import { copySidekickLink } from '../lib/copy-workstream-link';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { ConversationSurface } from './conversation-surface';
@@ -23,6 +24,22 @@ export function AutomationScreen(): React.JSX.Element {
   const { id } = useParams();
   if (id === undefined || id === 'new') return <NewAutomationScreen />;
   return <AutomationDetailScreen id={id} />;
+}
+
+/**
+ * A failed Sidekick screen's way on. In a browser tab the screen fills the tab
+ * with the sidebar hidden (`lib/window-surface.ts`), so it also offers the way
+ * out the Mac app's window chrome gives there.
+ */
+function ErrorActions({ onRetry }: { onRetry: () => void }): React.JSX.Element {
+  const { host } = useShellCapabilities();
+  const close = useCloseWindowSurface();
+  return (
+    <div className="empty-state-actions">
+      <Button onClick={onRetry}>Try again</Button>
+      {host === 'browser' && <Button onClick={close}>Close</Button>}
+    </div>
+  );
 }
 
 function NewAutomationScreen(): React.JSX.Element {
@@ -56,7 +73,7 @@ function NewAutomationScreen(): React.JSX.Element {
       <div className="screen-error-state screen-with-titlebar">
         <div className="screen-drag-strip window-drag" />
         <EmptyState
-          action={<Button onClick={() => { creation.current = null; setError(null); }}>Try again</Button>}
+          action={<ErrorActions onRetry={() => { creation.current = null; setError(null); }} />}
           description={error}
           title="Sidekick could not be created"
         />
@@ -153,7 +170,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       <div className="screen-error-state screen-with-titlebar">
         <div className="screen-drag-strip window-drag" />
         <EmptyState
-          action={<Button onClick={() => void automation.refetch()}>Try again</Button>}
+          action={<ErrorActions onRetry={() => void automation.refetch()} />}
           description={automation.error.message}
           title="Sidekick could not be opened"
         />

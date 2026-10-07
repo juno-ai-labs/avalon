@@ -1,6 +1,6 @@
 import { isWebPushServiceUrl } from '@rally/contracts/push-notifications';
 import { ApiError, type RallyApi } from './api';
-import { iosSafariTab } from './home-screen';
+import { iosStandalone } from './home-screen';
 
 /**
  * Browser notifications for a member tab: one service worker at the root, one
@@ -105,7 +105,7 @@ export async function reconcileWebPush(api: WebPushApi): Promise<void> {
 
 /** Reports "on" only once the subscription is registered for this session. */
 export async function webPushState(api: WebPushApi): Promise<WebPushState> {
-  if (!supported()) return iosSafariTab() ? 'home-screen' : 'unsupported';
+  if (!supported()) return iosStandalone() === false ? 'home-screen' : 'unsupported';
   const publicKey = await configuredKey(api);
   if (!publicKey) return 'unavailable';
   if (Notification.permission === 'denied') return 'denied';

@@ -31,6 +31,7 @@ import {
   WireResourceRelationshipTypeSchema,
 } from "./resource-relationships";
 import { HttpsUrlSchema, httpsUrlSchema, HttpUrlSchema, httpUrlSchema, WebSocketUrlSchema } from "./url-schemas";
+import { ConversationAccessRequestItemSchema } from "./access-requests";
 import { PickableWorkstreamIconKeySchema, WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
 import {
   TranscriptActivitySchema,
@@ -50,10 +51,12 @@ export * from "./demo-operations";
 export * from "./demo-seed";
 export * from "./identifiers";
 export * from "./impersonation";
+export * from "./support-access";
 export * from './onboarding';
 export * from "./workspace-retirement";
 export * from "./appearance-icons";
 export * from "./workstream-appearance";
+export * from "./access-requests";
 export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
@@ -371,8 +374,10 @@ export const WorkspaceOnboardingStateSchema = z.object({
   workspaces: value.workspaces ?? (value.workspace ? [value.workspace] : []),
   invitations: value.invitations,
 }));
+/** An Organization's display name, as chosen at creation and on every rename. */
+export const WorkspaceNameSchema = z.string().trim().min(2).max(120);
 export const CreateWorkspaceRequestSchema = z.object({
-  name: z.string().trim().min(2).max(120),
+  name: WorkspaceNameSchema,
   region: ConfiguredRegionSchema
 });
 export const OnboardingRegionRequestSchema = z.object({ region: ConfiguredRegionSchema });
@@ -1751,12 +1756,21 @@ export const ApiErrorSchema = z.object({
 export const CursorPageSchema = <T extends z.ZodType>(item: T) =>
   z.object({ items: z.array(item), nextCursor: z.string().nullable() });
 
+/**
+ * The Rally staff member acting as `user` in a support session
+ * (`docs/impersonation.md`). Present only on a session a staff member started
+ * from the account menu; every other session leaves it out.
+ */
+export const SessionImpersonatorSchema = UserSchema.pick({ id: true, email: true, name: true, avatarUrl: true });
+export type SessionImpersonator = z.infer<typeof SessionImpersonatorSchema>;
+
 export const SessionSchema = z.object({
   accessToken: z.string().min(20),
   refreshToken: z.string().min(20),
   expiresAt: TimestampSchema,
   user: UserSchema,
   workspace: WorkspaceSchema.nullable(),
+  impersonator: SessionImpersonatorSchema.optional(),
   apiBaseUrl: HttpUrlSchema
 });
 
@@ -1804,7 +1818,13 @@ export const MemberPreferencesSchema = z.object({
 });
 export type MemberPreferences = z.infer<typeof MemberPreferencesSchema>;
 export const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = { showAgentWork: true };
-export const UpdateWorkspaceRequestSchema = z.object({ timezone: IanaTimezoneSchema });
+/** Each field is optional so one control can save its own; an empty body changes nothing and is refused. */
+export const UpdateWorkspaceRequestSchema = z.object({
+  name: WorkspaceNameSchema.optional(),
+  timezone: IanaTimezoneSchema.optional(),
+}).refine((value) => value.name !== undefined || value.timezone !== undefined, {
+  message: "Name or timezone is required.",
+});
 
 // --- Digest ---------------------------------------------------------------
 
@@ -2655,6 +2675,8 @@ export const WorkspaceSocketSyncEventSchema = z.strictObject({
   featureFlags: ClientFeatureFlagsSchema.optional(),
   /** This viewer's display preferences, beside `featureFlags` and for the same reason. */
   viewerPreferences: MemberPreferencesSchema.optional(),
+  /** The access requests waiting on this viewer, for the same reason again. */
+  accessRequests: z.array(ConversationAccessRequestItemSchema).optional(),
 }).superRefine((event, context) => {
   if (event.topics.length === 0 && event.sidebar === undefined) {
     context.addIssue({

@@ -7,6 +7,8 @@ import type {
   WorkspaceDepartureOutcome,
   AccountOnboarding,
   UpdateAccountOnboarding,
+  SupportPerson,
+  SupportWorkspace,
 } from '@rally/contracts';
 import type { Region } from "@rally/contracts/regions";
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
@@ -464,6 +466,16 @@ export interface RallyDesktopBridge {
   }) => Promise<WorkspaceDeparture>;
   activateWorkspace: (input: { region: RallyRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
   /**
+   * Rally staff support access (`docs/impersonation.md`). The Organization
+   * list is `null` for anybody who is not Rally staff, and rejects only on a
+   * failure worth retrying. Starting a session makes it the active one;
+   * ending it returns to the Organization used before.
+   */
+  listSupportWorkspaces: () => Promise<SupportWorkspace[] | null>;
+  listSupportPeople: (workspaceId: string) => Promise<SupportPerson[]>;
+  startSupportSession: (input: { workspaceId: string; userId: string }) => Promise<DesktopSession>;
+  endSupportSession: () => Promise<DesktopSession | null>;
+  /**
    * Answers a link that names the active workspace with the session already
    * in use, taking a selection intent so the link is the newest selection and
    * an activation still in flight cannot take over the window. Resolves `null`
@@ -503,6 +515,8 @@ export interface RallyDesktopBridge {
   /** The import window's Spaces, as the main window last offered them. */
   getBrowserImportContext: () => Promise<BrowserImportContext | null>;
   onBrowserImportContextChanged: (listener: () => void) => () => void;
+  /** View → Refresh Organization List: reread the account menu's Organizations. */
+  onOrganizationListRefreshRequested: (listener: () => void) => () => void;
   /** The import window's hand-off: the main window opens the Channel and this window closes. */
   completeBrowserImport: (workstreamId: string) => Promise<void>;
   /**

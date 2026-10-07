@@ -18,11 +18,11 @@ Every step is optional, and everything here can be done again later in Settings.
 
 ## This is you in Rally
 
-This screen sets how you appear to your teammates: **Your team will see your avatar and color. They follow you across devices.**
+This screen sets how you appear to your teammates.
 
 1. Check your **Name**. Rally fills it in from your Google account.
 2. Check your **Avatar initials**, the letters in your little round avatar. These start from your Google name too.
-3. Pick a colour under **Your color**. There are eight: rose, orange, lime, emerald, blue, violet, fuchsia and black.
+3. Pick a colour under **Your color**. There are eight: rose, orange, lime, emerald, blue, violet, fuchsia and black. Rally starts you on one at random.
 4. Click **Continue with this look**.
 
 The button stays greyed out until both the name and the initials are filled in.
@@ -31,13 +31,13 @@ Your look belongs to your account, not to this Mac, so it follows you to your ot
 
 ## Invite your teammates
 
-The last step is for bringing your team in: **Add email addresses to invite people to your organization.**
+The last step is for bringing your team in. Rally is built for shared chat with AI, so it works best with your teammates in it, and you can start before they accept.
 
 1. Type or paste email addresses into **Email addresses**. Separate them with a space, a comma or a semicolon. Pasting a whole list works too.
 2. Each address turns into a chip when you type a separator, press <kbd>Return</kbd> or click elsewhere. Click the **×** on a chip to remove it.
 3. Click **Invite 3 teammates** (the number counts your chips). Rally sends the invitations.
 
-Everyone you invite here joins as a **Member** and can use your organization connections. As the screen says, your private Channels stay private.
+Everyone you invite here joins as a **Member** and can use your organization connections.
 
 If an address is not complete, Rally says **Enter a complete email address for each teammate.** If some invitations fail to send, it lists them after **Could not invite:** and leaves them in the box to fix and retry. Retrying never sends a second invitation to someone who already has one, or who is already a member.
 

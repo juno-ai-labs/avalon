@@ -1,7 +1,7 @@
 import "../../../../tests/isolated-region";
 import { describe, expect, it } from 'vitest';
 import type { DesktopWorkspaceSummary } from '../common/desktop';
-import type { StoredAuth, StoredAuthSet, StoredProfile, StoredProfileSet } from './stored-auth';
+import { sessionFromStoredState, storedCredentialIsSupport, storedProfileFromSession, type StoredAuth, type StoredAuthSet, type StoredProfile, type StoredProfileSet } from './stored-auth';
 import { endedStoredWorkspaces, mergeWorkspaceDirectory, storedWorkspaceSummaries } from './workspace-directory';
 
 const user = {
@@ -159,5 +159,28 @@ describe('ended stored organizations', () => {
   it('tells regions apart when the same id is listed for the other one', () => {
     expect(endedStoredWorkspaces(auth, profiles, [junoLabs, laCabra, { ...europe, region: 'global' }], discoveredAt))
       .toEqual([{ workspaceId: europe.id, region: 'enterprise' }]);
+  });
+});
+
+describe('a stored support session (docs/impersonation.md)', () => {
+  const acme = workspace('00000000-0000-7000-8000-0000000000a5', 'Acme Robotics');
+  const staff = { id: '00000000-0000-7000-8000-0000000000f1', email: 'staff@rallywith.ai', name: 'Sam Staff', avatarUrl: null };
+  const supportAuth: StoredAuthSet = { ...auth, workspaces: [...auth.workspaces, credential(acme.id)] };
+  const supportProfiles: StoredProfileSet = { ...profiles, workspaces: [...profiles.workspaces, { ...profile(acme), impersonator: staff }] };
+
+  it('is never listed as one of the account\'s own organizations', () => {
+    expect(storedWorkspaceSummaries(supportAuth, supportProfiles).map((summary) => summary.name))
+      .toEqual(['Juno Labs', 'La Cabra', 'Europe Studio']);
+  });
+
+  it('is told apart from the account\'s own credentials by its profile', () => {
+    expect(storedCredentialIsSupport(supportProfiles, credential(acme.id))).toBe(true);
+    expect(storedCredentialIsSupport(supportProfiles, credential(laCabra.id))).toBe(false);
+  });
+
+  it('keeps the staff member through a round trip through storage', () => {
+    const restored = sessionFromStoredState(credential(acme.id), { ...profile(acme), impersonator: staff }, 'https://api.example.test');
+    expect(restored?.impersonator).toEqual(staff);
+    expect(storedProfileFromSession(restored!).impersonator).toEqual(staff);
   });
 });

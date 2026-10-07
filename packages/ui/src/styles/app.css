@@ -539,6 +539,10 @@ pre {
   border-radius: var(--av-sys-size-radius-sm);
   color: var(--av-cmp-tooltip-foreground);
   font-size: 12px;
+  /* A long label wraps instead of running across the window. 280px is the
+     width the tooltips that already capped themselves had each settled on. */
+  max-width: 280px;
+  overflow-wrap: break-word;
   padding: 5px 8px;
   z-index: 1000;
 }
@@ -837,6 +841,7 @@ pre {
 }
 
 .empty-state p:not(.empty-state-title) { margin: 0 0 14px; }
+.empty-state-actions { display: flex; gap: 8px; justify-content: center; }
 
 .dialog-overlay {
   animation: fade-in 130ms ease-out;
@@ -1573,6 +1578,18 @@ pre {
 .skeleton-row:nth-child(5n+2) .skeleton-row-subline { width: 62%; }
 .skeleton-row:nth-child(5n+4) .skeleton-row-subline { width: 33%; }
 
+/* The empty Channel list's one row; the mark keeps the glyph's pebble. */
+.ghost-channel-row { pointer-events: none; }
+.ghost-channel-mark { height: 40px; width: 40px; }
+.ghost-channel-mark > .workstream-glyph-shape {
+  background: transparent;
+  border: 1.5px dashed var(--av-sys-color-border-strong);
+  box-shadow: none;
+}
+.ghost-channel-row .channel-row-heading { align-items: center; }
+.ghost-channel-title { flex: 0 1 auto; height: 9px; width: 58%; }
+.ghost-channel-time { flex: none; height: 7px; margin-left: auto; width: 44px; }
+
 .skeleton-group-label {
   animation: skeleton-pulse 1.5s ease-in-out infinite;
   height: 0.6em;
@@ -1695,6 +1712,8 @@ pre {
 }
 
 .account-trigger:hover { background-image: var(--hover-layer); }
+/* A support session: the staff member acting, beside the person acted as. */
+.account-impersonator { display: flex; flex-shrink: 0; }
 .account-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .account-copy strong { font-size: 13px; font-weight: 500; line-height: 18px; overflow: hidden; white-space: nowrap; }
 .account-copy span { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; white-space: nowrap; }
@@ -1735,6 +1754,11 @@ pre {
 .workspace-menu-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-copy small { color: var(--av-sys-color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-error { color: var(--av-sys-color-danger-base) !important; }
+/* Rally access rows (docs/impersonation.md): another Organization's people. */
+.support-workspace-mark { color: var(--av-sys-color-text-muted); flex-shrink: 0; }
+.support-people-menu { max-height: var(--radix-dropdown-menu-content-available-height); min-width: 240px; overflow-y: auto; }
+.support-person-item { min-height: 38px; }
+.support-people-status { white-space: normal; }
 .workspace-region-tag {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-sys-color-border-subtle);
@@ -1819,13 +1843,12 @@ pre {
   padding: 6px 10px;
 }
 
-/* The active Organization's usage line, set under its name: the inset is the
-   row's padding plus the 18px mark and the row's 8px gap. After the popup's
-   rule above, which it has to override at the same specificity. */
-.menu-content .workspace-usage-item.menu-item { align-items: stretch; flex-direction: column; gap: 5px; min-height: 0; padding: 0 10px 8px 36px; }
+/* The Quota row under Settings: the meter spans the menu's width, past the
+   icon column the rows above it indent their labels to. After the popup's rule
+   above, which it has to override at the same specificity. */
+.menu-content .workspace-usage-item.menu-item { align-items: stretch; flex-direction: column; gap: 5px; min-height: 0; padding: 6px 10px 8px; }
 .workspace-usage-item small { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-font-size-meta); }
-/* With no Organizations list there is no row to indent under. */
-.menu-content .workspace-usage-standalone .workspace-usage-item.menu-item { padding: 6px 10px 8px; }
+.workspace-usage-title { color: var(--av-sys-color-text-default); }
 
 .account-menu-item-with-value.menu-item { grid-template-columns: 18px minmax(0, 1fr) auto 14px; }
 .account-menu-item.menu-item[data-highlighted] { background-image: var(--hover-layer); }
@@ -2058,6 +2081,26 @@ pre {
 .screen-with-titlebar { height: 100%; position: relative; }
 .screen-drag-strip { height: var(--screen-drag-strip-height); left: 0; position: absolute; right: 0; top: 0; }
 .screen-error-state { align-items: center; display: flex; height: 100%; justify-content: center; }
+.conversation-access-request {
+  align-items: center;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 400px;
+  padding: 32px 20px;
+  text-align: center;
+}
+.conversation-access-request p { margin: 0; }
+.conversation-access-request-title {
+  color: var(--av-sys-color-text-default);
+  font-size: 18px;
+  font-weight: 620;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.conversation-access-request-sent { color: var(--av-sys-color-text-subtle); }
+.conversation-access-request-sent svg { display: inline-block; margin-right: 4px; vertical-align: -2px; }
 .screen-state-actions { align-items: center; display: flex; gap: 2px; position: absolute; right: 10px; top: 9px; }
 .muted-notice { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 
@@ -2161,6 +2204,10 @@ pre {
   padding-left: 35px;
 }
 .settings-navigation-group button.settings-navigation-child svg { height: 14px; width: 14px; }
+.settings-navigation-group button.settings-navigation-child .connector-mark { flex: none; height: 14px; width: 14px; }
+/* A connection's name is its creator's, often with an account after it, so it
+   truncates rather than wrapping the sidebar row to two lines. */
+.settings-navigation-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-search-empty { color: var(--av-sys-color-text-muted); font-size: 11px; padding: 18px 9px; }
 
 .settings-search-results { min-height: 0; overflow-y: auto; padding-top: 14px; }
@@ -2251,14 +2298,15 @@ pre {
 .settings-pane-heading-count > span { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
 .settings-subsection { margin-top: 30px; }
 
-/* Settings → Organization → Usage. */
-.usage-summary { display: flex; flex-direction: column; gap: 4px; padding: 14px; }
-.usage-summary .meter { margin: 6px 0 4px; }
-.usage-plan { font-size: 13px; font-weight: 500; }
-.usage-remaining { display: flex; flex-wrap: wrap; font-size: 13px; gap: 6px; margin: 0; }
-.usage-as-of,
-.usage-summary small { color: var(--av-sys-color-text-muted); font-size: 12px; }
-.usage-summary + .usage-overage::before { background: var(--av-sys-color-border-subtle); content: ''; height: .5px; left: 14px; position: absolute; right: 14px; top: 0; }
+/* Settings → Organization → Usage. The meter fills in the text colour,
+   near-black in the light appearance and near-white in the dark, rather than
+   the brand accent; the warning fill still wins below the low-quota line. */
+.usage-quota-value .meter { --av-cmp-meter-fill: var(--av-sys-color-text-default); }
+/* The Weekly quota row's value: the meter over how much is left, right-aligned
+   like the other rows' values. */
+.usage-quota-value { display: flex; flex-direction: column; gap: 6px; text-align: right; width: 200px; }
+.usage-quota-value small { color: var(--av-sys-color-text-muted); font-size: 12px; }
+.usage-plan-error { color: var(--av-sys-color-danger-soft); }
 .usage-overage-value { align-items: center; display: inline-flex; font-size: 13px; gap: 8px; }
 .usage-overage-value s { color: var(--av-sys-color-text-muted); }
 .usage-not-billed:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 1px; }
@@ -2322,10 +2370,22 @@ pre {
 }
 
 .settings-row-value { align-items: flex-end; display: flex; flex-direction: column; gap: 4px; text-align: right; }
+/* Allow Rally access: the time left sits before the button that ends it. */
+.support-access-controls { align-items: center; display: flex; flex-shrink: 0; gap: 12px; }
+.support-access-remaining { color: var(--av-sys-color-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .settings-row-value strong { font-size: 11.5px; }
 .workspace-settings-screen .settings-profile-card strong,
 .workspace-settings-screen .settings-member-row strong,
 .workspace-settings-screen .settings-row-value strong { font-size: 13px; font-weight: 400; }
+.inline-editable-text { border-radius: 6px; cursor: text; margin: -3px -6px; padding: 3px 6px; }
+/* Hover previews the field it opens into; a plain tint is lost on a Settings card. */
+.inline-editable-text:hover { background: var(--av-sys-color-surface-sunken); box-shadow: inset 0 0 0 1px var(--av-ref-color-line-3); }
+.inline-editable-text[aria-busy="true"] { cursor: progress; }
+.inline-editable-text[aria-busy="true"]:hover { background: none; box-shadow: none; }
+.inline-editable-field { align-items: flex-end; display: flex; flex-direction: column; gap: 4px; width: min(240px, 100%); }
+.inline-editable-reason { color: var(--av-sys-color-danger-soft); font-size: 12px; }
+/* The box itself is the Settings text field, shared with `.invite-form input` below. */
+.inline-editable-input { font-size: 13px; min-width: 0; }
 .workspace-settings-screen .settings-profile-card small,
 .workspace-settings-screen .settings-member-row small { font-size: 12px; }
 
@@ -2873,7 +2933,6 @@ pre {
 }
 
 .settings-connection-toolbar { align-items: center; display: flex; justify-content: space-between; margin-bottom: 12px; }
-.settings-connection-toolbar > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 
 .settings-section-copy { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin: 0 0 14px; }
 .provider-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
@@ -2927,14 +2986,8 @@ pre {
 
 .settings-connection-tables { display: grid; gap: 18px; }
 .settings-connection-group { min-width: 0; }
-.settings-connection-group-heading {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  margin: 0 2px 7px;
-}
+.settings-connection-group-heading { margin: 0 2px 7px; }
 .settings-connection-group-heading h3 { font-size: var(--av-cmp-control-font-size); margin: 0; }
-.settings-connection-group-heading > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .settings-connection-table-frame { overflow-x: auto; }
 .settings-connection-table { border-collapse: collapse; min-width: 540px; width: 100%; }
 .settings-connection-table th {
@@ -2958,7 +3011,22 @@ pre {
   padding: 8px 10px;
   vertical-align: middle;
 }
-.settings-connection-name { align-items: center; display: flex; gap: 9px; }
+.settings-connection-row { cursor: pointer; }
+.settings-connection-row:hover td { background: var(--av-sys-color-state-hover); }
+.settings-connection-name {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 9px;
+  padding: 0;
+  text-align: left;
+}
+.settings-connection-name:focus-visible { border-radius: 4px; box-shadow: var(--av-sys-focus-ring-default); outline: none; }
+.settings-connection-chevron { color: var(--av-sys-color-text-muted); vertical-align: middle; }
 /* Between the status dot and the name, at the row's own text colour, and sized
    through the row that owns it — a bare class here ties with `.connector-mark`
    and loses on order. The gap above spaces it from both without a rule of its
@@ -2970,17 +3038,13 @@ pre {
 .settings-connection-empty-row td { height: auto; padding: 0; }
 .settings-connection-empty-row .empty-state { min-height: 94px; }
 .settings-icon-tooltip-trigger { display: inline-flex; }
-.settings-connection-tooltip { max-width: 280px; text-align: center; }
-.settings-github-pane,
-.settings-custom-mcp-pane { max-width: 760px; }
-.settings-github-connection,
-.settings-custom-mcp-connection { margin-bottom: 18px; max-width: 360px; }
+.settings-connection-tooltip { text-align: center; }
+.settings-connection-page { max-width: 760px; }
+.settings-connection-facet-heading { margin-top: 28px; }
 .settings-github-policy { margin-bottom: 22px; }
 .settings-github-policy .settings-preference-row > select,
 .settings-github-repository-row > select,
-.settings-github-connection > select,
-.settings-custom-mcp-pane .settings-preference-row > select,
-.settings-custom-mcp-connection > select {
+.settings-connection-page .settings-preference-row > select {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-ref-color-line-4);
   border-radius: var(--av-cmp-control-radius);
@@ -3064,7 +3128,8 @@ pre {
 .invite-form label { display: grid; gap: 5px; }
 .invite-form label > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .invite-form input,
-.invite-form select {
+.invite-form select,
+.inline-editable-input {
   background: var(--av-sys-color-surface-sunken);
   border: 1px solid var(--av-ref-color-line-3);
   border-radius: var(--av-cmp-control-radius);
@@ -3075,7 +3140,9 @@ pre {
   width: 100%;
 }
 .invite-form input:focus,
-.invite-form select:focus { border-color: var(--av-sys-color-focus-default); }
+.invite-form select:focus,
+.inline-editable-input:focus { border-color: var(--av-sys-color-focus-default); }
+.inline-editable-input[aria-invalid="true"] { border-color: var(--av-sys-color-danger-soft); }
 .invite-form .button { height: 34px; }
 .invite-link-result {
   align-items: center;
@@ -3127,8 +3194,7 @@ pre {
   .invite-form { grid-template-columns: 1fr 120px; }
   .invite-form .button { grid-column: 1 / -1; }
   .settings-connection-table { min-width: 450px; }
-  .settings-github-policy .settings-preference-row,
-  .settings-custom-mcp-pane .settings-preference-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .settings-connection-page .settings-preference-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .settings-github-repository-heading,
   .settings-custom-mcp-tool-heading { align-items: stretch; flex-direction: column; gap: 10px; }
   .settings-github-search { flex-basis: auto; }
@@ -3818,7 +3884,7 @@ pre {
 }
 /* The tooltip's own box supplies the ground and the shadow; this only stacks
    the source above its note, which a one-line tooltip does not need to do. */
-.citation-pill-popover { display: flex; flex-direction: column; gap: 3px; max-width: 280px; text-align: left; }
+.citation-pill-popover { display: flex; flex-direction: column; gap: 3px; text-align: left; }
 .citation-pill-source { font-weight: 600; }
 .citation-pill-note,
 .citation-pill-open { opacity: 0.72; }
@@ -7387,6 +7453,7 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .sidekicks-library-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 40px; }
 .sidekicks-library-heading h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -.5px; }
 .sidekicks-library-heading p { margin: 8px 0 0; font-size: 15px; color: var(--av-sys-color-text-muted); }
+.sidekicks-library-actions { align-items: center; display: flex; flex-shrink: 0; gap: 12px; }
 .sidekicks-library-heading .button { border-radius: var(--av-sys-size-radius-pill); text-decoration: none; flex-shrink: 0; padding: 10px 18px; }
 .sidekicks-library-controls .sidebar-search { height: auto; min-height: 44px; width: 100%; margin: 0; border-radius: var(--av-sys-size-radius-pill); padding: 12px 16px; }
 .sidekick-filters { display: flex; gap: 8px; }
@@ -7436,7 +7503,7 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .sidekick-section-list { list-style: none; margin: 0; padding: 0; }
 .sidekick-recommendation { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: 50%; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 24px; height: 24px; justify-content: center; margin-right: 8px; }
 .sidekick-recommendation:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
-.sidekick-recommendation-tooltip { max-width: 280px; white-space: normal; }
+.sidekick-recommendation-tooltip { white-space: normal; }
 .sidekick-picker-search { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 8px; padding: 10px 12px; width: 100%; }
 .sidekick-picker-list { display: grid; gap: 8px; list-style: none; margin: 12px 0 0; padding: 0; }
 .sidekick-picker-list .button { align-items: flex-start; display: flex; flex-direction: column; gap: 4px; text-align: left; white-space: normal; width: 100%; }
@@ -7466,6 +7533,7 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
 
 .settings-account-profile { display: grid; gap: 12px; }
+.settings-support-note { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 0; padding: 0 8px; }
 .settings-account-profile .settings-profile-card { border-radius: 0; }
 .settings-account-avatar { width: 38px; height: 38px; font-size: 13px; }
 .settings-account-profile .settings-preference-row { font-size: 13px; grid-template-columns: minmax(100px, 1fr) minmax(0, 280px); }
@@ -7636,6 +7704,13 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
   padding: 0 14px 0 calc(18px + var(--window-controls-inset));
 }
 .sidebar-top-actions { align-items: center; display: flex; gap: 8px; margin-left: auto; }
+/* With no window controls painted over the bar (the browser, or Electron off
+   macOS), nothing holds its start, so the actions lead it, flush with the Space pills below. The
+   phone bar keeps them opposite its menu button. */
+@media (min-width: 641px) {
+  .workspace-shell:not(.has-overlay-window-controls) .sidebar-top-bar { padding-left: 14px; }
+  .workspace-shell:not(.has-overlay-window-controls) .sidebar-top-actions { margin-left: 0; }
+}
 .sidebar-top-actions > .icon-button,
 .sidebar-top-action {
   align-items: center;
@@ -7651,6 +7726,10 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 }
 .sidebar-top-actions > .icon-button:hover:not(:disabled),
 .sidebar-top-action:hover:not(:disabled) { background: var(--av-sys-color-surface-raised-hover); }
+/* Import on the web host: shown so people learn it exists, but `aria-disabled`
+   rather than `disabled` so its tooltip still opens on hover and focus. */
+.sidebar-top-actions > .icon-button[aria-disabled='true'] { cursor: not-allowed; opacity: 0.48; }
+.sidebar-top-actions > .icon-button[aria-disabled='true']:hover { background: var(--av-sys-color-surface-raised); }
 /* The one action asking to be taken: a fixed blue fill, the same in both themes. */
 .sidebar-top-actions > .sidebar-top-update {
   background: var(--av-sys-color-project-blue);
@@ -7691,8 +7770,26 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 /* Unread is the sidebar Channel row's red here too, not the generic green. */
 .attention-menu .status-unread .status-dot { background: var(--av-sys-color-workstream-news); }
 .attention-menu-empty { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); padding: 10px; }
+.attention-menu-request { align-items: center; border-radius: var(--av-cmp-control-radius); display: flex; gap: 4px; min-height: 44px; padding: 0 6px 0 0; }
+/* One fill for the whole row, its buttons included, whichever part the
+   pointer or the keyboard is on. */
+.attention-menu-request:hover,
+.attention-menu-request:has([data-highlighted]) { background-image: var(--hover-layer); }
+.attention-menu-request-open { align-items: center; align-self: stretch; cursor: pointer; display: flex; flex: 1; gap: 10px; min-width: 0; outline: 0; padding: 6px 10px; }
+/* Approve and decline on an access request: the attention menu's rows and the People level's Asked to join. */
+.decision-button { align-items: center; background: transparent; border: 0; border-radius: 999px; color: var(--av-sys-color-text-subtle); cursor: pointer; display: inline-flex; flex: 0 0 auto; height: 28px; justify-content: center; outline: 0; padding: 0; width: 28px; }
+button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-focus-default); }
+.decision-button.is-approve:hover,
+.decision-button.is-approve[data-highlighted] { background: var(--av-sys-color-success-tint); color: var(--av-sys-color-success-strong); }
+.decision-button.is-decline:hover,
+.decision-button.is-decline[data-highlighted] { background: var(--av-sys-color-danger-tint); background-image: none; color: var(--av-sys-color-danger-strong); }
+.attention-menu-error { color: var(--av-sys-color-danger-base); font-size: 12px; padding: 6px 10px; }
+.access-request-dialog-subject { align-items: center; display: flex; gap: 12px; }
+.access-request-dialog-title { color: var(--av-sys-color-text-default); font-size: 15px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 
 .space-pill-strip { align-items: center; display: flex; flex: 0 0 auto; gap: 6px; min-width: 0; padding: 0 14px 10px; }
+.sidebar-top-space-slot { display: contents; }
+.sidebar-top-space-slot .space-pill-add { height: 32px; width: 32px; }
 .space-pill-strip-scroll {
   display: flex;
   flex: 1;
@@ -7785,8 +7882,10 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .single-sidebar .channel-row-time { color: var(--av-sys-color-text-disabled); }
 .single-sidebar .sidebar-footer-line { margin-inline: 16px; width: auto; }
 /* Rows above the footer line. Padded as `.sidebar-scroll` pads a row,
-   compact included, so they line up with the list above. */
-.sidebar-footer-items { display: flex; flex: none; flex-direction: column; gap: 4px; padding: 4px 12px 0; transition: padding var(--sidebar-layout-motion); }
+   compact included, so they line up with the list above. The bottom pad
+   matches `.sidebar-footer`'s top pad, so the rows sit as far above the
+   line as the account menu sits below it. */
+.sidebar-footer-items { display: flex; flex: none; flex-direction: column; gap: 4px; padding: 4px 12px 8px; transition: padding var(--sidebar-layout-motion); }
 .resizable-sidebar.is-compact .sidebar-footer-items { padding-inline: calc((100% - 54px) / 2); }
 .single-sidebar .sidebar-footer { padding-inline: 10px; }
 .single-sidebar .account-trigger .avatar { height: 28px; width: 28px; }
@@ -7833,16 +7932,40 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
   }
   .app-shell .single-sidebar > .space-pill-strip { padding-top: 12px; }
   .app-shell .single-sidebar .sidebar-resizer { display: none; }
-  .app-shell .sidebar-menu-toggle { color: var(--av-sys-color-text-default); display: inline-flex; height: 36px; margin-left: -6px; width: 36px; }
+  /* The same raised round fill as the actions opposite. Its glyph is a
+     menu while the sheet is shut and a close mark while it is open: on a
+     phone the open sheet covers the screen, so the button's one job is to
+     close it. The glyphs stack in one grid cell and turn into each other. */
+  .app-shell .sidebar-menu-toggle {
+    background: var(--av-sys-color-surface-raised);
+    border-radius: var(--av-sys-size-radius-pill);
+    box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong), var(--av-cmp-composer-shadow);
+    color: var(--av-sys-color-text-default);
+    display: inline-grid;
+    height: 32px;
+    place-items: center;
+    width: 32px;
+  }
+  .app-shell .sidebar-menu-toggle:hover:not(:disabled) { background: var(--av-sys-color-surface-raised-hover); }
+  .app-shell .sidebar-menu-glyph { grid-area: 1 / 1; transition: opacity 180ms ease, transform 180ms ease; }
+  .app-shell .sidebar-menu-toggle[aria-expanded="true"] .sidebar-menu-glyph.is-menu,
+  .app-shell .sidebar-menu-toggle[aria-expanded="false"] .sidebar-menu-glyph.is-close { opacity: 0; transform: rotate(90deg) scale(.6); }
   .app-shell .main-pane { height: calc(100% - var(--phone-top-bar-height)); margin-top: var(--phone-top-bar-height); }
   /* The right panel and its scrim are fixed to the window too, and start under the bar. */
   .app-shell .rail-surface,
   .app-shell .rail-scrim { top: var(--phone-top-bar-height); }
 }
+/* A window surface (Settings, Sidekicks) shown as a route in a browser tab
+   takes the whole tab, as its window would: no sidebar, and no room or phone
+   top bar left for one. See `lib/window-surface.ts`. After the phone rules
+   above so it outranks them at every width. */
+.workspace-shell.is-window-surface > .sidebar { display: none; }
+.workspace-shell.is-window-surface .main-pane { height: 100%; margin: 0; }
 @media (max-width: 640px) and (prefers-reduced-motion: reduce) {
   .app-shell .single-sidebar,
   .app-shell .single-sidebar > :not(.sidebar-top-bar),
-  .app-shell .single-sidebar.is-mobile-open > :not(.sidebar-top-bar) { transition: none; }
+  .app-shell .single-sidebar.is-mobile-open > :not(.sidebar-top-bar),
+  .app-shell .sidebar-menu-glyph { transition: none; }
 }
 .sidebar-section-hint { color: var(--av-sys-color-text-disabled); flex: none; font-size: 11.5px; }
 /* The sort toggle borrows the group menu trigger's hover layer and focus
@@ -7970,7 +8093,7 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
   gap: 2px;
   width: min(404px, var(--title-menu-room));
 }
-.title-menu-view:has(> .title-menu-scope) { width: min(420px, var(--title-menu-room)); }
+.title-menu-view:has(> .title-menu-people-search) { width: min(420px, var(--title-menu-room)); }
 /* The breadcrumb already names the level, so its section heading would say it twice. */
 .title-menu-view > .title-menu-sidekicks .workstream-context-section h2 { display: none; }
 .title-menu-view > * { animation: title-menu-enter 300ms cubic-bezier(.2, .8, .2, 1) both; }
@@ -8038,29 +8161,8 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .title-menu-level-meta { color: var(--av-sys-color-text-muted); flex: none; font-size: 13.5px; }
 .title-menu-level-chevron { color: var(--av-sys-color-text-disabled); flex: none; }
 
-/* People: who can see it, a search, who is in it, who could be. */
-.title-menu-scope {
-  align-items: center;
-  background: var(--av-sys-color-surface-sunken);
-  border-radius: 12px;
-  color: var(--av-ref-color-neutral-11);
-  display: flex;
-  gap: 12px;
-  margin-bottom: 8px;
-  padding: 12px 14px;
-}
-/* The icon stays level with the title when the detail wraps. */
-.title-menu-scope > svg { align-self: flex-start; flex: none; margin-top: 2px; }
-.title-menu-scope-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.title-menu-scope-title { color: var(--av-sys-color-text-default); font-size: 14.5px; }
-.title-menu-scope-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; }
-/* Too narrow for Change beside the copy: the icon stays beside the title, and
-   Change moves under the copy. */
-@media (max-width: 480px) {
-  .title-menu-scope { align-items: start; column-gap: 12px; display: grid; grid-template-columns: auto minmax(0, 1fr); row-gap: 8px; }
-  .title-menu-scope .title-menu-link { grid-column: 2; justify-self: start; margin-left: -4px; }
-}
-.title-menu-view:has(> .title-menu-scope) .title-menu-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
+/* People: a search that also takes addresses, who is in it, who could be. */
+.title-menu-people-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
 .title-menu-person { align-items: center; display: flex; gap: 12px; min-height: 52px; padding: 4px 8px; }
 .title-menu-person .avatar { height: 34px; width: 34px; }
 .title-menu-person-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
@@ -8100,10 +8202,10 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .title-menu-add:hover:not(:disabled) { background: var(--av-sys-color-surface-sunken); }
 .title-menu-add:disabled { cursor: progress; opacity: .6; }
 .title-menu-error { color: var(--av-sys-color-danger-base); font-size: 12.5px; margin: 0 8px 6px; }
+.title-menu-load-failed { align-items: center; color: var(--av-sys-color-danger-base); display: flex; font-size: 12.5px; gap: 12px; justify-content: space-between; margin: 0 8px 6px; }
 
-/* More: the conversation's settings as switches, grouped, then its actions. */
-.title-menu-settings { background: var(--av-sys-color-surface-sunken); border-radius: 12px; margin-bottom: 8px; padding: 4px; }
-.title-pill-menu .menu-item.title-menu-switch-row { font-size: 14.5px; gap: 12px; min-height: 44px; padding: 0 10px; }
+/* A switch is a row like any other in More: same size, inset and gap. */
+.title-pill-menu .menu-item.title-menu-switch-row { gap: 10px; }
 .title-menu-switch {
   background: var(--av-ref-color-line-4);
   border-radius: var(--av-sys-size-radius-pill);
@@ -8397,3 +8499,18 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 }
 .title-pill-menu-trigger:hover > .title-pill-menu-trigger-body { background: var(--av-sys-color-state-hover); }
 .title-pill-menu-trigger[data-state='open'] > .title-pill-menu-trigger-body { background: transparent; }
+
+/*
+ * iOS Safari zooms the page into any focused field whose text is under 16px,
+ * and leaves it zoomed after blur. Touch screens get 16px text in every text
+ * field instead; maximum-scale=1 would also stop it but takes pinch zoom away
+ * on Android. Important because the field rules it overrides are scoped deeper
+ * than any one rule here could be. That also shrinks a larger field to 16px,
+ * so a field styled above 16px has to be added to the :not() list.
+ */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], .space-name-input),
+  textarea,
+  select,
+  .workstream-composer .composer-highlight { font-size: 16px !important; }
+}

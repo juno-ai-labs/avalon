@@ -61,6 +61,18 @@ export const WorkspaceSpaceGeneralRequestSchema = SpaceActorSchema.extend({
 }).strict();
 export type WorkspaceSpaceGeneralRequest = z.infer<typeof WorkspaceSpaceGeneralRequestSchema>;
 
+/**
+ * `initializeWorkspace`'s General Space for a new Organization: the person
+ * creating it, the id whose D1 anchor the caller has written, and the
+ * authority generation it wrote that anchor at.
+ */
+export const WorkspaceGeneralOpeningSchema = z.strictObject({
+  creatorUserId: UserIdSchema,
+  spaceId: SpaceIdSchema,
+  authorityGeneration: z.number().int().positive(),
+});
+export type WorkspaceGeneralOpening = z.infer<typeof WorkspaceGeneralOpeningSchema>;
+
 export const WorkspaceSpaceReserveRequestSchema = SpaceActorSchema.extend({
   /** Always with an icon: the service stands one in when the person chose none. */
   space: CreateSpaceRequestSchema.extend({ iconKey: SpaceIconKeySchema }),
