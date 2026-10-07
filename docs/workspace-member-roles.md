@@ -22,7 +22,7 @@ the read-side authorization primitive that composes resource access belongs to
 | `apps/api/src/middleware/auth.ts` | Resolves `auth.role` from `workspace_members` on **every** request, and `requireWorkspaceAdmin` — the route-level gate. |
 | `apps/api/src/services/workspace-service.ts` | `setMemberRole` (the one write that changes a role), `createInvitation` (the role a future membership arrives with), `removeMember` and `leaveWorkspace` (the owner counts that keep a workspace owned), and the private `requireAdmin` every workspace-administration method starts with. |
 | `apps/api/src/routes/workspace.ts` | `PATCH /workspace/members/:userId/role`. |
-| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list, the promote/demote control beside each row, and the invitation role selector. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by email), the menu beside each row (promote/demote or make member, and suspend), and the invitation role selector. |
 | `apps/desktop/src/renderer/lib/session-workspace.ts` | Why the role the desktop holds is a *presentation* input and never an authorization one. |
 
 ## How it works
@@ -162,7 +162,7 @@ asked for, and inventing a ceiling here would be
   that matters is an administrator who is **not** the owner: rendering the owner
   there would stay green against a renderer regressed to owner-only, which is
   the behaviour under test. The roster it renders holds two people with the same
-  display name, so the controls' accessible names have to be distinct.
+  display name, so the row menus' accessible names have to be distinct.
 
 The last-administrator guard is exercised by deleting the owner row first. That
 state is artificial but not illegitimate: nothing in the schema declares that an
