@@ -31,13 +31,13 @@ Your look belongs to your account, not to this Mac, so it follows you to your ot
 
 ## Invite your teammates
 
-The last step is for bringing your team in: **Add email addresses to invite people to your organization.**
+The last step is for bringing your team in. Rally is built for shared chat with AI, so it works best with your teammates in it, and you can start before they accept.
 
 1. Type or paste email addresses into **Email addresses**. Separate them with a space, a comma or a semicolon. Pasting a whole list works too.
 2. Each address turns into a chip when you type a separator, press <kbd>Return</kbd> or click elsewhere. Click the **×** on a chip to remove it.
 3. Click **Invite 3 teammates** (the number counts your chips). Rally sends the invitations.
 
-Everyone you invite here joins as a **Member** and can use your organization connections. As the screen says, your private Channels stay private.
+Everyone you invite here joins as a **Member** and can use your organization connections.
 
 If an address is not complete, Rally says **Enter a complete email address for each teammate.** If some invitations fail to send, it lists them after **Could not invite:** and leaves them in the box to fix and retry. Retrying never sends a second invitation to someone who already has one, or who is already a member.
 

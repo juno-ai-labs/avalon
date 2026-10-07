@@ -70,10 +70,10 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
   return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={account.isPending || account.isFetching}><ConversationAdmissionProvider allowed={guest || Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{!guest && account.data?.eligible && !account.data.introduced ? <PlatformIntroduction previewed={previewed} /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
 }
 
-export function OnboardingPage({ title, subtitle, children, footer }: { title: string; subtitle?: string; children: ReactNode; footer?: ReactNode }): React.JSX.Element {
+export function OnboardingPage({ title, subtitle, children, footer }: { title: string; subtitle?: string | readonly string[]; children: ReactNode; footer?: ReactNode }): React.JSX.Element {
   return <main className="guided-onboarding window-drag">
     <section className="guided-page window-no-drag" aria-label={title}>
-      <header><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</header>
+      <header><h1>{title}</h1>{(typeof subtitle === 'string' ? [subtitle] : subtitle ?? []).map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</header>
       <div className="guided-content">{children}</div>
       {footer && <footer className="guided-footer">{footer}</footer>}
     </section>
@@ -230,7 +230,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     setEmails((previous) => [...new Set([...previous, ...parts.map((email) => email.trim().toLowerCase()).filter(Boolean)])]);
     setEmailDraft(remaining);
   };
-  if (state.stage === 'people') return <OnboardingPage title="Invite your teammates" subtitle="Add email addresses to invite people to your organization." footer={<>
+  if (state.stage === 'people') return <OnboardingPage title="Invite your teammates" subtitle={["Rally is designed to be multi-human. Rally lets teammates work with AI in shared (cooperative) chat, so without your teammates it won't be as fun.", "Don't worry, you can start using it even before they accept the invite."]} footer={<>
     <Button className="button-primary" disabled={busy || !inviteAddresses.length || invalidEmails} onClick={() => void perform(async () => {
       const addresses = inviteAddresses.filter((email) => !sent.includes(email));
       setEmailDraft('');
@@ -263,7 +263,6 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
       </div>
       <p id="invite-email-hint">Separate emails with a space, comma, or semicolon.</p>
       {invalidEmails && <p className="inline-error">Enter a complete email address for each teammate.</p>}
-      <p>Everyone invited joins as a Member and can use organization connections. Your private streams stay private.</p>
     </div>
     {sent.length > 0 && <p role="status">Invited: {sent.join(', ')}</p>}{error && <InlineError>{error}</InlineError>}
   </OnboardingPage>;
