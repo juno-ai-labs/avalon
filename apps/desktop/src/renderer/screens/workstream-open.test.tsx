@@ -1485,12 +1485,13 @@ describe('socket-first channel open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    await titleMenu('Channel menu: Recovered channel', ['Add people', 'Change']);
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam participant actions' }), {
+    await titleMenu('Channel menu: Recovered channel', 'Add people');
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Adam actions' }), {
       button: 0,
       ctrlKey: false,
     });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from main conversation' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Leave the channel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await waitFor(() => expect(locationInTest?.pathname).toBe('/'));
     expect(locationInTest?.state).toEqual({
       skipWorkstreamIds: [workstreamId],
