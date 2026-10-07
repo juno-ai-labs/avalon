@@ -91,17 +91,3 @@ export function spaceCreationWorkspaceRpcs() {
     })),
   };
 }
-
-/**
- * The Channel's side of a placement into an existing Channel: the source the
- * Space supplies, planned and then confirmed.
- *
- * `seatUserIds` is empty because neither Space here has a roster — General
- * seats nobody individually, and the personal one is empty by construction.
- */
-export function spaceCreationRoomRpcs() {
-  return {
-    applySpaceAccessSource: vi.fn(async () => ({ ok: true as const, plan: { seatUserIds: [] as string[] } })),
-    confirmSpaceAccessSource: vi.fn(async () => ({ ok: true as const })),
-  };
-}

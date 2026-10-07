@@ -75,8 +75,8 @@ started from a Space. The launcher starts with focus in the opening-message text
 input. The Channel name travels with that route and is committed only when the
 opening message is sent; participants are chosen in the header's
 **Participants** bar before that request. The creator's own chip leads the bar
-and has no remove control. In a personal Space the bar shows the Space's roster
-read-only and says it is managed by the Space. `NewWorkstreamScreen` remounts
+and has no remove control. A Space's participants are its listed members, not who is
+in its Channels, so the bar never starts from them. `NewWorkstreamScreen` remounts
 the whole launcher for every navigation that opens it, because React would
 otherwise keep one instance across a change of Space or a second opening of the
 same one: the people picked for one Channel were sent with the next, and the
@@ -110,11 +110,10 @@ The composer is `WorkstreamComposer`, the one a Channel's own feed uses, so
 the opening message gets the same `@` list (Rally and the Organization's
 members), slash commands and draft handling as every message after it. It is
 handed a `ComposerConversation` standing for the Channel about to exist: the
-Participants bar's people, the Space's scope, and no run. Mentioning a person
+Participants bar's people, Organization-wide, and no run. Mentioning a person
 seats them in the Channel: `submit` unions the mentioned people into the
 request's `participantIds`, because a name that only reached the text would
-arrive with nobody attached to it. In a personal Space the composer first asks
-**Add participant?** for anybody outside the bar, as it does in a feed. The
+arrive with nobody attached to it. The
 composer clears the draft on submit and restores it if `submit` rejects, so the
 too-long refusal and a failed create both throw rather than return.
 
@@ -229,10 +228,8 @@ was already deferred before this module existed.
 `reserveChannelInSpaces`, after the address reservation and before the D1
 anchor. In one SQLite transaction it resolves General when the request named no
 Space, writes each membership `active`, stages the defaults each Space hands a
-new member, reserves the main conversation with its provisional directory row,
-and records which Space supplied which reader on the Channel's own authority
-(`applySpaceAccessSource` with `commitWithPlan`, called inside the object rather
-than over RPC). It answers with the Spaces it read, and the
+new member, and reserves the main conversation with its provisional directory
+row. It answers with the Spaces it read, and the
 coordinator derives the opening audience from them with the same
 `resolveSpaceWorkstreamStart` the object used for the directory row's scope.
 A creation started from a provider thread passes `externalBinding`, and the
@@ -285,27 +282,16 @@ true. `POST /workstreams` carries `spaceIds`, defaulted to empty, and **empty
 means General** — `SpaceService.ensureGeneral` makes the Organization's General
 Space if this is the first thing that ever needed it.
 
-**A Channel created without a named Space is therefore born Organization-wide**,
-whatever scope the caller asked for: General is Organization-wide, its source
-unions into the birth audience, and a source only ever widens. That is true of
-a connector ingress that resolved a personal scope,
-of session import, of `createFromOpportunity`, and of the demo seeder — which
-refuses a pack room declared `personal` by name rather than seeding it
-Organization-wide ([`demo-workspaces.md`](demo-workspaces.md)). A Channel that
-is meant to stay personal has to be born in a personal Space that names it.
-
-The audience the Channel opens with is derived from those Spaces rather than
-taken from the request. `resolveSpaceWorkstreamStart` runs the same
-`effectiveChannelAudience` algebra the rest of the Space module uses over the
-named Spaces plus the caller's own request: if any of them is Organization-wide
-the Channel opens `workspace` and the requested participants are kept as
-participants; otherwise it opens personal over the union of the Spaces' rosters
-and the caller's. A requested participant who is in none of the named Spaces'
-rosters is seated directly in the Channel; that descendant access exposes only
-the containing Spaces' presentation metadata through associative reach and does
-not make them a Space participant. The Spaces' `defaultResourceIds` are unioned with the
-caller's origin resources, so a Channel started in a Space begins with what that
-Space hands down.
+**A Channel is born with the scope its caller asked for**, whichever Spaces it
+is born in: every Space is Organization-wide and grants no reader
+([`spaces.md`](spaces.md#every-space-is-organization-wide)). `POST /workstreams`
+asks for `workspace`, so a Channel somebody starts in Rally is public. An
+internal caller that names nothing gets the fail-closed `personal`, and one that
+names `personal` (a private Slack room, session import, a suggestion shown to
+one person, a digest) gets a private Channel even in General.
+`resolveSpaceWorkstreamStart` keeps the requested scope and participants and
+unions the Spaces' `defaultResourceIds` with the caller's origin resources, so a
+Channel started in a Space begins with what that Space hands down.
 
 **The memberships, the reservation and the provenance commit together.** The
 order between them used to be load-bearing: reserving the main conversation
@@ -423,18 +409,18 @@ than whichever rejection landed first.
   placement transaction writes the directory row that carries the address; see
   [The Space a Channel is born in](#the-space-a-channel-is-born-in).
 - **A Channel's Organization-side birth is one transaction.** Memberships,
-  Space defaults, the parent reservation with its provisional directory row, and
-  the Space sources commit in `reserveChannelInSpaces` or not at all; creation
+  Space defaults, and the parent reservation with its provisional directory row
+  commit in `reserveChannelInSpaces` or not at all; creation
   never stages a `joining` row or an `add` intent.
-- **A create that names no audience writes a private work stream.** `POST
-  /workstreams` carries no scope — a request on the wire cannot claim one — so
-  the creator is seated beside whoever they named, those active participant rows
-  are the room's complete reader authority, and the scope reaches the
-  object as an argument rather than a hardcoded `'workspace'`. A create path
-  added later inherits that: omitting the scope is a decision for private, and
-  only a caller that *knows* the audience is wider — an ingress reading a public
-  channel — says `workspace`. See
-  [`data-model.md`](data-model.md#2026-08-21--a-work-stream-is-born-private).
+- **A create that names no audience writes a private work stream.** The scope
+  reaches the object as an argument rather than a hardcoded `'workspace'`, and
+  an internal create path that omits it gets `personal`. The request body
+  carries no scope; `POST /workstreams` itself passes `workspace`, because [a
+  Space grants no reader](spaces.md#every-space-is-organization-wide) and a
+  Channel a person starts in Rally is public. A create receipt the previous
+  Worker hashed as `personal` is replayed by that `workspace` retry, never the
+  other way round. An ingress reading a Slack room passes the room's privacy.
+  See [`data-model.md`](data-model.md#2026-08-21--a-work-stream-is-born-private).
 - **Whether the people named are told is the caller's to say, not the object's.**
   `POST /workstreams` passes `notifyParticipants`, because its
   `participantUserIds` is people somebody picked in "Add people"; each of them
@@ -608,6 +594,26 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-06 — A Channel is born with the scope it asked for
+
+**What changed:** `resolveSpaceWorkstreamStart` no longer derives a Channel's
+birth audience from its Spaces, and `POST /workstreams` asks for `workspace`
+itself. The launcher no longer prefills or locks the Participants bar from a
+personal Space.
+
+**Why:** Every Space is Organization-wide and grants no reader
+([`spaces.md`](spaces.md)). Without that, General would have made every new
+Channel public again, and a private Channel could not be born anywhere.
+
+**Considered and rejected:** Defaulting an unnamed scope to `workspace` in the
+coordinator. It would quietly make public any internal create that forgot to
+name an audience; the route that means public now says so.
+
+**Consequences:** A new creation path names its scope; nothing widens a
+Channel after birth on its behalf.
+
+Pull request: [#1119](https://github.com/juno-ai-labs/avalon/pull/1119).
 
 ### 2026-10-01 — A pending row stays pending until its create answers
 

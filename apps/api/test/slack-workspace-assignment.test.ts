@@ -20,7 +20,7 @@ import {
   SLACK_WORKSPACE_OBJECT_METHODS,
   workspaceObjectRpcs,
 } from "./helpers/workspace-object-rpcs";
-import { spaceCreationRoomRpcs, spaceCreationWorkspaceRpcs } from "./helpers/space-creation-rpcs";
+import { spaceCreationWorkspaceRpcs } from "./helpers/space-creation-rpcs";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import {
@@ -948,7 +948,6 @@ describe("Slack connector principal delivery", () => {
           ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
           ...spaceCreationWorkspaceRpcs(),
           ...parentCreationRpcs(),
-          ...spaceCreationRoomRpcs(),
           admitConnectorParticipants: async () => ({ status: "legacy" }),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
@@ -1801,7 +1800,6 @@ describe("Slack public channel membership", () => {
           ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
           ...spaceCreationWorkspaceRpcs(),
           ...parentCreationRpcs(),
-          ...spaceCreationRoomRpcs(),
           admitConnectorParticipants: async () => ({ status: "legacy" }),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
@@ -2403,52 +2401,77 @@ describe("Slack public channel membership", () => {
       .toEqual([]);
   });
 
-  it("refuses to open a Channel in an Organization-wide Space for a room that has become private", async () => {
-    const database = migratedDatabase();
-    const credentialsKey = "test-connector-credentials-key";
-    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
-    // Linked while public: the room's Space is Organization-wide.
-    objectDatabase.exec(`
-      INSERT INTO spaces
-        (space_id, title, scope, authority_generation, source_version, payload_hash,
-         revision, created_at, updated_at, created_by_user_id)
-      VALUES ('00000000-0000-7000-8000-0000000000b1', 'launch', 'workspace', 1, 1,
-              'fixture', 1, 0, 0, '019fc4e0-4444-7000-8000-000000000044');
-      INSERT INTO external_conversation_bindings
-        (installation_id, path_json, target_kind, space_id, state, created_at, updated_at)
-      VALUES ('slack:T123', '["C123"]', 'space', '00000000-0000-7000-8000-0000000000b1', 'active',
-              '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z');
-    `);
-    insertSlackEventJob(objectDatabase, "event:now-private", appMention("EvNowPrivate"));
-    const posted: Array<Record<string, unknown>> = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
-      const json = (body: unknown) => new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "content-type": "application/json" },
+  for (const [label, memberCount, scope] of [
+    ["a private room", 2, "personal"],
+    ["a private room past the member-count promotion", 51, "workspace"],
+  ] as const) {
+    it(`opens ${label}'s thread in its Organization-wide Space as a ${scope} Channel`, async () => {
+      const database = migratedDatabase();
+      const credentialsKey = "test-connector-credentials-key";
+      const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+      // Every room's Space is Organization-wide; the room decides the Channel's audience.
+      objectDatabase.exec(`
+        INSERT INTO spaces
+          (space_id, title, scope, authority_generation, source_version, payload_hash,
+           revision, created_at, updated_at, created_by_user_id)
+        VALUES ('00000000-0000-7000-8000-0000000000b1', 'launch', 'workspace', 1, 1,
+                'fixture', 1, 0, 0, '019fc4e0-4444-7000-8000-000000000044');
+        INSERT INTO external_conversation_bindings
+          (installation_id, path_json, target_kind, space_id, state, created_at, updated_at)
+        VALUES ('slack:T123', '["C123"]', 'space', '00000000-0000-7000-8000-0000000000b1', 'active',
+                '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z');
+      `);
+      insertSlackEventJob(objectDatabase, `event:private-${memberCount}`, appMention(`EvPrivate${memberCount}`));
+      const create = vi.spyOn(SlackWorkspaceWorkstreamService.prototype, "create")
+        .mockRejectedValue(new Error("stopped_at_create"));
+      const posted: Array<Record<string, unknown>> = [];
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+        const json = (body: unknown) => new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+        if (url.pathname.endsWith("conversations.info")) {
+          return json({ ok: true, channel: { id: "C123", name: "launch", is_private: true, is_im: false, is_mpim: false } });
+        }
+        if (url.pathname.endsWith("conversations.members")) {
+          return json({
+            ok: true,
+            members: Array.from({ length: memberCount }, (_, index) => `U${900 + index}`),
+            response_metadata: {},
+          });
+        }
+        if (url.pathname.endsWith("users.info")) {
+          return json({
+            ok: true,
+            user: {
+              id: "U456", team_id: "T123", deleted: false, is_bot: false, name: "adam",
+              profile: { display_name: "Adam", real_name: "Adam" },
+            },
+          });
+        }
+        if (url.pathname.endsWith("assistant.threads.setStatus")) return json({ ok: true });
+        if (url.pathname.endsWith("chat.postMessage")) {
+          posted.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          return json({ ok: true, channel: "C123", ts: "1.1" });
+        }
+        return json({ ok: true });
+      }));
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      await new SlackAgentService(slackMembershipEnvironment(
+        database, instance, credentialsKey, vi.fn(async () => undefined), new Map(),
+      )).processQueuedIngress("22222222-2222-4222-8222-222222222222", `event:private-${memberCount}`)
+        .catch(() => undefined);
+
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(create.mock.calls[0]![0]).toMatchObject({
+        scope,
+        space: { spaceId: "00000000-0000-7000-8000-0000000000b1" },
       });
-      if (url.pathname.endsWith("conversations.info")) {
-        return json({ ok: true, channel: { id: "C123", name: "launch", is_private: true, is_im: false, is_mpim: false } });
-      }
-      if (url.pathname.endsWith("chat.postMessage")) {
-        posted.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-        return json({ ok: true, channel: "C123", ts: "1.1" });
-      }
-      throw new Error(`Unexpected Slack request ${url}`);
-    }));
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    await new SlackAgentService(slackMembershipEnvironment(
-      database, instance, credentialsKey, vi.fn(async () => undefined),
-    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:now-private");
-
-    expect(posted).toHaveLength(1);
-    expect(String(posted[0]!.text)).toContain("private now");
-    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM slack_agent_sessions").get()).toEqual({ count: 0 });
-    expect(objectDatabase.prepare(
-      "SELECT COUNT(*) AS count FROM external_conversation_bindings WHERE path_json <> '[\"C123\"]'",
-    ).get()).toEqual({ count: 0 });
-  });
+      expect(posted.map((message) => String(message.text)).filter((text) => text.includes("private"))).toEqual([]);
+    });
+  }
 
   it("starts work in a room Slack does not thread without calling a thread API", async () => {
     // Slack refuses a thread there: an Agent status or a `thread_ts` post
@@ -3462,7 +3485,7 @@ describe("Slack replies routed by external conversation bindings", () => {
     return links;
   }
 
-  it("links a private room to a private Space seated with its Rally members, acting as the member who is there when the inviter is not one", async () => {
+  it("links a private room to an Organization-wide Space, acting as the member who is there when the inviter is not one", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
     const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
@@ -3482,9 +3505,9 @@ describe("Slack replies routed by external conversation bindings", () => {
       installationId: "slack:T123",
       path: ["GPRIV"],
       userId: LINKED_USER,
-      space: { name: "launch-private", scope: "personal" },
-      participantUserIds: [LINKED_USER],
+      space: { name: "launch-private" },
     });
+    expect(links[0]).not.toHaveProperty("participantUserIds");
   });
 
   it("names a room's Space by the room, so a repeated invitation claims the same anchor", async () => {
@@ -3511,7 +3534,7 @@ describe("Slack replies routed by external conversation bindings", () => {
       .toEqual({ count: 1 });
   });
 
-  it("links a public room to an Organization-wide Space as the inviter, seating nobody", async () => {
+  it("links a public room to an Organization-wide Space as the inviter", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
     const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
@@ -3528,8 +3551,7 @@ describe("Slack replies routed by external conversation bindings", () => {
 
     expect(links).toHaveLength(1);
     expect(links[0]).toMatchObject({
-      path: ["CPUB"], userId: LINKED_USER, space: { name: "launch", scope: "workspace" }, participantUserIds: [],
-      spaceMatch: "unmatched",
+      path: ["CPUB"], userId: LINKED_USER, space: { name: "launch" }, spaceMatch: "unmatched",
     });
     // One line in the room saying what inviting Rally did.
     expect(roomPosts).toEqual([expect.objectContaining({ channel: "CPUB", text: expect.stringContaining("Rally is here") })]);
@@ -3559,7 +3581,7 @@ describe("Slack replies routed by external conversation bindings", () => {
 
     expect(asked).toEqual([{ workspaceId: expect.any(String), name: "general" }]);
     expect(links).toHaveLength(1);
-    expect(links[0]).toMatchObject({ path: ["CGEN"], spaceId: general, spaceMatch: "matched", space: { name: "general", scope: "workspace" } });
+    expect(links[0]).toMatchObject({ path: ["CGEN"], spaceId: general, spaceMatch: "matched", space: { name: "general" } });
     expect(admit).not.toHaveBeenCalled();
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams WHERE id = ?").get(general)).toEqual({ count: 0 });
   });
@@ -3606,7 +3628,7 @@ describe("Slack replies routed by external conversation bindings", () => {
 
     expect(matcher).not.toHaveBeenCalled();
     expect(links).toHaveLength(1);
-    expect(links[0]).toMatchObject({ path: ["CEXT"], space: { name: "general", scope: "workspace" } });
+    expect(links[0]).toMatchObject({ path: ["CEXT"], space: { name: "general" } });
     expect(links[0]).not.toHaveProperty("spaceMatch");
   });
 
@@ -3791,7 +3813,6 @@ function slackMembershipEnvironment(
         ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
         ...spaceCreationWorkspaceRpcs(),
         ...parentCreationRpcs(),
-        ...spaceCreationRoomRpcs(),
         admitConnectorParticipants: async () => ({ status: "legacy" }),
         ...workspaceRpcs,
       },

@@ -380,8 +380,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     }).catch((cause: unknown) => {
       // Not over a newer menu action, or after leaving for another conversation.
       if (routeRef.current.visit !== visit || menuOperation.current !== operation) return;
-      // A refusal (an organization-wide Space still holds it, say) names what
-      // to change first; anything else is the action's own retry sentence.
+      // A refusal names what to change first; anything else is the action's
+      // own retry sentence.
       const fallback = workstreamSidebarFailureCopy[action];
       setSubstreamMenuFailure({ title: fallback.title, copy: spaceFailureSentence(cause, fallback.copy) });
       // Selecting a Breakout changes the visit without the reset a new Channel

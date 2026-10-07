@@ -1,4 +1,4 @@
-import { IdSchema } from "@rally/contracts";
+import { IdSchema, UserIdSchema } from "@rally/contracts";
 import { z } from "zod";
 
 export const ContentAudienceSchema = z.discriminatedUnion("scope", [
@@ -20,6 +20,17 @@ export const WorkstreamReaderAudienceSchema = z.discriminatedUnion("scope", [
 ]);
 
 export type WorkstreamReaderAudience = z.infer<typeof WorkstreamReaderAudienceSchema>;
+
+/**
+ * A Channel as observed: who may read it, and its roster. Both, because
+ * `readers` says only `workspace` once the Channel is Organization-wide, and
+ * the roster exists in both scopes.
+ */
+export const ObservedChannelSchema = z.strictObject({
+  readers: WorkstreamReaderAudienceSchema,
+  participantUserIds: z.array(UserIdSchema),
+});
+export type ObservedChannel = z.infer<typeof ObservedChannelSchema>;
 
 /** Whether one member is inside a content audience. */
 export function contentAudienceAllowsUser(source: ContentAudience, userId: string): boolean {

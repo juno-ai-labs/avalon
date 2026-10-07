@@ -895,8 +895,9 @@ describe("Durable Objects in the Workers runtime", () => {
       region: "global" as const,
       role: "member" as const,
     };
-    // No `scope`, which is the whole point: `POST /workstreams` carries none,
-    // so this is the shape every create a person makes in Avalon arrives in.
+    // No `scope`, which is the whole point: an initialize nobody named an
+    // audience for is born private. `POST /workstreams` names `workspace`
+    // itself, so a Channel a person starts is not this case.
     const input = {
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
@@ -4015,6 +4016,11 @@ describe("Durable Objects in the Workers runtime", () => {
       workspaceDOName("global", WORKSPACE_ID),
     ));
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // Close the Space cutover, as the path that opens a new Organization does.
+    // A pending one is due at once, and when workerd fires it before the
+    // settle below, its page claim re-arms the alarm a retry delay out, which
+    // is earlier than the expiry this case measures.
+    await stub.finalizeSpaceBootstrap({ workspaceId: WORKSPACE_ID });
     const eventId = "00000000-0000-7000-8000-000000000316";
     const processingOwnerId = "00000000-0000-7000-8000-000000000317";
     await stub.ingestConnectorEvent({
