@@ -521,6 +521,9 @@ describe('New channel home', () => {
 
     openPeopleSearch();
     fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
+    // Whole names while the search is open too: the part before a space is
+    // not necessarily anyone's first name.
+    expect(screen.getByText('Morgan Ellis, Samantha Lee')).toBeVisible();
     const roster = openRoster();
     expect(within(roster).getByRole('button', { name: 'Remove Samantha Lee' })).toBeVisible();
     expect(within(roster).getByText('Morgan Ellis')).toBeVisible();
