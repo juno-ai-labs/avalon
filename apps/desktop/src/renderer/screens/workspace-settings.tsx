@@ -1224,6 +1224,9 @@ export function WorkspaceSettingsScreen({
     if (!nextSection) return;
     setNavigationQuery('');
     setSearchTarget(null);
+    // A section request names no connection, so it must not reopen whichever
+    // page was last shown; `connection` without one lands on Connections.
+    setConnectionPageId(null);
     setActiveSection(nextSection);
     if (nextSection === 'workspace') setUsageRequest((count) => count + 1);
   }), [bridge]);

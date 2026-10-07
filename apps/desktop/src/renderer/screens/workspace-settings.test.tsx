@@ -1222,6 +1222,21 @@ describe('Organization settings', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Connections' })).toBeVisible();
   });
 
+  it('lands a connection request that names no connection on Connections, not the last page shown', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000022', connectorType: 'granola', scope: 'you',
+      displayName: 'Granola · adam@example.com', capabilities: [], status: 'healthy', toolCount: 6,
+    }]);
+    renderSettings();
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    fireEvent.click(await within(navigation).findByRole('button', { name: 'Granola · adam@example.com' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Granola · adam@example.com' })).toBeVisible();
+    openSettingsSection('Application');
+
+    act(() => settingsSectionRequest.listener?.('connection'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Connections' })).toBeVisible();
+  });
+
   it('falls back to Account for the removed General settings section', () => {
     window.history.replaceState({}, '', '/?surface=settings&settingsSection=general#/settings');
     renderSettings();
