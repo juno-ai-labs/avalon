@@ -24,6 +24,18 @@ function googleSignInError(code: string): string {
   return "Google sign-in did not complete. Try again or use your email.";
 }
 
+/** Older strict start schemas reject the new optional analytics field before
+ * any proof is created. Only that validation rejection gets a legacy retry. */
+async function signupStart<T>(path: '/google/start' | '/email/start', schema: z.ZodType<T>, body: Record<string, unknown>): Promise<T> {
+  try { return await browserRequest(IDENTITY_REGION, path, schema, body); }
+  catch (error) {
+    if (!(error instanceof BrowserApiError) || error.status !== 400 || error.code !== 'invalid_request') throw error;
+    const legacyBody = { ...body };
+    delete legacyBody.signupFlowId;
+    return browserRequest(IDENTITY_REGION, path, schema, legacyBody);
+  }
+}
+
 /**
  * Opens a workspace in its own deployment. A deployment other than Global
  * that holds no cookie for this browser yet answers 401; Global then opens the
@@ -294,7 +306,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
           : { email: normalizedEmail, id: crypto.randomUUID(), redemptionId: crypto.randomUUID() };
         issuance.current = next;
         const returnPath = location.pathname.startsWith("/app/") ? { returnPath: location.pathname } : {};
-        await browserRequest(IDENTITY_REGION, "/email/start", EmailLoginStartedSchema, { challengeId: next.id, email: normalizedEmail, signupFlowId: signupFlow.current, ...returnPath });
+        await signupStart("/email/start", EmailLoginStartedSchema, { challengeId: next.id, email: normalizedEmail, signupFlowId: signupFlow.current, ...returnPath });
         setChallenge(next);
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to continue. Please try again."); }
@@ -329,7 +341,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     setBusy(true); setError(null); setGoogleNotice(null);
     try {
       const returnPath = location.pathname.startsWith("/app/") ? location.pathname : "/";
-      const { url } = await browserRequest(IDENTITY_REGION, "/google/start", BrowserGoogleStartedSchema, { returnPath, signupFlowId: signupFlow.current });
+      const { url } = await signupStart("/google/start", BrowserGoogleStartedSchema, { returnPath, signupFlowId: signupFlow.current });
       location.assign(url);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to start Google sign-in. Try again.");

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import '../../../../../tests/isolated-region';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -396,7 +397,7 @@ it('treats an old token invitation link as a plain sign-in page', async () => {
   // in with the invited address is what claims the share.
   expect(location.pathname).toBe('/');
   expect(location.hash).toBe('');
-  expect(requests).toEqual(['/session']);
+  expect(requests).toEqual(['/session', '/signup/view']);
 });
 
 it('waits for the organization list before saying nothing has been shared', async () => {
@@ -416,10 +417,12 @@ it('waits for the organization list before saying nothing has been shared', asyn
 });
 
 it('starts Google sign-in for the page it was opened on and explains a declined one on return', async () => {
-  const starts: unknown[] = [];
+  const starts: Array<{ signupFlowId: string; returnPath: string }> = [];
+  const views: Array<{ flowId: string }> = [];
   vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
     const path = input.split('/browser')[1];
     if (path === '/workspace/select' || path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/signup/view') { views.push(JSON.parse(String(init?.body))); return new Response(null, { status: 204 }); }
     if (path === '/google/start') { starts.push(JSON.parse(String(init?.body))); return Response.json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=s' }); }
     throw new Error(`Unexpected browser request: ${input}`);
   }));
@@ -428,9 +431,65 @@ it('starts Google sign-in for the page it was opened on and explains a declined 
   try {
     expect(await screen.findByRole('alert')).toHaveTextContent('Google sign-in was cancelled.');
     expect(location.hash).toBe('');
+    await waitFor(() => expect(views).toHaveLength(1));
+    view.rerender(<BrowserEntry />);
     fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
     await waitFor(() => expect(starts).toEqual([{ returnPath: `/app/workspaces/global/${workspace.id}`, signupFlowId: expect.stringMatching(/^[0-9a-f-]{14}7/u) }]));
+    expect(views).toEqual([{ flowId: starts[0]!.signupFlowId }]);
   } finally { view.unmount(); }
+});
+
+it.each(['google', 'email'] as const)('keeps %s sign-in available on an older strict start API', async method => {
+  const starts: Array<Record<string, unknown>> = [];
+  const path = `/${method}/start`;
+  const legacy = method === 'google'
+    ? z.strictObject({ returnPath: z.string() })
+    : z.strictObject({ challengeId: z.string().uuid(), email: z.string().email() });
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const requestedPath = input.split('/browser')[1];
+    if (requestedPath === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (requestedPath === '/signup/view') return Response.json({ error: { message: 'Not found' } }, { status: 404 });
+    if (requestedPath === path) {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      starts.push(body);
+      if (!legacy.safeParse(body).success) return Response.json({ error: { code: 'invalid_request', message: 'The request is invalid' } }, { status: 400 });
+      return method === 'google' ? Response.json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=s' })
+        : Response.json({ challengeId: body.challengeId, expiresAt: Date.now() + 600_000 }, { status: 202 });
+    }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry />);
+  if (method === 'google') fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
+  else {
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with email' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: 'new@example.test' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
+  }
+  await waitFor(() => expect(starts).toHaveLength(2));
+  expect(starts[0]).toHaveProperty('signupFlowId');
+  const expected = { ...starts[0] };
+  delete expected.signupFlowId;
+  expect(starts[1]).toEqual(expected);
+  expect(screen.queryByRole('alert')).toBeNull();
+  if (method === 'email') expect(await screen.findByRole('textbox', { name: 'Sign-in code' })).toBeVisible();
+});
+
+it.each([[503, 'unavailable'], [400, 'not_a_validation_error']] as const)('does not retry a signup start rejected with %s %s', async (status, code) => {
+  const starts: unknown[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/signup/view') return new Response(null, { status: 204 });
+    if (path === '/google/start') {
+      starts.push(JSON.parse(String(init?.body)));
+      return Response.json({ error: { code, message: 'Start unavailable' } }, { status });
+    }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  render(<BrowserEntry />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Start unavailable');
+  expect(starts).toHaveLength(1);
 });
 
 it('returns to the Google-first choice after an email sign-in signs out', async () => {

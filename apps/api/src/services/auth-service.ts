@@ -1,4 +1,4 @@
-import { observeSignup, observeAuthenticationCompleted, type SignupFlow } from '../telemetry/signup';
+import { observeSignup, observeAuthenticationCompleted, type SignupFlow, type SignupPlatform } from '../telemetry/signup';
 import { openEmailLoginSecret } from "./email-login-service";
 import { isConfiguredRegion } from "@rally/contracts/regions";
 import { createRemoteJWKSet, jwtVerify, SignJWT, type JWTPayload } from "jose";
@@ -662,8 +662,7 @@ export class AuthService {
     avatarUrl: string | null;
   }, signup?: SignupFlow): Promise<IdentityRow> {
     const at = nowIso();
-    let created = false;
-    const user = { id: await persistVerifiedGoogleIdentity(this.env.DB, input, () => { created = true; }, signup) };
+    const user = await persistVerifiedGoogleIdentity(this.env.DB, input, signup);
     const platformLink = await this.env.DB.prepare(
       `UPDATE users SET platform_user_id = ?, updated_at = ?
        WHERE id = ? AND (platform_user_id IS NULL OR platform_user_id = ?)`,
@@ -671,7 +670,7 @@ export class AuthService {
     if (Number(platformLink.meta.changes ?? 0) !== 1) {
       throw new ApiError(409, "platform_identity_conflict", "The Global identity could not be linked safely");
     }
-    return { ...await this.loadIdentity(user.id, null), signup_created: created };
+    return { ...await this.loadIdentity(user.id, null), signup_created: user.created };
   }
 
   private async loadIdentity(userId: string, workspaceId: string | null): Promise<IdentityRow> {
@@ -795,7 +794,7 @@ export class AuthService {
   }
 
   /** Only a successfully consumed mailbox challenge can resume this session. */
-  async resumeEmailLogin(receipt: { challengeId:string;redemptionId:string }): Promise<Session> {
+  async resumeEmailLogin(receipt: { challengeId:string;redemptionId:string }, clientPlatform: SignupPlatform): Promise<Session> {
     const row = await this.env.DB.prepare(`SELECT user_id,session_id,session_secret_encrypted,redeemed_at,telemetry_flow_id,telemetry_client_platform,signup_created
       FROM email_login_challenges WHERE id=? AND redemption_id=? AND redeemed_at IS NOT NULL`)
       .bind(IdSchema.parse(receipt.challengeId),IdSchema.parse(receipt.redemptionId))
@@ -806,7 +805,7 @@ export class AuthService {
     const session = await this.createSession(await this.loadIdentity(row.user_id,null),{
       sessionId:row.session_id,refreshToken,createdAt:new Date(row.redeemed_at).toISOString(),
     });
-    observeAuthenticationCompleted(this.env, { flowId: row.telemetry_flow_id, clientPlatform: row.telemetry_client_platform }, 'email', row.user_id, row.signup_created === 1);
+    observeAuthenticationCompleted(this.env, { flowId: row.telemetry_flow_id, clientPlatform: row.telemetry_client_platform }, 'email', row.user_id, row.signup_created === 1, clientPlatform);
     return session;
   }
 
