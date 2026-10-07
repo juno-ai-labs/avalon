@@ -95,10 +95,8 @@ A staff member's account menu reads `GET /auth/support/workspaces` with the
 account's identity credential (the browser uses its cookie's identity session).
 It lists every Organization with a live grant, with a spy mark beside it.
 The app reads that list when it starts and again every ten minutes in the
-background, never when the menu opens: a read on open lands after the menu is
-drawn, so a new grant would pop in under the pointer. **View → Refresh
-Organization List** in the Mac app rereads it, and the account's own
-Organizations, at once.
+background (`useSupportWorkspaces`), never when the menu opens. **View →
+Refresh Organization List** in the Mac app rereads it at once.
 Opening a row reads that Organization's members, then guests. Choosing a person
 calls `POST /auth/support/session`, whose single `INSERT … SELECT` writes a
 session for the represented person only if the grant is live, the caller is
@@ -408,7 +406,8 @@ existing `rallywithai:` deep link for the main app.
 
 **What changed:** Staff's list of granting Organizations is reread every ten
 minutes in the background instead of each time the account menu opens, and the
-Mac app's View menu gained **Refresh Organization List**.
+Mac app's View menu gained **Refresh Organization List**, which rereads it at
+once. The account's own Organizations still reread when the menu opens.
 
 **Why:** A read started on open finished after the menu was drawn, so a newly
 granted Organization appeared a moment later and pushed the rows below it down.
@@ -421,6 +420,9 @@ which nothing else needs yet.
 **Consequences:** A grant can take up to ten minutes to appear unless staff use
 the View menu item. A revoked grant can stay listed as long; choosing a person
 there is refused by the server, as before.
+
+PR [#1159](https://github.com/juno-ai-labs/avalon/pull/1159), following
+[#1152](https://github.com/juno-ai-labs/avalon/pull/1152).
 
 ### 2026-10-07 — Rally access: staff sessions as another Organization's people
 
@@ -451,6 +453,7 @@ session leaves the person's read state, recency and presence alone: Adam asked
 for both, with the audit kept off the response path. A second
 deployment needs the staff check and grant list to cross regions.
 
+PR [#1152](https://github.com/juno-ai-labs/avalon/pull/1152).
 
 ### 2026-10-01 — R2 reads abort on idle, not on total time
 
