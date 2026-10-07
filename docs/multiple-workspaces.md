@@ -436,7 +436,12 @@ email-only identity to Global. It unblocked the browser but left the bridge
 keyed on one provider, which the next provider would have had to undo.
 
 **Consequences:** Linking by email trusts that Global verified the mailbox, as
-it does for the email login identity itself. Every regional user the bridge
+it does for the email login identity itself. A deployment keeps only the email
+addresses Global currently sends, as Global does, so a changed mailbox cannot
+block its next owner. Email-only accounts, mostly guests, now get the same
+discovery Google accounts already had: the browser's list asks each other
+deployment in parallel, and each creates a regional user for the account on
+first contact. With Global the only deployment this costs nothing today. Every regional user the bridge
 touches gains login identity rows. A new provider's name must fit the shape
 migration 0120 checks and the API's `loginIdentitySchema`.
 

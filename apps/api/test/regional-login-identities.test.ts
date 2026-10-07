@@ -44,3 +44,14 @@ it("refuses an account whose sign-in methods belong to two different regional us
   await expect(service().discover(identity(crypto.randomUUID(),[{ provider:"github",subject:"gh-1" },{ provider:"apple",subject:"apple-1" }])))
     .rejects.toMatchObject({ status:409,code:"regional_identity_conflict" });
 });
+
+it("drops an email address Global no longer sends, so its next owner can link here",async () => {
+  const first = crypto.randomUUID();
+  await service().discover(identity(first,[{ provider:"google",subject:"g-1" },{ provider:"email",subject:"old@example.test" }],"old@example.test"));
+  await service().discover(identity(first,[{ provider:"google",subject:"g-1" },{ provider:"email",subject:"new@example.test" }],"new@example.test"));
+  const user = db.prepare("SELECT id FROM users WHERE platform_user_id=?").get(first) as { id:string };
+  expect(identities(user.id)).toEqual([{ provider:"email",subject:"new@example.test" },{ provider:"google",subject:"g-1" }]);
+  const next = crypto.randomUUID();
+  await service().discover(identity(next,[{ provider:"email",subject:"old@example.test" }],"old@example.test"));
+  expect(db.prepare("SELECT COUNT(*) AS n FROM users WHERE platform_user_id=?").get(next)).toEqual({ n:1 });
+});

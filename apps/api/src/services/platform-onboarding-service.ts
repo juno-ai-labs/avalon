@@ -659,14 +659,25 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     }
   }
 
-  /** Global verified each of these; the deployment keeps them so a later sign-in links to the same user. */
+  /**
+   * Global verified each of these; the deployment keeps them so a later sign-in
+   * links to the same user. An email address Global no longer sends is dropped,
+   * as Global drops it when the mailbox changes: a kept old address would block
+   * its next owner here with a conflict.
+   */
   private async recordLoginIdentities(userId: string, identity: PlatformIdentity): Promise<void> {
-    if (identity.loginIdentities.length === 0) return;
     const at = nowIso();
-    await this.env.DB.batch(identity.loginIdentities.map((entry) => this.env.DB.prepare(
-      `INSERT INTO user_login_identities (provider, subject, user_id, verified_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(provider, subject) DO NOTHING`,
-    ).bind(entry.provider, entry.subject, userId, at)));
+    const emails = identity.loginIdentities.filter((entry) => entry.provider === "email").map((entry) => entry.subject);
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `DELETE FROM user_login_identities WHERE provider = 'email' AND user_id = ?
+         AND subject NOT IN (SELECT value FROM json_each(?))`,
+      ).bind(userId, JSON.stringify(emails)),
+      ...identity.loginIdentities.map((entry) => this.env.DB.prepare(
+        `INSERT INTO user_login_identities (provider, subject, user_id, verified_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(provider, subject) DO NOTHING`,
+      ).bind(entry.provider, entry.subject, userId, at)),
+    ]);
   }
 
   private async syncRegionalProfile(userId: string, identity: PlatformIdentity): Promise<void> {
