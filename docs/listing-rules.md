@@ -110,7 +110,9 @@ everyone's, because each answers only for what the person may already reach.
 ## Boundary
 
 Owns: the yes-or-no of being listed. Does not own whether content is readable
-(each conversation's own authority),
+(each conversation's own authority), the name and mark a member who holds a
+link is shown so they can request access
+([`channel-access-requests.md`](channel-access-requests.md)),
 Space writes ([`spaces.md`](spaces.md)), or which conversations a guest holds
 in a Channel ([`scope-grant-directory.md`](scope-grant-directory.md)).
 

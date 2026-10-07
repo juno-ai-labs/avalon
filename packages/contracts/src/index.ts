@@ -31,6 +31,7 @@ import {
   WireResourceRelationshipTypeSchema,
 } from "./resource-relationships";
 import { HttpsUrlSchema, httpsUrlSchema, HttpUrlSchema, httpUrlSchema, WebSocketUrlSchema } from "./url-schemas";
+import { ConversationAccessRequestItemSchema } from "./access-requests";
 import { PickableWorkstreamIconKeySchema, WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
 import {
   TranscriptActivitySchema,
@@ -54,6 +55,7 @@ export * from './onboarding';
 export * from "./workspace-retirement";
 export * from "./appearance-icons";
 export * from "./workstream-appearance";
+export * from "./access-requests";
 export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
@@ -2655,6 +2657,8 @@ export const WorkspaceSocketSyncEventSchema = z.strictObject({
   featureFlags: ClientFeatureFlagsSchema.optional(),
   /** This viewer's display preferences, beside `featureFlags` and for the same reason. */
   viewerPreferences: MemberPreferencesSchema.optional(),
+  /** The access requests waiting on this viewer, for the same reason again. */
+  accessRequests: z.array(ConversationAccessRequestItemSchema).optional(),
 }).superRefine((event, context) => {
   if (event.topics.length === 0 && event.sidebar === undefined) {
     context.addIssue({
