@@ -460,10 +460,8 @@ export function ChannelMenu({
   if (nav.view?.key === 'more') {
     return <>
       {appearance}
-      {(pinned || actions?.onSetPublic) && <div className="title-menu-settings">
-        {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
-        <PublicSwitch actions={actions} />
-      </div>}
+      {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
+      <PublicSwitch actions={actions} />
       {onImportUpdates && <TitleMenuItem icon={<IconCloudDownload aria-hidden="true" size={16} stroke={1.8} />} onSelect={onImportUpdates}>Import updates</TitleMenuItem>}
       {extraActions}
       <ResourceList label="Artifacts" onOpen={onOpenArtifact} resources={artifacts} />
@@ -540,7 +538,7 @@ export function BreakoutMenu({
   if (nav.view?.key === 'more') {
     return <>
       {appearance}
-      {actions?.onSetPublic && <div className="title-menu-settings"><PublicSwitch actions={actions} /></div>}
+      <PublicSwitch actions={actions} />
       {actions?.onArchive && <>
         {(appearance || actions.onSetPublic) && <TitleMenuSeparator />}
         <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(breakout)}>Archive breakout</TitleMenuItem>

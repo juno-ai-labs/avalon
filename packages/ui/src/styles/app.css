@@ -8099,9 +8099,8 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .title-menu-error { color: var(--av-sys-color-danger-base); font-size: 12.5px; margin: 0 8px 6px; }
 .title-menu-load-failed { align-items: center; color: var(--av-sys-color-danger-base); display: flex; font-size: 12.5px; gap: 12px; justify-content: space-between; margin: 0 8px 6px; }
 
-/* More: the conversation's settings as switches, grouped, then its actions. */
-.title-menu-settings { background: var(--av-sys-color-surface-sunken); border-radius: 12px; margin-bottom: 8px; padding: 4px; }
-.title-pill-menu .menu-item.title-menu-switch-row { font-size: 14.5px; gap: 12px; min-height: 44px; padding: 0 10px; }
+/* A switch is a row like any other in More: same size, inset and gap. */
+.title-pill-menu .menu-item.title-menu-switch-row { gap: 10px; }
 .title-menu-switch {
   background: var(--av-ref-color-line-4);
   border-radius: var(--av-sys-size-radius-pill);
