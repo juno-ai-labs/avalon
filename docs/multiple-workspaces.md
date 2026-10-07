@@ -491,6 +491,8 @@ now lands without `GET /workspace` in hand; the shell draws from the
 placeholder and the read replaces it in place, as on a cold start. A journey
 read on a cold start still waits for the account's eligibility.
 
+Shipped in #1142.
+
 ### 2026-10-06 — A deployment links a person by any sign-in method
 
 **What changed:** The platform identity carries `loginIdentities`, every verified

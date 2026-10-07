@@ -1430,7 +1430,7 @@ describe("Durable Objects in the Workers runtime", () => {
         throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
       }
       expect(response.status).toBe(101);
-      await expect(stub.initializeWorkspace(WORKSPACE_ID, "wnam")).resolves.toBeUndefined();
+      await expect(stub.initializeWorkspace(WORKSPACE_ID, "wnam")).resolves.toEqual({ spacesReady: false });
       const socket = response.webSocket;
       expect(socket).toBeDefined();
       socket!.accept();
