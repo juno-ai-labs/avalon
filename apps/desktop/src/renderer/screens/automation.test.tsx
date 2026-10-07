@@ -11,9 +11,11 @@ const getAutomation = vi.hoisted(() => vi.fn());
 const getAutomationRuns = vi.hoisted(() => vi.fn());
 const setAutomationAppearance = vi.hoisted(() => vi.fn());
 const archiveAutomation = vi.hoisted(() => vi.fn());
+const shell = vi.hoisted(() => ({ host: 'desktop' as 'desktop' | 'browser' }));
 vi.mock('../lib/collaboration-session', () => ({
   useOptionalCollaborationSession: () => null,
   useCollaborationSession: () => ({ api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance } }),
+  useShellCapabilities: () => ({ host: shell.host, guest: false }),
 }));
 // The conversation beside the profile is its own surface with its own sockets,
 // and none of it is what this file is about.
@@ -72,6 +74,25 @@ beforeEach(() => {
   getAutomationRuns.mockReset().mockResolvedValue([]);
   setAutomationAppearance.mockReset();
   archiveAutomation.mockReset().mockResolvedValue(undefined);
+  shell.host = 'desktop';
+  window.location.hash = '';
+});
+
+describe('AutomationScreen load failure', () => {
+  it('offers a way back to the workspace in a browser tab, where the sidebar is hidden', async () => {
+    shell.host = 'browser';
+    getAutomation.mockRejectedValue(new Error('Sidekick not found'));
+    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Close' }));
+    expect(window.location.hash).toBe('#/');
+  });
+
+  it('leaves closing to the window in the Mac app', async () => {
+    getAutomation.mockRejectedValue(new Error('Sidekick not found'));
+    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+  });
 });
 
 describe('AutomationScreen archival', () => {
