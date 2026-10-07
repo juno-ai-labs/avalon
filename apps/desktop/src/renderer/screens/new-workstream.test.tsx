@@ -319,6 +319,56 @@ describe('New channel home', () => {
     })));
   });
 
+  it('falls back to the route\'s Space when the picked one is archived under it', async () => {
+    const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');
+    const [hiring] = spaceDirectory(spaceId).items;
+    const [general] = generalSpaceDirectory().items;
+    const queryClient = renderSpaceScreen(GENERAL_SPACE_ID, { waterline: 1, items: [general!, hiring!] });
+    const picker = screen.getByRole('combobox', { name: 'Space' });
+    fireEvent.click(picker);
+    fireEvent.click(screen.getByRole('option', { name: 'Hiring' }));
+    expect(picker).toHaveTextContent('Hiring');
+
+    act(() => queryClient.setQueryData(['spaces'], { waterline: 2, items: [general!] }));
+
+    expect(screen.queryByText('Space not found')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Space' })).toHaveTextContent('All'));
+    const composer = screen.getByRole('textbox', { name: 'Opening channel message' });
+    fireEvent.change(composer, { target: { value: 'Plan the quarter' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
+      spaceIds: [GENERAL_SPACE_ID],
+    })));
+  });
+
+  it('keeps focus in the people search for a press anywhere in its list', () => {
+    renderScreen();
+    openPeopleSearch();
+    // A press the list does not take would blur the field, which closes it.
+    expect(fireEvent.mouseDown(screen.getByRole('listbox', { name: 'People' }))).toBe(false);
+  });
+
+  it('closes the participant list on Escape and returns focus to its pill', async () => {
+    renderScreen();
+    openPeopleSearch();
+    fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
+    const roster = openRoster();
+    fireEvent.keyDown(within(roster).getByRole('button', { name: 'Remove Samantha Lee' }), { key: 'Escape' });
+    expect(screen.queryByRole('group', { name: 'Participants in this channel' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Participants: / })).toHaveFocus();
+  });
+
+  it('moves focus to the + when removing the last person closes the participant list', async () => {
+    renderScreen();
+    openPeopleSearch();
+    fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Search people' }), { key: 'Escape' });
+    const roster = openRoster();
+    fireEvent.click(within(roster).getByRole('button', { name: 'Remove Samantha Lee' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add participant' })).toHaveFocus());
+    expect(screen.queryByRole('group', { name: 'Participants in this channel' })).not.toBeInTheDocument();
+  });
+
   it('keeps the chosen Channel name visible while creation is pending', async () => {
     api.createWorkstream.mockReturnValue(new Promise(() => undefined));
     const spaceId = asSpaceId('00000000-0000-7000-8000-0000000000f2');

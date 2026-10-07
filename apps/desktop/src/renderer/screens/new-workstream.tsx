@@ -150,7 +150,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
   // composer can move it to another before the Channel exists. Held here rather
   // than in the route, because a navigation remounts the launcher and would
   // drop the people and name already chosen.
-  const [owningSpaceId, setOwningSpaceId] = useState(routeSpaceId);
+  const [pickedSpaceId, setPickedSpaceId] = useState(routeSpaceId);
   const [channelNameInput, setChannelNameInput] = useState('');
   const channelName = channelNameInput.trim();
   const { api } = useAppSession();
@@ -216,7 +216,12 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
       return;
     }
   }, [location.pathname, returnTo, navigate]);
-  const owningSpace = spaces.data?.items.find((space) => space.id === owningSpaceId);
+  // The picked Space can leave the directory (archived from the sidebar) while
+  // this screen is open; the launcher then falls back to the route's Space
+  // rather than to "Space not found".
+  const pickedSpace = spaces.data?.items.find((space) => space.id === pickedSpaceId);
+  const owningSpace = pickedSpace ?? spaces.data?.items.find((space) => space.id === routeSpaceId);
+  const owningSpaceId = owningSpace?.id ?? pickedSpaceId;
   // The Spaces a Channel can be started in, as every Space picker lists them.
   // A Space reached only through a shared Channel is not one; the route's own
   // Space stays listed so the picker never shows a value it has no row for.
@@ -496,7 +501,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
             <div className="new-channel-placement">
               <DropdownSelect
                 ariaLabel="Space"
-                onValueChange={setOwningSpaceId}
+                onValueChange={setPickedSpaceId}
                 options={spaceOptions}
                 side="top"
                 value={owningSpaceId}

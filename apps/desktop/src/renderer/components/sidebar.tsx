@@ -1074,7 +1074,7 @@ export function Sidebar({
   onReorderAllPinned,
   onRenameWorkstream,
   onPreviewWorkstreamBatch,
-  onCreateChannel = () => undefined,
+  onCreateChannel = () => { throw new Error('Channel creation is unavailable.'); },
   onCreateSpace = async () => {
     throw new Error('Space creation is unavailable.');
   },

@@ -1,9 +1,26 @@
 import clsx from 'clsx';
 import { ChevronDown, Plus, Search, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { mentionOptionId, useMentionNavigation } from '../lib/use-mention-navigation';
 import type { WorkspaceMember } from '../lib/types';
 import { Avatar, AvatarStack } from './primitives';
+
+/** A list's ceiling, and the gap kept between it and the top of the screen. */
+const POPOVER_MAX_HEIGHT = 280;
+const POPOVER_TOP_GAP = 16;
+
+/**
+ * Caps an upward list at the room above its anchor. Measured rather than
+ * written in CSS: the setup is centred with the composer, whose height is the
+ * draft's, so how much room there is depends on what has been typed.
+ */
+function fitAbove(element: HTMLElement | null): void {
+  const anchor = element?.parentElement;
+  const screen = element?.closest('.workstream-launch-screen');
+  if (!element || !anchor || !screen) return;
+  const room = anchor.getBoundingClientRect().top - screen.getBoundingClientRect().top - POPOVER_TOP_GAP;
+  element.style.maxHeight = `${Math.max(0, Math.min(POPOVER_MAX_HEIGHT, room))}px`;
+}
 
 /**
  * The Participants row above the new-Channel composer.
@@ -36,6 +53,9 @@ export function NewChannelParticipants({
   const inputRef = useRef<HTMLInputElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
   const rosterRef = useRef<HTMLDivElement>(null);
+  const rosterTriggerRef = useRef<HTMLButtonElement>(null);
+  const peopleListRef = useRef<HTMLDivElement>(null);
+  const rosterListRef = useRef<HTMLDivElement>(null);
   const everyone = useMemo(() => [creator, ...selected], [creator, selected]);
   const matches = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -66,10 +86,19 @@ export function NewChannelParticipants({
     document.addEventListener('pointerdown', close);
     return () => document.removeEventListener('pointerdown', close);
   }, [rosterOpen]);
-  // A remove that empties the list leaves nothing for the roster to show.
+  // A remove that empties the list leaves nothing for the roster to show, and
+  // takes away the button that had focus, so focus moves to the +.
   useEffect(() => {
-    if (selected.length === 0) setRosterOpen(false);
-  }, [selected.length]);
+    if (selected.length > 0 || !rosterOpen) return;
+    setRosterOpen(false);
+    addRef.current?.focus();
+  }, [rosterOpen, selected.length]);
+  useLayoutEffect(() => {
+    if (searching) fitAbove(peopleListRef.current);
+  }, [searching]);
+  useLayoutEffect(() => {
+    if (rosterOpen) fitAbove(rosterListRef.current);
+  }, [rosterOpen]);
 
   // Searching takes room from the pill, so past three people it shortens to a
   // count. Names are always shown whole: a name is one string, and the part
@@ -125,7 +154,16 @@ export function NewChannelParticipants({
           </button>
         )}
         {searching && (
-          <div aria-label="People" className="new-channel-popover new-channel-people" id="new-channel-people" role="listbox">
+          <div
+            aria-label="People"
+            className="new-channel-popover new-channel-people"
+            id="new-channel-people"
+            // Anywhere in the list, its padding and scrollbar included, keeps
+            // focus in the search field, whose blur closes the list.
+            onMouseDown={(event) => event.preventDefault()}
+            ref={peopleListRef}
+            role="listbox"
+          >
             {loading ? (
               <p className="new-channel-popover-empty">Loading people…</p>
             ) : matches.length > 0 ? matches.map((member, index) => (
@@ -136,7 +174,6 @@ export function NewChannelParticipants({
                 id={mentionOptionId(member.id)}
                 key={member.id}
                 onClick={() => add(member)}
-                onMouseDown={(event) => event.preventDefault()}
                 onMouseMove={() => navigation.setActiveIndex(index)}
                 ref={index === navigation.activeIndex ? navigation.activeOptionRef : undefined}
                 role="option"
@@ -154,7 +191,17 @@ export function NewChannelParticipants({
           </div>
         )}
       </span>
-      <div className="new-channel-roster-anchor" ref={rosterRef}>
+      <div
+        className="new-channel-roster-anchor"
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape' || !rosterOpen) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setRosterOpen(false);
+          rosterTriggerRef.current?.focus();
+        }}
+        ref={rosterRef}
+      >
         {everyone.length === 1 ? (
           <span aria-labelledby="new-channel-participants-label" className="new-channel-roster" role="group">
             <Avatar member={creator} size="small" />
@@ -166,6 +213,7 @@ export function NewChannelParticipants({
             aria-label={`Participants: ${everyone.map((member) => member.name).join(', ')}`}
             className="new-channel-roster"
             onClick={() => setRosterOpen((open) => !open)}
+            ref={rosterTriggerRef}
             type="button"
           >
             <AvatarStack members={everyone} showTooltip={false} />
@@ -174,7 +222,12 @@ export function NewChannelParticipants({
           </button>
         )}
         {rosterOpen && (
-          <div aria-label="Participants in this channel" className="new-channel-popover new-channel-roster-list" role="group">
+          <div
+            aria-label="Participants in this channel"
+            className="new-channel-popover new-channel-roster-list"
+            ref={rosterListRef}
+            role="group"
+          >
             {everyone.map((member) => (
               <div className="new-channel-popover-row" key={member.id}>
                 <Avatar member={member} size="small" />
