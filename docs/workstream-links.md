@@ -417,10 +417,12 @@ for good after one click. Carrying the name in the link's fragment, which
 every link reader refuses today, goes stale on a rename, and shows whatever an
 edited link says.
 
-**What a future change has to respect:** The desktop stays the first choice
+**Consequences:** The desktop stays the first choice
 wherever a Rally app can open the link. A new canonical path family needs the
 browser client's `shellLocation` and entry target to read it, or the browser
 button lands on the Organization root.
+
+Shipped in juno-ai-labs/avalon#1144.
 
 ### 2026-09-25 — Sidekicks get a shareable link
 
