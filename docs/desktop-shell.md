@@ -331,6 +331,8 @@ over it.
 **Consequences:** Both glyphs stay mounted and CSS keys on `aria-expanded`, so
 the state the button shows cannot drift from the state it announces.
 
+Shipped in [#1134](https://github.com/juno-ai-labs/avalon/pull/1134).
+
 ### 2026-10-07 — No Mac download on phones and tablets
 
 **What changed:** The browser no longer passes **Download the Mac app** as a
