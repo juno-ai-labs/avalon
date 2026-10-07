@@ -45,6 +45,10 @@ describe('settings registry', () => {
     expect(searchSettings(entries, 'time zone').some((entry) => entry.definition.id === 'personalTimezone')).toBe(true);
     expect(searchSettings(entries, '')).toEqual([]);
   });
+  it('finds the Security page by its page name', () => {
+    const entries = collectSettings([coreSettingsProvider], context);
+    expect(searchSettings(entries, 'security').map((entry) => entry.definition.id)).toContain('terminal');
+  });
   it('keeps provider instances distinct and ignores replayed metadata', () => {
     const entries = ['first', 'second'].map((instanceId) => ({
       key: 'github:' + instanceId, definition: settings.githubAccess, instanceId, instanceLabel: instanceId,
