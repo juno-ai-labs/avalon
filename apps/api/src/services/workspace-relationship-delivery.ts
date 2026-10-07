@@ -41,7 +41,7 @@ export async function dispatchWorkspaceRelationshipChanges(
       // session check; this closes the support sessions' open sockets too.
       if (row.workspaceId === supportOrganizationId(env)
         && (changeKind === "removed" || row.status !== "active" || row.accessClass !== "member")) {
-        await revokeSupportSessions(env, { impersonatorUserId: row.userId });
+        await revokeSupportSessions(env, { impersonatorUserId: row.userId, impersonatorIncarnation: row.incarnation });
       }
       await env.DB.prepare(`UPDATE workspace_relationship_deliveries SET dispatched_at = ?
         WHERE sequence = ? AND dispatched_at IS NULL`).bind(new Date().toISOString(), sequence).run();

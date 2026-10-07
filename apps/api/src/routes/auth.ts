@@ -1,6 +1,6 @@
 import { UuidV7Schema } from '@rally/contracts/telemetry';
 import { observeSignup, observeSignupProgress } from '../telemetry/signup';
-import { requireIdentityAuth, getIdentityAuth } from "../middleware/auth";
+import { requireIdentityAuth, getIdentityAuth, refuseSupportSession } from "../middleware/auth";
 import { startEmailLogin, redeemEmailLogin, deliverEmailLogin, EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
 import { Hono } from "hono";
 import { authBodyLimit } from "../middleware/auth-body-limit";
@@ -55,12 +55,12 @@ authRoutes.post('/signup/view', authBodyLimit, zValidator('json', z.strictObject
 const RegionalWorkspacesSchema = z.object({ workspaces:z.array(WorkspaceSchema) });
 const SelectRegionalWorkspaceSchema = z.strictObject({ workspaceId:WorkspaceIdSchema });
 
-authRoutes.get("/workspaces",requireIdentityAuth,async (c) => {
+authRoutes.get("/workspaces",requireIdentityAuth,refuseSupportSession,async (c) => {
   c.header("Cache-Control","no-store");
   const workspaces = await new AuthService(c.env).listRegionalWorkspaces(getIdentityAuth(c).userId);
   return c.json(RegionalWorkspacesSchema.parse({ workspaces }));
 });
-authRoutes.post("/workspace/select",requireIdentityAuth,authBodyLimit,zValidator("json",SelectRegionalWorkspaceSchema),async (c) => {
+authRoutes.post("/workspace/select",requireIdentityAuth,refuseSupportSession,authBodyLimit,zValidator("json",SelectRegionalWorkspaceSchema),async (c) => {
   c.header("Cache-Control","no-store");
   const auth = getIdentityAuth(c);
   observeSignupProgress(c.env, auth.userId, 'signup_organization_requested', 'existing_organization', 'desktop');

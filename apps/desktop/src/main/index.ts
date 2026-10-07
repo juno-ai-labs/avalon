@@ -3,7 +3,7 @@ import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowStat
 import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
 import { BrowserImportContextSchema, BrowserImportedWorkstreamIdSchema, BrowserImportProgressSchema, type BrowserImportContext, type BrowserImportProgress } from '../common/browser-import';
-import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
+import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
 import type { ZodType } from 'zod';
@@ -2705,7 +2705,9 @@ async function requestOnboardingSession(
       throw new Error('The signed-in Rally account changed during organization setup');
     }
     const activate = selectionIntent === workspaceSelectionIntent;
+    const displaced = await displacedSupportCredentialUnlocked(session);
     inMemoryAuthSet = await writeSplitSessionFiles(session, { activate });
+    if (displaced) revokeInBackground(displaced);
     if (activate) {
       await dropBackgroundSupportCredentialsUnlocked();
       inMemorySession = session;
@@ -2725,14 +2727,14 @@ async function requestOnboardingSession(
  * like any other Organization credential, marked by its profile's
  * `impersonator`.
  */
-async function supportIdentityGet<T>(path: string, schema: { safeParse: (value: unknown) => { success: true; data: T } | { success: false } }): Promise<T> {
+async function supportIdentityGet<T>(path: string, schema: ZodType<T>): Promise<T> {
   const { response } = await onboardingIdentityRequest((credential) => net.fetch(
     `${configuredApiBase('global')}${path}`,
     { method: 'GET', headers: { Accept: 'application/json', Authorization: `Bearer ${credential.accessToken}` } },
   ));
   if (!response.ok) throw await responseError(response);
   const parsed = schema.safeParse(await response.json());
-  if (!parsed.success) throw new Error('Rally returned an invalid Rally access response');
+  if (!parsed.success) throw new Error(`Rally returned an invalid Rally access response (${describeZodIssues(parsed.error)})`);
   return parsed.data;
 }
 
@@ -2772,8 +2774,9 @@ async function startSupportSession(input: unknown): Promise<DesktopSession> {
   ), identity);
   if (!response.ok) throw await responseError(response);
   const parsed = SessionSchema.safeParse(await response.json());
-  if (!parsed.success || !parsed.data.workspace || !parsed.data.impersonator) {
-    throw new Error('Rally returned an invalid support session');
+  if (!parsed.success) throw new Error(`Rally returned an invalid support session (${describeZodIssues(parsed.error)})`);
+  if (!parsed.data.workspace || !parsed.data.impersonator) {
+    throw new Error(`Rally returned a support session without its ${parsed.data.workspace ? 'impersonator' : 'workspace'}`);
   }
   const apiBaseUrl = validatedApiBase(parsed.data.apiBaseUrl);
   if (
@@ -2794,7 +2797,11 @@ async function startSupportSession(input: unknown): Promise<DesktopSession> {
       throw new Error('The signed-in Rally account changed while Rally access was starting');
     }
     const activate = selectionIntent === workspaceSelectionIntent;
+    const displaced = await displacedSupportCredentialUnlocked(session);
     inMemoryAuthSet = await writeSplitSessionFiles(session, { activate });
+    // A support session for another person in the same Organization takes its
+    // slot; the one it replaces is ended on the server rather than orphaned.
+    if (displaced) revokeInBackground(displaced);
     await dropBackgroundSupportCredentialsUnlocked();
     if (!activate) {
       const current = await loadStoredSession() ?? await loadStoredIdentitySession();
@@ -2851,6 +2858,19 @@ async function dropBackgroundSupportCredentialsUnlocked(): Promise<void> {
   await writeStoredProfileFile(userDataDirectory(), encryptStoredSessionValue(JSON.stringify(nextProfiles)));
   inMemoryAuthSet = nextAuth;
   inMemoryProfileSet = nextProfiles;
+}
+
+/**
+ * The support credential `session` is about to replace in its Organization's
+ * slot, if one is stored there. Writing the new session overwrites it, so the
+ * caller revokes it afterwards. Caller holds the session mutation lock.
+ */
+async function displacedSupportCredentialUnlocked(session: WireSession): Promise<StoredAuth | null> {
+  if (!session.workspace) return null;
+  const auth = await loadStoredAuthSet();
+  const current = auth ? storedWorkspaceCredential(auth, session.workspace.id, session.workspace.region) : null;
+  if (!current || current.refreshToken === session.refreshToken) return null;
+  return storedCredentialIsSupport(await loadStoredProfileSet(), current) ? current : null;
 }
 
 function revokeInBackground(credential: StoredAuth): void {
