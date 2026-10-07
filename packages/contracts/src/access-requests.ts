@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkstreamIdSchema } from "./identifiers";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
 
 /**
@@ -34,14 +35,15 @@ export type ConversationAccessRequestResult = z.infer<typeof ConversationAccessR
  * conversation's name and mark as they are now. Only the approver is sent it.
  */
 export const ConversationAccessRequestItemSchema = z.strictObject({
-  id: z.string().min(1),
-  parentId: z.string().min(1),
-  substreamId: z.string().min(1),
+  id: IdSchema,
+  parentId: WorkstreamIdSchema,
+  substreamId: SubstreamIdSchema,
   kind: z.enum(["channel", "breakout"]),
   title: z.string(),
   appearance: WorkstreamAppearanceSchema.nullable(),
-  markId: z.string(),
-  requesterUserId: z.string().min(1),
+  /** The Channel's id, or the Breakout's when it has a look of its own. */
+  markId: IdSchema,
+  requesterUserId: UserIdSchema,
   requesterName: z.string(),
   requestedAt: z.string().datetime(),
 });

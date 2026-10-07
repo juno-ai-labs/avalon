@@ -1,7 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import type { ConversationAccessRequestItem } from '@rally/contracts';
+import { asSubstreamId, asUserId, asWorkstreamId, type ConversationAccessRequestItem } from '@rally/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AttentionItem } from '../lib/attention-items';
@@ -89,13 +89,13 @@ describe('AttentionMenu', () => {
 
 const request: ConversationAccessRequestItem = {
   id: '00000000-0000-4000-8000-0000000ac0r1',
-  parentId: 'c',
-  substreamId: '0',
+  parentId: asWorkstreamId('00000000-0000-4000-8000-0000000ac0c0'),
+  substreamId: asSubstreamId('0'),
   kind: 'channel',
   title: 'Hiring plan',
   appearance: null,
-  markId: 'c',
-  requesterUserId: 'u-sam',
+  markId: '00000000-0000-4000-8000-0000000ac0c0',
+  requesterUserId: asUserId('00000000-0000-4000-8000-0000000ac013'),
   requesterName: 'Samantha Lee',
   requestedAt: '2026-10-07T12:00:00.000Z',
 };

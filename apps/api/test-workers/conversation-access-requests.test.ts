@@ -20,6 +20,8 @@ import {
 } from "@rally/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import { hostedParentStub } from "./helpers/hosted-parent";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000ac001");
@@ -236,5 +238,45 @@ describe("stored access requests", () => {
     expect((frame.requests as Array<{ title: string; markId: string }>).map(({ title, markId }) => ({ title, markId })))
       .toEqual([{ title: "Pricing", markId: privateChannel }]);
     expect(bystander.received.some((received) => received.type === "workspace_access_requests")).toBe(false);
+  });
+});
+
+describe("migration 95", () => {
+  it("adds the request table to an Organization already at 94, keeping what it held", async () => {
+    // Populated at 94 and committed in its own event, then upgraded as a
+    // deployed object is: a fresh schema has no rows to keep.
+    const stub = env.MIGRATION_PROBE_DO!.getByName("conversation-access-requests-v94");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 94);
+      expect(before.at(-1)?.version).toBe(94);
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: before, component: "workspace_do", workerVersionId: "before-requests", now: 1,
+      });
+      state.storage.sql.exec(`INSERT INTO channels (
+        workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+        title, description, preview, scope, exact_state, origin_type, title_status,
+        latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
+        source_created_at, source_updated_at, projected_at
+      ) VALUES (?, 1, 1, 'event-1', 'hash', 'Launch plan', '', '', 'personal', 'idle', 'ad_hoc', 'settled', 0, 0, 100, 100, 100, 100)`,
+      privateChannel);
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, component: "workspace_do",
+        workerVersionId: "with-requests", now: 2,
+      });
+      const sql = state.storage.sql;
+      expect(sql.exec(`SELECT title FROM channels WHERE workstream_id = ?`, privateChannel).toArray()).toEqual([{ title: "Launch plan" }]);
+      const insert = (id: string, status: string) => sql.exec(`INSERT INTO conversation_access_requests
+        (id, parent_id, substream_id, requester_user_id, requester_name, approver_user_id, status, created_at)
+        VALUES (?, ?, '0', ?, 'Samantha Lee', ?, ?, 3)`, id, privateChannel, requester, creator, status);
+      insert("request-1", "declined");
+      insert("request-2", "pending");
+      // One pending request per person per conversation; settled ones do not count.
+      expect(() => insert("request-3", "pending")).toThrow(/UNIQUE/u);
+      expect(() => insert("request-4", "withdrawn")).toThrow(/CHECK/u);
+      expect(sql.exec("PRAGMA foreign_key_check").toArray()).toEqual([]);
+    });
   });
 });

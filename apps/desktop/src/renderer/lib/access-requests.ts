@@ -37,12 +37,17 @@ export function useDecideAccessRequest(api: AccessRequestDecisionApi | null, wor
       return api.decideConversationAccess(id, decision);
     },
     onMutate: ({ id }) => {
-      const previous = queryClient.getQueryData<readonly ConversationAccessRequestItem[]>(key);
+      const removed = queryClient.getQueryData<readonly ConversationAccessRequestItem[]>(key)?.find((item) => item.id === id);
       queryClient.setQueryData<readonly ConversationAccessRequestItem[]>(key, (current) => current?.filter((item) => item.id !== id));
-      return { previous };
+      return { removed };
     },
+    // Only the refused request comes back: restoring the whole list as it was
+    // would also bring back one answered elsewhere since.
     onError: (_error, _variables, context) => {
-      if (context?.previous) queryClient.setQueryData(key, context.previous);
+      const removed = context?.removed;
+      if (!removed) return;
+      queryClient.setQueryData<readonly ConversationAccessRequestItem[]>(key, (current = []) =>
+        current.some((item) => item.id === removed.id) ? current : [removed, ...current]);
     },
   });
 }

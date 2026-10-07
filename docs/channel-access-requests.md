@@ -4,8 +4,8 @@ What an Organization member sees when they open a link to a Channel or Breakout
 they are not in, and how they get in. They see its name, color and icon, the
 line "You're not in this channel, ask for access below", and a primary
 **Request access** button. The button records a request addressed to the
-conversation's creator and emails them. The creator can answer it four ways,
-and every one settles the same stored request:
+conversation's creator and emails them. The creator can answer it in any of
+these places, and every one settles the same stored request:
 
 - **Approve access** in the email: one click, no sign-in.
 - The **check** and **cancel** icon buttons on the request's row in the
@@ -110,7 +110,8 @@ decision email as `conversation_access_decision_dev_email`.
   `test/conversation-access-approval.test.ts`.
 - **The preview names, it never reads.** Title and mark only. Guard: the
   workerd file's `accessRequestSubject` cases assert the whole subject.
-- **A guest is told nothing** and has no list. Guard: none automated.
+- **A guest is told nothing** and has no list. Guard:
+  `test/conversation-access-approval.test.ts` "a guest".
 
 ## Boundary
 
@@ -136,9 +137,11 @@ the approver's inbox, and it acts only as the approver.
 
 ## Failure modes and limits
 
-- **No approver.** A creator who left, a missing creator, or a requester who
-  created it gets 409 `access_request_no_approver`, and the screen says to ask
-  someone in it.
+- **No approver.** A creator who left the Organization or the conversation
+  itself, a missing creator, or a requester who created it gets 409
+  `access_request_no_approver`, and the screen says to ask someone in it. The
+  creator is asked the socket ticket's question as themselves before the
+  request is recorded.
 - **The approver lost the right to add.** The add's own refusal is shown: on
   the approve page as "Access was not changed", in the app as the dialog's or
   menu's error line, and the request stays pending.

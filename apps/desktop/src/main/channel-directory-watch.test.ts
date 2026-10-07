@@ -294,8 +294,8 @@ describe('channel directory watch', () => {
 
   it('holds the access requests the subscribe answer and later pushes carry', async () => {
     const request = {
-      id: 'r1', parentId: ACME, substreamId: '0', kind: 'channel', title: 'Acme renewal', appearance: null,
-      markId: ACME, requesterUserId: 'u-sam', requesterName: 'Samantha Lee', requestedAt: '2026-10-07T12:00:00.000Z',
+      id: '00000000-0000-4000-8000-0000000ac001', parentId: ACME, substreamId: '0', kind: 'channel',
+      title: 'Acme renewal', appearance: null, markId: ACME, requesterUserId: '00000000-0000-4000-8000-0000000ac013', requesterName: 'Samantha Lee', requestedAt: '2026-10-07T12:00:00.000Z',
     };
     const subject = harness();
     subject.watch.start();

@@ -135,7 +135,7 @@ import {
 } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { WorkspaceAccessRequestsEventSchema } from "@rally/contracts";
-import { CONVERSATION_ACCESS_REQUESTS_MIGRATION, ConversationAccessRequestStorage, type StoredAccessRequest } from "./conversation-access-request-storage";
+import { CONVERSATION_ACCESS_REQUESTS_MIGRATION, ConversationAccessRequestStorage, conversationMark, type StoredAccessRequest } from "./conversation-access-request-storage";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 import {
@@ -14399,15 +14399,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ...(breakout ? [request.parentId, request.substreamId] : [request.parentId]),
     ).toArray()[0];
     if (!row) return null;
-    // A Breakout with no look of its own wears its Channel's, resolved from the
-    // Channel's id, the way search and the sidebar draw it.
-    const borrowed = breakout && !row.appearance_json;
-    const appearanceJson = borrowed ? row.parent_appearance_json ?? null : row.appearance_json;
     return {
       kind: breakout ? "breakout" : "channel",
       title: row.title,
-      appearance: appearanceJson ? WorkstreamAppearanceSchema.parse(JSON.parse(appearanceJson)) : null,
-      markId: borrowed || !breakout ? request.parentId : request.substreamId,
+      ...conversationMark({
+        parentId: request.parentId, substreamId: request.substreamId,
+        appearanceJson: row.appearance_json, parentAppearanceJson: row.parent_appearance_json ?? null,
+      }),
       createdByUserId: row.created_by_user_id,
     };
   }
