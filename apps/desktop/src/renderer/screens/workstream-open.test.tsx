@@ -886,6 +886,31 @@ describe('socket-first channel open', () => {
     expect(mainAppearance).not.toHaveBeenCalled();
   });
 
+  it('saves the Channel appearance chosen from its More', async () => {
+    const mainAppearance = vi.fn().mockResolvedValue(undefined);
+    retainedSocket.mockImplementation(() => ({
+      activeCompaction: null,
+      activeInferenceDelays: [],
+      createMessage: vi.fn(),
+      setAppearance: mainAppearance,
+      requestSnapshot: vi.fn(),
+      retryOpening: vi.fn(),
+      sendReady: true,
+      state: 'connected',
+      workspaceSocketState: 'connected',
+    }));
+    const boot = recoveryBoot({ appearance: { icon: 'rocket', color: 'blue' } });
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+
+    await titleMenu('Channel menu: Recovered channel', 'More');
+    fireEvent.keyDown(await screen.findByRole('menuitem', { name: 'Icon and color' }), { key: 'ArrowRight' });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
+    await waitFor(() => expect(mainAppearance).toHaveBeenCalledWith({ color: 'purple' }));
+  });
+
   it('marks the Channel pill with the sidebar row\'s appearance, which a receipt moves first', async () => {
     const childId = '00000000-0000-7000-8000-000000000664';
     // The parent detail and the sidebar row disagree on purpose: this is the

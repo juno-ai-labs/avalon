@@ -61,7 +61,8 @@ const MORE_VIEW: TitleMenuView = { key: 'more', label: 'More' };
  */
 export interface TitleMenuPeople {
   candidates: readonly WorkspaceMember[];
-  onAdd: (member: WorkspaceMember) => void;
+  /** Settles when the add does; the host names a failure in `error`. */
+  onAdd: (member: WorkspaceMember) => Promise<void>;
   adding: boolean;
   error?: string | undefined;
   currentUserId?: string | undefined;
@@ -82,6 +83,9 @@ export interface TitleMenuPeople {
 export interface TitleMenuInvites {
   /** Addresses invited and not yet signed in, lower case; undefined until loaded. */
   pending: readonly string[] | undefined;
+  /** Loading them failed, and the way to try again. */
+  loadFailed?: boolean | undefined;
+  onRetryLoad?: (() => void) | undefined;
   /** Resolves once the addresses are invited; the host names a failure in `TitleMenuPeople.error`. */
   onInvite: (emails: string[]) => Promise<void>;
   /** Taking an invitation back before it is used; absent where the host cannot. */
@@ -156,9 +160,11 @@ function PeopleView({ members, noun, people, presentUserIds }: {
 }): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [entryError, setEntryError] = useState<string | null>(null);
+  // One submission at a time: adds run in order, so a later roster never lands before an earlier one.
+  const submitting = useRef(false);
   const invites = people?.invites;
-  const loadInvites = invites?.onLoad;
-  useEffect(() => { loadInvites?.(); }, [loadInvites]);
+  const onLoad = useRef(invites?.onLoad);
+  useEffect(() => { onLoad.current?.(); }, []);
   const needle = query.trim().toLocaleLowerCase();
   const present = new Set(presentUserIds);
   const inRoom = new Set(members.map((member) => member.id));
@@ -169,38 +175,65 @@ function PeopleView({ members, noun, people, presentUserIds }: {
   const tokens = needle.split(ADDRESS_SEPARATORS).filter(Boolean);
   const typedEmails = tokens.length > 0 && tokens.every((token) => EMAIL.safeParse(token).success);
   const change = (value: string): void => { setQuery(value); setEntryError(null); };
+  /** Adds and invites in order; what failed stays in the box to retry, unless more was typed meanwhile. */
+  const run = async (submitted: string, adds: readonly WorkspaceMember[], strangers: string[]): Promise<void> => {
+    if (!people) return;
+    submitting.current = true;
+    const failed: string[] = [];
+    try {
+      for (const member of adds) {
+        await people.onAdd(member).catch(() => { failed.push(member.email ?? member.name); });
+      }
+      if (strangers.length > 0) await invites?.onInvite(strangers).catch(() => { failed.push(...strangers); });
+    } finally {
+      submitting.current = false;
+    }
+    setQuery((current) => current === submitted ? failed.join(', ') : current);
+  };
   const submit = (): void => {
-    if (!people || tokens.length === 0) return;
+    if (!people || tokens.length === 0 || submitting.current) return;
     if (!typedEmails) {
       // A name narrowed to one person adds them, as clicking Add would.
       const only = suggestions.length === 1 ? suggestions[0] : undefined;
-      if (only) { people.onAdd(only); setQuery(''); return; }
-      setEntryError('Enter email addresses separated by spaces, commas or semicolons.');
+      if (only) void run(query, [only], []);
+      else setEntryError('Enter email addresses separated by spaces, commas or semicolons.');
       return;
     }
-    const byEmail = new Map((people.candidates).flatMap((member) => (member.status ?? 'active') === 'active' && member.email
-      ? [[member.email.toLocaleLowerCase(), member] as const] : []));
+    // Who is already invited decides who is invited again, so it has to be known first.
+    if (invites && invites.pending === undefined) {
+      setEntryError(invites.loadFailed ? 'Invitations couldn’t be loaded. Try again.' : 'Invitations are still loading. Try again in a moment.');
+      return;
+    }
+    const byEmail = new Map(people.candidates.flatMap((member) => member.email ? [[member.email.toLocaleLowerCase(), member] as const] : []));
     const here = new Set([...members.flatMap((member) => member.email ? [member.email.toLocaleLowerCase()] : []), ...invites?.pending ?? []]);
+    const adds: WorkspaceMember[] = [];
+    const inactive: string[] = [];
     const strangers: string[] = [];
     for (const email of new Set(tokens)) {
       if (here.has(email)) continue;
       const member = byEmail.get(email);
-      if (member) people.onAdd(member);
-      else strangers.push(email);
+      if (!member) strangers.push(email);
+      else if ((member.status ?? 'active') === 'active') adds.push(member);
+      else inactive.push(email);
     }
-    if (strangers.length === 0 || !invites) {
-      if (strangers.length > 0) setEntryError(`Only people in the organization can be added here.`);
-      else setQuery('');
+    if (inactive.length > 0) {
+      setEntryError(`${inactive.join(', ')} ${inactive.length === 1 ? 'has' : 'have'} an organization account that isn’t active.`);
       return;
     }
-    const submitted = query;
-    // Cleared once invited, unless more was typed meanwhile; a failure keeps the addresses to retry.
-    invites.onInvite(strangers).then(() => setQuery((current) => current === submitted ? '' : current), () => undefined);
+    if (strangers.length > 0 && !invites) {
+      setEntryError('Only people in the organization can be added here.');
+      return;
+    }
+    void run(query, adds, strangers);
   };
   const error = entryError ?? people?.error;
   return <>
-    {people && <TitleMenuSearch label="Add someone by name or email" onChange={change} onEnter={submit} value={query} />}
+    {people && <TitleMenuSearch className="title-menu-people-search" label="Add someone by name or email" onChange={change} onEnter={submit} value={query} />}
     {error && <p className="title-menu-error" role="alert">{error}</p>}
+    {invites?.loadFailed && <div className="title-menu-load-failed" role="alert">
+      <span>Invitations waiting to sign in couldn’t be loaded.</span>
+      {invites.onRetryLoad && <button className="title-menu-add" onClick={invites.onRetryLoad} type="button">Try again</button>}
+    </div>}
     {!needle && members.map((member) => <div className="title-menu-person" key={member.id}>
       <Avatar member={member} size="medium" />
       <span className="title-menu-person-copy">
@@ -242,7 +275,7 @@ function PeopleView({ members, noun, people, presentUserIds }: {
           aria-label={`Add ${member.name}`}
           className="title-menu-add"
           disabled={people.adding}
-          onClick={() => people.onAdd(member)}
+          onClick={() => { void people.onAdd(member).catch(() => undefined); }}
           type="button"
         >Add</button>
       </div>)}
@@ -365,6 +398,7 @@ function peopleMeta(count: number, scope: 'personal' | 'workspace' | undefined, 
 export function ChannelMenu({
   actions,
   addSidekick,
+  appearance,
   breakouts,
   extraActions,
   onImportUpdates,
@@ -372,7 +406,6 @@ export function ChannelMenu({
   onOpenBreakout,
   onOpenResource,
   onOpenSidekick,
-  onParticipants,
   onRefreshSidekicks,
   onSidekickMenuOpen,
   openSubstreamId,
@@ -387,6 +420,8 @@ export function ChannelMenu({
 }: {
   actions?: ConversationRowActions | undefined;
   addSidekick?: ReactNode;
+  /** The Channel's icon-and-colour choice, as a submenu, when the viewer may change it. */
+  appearance?: ReactNode;
   breakouts: readonly BreakoutMark[] | undefined;
   /** Host-only items placed in **More** after the shared ones, e.g. a debug copy. */
   extraActions?: ReactNode;
@@ -396,7 +431,6 @@ export function ChannelMenu({
   /** Opens a resource that is not an artifact; absent where the host has no view for one. */
   onOpenResource?: ((id: string, returnFocus: HTMLElement) => void) | undefined;
   onOpenSidekick?: (id: string) => void;
-  onParticipants?: (() => void) | undefined;
   onRefreshSidekicks?: (() => void) | undefined;
   onSidekickMenuOpen?: () => void;
   openSubstreamId: string | null;
@@ -425,6 +459,7 @@ export function ChannelMenu({
   }
   if (nav.view?.key === 'more') {
     return <>
+      {appearance}
       {(pinned || actions?.onSetPublic) && <div className="title-menu-settings">
         {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
         <PublicSwitch actions={actions} />
@@ -441,7 +476,7 @@ export function ChannelMenu({
   }
   return <>
     <ActionTiles>
-      <ActionTile disabled={!onParticipants && !people} icon={<IconUserPlus aria-hidden="true" size={20} stroke={1.6} />} label="Add people" onSelect={openLevel(nav, PEOPLE_VIEW)} />
+      <ActionTile disabled={!people} icon={<IconUserPlus aria-hidden="true" size={20} stroke={1.6} />} label="Add people" onSelect={openLevel(nav, PEOPLE_VIEW)} />
       {actions?.onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={() => actions.onRename?.(target)} />}
       {actions?.onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={() => actions.onCopyLink?.(target)} />}
       <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />
@@ -464,7 +499,6 @@ export function BreakoutMenu({
   breakout,
   channel,
   onOpenSidekick,
-  onParticipants,
   onRefreshSidekicks,
   onShowInChannel,
   onSidekickMenuOpen,
@@ -488,7 +522,6 @@ export function BreakoutMenu({
   sidekicks?: SidekickRow[] | undefined;
   breakout: ConversationRowTarget;
   channel: { id: string; title: string; appearance?: SidebarPresentation['appearance'] };
-  onParticipants?: (() => void) | undefined;
   onShowInChannel?: (() => void) | undefined;
   origin?: { byline: ReactNode; text: string } | undefined;
   participants: readonly WorkspaceMember[];
@@ -526,7 +559,7 @@ export function BreakoutMenu({
       <span className="title-menu-origin-text">{origin.text}</span>
     </div>}
     <ActionTiles>
-      <ActionTile disabled={!onParticipants && !people} icon={<IconUserPlus aria-hidden="true" size={20} stroke={1.6} />} label="Add people" onSelect={openLevel(nav, PEOPLE_VIEW)} />
+      <ActionTile disabled={!people} icon={<IconUserPlus aria-hidden="true" size={20} stroke={1.6} />} label="Add people" onSelect={openLevel(nav, PEOPLE_VIEW)} />
       {actions?.onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={() => actions.onRename?.(breakout)} />}
       {actions?.onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={() => actions.onCopyLink?.(breakout)} />}
       {(appearance || actions?.onSetPublic || actions?.onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
