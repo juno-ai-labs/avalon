@@ -39,6 +39,7 @@ const api = vi.hoisted(() => ({
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
   setWorkspaceMemberRole: vi.fn(),
+  removeWorkspaceMember: vi.fn(),
   getTerminalWorkspaceSettings: vi.fn(),
   previewTerminalNetworkPolicy: vi.fn(),
   applyTerminalNetworkPolicy: vi.fn(),
@@ -198,6 +199,11 @@ function openSettingsSection(
 ): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
+}
+
+/** Radix opens a dropdown on pointer down, not click. */
+async function openMemberActions(name: string): Promise<void> {
+  fireEvent.pointerDown(await screen.findByRole('button', { name }), { button: 0, ctrlKey: false });
 }
 
 /**
@@ -434,11 +440,12 @@ describe('Organization settings', () => {
     });
     renderSettings();
     openSettingsSection('Organization');
-    fireEvent.click(await screen.findByRole('button', { name: 'Make Guest Sam a member' }));
+    await openMemberActions(`Guest Sam (${guest.email}) member actions`);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make member' }));
     expect(api.promoteWorkspaceGuest).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Make member' }));
     await waitFor(() => expect(api.promoteWorkspaceGuest).toHaveBeenCalledWith(guest.id, { incarnation: 'membership', expectedRevision: 3 }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Make Guest Sam a member' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Guest Sam').closest('.settings-member-row')).toHaveTextContent('member'));
     expect(screen.getByText('Guest Sam')).toBeVisible();
   });
 
@@ -2159,27 +2166,30 @@ describe('Organization settings', () => {
     openSettingsSection('Organization');
     expect(await screen.findAllByText('Sam')).toHaveLength(2);
 
-    // One control per eligible row, each with an accessible name only that row
+    // One menu per eligible row, each with an accessible name only that row
     // can answer to. `Sam` appears twice on purpose: a name alone would leave a
-    // screen-reader user unable to tell the two rows apart.
-    const controls = screen.getAllByRole('button', { name: /administrator/i });
-    const names = controls.map((control) => control.getAttribute('aria-label'));
+    // screen-reader user unable to tell the two rows apart. The owner's menu is
+    // disabled: theirs is the one role the server refuses to reassign or remove.
+    const names = screen.getAllByRole('button', { name: /member actions$/ }).map((control) => control.getAttribute('aria-label'));
+    expect(screen.getByRole('button', { name: 'Adam (adam@example.com) member actions' })).toBeDisabled();
     expect(names).toEqual([
-      'Remove administrator access from Riley (riley@example.com)',
-      'Make Sam (sam@example.com) an administrator',
-      'Make Sam (sam.reed@example.com) an administrator',
+      'Adam (adam@example.com) member actions',
+      'Riley (riley@example.com) member actions',
+      'Sam (sam@example.com) member actions',
+      'Sam (sam.reed@example.com) member actions',
     ]);
-    expect(new Set(names).size).toBe(names.length);
-    // The owner's row has none: theirs is the one role the server refuses to
-    // reassign, so a button beside it could only ever fail.
-    expect(screen.queryByRole('button', { name: /Adam/ })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Make Sam (sam@example.com) an administrator' }));
+    await openMemberActions('Sam (sam@example.com) member actions');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make administrator' }));
     await waitFor(
       () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(member.id, 'admin'),
       { timeout: 10_000 },
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Remove administrator access from Riley (riley@example.com)' }));
+    // The viewer's own row offers the role change but not Suspend: the server
+    // refuses removing yourself, and leaving is its own control.
+    await openMemberActions('Riley (riley@example.com) member actions');
+    expect(screen.queryByRole('menuitem', { name: 'Suspend' })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove administrator' }));
     await waitFor(
       () => expect(api.setWorkspaceMemberRole).toHaveBeenCalledWith(secondAdmin.id, 'member'),
       { timeout: 10_000 },
@@ -2196,7 +2206,64 @@ describe('Organization settings', () => {
     renderSettings({ ...workspace, currentUser: member });
     openSettingsSection('Organization');
     expect(await screen.findByText('Adam')).toBeVisible();
-    expect(screen.queryByRole('button', { name: /administrator/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /member actions$/ })).not.toBeInTheDocument();
+  });
+
+  it('lists members by name, then guests by name, ignoring case', async () => {
+    const guestZed = { ...member, id: 'user-5', name: 'Aaron', email: 'Zed@example.com', accessClass: 'guest' as const, role: null };
+    const guestBo = { ...member, id: 'user-6', name: 'zz', email: 'bo@example.com', accessClass: 'guest' as const, role: null };
+    const lowerName = { ...member, id: 'user-7', name: 'bea', email: 'bea@example.com' };
+    api.getWorkspaceMembers.mockResolvedValue([guestZed, member, owner, guestBo, lowerName, secondAdmin]);
+    renderSettings();
+    openSettingsSection('Organization');
+    expect(await screen.findByText('Riley')).toBeVisible();
+    const rows = Array.from(document.querySelectorAll('.settings-member-list .settings-member-row strong'))
+      .map((name) => name.textContent);
+    expect(rows).toEqual(['Adam', 'bea', 'Riley', 'Sam', 'Aaron', 'zz']);
+  });
+
+  it('suspends a member after confirmation and refreshes the roster', async () => {
+    api.removeWorkspaceMember.mockImplementationOnce(async () => {
+      api.getWorkspaceMembers.mockResolvedValue([owner]);
+    });
+    api.getWorkspaceMembers.mockResolvedValue([owner, member]);
+    renderSettings();
+    openSettingsSection('Organization');
+    await openMemberActions('Sam (sam@example.com) member actions');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Suspend' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Suspend Sam?' });
+    expect(api.removeWorkspaceMember).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Suspend' }));
+    await waitFor(() => expect(api.removeWorkspaceMember).toHaveBeenCalledWith(workspace.id, member.id));
+    await waitFor(() => expect(screen.queryByText('Sam')).not.toBeInTheDocument());
+    expect(screen.queryByRole('dialog', { name: 'Suspend Sam?' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the person when Suspend is cancelled, and lets a failed suspension be retried', async () => {
+    api.getWorkspaceMembers.mockResolvedValue([owner, member]);
+    api.removeWorkspaceMember
+      .mockRejectedValueOnce(new ApiError('The workspace membership changed. Check it and try again.', 409, 'membership_changed'))
+      .mockImplementationOnce(async () => { api.getWorkspaceMembers.mockResolvedValue([owner]); });
+    renderSettings();
+    openSettingsSection('Organization');
+
+    await openMemberActions('Sam (sam@example.com) member actions');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Suspend' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Suspend Sam?' })).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Suspend Sam?' })).not.toBeInTheDocument());
+    expect(api.removeWorkspaceMember).not.toHaveBeenCalled();
+
+    await openMemberActions('Sam (sam@example.com) member actions');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Suspend' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Suspend Sam?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Suspend' }));
+    expect(await within(dialog).findByText('The workspace membership changed. Check it and try again.')).toBeVisible();
+    expect(screen.getAllByText('Sam').length).toBeGreaterThan(0);
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Suspend' }));
+    await waitFor(() => expect(api.removeWorkspaceMember).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Suspend Sam?' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('Sam')).not.toBeInTheDocument());
   });
 
   it('does not expose invitation management to regular members', async () => {

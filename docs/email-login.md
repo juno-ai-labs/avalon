@@ -65,6 +65,10 @@ Local setup copies `EMAIL_LOGIN_POLICY_JSON` and `BROWSER_APP_ORIGIN` from
 listed in `.env.example` without defaults: an absent policy or origin leaves
 email sign-in disabled. Production values must be chosen explicitly.
 
+## Signup measurement
+
+Signup uses the opaque first-account flow and stage contract in [complete signup measurement](telemetry.md#complete-signup-measurement).
+
 ## Invariants
 
 - Magic links and OTPs consume the same row atomically; separate consumption

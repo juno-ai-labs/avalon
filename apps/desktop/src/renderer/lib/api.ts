@@ -1061,6 +1061,17 @@ export class RallyApi {
     });
   }
 
+  /**
+   * Take somebody else out of a workspace. The settings roster calls this
+   * "Suspend": the person loses access at once and can be invited back later.
+   */
+  async removeWorkspaceMember(workspaceId: string, userId: string): Promise<void> {
+    await this.requestVoid(
+      `/workspaces/${encodeURIComponent(workspaceId)}/membership/member/${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    );
+  }
+
   async createWorkspace(name: string): Promise<void> {
     await this.requestVoid('/onboarding/workspace', { method: 'POST', body: { name } });
   }
@@ -2608,16 +2619,21 @@ export class RallyApi {
     });
   }
 
+  async observeSignupView(flowId: string): Promise<void> {
+    await this.requestVoid('/auth/signup/view', { method: 'POST', body: { flowId } });
+  }
+
   async beginGoogleLogin(
     region: Region,
     callbackUri: string,
-    input: { workspaceName?: string; invitationToken?: string; authAttempt: DesktopAuthAttempt },
+    input: { workspaceName?: string; invitationToken?: string; authAttempt: DesktopAuthAttempt; signupFlowId?: string },
   ): Promise<string> {
     const result = await this.request('/auth/google/start', {
       method: 'POST',
       body: {
         region,
         returnUri: callbackUri,
+        ...(input.signupFlowId ? { signupFlowId: input.signupFlowId } : {}),
         desktopAttemptId: input.authAttempt.attemptId,
         desktopCodeChallenge: input.authAttempt.codeChallenge,
         ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),

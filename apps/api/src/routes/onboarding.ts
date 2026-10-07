@@ -1,3 +1,4 @@
+import { observeSignupProgress, requestSignupPlatform } from '../telemetry/signup';
 import { regionalBindings } from "../lib/regional-bindings";
 import type { Region } from "@rally/contracts/regions";
 import { publishWorkspaceSync } from '../services/workspace-realtime-service';
@@ -91,9 +92,11 @@ onboardingRoutes.post("/workspace", zValidator("json", CreateWorkspaceRequestSch
   const body = c.req.valid("json");
   const auth = getIdentityAuth(c);
   const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
+  observeSignupProgress(c.env, auth.userId, 'signup_organization_requested', 'new_organization', requestSignupPlatform(c));
   try {
     const session = SessionSchema.parse(await new PlatformOnboardingService(c.env, auth)
       .createWorkspace(body.name, body.region, c.req.raw.cf, operationId ?? undefined));
+    observeSignupProgress(c.env, auth.userId, 'signup_organization_ready', 'new_organization', requestSignupPlatform(c));
     deferOnboardingOutcome(c, auth, session, 'workspace_create_completed', body.region, operationId, 'success');
     return c.json(SessionSchema.parse(session), 201);
   } catch (error) {
@@ -111,9 +114,11 @@ onboardingRoutes.post(
     const body = c.req.valid("json");
     const auth = getIdentityAuth(c);
     const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
+    observeSignupProgress(c.env, auth.userId, 'signup_organization_requested', 'existing_organization', requestSignupPlatform(c));
     try {
       const session = SessionSchema.parse(await new PlatformOnboardingService(c.env, auth)
         .activate(body.region, body.workspaceId, { guests: clientOpensGuestWorkspaces((name) => c.req.header(name)) }));
+      observeSignupProgress(c.env, auth.userId, 'signup_organization_ready', 'existing_organization', requestSignupPlatform(c));
       deferOnboardingOutcome(c, auth, session, 'workspace_activation_completed', body.region, operationId, 'success');
       return c.json(SessionSchema.parse(session));
     } catch (error) {
@@ -133,9 +138,11 @@ onboardingRoutes.post(
     const auth = getIdentityAuth(c);
     const region = c.req.valid("json").region;
     const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
+    observeSignupProgress(c.env, auth.userId, 'signup_organization_requested', 'existing_organization', requestSignupPlatform(c));
     try {
       const session = SessionSchema.parse(await new PlatformOnboardingService(c.env, auth)
         .acceptInvitation(c.req.valid("param").id, region, operationId ?? undefined));
+      observeSignupProgress(c.env, auth.userId, 'signup_organization_ready', 'existing_organization', requestSignupPlatform(c));
       deferOnboardingOutcome(c, auth, session, 'workspace_activation_completed', region, operationId, 'success');
       return c.json(SessionSchema.parse(session));
     } catch (error) {
@@ -163,7 +170,9 @@ onboardingRoutes.get('/account', async (c) =>
   c.json(AccountOnboardingSchema.parse(await new AccountOnboardingService(c.env, getIdentityAuth(c)).get())));
 onboardingRoutes.patch('/account', zValidator('json', UpdateAccountOnboardingSchema), async (c) => {
   const auth = getIdentityAuth(c);
-  const result = await new AccountOnboardingService(c.env, auth).update(c.req.valid('json'));
+  const observedAt = new Date().toISOString();
+  const result = await new AccountOnboardingService(c.env, auth).update(c.req.valid('json'), () =>
+    observeSignupProgress(c.env, auth.userId, 'signup_onboarding_completed', undefined, requestSignupPlatform(c), observedAt));
   // Notify Global members independently: an unavailable regional discovery must not
   // suppress realtime delivery for an already-committed Global profile.
   requestDeferral(c)((async () => {
