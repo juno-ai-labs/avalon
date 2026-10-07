@@ -78,12 +78,12 @@ describe('Usage in Settings', () => {
       </LocalCacheScopeProvider>
     );
     const { rerender } = render(tree(SCOPE, apiAnswering(usage(72))));
-    expect(await screen.findByText("72% of this week's quota left")).toBeVisible();
+    expect(await screen.findByText('72% left')).toBeVisible();
 
     rerender(tree('user-1:global:workspace-2', pendingApi));
 
     expect(await screen.findByText('Checking usage…')).toBeVisible();
-    expect(screen.queryByText("72% of this week's quota left")).not.toBeInTheDocument();
+    expect(screen.queryByText('72% left')).not.toBeInTheDocument();
   });
 
   it('shows the plan, the meter and when the week resets', async () => {
@@ -95,9 +95,8 @@ describe('Usage in Settings', () => {
     expect(meter).toHaveAttribute('aria-valuemax', '100');
     expect(meter).not.toHaveClass('meter-warning');
     expect(screen.getByText('Starter plan')).toBeVisible();
-    expect(screen.getByText("72% of this week's quota left")).toBeVisible();
-    expect(screen.getByText('Resets Thursday, October 8 at 9:00 AM')).toBeVisible();
-    expect(screen.getByText('Shared by everyone in Juno Labs.')).toBeVisible();
+    expect(screen.getByText('72% left')).toBeVisible();
+    expect(screen.getByText('Resets Thursday, October 8 at 9:00 AM. Shared by everyone in Juno Labs.')).toBeVisible();
     expect(screen.queryByText('Usage beyond quota this month')).not.toBeInTheDocument();
   });
 
@@ -112,7 +111,7 @@ describe('Usage in Settings', () => {
     expect(screen.getByRole('option', { name: /Growth plan/ })).toHaveTextContent('$250 a month');
     fireEvent.keyDown(screen.getByRole('option', { name: /Growth plan/ }), { key: 'Enter' });
 
-    expect(await screen.findByText("44% of this week's quota left")).toBeVisible();
+    expect(await screen.findByText('44% left')).toBeVisible();
     expect(api.setWorkspacePlan).toHaveBeenCalledWith('growth');
     expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Growth plan');
     expect(await usageCacheSlice.read(SCOPE, 'usage')).toMatchObject({ usage: { plan: 'growth', quotaRemainingPercent: 44 } });
@@ -142,14 +141,14 @@ describe('Usage in Settings', () => {
     vi.stubEnv('TZ', 'America/Los_Angeles');
     renderSection(apiAnswering(usage(72)));
 
-    expect(await screen.findByText('Resets Thursday, October 8 at 2:00 AM')).toBeVisible();
+    expect(await screen.findByText(/^Resets Thursday, October 8 at 2:00 AM./)).toBeVisible();
   });
 
   it('shows a full meter before anything has been used', async () => {
     renderSection(apiAnswering(usage(100)));
 
     expect(await screen.findByRole('meter', { name: 'Weekly quota left' })).toHaveAttribute('aria-valuenow', '100');
-    expect(screen.getByText("100% of this week's quota left")).toBeVisible();
+    expect(screen.getByText('100% left')).toBeVisible();
   });
 
   it('turns the meter to the warning colour below 20% left', async () => {
@@ -167,7 +166,7 @@ describe('Usage in Settings', () => {
   it('says the quota is used at 0% and shows this month’s overage struck through and not billed', async () => {
     renderSection(apiAnswering(usage(0, 12_400_000)));
 
-    expect(await screen.findByText('Quota used for this week')).toBeVisible();
+    expect(await screen.findByText('All used')).toBeVisible();
     expect(screen.getByRole('meter', { name: 'Weekly quota left' })).toHaveAttribute('aria-valuenow', '0');
     expect(screen.getByText('Usage beyond quota this month')).toBeVisible();
     expect(screen.getByText('Oct 3 to Nov 2')).toBeVisible();
@@ -198,7 +197,7 @@ describe('Usage in Settings', () => {
     await usageCacheSlice.write(SCOPE, 'usage', { usage: usage(55), fetchedAt: '2026-10-03T14:14:00.000Z' });
     renderSection(pendingApi);
 
-    expect(await screen.findByText("55% of this week's quota left")).toBeVisible();
+    expect(await screen.findByText('55% left')).toBeVisible();
     expect(screen.queryByText(/^as of/u)).not.toBeInTheDocument();
   });
 
@@ -207,13 +206,13 @@ describe('Usage in Settings', () => {
     onlineManager.setOnline(false);
     renderSection(apiAnswering(usage(10)));
 
-    expect(await screen.findByText("55% of this week's quota left")).toBeVisible();
+    expect(await screen.findByText('55% left')).toBeVisible();
     expect(screen.getByText('as of 2:14 PM')).toBeVisible();
   });
 
   it('remembers the answer for the next time the section opens', async () => {
     renderSection(apiAnswering(usage(64)));
-    await screen.findByText("64% of this week's quota left");
+    await screen.findByText('64% left');
 
     await waitFor(async () => expect((await usageCacheSlice.read(SCOPE, 'usage'))?.usage.quotaRemainingPercent).toBe(64));
   });
@@ -223,12 +222,12 @@ describe('Usage in Settings', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const section = <QueryClientProvider client={client}><UsageSettingsSection api={api} canChangePlan organizationName="Juno Labs" /></QueryClientProvider>;
     const first = render(section);
-    await screen.findByText("80% of this week's quota left");
+    await screen.findByText('80% left');
     first.unmount();
 
     render(section);
 
-    expect(await screen.findByText("61% of this week's quota left")).toBeVisible();
+    expect(await screen.findByText('61% left')).toBeVisible();
     expect(api.getWorkspaceUsage).toHaveBeenCalledTimes(2);
   });
 
@@ -241,11 +240,11 @@ describe('Usage in Settings', () => {
       </QueryClientProvider>
     );
     const { rerender } = render(section(3));
-    await screen.findByText("80% of this week's quota left");
+    await screen.findByText('80% left');
 
     rerender(section(4));
 
-    expect(await screen.findByText("61% of this week's quota left")).toBeVisible();
+    expect(await screen.findByText('61% left')).toBeVisible();
     expect(api.getWorkspaceUsage).toHaveBeenCalledTimes(2);
   });
 
@@ -258,7 +257,7 @@ describe('Usage in Settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
-    expect(await screen.findByText("33% of this week's quota left")).toBeVisible();
+    expect(await screen.findByText('33% left')).toBeVisible();
     expect(api.getWorkspaceUsage).toHaveBeenCalledTimes(2);
   });
 });
