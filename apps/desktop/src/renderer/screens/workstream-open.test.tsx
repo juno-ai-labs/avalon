@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -381,19 +381,6 @@ describe('socket-first channel open', () => {
     await act(async () => rejectCopy(new Error('Clipboard unavailable')));
     expect(screen.queryByText('Clipboard unavailable')).not.toBeInTheDocument();
     if (next === 'rename') expect(screen.getByRole('dialog', { name: 'Rename channel' })).toBeVisible();
-  });
-
-  it('copies the Channel\'s email address from More, where the old header kept it', async () => {
-    const copy = vi.spyOn(desktopBridge(), 'copyText').mockResolvedValue(undefined);
-    const boot = { ...recoveryBoot(), emailAddress: 'recovered@in.rally.test' };
-    renderScreen(cache => {
-      cache.setQueryData(['workstream', workstreamId], boot);
-      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
-    });
-
-    await mainMenu(['More', 'Copy channel email address']);
-
-    await waitFor(() => expect(copy).toHaveBeenCalledWith('recovered@in.rally.test'));
   });
 
   it('positions a laid-out opening before enabling automatic history requests', async () => {
@@ -899,6 +886,31 @@ describe('socket-first channel open', () => {
     expect(mainAppearance).not.toHaveBeenCalled();
   });
 
+  it('saves the Channel appearance chosen from its More', async () => {
+    const mainAppearance = vi.fn().mockResolvedValue(undefined);
+    retainedSocket.mockImplementation(() => ({
+      activeCompaction: null,
+      activeInferenceDelays: [],
+      createMessage: vi.fn(),
+      setAppearance: mainAppearance,
+      requestSnapshot: vi.fn(),
+      retryOpening: vi.fn(),
+      sendReady: true,
+      state: 'connected',
+      workspaceSocketState: 'connected',
+    }));
+    const boot = recoveryBoot({ appearance: { icon: 'rocket', color: 'blue' } });
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], boot);
+      cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+    });
+
+    await titleMenu('Channel menu: Recovered channel', 'More');
+    fireEvent.keyDown(await screen.findByRole('menuitem', { name: 'Icon and color' }), { key: 'ArrowRight' });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Purple' }));
+    await waitFor(() => expect(mainAppearance).toHaveBeenCalledWith({ color: 'purple' }));
+  });
+
   it('marks the Channel pill with the sidebar row\'s appearance, which a receipt moves first', async () => {
     const childId = '00000000-0000-7000-8000-000000000664';
     // The parent detail and the sidebar row disagree on purpose: this is the
@@ -927,7 +939,7 @@ describe('socket-first channel open', () => {
   it('manages the selected breakout roster without changing parent participants', async () => {
     const childId = '00000000-0000-7000-8000-000000000660';
     const creator = { id: '00000000-0000-7000-8000-000000000661', name: 'Creator', email: 'creator@example.test', timezone: 'UTC' };
-    const newcomer = { ...creator, id: '00000000-0000-7000-8000-000000000662', name: 'New member' };
+    const newcomer = { ...creator, id: '00000000-0000-7000-8000-000000000662', name: 'New member', email: 'new@example.test' };
     const parent = recoveryBoot({ participants: [creator, newcomer] });
     const child = recoveryBoot({ title: 'Private child', participants: [creator] });
     api.getWorkspaceMembers.mockResolvedValue([creator, newcomer]);
@@ -942,17 +954,17 @@ describe('socket-first channel open', () => {
 
     fireEvent.pointerDown(await screen.findByRole('button', { name: 'Breakout menu: Private child' }), { button: 0, ctrlKey: false });
     expect(await screen.findByRole('menuitem', { name: /^People\s*1/u })).toBeInTheDocument();
-    // The People level's Change opens the full roster, where people are removed.
+    // Typing a known address and pressing Enter adds them, and the level stays open.
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add people' }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Change' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Add New member to breakout' }));
+    const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
+    fireEvent.change(search, { target: { value: newcomer.email } });
+    fireEvent.keyDown(search, { key: 'Enter' });
     await waitFor(() => expect(api.addSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
-    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
-    fireEvent.pointerDown(await screen.findByRole('button', { name: 'New member participant actions' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('button', { name: 'New member actions' })).toBeVisible();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'New member actions' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from breakout' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await waitFor(() => expect(api.removeSubstreamParticipant).toHaveBeenCalledWith(workstreamId, childId, newcomer.id));
-    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
-    expect(await screen.findByRole('button', { name: 'Add New member to breakout' })).toBeVisible();
     expect(client.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.participants).toEqual([creator, newcomer]);
     expect(api.addParticipant).not.toHaveBeenCalled();
     expect(api.removeParticipant).not.toHaveBeenCalled();
@@ -1348,24 +1360,24 @@ describe('socket-first channel open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    await titleMenu('Channel menu: Recovered channel', ['Add people', 'Change']);
-    fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan to main conversation' }));
-    expect(await screen.findByText('That participant couldn’t be added.')).toBeInTheDocument();
+    await titleMenu('Channel menu: Recovered channel', 'Add people');
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan' }));
+    expect(await screen.findByText('That person couldn’t be added.')).toBeInTheDocument();
     expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
-    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Katherine participant actions' }), {
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Katherine actions' }), {
       button: 0,
       ctrlKey: false,
     });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from main conversation' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from channel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
 
     expect(await screen.findByText('That participant couldn’t be removed.')).toBeInTheDocument();
     expect(screen.queryByText('Adam cannot remove Katherine')).not.toBeInTheDocument();
-    expect(screen.queryByText('That participant couldn’t be added.')).not.toBeInTheDocument();
+    expect(screen.queryByText('That person couldn’t be added.')).not.toBeInTheDocument();
   });
 
-  it('keeps the participant dialog open after an add so another person can be added', async () => {
+  it('keeps the People level open after an add so another person can be added', async () => {
     const adam = {
       id: '00000000-0000-7000-8000-000000000651',
       name: 'Adam',
@@ -1396,18 +1408,16 @@ describe('socket-first channel open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    await titleMenu('Channel menu: Recovered channel', ['Add people', 'Change']);
-    fireEvent.click(await screen.findByRole('button', { name: 'Add Katherine to main conversation' }));
+    await titleMenu('Channel menu: Recovered channel', 'Add people');
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Katherine' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, katherine.id));
-    const dialog = screen.getByRole('dialog', { name: 'Add a participant' });
-    expect(dialog).toBeVisible();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Add Jordan to main conversation' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan' }));
     await waitFor(() => expect(api.addParticipant).toHaveBeenCalledWith(workstreamId, jordan.id));
     expect(api.addParticipant).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole('dialog', { name: 'Add a participant' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Channel menu: Recovered channel, People' })).toBeInTheDocument();
   });
 
-  it('closes the participant dialog when the current person leaves an organization-scoped room', async () => {
+  it('leaves an organization-scoped room from the People level once confirmed', async () => {
     const adam = {
       id: '00000000-0000-7000-8000-000000000651',
       name: 'Adam',
@@ -1432,14 +1442,15 @@ describe('socket-first channel open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    await titleMenu('Channel menu: Recovered channel', ['Add people', 'Change']);
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam participant actions' }), {
+    await titleMenu('Channel menu: Recovered channel', 'Add people');
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Adam actions' }), {
       button: 0,
       ctrlKey: false,
     });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from main conversation' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Leave the channel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await waitFor(() => expect(api.removeParticipant).toHaveBeenCalledWith(workstreamId, adam.id));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add a participant' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(client.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.participants).toEqual([katherine]);
   });
 
@@ -1474,12 +1485,13 @@ describe('socket-first channel open', () => {
       queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
-    await titleMenu('Channel menu: Recovered channel', ['Add people', 'Change']);
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam participant actions' }), {
+    await titleMenu('Channel menu: Recovered channel', 'Add people');
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Adam actions' }), {
       button: 0,
       ctrlKey: false,
     });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from main conversation' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Leave the channel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
     await waitFor(() => expect(locationInTest?.pathname).toBe('/'));
     expect(locationInTest?.state).toEqual({
       skipWorkstreamIds: [workstreamId],
