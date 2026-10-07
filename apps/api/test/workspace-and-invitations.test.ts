@@ -182,7 +182,7 @@ describe("workspace preferences", () => {
       .resolves.toMatchObject({ timezone: "America/Los_Angeles" });
 
     const update = database.runs.find((statement) => statement.sql.startsWith("UPDATE workspaces"));
-    expect(update?.values[0]).toBe("Europe/London");
+    expect(update?.values.slice(0, 2)).toEqual([null, "Europe/London"]);
   });
 
   it("records that the account timezone was chosen rather than inferred", async () => {

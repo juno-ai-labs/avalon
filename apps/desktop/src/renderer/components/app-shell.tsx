@@ -610,8 +610,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     clearPendingInvitation();
     void desktopBridge().showDeepLinkError(mismatch);
   }, [clearPendingInvitation, pendingInvitationPreview.data, session]);
-  const activeWorkspace: DesktopWorkspaceSummary = workspaceDirectory.data?.workspaces
-    .find((candidate) => candidate.id === workspace.id && candidate.region === workspace.region) ?? {
+  // The directory is fetched by account discovery, which no sync topic reruns,
+  // so the active row takes its name from `workspace`: the read the
+  // `workspace_profile` topic refreshes when an administrator renames it.
+  const isActive = (candidate: DesktopWorkspaceSummary): boolean => (
+    candidate.id === workspace.id && candidate.region === workspace.region
+  );
+  const directoryWorkspaces = workspaceDirectory.data?.workspaces
+    .map((candidate) => (isActive(candidate) ? { ...candidate, name: workspace.name } : candidate));
+  const activeWorkspace: DesktopWorkspaceSummary = directoryWorkspaces?.find(isActive) ?? {
       id: workspace.id,
       name: workspace.name,
       slug: workspace.id,
@@ -620,9 +627,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       ...(session?.workspace?.accessClass === 'guest' ? { accessClass: 'guest' as const } : {}),
       createdAt: new Date(0).toISOString(),
     };
-  const knownWorkspaces = workspaceDirectory.data?.workspaces.length
-    ? workspaceDirectory.data.workspaces
-    : [activeWorkspace];
+  const knownWorkspaces = directoryWorkspaces?.length ? directoryWorkspaces : [activeWorkspace];
   const promptedInvitation = pendingInvitationPreview.data
     ? workspaceDirectory.data?.invitations.find((candidate) => (
       candidate.workspaceId === pendingInvitationPreview.data.workspaceId
