@@ -30,6 +30,7 @@ import type { Env } from "../src/env";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { deliverChildEffects } from "./helpers/conversation-effects";
 import { hostedParentStub } from "./helpers/hosted-parent";
+import { ensureAuditSchema } from "./helpers/audit-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000007b1");
 // An earlier object may still finish an alarm while reset is in flight. Each
@@ -89,7 +90,8 @@ beforeEach(async () => {
       VALUES (?, ?, 'active', 'member', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, INVITEE_ID),
     env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
@@ -497,5 +499,124 @@ describe("a work stream nobody has shown this person yet", () => {
     // parallel-file load, not a slow object. `nextClose` and
     // `nextEvent` deliberately never reject: the convention here is to let the
     // harness timeout be the failure and size the budget for the work.
+  });
+
+  describe("on a Rally access support session (docs/impersonation.md)", () => {
+    const SUPPORT_SESSION_ID = "00000000-0000-7000-8000-0000000007e1";
+    const STAFF_ID = "00000000-0000-7000-8000-0000000007e2";
+    const SUPPORT_AUTH = { ...INVITEE_AUTH, sessionId: SUPPORT_SESSION_ID };
+
+    beforeEach(async () => {
+      await env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at, impersonator_user_id)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z', ?)`)
+        .bind(SUPPORT_SESSION_ID, INVITEE_ID, WORKSPACE_ID, STAFF_ID).run();
+    });
+
+    async function attention(stub: DurableObjectStub, userId: string): Promise<number | undefined> {
+      const rows = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ seen: number }>(
+          `SELECT seen_attention_ordinal AS seen FROM member_attention WHERE user_id = ?`,
+          userId,
+        ).toArray());
+      return rows[0]?.seen;
+    }
+
+    it("opens and reads it without it becoming opened or read for the person", async () => {
+      const stub = agentStub();
+      await startWorkstream(stub, [INVITEE_ID]);
+
+      const opened = await product(stub, { operation: "get", auth: SUPPORT_AUTH });
+      expect(opened.status).toBe(200);
+      expect(opened.body.unseen).toBe(true);
+      expect(await firstOpenedAt(stub, INVITEE_ID)).toBeNull();
+
+      const before = await attention(stub, INVITEE_ID);
+      const read = await product(stub, {
+        operation: "acknowledge_read", auth: SUPPORT_AUTH,
+        input: { readThroughSequenceNumber: 1, observedManualUnreadGeneration: 0 },
+      });
+      expect(read.status).toBe(200);
+      expect(await attention(stub, INVITEE_ID)).toBe(before);
+    });
+
+    it("records each command its socket sends, as the staff member acting for the person", async () => {
+      await ensureAuditSchema();
+      const stub = agentStub();
+      await startWorkstream(stub, [INVITEE_ID]);
+      const response = await stub.fetch("https://object.test/socket", {
+        headers: {
+          Upgrade: "websocket",
+          "x-rally-workspace-id": WORKSPACE_ID,
+          "x-rally-workstream-id": WORKSTREAM_ID,
+          "x-rally-substream-id": "0",
+          "x-rally-user-id": INVITEE_ID,
+          "x-rally-session-id": SUPPORT_SESSION_ID,
+          "x-rally-socket-ticket-id": "00000000-0000-7000-8000-0000000007e4",
+          "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+          "x-rally-socket-impersonator-id": STAFF_ID,
+        },
+      });
+      expect(response.status).toBe(101);
+      const socket = response.webSocket!;
+      socket.accept();
+      const snapshot = nextEvent(socket, "snapshot");
+      socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0, publishPresence: false }));
+      await snapshot;
+      socket.send(JSON.stringify({ type: "set_workstream_appearance", operationId: crypto.randomUUID(), appearance: {} }));
+      await expect.poll(async () => (await env.AUDIT_DB.prepare(
+        `SELECT actor_user_id, target_id, workstream_id, json_extract(metadata_json, '$.command') AS command
+           FROM audit_events WHERE action = 'support_session.socket_command'
+            AND json_extract(metadata_json, '$.sessionId') = ?`,
+      ).bind(SUPPORT_SESSION_ID).all()).results, { timeout: 5_000 }).toEqual([{
+        actor_user_id: STAFF_ID, target_id: INVITEE_ID, workstream_id: WORKSTREAM_ID, command: "set_workstream_appearance",
+      }]);
+      socket.close(1000, "test complete");
+      await expect.poll(
+        () => runInDurableObject(stub, (_instance, state) => state.getWebSockets().length),
+        { timeout: 5_000 },
+      ).toBe(0);
+    });
+
+    it("never lists the person as present from a socket", async () => {
+      const stub = agentStub();
+      await startWorkstream(stub, [INVITEE_ID]);
+      const response = await stub.fetch("https://object.test/socket", {
+        headers: {
+          Upgrade: "websocket",
+          "x-rally-workspace-id": WORKSPACE_ID,
+          "x-rally-workstream-id": WORKSTREAM_ID,
+          "x-rally-substream-id": "0",
+          "x-rally-user-id": INVITEE_ID,
+          "x-rally-session-id": SUPPORT_SESSION_ID,
+          "x-rally-socket-ticket-id": "00000000-0000-7000-8000-0000000007e3",
+          "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+          "x-rally-socket-impersonator-id": STAFF_ID,
+        },
+      });
+      expect(response.status).toBe(101);
+      const socket = response.webSocket!;
+      socket.accept();
+      const snapshot = nextEvent(socket, "snapshot");
+      socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0, publishPresence: true }));
+      await snapshot;
+      expect(await firstOpenedAt(stub, INVITEE_ID)).toBeNull();
+      // The feed lists as viewers only people outside its participant list, so
+      // read the list as if the person were not a participant: their socket is
+      // subscribed with presence on, and only the support session keeps it off.
+      const viewers = await runInDurableObject(stub, (instance) => {
+        const agent = instance as unknown as {
+          product: { activeParticipantIds(): string[] };
+          loadViewers(workspaceId: string, workstreamId: string): Promise<unknown[]>;
+        };
+        agent.product.activeParticipantIds = () => [];
+        return agent.loadViewers(WORKSPACE_ID, WORKSTREAM_ID);
+      });
+      expect(viewers).toEqual([]);
+      socket.close(1000, "test complete");
+      await expect.poll(
+        () => runInDurableObject(stub, (_instance, state) => state.getWebSockets().length),
+        { timeout: 5_000 },
+      ).toBe(0);
+    });
   });
 });

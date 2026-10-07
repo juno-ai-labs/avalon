@@ -1,4 +1,4 @@
-import { ChevronRight, Plus } from 'lucide-react';
+import { ChevronRight, Plus, X } from 'lucide-react';
 import { AutomationScreen } from './automation';
 import { SpeechPlaybackProvider } from '../components/speech-playback';
 import { useEscapeClosesWindow } from '../lib/window-escape';
@@ -11,6 +11,7 @@ import { HashRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
+import { useCloseWindowSurface } from '../lib/window-surface';
 import { EmptyState, InlineError, OpeningState } from '../components/primitives';
 
 export function SidekicksLibraryScreen(): React.JSX.Element {
@@ -23,7 +24,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
     && `${item.name} ${item.description}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
   );
   return <main className="sidekicks-library">
-    <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1><p>A little help that knows how you work.</p></div><Link className="button button-primary window-no-drag" to="/sidekicks/new"><Plus aria-hidden="true" size={16} />New Sidekick</Link></header>
+    <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1><p>A little help that knows how you work.</p></div><div className="sidekicks-library-actions"><Link className="button button-primary window-no-drag" to="/sidekicks/new"><Plus aria-hidden="true" size={16} />New Sidekick</Link><CloseInTab /></div></header>
     <div className="sidekicks-library-controls">
       <SidebarSearch mode="input" aria-label="Search Sidekicks" placeholder="Search Sidekicks" value={search} onChange={(event) => setSearch(event.target.value)} />
     </div>
@@ -45,13 +46,35 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
 
 function GuestSidekicksLibrary(): React.JSX.Element {
   return <main className="sidekicks-library">
-    <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1></div></header>
+    <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1></div><CloseInTab /></header>
     <EmptyState title="Sidekicks open from conversations" description="Open a Sidekick from a conversation shared with you to see it here." />
   </main>;
 }
 
+/**
+ * The way out of the library in a browser tab, where it is a route with no
+ * window chrome to close. The Mac app's window has its own.
+ */
+function CloseInTab(): React.JSX.Element | null {
+  const { host } = useShellCapabilities();
+  const close = useCloseWindowSurface();
+  if (host !== 'browser') return null;
+  return <button aria-label="Close Sidekicks" className="settings-close window-no-drag" onClick={close} type="button"><X aria-hidden="true" size={18} /></button>;
+}
+
+/**
+ * The main window's `/sidekicks`. A browser tab shows the library here, as a
+ * window surface (`lib/window-surface.ts`); the Mac app hands it to the
+ * Sidekicks window.
+ */
+export function SidekicksLibraryRoute(): React.JSX.Element {
+  const { host, guest } = useShellCapabilities();
+  if (host !== 'browser') return <SidekicksWindowRedirect />;
+  return guest ? <GuestSidekicksLibrary /> : <SidekicksLibraryScreen />;
+}
+
 /** Retained main-window links hand library navigation to its dedicated window. */
-export function SidekicksWindowRedirect(): React.JSX.Element {
+function SidekicksWindowRedirect(): React.JSX.Element {
   const openFirstWorkstream = useOpenFirstWorkstream();
   useEffect(() => {
     void desktopBridge().openSidekicks().then(() => openFirstWorkstream());

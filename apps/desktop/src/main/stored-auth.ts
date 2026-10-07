@@ -3,6 +3,7 @@ import {
   IdSchema,
   RefreshTokenSchema,
   RegionSchema,
+  SessionImpersonatorSchema,
   TimestampSchema,
   UserSchema,
   WorkspaceSchema,
@@ -29,6 +30,8 @@ const storedProfileSchema = z.object({
   cachedAt: TimestampSchema,
   user: UserSchema,
   workspace: WorkspaceSchema.nullable(),
+  /** Set on a support session: the staff member acting as `user`. */
+  impersonator: SessionImpersonatorSchema.optional(),
 });
 
 const storedWorkspaceReferenceSchema = z.object({
@@ -180,6 +183,7 @@ export function storedProfileFromSession(
     cachedAt,
     user: session.user,
     workspace: session.workspace,
+    ...(session.impersonator ? { impersonator: session.impersonator } : {}),
   };
 }
 
@@ -203,6 +207,7 @@ export function sessionFromStoredState(
     expiresAt: auth.expiresAt,
     user: profile.user,
     workspace: profile.workspace,
+    ...(profile.impersonator ? { impersonator: profile.impersonator } : {}),
     apiBaseUrl,
   };
 }
@@ -270,6 +275,16 @@ export function activeStoredCredentialIsGuest(auth: StoredAuthSet | null, profil
  */
 export function storedCredentialIsGuest(profiles: StoredProfileSet | null, auth: StoredAuth): boolean {
   return profiles ? storedProfileForCredential(profiles, auth)?.workspace?.accessClass === 'guest' : false;
+}
+
+/**
+ * Whether a stored credential is a support session: Rally staff acting as one
+ * of an Organization's people (`docs/impersonation.md`). It is never listed as
+ * one of the account's own Organizations, never registered for push, and never
+ * kept in the background: switching away ends it.
+ */
+export function storedCredentialIsSupport(profiles: StoredProfileSet | null, auth: StoredAuth): boolean {
+  return profiles ? storedProfileForCredential(profiles, auth)?.impersonator !== undefined : false;
 }
 
 export function selectStoredWorkspace(auth: StoredAuthSet, workspaceId: string, region: Region): StoredAuthSet {

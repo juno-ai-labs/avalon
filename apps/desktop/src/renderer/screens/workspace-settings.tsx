@@ -2,6 +2,7 @@ import { startConnectorAuthorization } from '../lib/start-connector-authorizatio
 import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
 import { CopyButton, CopyField } from '../components/copy-button';
+import { SupportAccessSetting } from '../components/support-access-setting';
 import { ServerCog } from 'lucide-react';
 import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
@@ -39,7 +40,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -65,6 +65,7 @@ import { UsageSettingsSection } from '../components/organization-usage';
 import { InlineEditableText } from '../components/inline-editable-text';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
+import { useCloseWindowSurface } from '../lib/window-surface';
 import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError, type RallyApi } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
@@ -561,6 +562,7 @@ export function WorkspaceSettingsScreen({
     runtime,
     leaveWorkspace,
     signOut,
+    endSupportSession,
     pendingConnectorOAuth,
     setPendingConnectorOAuth,
   } = useAppSession();
@@ -1113,7 +1115,9 @@ export function WorkspaceSettingsScreen({
       (!guest || GUEST_SETTINGS_SECTIONS.has(item.id))
       && (item.id !== 'digest' || digestSettingsAvailable)
       && (item.id !== 'notifications' || featureFlags.data?.pushNotificationsEnabled === true)) };
-  }), [guest, githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable, featureFlags.data?.pushNotificationsEnabled]);
+  // Every Application setting but appearance is about the Mac app itself, so a
+  // browser drops the whole Desktop app group and shows appearance in Account.
+  }).filter((group) => !browserHost || group.label !== 'Desktop app'), [browserHost, guest, githubSettingsConnections.length, customMcpSettingsConnections.length, digestSettingsAvailable, featureFlags.data?.pushNotificationsEnabled]);
   const availableSections = useMemo(
     () => new Set(settingsNavigationWithConnectors.flatMap((group) => group.items.map((item) => item.id))),
     [settingsNavigationWithConnectors],
@@ -1125,7 +1129,8 @@ export function WorkspaceSettingsScreen({
     menuBar: applicationSettings?.menuBarAvailable !== false,
     login: applicationSettings?.launchAtLoginAvailable !== false,
     releaseChannel: applicationSettings?.releaseChannelAvailable !== false,
-  }), [availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable, applicationSettings?.releaseChannelAvailable]);
+    browser: browserHost,
+  }), [browserHost, availableSections, isAdmin, developerSettingsAvailable, applicationSettings?.menuBarAvailable, applicationSettings?.launchAtLoginAvailable, applicationSettings?.releaseChannelAvailable]);
   const [searchTarget, setSearchTarget] = useState<SettingSearchResult | null>(null);
   const searchEntries = useMemo(() => collectSettings([
     {
@@ -1190,7 +1195,6 @@ export function WorkspaceSettingsScreen({
   );
   const workspaceConnections = installedConnections.filter((connection) => connection.scope === 'workspace');
   const personalConnections = installedConnections.filter((connection) => connection.scope === 'you');
-  const healthyConnections = installedConnections.filter((connection) => connection.status === 'healthy');
   const visibleProviders = connectorProviders.filter((provider) => {
     const connected = providerHasConnection(provider, connections.data ?? []);
     if (connectionFilter === 'connected') return connected;
@@ -1214,10 +1218,7 @@ export function WorkspaceSettingsScreen({
   // once this window is gone.
   // A browser tab cannot close itself: there Settings is a route, and closing
   // it returns to the workspace.
-  const closeSettings = useCallback(() => {
-    if (browserHost) window.location.hash = '#/';
-    else window.close();
-  }, [browserHost]);
+  const closeSettings = useCloseWindowSurface();
   useEscapeClosesWindow({ enabled: standaloneWindow, unsavedTextScope: contentRef, onClose: closeSettings });
 
   // The settings window is kept and reused, so a pane already on screen does
@@ -1462,11 +1463,22 @@ export function WorkspaceSettingsScreen({
                   </div>
                 </>}
                 </>}
+                {browserHost && <>
+                  <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2></div>
+                  <ThemePicker setting={settings.accountAppearance} />
+                </>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Session</h2></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
-                    <SettingCopy setting={settings.signOut} />
-                    <Button onClick={() => void signOut()}>Sign out</Button>
+                    {session?.impersonator
+                      ? <>
+                          <SettingCopy setting={settings.signOut} description={`You are signed in as ${session.user.name}. Ending returns you to your own account.`} />
+                          <Button onClick={() => void endSupportSession()}>End impersonation</Button>
+                        </>
+                      : <>
+                          <SettingCopy setting={settings.signOut} />
+                          <Button onClick={() => void signOut()}>Sign out</Button>
+                        </>}
                   </div>
                 </div>
               </section>
@@ -1539,6 +1551,12 @@ export function WorkspaceSettingsScreen({
                       variant="secondary"
                     />
                   </label>
+                  <SupportAccessSetting
+                    api={api ?? null}
+                    impersonating={Boolean(session?.impersonator)}
+                    isAdmin={isAdmin}
+                    workspaceId={workspace.id}
+                  />
                 </div>
                 {renameWorkspace.error && <InlineError>{renameWorkspace.error.message}</InlineError>}
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
@@ -1842,9 +1860,8 @@ export function WorkspaceSettingsScreen({
 
             {activeSection === 'connections' && (
               <section aria-labelledby="settings-title" className="settings-pane settings-connections-pane">
-                <div className="settings-pane-heading settings-pane-heading-count">
-                  <div><h2><SettingLabel setting={settings.connections} /></h2><p>Credentials currently available to you or this workspace.</p></div>
-                  <span>{installedConnections.length}</span>
+                <div className="settings-pane-heading">
+                  <h2><SettingLabel setting={settings.connections} /></h2>
                 </div>
                 <div className="settings-connection-tables">
                   {([
@@ -1866,7 +1883,6 @@ export function WorkspaceSettingsScreen({
                     <section className="settings-connection-group" key={group.id}>
                       <div className="settings-connection-group-heading">
                         <h3 id={group.id}>{group.title}</h3>
-                        <span>{group.items.length}</span>
                       </div>
                       <div className="settings-list-card settings-connection-table-frame">
                         <table aria-labelledby={group.id} className="settings-connection-table">
@@ -1971,7 +1987,6 @@ export function WorkspaceSettingsScreen({
                       ]}
                       value={connectionFilter}
                     />
-                    <span>{healthyConnections.length} connected</span>
                   </div>
                   <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Organization connections expose granted capabilities to every member; organization automations use only the connections explicitly bound to them.</p>
                   <div className="provider-grid">
@@ -2365,17 +2380,6 @@ export function WorkspaceSettingsScreen({
                 {(customMcpSettings.error || updateCustomMcpToolPolicy.error) && (
                   <InlineError>{customMcpSettings.error?.message ?? updateCustomMcpToolPolicy.error?.message}</InlineError>
                 )}
-              </section>
-            )}
-
-            {/* In a browser the rest of this section is about the Mac app itself:
-                its keystore, crash reports, icon, updates and startup. Say so
-                rather than offer switches that cannot work here. */}
-            {activeSection === 'application' && browserHost && (
-              <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Appearance</h2><p>Keep Rally light or dark, or follow your system.</p></div>
-                <ThemePicker />
-                <p className="settings-oauth-status">Security, diagnostics, app icon, update and startup settings are available in the Mac app.</p>
               </section>
             )}
 

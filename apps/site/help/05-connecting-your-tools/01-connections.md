@@ -14,7 +14,7 @@ Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> (or **Rally → Settings…** in 
 
 Connections are managed in the Mac app. The iPhone app and the browser version do not have this screen.
 
-The page is headed **Your connections**, with a count of how many you have. It has two halves.
+The page is headed **Your connections**. It has two halves.
 
 ## The two tables
 
@@ -36,7 +36,7 @@ If **Tools** shows a dash instead of a number, hover over it to see why. It migh
 
 ## The cards
 
-The bottom half is a grid of cards, one for each kind of tool Rally can connect to. Above the grid is a filter with **Not connected**, **Connected** and **All**, and a count of how many connections are working. The filter starts on **Not connected**, which is handy for finding something new to connect and confusing when you are looking for something you already have. Click **All** if a card seems to be missing.
+The bottom half is a grid of cards, one for each kind of tool Rally can connect to. Above the grid is a filter with **Not connected**, **Connected** and **All**. The filter starts on **Not connected**, which is handy for finding something new to connect and confusing when you are looking for something you already have. Click **All** if a card seems to be missing.
 
 Each card shows the tool, a one-line description, and one of these words under its name:
 

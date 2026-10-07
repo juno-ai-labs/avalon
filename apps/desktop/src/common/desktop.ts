@@ -7,6 +7,8 @@ import type {
   WorkspaceDepartureOutcome,
   AccountOnboarding,
   UpdateAccountOnboarding,
+  SupportPerson,
+  SupportWorkspace,
 } from '@rally/contracts';
 import type { Region } from "@rally/contracts/regions";
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
@@ -463,6 +465,16 @@ export interface RallyDesktopBridge {
     workspaceId: string;
   }) => Promise<WorkspaceDeparture>;
   activateWorkspace: (input: { region: RallyRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
+  /**
+   * Rally staff support access (`docs/impersonation.md`). The Organization
+   * list is `null` for anybody who is not Rally staff, and rejects only on a
+   * failure worth retrying. Starting a session makes it the active one;
+   * ending it returns to the Organization used before.
+   */
+  listSupportWorkspaces: () => Promise<SupportWorkspace[] | null>;
+  listSupportPeople: (workspaceId: string) => Promise<SupportPerson[]>;
+  startSupportSession: (input: { workspaceId: string; userId: string }) => Promise<DesktopSession>;
+  endSupportSession: () => Promise<DesktopSession | null>;
   /**
    * Answers a link that names the active workspace with the session already
    * in use, taking a selection intent so the link is the newest selection and

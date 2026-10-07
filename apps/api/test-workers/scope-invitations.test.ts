@@ -83,8 +83,8 @@ beforeEach(async () => {
     env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, analytics_person_id TEXT, name TEXT, email TEXT)"),
     env.DB.prepare("INSERT INTO users (id, name) VALUES (?, 'Adam Owner'), (?, NULL)").bind(actorId, recipientId),
     env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT,
-      region TEXT, workspace_incarnation TEXT, revoked_at TEXT, expires_at TEXT)`),
-    env.DB.prepare("INSERT INTO sessions VALUES ('actor-session', ?, ?, 'global', 'actor-membership', NULL, '2099-01-01T00:00:00.000Z')").bind(actorId, workspaceId),
+      region TEXT, workspace_incarnation TEXT, revoked_at TEXT, expires_at TEXT, impersonator_user_id TEXT)`),
+    env.DB.prepare("INSERT INTO sessions VALUES ('actor-session', ?, ?, 'global', 'actor-membership', NULL, '2099-01-01T00:00:00.000Z', NULL)").bind(actorId, workspaceId),
     ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare("INSERT INTO user_verified_emails VALUES ('guest@example.test',?)").bind(recipientId),
   ]);
