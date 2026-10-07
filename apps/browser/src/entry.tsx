@@ -1,5 +1,6 @@
 import { clearAllDrafts as clearAllDraftsOnly } from '../../desktop/src/renderer/lib/draft-cache';
 import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
+import { homeScreenApp } from '../../desktop/src/renderer/lib/home-screen';
 import { CreateOrganizationCard, type CreateOrganizationOperation } from '../../desktop/src/renderer/screens/create-organization';
 import { Building2, ChevronRight, KeyRound, LoaderCircle, Mail } from "lucide-react";
 import { Button, ConnectorMark, InlineError, RallyMark } from "@rally/ui/components/primitives";
@@ -371,7 +372,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         <button className="text-button onboarding-signout" disabled={busy} onClick={() => { void signOut(); }} type="button">Sign out</button>
       </> : <>
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
-        <p>{proof ? "Continue to your shared conversations." : challenge ? `Enter the code sent to ${email}, or open the sign-in link in that email.` : destination ? "Sign in with the email address the link was sent to." : "Your team, your work, and Rally. All in one place."}</p>
+        <p>{proof ? "Continue to your shared conversations." : challenge ? homeScreenApp() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : destination ? "Sign in with the email address the link was sent to." : "Your team, your work, and Rally. All in one place."}</p>
         {!proof && !challenge && !emailChosen ? <>
           <Button className="button-primary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>
           <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => setEmailChosen(true)}><Mail aria-hidden="true" size={16} />Continue with email</Button>

@@ -161,11 +161,12 @@ function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Elem
       <div className="settings-list-card">
         <SettingToggle setting={settings.pushNotifications}
           checked={current === 'on'}
-          disabled={!current || current === 'unsupported' || current === 'unavailable' || current === 'denied' || update.isPending}
+          disabled={!current || current === 'unsupported' || current === 'home-screen' || current === 'unavailable' || current === 'denied' || update.isPending}
           onChange={(event) => update.mutate(event.currentTarget.checked)}
           role="switch" />
       </div>
       {current === 'unsupported' && <p className="settings-section-copy">This browser cannot show Rally notifications.</p>}
+      {current === 'home-screen' && <p className="settings-section-copy">To get notifications on this device, tap Share, then Add to Home Screen. Open Rally from your Home Screen and turn this on there.</p>}
       {current === 'unavailable' && <p className="settings-section-copy">Browser notifications are not available yet.</p>}
       {current === 'denied' && <p className="settings-section-copy">Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on.</p>}
       {state.error && <InlineError>{state.error.message}</InlineError>}
