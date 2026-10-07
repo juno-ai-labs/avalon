@@ -65,8 +65,8 @@ Organizations if you belong to any.
 
 If nothing has been shared with you yet, **Your shared work** offers **Create an
 organization**. Click it, type a name and click **Create organization**. The new
-Organization opens and walks you through the same setup as the Mac app,
-starting with connecting your tools. Click **Back** to
+Organization opens and walks you through the same setup as the Mac app:
+how you look to your team, then inviting teammates. Click **Back** to
 return without creating one.
 
 ### Staying signed in
