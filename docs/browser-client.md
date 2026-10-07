@@ -242,7 +242,12 @@ Mac app's `PlatformOnboardingService.createWorkspace`, revokes the bearer sessio
 it returns without reading it into a response, and answers only
 `{ region, workspaceId }`. The entry then navigates to
 `/app/workspaces/<region>/<id>`, which opens through `/workspace/select` like
-any other organization, and the shell runs the creator's setup journey there.
+any other organization, and the shell runs the creator's setup journey there:
+organization connectors, personal connectors, "This is you in Rally", then
+inviting teammates. The browser skips the three introduction screens: people
+reach it from the landing page, which already introduced Rally, so the gate
+records the introduction as seen, as the Mac app does after a pre-sign-in
+preview.
 Any account can create one, whatever it signed in with; see
 [multiple workspaces](multiple-workspaces.md#authority-and-data-flow) for how a
 deployment links the account.
@@ -574,6 +579,9 @@ never hold. A browser-only bridge method that registers a cookie in the target
 deployment, as activation does, was more machinery than needed while
 organizations are created on Global: the browser's existing Global cookie can
 select the new organization.
+
+The browser also records the account introduction as seen instead of showing
+it, since the landing page that sent the person here already introduced Rally.
 
 **Consequences:** Creation runs only on Global; another deployment answers 409
 `global_identity_required`. The bearer the create path mints is revoked at once,
