@@ -27,8 +27,13 @@ describe('InlineEditableText', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     expect(onSave).toHaveBeenCalledWith('Juno Labs');
-    expect(screen.getByRole('button', { name: /Organization name/ })).toHaveTextContent('Juno Labs');
-    finish();
+    // Shown at once, and not editable again until the save settles.
+    expect(screen.getByText('Juno Labs')).toBeInTheDocument();
+    fireEvent.doubleClick(screen.getByText('Juno Labs'));
+    expect(screen.queryByRole('textbox')).toBeNull();
+
+    await act(async () => { finish(); });
+    expect(screen.getByRole('button', { name: /Organization name/ })).toBeInTheDocument();
   });
 
   it('cancels on Escape and marks the keystroke so the window stays open', () => {

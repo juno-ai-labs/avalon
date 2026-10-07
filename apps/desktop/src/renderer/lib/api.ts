@@ -901,10 +901,13 @@ export class RallyApi {
     return mapUser(user);
   }
 
-  /** Saves only the fields given; the server keeps the rest. */
-  async updateWorkspace(input: { name?: string; timezone?: string }): Promise<Workspace> {
-    await this.request('/workspace', { method: 'PATCH', body: input, schema: WireWorkspaceSchema });
-    return this.getWorkspace();
+  /**
+   * Saves only the fields given; the server keeps the rest. Answers with the
+   * profile the PATCH returned rather than a second read, so a committed
+   * change is never reported as failed by a read that followed it.
+   */
+  updateWorkspace(input: { name?: string; timezone?: string }): Promise<{ name: string; timezone: string }> {
+    return this.request('/workspace', { method: 'PATCH', body: input, schema: WireWorkspaceSchema });
   }
 
   async getTerminalWorkspaceSettings(signal?: AbortSignal): Promise<TerminalWorkspaceSettings> {
