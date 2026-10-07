@@ -62,23 +62,17 @@ typing does not change the active page.
 Sections are pages, and a page may be indented under the one it belongs to.
 `internet-access` sits under `workspace`; the child is a section in its own
 right, with its own definitions, its own read and its own deep link, not a
-scroll position inside its parent.
-
-Every installed connection is a page of its own under `connections`, drawn with
-its company's mark (`connectorBrandMark`), personal before organization as the
-tables list them. They share one section, `connection`, and the selected
-connection ID names the instance, the same pair a search result carries. Each
-row of the Connections tables opens its connection's page, and the page is the
-only place its actions (refresh, delete, manage events) are offered. Each page
-shows status, access, tool count and those actions; a definition
-with a `connectionKind` adds its control to the page of every connection whose
-`settingsKind` matches, which is how GitHub repository access and custom MCP
-tools appear only where they apply. A connection with nothing else to configure
-still has its page. A deep link to `connection` with no connection, or a page
-whose connection was deleted, lands on Connections once the list has loaded. `sectionLabels` in
+scroll position inside its parent. `sectionLabels` in
 `search-results.tsx` is typed as a total record of the section list, so adding a
 section that nobody named fails the build rather than shipping a search result
 whose page name is blank.
+
+`connection` is one section shared by every installed connection; the selected
+connection ID names the instance, the same pair a search result carries. Its
+sidebar items, table rows and search entries all set both. Definitions with a
+`connectionKind` appear only on the pages of connections whose `settingsKind`
+matches. A `connection` request with no live connection, including a deep link,
+lands on Connections once the list has loaded.
 
 Both sidebars render `SidebarSearch` with the same sizing, typography, icon and
 focus treatment. The main window uses its button mode to open workspace search;
@@ -110,8 +104,8 @@ searches for either label filter by the available scope. API-key searches reveal
 Workspace setup has no event selection: Rally manages Ashby subscriptions
 automatically, while automations choose which event types they use.
 Personal owners can refresh their own OAuth connection. Administrators manage
-Ashby installations through **Manage events**; no other connector's row offers
-it. The main view shows
+Ashby installations through **Manage events** on the connection's page; no
+other connector's page offers it. The main view shows
 plain status, the last event and explained **Test**, with **Get help** when needed.
 **Advanced** contains saved-status refresh, API-key replacement and technical
 recovery; subscription diagnostics are collapsed separately. Cleanup retry is
@@ -210,8 +204,8 @@ server's URL to choose its mark would cost one live request per server to draw
 the sidebar; the name is already in the list.
 
 **Consequences:** `connection` is meaningless without a connection ID, so
-anything that opens it must also set one; the main process has no deep link to
-it. A setting tied to one kind of connection declares `connectionKind` rather
+anything that opens it must also set one; a section request from the main
+process names no connection, so it lands on Connections. A setting tied to one kind of connection declares `connectionKind` rather
 than a section of its own. A server named for no known company draws the
 generic server icon.
 
