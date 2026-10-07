@@ -262,6 +262,8 @@ inline `<style>`, so the site serves `/favicon.svg` under its own CSP
 (`apps/site/public/_headers`), and the browser client's Worker passes
 `/favicon.svg` through to its static assets.
 
+PR: #1162.
+
 ### 2026-09-07 — Dock hosts read the installed icon catalog across upgrades
 
 **What changed:** Replaced the compiled selectable-ID allowlist with a versioned
