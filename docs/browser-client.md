@@ -585,7 +585,11 @@ would then remount the sidebar and reconnect the workspace socket; hiding it
 keeps the return instant.
 
 **Consequences:** A surface added to the list gets both behaviors. The sidebar
-stays mounted, and its socket open, while a surface is on screen.
+stays mounted, and its socket open, while a surface is on screen. A tab left
+open on the former Sidekicks tab's `?surface=sidekicks` address drops that query
+when the shell loads.
+
+Shipped in [#1154](https://github.com/juno-ai-labs/avalon/pull/1154).
 
 ### 2026-10-07: A created organization opens in place
 
