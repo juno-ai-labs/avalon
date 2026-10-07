@@ -39,7 +39,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -65,6 +64,7 @@ import { UsageSettingsSection } from '../components/organization-usage';
 import { InlineEditableText } from '../components/inline-editable-text';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
+import { useCloseWindowSurface } from '../lib/window-surface';
 import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError, type RallyApi } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
@@ -1214,10 +1214,7 @@ export function WorkspaceSettingsScreen({
   // once this window is gone.
   // A browser tab cannot close itself: there Settings is a route, and closing
   // it returns to the workspace.
-  const closeSettings = useCallback(() => {
-    if (browserHost) window.location.hash = '#/';
-    else window.close();
-  }, [browserHost]);
+  const closeSettings = useCloseWindowSurface();
   useEscapeClosesWindow({ enabled: standaloneWindow, unsavedTextScope: contentRef, onClose: closeSettings });
 
   // The settings window is kept and reused, so a pane already on screen does

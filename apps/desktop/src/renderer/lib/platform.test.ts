@@ -30,17 +30,13 @@ describe('browser fallback single-platform identity boundary', () => {
     vi.unstubAllGlobals();
   });
 
-  it('reuses the Sidekicks window and clears its opener before navigation', async () => {
-    const popup = { closed: false, opener: window, location: { href: '' }, focus: vi.fn() };
-    const open = vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+  it('opens Sidekicks as a route of this tab rather than a new one', async () => {
+    const open = vi.spyOn(window, 'open');
     await desktopBridge().openSidekicks('example');
-    expect(popup.opener).toBeNull();
-    expect(popup.location.href).toContain('#/sidekicks/example');
+    expect(window.location.hash).toBe('#/sidekicks/example');
     await desktopBridge().openSidekicks();
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(popup.location.href).toContain('#/sidekicks');
-    expect(popup.focus).toHaveBeenCalledOnce();
-    popup.closed = true;
+    expect(window.location.hash).toBe('#/sidekicks');
+    expect(open).not.toHaveBeenCalled();
     open.mockRestore();
   });
 

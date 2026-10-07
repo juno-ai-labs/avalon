@@ -21,6 +21,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
 | `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context, optional setup capabilities, and `useShellCapabilities`: which host is drawing and whether the reader is a guest. |
+| `apps/desktop/src/renderer/lib/window-surface.ts` | The surfaces the Mac app opens in their own window (Settings, Sidekicks), which a browser tab shows as full-tab routes, and how each closes. |
 | `apps/desktop/src/renderer/components/mac-download-link.tsx` | The Mac app download row, the sidebar's footer item when the host is a browser tab. |
 | `packages/contracts/src/browser-session.ts` | Shared credential-free session and email exchange schemas. |
 | `apps/browser/wrangler.jsonc` | Assets and the explicit Global API service binding. |
@@ -203,10 +204,12 @@ Breakouts, the details rail and the Settings route. The value carries
 `_` workspace of the cookie adapter. Anything only the Mac app can do (accepting
 a workspace invitation from the desktop flow, desktop sign-in) rejects with
 "Available in the Mac app." Creating an organization is the entry's, not the
-shell's; see below. A browser tab has no Settings window to open, so Settings
-is the main window's `#/settings` route; like that window, it takes the whole
-tab and hides the sidebar, which stays mounted so closing Settings returns to
-the workspace without reloading it. In Settings, Application shows
+shell's; see below. A browser tab cannot keep a window of its own, so the
+surfaces the Mac app opens in one, Settings and Sidekicks (the library and each
+Sidekick's screen), are routes of the main window here (`#/settings`,
+`#/sidekicks`). `lib/window-surface.ts` lists them; on such a route the shell
+takes the whole tab and hides the sidebar, which stays mounted so closing the
+surface returns to the workspace without reloading it. In Settings, Application shows
 Appearance and names the Mac app for the rest, and Notifications offers
 "In this browser". The sidebar always shows **Download the Mac app** above the
 account menu, as a footer item ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
@@ -564,6 +567,25 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-07: Settings and Sidekicks take the whole tab
+
+**What changed:** Settings and Sidekicks, which the Mac app opens in their own
+windows, are routes of the main window in a browser tab, listed in
+`lib/window-surface.ts`. On those routes the shell hides the sidebar and gives
+the surface the whole tab. Sidekicks used to open in a second, named tab; it now
+opens at `#/sidekicks` in the same one, and its library gains a close button.
+
+**Why:** Settings drew in a pane beside the sidebar, which read as a channel
+rather than as its own place. Sidekicks opened a tab of its own, which a person
+then had to find and close.
+
+**Considered and rejected:** Mounting these routes outside the shell. Leaving
+would then remount the sidebar and reconnect the workspace socket; hiding it
+keeps the return instant.
+
+**Consequences:** A surface added to the list gets both behaviors. The sidebar
+stays mounted, and its socket open, while a surface is on screen.
 
 ### 2026-10-07: A created organization opens in place
 
