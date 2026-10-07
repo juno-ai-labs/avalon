@@ -2261,3 +2261,40 @@ describe("WorkspaceDO space authority", () => {
     })).toMatchObject({ rows: [] });
   });
 });
+
+describe("WorkspaceDO opening a new Organization", () => {
+  const GENERAL = asSpaceId("00000000-0000-7000-8000-00000000cf1b");
+
+  it("given General's anchor, when the Organization is initialized, then General exists and its Spaces are ready in that one call", async () => {
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: OWNER, spaceId: GENERAL, authorityGeneration: 1,
+    })).resolves.toEqual({ spacesReady: true });
+
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ phase: "complete", generalSpaceId: GENERAL, ready: true });
+    expect((await spaceDirectories(OWNER)).active.items).toMatchObject([{ id: GENERAL, name: "General" }]);
+  });
+
+  it("given no anchor, when a new Organization is initialized, then it is answered not ready and nothing is created", async () => {
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam"))
+      .resolves.toEqual({ spacesReady: false });
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ phase: "pending", generalSpaceId: null, ready: false });
+  });
+
+  it("given a guest as the creator, when the Organization is initialized, then General is not opened for them", async () => {
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: GUEST, spaceId: GENERAL, authorityGeneration: 1,
+    })).resolves.toEqual({ spacesReady: false });
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ generalSpaceId: null, ready: false });
+  });
+
+  it("given an Organization already open, when it is initialized again, then it is answered ready without an anchor", async () => {
+    await workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: OWNER, spaceId: GENERAL, authorityGeneration: 1,
+    });
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam"))
+      .resolves.toEqual({ spacesReady: true });
+  });
+});

@@ -33,17 +33,27 @@ function finalRegionalWorkstreamAnchorStatement(
   ).bind(workstreamId, workspaceId);
 }
 
+/**
+ * The databases already seen in the final anchor shape. A schema only moves
+ * forward, so once 0090 has dropped the legacy columns the probe cannot answer
+ * otherwise, and every Space, Sidekick and Channel create after the first in
+ * an isolate skips a D1 round trip. Keyed by binding, so a legacy-shaped
+ * database is still probed whatever another binding answered.
+ */
+const finalAnchorShape = new WeakSet<D1Database>();
+
 async function regionalWorkstreamAnchorStatement(
   env: Pick<Env, "DB">,
   workspaceId: string,
   workstreamId: string,
   at: string,
 ): Promise<{ legacyShape: boolean; statement: D1PreparedStatement }> {
-  const legacyShape = await env.DB.prepare(
+  const legacyShape = !finalAnchorShape.has(env.DB) && await env.DB.prepare(
     `SELECT 1 AS legacy FROM pragma_table_info('workstreams')
       WHERE name = 'title' LIMIT 1`,
   ).first<{ legacy: number }>();
   if (!legacyShape) {
+    finalAnchorShape.add(env.DB);
     return {
       legacyShape: false,
       statement: finalRegionalWorkstreamAnchorStatement(env, workspaceId, workstreamId),
@@ -80,6 +90,18 @@ export async function writeRegionalWorkstreamAnchorBatch(
   input: { workspaceId: string; workstreamId: string; at: string },
   additionalStatements: () => D1PreparedStatement[],
 ): Promise<void> {
+  await batchWithRegionalWorkstreamAnchor(env, input, (anchor) => [anchor, ...additionalStatements()]);
+}
+
+/**
+ * `writeRegionalWorkstreamAnchorBatch` for a caller that places the anchor
+ * itself, after a row it references, and reads the batch's results.
+ */
+export async function batchWithRegionalWorkstreamAnchor(
+  env: Pick<Env, "DB">,
+  input: { workspaceId: string; workstreamId: string; at: string },
+  statements: (anchor: D1PreparedStatement) => D1PreparedStatement[],
+): Promise<D1Result[]> {
   const anchor = await regionalWorkstreamAnchorStatement(
     env,
     input.workspaceId,
@@ -87,17 +109,16 @@ export async function writeRegionalWorkstreamAnchorBatch(
     input.at,
   );
   try {
-    await env.DB.batch([anchor.statement, ...additionalStatements()]);
+    return await env.DB.batch(statements(anchor.statement));
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     const migrationRemovedLegacyColumns =
       /(?:no such column|has no column named).*title|title.*(?:no such column|has no column named)/iu
         .test(reason);
     if (!anchor.legacyShape || !migrationRemovedLegacyColumns) throw error;
-    await env.DB.batch([
+    return env.DB.batch(statements(
       finalRegionalWorkstreamAnchorStatement(env, input.workspaceId, input.workstreamId),
-      ...additionalStatements(),
-    ]);
+    ));
   }
 }
 
@@ -142,47 +163,72 @@ export async function claimParentAnchor(
   parentId: string,
   parentKind: ConversationParentKind,
 ): Promise<{ generation: number }> {
+  const authority = await readWorkstreamAuthorityControl(env);
+  const at = new Date().toISOString();
+  const statements = parentAnchorStatements(env, { workspaceId, parentId, parentKind, generation: authority.generation, at });
+  const results = await batchWithRegionalWorkstreamAnchor(
+    env,
+    { workspaceId, workstreamId: parentId, at },
+    (anchor) => [anchor, ...statements.statements],
+  );
+  statements.requireUnclaimed(results.slice(1));
+  return authority;
+}
+
+/**
+ * A parent's regional route, and the read that claims its id against a
+ * Channel create, for a caller writing them in its own batch after the
+ * anchor. `requireUnclaimed` takes these statements' results, in order.
+ *
+ * A Channel create may name its own id, and claims it with its receipt only
+ * while no anchor has it. The read is the other half of that claim, for a
+ * Space or Sidekick: anchor first, then refuse if a Channel's receipt already
+ * names the id. Whichever statement D1 runs first wins, so the two cannot both
+ * believe they own it. Their ids can be seen before their anchor exists when
+ * provisioning is replayed, which is the case this closes; it fails loudly
+ * rather than sharing the id's route. A Channel's own bootstrap is exempt: a
+ * receipt for its id is its own, and restoring a created Channel is one. The
+ * read rides in the batch, after the anchor, so the claim costs no round trip
+ * of its own.
+ */
+export function parentAnchorStatements(
+  env: Pick<Env, "DB" | "AVALON_REGION">,
+  input: { workspaceId: string; parentId: string; parentKind: ConversationParentKind; generation: number; at: string },
+): { statements: D1PreparedStatement[]; requireUnclaimed: (results: readonly D1Result[]) => void } {
   // `workstream_authority_routes` and the `workstreams` anchor are keyed by
   // parent id whatever the kind: every reader of the route (loop activation,
   // socket admission, the notification generation fence) keys on the same id,
   // and the D1 column keeps its name because D1 migrations are immutable.
-  const workstreamId = parentId;
-  const authority = await readWorkstreamAuthorityControl(env);
-  const at = new Date().toISOString();
-  await writeRegionalWorkstreamAnchorBatch(env, { workspaceId, workstreamId, at }, () => [
-    env.DB.prepare(
-      `INSERT OR IGNORE INTO workstream_authority_routes
-         (workspace_id, workstream_id, generation, object_name, state, stage_index,
-          source_cursor, source_fence_sequence, source_hash, target_hash,
-          row_counts_json, imported_at, verified_at, activated_at, updated_at)
-       VALUES (?, ?, ?, ?, 'active', 0, 0, 0, 'created_in_do', 'created_in_do',
-               '{}', ?, ?, ?, ?)`,
-    ).bind(
-      workspaceId,
-      workstreamId,
-      authority.generation,
-      `${env.AVALON_REGION}:${workspaceId}:${workstreamId}`,
-      at,
-      at,
-      at,
-      at,
-    ),
-  ]);
-  // A Channel create may name its own id, and claims it with its receipt only
-  // while no anchor has it. This is the other half of that claim, for a Space
-  // or Sidekick: anchor first, then refuse if a Channel's receipt already names
-  // the id. Whichever statement D1 runs first wins, so the two cannot both
-  // believe they own it. Their ids can be seen before their anchor exists when
-  // provisioning is replayed, which is the case this closes; it fails loudly
-  // rather than sharing the id's route. A Channel's own bootstrap is exempt:
-  // a receipt for its id is its own, and restoring a created Channel is one.
-  const claimed = parentKind !== "workstream" && await env.DB.prepare(
+  const { workspaceId, parentId: workstreamId, at } = input;
+  const route = env.DB.prepare(
+    `INSERT OR IGNORE INTO workstream_authority_routes
+       (workspace_id, workstream_id, generation, object_name, state, stage_index,
+        source_cursor, source_fence_sequence, source_hash, target_hash,
+        row_counts_json, imported_at, verified_at, activated_at, updated_at)
+     VALUES (?, ?, ?, ?, 'active', 0, 0, 0, 'created_in_do', 'created_in_do',
+             '{}', ?, ?, ?, ?)`,
+  ).bind(
+    workspaceId,
+    workstreamId,
+    input.generation,
+    `${env.AVALON_REGION}:${workspaceId}:${workstreamId}`,
+    at,
+    at,
+    at,
+    at,
+  );
+  if (input.parentKind === "workstream") return { statements: [route], requireUnclaimed: () => undefined };
+  const claim = env.DB.prepare(
     "SELECT 1 AS claimed FROM workstream_create_receipts WHERE workstream_id = ? LIMIT 1",
-  ).bind(workstreamId).first<{ claimed: number }>();
-  if (claimed) {
-    throw new ApiError(409, "workstream_id_unavailable", "This conversation id is already claimed by a channel create");
-  }
-  return authority;
+  ).bind(workstreamId);
+  return {
+    statements: [route, claim],
+    requireUnclaimed: (results) => {
+      if ((results[1]?.results?.length ?? 0) > 0) {
+        throw new ApiError(409, "workstream_id_unavailable", "This conversation id is already claimed by a channel create");
+      }
+    },
+  };
 }
 
 /**
