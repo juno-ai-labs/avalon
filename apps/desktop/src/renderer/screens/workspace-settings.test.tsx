@@ -411,7 +411,7 @@ describe('Organization settings', () => {
       proposedMode: 'full_internet', customDomains: [], remainingCustomSlots: 7,
       affectedWorkstreamIds: ['00000000-0000-7000-8000-000000000091'],
       affectedWorkstreams: [{ id: '00000000-0000-7000-8000-000000000091', title: 'Customer export' }],
-      warning: 'Full internet lets Terminal code contact arbitrary public destinations.',
+      warning: 'Full internet lets cloud computers access any website or internet service.',
     });
     api.applyTerminalNetworkPolicy.mockResolvedValue({
       availability: 'supported', mode: 'full_internet', revision: 2, verificationState: 'verified',
@@ -679,7 +679,7 @@ describe('Organization settings', () => {
     await waitFor(() => expect(fullInternet).toBeChecked(), { timeout: 10_000 });
     fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
 
-    expect(await screen.findByText(/arbitrary public destinations/u, undefined, { timeout: 10_000 })).toBeVisible();
+    expect(await screen.findByText(/any website or internet service/u, undefined, { timeout: 10_000 })).toBeVisible();
     expect(api.previewTerminalNetworkPolicy).toHaveBeenCalledWith({
       expectedRevision: 1, mode: 'full_internet', customDomains: [],
     });
