@@ -75,6 +75,12 @@ transcript's use of it.
 `apple` is in the table without being a connector: the browser client's Mac
 download row wears it. The table holds company marks, whatever links to them.
 
+A custom MCP server has no connector type of its own, so it wears the mark of a
+company its display name spells out in whole words: "Cloudflare API" draws
+`cloudflare`, which is in the table for exactly that. `x` and `apple` never
+match a name. A server whose name names no company in the table draws nothing,
+and the caller falls back to its own generic icon.
+
 The public landing is static HTML and has no React runtime, so it cannot go
 through `ConnectorMark`. It inlines `@thesvg/react/apple`'s `mono` path on the
 download button, painted in `currentColor`, and the `github` and `hugging-face`
