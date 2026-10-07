@@ -7988,7 +7988,7 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
   gap: 2px;
   width: min(404px, var(--title-menu-room));
 }
-.title-menu-view:has(> .title-menu-scope) { width: min(420px, var(--title-menu-room)); }
+.title-menu-view:has(> .title-menu-people-search) { width: min(420px, var(--title-menu-room)); }
 /* The breadcrumb already names the level, so its section heading would say it twice. */
 .title-menu-view > .title-menu-sidekicks .workstream-context-section h2 { display: none; }
 .title-menu-view > * { animation: title-menu-enter 300ms cubic-bezier(.2, .8, .2, 1) both; }
@@ -8056,29 +8056,8 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .title-menu-level-meta { color: var(--av-sys-color-text-muted); flex: none; font-size: 13.5px; }
 .title-menu-level-chevron { color: var(--av-sys-color-text-disabled); flex: none; }
 
-/* People: who can see it, a search, who is in it, who could be. */
-.title-menu-scope {
-  align-items: center;
-  background: var(--av-sys-color-surface-sunken);
-  border-radius: 12px;
-  color: var(--av-ref-color-neutral-11);
-  display: flex;
-  gap: 12px;
-  margin-bottom: 8px;
-  padding: 12px 14px;
-}
-/* The icon stays level with the title when the detail wraps. */
-.title-menu-scope > svg { align-self: flex-start; flex: none; margin-top: 2px; }
-.title-menu-scope-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.title-menu-scope-title { color: var(--av-sys-color-text-default); font-size: 14.5px; }
-.title-menu-scope-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; }
-/* Too narrow for Change beside the copy: the icon stays beside the title, and
-   Change moves under the copy. */
-@media (max-width: 480px) {
-  .title-menu-scope { align-items: start; column-gap: 12px; display: grid; grid-template-columns: auto minmax(0, 1fr); row-gap: 8px; }
-  .title-menu-scope .title-menu-link { grid-column: 2; justify-self: start; margin-left: -4px; }
-}
-.title-menu-view:has(> .title-menu-scope) .title-menu-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
+/* People: a search that also takes addresses, who is in it, who could be. */
+.title-menu-people-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
 .title-menu-person { align-items: center; display: flex; gap: 12px; min-height: 52px; padding: 4px 8px; }
 .title-menu-person .avatar { height: 34px; width: 34px; }
 .title-menu-person-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
@@ -8118,6 +8097,7 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .title-menu-add:hover:not(:disabled) { background: var(--av-sys-color-surface-sunken); }
 .title-menu-add:disabled { cursor: progress; opacity: .6; }
 .title-menu-error { color: var(--av-sys-color-danger-base); font-size: 12.5px; margin: 0 8px 6px; }
+.title-menu-load-failed { align-items: center; color: var(--av-sys-color-danger-base); display: flex; font-size: 12.5px; gap: 12px; justify-content: space-between; margin: 0 8px 6px; }
 
 /* More: the conversation's settings as switches, grouped, then its actions. */
 .title-menu-settings { background: var(--av-sys-color-surface-sunken); border-radius: 12px; margin-bottom: 8px; padding: 4px; }

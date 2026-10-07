@@ -703,6 +703,14 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       ...(!onSelect && breakoutPaneOpen ? { chevron: 'right' as const } : {}),
       menu: <ChannelMenu
         actions={mainActions}
+        appearance={appearanceChange ? <AppearanceSubmenu
+          appearance={channelAppearance}
+          icon={<IconPalette aria-hidden="true" size={16} stroke={1.8} />}
+          id={id}
+          key={id}
+          label="Icon and color"
+          onChange={appearanceChange}
+        /> : undefined}
         addSidekick={(context || channelRail) && <SidekickPicker substreamId="0" workstreamId={id} />}
         breakouts={breakoutMarks}
         // The update re-runs the import in the embedded browser, which only the Mac app has.
@@ -710,7 +718,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         onOpenArtifact={context?.openArtifact}
         onOpenBreakout={openBreakout}
         onOpenSidekick={(sidekickId) => void desktopBridge().openSidekicks(sidekickId)}
-        onParticipants={context?.openParticipantDialog}
         onRefreshSidekicks={context?.refreshSidekicks}
         onSidekickMenuOpen={context?.loadSidekickOptions}
         openSubstreamId={openBreakoutId}
@@ -761,7 +768,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         />}
         breakout={{ substreamId: breakoutId, title }}
         channel={{ id, title: railTitle ?? '', appearance: channelAppearance }}
-        onParticipants={context.openParticipantDialog}
         onShowInChannel={mainVisible ? () => showInChannel(openBreakoutMark?.originTurnId) : undefined}
         origin={context.origin}
         addSidekick={<SidekickPicker substreamId={breakoutId} workstreamId={id} />}

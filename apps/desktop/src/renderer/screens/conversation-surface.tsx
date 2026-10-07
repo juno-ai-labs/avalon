@@ -2838,16 +2838,21 @@ export function ConversationSurface({
         replyCount,
         people: parentKind === 'workstream' ? {
           candidates: visibleMembers,
-          onAdd: (member) => {
+          onAdd: async (member) => {
             removeParticipant.reset();
             invitations.invite.reset();
-            addParticipant.mutate({ member, target: substreamId });
+            invitations.remove.reset();
+            await addParticipant.mutateAsync({ member, target: substreamId });
           },
           adding: addParticipant.isPending,
           error: addParticipant.error
             ? refusalMessage(addParticipant.error) ?? 'That person couldn’t be added.'
             : invitations.invite.error ? 'They couldn’t be invited. Try again.'
-              : invitations.remove.error ? 'That invite couldn’t be cancelled. Try again.'
+              : invitations.remove.error
+                // They signed in between the list loading and the click: the invite is used.
+                ? invitations.remove.error instanceof ApiError && invitations.remove.error.code === 'scope_revision_conflict'
+                  ? 'They have already joined. Remove them from the people instead.'
+                  : 'That invite couldn’t be cancelled. Try again.'
                 : undefined,
           currentUserId: session?.user.id,
           onRemove: (member) => {
@@ -2857,8 +2862,10 @@ export function ConversationSurface({
           },
           invites: api && session?.workspace ? {
             pending: invitations.pending.data?.map((guest) => guest.email),
+            loadFailed: invitations.pending.isError,
+            onRetryLoad: () => { void invitations.pending.refetch(); },
             onInvite: async (emails) => {
-              addParticipant.reset();
+              // A failed add earlier in the same submission stays reported.
               invitations.remove.reset();
               await invitations.invite.mutateAsync([...emails].sort());
               // Someone who already had an account is claimed as they are invited, and joins the room.
@@ -2868,7 +2875,14 @@ export function ConversationSurface({
               const guest = invitations.pending.data?.find((candidate) => candidate.email === email);
               if (!guest) return;
               invitations.invite.reset();
-              invitations.remove.mutate(guest);
+              addParticipant.reset();
+              invitations.remove.mutate(guest, {
+                onError: (error) => {
+                  if (error instanceof ApiError && error.code === 'scope_revision_conflict') {
+                    void queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) });
+                  }
+                },
+              });
             },
             onLoad: () => setInvitesWanted(true),
           } : undefined,
