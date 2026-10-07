@@ -2290,6 +2290,18 @@ describe("WorkspaceDO opening a new Organization", () => {
       .resolves.toMatchObject({ generalSpaceId: null, ready: false });
   });
 
+  it("given a creator lookup that fails, when the Organization is initialized, then it answers not ready rather than failing", async () => {
+    // The creator's relationship is read from D1 on a fresh object; with the
+    // table gone that read throws, as a D1 outage would.
+    await env.DB.exec("DROP TABLE workspace_members");
+
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: OWNER, spaceId: GENERAL, authorityGeneration: 1,
+    })).resolves.toEqual({ spacesReady: false });
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ generalSpaceId: null, ready: false });
+  });
+
   it("given an Organization already open, when it is initialized again, then it is answered ready without an anchor", async () => {
     await workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
       creatorUserId: OWNER, spaceId: GENERAL, authorityGeneration: 1,

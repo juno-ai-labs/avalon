@@ -7950,23 +7950,44 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): Promise<{ spacesReady: boolean }> {
     await this.initialized;
     this.ensureIdentity(workspaceId, placementAffinity);
-    const storage = this.spaceStorage();
-    if (!storage.ready()) return { spacesReady: false };
-    if (storage.bootstrapStatus().ready) return { spacesReady: true };
-    if (storage.generalSpaceId() === null) {
-      if (general === undefined) return { spacesReady: false };
-      const opening = parseRpcInput(WorkspaceGeneralOpeningSchema, general, "initialize_workspace_general");
-      if (await this.spaceRefusalCode(workspaceId, opening.creatorUserId, "write")) return { spacesReady: false };
-      const opened = await this.reserveGeneral(
-        { workspaceId, userId: opening.creatorUserId },
-        opening.spaceId,
-        opening.authorityGeneration,
-      );
-      if (!opened.ok) return { spacesReady: false };
+    // The identity above is the call's contract; the Spaces are best effort, as
+    // `openGeneralSpaceForNewWorkspace` is, so a failure there answers not
+    // ready and the caller's slower path (and the alarm behind it) takes over
+    // rather than failing an Organization whose rows are already committed.
+    try {
+      return { spacesReady: await this.openSpaces(workspaceId, general) };
+    } catch (error) {
+      logWarn(this.env, "space_general_open_failed", {
+        workspace_id: workspaceId,
+        reason: diagnosticErrorCode(error, "space_general_open_failed"),
+      });
+      return { spacesReady: false };
     }
-    if (storage.completeBootstrap() !== "complete") return { spacesReady: false };
+  }
+
+  private async openSpaces(workspaceId: string, general: WorkspaceGeneralOpening | undefined): Promise<boolean> {
+    const storage = this.spaceStorage();
+    if (!storage.ready()) return false;
+    if (storage.bootstrapStatus().ready) return true;
+    if (storage.generalSpaceId() === null) {
+      if (general === undefined) return false;
+      const opening = parseRpcInput(WorkspaceGeneralOpeningSchema, general, "initialize_workspace_general");
+      const refusal = await this.spaceRefusalCode(workspaceId, opening.creatorUserId, "write");
+      const opened = refusal === null
+        ? await this.reserveGeneral(
+          { workspaceId, userId: opening.creatorUserId },
+          opening.spaceId,
+          opening.authorityGeneration,
+        )
+        : { ok: false as const, code: refusal };
+      if (!opened.ok) {
+        logWarn(this.env, "space_general_open_refused", { workspace_id: workspaceId, reason: opened.code });
+        return false;
+      }
+    }
+    if (storage.completeBootstrap() !== "complete") return false;
     this.publishSpaceSnapshot();
-    return { spacesReady: true };
+    return true;
   }
 
   /** Which room owns an automation, and which of its conversations is home, for a caller resolving participation. */
