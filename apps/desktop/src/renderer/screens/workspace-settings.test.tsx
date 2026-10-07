@@ -2168,10 +2168,12 @@ describe('Organization settings', () => {
 
     // One menu per eligible row, each with an accessible name only that row
     // can answer to. `Sam` appears twice on purpose: a name alone would leave a
-    // screen-reader user unable to tell the two rows apart. The owner's row has
-    // none: theirs is the one role the server refuses to reassign or remove.
+    // screen-reader user unable to tell the two rows apart. The owner's menu is
+    // disabled: theirs is the one role the server refuses to reassign or remove.
     const names = screen.getAllByRole('button', { name: /member actions$/ }).map((control) => control.getAttribute('aria-label'));
+    expect(screen.getByRole('button', { name: 'Adam (adam@example.com) member actions' })).toBeDisabled();
     expect(names).toEqual([
+      'Adam (adam@example.com) member actions',
       'Riley (riley@example.com) member actions',
       'Sam (sam@example.com) member actions',
       'Sam (sam.reed@example.com) member actions',
@@ -2207,7 +2209,7 @@ describe('Organization settings', () => {
     expect(screen.queryByRole('button', { name: /member actions$/ })).not.toBeInTheDocument();
   });
 
-  it('lists members by name, then guests by email, ignoring case', async () => {
+  it('lists members by name, then guests by name, ignoring case', async () => {
     const guestZed = { ...member, id: 'user-5', name: 'Aaron', email: 'Zed@example.com', accessClass: 'guest' as const, role: null };
     const guestBo = { ...member, id: 'user-6', name: 'zz', email: 'bo@example.com', accessClass: 'guest' as const, role: null };
     const lowerName = { ...member, id: 'user-7', name: 'bea', email: 'bea@example.com' };
@@ -2217,7 +2219,7 @@ describe('Organization settings', () => {
     expect(await screen.findByText('Riley')).toBeVisible();
     const rows = Array.from(document.querySelectorAll('.settings-member-list .settings-member-row strong'))
       .map((name) => name.textContent);
-    expect(rows).toEqual(['Adam', 'bea', 'Riley', 'Sam', 'zz', 'Aaron']);
+    expect(rows).toEqual(['Adam', 'bea', 'Riley', 'Sam', 'Aaron', 'zz']);
   });
 
   it('suspends a member after confirmation and refreshes the roster', async () => {
