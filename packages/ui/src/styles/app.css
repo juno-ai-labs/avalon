@@ -6792,8 +6792,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    `border-bottom: 0` — so a header left with it blinks a rule off at the swap;
    the width is zeroed rather than the shorthand so the colour stays a token's
    to name. Released here rather than dropping the shared class, which is also
-   where the padding comes from. The new-chat launcher restates its own border
-   for the recipient bar, at a specificity that still wins. */
+   where the padding comes from. */
 .workstream-launch-screen > .launch-header {
   border-bottom-width: 0;
   min-height: 0;
@@ -7000,200 +6999,287 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   white-space: nowrap;
 }
 
-/* The new work stream screen follows GrokBot's recipient-first composition
-   surface. The chips stay deliberately dense: each participant reads as one
-   charcoal pill, with the caret beginning immediately after the final selected
-   person. */
-.new-chat-screen:not(.is-launching) > .launch-header {
-  border-bottom: .5px solid var(--av-cmp-sidebar-border);
-  height: 48.5px;
-  overflow: visible;
-  padding: 0;
-  position: relative;
-  z-index: 8;
+/* The setup rows above the new-Channel composer. Optical left edge: a round
+   end reads 2–3px inside its box, so the pill sits 1px and the label 2px in
+   from the composer. 9px between rows is the composer stack's own gap. */
+.new-channel-setup {
+  display: grid;
+  gap: 9px;
+  padding: 0 6px 0 1px;
 }
 
-.new-chat-recipient-bar {
+.new-channel-participants {
   align-items: center;
   display: flex;
-  gap: 6px;
-  height: 48px;
-  padding: 10px 12px 10px 12px;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 1px;
+}
+
+.new-channel-participants-label {
+  color: var(--av-sys-color-text-muted);
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* One box for both states, so the widening is the box's own width easing
+   rather than one control swapped for another. */
+.new-channel-add {
+  align-items: center;
+  border: 1px dashed var(--av-ref-color-line-5);
+  border-radius: 999px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 30px;
+  position: relative;
+  transition:
+    width 220ms cubic-bezier(.32, .72, 0, 1),
+    border-color 160ms ease,
+    background-color 160ms ease;
+  width: 30px;
+}
+
+.new-channel-add.is-searching {
+  background: var(--av-sys-color-surface-default);
+  border-color: var(--av-cmp-composer-border-color-focus);
+  border-style: solid;
+  width: 170px;
+}
+
+.new-channel-add-button {
+  align-items: center;
+  animation: new-channel-fade 160ms ease both;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  height: 100%;
+  justify-content: center;
+  padding: 0;
+  transition: color 150ms ease, background-color 150ms ease;
   width: 100%;
 }
 
-.new-chat-to-label {
+.new-channel-add-button:hover { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
+
+.new-channel-add-icon {
+  animation: new-channel-fade 160ms 60ms ease both;
   color: var(--av-sys-color-text-muted);
   flex: 0 0 auto;
-  font-size: 14px;
-  font-weight: 420;
-  line-height: 20px;
+  margin-left: 10px;
 }
 
-.new-chat-recipient-input-shell {
-  align-items: center;
-  display: flex;
+.new-channel-add > input {
+  animation: new-channel-fade 160ms 60ms ease both;
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-default);
   flex: 1;
-  gap: 5px;
+  font-size: 13px;
+  line-height: 18px;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  outline: 0;
+  padding: 0 10px 0 6px;
 }
 
-.new-chat-recipient-input-shell::-webkit-scrollbar { display: none; }
+.new-channel-roster-anchor {
+  display: flex;
+  min-width: 0;
+  position: relative;
+}
 
-.new-chat-recipient-chip {
+.new-channel-roster {
   align-items: center;
   background: var(--av-sys-color-surface-elevated-hover);
+  border: 0;
   border-radius: 999px;
   color: var(--av-sys-color-text-default);
   display: inline-flex;
-  flex: 0 0 auto;
-  font-size: 14px;
-  font-weight: 400;
-  gap: 6px;
-  height: 29px;
-  line-height: 20px;
-  padding: 0 7px 0 4px;
+  font-size: 13px;
+  font-weight: 500;
+  gap: 7px;
+  height: 30px;
+  line-height: 18px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 12px 0 5px;
+  transition: background-color 150ms ease;
 }
 
-.new-chat-recipient-chip .avatar-small {
-  border-color: transparent;
-  height: 23px;
-  width: 23px;
+button.new-channel-roster:hover,
+button.new-channel-roster[aria-expanded='true'] { background-image: var(--hover-layer); }
+.new-channel-roster:has(> .new-channel-roster-chevron) { padding-right: 10px; }
+[data-theme='dark'] .new-channel-roster { background: var(--av-sys-color-surface-subtle); }
+
+.new-channel-roster .avatar-stack { flex: 0 0 auto; }
+.new-channel-roster .avatar-stack-item { animation: new-channel-arrive 220ms cubic-bezier(.32, .72, 0, 1) both; }
+.new-channel-roster > .avatar-small { height: 20px; width: 20px; }
+
+.new-channel-roster-names {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.new-chat-recipient-chip > button {
+.new-channel-roster-chevron { color: var(--av-sys-color-text-muted); flex: 0 0 auto; }
+
+/* Both lists open upward; `fitAbove` in new-channel-participants.tsx caps
+   each at the room above it, which depends on the draft's height. */
+.new-channel-popover {
+  animation: new-channel-pop 180ms cubic-bezier(.32, .72, 0, 1) both;
+  background: var(--av-sys-color-surface-default);
+  border: .5px solid var(--av-cmp-composer-border-color);
+  border-radius: 14px;
+  bottom: calc(100% + 8px);
+  box-shadow: var(--av-sys-elevation-shadow-md);
+  display: grid;
+  gap: 2px;
+  left: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  position: absolute;
+  transform-origin: bottom left;
+  width: 260px;
+  z-index: 30;
+}
+
+[data-theme='dark'] .new-channel-popover { background: var(--av-sys-color-surface-elevated); }
+
+.new-channel-popover-row {
   align-items: center;
   background: transparent;
   border: 0;
-  color: var(--av-sys-color-text-muted);
-  display: flex;
-  height: 19px;
-  justify-content: center;
-  margin-left: 1px;
-  padding: 0;
-  width: 16px;
-}
-
-.new-chat-recipient-chip > button:hover { color: var(--av-sys-color-text-default); }
-
-[data-theme='dark'] .new-chat-recipient-chip {
-  background: var(--av-sys-color-surface-subtle);
+  border-radius: 10px;
   color: var(--av-sys-color-text-default);
+  display: flex;
+  font-size: 14px;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 10px;
+  text-align: left;
+  transition: background-color 120ms ease;
+  width: 100%;
 }
 
-[data-theme='dark'] .new-chat-recipient-chip > button { color: var(--av-sys-color-text-muted); }
-[data-theme='dark'] .new-chat-recipient-chip > button:hover { color: var(--av-sys-color-text-default); }
+button.new-channel-popover-row.is-selected,
+button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-selected); }
 
-.new-chat-recipient-input-shell > input {
+.new-channel-popover-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-channel-popover-remove {
+  align-items: center;
   background: transparent;
   border: 0;
-  color: var(--av-sys-color-text-default);
-  flex: 1 0 132px;
-  font-size: 14px;
-  font-weight: 420;
-  line-height: 20px;
-  min-width: 132px;
-  outline: 0;
+  border-radius: 6px;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  height: 22px;
+  justify-content: center;
   padding: 0;
+  transition: color 120ms ease, background-color 120ms ease;
+  width: 22px;
 }
 
-.new-chat-recipient-input-shell > input::placeholder { color: var(--av-sys-color-text-muted); }
+.new-channel-popover-remove:hover { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 
-/* The creator's chip, and every chip in a personal Space, has no remove
-   control; the padding the control would have taken is given back. */
-.new-chat-recipient-chip:not(:has(> button)) { padding-right: 10px; }
+.new-channel-popover-empty {
+  color: var(--av-sys-color-text-muted);
+  font-size: 13px;
+  line-height: 18px;
+  margin: 0;
+  padding: 10px 12px;
+  text-align: center;
+}
 
+.new-channel-placement {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.new-channel-placement-divider { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 16px; opacity: .6; }
+
+.new-channel-name {
+  background: var(--av-sys-color-surface-sunken);
+  border: 1px solid var(--av-cmp-composer-border-color);
+  border-radius: 9px;
+  color: var(--av-sys-color-text-default);
+  flex: 1;
+  font-size: 14px;
+  height: 32px;
+  min-width: 0;
+  outline: 0;
+  padding: 0 12px;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.new-channel-name::placeholder { color: var(--av-sys-color-text-muted); }
+.new-channel-name:focus { background: var(--av-sys-color-surface-default); border-color: var(--av-cmp-composer-border-color-focus); }
+
+/* The shared Space picker, drawn as a pill inline with the name. */
+.dropdown-select-trigger-pill {
+  background: var(--av-sys-color-surface-elevated-hover);
+  border: 0;
+  border-radius: 16px;
+  flex: 0 1 auto;
+  font-size: 13px;
+  gap: 6px;
+  height: 32px;
+  line-height: 16px; /* whole pixels: 16.25px rounded the name 1px high */
+  max-width: 45%;
+  min-width: 0;
+  padding: 0 10px 0 12px;
+  transition: background-color 150ms ease;
+  white-space: nowrap;
+}
+
+.dropdown-select-trigger-pill > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Optical: the chevron's ink is its point, 1px above the name's centre. */
+.dropdown-select-trigger-pill .dropdown-select-chevron { transform: translateY(1px); }
+.dropdown-select-trigger-pill[data-state='open'] { background-image: var(--hover-layer); }
+[data-theme='dark'] .dropdown-select-trigger-pill { background: var(--av-sys-color-surface-subtle); }
+
+.dropdown-select-content-pill {
+  animation: new-channel-pop 180ms cubic-bezier(.32, .72, 0, 1) both;
+  border-radius: 14px;
+  min-width: max(200px, var(--radix-select-trigger-width));
+  transform-origin: var(--radix-select-content-transform-origin);
+}
 
 .new-chat-close {
   align-items: center;
   background: transparent;
   border: 0;
+  border-radius: 8px;
   color: var(--av-sys-color-text-muted);
   display: flex;
-  border-radius: 50%;
-  flex: 0 0 20px;
-  height: 20px;
+  height: 32px;
   justify-content: center;
   padding: 0;
-}
-
-.new-chat-close:hover { color: var(--av-sys-color-text-default); }
-
-.new-chat-recipient-results {
-  background: var(--av-sys-color-surface-default);
-  border: .5px solid var(--av-cmp-composer-border-color);
-  border-radius: 14px;
-  box-shadow: var(--av-sys-elevation-shadow-md);
-  left: 32px;
-  max-height: min(330px, calc(100vh - 150px));
-  overflow-y: auto;
-  padding: 6px;
   position: absolute;
-  top: 38px;
-  width: min(560px, calc(100% - 52px));
-  z-index: 20;
+  right: 14px;
+  top: 14px;
+  transition: color 150ms ease, background-color 150ms ease;
+  width: 32px;
+  z-index: 5;
 }
 
-[data-theme='dark'] .new-chat-recipient-results {
-  background: var(--av-sys-color-surface-elevated);
-  border-color: var(--av-cmp-composer-border-color);
-}
+.new-chat-close:hover { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 
-.new-chat-recipient-results > button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  gap: 8px;
-  min-height: 36px;
-  padding: 6px 8px;
-  text-align: left;
-  width: 100%;
-}
-
-.new-chat-recipient-results:has(> .new-chat-recipient-empty) {
-  align-items: center;
-  display: grid;
-  min-height: 59px;
-}
-
-.new-chat-recipient-results > button.is-selected,
-.new-chat-recipient-results > button:hover { background: var(--av-cmp-row-background-selected); }
-[data-theme='dark'] .new-chat-recipient-results > button.is-selected,
-[data-theme='dark'] .new-chat-recipient-results > button:hover { background: var(--av-cmp-row-background-selected); }
-
-.new-chat-recipient-results .avatar-small { height: 24px; width: 24px; }
-.new-chat-recipient-copy { display: flex; flex: 1; min-width: 0; }
-.new-chat-recipient-copy strong { font-size: 14px; font-weight: 420; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.new-chat-recipient-shortcut { display: flex; gap: 2px; margin-left: auto; }
-.new-chat-recipient-shortcut kbd {
-  align-items: center;
-  background: var(--av-cmp-row-background-selected);
-  border: 0;
-  border-radius: 4px;
-  color: var(--av-sys-color-text-muted);
-  display: inline-flex;
-  font-family: inherit;
-  font-size: 10px;
-  height: 19px;
-  justify-content: center;
-  min-width: 19px;
-  padding: 0 4px;
-}
-[data-theme='dark'] .new-chat-recipient-shortcut kbd { background: var(--av-sys-color-surface-subtle); color: var(--av-sys-color-text-muted); }
-.new-chat-recipient-empty {
-  color: var(--av-sys-color-text-muted);
-  font-size: 13px;
-  font-weight: 400;
-  line-height: 18px;
-  margin: 0;
-  padding: 0 13px;
-  text-align: center;
-}
+@keyframes new-channel-fade { from { opacity: 0; } }
+@keyframes new-channel-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+@keyframes new-channel-arrive { from { opacity: 0; transform: scale(.6); } }
 
 /* While composing, the dock spans the body and dock rows and centres in them;
    launching drops it back into the dock row. Not animated, and the padding is
@@ -7205,15 +7291,15 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   padding: 0 16px var(--composer-dock-gap);
 }
 
-/* Centred, the field has only half the pane above it, and the mention and
-   command lists open upward: in a short window a full list ran under the
-   Participants bar. The screen is a size container so the lists can cap
-   themselves at the room they have. Both are positioned against the composer,
-   so `50%` is half its height whatever the draft's length, and with the dock
-   centred under the bar the room above a list is half the screen less half the
-   composer, half the bar, half the dock's bottom padding, the list's own offset
-   and a gap — 48px at most, for the command list. The 280px is each list's own
-   ceiling, restated because `min()` is the only way to keep it. */
+/* Centred, the field has only about half the pane above it, and the mention and
+   command lists open upward, so in a short window a full list would run off the
+   top. The screen is a size container so the lists can cap themselves at the
+   room they have. Both are positioned against the composer, so `50%` is half its
+   height whatever the draft's length. The setup rows above the composer push it
+   below the centre line, which only adds room, so the cap stays safe: half the
+   screen less half the composer, half the dock's bottom padding, the list's own
+   offset and a gap. The 280px is each list's own ceiling, restated because
+   `min()` is the only way to keep it. */
 .new-chat-screen:not(.is-launching) {
   container-type: size;
 }
