@@ -85,8 +85,8 @@ uses its seeded Organization instead. Nothing else makes somebody staff.
 An owner or administrator of any other Organization presses **Grant access**
 under **Settings → Organization → Allow Rally access**. `PUT
 /workspace/support-access` upserts the Organization's one
-`support_access_grants` row with an expiry seven days out; pressing it again
-restarts the seven days, and `DELETE` removes the row. Every member can read the
+`support_access_grants` row with an expiry seven days out, and `DELETE`
+removes the row. The row offers **Grant access** only while no grant is live. Every member can read the
 state, which the settings row counts down against the shared clock. A support
 session cannot grant (`support_access_grant_requires_member`), so staff cannot
 extend access nobody gave them; it can revoke.
@@ -243,7 +243,8 @@ non-macOS, and non-arm64 builds never contact the production feed.
 - A support session is bound to the staff membership incarnation that opened
   it, as an ordinary session is to its own membership's.
 - A grant and a support session are audited before they exist.
-- A support session never outlives its grant. Renewal is capped at the grant's
+- A support session never outlives its grant. What it creates (an invitation,
+  a connection) is the Organization's and stays, as anyone's would. Renewal is capped at the grant's
   expiry, which is also what lets the ordinary expiry sweep close its sockets.
 - The sidecar never observes post-admission work. It opens no conversation feed
   and reads nothing from its workspace socket but membership nudges; a feed
@@ -371,16 +372,9 @@ existing `rallywithai:` deep link for the main app.
 
 ### 2026-10-07 — Rally access: staff sessions as another Organization's people
 
-**What changed:** An Organization's administrator can grant Rally access for
-seven days from Organization preferences, see it count down, and revoke it.
-Members of Juno Labs (hard-coded as the staff Organization) then see granting
-Organizations in their account menu and open a session as any member or guest
-there, on the Mac app and the web. The session is the represented person's
-ordinary session with `sessions.impersonator_user_id` naming the staff member;
-every request and renewal re-checks the grant and the staff membership (a
-second statement on authentication, paid only by support sessions), and
-the footer shows both people with **End impersonation** in place of signing
-out.
+**What changed:** Rally access, described under
+[Support access](#support-access): a seven-day grant from Organization
+preferences, and staff sessions as the granting Organization's people.
 
 **Why:** Rally staff set up, configure and support customers' Organizations
 hands-on, and need to see and do exactly what a given person can. Asked for
@@ -396,7 +390,9 @@ grant or staff check, which would let a revoke lag.
 
 **Consequences:** Anything that authorizes from `sessions` treats a support
 session as its person, by design; a new check that must not (like granting
-access) reads `impersonatorUserId`. Identity-scoped account state (onboarding,
+access, or minting another credential) reads `impersonatorUserId`. Durable
+things a session creates as an administrator (an invitation, a role change, a
+connection) outlive the grant like any administrator's. Identity-scoped account state (onboarding,
 profile, appearance) is the staff member's and is hidden on a support session.
 The represented person's actions are not separately audited. A second
 deployment needs the staff check and grant list to cross regions.
