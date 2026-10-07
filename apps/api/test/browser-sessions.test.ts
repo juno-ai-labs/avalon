@@ -230,3 +230,27 @@ it("creates an organization for an email-only account and opens it with the cook
     expect(db.prepare("SELECT onboarding_eligible FROM users WHERE id=?").get(entry.session.user.id)).toEqual({ onboarding_eligible:0 });
   } finally { for (const database of workspaceObject.databases) database.close(); }
 });
+
+it("leaves an account's setup exemption alone when the create fails or it belongs to an organization in another deployment",async () => {
+  const eligible = (userId:string) => db.prepare("SELECT onboarding_eligible FROM users WHERE id=?").get(userId);
+  const create = (cookie:string, env:ReturnType<typeof bindings>, operationId:string) => createApp().request(`${apiOrigin}/browser/workspace/create`,{ method:"POST",
+    headers:{ origin,"content-type":"application/json",cookie },body:JSON.stringify({ name:"Acme Research",operationId }) },env);
+  const entry = await login();
+  const now = new Date().toISOString();
+  const workspaceObject = creatingWorkspaceObjectBinding(db);
+  const env = { ...bindings(),WORKSPACE_DOS:workspaceObject.binding };
+  // An operation id another account already used is refused before anything is created.
+  const taken = "01920000-0000-7000-8000-000000000011";
+  db.prepare(`INSERT INTO platform_workspace_operations(operation_id,platform_user_id,action,request_fingerprint,region,workspace_id,
+    placement_affinity,status,created_at,updated_at) VALUES (?,?,'create','other','global',?,'wnam','pending',?,?)`)
+    .run(taken,crypto.randomUUID(),crypto.randomUUID(),now,now);
+  expect((await create(entry.cookie,env,taken)).status).toBe(409);
+  expect(eligible(entry.session.user.id)).toEqual({ onboarding_eligible:0 });
+  // A member elsewhere: the binding to another deployment is all Global knows of it.
+  db.prepare(`INSERT INTO platform_workspace_bindings(platform_user_id,region,workspace_id,status,operation_id,created_at,updated_at)
+    VALUES (?,'enterprise',?,'active',?,?,?)`).run(entry.session.user.id,crypto.randomUUID(),crypto.randomUUID(),now,now);
+  try {
+    expect((await create(entry.cookie,env,"01920000-0000-7000-8000-000000000012")).status).toBe(201);
+    expect(eligible(entry.session.user.id)).toEqual({ onboarding_eligible:0 });
+  } finally { for (const database of workspaceObject.databases) database.close(); }
+});

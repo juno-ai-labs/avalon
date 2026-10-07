@@ -1192,14 +1192,6 @@ export class PlatformOnboardingService {
     requestLocation?: unknown,
     requestedOperationId?: string,
   ): Promise<Session> {
-    // Someone creating their first organization sets it up as its creator, as
-    // a new Mac account does. An email sign-in starts ineligible, since most
-    // arrive as guests; being a guest elsewhere does not exempt them. Anyone
-    // already a member of an organization keeps the exemption they have.
-    await this.env.DB.prepare(
-      `UPDATE users SET onboarding_eligible = 1 WHERE id = ? AND onboarding_eligible = 0
-         AND NOT EXISTS (SELECT 1 FROM workspace_members WHERE user_id = users.id AND access_class = 'member' AND status = 'active')`,
-    ).bind(this.auth.userId).run();
     const identity = await this.loadPlatformIdentity();
     const requestFingerprint = await sha256(JSON.stringify(["create", region, name]));
     let operationId: string;
@@ -1230,7 +1222,7 @@ export class PlatformOnboardingService {
       workspaceId = existing.workspace_id;
       placementAffinity = existing.placement_affinity;
     }
-    return this.completeRegionalAction(
+    const session = await this.completeRegionalAction(
       identity,
       region,
       workspaceId,
@@ -1245,6 +1237,27 @@ export class PlatformOnboardingService {
         preference,
       }),
     );
+    await this.makeFirstCreatorEligible(identity.platformUserId, region, workspaceId);
+    return session;
+  }
+
+  /**
+   * Someone whose first organization this is sets it up as its creator, as a
+   * new Mac account does. An email sign-in starts ineligible, since most arrive
+   * as guests, and a guest relationship here does not exempt them. Runs only
+   * once the organization exists, so a failed create changes nothing. An
+   * active binding in another deployment keeps the exemption: the binding
+   * does not say member or guest, and an established member must not be sent
+   * through setup again.
+   */
+  private async makeFirstCreatorEligible(platformUserId: string, region: Region, workspaceId: string): Promise<void> {
+    await this.env.DB.prepare(
+      `UPDATE users SET onboarding_eligible = 1 WHERE id = ? AND onboarding_eligible = 0
+         AND NOT EXISTS (SELECT 1 FROM workspace_members WHERE user_id = users.id AND workspace_id <> ?
+           AND access_class = 'member' AND status = 'active')
+         AND NOT EXISTS (SELECT 1 FROM platform_workspace_bindings WHERE platform_user_id = ? AND region <> ?
+           AND status = 'active' AND NOT (region = ? AND workspace_id = ?))`,
+    ).bind(this.auth.userId, workspaceId, platformUserId, this.env.AVALON_REGION, region, workspaceId).run();
   }
 
   async acceptInvitation(
