@@ -2,7 +2,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { PLAN_IDS, PlanIdSchema } from '@rally/contracts/usage';
 import { useEffect, useRef } from 'react';
 import { settings } from '../settings/registry';
-import { SettingLabel } from '../settings/setting-label';
+import { SettingCopy, SettingLabel } from '../settings/setting-label';
 import {
   formatMicrousd,
   usageAsOfLabel,
@@ -89,20 +89,21 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
   const { usage, fetchedAt } = reading;
   const setPlan = useSetOrganizationPlan(api);
   return <>
+    <label className="settings-preference-row">
+      <SettingCopy setting={settings.plan} />
+      <DropdownSelect
+        ariaLabel="Plan"
+        disabled={!canChangePlan || !api || offline || setPlan.isPending}
+        onValueChange={(value) => {
+          const plan = PlanIdSchema.parse(value);
+          if (plan !== usage.plan) setPlan.mutate(plan);
+        }}
+        options={PLAN_OPTIONS}
+        value={setPlan.isPending ? setPlan.variables ?? usage.plan : usage.plan}
+        variant="secondary"
+      />
+    </label>
     <div className="usage-summary">
-      <div className="usage-plan">
-        <DropdownSelect
-          ariaLabel="Plan"
-          disabled={!canChangePlan || !api || offline || setPlan.isPending}
-          onValueChange={(value) => {
-            const plan = PlanIdSchema.parse(value);
-            if (plan !== usage.plan) setPlan.mutate(plan);
-          }}
-          options={PLAN_OPTIONS}
-          value={setPlan.isPending ? setPlan.variables ?? usage.plan : usage.plan}
-          variant="secondary"
-        />
-      </div>
       {setPlan.error && <InlineError>The plan could not be changed. {setPlan.error.message}</InlineError>}
       <Meter label={METER_LABEL} tone={usageTone(usage)} value={usage.quotaRemainingPercent} />
       <p className="usage-remaining">
@@ -144,7 +145,8 @@ export function OrganizationUsageMenuItem({ api, onSelect }: {
   const { usage } = state.reading;
   const line = usageMenuLabel(usage.quotaRemainingPercent);
   return (
-    <DropdownMenu.Item aria-label={`Usage, ${line}`} className="menu-item workspace-usage-item" onSelect={onSelect}>
+    <DropdownMenu.Item aria-label={`Quota, ${line}`} className="menu-item workspace-usage-item" onSelect={onSelect}>
+      <span className="workspace-usage-title">Quota</span>
       <Meter label={METER_LABEL} size="thin" tone={usageTone(usage)} value={usage.quotaRemainingPercent} />
       <small>{line}</small>
     </DropdownMenu.Item>
