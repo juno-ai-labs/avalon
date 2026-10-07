@@ -611,6 +611,23 @@ that include the CTA must aggregate by `properties.flowId` across subjects.
 `placement: hero`. A static DMG carries no per-visitor attribution; download
 clicks and desktop signup remain separate measurements.
 
+The desktop flow starts at `desktop_install_opened`, emitted by main only when
+installation data is first created and no account is saved. Its random
+`firstSignupFlowId` persists in the installation identity file and is exposed by
+the trusted runtime bridge while no account has been observed. Sign-in reads it
+once and carries it into the existing API stages. Account changes retire it;
+existing installations and repaired corrupt identity files are not backfilled.
+The event respects Product analytics settings and uses the existing spool and
+anonymous capability. A missing or failed telemetry bridge falls back to a
+regular signup flow without blocking authentication. “Fresh install” means new
+local installation data, not reinstalling the binary over existing app data.
+
+The dashboard has two complete tracking flows: browser from the hero web CTA,
+and desktop from the first installation opening. Both include first organization
+access (new or existing) and required account introduction. Cross-subject SQL
+joins by flow ID show ordered stage counts and previous-stage drop-off within
+14 days, rather than merging site or installation subjects with account identity.
+
 The unauthenticated view endpoint accepts only a UUIDv7, but callers can submit
 fresh IDs to inflate view counts; it has no new issuance limit. Successful stages
 remain server-owned. No mailbox, account ID, proof, invitation credential, or raw
@@ -2015,20 +2032,23 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ## Changelog
 
-### 2026-10-07 — Connect landing web entry to signup
+### 2026-10-07 — Connect browser and fresh-install entry to signup
 
 **What changed:** Web entry links propagate an opaque signup flow to browser
-entry and report it on the existing site action event.
+entry and report it on the existing site action event. A new main-owned first
+installation opening carries a persisted flow into desktop signup.
 
 **Why:** Separate anonymous site and signup subjects hid abandonment between
-selecting the web CTA and completing organization setup.
+selecting the web CTA and completing organization setup. Desktop also needed a
+cohort anchored at the first opening rather than every sign-in screen.
 
 **Considered and rejected:** Replacing the direct Mac download with browser
 registration would change the acquisition experience. A static DMG cannot
 reliably carry the visitor's identity, so its clicks remain separate.
 
 **Consequences:** Join cross-subject stages by flow ID, validate incoming IDs,
-and deploy the optional-property API reader before the site producer. Download
+retire first-install lineage after account changes, and deploy the API readers
+before site and desktop producers. Download
 clicks do not prove an installation or a completed desktop signup.
 
 ### 2026-10-07 — Observe the complete first signup journey

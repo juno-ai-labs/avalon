@@ -648,6 +648,7 @@ let nativeCrashGenerationActive = false;
 let nativeCrashGenerationInvalidated = false;
 let telemetryFlushTimer: ReturnType<typeof setInterval> | null = null;
 let telemetryAccountBinding: string | null = null;
+let telemetryHasAuthenticated = false;
 let telemetryLinkInFlight: Promise<void> | null = null;
 let telemetryLinkedCapability: string | null = null;
 let telemetryLaunchId: string | null = null;
@@ -957,6 +958,7 @@ function broadcastSessionChanged(value: WireSession | null): void {
     void telemetrySpool.purgeNonessential();
     void rotateTelemetryEpochsAfterAccountChange();
   }
+  if (nextBinding) telemetryHasAuthenticated = true;
   telemetryAccountBinding = nextBinding;
   if (exposed?.workspace) {
     const nextRoute = exposed.workspace.region;
@@ -1951,6 +1953,8 @@ function configuredApiBase(region: RallyRegion): string {
 function runtimeConfig(): RuntimeConfig {
   const packaged = app.isPackaged;
   return {
+    ...(!telemetryHasAuthenticated && telemetryIdentity?.firstSignupFlowId
+      ? { firstSignupFlowId: telemetryIdentity.firstSignupFlowId } : {}),
     appVersion: app.getVersion(),
     isPackaged: packaged,
     platform: process.platform,
@@ -1987,6 +1991,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
   const launchState = await beginTelemetryLaunch(userDataDirectory(), telemetryLaunchId, new Date());
   const identityState = await readTelemetryIdentityState(userDataDirectory());
   telemetryIdentity = identityState.identity;
+  telemetryHasAuthenticated = launchAuth !== null;
   telemetryAccountBinding = launchAuth
     ? flagSessionIdentity(launchAuth.binding.userId, apiBaseForAuth(launchAuth))
     : null;
@@ -2152,6 +2157,9 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
     }
   } catch (error) {
     logWarn('rally', 'could not record the application version transition', error);
+  }
+  if (identityState.created && !launchAuth && telemetryIdentity.firstSignupFlowId) {
+    await telemetryReporter.freshInstallOpened(telemetryIdentity.firstSignupFlowId);
   }
   await telemetryReporter.applicationLifecycle('launch_started');
   await telemetryReporter.desktopSession('started', telemetryContinuouslyEligible);

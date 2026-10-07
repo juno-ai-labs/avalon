@@ -304,6 +304,14 @@ function signupEvent<Name extends string>(name: Name, definition: string) {
 }
 
 export const TELEMETRY_EVENTS = {
+  desktop_install_opened: productEvent({
+    name: "desktop_install_opened",
+    definition: "The desktop process opened with newly created installation data and no saved account.",
+    productQuestion: "Where do fresh desktop installations drop off before completing signup?",
+    sources: ["desktop-main"], authoritativeSource: "desktop-main", identityScopes: ["anonymous-epoch"],
+    properties: deferredZodSchema(() => z.strictObject({ flowId: UuidV7Schema, clientPlatform: z.literal("desktop") })),
+    priority: "high",
+  }),
   signup_onboarding_completed: signupEvent("signup_onboarding_completed", "A new user completed the account introduction."),
   signup_organization_ready: signupEvent("signup_organization_ready", "A new user gained access to a new or existing organization."),
   signup_organization_requested: signupEvent("signup_organization_requested", "A new user requested organization creation or invitation acceptance."),
