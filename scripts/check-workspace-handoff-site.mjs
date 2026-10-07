@@ -29,9 +29,11 @@ export async function assertWorkspaceHandoffSite(response) {
   }
   const contentType = response.headers.get("content-type") ?? "";
   const body = await response.text();
+  // Match the element ids workstream-link.ts reads, not the page's copy, so a
+  // wording change on the handoff page does not block API deploys.
   if (
     !contentType.toLowerCase().includes("text/html")
-    || !body.includes("Open channel in Rally")
+    || !body.includes('id="workstream-title"')
     || !body.includes('id="open-rally"')
   ) {
     throw new Error("The live site does not expose the addressed work-stream handoff marker");
