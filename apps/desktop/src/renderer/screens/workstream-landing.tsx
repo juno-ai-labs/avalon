@@ -1,7 +1,8 @@
 import { useEffect, useMemo } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState, InlineError, LoadingState } from '../components/primitives';
-import { emptySpaceRoute, firstLandingWorkstream, landingSpaceId, skippedWorkstreamIds } from '../lib/workstream-landing';
+import { channelDestination, emptySpaceRoute, firstLandingWorkstream, landingSpaceId, skippedWorkstreamIds } from '../lib/workstream-landing';
+import { associativeWorkstreamsForSidebar, useConversationDirectory } from '../lib/conversation-directory';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useSpaceDirectories } from '../lib/use-space-directories';
@@ -34,10 +35,18 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   // A screen that just left for this route names what it left behind; the
   // directory has not caught up yet, and that row would otherwise be the
   // most recent one here.
-  const loaded = workstreams.data;
+  // The sidebar's own rows: a Channel whose Main is not this reader's opens on
+  // the Breakout the conversation directory lists, never on a Main that would
+  // refuse them. The directory is the shell's cache, read without a fetch.
+  const directory = useConversationDirectory();
+  const loaded = useMemo(
+    () => workstreams.data && associativeWorkstreamsForSidebar(directory, workstreams.data),
+    [directory, workstreams.data],
+  );
   // A screen that left a Channel in a Space names that Space, and the landing
-  // stays in it, on the row the sidebar draws first there. A Space no longer listed, archived or never seen, lands across
-  // the Organization as a bare leave does.
+  // stays in it, on the row the sidebar draws first there. A Space no longer
+  // listed, archived or never seen, lands across the Organization as a bare
+  // leave does.
   const stayInSpaceId = useMemo(() => landingSpaceId(routeState), [routeState]);
   const stayInSpace = stayInSpaceId === null ? undefined : spaces?.items.find((row) => row.id === stayInSpaceId);
   const candidates = useMemo(
@@ -58,11 +67,21 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   // change, which the socket does once the archive's tombstones land.
   // `fetchMore` is deliberately not a dependency: it is re-created as a page
   // settles, and re-requesting on that would be the loop.
+  //
+  // A landing in a Space waits for that Space's whole list, as the sidebar
+  // does: its first pin or first row under an A–Z sort may sit on a later page
+  // than a Channel that happens to match.
+  const spaceRowsLoaded = stayInSpace === undefined || loaded === undefined ? 0
+    : loaded.filter((workstream) => workstream.spaceIds.includes(stayInSpace.id)).length;
+  const spaceIncomplete = stayInSpace !== undefined && (sidebarConnect?.channelsBySpace === true
+    ? !loadedSpaceIds.has(stayInSpace.id) && !workstreams.isError
+    : workstreams.hasMore && spaceRowsLoaded < stayInSpace.channelCount);
   const needsMore = loaded !== undefined && workstreams.hasMore
-    && (savedChannelId !== null
-      ? !candidates.some((row) => row.id === savedChannelId)
-      : candidates.length === 0 && !awaitingSpace
-        && !spaces?.items.some((row) => row.id === savedSpaceId));
+    && ((sidebarConnect?.channelsBySpace !== true && spaceIncomplete)
+      || (savedChannelId !== null
+        ? !candidates.some((row) => row.id === savedChannelId)
+        : candidates.length === 0 && !awaitingSpace
+          && !spaces?.items.some((row) => row.id === savedSpaceId)));
   // Loading a Space at a time, the same wait is for the Spaces not yet in,
   // archived ones included, unless the walk has failed.
   const awaitingSpaces = loaded !== undefined && sidebarConnect?.channelsBySpace === true && !workstreams.isError
@@ -81,7 +100,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
     if (state === 'unavailable') return <InlineError>Unable to connect to your organization. Check your connection and restart Rally to try again.</InlineError>;
     return <LoadingState label="Opening channels…" />;
   }
-  if (needsMore || awaitingSpaces) return <LoadingState label="Opening channels…" />;
+  if (needsMore || awaitingSpaces || (loaded !== undefined && spaceIncomplete)) return <LoadingState label="Opening channels…" />;
   if (stayInSpaceId !== null && awaitingSpace) return <LoadingState label="Opening spaces…" />;
   const first = stayInSpace
     ? firstSidebarChannelInSpace(candidates, stayInSpace.id, channelSort)
@@ -103,7 +122,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
         : `/spaces/${encodeURIComponent(savedSpace.id)}`} />;
     }
   }
-  if (first) return <Navigate replace to={`/workstreams/${encodeURIComponent(first.id)}`} />;
+  if (first) return <Navigate replace to={channelDestination(first)} />;
   if (stayInSpace) return <Navigate replace to={emptySpaceRoute(stayInSpace.id, !guest)} />;
   // No Channel to open. Every Channel is started from a Space, so an empty
   // Organization lands on starting one in General. A guest is not listed
