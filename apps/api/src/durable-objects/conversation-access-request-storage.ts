@@ -20,7 +20,10 @@ export const CONVERSATION_ACCESS_REQUESTS_MIGRATION: readonly string[] = [
     approver_user_id TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'declined')),
     created_at INTEGER NOT NULL,
-    resolved_at INTEGER
+    resolved_at INTEGER,
+    -- Set once the approver's email went out; a pending row without it is
+    -- emailed again when the person asks again.
+    emailed_at INTEGER
   ) STRICT`,
   `CREATE UNIQUE INDEX conversation_access_requests_one_pending
     ON conversation_access_requests (parent_id, substream_id, requester_user_id)
@@ -36,12 +39,16 @@ export interface StoredAccessRequest {
   requesterUserId: string;
   approverUserId: string;
   status: "pending" | "approved" | "declined";
+  /** The approver's email went out; asking again sends nothing more. */
+  emailed: boolean;
 }
 
 type Row = {
   id: string; parent_id: string; substream_id: string; requester_user_id: string;
-  approver_user_id: string; status: StoredAccessRequest["status"];
+  approver_user_id: string; status: StoredAccessRequest["status"]; emailed_at: number | null;
 };
+
+const COLUMNS = "id, parent_id, substream_id, requester_user_id, approver_user_id, status, emailed_at";
 
 const stored = (row: Row): StoredAccessRequest => ({
   id: row.id,
@@ -50,6 +57,7 @@ const stored = (row: Row): StoredAccessRequest => ({
   requesterUserId: row.requester_user_id,
   approverUserId: row.approver_user_id,
   status: row.status,
+  emailed: row.emailed_at !== null,
 });
 
 export class ConversationAccessRequestStorage {
@@ -65,13 +73,13 @@ export class ConversationAccessRequestStorage {
         (id, parent_id, substream_id, requester_user_id, requester_name, approver_user_id, status, created_at)
        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
        ON CONFLICT (parent_id, substream_id, requester_user_id) WHERE status = 'pending' DO NOTHING
-       RETURNING id, parent_id, substream_id, requester_user_id, approver_user_id, status`,
+       RETURNING ${COLUMNS}`,
       input.id, input.parentId, input.substreamId, input.requesterUserId, input.requesterName,
       input.approverUserId, input.now,
     ).toArray()[0];
     if (inserted) return { request: stored(inserted), created: true };
     const existing = this.sql.exec<Row>(
-      `SELECT id, parent_id, substream_id, requester_user_id, approver_user_id, status
+      `SELECT ${COLUMNS}
          FROM conversation_access_requests
         WHERE parent_id = ? AND substream_id = ? AND requester_user_id = ? AND status = 'pending'`,
       input.parentId, input.substreamId, input.requesterUserId,
@@ -81,7 +89,7 @@ export class ConversationAccessRequestStorage {
 
   get(id: string): StoredAccessRequest | null {
     const row = this.sql.exec<Row>(
-      `SELECT id, parent_id, substream_id, requester_user_id, approver_user_id, status
+      `SELECT ${COLUMNS}
          FROM conversation_access_requests WHERE id = ?`, id,
     ).toArray()[0];
     return row ? stored(row) : null;
@@ -92,8 +100,28 @@ export class ConversationAccessRequestStorage {
     const row = this.sql.exec<Row>(
       `UPDATE conversation_access_requests SET status = ?, resolved_at = ?
         WHERE id = ? AND status = 'pending'
-       RETURNING id, parent_id, substream_id, requester_user_id, approver_user_id, status`,
+       RETURNING ${COLUMNS}`,
       status, now, id,
+    ).toArray()[0];
+    return row ? stored(row) : null;
+  }
+
+  /** The approver's email went out. */
+  markEmailed(id: string, now: number): void {
+    this.sql.exec(`UPDATE conversation_access_requests SET emailed_at = ? WHERE id = ? AND emailed_at IS NULL`, now, id);
+  }
+
+  /**
+   * Put an approval back to pending when the grant it claimed failed, so the
+   * approver can try again. `OR IGNORE`: if the person has asked again since,
+   * their newer pending request stands and this one stays as it was.
+   */
+  reopen(id: string): StoredAccessRequest | null {
+    const row = this.sql.exec<Row>(
+      `UPDATE OR IGNORE conversation_access_requests SET status = 'pending', resolved_at = NULL
+        WHERE id = ? AND status = 'approved'
+       RETURNING ${COLUMNS}`,
+      id,
     ).toArray()[0];
     return row ? stored(row) : null;
   }

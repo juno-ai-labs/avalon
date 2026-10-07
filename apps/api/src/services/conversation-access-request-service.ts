@@ -96,13 +96,15 @@ export class ConversationAccessRequestService {
       throw new ApiError(409, "access_request_no_approver", "Nobody can approve this request. Ask someone in it to add you.");
     }
     const requesterName = singleLine(requester?.name || requester?.email || "Someone");
-    const recorded = await (await workspaceStub(this.env, this.auth.workspaceId)).recordConversationAccessRequest({
+    const workspace = await workspaceStub(this.env, this.auth.workspaceId);
+    const recorded = await workspace.recordConversationAccessRequest({
       workspaceId: this.auth.workspaceId, parentId, substreamId,
       requesterUserId: this.auth.userId, requesterName, approverUserId,
     });
-    // Asking again while a request is pending reuses it: the approver already
-    // has the email and the row, and a second press sends neither again.
-    if (!recorded.created) return;
+    // Asking again while a request is pending reuses it. The approver already
+    // has the row, and has the email unless sending it failed, in which case
+    // this press sends it again under the same idempotency key.
+    if (recorded.request.emailed) return;
     const approveUrl = await approvalUrl(this.env, {
       workspaceId: this.auth.workspaceId, requestId: recorded.request.id, approverUserId,
     });
@@ -117,6 +119,7 @@ export class ConversationAccessRequestService {
       idempotencyKey: `rally-conversation-access-request/${recorded.request.id}`,
       region: this.env.AVALON_REGION,
     });
+    await workspace.markConversationAccessRequestEmailed({ workspaceId: this.auth.workspaceId, id: recorded.request.id });
     // Mail is never sent outside production; the link is what a developer
     // needs to try the approval locally. Never logged where it is a credential.
     if (this.env.APP_ENV === "development") {
@@ -136,11 +139,21 @@ export class ConversationAccessRequestService {
       throw new ApiError(404, "access_request_not_found", "Access request not found");
     }
     if (request.status !== "pending") return { status: "settled" };
-    if (decision === "approve") await grant(this.env, this.auth, request);
+    // Settled before the grant, so only the decision that wins may grant: an
+    // approve and a decline sent together from two places can never leave
+    // somebody added under a request that reads declined.
     const resolved = await workspace.resolveConversationAccessRequest({
       workspaceId: this.auth.workspaceId, id: requestId, status: decision === "approve" ? "approved" : "declined",
     });
     if (!resolved) return { status: "settled" };
+    if (decision === "approve") {
+      try {
+        await grant(this.env, this.auth, resolved);
+      } catch (error) {
+        await workspace.reopenConversationAccessRequest({ workspaceId: this.auth.workspaceId, id: requestId });
+        throw error;
+      }
+    }
     await tellRequester(this.env, this.auth.workspaceId, resolved);
     return { status: resolved.status as "approved" | "declined" };
   }
@@ -238,14 +251,23 @@ export async function approveConversationAccess(env: Env, token: string): Promis
     analyticsWorkspaceId: null,
     principal: "connector",
   };
+  // Claimed before the grant, as `decide` does: a decline that lands first
+  // wins, and this link then grants nothing.
+  const claimed = await workspace.resolveConversationAccessRequest({ workspaceId, id: request.id, status: "approved" });
+  if (!claimed) {
+    const now = await workspace.conversationAccessRequest({ workspaceId, id: request.id });
+    return now?.status === "approved"
+      ? named()
+      : { status: "refused", code: "access_request_declined", message: "You declined this request in Rally." };
+  }
   try {
-    await grant(env, auth, request);
+    await grant(env, auth, claimed);
   } catch (error) {
+    await workspace.reopenConversationAccessRequest({ workspaceId, id: request.id });
     if (!(error instanceof ApiError)) throw error;
     return { status: "refused", code: error.code, message: error.message };
   }
-  const resolved = await workspace.resolveConversationAccessRequest({ workspaceId, id: request.id, status: "approved" });
-  if (resolved) await tellRequester(env, workspaceId, resolved);
+  await tellRequester(env, workspaceId, claimed);
   return named();
 }
 
