@@ -126,6 +126,16 @@ describe("creating an Organization in its region", () => {
     ]]);
   });
 
+  it("leaves General to the slower path while the authority is mid-migration", async () => {
+    database.exec(`UPDATE workstream_authority_control SET phase = 'maintenance_draining', generation = 1, updated_at = '${at}' WHERE id = 1;`);
+
+    await create();
+
+    expect(database.prepare("SELECT COUNT(*) AS routes FROM workstream_authority_routes WHERE workspace_id = ?")
+      .get(workspaceId)).toEqual({ routes: 0 });
+    expect(initialized).toEqual([[workspaceId, "wnam", undefined]]);
+  });
+
   it("leaves General to the slower path while the authority is closed", async () => {
     const session = await create();
 

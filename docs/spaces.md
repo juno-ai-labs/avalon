@@ -496,7 +496,7 @@ Organization and passes it to `initializeWorkspace`. The object then checks the
 creator the way `openGeneralSpace` does, reserves General under that id through
 the same `reserveGeneral` step, and closes the cutover, all in that one call.
 It answers `spacesReady`; anything short of `true` (the authority closed, a
-guest creator, a cutover that cannot close) sends the caller to
+guest creator, an authority mid-migration, a cutover that cannot close) sends the caller to
 `openGeneralSpaceForNewWorkspace`, which is `ensureGeneral` as above. An
 Organization whose cutover is already complete answers `true` without any of
 this, so activating one costs the one call and no D1 read for Spaces.
