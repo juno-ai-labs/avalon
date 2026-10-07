@@ -7648,6 +7648,13 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
   padding: 0 14px 0 calc(18px + var(--window-controls-inset));
 }
 .sidebar-top-actions { align-items: center; display: flex; gap: 8px; margin-left: auto; }
+/* With no window controls painted over the bar (the browser, or Electron off
+   macOS), nothing holds its start, so the actions lead it, flush with the Space pills below. The
+   phone bar keeps them opposite its menu button. */
+@media (min-width: 641px) {
+  .workspace-shell:not(.has-overlay-window-controls) .sidebar-top-bar { padding-left: 14px; }
+  .workspace-shell:not(.has-overlay-window-controls) .sidebar-top-actions { margin-left: 0; }
+}
 .sidebar-top-actions > .icon-button,
 .sidebar-top-action {
   align-items: center;
