@@ -312,22 +312,23 @@ export function siteActionForLink(id: string | undefined): SiteActionLink | null
 }
 
 function initializeSiteActions(): void {
-  // Prepare before interaction so keyboard, middle-click and copied links carry
-  // the same opaque flow as the observed CTA. No identity or credentials travel.
-  const flows = new WeakMap<HTMLElement, string>();
-  for (const link of document.querySelectorAll<HTMLAnchorElement>('a[data-site-action]')) {
-    if (link.dataset['siteAction'] !== 'web-app-hero' && link.dataset['siteAction'] !== 'sign-in-header') continue;
-    const destination = new URL(link.href);
-    if (destination.origin !== 'https://app.rallywith.ai') continue;
-    const flowId = uuidV7();
-    destination.searchParams.set('signupFlowId', flowId);
-    link.href = destination.href;
-    flows.set(link, flowId);
-  }
   const selected = (event: MouseEvent): void => {
-    const link = (event.target as Element | null)?.closest?.<HTMLElement>('[data-site-action]');
-    const action = siteActionForLink(link?.dataset['siteAction']);
-    if (action) reportSiteAction({ ...action, ...(link && flows.has(link) ? { flowId: flows.get(link)! } : {}) });
+    const link = (event.target as Element | null)?.closest?.<HTMLAnchorElement>('a[data-site-action]');
+    const id = link?.dataset['siteAction'];
+    const action = siteActionForLink(id);
+    if (!action || !link) return;
+    let flowId: string | undefined;
+    if (id === 'web-app-hero' || id === 'sign-in-header') {
+      flowId = uuidV7();
+      const destination = new URL(link.href);
+      destination.searchParams.set('signupFlowId', flowId);
+      link.href = destination.href;
+      // Default navigation reads the updated href after dispatch. Restore the
+      // clean link afterwards so copied links never share an attempt.
+      destination.searchParams.delete('signupFlowId');
+      setTimeout(() => { link.href = destination.href; }, 0);
+    }
+    reportSiteAction({ ...action, ...(flowId ? { flowId } : {}) });
   };
   document.addEventListener('click', selected, { capture: true });
   // A middle-click opens a link without firing `click`.
