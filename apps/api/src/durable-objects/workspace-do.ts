@@ -134,6 +134,12 @@ import {
   type UpdateOnboardingJourney,
 } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { WorkspaceAccessRequestsEventSchema } from "@rally/contracts";
+import {
+  AccessRequestRefSchema, AccessRequestSubjectRequestSchema, AccessRequestSubjectSchema, CONVERSATION_ACCESS_REQUESTS_MIGRATION,
+  ConversationAccessRequestStorage, conversationMark, RecordAccessRequestSchema, ResolveAccessRequestSchema,
+  type StoredAccessRequest,
+} from "./conversation-access-request-storage";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 import {
@@ -1086,6 +1092,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   'search_authorization_push', 'search_authorization_keys', 'search_authorization_dependencies',
   "resource_search_versions",
   "onboarding_journeys",
+  "conversation_access_requests",
   "workstream_notification_intents",
   "workspace_socket_unheard", // The first-frame watch's ledger.
   // Converted to typed methods, so a generic statement naming one is a
@@ -4172,6 +4179,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // Every Space is Organization-wide. A Space grants no reader to its
   // Channels, so no Channel changes; see docs/spaces.md#every-space-is-organization-wide.
   statements: SPACE_PUBLIC_ONLY_MIGRATION,
+}, {
+  version: 95,
+  description: "requests to join a Channel or Breakout, addressed to an approver",
+  statements: CONVERSATION_ACCESS_REQUESTS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -11505,6 +11516,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       channelIds: [...commonChanges, ...breakoutChanges],
       viewerChannelIds: mergeViewerChanges(viewerChanges, breakoutViewerChanges),
     });
+    // An access request names its conversation as it is now, and leaves out
+    // one since archived; its approver's list moves with the conversation.
+    for (const approverUserId of this.accessRequestStorage().approversFor([...commonChanges, ...breakoutChanges])) {
+      this.publishAccessRequests(approverUserId);
+    }
     // A Channel row carries its live Breakout total. A child projection does
     // not advance the parent's directory waterline, so republish the parent
     // row; the receiver may accept this aggregate from a duplicate version.
@@ -14361,6 +14377,123 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { title: row?.title.trim() || null };
   }
 
+  /**
+   * The name, mark and creator of one unarchived Channel or Breakout, for an
+   * access request. Asks nothing of the viewer: the caller has already proved
+   * an active member and holds the id, and this names only what a Channel
+   * reached through a Breakout already names (`docs/channel-access-requests.md`).
+   */
+  async accessRequestSubject(input: { workspaceId: string; parentId: string; substreamId: string }): Promise<{
+    kind: "channel" | "breakout";
+    title: string;
+    appearance: z.infer<typeof WorkstreamAppearanceSchema> | null;
+    markId: string;
+    createdByUserId: string | null;
+  } | null> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestSubjectRequestSchema, input, "access_request_subject");
+    this.assertWorkspace(request.workspaceId);
+    const breakout = request.substreamId !== "0";
+    const row = this.state.storage.sql.exec<{
+      title: string; appearance_json: string | null; created_by_user_id: string | null; parent_appearance_json?: string | null;
+    }>(
+      breakout
+        ? `SELECT breakout.title, breakout.appearance_json, breakout.created_by_user_id,
+              parent.appearance_json AS parent_appearance_json
+             FROM breakouts breakout JOIN channels parent ON parent.workstream_id = breakout.workstream_id
+            WHERE breakout.workstream_id = ? AND breakout.substream_id = ?
+              AND breakout.archived_at IS NULL AND parent.archived_at IS NULL`
+        : `SELECT title, appearance_json, created_by_user_id FROM channels
+            WHERE workstream_id = ? AND archived_at IS NULL`,
+      ...(breakout ? [request.parentId, request.substreamId] : [request.parentId]),
+    ).toArray()[0];
+    if (!row) return null;
+    return AccessRequestSubjectSchema.parse({
+      kind: breakout ? "breakout" : "channel",
+      title: row.title,
+      ...conversationMark({
+        parentId: request.parentId, substreamId: request.substreamId,
+        appearanceJson: row.appearance_json, parentAppearanceJson: row.parent_appearance_json ?? null,
+      }),
+      createdByUserId: row.created_by_user_id,
+    });
+  }
+
+  private accessRequestStorage(): ConversationAccessRequestStorage {
+    return new ConversationAccessRequestStorage(this.state.storage.sql);
+  }
+
+  /** Record a request, or return the one already pending; the approver's sockets get their new list. */
+  async recordConversationAccessRequest(input: {
+    workspaceId: string; parentId: string; substreamId: string; requesterUserId: string;
+    requesterName: string; approverUserId: string;
+  }): Promise<{ request: StoredAccessRequest; created: boolean }> {
+    await this.initialized;
+    const request = parseRpcInput(RecordAccessRequestSchema, input, "record_conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    const recorded = this.accessRequestStorage().record({ ...request, id: uuidV7(), now: Date.now() });
+    if (recorded.created) this.publishAccessRequests(request.approverUserId);
+    return recorded;
+  }
+
+  async conversationAccessRequest(input: { workspaceId: string; id: string }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestRefSchema, input, "conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    return this.accessRequestStorage().get(request.id);
+  }
+
+  /** Settle a pending request; null when it was already settled. The approver's sockets get their new list. */
+  async resolveConversationAccessRequest(input: {
+    workspaceId: string; id: string; status: "approved" | "declined";
+  }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    const request = parseRpcInput(ResolveAccessRequestSchema, input, "resolve_conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    const resolved = this.accessRequestStorage().resolve(request.id, request.status, Date.now());
+    if (resolved) this.publishAccessRequests(resolved.approverUserId);
+    return resolved;
+  }
+
+  /** The approver's email for this request went out. */
+  async markConversationAccessRequestEmailed(input: { workspaceId: string; id: string }): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestRefSchema, input, "mark_conversation_access_request_emailed");
+    this.assertWorkspace(request.workspaceId);
+    this.accessRequestStorage().markEmailed(request.id, Date.now());
+  }
+
+  /** An approval whose grant failed goes back to pending; the approver's sockets get it back. */
+  async reopenConversationAccessRequest(input: { workspaceId: string; id: string }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestRefSchema, input, "reopen_conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    const reopened = this.accessRequestStorage().reopen(request.id);
+    if (reopened) this.publishAccessRequests(reopened.approverUserId);
+    return reopened;
+  }
+
+  /**
+   * The approver's whole pending list, to their sockets only. Outside the
+   * waterline: the subscribe answer carries it again on every connect.
+   */
+  private publishAccessRequests(approverUserId: string): void {
+    let payload: string | null = null;
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed || attachment.userId !== approverUserId) continue;
+      payload ??= JSON.stringify(WorkspaceAccessRequestsEventSchema.parse({
+        type: "workspace_access_requests",
+        requests: this.accessRequestStorage().pendingFor(approverUserId, this.spaceStorage().breakoutsReady()),
+      }));
+      try {
+        socket.send(payload);
+      } catch {
+        // Hibernation owns cleanup; a reconnecting client is sent the list again.
+      }
+    }
+  }
+
   async recentWorkstreamDirectory(
     input: WorkspaceDirectoryRecentRequest,
   ): Promise<WorkspaceDirectoryLookupResult> {
@@ -16446,6 +16579,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const sidebar = this.sidebarPayload(attachment);
     this.logWorkspaceSocketHandshake(attachment, "sidebar_built", diagnosticAttemptId);
     const viewerPreferences = this.readMemberPreferences(attachment.userId);
+    // Only a member is ever an approver; a guest's answer carries no list.
+    const accessRequests = attachment.accessClass === "guest"
+      ? undefined : this.accessRequestStorage().pendingFor(attachment.userId, this.spaceStorage().breakoutsReady());
     let events: WorkspaceSocketSyncEvent[];
     if (afterWaterline === 0) {
       events = [{
@@ -16519,7 +16655,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
     this.logWorkspaceSocketHandshake(attachment, "flags_resolved", diagnosticAttemptId);
     for (const event of events) {
-      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({ ...event, featureFlags, viewerPreferences })));
+      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({
+        ...event, featureFlags, viewerPreferences, ...(accessRequests ? { accessRequests } : {}),
+      })));
     }
     this.logWorkspaceSocketHandshake(attachment, "sync_sent", diagnosticAttemptId);
     socket.serializeAttachment({

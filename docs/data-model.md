@@ -505,6 +505,10 @@ SQL joins.
   [`personal-system-prompt.md`](personal-system-prompt.md).
   `member_preferences` (migration 89) holds each member's display preferences;
   see [`member-preferences.md`](member-preferences.md).
+  `conversation_access_requests` (migration 95) holds each request to join a
+  Channel or Breakout, addressed to one approver, with at most one pending per
+  person per conversation; see
+  [`channel-access-requests.md`](channel-access-requests.md).
   `space_channel_memberships` is keyed by Space and Channel with **no**
   uniqueness on the Channel, because a Channel belongs to as many Spaces as it
   was added to. `space_intents` is one row per staged cross-object operation

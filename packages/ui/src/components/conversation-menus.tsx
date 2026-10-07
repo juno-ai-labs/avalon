@@ -2,6 +2,8 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { CreateScopeInvitationsSchema } from '@rally/contracts/scope-grants';
 import {
   IconArchive,
+  IconCancel,
+  IconCheck,
   IconChevronRight,
   IconCloudDownload,
   IconCornerDownRight,
@@ -21,7 +23,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { compareAlphabeticalTitle } from '../lib/alphabetical';
 import type { SidebarPresentation, WorkspaceMember } from '../lib/types';
 import { breakoutHasActivity, type BreakoutMark } from './breakout-marks';
-import { Avatar } from './primitives';
+import { Avatar, Tip } from './primitives';
 import { ResourceIcon } from './resource-icon';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import { keepSearchFocus, TitleMenuHeader, TitleMenuItem, TitleMenuLink, TitleMenuSearch, TitleMenuSeparator, useTitleMenuNav, type TitleMenuView } from './title-pill';
@@ -73,6 +75,17 @@ export interface TitleMenuPeople {
   onRemove?: ((member: WorkspaceMember) => void) | undefined;
   /** Inviting by email address as a guest; absent where the host cannot invite. */
   invites?: TitleMenuInvites | undefined;
+  /** People who asked to join this conversation, answered in place; absent or empty shows nothing. */
+  requests?: TitleMenuAccessRequests | undefined;
+}
+
+/**
+ * Requests to join, listed to the person they wait on: the conversation's
+ * creator (`docs/channel-access-requests.md`).
+ */
+export interface TitleMenuAccessRequests {
+  items: readonly { id: string; userId: string; name: string }[];
+  onDecide: (requestId: string, decision: 'approve' | 'decline') => void;
 }
 
 /**
@@ -168,7 +181,10 @@ function PeopleView({ members, noun, people, presentUserIds }: {
   const needle = query.trim().toLocaleLowerCase();
   const present = new Set(presentUserIds);
   const inRoom = new Set(members.map((member) => member.id));
-  const addable = (people?.candidates ?? []).filter((member) => !inRoom.has(member.id)
+  const requests = people?.requests?.items ?? [];
+  // Someone who asked is answered under Asked to join, not offered again below it.
+  const asked = new Set(requests.map((request) => request.userId));
+  const addable = (people?.candidates ?? []).filter((member) => !inRoom.has(member.id) && !asked.has(member.id)
     && (member.status ?? 'active') === 'active'
     && (!needle || member.name.toLocaleLowerCase().includes(needle) || (member.email ?? '').toLocaleLowerCase().includes(needle)));
   const suggestions = needle ? addable : addable.slice(0, PEOPLE_SUGGESTIONS);
@@ -263,6 +279,36 @@ function PeopleView({ members, noun, people, presentUserIds }: {
         onSelect={() => invites.onRevoke?.(email)}
       />}
     </div>)}
+    {!needle && people?.requests && requests.length > 0 && <>
+      <div className="title-menu-section-heading">Asked to join</div>
+      {requests.map((request) => {
+        const member: WorkspaceMember = people.candidates.find((candidate) => candidate.id === request.userId)
+          ?? { id: request.userId, name: request.name, email: '', timezone: 'UTC' };
+        return <div className="title-menu-person" key={request.id}>
+          <Avatar member={member} size="medium" />
+          <span className="title-menu-person-copy">
+            <span className="title-menu-person-name">{request.name}</span>
+            {member.email && <span className="title-menu-person-detail">{member.email}</span>}
+          </span>
+          <Tip describesTrigger={false} label="Approve" side="top">
+            <button
+              aria-label={`Approve ${request.name}`}
+              className="decision-button is-approve"
+              onClick={() => people.requests?.onDecide(request.id, 'approve')}
+              type="button"
+            ><IconCheck aria-hidden="true" size={16} stroke={2} /></button>
+          </Tip>
+          <Tip describesTrigger={false} label="Decline" side="top">
+            <button
+              aria-label={`Decline ${request.name}`}
+              className="decision-button is-decline"
+              onClick={() => people.requests?.onDecide(request.id, 'decline')}
+              type="button"
+            ><IconCancel aria-hidden="true" size={16} stroke={2} /></button>
+          </Tip>
+        </div>;
+      })}
+    </>}
     {people && suggestions.length > 0 && <>
       <div className="title-menu-section-heading">{needle ? 'Add to this ' + noun : 'Suggested'}</div>
       {suggestions.map((member) => <div className="title-menu-person" key={member.id}>

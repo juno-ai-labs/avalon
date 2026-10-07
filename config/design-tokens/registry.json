@@ -499,6 +499,9 @@
     "sys.color.danger.tint": {
       "$type": "color"
     },
+    "sys.color.success.tint": {
+      "$type": "color"
+    },
     "sys.color.scrim.default": {
       "$type": "color"
     },

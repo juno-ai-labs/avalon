@@ -1,3 +1,4 @@
+import type { ConversationAccessRequestItem } from '@rally/contracts';
 import { ShareConversationDialog } from './scope-sharing-panel';
 import { useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { IconPin, IconShare2 } from '@tabler/icons-react';
@@ -63,12 +64,17 @@ import { SpacePills } from './space-pills';
 import { RelativeTime } from './relative-time';
 import { SidebarGhostChannelRow, SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { WorkstreamGlyph } from './workstream-glyph';
-import { AttentionMenu } from './attention-menu';
+import { AttentionMenu, type AccessDecision } from './attention-menu';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
   /** Conversations waiting for this reader, for the attention menu. */
   attentionItems?: readonly AttentionItem[];
+  /** Access requests waiting on this person; the attention menu lists them first. */
+  accessRequests?: readonly ConversationAccessRequestItem[];
+  onDecideAccessRequest?: (request: ConversationAccessRequestItem, decision: AccessDecision) => void;
+  onOpenAccessRequest?: (request: ConversationAccessRequestItem) => void;
+  accessDecisionFailed?: boolean;
   /** False while some Channels are not loaded yet; see `AttentionMenu`. */
   attentionComplete?: boolean;
   workspace: Workspace;
@@ -1009,6 +1015,10 @@ export function Sidebar({
   onOpenSearch,
   attentionItems = [],
   attentionComplete = true,
+  accessRequests = [],
+  onDecideAccessRequest,
+  onOpenAccessRequest,
+  accessDecisionFailed = false,
   workspace,
   spaces,
   spacesReadOnly = false,
@@ -2180,7 +2190,14 @@ export function Sidebar({
           {downloadedUpdate !== null && <IconButton className="sidebar-top-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
             <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
           </IconButton>}
-          <AttentionMenu complete={attentionComplete} items={attentionItems} />
+          <AttentionMenu
+            complete={attentionComplete}
+            decisionFailed={accessDecisionFailed}
+            items={attentionItems}
+            {...(onDecideAccessRequest ? { onDecide: onDecideAccessRequest } : {})}
+            {...(onOpenAccessRequest ? { onOpenRequest: onOpenAccessRequest } : {})}
+            requests={accessRequests}
+          />
           <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
             <IconSearch aria-hidden="true" size={16} stroke={1.9} />
           </IconButton>

@@ -58,6 +58,7 @@ import {
 } from "./services/slack-routing-service";
 
 import { privateAccessRoutes } from "./routes/private-access";
+import { conversationAccessRoutes } from "./routes/conversation-access";
 
 export function createApp(): Hono<HonoAppEnv> {
   const app = new Hono<HonoAppEnv>();
@@ -129,6 +130,7 @@ export function createApp(): Hono<HonoAppEnv> {
   app.get("/", (c) => c.json({ service: "avalon-api", region: c.env.AVALON_REGION }));
   app.route("/health", healthRoutes);
   app.route("/access", privateAccessRoutes);
+  app.route("/conversation-access", conversationAccessRoutes);
   app.route("/auth", authRoutes);
   app.route("/browser",createBrowserRoutes((request,c) => {
     let executionContext;

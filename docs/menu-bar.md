@@ -51,7 +51,7 @@ mark into a black blob. `nativeImage` resolves the `@2x` sibling by name.
 ### The count
 
 `MenuBarController.refresh()` sets the tray's title (`Tray.setTitle`, which
-macOS draws to the right of the icon) to the number of conversations waiting
+macOS draws to the right of the icon) to the number of access requests and conversations waiting
 for the reader: every one, not the five the menu lists. `menuBarTitle` formats
 it as the sidebar's attention button does — `99+` past two digits, nothing at
 zero — and it is empty while signed out.
@@ -70,7 +70,13 @@ The drop-down is rebuilt from `menuBarMenuTemplate` whenever the content or the
 preference changes — never on open. A click therefore always produces a menu
 immediately. In order:
 
-1. **Needs attention**: the first five of the attention list, in its order
+1. **Needs attention**: access requests waiting on the reader first, each
+   "*Name* asked to join *title*" with the sublabel **Access request**, then
+   the attention list. Five rows in all. A native menu row cannot hold
+   buttons, so choosing a request emits `access-requests/<id>`, which opens
+   the main window on the request's dialog with **Decline** and **Approve**
+   ([`channel-access-requests.md`](channel-access-requests.md)). The
+   conversations follow, the first of the attention list, in its order
    (unseen, mentioned, unread; newest first within each). Each row's
    `sublabel` is the sidebar menu's detail line — the state, and "in
    *Channel*" for a Breakout. Under it, **Still loading channels** until the
@@ -436,6 +442,17 @@ is reported before `app.focus`, so the application-open coalescer suppresses the
 generic Electron activation callback rather than also counting a Dock open.
 
 ## Changelog
+
+### 2026-10-07 — Access requests in Needs attention
+
+**What changed:** Requests to join the reader's Channels and Breakouts head
+**Needs attention**, are counted beside the icon, and open their decision in
+the main window. `ChannelDirectoryWatch` keeps the list from the subscribe
+answer and the `workspace_access_requests` frame.
+
+**Why:** The sidebar's attention menu lists them, and this menu's count is that
+menu's count. The menu cannot hold approve and decline, so a row opens the
+same dialog the sidebar row does.
 
 ### 2026-10-06 — A count beside the icon, and Needs attention over Most recent
 
