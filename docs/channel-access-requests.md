@@ -63,8 +63,10 @@ The person who asked gets an email when the request is approved or declined.
    every connect, and each change sends `workspace_access_requests` with the
    whole list to that approver's sockets alone. Neither is on the waterline.
    The renderer and the main process each keep it, so the attention menu, the
-   dock badge and the menu bar count it with no request of their own. A
-   request for a conversation since archived drops out of the list.
+   dock badge and the menu bar count it with no request of their own. The list
+   names each conversation as it is now: a rename or an archive sends the list
+   again to every approver with a request pending there, and a request for a
+   conversation since archived drops out.
 5. **Answering in the app.** `POST /conversations/access-requests/:id/approve`
    or `decline`, as the signed-in approver. Anyone else is told it does not
    exist. The row is settled first, so only the decision that wins it acts:
@@ -149,6 +151,15 @@ the approver's inbox, and it acts only as the approver.
   valid until answered. Whether either should expire, and whether asking needs
   a cooldown after a decline, is the team's call
   ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
+- **An Organization held below migration 95** (the meeting-notes retirement
+  can hold one at 57) has no request table, or no Breakout projection, or one
+  without its look. The list is read on every connect, so it answers empty or
+  leaves the Breakout half out rather than aborting the connect: an unguarded
+  read there stops the sidebar opening. Guard: `space-authority.test.ts`
+  "given an Organization held at schema 57".
+- **After a removal, the screen dials again only by hand.** A socket closed
+  because access was revoked does not reconnect by itself, so the request
+  screen keeps a **Try again** that dials again once the request is approved.
 - **The iOS badge leaves requests out.** The APNs badge is counted by
   `readerAttentionCount` on the server, which counts conversations only. The
   macOS dock badge and the menu bar include requests.

@@ -19,11 +19,16 @@ import { Button, InlineError } from './primitives';
  */
 export type ConversationAccessApi = Pick<RallyApi, 'conversationAccessPreview' | 'requestConversationAccess'>;
 
-export function ConversationAccessRequest({ api, parentId, substreamId, fallback }: {
+export function ConversationAccessRequest({ api, parentId, substreamId, fallback, onRetry }: {
   api: ConversationAccessApi | null;
   parentId: string;
   substreamId: string;
   fallback: React.JSX.Element;
+  /**
+   * Dial the conversation again. A socket closed because access was revoked
+   * never dials back by itself, so after an approval this is how it opens.
+   */
+  onRetry: () => void;
 }): React.JSX.Element {
   const preview = useQuery({
     queryKey: ['conversation-access-preview', parentId, substreamId],
@@ -46,9 +51,12 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
         <h1 className="conversation-access-request-title">{title}</h1>
         <p>You’re not in this {noun}, ask for access below</p>
         {request.isSuccess ? (
-          <p className="conversation-access-request-sent" role="status">
-            <Check aria-hidden="true" size={14} /> Request sent. This {noun} opens once you’re approved.
-          </p>
+          <>
+            <p className="conversation-access-request-sent" role="status">
+              <Check aria-hidden="true" size={14} /> Request sent. This {noun} opens once you’re approved.
+            </p>
+            <Button onClick={onRetry}>Try again</Button>
+          </>
         ) : (
           <Button className="button-primary" disabled={request.isPending} onClick={() => request.mutate()}>
             {request.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />} Request access
