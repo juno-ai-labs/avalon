@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { SessionSchema } from "@rally/contracts";
+import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from "@rally/contracts/http-headers";
 import { createApp } from "../src/app";
 import { AuthService } from "../src/services/auth-service";
 import { BrowserSessionService } from "../src/services/browser-session-service";
 import { revokeSupportSessions, SUPPORT_ORGANIZATION_ID } from "../src/services/support-access";
 import { reapExpiredSessions } from "../src/services/access-revocation";
+import { verifyWorkspaceSocketTicket } from "../src/services/socket-service";
 import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 import { migratedObservabilityFixture, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -39,8 +41,8 @@ function bindings(overrides: { AUDIT_DB?: D1Database; queueDown?: boolean } = {}
     } });
 }
 
-function call(path: string, token: string, method = "GET", body?: unknown, env = bindings()) {
-  return createApp().request(`${apiOrigin}${path}`, { method, headers: { authorization: `Bearer ${token}`, origin,
+function call(path: string, token: string, method = "GET", body?: unknown, env = bindings(), headers: Record<string, string> = {}) {
+  return createApp().request(`${apiOrigin}${path}`, { method, headers: { ...headers, authorization: `Bearer ${token}`, origin,
     ...(body === undefined ? {} : { "content-type": "application/json" }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, env);
 }
@@ -254,4 +256,28 @@ it("ends only the support sessions of the staff membership that was removed", as
   await revokeSupportSessions(bindings(), { impersonatorUserId: STAFF, impersonatorIncarnation: oldIncarnation });
   expect((await call("/workspace", current.accessToken)).status).toBe(200);
   expect((await call("/workspace", old.accessToken)).status).toBe(401);
+});
+
+it("records each write a support session makes, in the background, and no reads", async () => {
+  await grant();
+  const session = await startAsBob();
+  expect((await call("/workspace", session.accessToken)).status).toBe(200);
+  // Recorded whatever the answer: here a member may not grant access.
+  const write = await call("/workspace/support-access", session.accessToken, "PUT");
+  expect(write.status).toBe(403);
+  await expect.poll(() => db.prepare(
+    `SELECT actor_user_id, target_id, json_extract(metadata_json, '$.method') AS method,
+            json_extract(metadata_json, '$.path') AS path, json_extract(metadata_json, '$.status') AS status
+       FROM audit_events WHERE action = 'support_session.request'`,
+  ).all()).toEqual([{ actor_user_id: STAFF, target_id: BOB, method: "PUT", path: "/workspace/support-access", status: 403 }]);
+});
+
+it("signs the staff member into a support session's socket tickets", async () => {
+  await grant();
+  const session = await startAsBob();
+  const ticket = await call("/workspace/socket", session.accessToken, "GET", undefined, bindings(),
+    { [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION) });
+  expect(ticket.status).toBe(200);
+  const claims = await verifyWorkspaceSocketTicket(bindings(), ((await ticket.json()) as { ticket: string }).ticket);
+  expect(claims.impersonatorUserId).toBe(STAFF);
 });

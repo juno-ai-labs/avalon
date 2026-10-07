@@ -48,6 +48,8 @@ interface SocketClaims {
   afterSequence?: number;
   speculative?: true;
   admission?: WorkstreamSocketAdmission;
+  /** The staff member behind a support session (`docs/impersonation.md`). */
+  impersonatorUserId?: UserId;
 }
 
 export interface WorkstreamSocketAdmission {
@@ -76,6 +78,8 @@ interface WorkspaceSocketClaims {
   region: Region;
   ticketId: string;
   expiresAt: number;
+  /** The staff member behind a support session (`docs/impersonation.md`). */
+  impersonatorUserId?: UserId;
 }
 
 interface WorkstreamControlSocketClaims extends WorkspaceSocketClaims {
@@ -156,6 +160,7 @@ export async function issueSocketTicket(
     region: auth.region,
     ...(afterSequence === undefined ? {} : { after: afterSequence }),
     ...(speculative ? { warm: true } : {}),
+    ...(auth.impersonatorUserId ? { imp: auth.impersonatorUserId } : {}),
     ...(options.admission ? {
       admission: 1,
       authority_generation: options.admission.authorityGeneration,
@@ -186,6 +191,7 @@ export async function issueWorkspaceSocketTicket(
     sid: auth.sessionId,
     wid: auth.workspaceId,
     region: auth.region,
+    ...(auth.impersonatorUserId ? { imp: auth.impersonatorUserId } : {}),
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
@@ -253,6 +259,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       ...(afterSequence === undefined ? {} : { afterSequence }),
       ...(speculative ? { speculative: true as const } : {}),
       ...(admission ? { admission } : {}),
+      ...(typeof payload.imp === "string" ? { impersonatorUserId: asUserId(payload.imp) } : {}),
     };
   } catch {
     throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
@@ -280,6 +287,7 @@ export async function verifyWorkspaceSocketTicket(
       region: payload.region,
       ticketId: payload.jti,
       expiresAt: payload.exp,
+      ...(typeof payload.imp === "string" ? { impersonatorUserId: asUserId(payload.imp) } : {}),
     };
   } catch {
     throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
@@ -559,7 +567,9 @@ export class SocketService {
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_AFTER_SEQUENCE),
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_SPECULATIVE),
         ...rallyHeaderAliases(RALLY_HEADERS.PARENT_ARCHIVED),
+        ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_IMPERSONATOR_ID),
       ]) headers.delete(name);
+      if (claims.impersonatorUserId) headers.set(RALLY_HEADERS.SOCKET_IMPERSONATOR_ID, claims.impersonatorUserId);
       if (claims.afterSequence !== undefined) {
         headers.set(RALLY_HEADERS.SOCKET_AFTER_SEQUENCE, String(claims.afterSequence));
       }
@@ -645,6 +655,8 @@ export class WorkspaceSocketService {
     headers.set(RALLY_HEADERS.USER_ID, claims.userId);
     headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
     headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
+    for (const name of rallyHeaderAliases(RALLY_HEADERS.SOCKET_IMPERSONATOR_ID)) headers.delete(name);
+    if (claims.impersonatorUserId) headers.set(RALLY_HEADERS.SOCKET_IMPERSONATOR_ID, claims.impersonatorUserId);
     const response = await stub.fetch(
       new Request("https://workspace.internal/socket", { method: "GET", headers }),
     );
