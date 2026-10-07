@@ -8,7 +8,7 @@ import { layoutKey } from '../lib/desktop-layout';
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
   session: { user: { id: 'person' }, workspace: { id: 'org', accessClass: 'member' } },
 }) }));
-const spaces = vi.hoisted(() => ({ data: undefined as { items: { id: string; systemRole?: string | null }[] } | undefined }));
+const spaces = vi.hoisted(() => ({ data: undefined as { items: { id: string; systemRole?: string | null; channelCount?: number }[] } | undefined }));
 vi.mock('../lib/use-space-directories', () => ({ useSpaceDirectories: () => ({ active: spaces, inactive: { data: undefined } }) }));
 
 const socket = vi.hoisted(() => ({ state: 'connecting', sidebarConnect: null as { spacesLive: boolean } | null }));
@@ -76,6 +76,14 @@ describe('default channel landing', () => {
     spaces.data = { items: [{ id: 'saved' }] };
     view.rerender(<Router />);
     expect(await screen.findByTestId('destination')).toHaveTextContent('/spaces/saved');
+  });
+
+  it('opens a saved Space that has emptied on starting a Channel there', async () => {
+    directory.data = [stream('recent', null, '2026-09-05')];
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/spaces/saved');
+    spaces.data = { items: [{ id: 'saved', channelCount: 0 }] };
+    render(<Router />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/spaces\/saved\/workstreams\/new$/u);
   });
 
   it('falls back when an older socket cannot deliver Spaces', async () => {
@@ -148,7 +156,7 @@ describe('default channel landing', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Opening spaces');
     spaces.data = { items: [{ id: 'team', systemRole: null }, { id: 'general', systemRole: 'general' }] };
     view.rerender(<Router />);
-    expect(await screen.findByTestId('destination')).toHaveTextContent('/spaces/general');
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/spaces\/general\/workstreams\/new$/u);
   });
 
   it('says there is nothing to open when an empty directory has no Spaces to fall back to', () => {

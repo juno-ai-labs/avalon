@@ -48,7 +48,7 @@ import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
-import { channelDestination } from '../lib/workstream-landing';
+import { channelDestination, emptySpaceRoute } from '../lib/workstream-landing';
 import { Avatar, Button, IconButton, InlineError, Meter, Modal, StatusDot, Tip } from './primitives';
 import { AcknowledgedErrorDialog } from './acknowledged-error-dialog';
 import { ManageAccessDialog } from './manage-access-dialog';
@@ -130,7 +130,7 @@ interface SidebarProps {
   onPreviewWorkstreamBatch: (
     filter: WorkstreamBatchFilter,
   ) => Promise<{ matchedCount: number; matchedNoteCount: number }>;
-  onCreateChannel?: (input: { name: string; spaceId: string }) => Promise<void>;
+  onCreateChannel?: (input: { spaceId: string }) => void;
   onCreateSpace?: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
   onAddChannelToSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
   onMoveChannelToSpace?: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
@@ -1074,7 +1074,7 @@ export function Sidebar({
   onReorderAllPinned,
   onRenameWorkstream,
   onPreviewWorkstreamBatch,
-  onCreateChannel = async () => { throw new Error('Channel creation is unavailable.'); },
+  onCreateChannel = () => { throw new Error('Channel creation is unavailable.'); },
   onCreateSpace = async () => {
     throw new Error('Space creation is unavailable.');
   },
@@ -1498,7 +1498,7 @@ export function Sidebar({
     if (!next && (hasMoreWorkstreams || loadingMoreWorkstreams)) return;
     const destination = next
       ? `/workstreams/${encodeURIComponent(next.id)}`
-      : `/spaces/${encodeURIComponent(pendingChannelMoveNavigation.spaceId)}`;
+      : emptySpaceRoute(pendingChannelMoveNavigation.spaceId, !spacesReadOnly);
     owned.destination = destination;
     setPendingChannelMoveNavigation(null);
     void navigate(destination, { replace: true });
@@ -1509,18 +1509,23 @@ export function Sidebar({
     loadingMoreWorkstreams,
     navigate,
     pendingChannelMoveNavigation,
+    spacesReadOnly,
   ]);
   // A pill that hides the open Channel opens the first Channel the filtered
-  // list draws, once that Space's Channels have loaded, or the Space's
-  // dashboard when it holds none. Dropped if the reader leaves the route or
-  // picks another pill first.
+  // list draws, once that Space's Channels have loaded, or the screen that
+  // starts one when it holds none. A new-Channel screen for another Space
+  // counts as hidden too. Dropped if the reader leaves the route or picks
+  // another pill first.
   const [pendingPillNavigation, setPendingPillNavigation] = useState<{ origin: string; spaceId: string } | null>(null);
   const selectSpaceFromPill = useCallback((spaceId: string | null): void => {
     setSelectedSpaceId(spaceId);
-    setPendingPillNavigation(spaceId !== null && routeWorkstream && !routeWorkstream.spaceIds.includes(spaceId)
+    const hidesRoute = routeWorkstream
+      ? !routeWorkstream.spaceIds.includes(spaceId ?? '')
+      : onNewStreamRoute && routeSpaceId !== spaceId;
+    setPendingPillNavigation(spaceId !== null && hidesRoute
       ? { origin: currentRouteRef.current, spaceId }
       : null);
-  }, [routeWorkstream, setSelectedSpaceId]);
+  }, [onNewStreamRoute, routeSpaceId, routeWorkstream, setSelectedSpaceId]);
   useEffect(() => {
     if (pendingPillNavigation === null) return;
     if (currentRoute !== pendingPillNavigation.origin || selectedSpaceId !== pendingPillNavigation.spaceId) {
@@ -1533,7 +1538,7 @@ export function Sidebar({
     setPendingPillNavigation(null);
     void navigate(first
       ? `/workstreams/${encodeURIComponent(first.id)}`
-      : `/spaces/${encodeURIComponent(pendingPillNavigation.spaceId)}`);
+      : emptySpaceRoute(pendingPillNavigation.spaceId, !spacesReadOnly));
   }, [
     channelsLoading,
     currentRoute,
@@ -1543,6 +1548,7 @@ export function Sidebar({
     navigate,
     pendingPillNavigation,
     selectedSpaceId,
+    spacesReadOnly,
   ]);
   // Whether this session has the hierarchy at all. A host that hands over no
   // directory (no active workspace) keeps the flat, time-grouped list this
@@ -2105,21 +2111,17 @@ export function Sidebar({
   // the same toggle.
   useListMotion(scrollRef, compact, layoutSettling);
 
-  const createChannelFromSidebar = useCallback(async (input: { name: string; spaceId: string }): Promise<void> => {
+  const createChannelFromSidebar = useCallback((input: { spaceId: string }): void => {
     markSurfaceEntrypoint('sidebar_new');
-    try {
-      await onCreateChannel(input);
-    } catch (cause) {
-      markSurfaceEntrypoint('direct');
-      throw cause;
-    }
+    onCreateChannel(input);
   }, [onCreateChannel]);
   const createSpaceFromSidebar = useCallback(async (name: string): Promise<void> => {
     // No icon: Rally chooses one from the name a moment later. `workspace` is
     // the only scope a Space can have.
     const created = await onCreateSpace({ name, colorKey: 'blue', scope: 'workspace' });
-    void navigate(`/spaces/${created.id}`);
-  }, [navigate, onCreateSpace]);
+    // A new Space holds no Channel yet, so it opens on starting one.
+    void navigate(emptySpaceRoute(created.id, !spacesReadOnly));
+  }, [navigate, onCreateSpace, spacesReadOnly]);
 
   const moveChannelFromSelectedSpace = useCallback((
     sourceSpaceId: string,
@@ -2138,7 +2140,7 @@ export function Sidebar({
         : displayedWorkstreams[index + 1] ?? displayedWorkstreams[index - 1];
       const destination = next
         ? `/workstreams/${encodeURIComponent(next.id)}`
-        : (selectedSpace?.channelCount ?? 0) <= 1 ? `/spaces/${encodeURIComponent(sourceSpaceId)}` : null;
+        : (selectedSpace?.channelCount ?? 0) <= 1 ? emptySpaceRoute(sourceSpaceId, !spacesReadOnly) : null;
       navigationToken = channelMoveNavigationGeneration.current + 1;
       channelMoveNavigationGeneration.current = navigationToken;
       channelMoveNavigation.current = {
@@ -2174,6 +2176,7 @@ export function Sidebar({
     routeWorkstreamId,
     selectedSpace?.channelCount,
     selectedSpaceId,
+    spacesReadOnly,
   ]);
 
 
