@@ -7,6 +7,7 @@ import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { layoutKey, readLayout } from '../lib/desktop-layout';
 import { useAppSession } from '../lib/app-session';
+import { useShellCapabilities } from '../lib/collaboration-session';
 
 /** Resolve only the default route; live list updates never replace an open conversation. */
 export function WorkstreamLandingScreen(): React.JSX.Element {
@@ -15,6 +16,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   const spaces = spaceDirectories.active.data;
   const inactiveSpaces = spaceDirectories.inactive.data;
   const { session } = useAppSession();
+  const { guest } = useShellCapabilities();
   const { state, sidebarConnect, loadedSpaceIds } = useWorkspaceSocket();
   const routeState: unknown = useLocation().state;
   const savedRoute = routeState == null && session?.workspace && session.user
@@ -81,7 +83,12 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
     }
     if (savedSpaceId !== null) {
       if (awaitingSpace) return <LoadingState label="Opening spaces…" />;
-      if (spaces?.items.some((row) => row.id === savedSpaceId)) return <Navigate replace to={`/spaces/${encodeURIComponent(savedSpaceId)}`} />;
+      const savedSpace = spaces?.items.find((row) => row.id === savedSpaceId);
+      // A Space that has emptied since it was saved opens on starting a Channel,
+      // as every empty Space does.
+      if (savedSpace) return <Navigate replace to={savedSpace.channelCount === 0
+        ? emptySpaceRoute(savedSpace.id, !guest)
+        : `/spaces/${encodeURIComponent(savedSpace.id)}`} />;
     }
   }
   if (first) return <Navigate replace to={`/workstreams/${encodeURIComponent(first.id)}`} />;

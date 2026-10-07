@@ -77,7 +77,8 @@ the Space and the name are set on the screen itself, and nothing is created unti
 the opening message is sent. That is the only route to the launcher: there is no
 Space-less one, because every Channel is started from a Space. A Space with no
 Channel to open lands here too (`emptySpaceRoute` in `lib/workstream-landing.ts`):
-an empty Organization opens it on General, a pill picked for a Space with no
+an empty Organization opens it on General, as does a last-viewed Space that has
+emptied since, a pill picked for a Space with no
 Channels opens it on that Space, as does a newly created Space and a Channel
 moved out of the last placement in its Space. A reader who cannot start Channels
 gets the Space's dashboard instead.
@@ -95,7 +96,8 @@ The setup above the composer is three controls:
   `useSpaceChoices`. Changing it is local state rather than a navigation, because
   a navigation remounts the launcher and would drop the people and name already
   chosen. The draft key stays the route's Space, so the words in the composer
-  never swap for another Space's draft.
+  never swap for another Space's draft. If the picked Space is archived while
+  the screen is open, the launcher falls back to the route's Space.
 - **Name.** Optional; a Channel sent without one is titled by the server, as
   before.
 
@@ -651,9 +653,9 @@ for"; product now asks for exactly that.
 **Consequences:** The name is optional again, where the dialog required it; the
 server titles an unnamed Channel. A future control on this screen should join
 the setup rows above the composer, not the header, which is collapsed until
-launch. The people list and the Space list both open upward, capped at the room
-above the centred dock through the screen's size container, so a change to the
-setup rows' height has to move that cap too.
+launch. The people list and the participant list open upward and measure the
+room above them when they open (`fitAbove`), because the centred setup moves
+with the draft's height; the Space list is Radix's and flips on its own.
 
 Pull request: [#1130](https://github.com/juno-ai-labs/avalon/pull/1130).
 
