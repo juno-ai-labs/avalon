@@ -59,17 +59,9 @@ The section is always drawn once the Organization is open. Empty, it is a
 dashed drop zone reading **Move a channel here to pin it**, which takes the
 accent while a Channel is being dragged; dropping one there pins it.
 
-While an unpinned Channel is dragged over the section, the section holds a slot
-open for it: a faded copy of its row, drawn as a pinned row being reordered is
-drawn, in the place a release would put it, with the pinned rows after it pushed
-down to make room. The slot is the count of pinned rows whose laid-out midpoint
-is above the pointer (`layoutInsertIndex` in `lib/list-motion.ts`). A release
-pins the Channel and then saves the order with the Channel in that slot. A
-Space's run appends a new pin, so there a slot at the end needs no second
-write. All's saved order is not cleared by an unpin and would put the Channel
-back in its old slot, so under All an end drop is saved too. The slot stays open, and the order is previewed, from the
-release until the pinned row arrives, so the section does not close up and then
-open again around the round trip.
+While an unpinned Channel is dragged over the section, a faded copy of its row
+shows where a release would put it, and the pinned rows after it move down to
+make room. A release pins the Channel into that slot.
 
 All's order lives in `workspace_pinned_order` (WorkspaceDO migration 87) and
 reaches clients as `pinnedOrder` on the sidebar payload and the Space snapshot.
