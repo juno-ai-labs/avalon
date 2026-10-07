@@ -1249,8 +1249,9 @@ endpoint: this is the same `['workstreams']` page the former flat list used.
 sidebar draws the empty Pinned section, the Channels heading with its sort
 toggle, and one ghost row under it: the glyph's pebble dashed and unfilled with
 no symbol, and still skeleton bars for the title and time. There is no "No
-channels yet" line. The heading is hidden only when every Channel
-is pinned, where it would head nothing.
+channels yet" line, except as screen-reader text. The heading is hidden when
+every Channel is pinned. A guest, who cannot create a Channel, still sees "No
+channels yet" instead.
 
 **A Channel reached only through a Breakout is a socket row like any other**,
 for a member or a guest. The conversation directory (`/sharing/navigation`)
@@ -1869,18 +1870,6 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
-
-### 2026-10-07 — The sidebar drops "No channels yet" for a ghost row
-
-**What changed:** With no Channels, the sidebar no longer draws a "No channels
-yet" line under the Spaces. It draws the Channels heading with its sort toggle
-under the empty Pinned section, and one ghost Channel row under that.
-
-**Why:** The empty Pinned section already says there is nothing yet, and the
-extra line read as clutter at the top of the list. The heading and ghost row
-show the sidebar's shape before the first Channel lands. The ghost's bars do not
-pulse, since nothing is loading. The heading still hides when
-every Channel is pinned, since it would head nothing there.
 
 ### 2026-10-06 — Every Space is Organization-wide and grants no reader
 

@@ -3442,8 +3442,15 @@ describe('the sidebar without a recency list', () => {
 
     expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
     expect(screen.getByRole('button', { name: /^Sorted / })).toBeVisible();
-    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
-    expect(document.querySelectorAll('.ghost-channel-row')).toHaveLength(1);
+    expect(screen.getByText('No channels yet')).toHaveClass('sr-only');
+  });
+
+  it('given a guest with no channels, when the sidebar is drawn, then it says so instead of drawing a slot', () => {
+    renderSidebar({ spaces: [space()], spacesReadOnly: true, workstreams: [] });
+
+    expect(screen.getByText('No channels yet')).toBeVisible();
+    expect(screen.getByText('No channels yet')).not.toHaveClass('sr-only');
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
   });
 
   it('given Channels loaded a Space at a time, when the Space on screen has not answered, then it waits rather than saying it is empty', () => {
@@ -3474,14 +3481,14 @@ describe('the sidebar without a recency list', () => {
     // Nothing to open yet: the Channel has no screen until its create answers.
     expect(screen.queryByRole('link', { name: /Launch plan/u })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Creating Elsewhere')).not.toBeInTheDocument();
-    expect(document.querySelector('.ghost-channel-row')).toBeNull();
+    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
   });
 
-  it('given a member with a channel, when the sidebar is drawn, then it draws no ghost row', () => {
+  it('given a member with a channel, when the sidebar is drawn, then it does not claim to be empty', () => {
     const hiring = space();
     renderSidebar({ spaces: [hiring], workstreams: [placedIn(today, hiring.id)] });
 
-    expect(document.querySelector('.ghost-channel-row')).toBeNull();
+    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
   });
 
   /**
