@@ -133,7 +133,7 @@ def motion_kit() -> str:
     path, values = mark_path()
     left, top, side = view_box(values, 15)
     return (
-        "// The Rally mark: a single stroke path in a 249.63 viewBox (from apps/site/public/brand/rally-mark.svg).\n"
+        f"// The Rally mark: a single stroke path in a {side} viewBox (from apps/site/public/brand/rally-mark.svg).\n"
         f'const MARK_D = "{path}";\n'
         f"const MARK_VIEWBOX = {{ x: {left}, y: {top}, s: {side} }};\n"
     )
