@@ -13,7 +13,7 @@ forwarded to PostHog. The site loads no PostHog script and sets no cookie.
 | --- | --- | --- |
 | `$pageview` | A page loads | Page class, path, referring domain, `$utm_source` / `$utm_medium` / `$utm_campaign` |
 | `$pageleave` | The visitor leaves the page (`pagehide`) | Page class, path, time-on-page bucket (under 1s up to 10m+) |
-| `site_action_selected` | A tagged link is clicked | Action, placement, plan (pricing buttons only) |
+| `site_action_selected` | A tagged link is clicked | Action, placement, plan (pricing buttons only), flowId (web entry only) |
 
 Tagged links on the landing page, by `data-site-action` id:
 
@@ -31,6 +31,13 @@ Tagged links on the landing page, by `data-site-action` id:
 
 `web-app-hero` reports `secondary_cta · hero` on every device, including
 phones where it is the only hero button, so its clicks cannot be split by device.
+
+Each activation of `web-app-hero` or `sign-in-header` creates a fresh opaque
+`flowId`, reports it on the action, and sends it to the browser as `signupFlowId`.
+Copied links stay clean. Browser entry validates and retains it in tab-scoped
+session storage before removing the URL field, so refreshing before sign-in
+keeps the landing attribution. Authentication retires it. See
+[`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
 
 Not tracked: scrolling, section views, header nav clicks, and the founders'
 LinkedIn, GitHub and Hugging Face links.
@@ -56,16 +63,20 @@ Check these on every edit to the landing page:
 5. **Put UTM tags on links that bring people to the page** (utm_source,
    utm_medium, utm_campaign), such as posts, emails and ads. The page reads them from its
    own URL; without them the campaign chart shows only "(none)".
-6. **Deploy the API before the site** when adding a new action, placement or
-   plan. A merge touching both starts both deploys at once, so run the API
+6. **Deploy the API before the site** when adding a new action, placement, plan or event property. A merge touching both starts both deploys at once, so run the API
    deploy first. Until the API knows a value it refuses the whole batch that
    carries it, including any page view in that batch.
+
+7. **Keep a fresh flow per web entry activation.** Its event and destination
+   must carry the same ID; never prepare a shared ID at page load or remove
+   browser reload persistence. Signup reports join separate subjects by flow.
 
 ## Where to look
 
 - **Dashboard:** [Landing page & GTM](https://us.posthog.com/project/541600/dashboard/2150285)
   in PostHog. It shows visits, which download link was clicked, weekly download
-  rate, and conversion by referrer and by campaign.
+  rate, conversion by referrer and by campaign, and two complete signup flows:
+  browser from the web CTA and desktop from opening a fresh install.
 - **Code:** `apps/site/src/telemetry.ts` (reporting and the link table),
   `packages/contracts/src/telemetry.ts` (allowed values).
 - **Mechanism:** [`public-site-telemetry.md`](public-site-telemetry.md).

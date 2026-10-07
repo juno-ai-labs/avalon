@@ -10,7 +10,7 @@ import type { PendingWorkspaceInvitation } from '../lib/types';
 
 export type SignInDesktopBridge = Pick<
   RallyDesktopBridge,
-  'cancelDesktopAuthAttempt' | 'createDesktopAuthAttempt' | 'openExternal'
+  'cancelDesktopAuthAttempt' | 'createDesktopAuthAttempt' | 'openExternal' | 'getRuntimeConfig'
 >;
 
 export function BootScreen(): React.JSX.Element {
@@ -34,9 +34,14 @@ export function SignInScreen(): React.JSX.Element {
     runtime,
     selectRegion,
   } = useAppSession();
-  const signupFlow = useRef<string | null>(null);
+  const signupFlow = useRef<Promise<string> | null>(null);
   const signupViewed = useRef(false);
-  signupFlow.current ??= uuidV7();
+  const ensureSignupFlow = (): Promise<string> => {
+    signupFlow.current ??= desktopBridge().getRuntimeConfig()
+      .then(config => config.firstSignupFlowId ?? uuidV7())
+      .catch(() => uuidV7());
+    return signupFlow.current;
+  };
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
@@ -48,7 +53,7 @@ export function SignInScreen(): React.JSX.Element {
   useEffect(() => {
     if (!api || signupViewed.current) return;
     signupViewed.current = true;
-    void api.observeSignupView(signupFlow.current!).catch(() => undefined);
+    void ensureSignupFlow().then(flowId => api.observeSignupView(flowId)).catch(() => undefined);
   }, [api]);
 
   const beginGoogleLogin = async (): Promise<void> => {
@@ -64,7 +69,7 @@ export function SignInScreen(): React.JSX.Element {
         region: 'global',
       });
       attemptId = authAttempt.attemptId;
-      const url = await api.beginGoogleLogin('global', 'rallywithai://auth/complete', { authAttempt, signupFlowId: signupFlow.current! });
+      const url = await api.beginGoogleLogin('global', 'rallywithai://auth/complete', { authAttempt, signupFlowId: await ensureSignupFlow() });
       await bridge.openExternal(url);
     } catch (caught) {
       if (attemptId) await bridge.cancelDesktopAuthAttempt(attemptId).catch(() => undefined);
