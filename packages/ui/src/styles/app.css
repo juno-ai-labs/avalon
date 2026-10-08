@@ -7590,6 +7590,18 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
   /* The borderless picker is pushed right for the two-column row; here its
      text lines up with the label above it. */
   .workspace-settings-screen .settings-preference-row .dropdown-select-trigger-secondary { justify-content: flex-start; min-width: 0; padding-left: 0; padding-right: 10px; }
+  /* The connection tables fit the phone instead of scrolling sideways: the
+     fixed columns narrow and the name wraps, so an empty table's message is
+     never cut off. */
+  .workspace-settings-screen .settings-connection-table { min-width: 0; }
+  .workspace-settings-screen .settings-connection-table th,
+  .workspace-settings-screen .settings-connection-table td { padding-inline: 6px; }
+  .workspace-settings-screen .settings-connection-table th:first-child,
+  .workspace-settings-screen .settings-connection-table td:first-child { padding-left: 12px; }
+  .workspace-settings-screen .settings-connection-table th:nth-child(2) { width: 88px; }
+  .workspace-settings-screen .settings-connection-table th:nth-child(3) { width: 48px; }
+  .workspace-settings-screen .settings-connection-table th:last-child { width: 30px; }
+  .workspace-settings-screen .settings-connection-empty-row td { padding: 0; }
   .workspace-settings-screen .settings-preference-row > .usage-quota-value { justify-self: stretch; text-align: left; width: auto; }
   .workspace-settings-screen .settings-account-profile input { width: 100%; }
   .workspace-settings-screen .settings-account-profile .personal-colors,
