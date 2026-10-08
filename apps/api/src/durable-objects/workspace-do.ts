@@ -1054,6 +1054,7 @@ import {
 } from "./workspace-transcription-storage";
 import {
   SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS,
+  admissionAddress,
   attachSidekickConversation,
   conversationIdOf,
   conversationsTitled,
@@ -1088,6 +1089,7 @@ import {
   type ConversationToolRefusal,
   type ConversationToolRefusalCode,
   type ConversationToolResolveResult,
+  type ConversationToolScope,
   type ConversationToolScopeResult,
 } from "./workspace-conversation-tool-protocol";
 
@@ -8091,7 +8093,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ConversationToolScopeRequestSchema, input, "conversation_tool_scope");
     this.assertWorkspace(request.workspaceId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
-    const conversations = await this.reachableConversations(request.workspaceId, scoped, request.userId);
+    const conversations = await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId);
     return { conversations: conversations.map(conversationToolEntry) };
   }
 
@@ -8099,10 +8101,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * The unarchived conversations of a scope this person can read, as each
    * Channel's own authority answers it (`readableSubstreams`, the rule its
    * canonical reads and search's audience apply) for this person's
-   * relationship. Asked once per Channel, inside this object.
+   * relationship, each through its `admissionAddress`. Asked once per Channel,
+   * inside this object.
    */
   private async reachableConversations<T extends { parentId: string; substreamId: string; readable: boolean; archived: boolean }>(
     workspaceId: string,
+    scope: ConversationToolScope,
     scoped: readonly T[],
     userId: string,
   ): Promise<T[]> {
@@ -8114,7 +8118,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const parentId of new Set(unarchived.map((conversation) => conversation.parentId))) {
       readable.set(parentId, new Set((await this.hostedParent(parentId)).readableSubstreams(asUserId(userId), relationship)));
     }
-    return unarchived.filter((conversation) => readable.get(conversation.parentId)?.has(conversation.substreamId) === true);
+    return unarchived.filter((conversation) => {
+      const admitted = admissionAddress(scope, conversation);
+      return readable.get(admitted.parentId)?.has(admitted.substreamId) === true;
+    });
   }
 
   /**
@@ -8151,7 +8158,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
     // Only a refusal lists what the person can reach, so only a refusal pays for it.
-    const available = async () => (await this.reachableConversations(request.workspaceId, scoped, request.userId))
+    const available = async () => (await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId))
       .map((conversation) => conversation.conversationId);
     let target;
     if (request.reference === null) {
@@ -8167,7 +8174,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const resourceId = target.substreamId === "0" ? target.parentId : target.substreamId;
     if (target.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
-    const admission = await this.conversationToolAdmission(request.workspaceId, target, request.userId);
+    const admission = await this.conversationToolAdmission(
+      request.workspaceId, admissionAddress(request.scope, target), request.userId,
+    );
     if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], resourceId);
     if (admission.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
     const sidekickName = request.scope.kind !== "sidekick" ? null

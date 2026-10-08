@@ -15,7 +15,7 @@ import { asArtifactId, type ExecutionPrincipal } from "@rally/contracts";
 
 import { artifactHostDOName } from "../durable-objects/names";
 import type { Env } from "../env";
-import { createResourceObjectPort } from "../runtime/resource-port";
+import { createConversationResourceLinks } from "../runtime/resource-port";
 import { loadVisibleWorkstreamResourcePage } from "./workstream-resource-visibility";
 import { durableObjectStubForArtifact, workspacePlacementAffinity } from "../lib/durable-object-namespace";
 import type {
@@ -54,7 +54,7 @@ export function createArtifactDataToolContext(
       // existence oracle.
       const page = await loadVisibleWorkstreamResourcePage(
         env.DB,
-        createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+        createConversationResourceLinks(env, input.workspaceId, input.workstreamId),
         {
           workspaceId: input.workspaceId,
           workstreamId: input.workstreamId,

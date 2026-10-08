@@ -13,6 +13,7 @@ import {
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
 import {
+  conversationResourceLinks,
   loadVisibleWorkstreamResourcesByIds,
   type VisibleWorkstreamResourceRow,
 } from "../workstream-resource-visibility";
@@ -122,7 +123,10 @@ export function createMultimodalGenerationResourceStore(
       const requested = [resourceId, ...(maskResourceId ? [maskResourceId] : [])];
       const rows = await loadVisibleWorkstreamResourcesByIds(
         env.DB,
-        resourcePortFactory(context.workspaceId, context.workstreamId),
+        conversationResourceLinks(
+          resourcePortFactory(context.workspaceId, context.workstreamId),
+          () => resourcePortFactory(context.workspaceId, context.workstreamId, "0"),
+        ),
         {
           workspaceId: context.workspaceId,
           workstreamId: context.workstreamId,

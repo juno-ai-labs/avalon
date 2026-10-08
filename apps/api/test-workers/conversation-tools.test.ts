@@ -10,6 +10,9 @@
  * Breakout's own SubstreamAgent appends a post. The model-driven path (a real
  * run calling `conversation_post`) is in `automation-post-result.test.ts`; the
  * tools' argument and failure shapes are in `test/conversation-tools.test.ts`.
+ * A Breakout's full access to its Channel (its Main's messages through these
+ * tools, and its Main's resource links) is here too, because this suite makes
+ * real Channels and Breakouts.
  */
 
 import { env } from "cloudflare:workers";
@@ -28,6 +31,7 @@ import {
 } from "@rally/contracts";
 
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import { createConversationResourceLinks } from "../src/runtime/resource-port";
 import type { AuthContext, Env } from "../src/env";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
 import { AuthorizationService } from "../src/services/authorization-service";
@@ -49,6 +53,10 @@ const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000c0a11");
 const COLLEAGUE_ID = asUserId("00000000-0000-7000-8000-0000000c0a12");
 const SESSION_ID = "00000000-0000-7000-8000-0000000c0a13";
 const GUEST_ID = asUserId("00000000-0000-7000-8000-0000000c0a14");
+/** A member of the Organization who is in no Channel this suite makes. */
+const OUTSIDER_ID = asUserId("00000000-0000-7000-8000-0000000c0a15");
+const CHANNEL_RESOURCE_ID = "00000000-0000-7000-8000-0000000c0ae1";
+const BREAKOUT_RESOURCE_ID = "00000000-0000-7000-8000-0000000c0ae2";
 const NOW = "2026-09-27T10:00:00.000Z";
 const TEST_ENV: Env = env;
 
@@ -432,6 +440,79 @@ describe("a conversation tool's scope", () => {
       .toEqual([[`${ROOM_ID}/${breakout}`, true], [ROOM_ID, false]]);
     expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
       scope, reference: OTHER_ROOM_ID })).toMatchObject({ ok: false, code: "conversation_not_in_scope" });
+  });
+});
+
+describe("a Breakout's access to its Channel", () => {
+  /** A link in one conversation's object, as an attach writes it. */
+  async function link(target: DurableObjectStub, resourceId: string, attachedAt: number): Promise<void> {
+    await runInDurableObject(target, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workstream_resource_links
+           (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+            resource_json, attached_at, updated_at)
+         VALUES (?, NULL, 0, 'generated', '{}', ?, ?)`,
+        resourceId, attachedAt, attachedAt,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
+         ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
+        attachedAt,
+      );
+    });
+  }
+
+  it("sees every resource its Channel's Main has attached, beside its own", async () => {
+    const breakout = await seedBreakout("Weekly call");
+    await link(conversation(ROOM_ID), CHANNEL_RESOURCE_ID, 1_000);
+    await link(conversation(ROOM_ID, breakout), BREAKOUT_RESOURCE_ID, 2_000);
+
+    const seen = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, ROOM_ID, undefined, breakout);
+    expect((await seen.links({})).links.map((row) => row.resource_id))
+      .toEqual([BREAKOUT_RESOURCE_ID, CHANNEL_RESOURCE_ID]);
+    // A point lookup, which is what read_resource makes, finds the Channel's.
+    expect((await seen.links({ resourceIds: [CHANNEL_RESOURCE_ID] })).links.map((row) => row.resource_id))
+      .toEqual([CHANNEL_RESOURCE_ID]);
+    expect(await seen.inventoryFingerprint()).toBe("inventory:1/1");
+
+    // The Channel attaching something changes what the Breakout sees, so a
+    // Breakout's cursor or compaction checkpoint must not keep matching.
+    await link(conversation(ROOM_ID), "00000000-0000-7000-8000-0000000c0ae3", 3_000);
+    expect(await seen.inventoryFingerprint()).toBe("inventory:1/2");
+
+    // The Channel inherits nothing from its Breakouts.
+    const channel = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, ROOM_ID, undefined, "0");
+    expect((await channel.links({ resourceIds: [BREAKOUT_RESOURCE_ID] })).links).toEqual([]);
+    expect(await channel.inventoryFingerprint()).toBe("inventory:2");
+  });
+
+  it("admits a Breakout's member to its Channel's Main, though the Channel itself would not", async () => {
+    await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
+      workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID, accessClass: "member", role: "member", status: "active",
+      incarnation: "outsider", revision: 1,
+    } });
+    const breakout = await seedBreakout("Weekly call");
+    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: breakout, actorUserId: AUTHOR_ID, userId: OUTSIDER_ID, operationId: "add-outsider" });
+    // The parent outbox is left alone, as above: the add queued a
+    // participant_notification this suite's D1 has no tables to deliver.
+    await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, breakout));
+    expect((await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: asSubstreamId("0"), userId: OUTSIDER_ID })).authorized).toBe(false);
+
+    const scope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: breakout };
+    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID, scope }))
+      .conversations.map((entry) => entry.conversationId))
+      .toEqual([`${ROOM_ID}/${breakout}`, ROOM_ID]);
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID,
+      scope, reference: ROOM_ID })).toMatchObject({ ok: true, conversation: { conversationId: ROOM_ID } });
+
+    // The standing is the Breakout's: without it, the Channel's Main is
+    // refused like any conversation they cannot open.
+    const mainScope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: asSubstreamId("0") };
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID,
+      scope: mainScope, reference: ROOM_ID }))
+      .toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: ROOM_ID });
   });
 });
 

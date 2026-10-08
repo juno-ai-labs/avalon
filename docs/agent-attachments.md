@@ -34,7 +34,8 @@ and extracted text is labeled separately. See [session import](session-import.md
 | `apps/api/src/durable-objects/workspace-resources-protocol.ts` | The typed request/result contracts for every resource-domain WorkspaceDO method, with refusals as outcomes rather than throws. |
 | `apps/api/src/durable-objects/workspace-resources-storage.ts` | The resource domain's SQL against the object's own storage: upload commit, draft delete, connector resolve, hydration swaps, watches, version reads, cleanup claims, alias claims, inbound-email receipts, webhook resource upserts, and the maintenance bounds beside them. |
 | `apps/api/src/services/resource-listing.ts` | The listing flag that separates a resource being *reachable* from its being *advertised*, the SQL predicate every enumerating statement applies, and the metadata helper its one producer writes. |
-| `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries. |
+| `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries, all over `ConversationResourceLinks`: a conversation's own links, and for a Breakout its Channel's Main links as well. |
+| `apps/api/src/runtime/resource-port.ts` | `createConversationResourceLinks`, the one way a reader builds those links from a conversation's address. |
 | `apps/api/src/services/workstream-resource-inventory.ts` | Renders the bounded current-principal inventory appended to live and replayed compaction checkpoints. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
 | `apps/api/src/services/automation-draft-attachment-tools.ts` | Reuses those operations behind a frozen compiler-request ID set and fresh draft ownership checks. |
@@ -162,10 +163,22 @@ set, while model tools use bounded point, batch, aggregate, and keyset-page
 queries. A workspace principal never inherits a user's private-note view.
 Knowledge of a resource ID or cursor does not bypass this query.
 
+**A Breakout sees its Channel's resources.** The links the query starts from are
+`ConversationResourceLinks`: the conversation's own `workstream_resource_links`,
+and when the conversation's object answers `inheritsChannelLinks` (a Breakout of
+a Channel, not a Sidekick's run child) every link its Channel's Main holds as
+well. Where both hold a link to the same resource, the Breakout's own wins. Every
+model-facing reader takes these links rather than a bare port, so `list_resources`,
+`read_resource`, `search_resource`, `view_resource`, `summarize_resource`,
+Terminal's `import_resource`, image edits, artifact data and receipt replay all
+agree on what a Breakout can reach. The sidebar is not one of them: it still
+shows a conversation's own set.
+
 `list_resources` returns 25 rows by default and at most 50, optionally
 filtered by one of the eight natural-language kinds. Continuations bind the
-principal, work stream, filters, size, ordering key, and a monotonic work-stream
-inventory revision. SubstreamAgent advances that revision for relationship, message-
+principal, work stream, filters, size, ordering key, and an inventory
+fingerprint: `inventory:<revision>` for a Channel, `inventory:<own>/<channel>`
+for a Breakout, each part a monotonic inventory revision. SubstreamAgent advances that revision for relationship, message-
 attachment, classification/content identity, and note-visibility mutations, but
 not hydration timestamps or derivative processing bookkeeping. A continuation
 compares it before and after its bounded queries, so a relevant change
@@ -205,7 +218,10 @@ The stored checkpoint contains the raw LLM summary plus the execution-principal
 key and authorized resource-inventory revision captured by an O(1) read before
 summarization. Rally runs the grouped inventory query once when rendering the
 appendix, verifies the revision there, and includes it in the conditional
-SubstreamAgent SQL statement that persists the checkpoint. Replay uses
+SubstreamAgent SQL statement that persists the checkpoint; for a Breakout that
+statement can fence only the Breakout's own revision (`ownInventoryRevision`),
+and a Channel change after it lands is caught by the fingerprint comparison on
+the next replay instead. Replay uses
 the summary only for an exact scope match; attachment, detachment, deletion,
 revocation, private-note visibility, or principal changes invalidate it and fall
 back to durable transcript replay. Relevant resource IDs and consulted
@@ -325,6 +341,13 @@ content; that proved Worker-memory ceiling replaces the former twenty-million-
 character envelope.
 
 ## Invariants
+
+- **A Breakout's visibility is its own links plus its Channel's Main.** Its
+  handoff summary names the Channel's documents, so a reader that took only the
+  Breakout's own links answered `resource_not_found` for a document anybody in
+  the Channel could open, and the unverified-attachment boundary then replaced
+  the whole reply. Build a reader with `createConversationResourceLinks`, never a
+  bare `createResourceObjectPort`, or that reader will disagree with the rest.
 
 - **`ResourceService.list`'s `resourceTypes` distinguishes absent from empty.**
   Omitted means every type, which is what the product's own listing wants; `[]`
@@ -478,6 +501,12 @@ generic tool execution/receipt loop is owned by
 
 ## Testing
 
+- `apps/api/test-workers/conversation-tools.test.ts` ("a Breakout's access to
+  its Channel") proves on real objects that a Breakout's links include its
+  Channel Main's, that a point lookup finds one, that the fingerprint moves when
+  the Channel attaches, and that a Channel inherits nothing from a Breakout.
+  `apps/api/test/resource-listing-visibility.test.ts` covers the Breakout's own
+  link winning a duplicate and `ownInventoryRevision`.
 - `packages/contracts/src/attachment-contracts.test.ts` locks kind order,
   description coverage, MIME precedence, strict arguments, and exact outputs.
 - `packages/contracts/src/index.test.ts` locks structured-failure allowlisting
@@ -659,6 +688,35 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-10-08 — A Breakout sees every resource its Channel attached
+
+**What changed:** Visibility reads take `ConversationResourceLinks` instead of a
+bare resource port. For a Breakout it merges the Channel Main's links into the
+Breakout's own, and its fingerprint becomes `inventory:<own>/<channel>`. The
+conversation object answers whether to inherit (`inheritsChannelLinks`), so the
+readers that hold only "the conversation this run executes in" needed no new
+argument.
+
+**Why:** In production a Breakout opened on a summary that cited the Channel's
+"Setup Plan" document as `resource://…`. Its run called `read_resource` on it,
+the lookup read only the Breakout's link table, and the answer was
+`resource_not_found`; the reply the person got was the "Attachment content
+unverified" notice. The product rule is now that a Breakout has full access to
+what its parent has attached.
+
+**Considered and rejected:** Copying the summary's cited links into the Breakout
+when it is created. It covers only what the summary happened to name, freezes at
+creation, and leaves out what the Channel attaches later. Threading a substream
+id through every reader: six of them hold only the port for the conversation
+they run in, and the object already knows what it is.
+
+**What a future change has to respect:** A Breakout member who cannot open the
+Channel still reaches its resources through the agent. That was an explicit
+product decision, not an oversight. Breakout compaction checkpoints written
+before this change carry `inventory:<n>` and stop matching once, which replays
+the transcript and compacts again. The sidebar and the human-facing resource
+routes still answer per conversation.
 
 ### 2026-09-26 — Index the stored object a resource or version points at
 

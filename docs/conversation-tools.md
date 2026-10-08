@@ -32,7 +32,7 @@ attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 | Loop | Scope | Tools | Acts as |
 | --- | --- | --- | --- |
-| Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation and its Channel's Main | list, read | The person it works for |
+| Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation and its Channel's Main | list, read | The person it works for, admitted to Main by the Breakout |
 | Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's home and attachments | list, read, post, attach | The person talking to it |
 | Sidekick run (`automationRun` present) | The Sidekick's home and attachments | list, read, post | The run-as user |
 
@@ -99,7 +99,11 @@ relationship in `workspace_member_status`, then the hosted parent's
 them. A list re-admits the same way: nothing for a person whose membership
 ended, the directories' viewer rows for a member, and for a guest each
 unarchived candidate's admission, since the viewer rows record no grants and
-would drop what a grant gives. Attach admits the same way and additionally refuses an archived target,
+would drop what a grant gives. One target is admitted by another conversation:
+in a Breakout loop's scope, the Channel's Main is admitted through the person's
+admission to the Breakout itself (`admissionAddress`), because a Breakout has
+full access to its parent and Breakout membership does not require the Channel.
+Attach admits the same way and additionally refuses an archived target,
 which is the rule a write through `ConversationService.writableClient` follows:
 attaching is the consent to publish there.
 
@@ -116,6 +120,10 @@ attaching is the consent to publish there.
 - **A post is keyed on the receipt, not the run.** A retried receipt posts once;
   a new call in a later wake of the same run is a new post. Keying on the run
   alone, as `post_result` did, would swallow every reply after the first.
+- **A Breakout's Main is admitted by the Breakout.** `admissionAddress` is the one
+  place a target is admitted as a different conversation, and only for a
+  Breakout's own scope. A Breakout member outside the Channel reads Main through
+  it; nothing else they hold changes.
 - **Every read and post admits the acting person again.** A continuation page
   or a listed id is never standing access; losing a Channel stops the next call.
 - **The external-source marking is the host's.** The model cannot set or clear
@@ -187,6 +195,8 @@ whole rather than splitting it.
   grant, listed what a grant gives, and admitted to a Breakout-homed Sidekick
   by the Breakout's grant rather than the Channel's; and a room member outside
   the home Breakout refused by the three sites that narrow to it.
+  A Breakout member outside its Channel: listed Main and admitted to it from the
+  Breakout's scope, and refused it from the Channel's own.
 - `apps/api/test-workers/external-bindings-mucker-flow.test.ts` (workerd): the
   whole flow, a continued run's forward landing in the home Breakout.
 - `apps/api/test-workers/automation-post-result.test.ts` (workerd): a real run,
@@ -210,6 +220,28 @@ is published to the target's audience; the person who attached that
 conversation chose that audience.
 
 ## Changelog
+
+### 2026-10-08 — A Breakout reads its Channel whoever is in it
+
+**What changed:** In a Breakout loop's scope, `conversation_list` and
+`conversation_read` admit the Channel's Main through the acting person's
+admission to the Breakout, not their admission to the Channel. The plugin's
+system message tells a Breakout loop to read Main when it needs more than its
+opening summary.
+
+**Why:** The product rule is that a Breakout has full access to its parent's
+messages. Breakout membership never required the Channel, so a member added
+from outside it got `conversation_access_denied` on the one conversation the
+Breakout was branched from.
+
+**Considered and rejected:** Limiting Breakout membership to people who can read
+the Channel, which would end guest-only Breakouts; and checking per run that
+every Breakout member can read the Channel. The owner chose to accept that a
+Breakout member reads the Channel through the agent.
+
+**Consequences:** What is read is unchanged: `readableMessagesBefore`, what was
+said, without tool cards or suggestions. A Sidekick's scope admits every target
+as itself, as before.
 
 ### 2026-09-27 — The conversation tools replace post_result
 
