@@ -162,6 +162,18 @@ describe('Channel rail attention from projected conversations', () => {
   });
 });
 
+describe('Channel rail questions from projected conversations', () => {
+  it('flags a Breakout waiting on an answer, preferring the open detail over its row', () => {
+    const rows = railChildrenWithAttention([
+      { substreamId: 'asking', harnessStatus: 'needs_input' as const },
+      { substreamId: 'answered', harnessStatus: 'needs_input' as const },
+      { substreamId: 'quiet', harnessStatus: 'completed' as const },
+      { substreamId: 'guest', needsAttention: true },
+    ], 'answered', { ...headerWorkstream, harnessStatus: 'running' });
+    expect(rows?.map((row) => row.needsInput)).toEqual([true, false, false, false]);
+  });
+});
+
 describe('running channel message delivery', () => {
   it('keeps accepted pending messages visibly pending until canonical promotion', () => {
     expect(acceptedMessageOverlayDeliveryState('pending', 'steer')).toBe('steer_pending');
