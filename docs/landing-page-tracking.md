@@ -21,6 +21,7 @@ Tagged links on the landing page, by `data-site-action` id:
 | --- | --- | --- |
 | `download-header` | Header Download for Mac | download · header |
 | `download-hero` | Hero Download the macOS beta | download · hero |
+| `web-app-hero` | Hero Use the web app (`/start-fast/` only) | secondary_cta · hero |
 | `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
 | `demo-request` | Ask for a demo (emails Katherine and Alex) | demo_request · sidekicks |
@@ -34,6 +35,16 @@ The footer is rendered from `apps/site/src/site-chrome.ts`, so its help@ link an
 its id live there, not in `index.html`. The `/compare/` pages share the header
 (`download-header`) and the footer, and count as page class `landing` with
 their own `$pathname`; see [`landing-comparisons.md`](landing-comparisons.md).
+
+`/start-fast/` is a variant of the home page kept in its own file,
+`apps/site/start-fast/index.html`: the same sections, but a different headline
+and a hero offering both the macOS download and the web app, each under a label
+with an arrow. It counts as page class `landing` with its own `$pathname`, and
+carries `noindex` with a canonical link to the home page so search engines do
+not treat it as duplicate content. Clicks report the same ids as the home page,
+so a click event alone does not say which variant it came from; compare the
+variants by `$pathname` on page views. A future variant is another folder
+beside it, added to the build inputs in `apps/site/vite.config.ts`.
 
 ## Don't lose on a redesign
 

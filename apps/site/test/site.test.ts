@@ -129,7 +129,8 @@ describe('public Rally site', () => {
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete/?ticket=${ticket}&region=global&attempt=${attempt}`))).toBeNull();
   });
   it('tags every tracked landing link with a known id, one per installer link', () => {
-    const page = renderSiteChrome(readProjectFile('index.html'));
+    // The home page and its variants, such as /start-fast/, share one set of ids.
+    const page = ['index.html', 'start-fast/index.html'].map((path) => renderSiteChrome(readProjectFile(path))).join('');
     const ids = [...page.matchAll(/data-site-action="([^"]+)"/gu)].map(([, id]) => id);
     // A misspelled id is ignored at runtime, which would silently stop counting that link.
     for (const id of ids) expect(siteActionForLink(id), id).not.toBeNull();
