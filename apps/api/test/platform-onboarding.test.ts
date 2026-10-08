@@ -21,6 +21,7 @@ import {
   type RegionalCreateInput,
   type RegionalDeclineInput,
   type RegionalDiscovery,
+  type RegionalAttention,
   type RegionalIdentityBridgeBinding,
   type RegionalIdentityBridgeRpcBinding,
   type BrowserRegistration,
@@ -308,10 +309,15 @@ class FakeRegionalGateway implements RegionalIdentityBridgeBinding {
   async discover(): Promise<RegionalDiscovery> {
     return structuredClone(this.discovery);
   }
+
+  async attention(): Promise<RegionalAttention> {
+    return { attention: [], failed: [] };
+  }
 }
 
 class FakeRawRegionalBridge implements RegionalIdentityBridgeRpcBinding {
   readonly discover = vi.fn<(identity: PlatformIdentity) => Promise<RegionalRpcResult<RegionalDiscovery>>>();
+  readonly attention = vi.fn<(identity: PlatformIdentity) => Promise<RegionalRpcResult<RegionalAttention>>>();
   readonly activate = vi.fn<(input: RegionalActivateInput) => Promise<RegionalRpcResult<Session>>>();
   readonly activateBrowser = vi.fn<(input: RegionalActivateInput) => Promise<RegionalRpcResult<BrowserRegistration>>>();
   readonly create = vi.fn<(input: RegionalCreateInput) => Promise<RegionalRpcResult<Session>>>();

@@ -17,9 +17,10 @@ import { AuthService, issueAccessToken, verifyAccessToken } from "../services/au
 import { telemetryOperationId } from "../telemetry/api-emitter";
 import { deferOnboardingOutcome, onboardingFailureResult } from "./onboarding";
 import { PlatformOnboardingService } from "../services/platform-onboarding-service";
+import { membershipAttention } from "../services/workspace-attention-service";
 import { IDENTITY_REGION, configuredRegions, type Region } from "@rally/contracts/regions";
 import { BrowserSessionService, BrowserSessionSchema, BrowserWorkspacesSchema } from "../services/browser-session-service";
-import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserWorkspaceActivateSchema,
+import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserWorkspaceActivateSchema, BrowserWorkspaceAttentionSchema,
   BrowserWorkspaceCreateSchema, BrowserWorkspaceCreatedSchema } from "@rally/contracts/browser-session";
 import { startEmailLogin, deliverEmailLogin, redeemEmailLogin, EmailLoginStartSchema,
   EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
@@ -170,6 +171,23 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     const remote = await new PlatformOnboardingService(c.env,auth).otherDeploymentWorkspaces();
     if (remote.failed.length > 0) logEvent(c,"warn","browser_workspace_discovery_failed",{ failed:remote.failed.map((item) => `${item.region}:${item.code}`).join(",") });
     return c.json(BrowserWorkspacesSchema.parse({ workspaces:[...local,...remote.workspaces] }));
+  });
+  /**
+   * Attention for each organization `/workspaces` lists, read apart from it so
+   * the list paints without waiting on any Durable Object. Global answers for
+   * every deployment, as it does for the list.
+   */
+  routes.get("/workspaces/attention",async (c) => {
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    const local = await membershipAttention(c.env,auth.userId,await new AuthService(c.env).listRegionalWorkspaces(auth.userId));
+    const remote = c.env.AVALON_REGION !== IDENTITY_REGION || configuredRegions.length < 2
+      ? { attention:[],failed:[] }
+      : await new PlatformOnboardingService(c.env,auth).otherDeploymentAttention();
+    // Workspace ids are not user data; they find the one bad workspace.
+    const failed = [...local.failed.map((item) => ({ region:c.env.AVALON_REGION,...item })),...remote.failed]
+      .map((item) => [item.region,item.workspaceId,item.code].filter(Boolean).join(":"));
+    if (failed.length > 0) logEvent(c,"warn","browser_workspace_attention_failed",{ failed:failed.join(",") });
+    return c.json(BrowserWorkspaceAttentionSchema.parse({ attention:[...local.attention,...remote.attention] }));
   });
   /**
    * Opens a workspace in another deployment for this browser. Global admits it
