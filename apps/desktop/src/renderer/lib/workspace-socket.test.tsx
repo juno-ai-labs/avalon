@@ -20,6 +20,7 @@ import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
+import { organizationUsageQueryKey, usageCacheSlice } from './organization-usage';
 import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 import { WORKSPACE_SOCKET_OPEN_TIMEOUT_MS } from '@rally/contracts/workspace-reach-watch';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
@@ -2699,6 +2700,49 @@ describe('the organization socket over the local cache', () => {
     await vi.waitFor(async () => {
       const row = await workspaceDirectorySlice.read(scope, DIRECTORY_CACHE_KEY);
       expect(row?.workstreams.map((item) => item.title)).toEqual(['Live row']);
+    }, { timeout: LOCAL_CACHE_WRITE_COALESCE_MS + 2_000 });
+  });
+  it('reads the meter again on every subscribe answer, and writes one pushed after a plan change into the read and the disk', async () => {
+    await clearAllLocalCache();
+    const queryClient = new QueryClient();
+    const usageKey = organizationUsageQueryKey(scope);
+    const starter = {
+      plan: 'starter',
+      quotaRemainingPercent: 10,
+      weekResetsAt: '2026-10-08T09:00:00.000Z',
+      overage: { amountMicrousd: 0, periodStart: '2026-10-01T09:00:00.000Z', periodEndsAt: '2026-11-01T09:00:00.000Z', billed: false },
+    } as const;
+    const growth = { ...starter, plan: 'growth', quotaRemainingPercent: 64 } as const;
+    queryClient.setQueryData(usageKey, { usage: starter, fetchedAt: '2026-10-03T00:00:00.000Z' });
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <LocalCacheScopeProvider scope={scope}>
+          <WorkspaceSocketProvider region="global"
+            api={{ getWorkspaceSocketTicket }}
+            workspaceId="00000000-0000-7000-8000-000000000001"
+          >
+            <div />
+          </WorkspaceSocketProvider>
+        </LocalCacheScopeProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    // A plan change made while this socket was away is not replayed.
+    act(() => socket.message(syncPayload([])));
+    expect(queryClient.getQueryState(usageKey)?.isInvalidated).toBe(true);
+
+    act(() => socket.message({ type: 'workspace_usage', occurredAt: '2026-10-03T00:01:00.000Z', usage: growth }));
+    expect(queryClient.getQueryData(usageKey)).toMatchObject({ usage: growth });
+    await vi.waitFor(async () => {
+      expect(await usageCacheSlice.read(scope, 'usage')).toMatchObject({ usage: growth });
     }, { timeout: LOCAL_CACHE_WRITE_COALESCE_MS + 2_000 });
   });
 });

@@ -5,8 +5,9 @@ import { z } from 'zod';
 
 import type { HonoAppEnv } from '../env';
 import { ApiError } from '../lib/api-error';
+import { requestDeferral } from '../lib/defer';
 import { zValidator } from '../middleware/validation';
-import { setWorkspacePlan } from '../services/usage-metering';
+import { publishOrganizationUsage, setWorkspacePlan } from '../services/usage-metering';
 import { retireWorkspaceForOperator } from '../services/workspace-retirement-service';
 import { getOperator, requireDemoOperator, requireOperatorRole } from '../telemetry/operator-auth';
 
@@ -51,7 +52,8 @@ workspaceOperatorRoutes.post(
 );
 
 // Move a workspace to a plan. The new weekly quota applies to the current week
-// at once; see docs/usage-metering.md.
+// at once, and every connected member is sent the new meter; see
+// docs/usage-metering.md.
 workspaceOperatorRoutes.post(
   '/:workspaceId/plan',
   zValidator('param', WorkspaceParamSchema),
@@ -62,6 +64,7 @@ workspaceOperatorRoutes.post(
     if (!await setWorkspacePlan(c.env, workspaceId, plan, Date.now())) {
       throw new ApiError(404, 'workspace_not_found', 'This region has no such workspace');
     }
+    requestDeferral(c)(publishOrganizationUsage(c.env, workspaceId));
     return c.json(WorkspacePlanResultSchema.parse({ workspaceId, plan }));
   },
 );
