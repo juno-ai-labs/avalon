@@ -124,19 +124,25 @@ export function conversationResourceLinks(
     async links(selection) {
       const [ownLinks, inheriting] = await Promise.all([own.attachedLinks(selection), inheritsChannel()]);
       const ownIds = new Set(ownLinks.map((link) => link.resource_id));
-      const channelLinks = inheriting
-        ? (await parent().attachedLinks(selection)).filter((link) => !ownIds.has(link.resource_id))
-        : [];
-      const onMessagesOf = async (port: () => ResourceObjectPort, rows: readonly ResourceLinkRow[]) => (
-        rows.length > 0 ? port().resourceIdsOnMessages({ resourceIds: rows.map((link) => link.resource_id) }) : []
-      );
+      // A point lookup (what read_resource makes) already knows the ids, so the
+      // Channel answers both questions in one round trip rather than two.
+      const [channelAll, channelNamedOnMessages] = inheriting
+        ? await Promise.all([
+          parent().attachedLinks(selection),
+          selection.resourceIds ? parent().resourceIdsOnMessages({ resourceIds: selection.resourceIds }) : null,
+        ])
+        : [[], []];
+      const channelLinks = channelAll.filter((link) => !ownIds.has(link.resource_id));
       const [ownOnMessages, channelOnMessages] = await Promise.all([
-        onMessagesOf(() => own, ownLinks),
-        onMessagesOf(parent, channelLinks),
+        ownLinks.length > 0 ? own.resourceIdsOnMessages({ resourceIds: [...ownIds] }) : [],
+        channelNamedOnMessages ?? (channelLinks.length > 0
+          ? parent().resourceIdsOnMessages({ resourceIds: channelLinks.map((link) => link.resource_id) })
+          : []),
       ]);
+      const channelIds = new Set(channelLinks.map((link) => link.resource_id));
       return {
         links: [...ownLinks, ...channelLinks],
-        onMessages: new Set([...ownOnMessages, ...channelOnMessages]),
+        onMessages: new Set([...ownOnMessages, ...channelOnMessages.filter((id) => channelIds.has(id))]),
       };
     },
     async attachedResourceIds() {

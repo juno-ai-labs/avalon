@@ -120,10 +120,6 @@ attaching is the consent to publish there.
 - **A post is keyed on the receipt, not the run.** A retried receipt posts once;
   a new call in a later wake of the same run is a new post. Keying on the run
   alone, as `post_result` did, would swallow every reply after the first.
-- **A Breakout's Main is admitted by the Breakout.** `admissionAddress` is the one
-  place a target is admitted as a different conversation, and only for a
-  Breakout's own scope. A Breakout member outside the Channel reads Main through
-  it; nothing else they hold changes.
 - **Every read and post admits the acting person again.** A continuation page
   or a listed id is never standing access; losing a Channel stops the next call.
 - **The external-source marking is the host's.** The model cannot set or clear
@@ -241,7 +237,11 @@ Breakout member reads the Channel through the agent.
 
 **Consequences:** What is read is unchanged: `readableMessagesBefore`, what was
 said, without tool cards or suggestions. A Sidekick's scope admits every target
-as itself, as before.
+as itself, as before. The substitution is for reading: a Breakout loop has no
+post, and giving it one would let a member outside the Channel post to Main
+unless `admissionAddress` learns the difference.
+
+Shipped in #1179.
 
 ### 2026-09-27 — The conversation tools replace post_result
 

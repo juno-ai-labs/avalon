@@ -200,6 +200,10 @@ export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope
  * require the Channel, so this is what lets a Breakout's agent use the
  * Channel it was branched from at all for such a member. Every other target
  * is admitted as itself.
+ *
+ * Read access only: a Breakout loop is offered list and read, never post. A
+ * post offered to it later must not take this path, or a member outside the
+ * Channel could post to Main.
  */
 export function admissionAddress(
   scope: ConversationToolScope,

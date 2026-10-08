@@ -49,6 +49,22 @@ export function createResourceObjectPort(
 }
 
 /**
+ * {@link createConversationResourceLinks} over an injected factory, for a
+ * caller that takes one so a test can stand its ports in.
+ */
+export function conversationResourceLinksFrom(
+  resourcePort: ResourcePortFactory,
+  workspaceId: string,
+  workstreamId: string,
+  substreamId?: string,
+): ConversationResourceLinks {
+  return conversationResourceLinks(
+    resourcePort(workspaceId, workstreamId, substreamId),
+    () => resourcePort(workspaceId, workstreamId, "0"),
+  );
+}
+
+/**
  * The resource links a conversation's runs see: its own, and for a Breakout
  * its Channel's Main as well. Every visibility read takes this rather than a
  * bare port, so no reader can see a Breakout's own links without its parent's.
