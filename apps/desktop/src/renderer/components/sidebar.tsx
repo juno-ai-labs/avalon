@@ -457,6 +457,21 @@ function PendingWorkstreamRow({ workstream }: { workstream: WorkstreamSummary })
 }
 
 /**
+ * A touch drag starts with the same long press that opens a row's menu, and
+ * iOS lifts the row without sending the page the move or cancel that would
+ * stop Radix's long-press timer. Left alone the menu opens over the drag, and
+ * a modal menu makes the rest of the page ignore the pointer, so the drag
+ * finds no drop target. A drag that starts first cancels the pending press;
+ * one that starts after the menu opened closes it.
+ */
+function dismissTouchMenus(row: HTMLElement): void {
+  row.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerType: 'touch' }));
+  if (row.dataset.state === 'open') {
+    row.ownerDocument.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }));
+  }
+}
+
+/**
  * The slot Pinned holds open for a Channel dragged in from below: a faded copy
  * of that Channel's row, drawn the way the row being reordered inside the
  * section is drawn, so arriving and rearranging look the same. Hidden from
@@ -723,6 +738,7 @@ function WorkstreamRow({
             : undefined}
           onDragStart={(event) => {
               closePreview();
+              dismissTouchMenus(event.currentTarget);
               // Chromium refuses to start a drag with an empty payload, and the
               // id is the payload every other surface would want anyway. The
               // order itself is tracked in the sidebar's own state: reading it
