@@ -454,6 +454,33 @@ describe('Organization settings', () => {
     expect(screen.getByText('Guest Sam')).toBeVisible();
   });
 
+  it('opens the phone sections sheet by default and shuts it when a section is picked', async () => {
+    renderSettings();
+    const toggle = await screen.findByRole('button', { name: 'Close settings sections' });
+    const sheet = screen.getByRole('navigation', { name: 'Settings sections' }).closest('aside');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(sheet).toHaveClass('is-mobile-open');
+
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Organization' }));
+    expect(screen.getByRole('heading', { level: 1, name: 'Organization' })).toBeVisible();
+    expect(sheet).not.toHaveClass('is-mobile-open');
+    expect(screen.getByRole('button', { name: 'Open settings sections' })).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open settings sections' }));
+    expect(sheet).toHaveClass('is-mobile-open');
+  });
+
+  it('keeps the phone sections sheet shut when a link names the section', async () => {
+    window.location.hash = '#/settings?section=workspace';
+    try {
+      renderSettings();
+      expect(await screen.findByRole('heading', { level: 1, name: 'Organization' })).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Open settings sections' })).toHaveAttribute('aria-expanded', 'false');
+    } finally {
+      window.location.hash = '';
+    }
+  });
+
   it('keeps a guest on their own sections even when a link names a member\'s', async () => {
     const guestSession = { apiBaseUrl: 'https://enterprise.api.rallywith.ai', expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'user-1', name: 'Adam', email: 'adam@example.com' },
