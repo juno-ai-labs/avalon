@@ -3,7 +3,6 @@ import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstalla
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
 import { CopyButton, CopyField } from '../components/copy-button';
 import { SupportAccessSetting } from '../components/support-access-setting';
-import { ServerCog } from 'lucide-react';
 import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
 import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from '../settings/choices';
@@ -371,7 +370,6 @@ interface SettingsNavItem {
 
 /** The icon a connection's page wears when its company has no mark to draw. */
 function fallbackConnectionIcon(connection: WorkstreamConnection): LucideIcon {
-  if (connection.connectorType === 'custom_mcp') return ServerCog;
   if (connection.connectorType === 'generic_webhook') return Webhook;
   return Plug;
 }

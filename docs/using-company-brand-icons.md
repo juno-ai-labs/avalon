@@ -78,8 +78,11 @@ download row wears it. The table holds company marks, whatever links to them.
 A custom MCP server has no connector type of its own, so it wears the mark of a
 company its display name spells out in whole words: "Cloudflare API" draws
 `cloudflare`, which is in the table for exactly that. `x` and `apple` never
-match a name. A server whose name names no company in the table draws nothing,
-and the caller falls back to its own generic icon.
+match a name. A server whose name names no company in the table wears
+`model-context-protocol`, the protocol's own mark, which is in the table as that
+fallback and never matched against a name. Settings and mention chips take this
+route; the transcript does not, and always draws the protocol mark for a custom
+server (see [`plugin-activity-rows.md`](plugin-activity-rows.md)).
 
 The public landing is static HTML and has no React runtime, so it cannot go
 through `ConnectorMark`. It inlines `@thesvg/react/apple`'s `mono` path on the
