@@ -2044,6 +2044,37 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("sends the meter after a plan change to every subscribed socket", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const first = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060c");
+    const second = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060d", SESSION_ID);
+    const usage = {
+      plan: "growth",
+      quotaRemainingPercent: 44,
+      weekResetsAt: "2026-10-08T09:00:00.000Z",
+      overage: {
+        amountMicrousd: 0,
+        periodStart: "2026-10-01T09:00:00.000Z",
+        periodEndsAt: "2026-11-01T09:00:00.000Z",
+        billed: false,
+      },
+    } as const;
+    try {
+      const delivered = [nextMessageOfType(first, "workspace_usage"), nextMessageOfType(second, "workspace_usage")];
+      await expect(stub.publishUsage(usage, WORKSPACE_ID, "wnam")).resolves.toBe(2);
+      for (const message of await Promise.all(delivered)) {
+        expect(message).toMatchObject({ type: "workspace_usage", usage });
+      }
+    } finally {
+      first.close(1000, "test complete");
+      second.close(1000, "test complete");
+    }
+  });
+
   it("distinguishes an invalid workspace frame from access revocation and logs only its shape", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(

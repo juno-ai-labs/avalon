@@ -504,6 +504,16 @@ filter over `watchWorkspaceSocket` in the same module, the transport alone,
 which the desktop's main process also uses to hold the Channel directory behind
 the menu bar ([`menu-bar.md`](menu-bar.md)).
 
+A plan change is sent as `workspace_usage`, carrying the Organization's usage
+meter as it reads under the new plan, to every subscribed socket. The plan
+routes read the meter once and call `WorkspaceDO.publishUsage` after their
+response; the object only fans it out. The value travels rather than a topic
+because the meter is the same for every member, so a nudge would cost each of
+them a read for an answer the server already had, and because the topic enum
+is closed. Like `workspace_reach_changed` it is outside the waterline and never
+replayed: the desktop marks the meter stale on every subscribe answer instead.
+[`usage-metering.md`](usage-metering.md) owns it.
+
 With `channelsBySpace`, that page is empty and the directory comes from the
 Space walk above.
 

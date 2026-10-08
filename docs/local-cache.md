@@ -334,13 +334,19 @@ channel** plus still navigate.
 
 ### What the usage meter paints
 
-The `usage` slice is the one slice with no socket behind it. Usage is a REST
-read, `GET /workspace/usage`, and it is fetched when a surface that shows it
-opens: the Usage section of Settings → Organization, and the Organization
-menu, whose usage line mounts with the menu's content. The settings window is
-kept and reused, so a request for the Organization pane while it is already
-mounted counts as an opening too. There is no push and no polling; the
-figure may lag by minutes and nothing gains from watching it.
+Usage is a REST read, `GET /workspace/usage`, and it is fetched when a surface
+that shows it opens: the Usage section of Settings → Organization, and the
+Organization menu, whose usage line mounts with the menu's content. The
+settings window is kept and reused, so a request for the Organization pane
+while it is already mounted counts as an opening too. There is no polling; the
+figure may lag by minutes as usage accrues and nothing gains from watching it.
+
+A plan change is the one push. It moves the quota at once, so the API sends
+the new meter as a `workspace_usage` event on the workspace socket, and
+`applyPushedOrganizationUsage` writes it into the query and the slice, after
+cancelling a read in flight that may have seen the old plan. The push is not
+replayed, so every subscribe answer marks the meter stale: an open one reads
+again, a closed one reads when it opens, as it would anyway.
 
 `useOrganizationUsage` reads the row when it mounts and shows it while the
 request is in flight. The row is held beside the query rather than written
@@ -410,7 +416,7 @@ Nothing else evicts, and nothing expires.
 - **Only state the server delivered is persisted.** The conversation mirror
   writes only while the feed source is `socket_snapshot`; the directory mirror
   only after the first subscribe answer; the usage slice only a
-  `GET /workspace/usage` answer. Break it and a seed, or a launch surface's
+  `GET /workspace/usage` answer or a `workspace_usage` push. Break it and a seed, or a launch surface's
   optimistic turn, becomes what the next launch paints, with no live frame
   having vouched for it.
 - **A seeded breakout list holds no version.** Break it and the first live
@@ -536,7 +542,7 @@ same way it backs the draft cache. Two traps, both already paid for once:
   renderer's test setup calls `closeLocalCache()` after every test; no file
   has to know.
 
-The suites are `components/organization-usage.test.tsx` (the `usage` slice: cached paint, the offline label, the write-back),
+The suites are `components/organization-usage.test.tsx` (the `usage` slice: cached paint, the offline label, the write-back; the plan-change push and the reread on subscribe are in `lib/workspace-socket.test.tsx`),
 `lib/local-cache.test.ts`, `lib/local-cache-mirror.test.ts`,
 `lib/conversation-cache.test.ts`, `lib/workspace-directory-cache.test.ts`,
 `components/connecting-card.test.tsx`, the `openingTranscriptSnapshot` cases in
