@@ -2039,6 +2039,10 @@ export const TELEMETRY_EVENTS = {
       page: z.enum(["landing", "download", "support"]),
       action: z.enum(["download", "primary_cta", "secondary_cta", "faq_opened", "connector_setup", "support_contact", "demo_request", "founder_contact"]),
       placement: z.enum(["header", "hero", "body", "footer", "faq", "connector", "unknown", "sidekicks", "team", "pricing"]),
+      // Which page the click happened on, so variants of one page (such as
+      // /start-fast/ beside /) can be compared. Optional: a tab opened before
+      // the site deploy still sends clicks without it.
+      pathname: z.string().min(1).max(160).regex(/^\/[a-z0-9_:/.-]*$/u).optional(),
       flowId: UuidV7Schema.optional(),
       // pro/max/ultra are the per-seat plans the page showed before the
       // 2026-09-30 pricing change; a tab left open across the deploy can still send them.
