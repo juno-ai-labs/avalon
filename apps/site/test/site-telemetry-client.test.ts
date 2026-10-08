@@ -69,8 +69,8 @@ describe('site telemetry reporter', () => {
     mac.click();
     await vi.waitFor(() => expect(api.clicks()).toHaveLength(2));
     expect(api.clicks().map((event) => event.properties)).toEqual([
-      { page: 'landing', action: 'secondary_cta', placement: 'hero', flowId },
-      { page: 'landing', action: 'download', placement: 'hero' },
+      { page: 'landing', pathname: '/', action: 'secondary_cta', placement: 'hero', flowId },
+      { page: 'landing', pathname: '/', action: 'download', placement: 'hero' },
     ]);
     expect(mac.href).toBe('https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg');
   });
@@ -91,13 +91,23 @@ describe('site telemetry reporter', () => {
     await vi.waitFor(() => expect(link.href).toBe('https://app.rallywith.ai/?keep=yes#anchor'));
   });
 
+  it('names the page a click came from, so landing variants can be compared', async () => {
+    const api = stubApi();
+    history.replaceState(null, '', '/start-fast/');
+    await start('<a data-site-action="download-hero" href="#">Download the macOS beta</a>');
+    document.querySelector<HTMLElement>('a')!.click();
+
+    await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
+    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', pathname: '/start-fast/', action: 'download', placement: 'hero' });
+  });
+
   it('reports a click inside a tagged link with its closed values and keepalive', async () => {
     const api = stubApi();
     await start('<a data-site-action="download-pricing-grow" href="#"><span>Download</span></a>');
     document.querySelector('span')!.click();
 
     await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
-    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', action: 'download', placement: 'pricing', plan: 'grow' });
+    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', pathname: '/', action: 'download', placement: 'pricing', plan: 'grow' });
     expect(api.sent.find((request) => request.events.some((event) => event.name === 'site_action_selected'))!.keepalive).toBe(true);
   });
 
@@ -109,7 +119,7 @@ describe('site telemetry reporter', () => {
     document.querySelector<HTMLElement>('#header')!.click();
 
     await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
-    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', action: 'download', placement: 'header' });
+    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', pathname: '/', action: 'download', placement: 'header' });
   });
 
   it('sends a click made before bootstrap with keepalive and never an empty batch', async () => {

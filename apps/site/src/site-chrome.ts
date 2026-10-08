@@ -4,6 +4,7 @@
  * `vite.config.ts` swaps in the markup, so the list of rivals and Trust Center
  * pages lives in one place instead of in every page that shows it. Node only.
  */
+import { readFileSync } from 'node:fs';
 import { loadBlogPosts, type BlogPost } from './blog-pages';
 import { escapeHtml as escape, loadComparisons, type Comparison } from './comparison-pages';
 
@@ -123,8 +124,19 @@ ${trustPages.map(({ href, name }) => `- [${name}](${ORIGIN}${href})`).join('\n')
 `;
 }
 
+/**
+ * Everything on the home page below the hero. The home page and its variants,
+ * such as `/start-fast/`, differ only in their hero, so they share one copy of
+ * the sections rather than drifting apart. Read on each render so the dev
+ * server serves the current file.
+ */
+function renderLandingSections(): string {
+  return renderSiteChrome(readFileSync(new URL('./landing-sections.html', import.meta.url), 'utf8'));
+}
+
 const markers: Record<string, () => string> = {
   'site-nav': renderSiteNav,
+  'landing-sections': renderLandingSections,
   'site-footer': renderSiteFooter,
   'comparison-table': renderComparisonTable,
 };

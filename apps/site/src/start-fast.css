@@ -1,0 +1,11 @@
+/* /start-fast: the home page with two hero calls to action, each under a
+   handwritten-style label whose arrow curls down onto its button. */
+.cta-pair{display:flex;justify-content:center;gap:20px;flex-wrap:wrap}
+.cta{display:flex;flex-direction:column;align-items:center;width:min(360px,100%)}
+.cta .button{width:100%;padding-block:16px}
+.cta-label{position:relative;margin:0 0 6px;color:var(--paper);font-size:var(--small);font-weight:500}
+.cta-arrow{position:absolute;left:calc(100% + 6px);top:2px;color:var(--paper)}
+.cta-note{margin:12px 0 0;color:var(--soft);font-size:var(--small)}
+.hero .intro{max-width:52rem}
+/* As on the home page, a touch-only device gets only the web app. */
+@media (hover:none) and (pointer:coarse){.cta.hero-download{display:none}}
