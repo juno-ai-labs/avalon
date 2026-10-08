@@ -231,10 +231,12 @@ The browser holds no workspace credential before it opens an Organization, so
 its organization list reads attention through its identity cookie instead:
 `GET /browser/workspaces/attention` answers for every membership the list
 holds. Global reads its own WorkspaceDOs and asks each other deployment over
-the identity bridge's `attention`, which resolves the person's regional id the
-way `discover` does. Guest relationships are skipped, as on the Mac. One
-workspace or deployment that fails is left out and logged by code as
-`browser_workspace_attention_failed`; the rest still answer. The list is read
+the identity bridge's `attention`, which looks up the person's regional id by
+platform id and writes nothing: linking is `discover`'s job, and the list ran
+it first. A person not linked there yet has no membership there to count. Guest relationships are skipped, as on the Mac. One
+workspace or deployment that fails is left out and logged as
+`browser_workspace_attention_failed`, naming the region, the workspace and a
+code that carries a schema rejection's field; the rest still answer. The list is read
 first and the counts after it, so the list never waits on a Durable Object.
 
 ### Workspace-addressed handoffs
