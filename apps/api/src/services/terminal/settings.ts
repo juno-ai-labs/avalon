@@ -28,7 +28,6 @@ import { parseTerminalRegionConfiguration } from "./contract";
 import { isTerminalProviderNotFound, terminalProviderErrorCode, type TerminalSandboxProvider } from "./provider-contract";
 import { TerminalToolError } from "./tools";
 import { createTerminalFinalDiffPreserver } from "./lifecycle";
-import type { TerminalLifecycleState } from "../../durable-objects/workstream-terminal-storage";
 import {
   emitProductUsageTelemetry,
   telemetryCountBucket,
@@ -269,16 +268,20 @@ export class TerminalSettingsService {
           workstream_id: sandbox.workstream_id,
           substream_id: sandbox.substream_id,
           sandbox_id: sandbox.provider_sandbox_id,
-          reason: failures.join(";"),
+          reason: failures.join("."),
         });
       }
       await terminal.settlePolicyTransition({
-        lifecycleState: stopped ? "stopped" : sandbox.state as TerminalLifecycleState,
-        failureCode: failures.length > 0 ? codeShaped(`policy_transition:${failures.join(";")}`) : null,
+        // Untouched unless this pass stopped it: the idle alarm may have moved it since it was loaded.
+        lifecycleState: stopped ? "stopped" : null,
+        failureCode: failures.length > 0 ? codeShaped(`policy_transition:${failures.join(".")}`) : null,
         clearSandboxId: false,
         clearOperationLease: stopped,
-        // Left as it was when the policy did not land, so the next claim reapplies it.
-        appliedNetworkRevision: applied ? resultingRevision : null,
+        // Revision 0 when the policy did not land: no organization revision is
+        // 0, so the next acquisition reapplies the policy, and a run holding
+        // this sandbox from before sees its claim go stale rather than keep
+        // using the old egress.
+        appliedNetworkRevision: applied ? resultingRevision : 0,
         generation: sandbox.generation,
         sandboxId: sandbox.provider_sandbox_id,
         now: epochMs,

@@ -344,14 +344,14 @@ describe("Terminal workspace settings", () => {
     await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
       .resolves.toMatchObject({ mode: "full_internet", revision: 2, verificationState: "verified" });
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
-    // Its revision stays behind, so its next claim reapplies the policy.
+    // Revision 0: a run already holding it goes stale, and the next claim reapplies the policy.
     expect(workstreamObjectGet(
       objectStore,
       "SELECT lifecycle_state, sandbox_id, applied_network_revision, failure_code FROM terminal_workspace WHERE id = 1",
     )).toEqual({
       lifecycle_state: "running",
       sandbox_id: "provider-1",
-      applied_network_revision: 1,
+      applied_network_revision: 0,
       failure_code: "policy_transition:stop:DaytonaConflictError:409",
     });
     expect(workstreamObjectGet(
@@ -409,7 +409,7 @@ describe("Terminal workspace settings", () => {
       .resolves.toMatchObject({ revision: 2, verificationState: "verified" });
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(workstreamObjectGet(threadStore, "SELECT lifecycle_state, sandbox_id, applied_network_revision, failure_code FROM terminal_workspace WHERE id = 1"))
-      .toEqual({ lifecycle_state: "stopped", sandbox_id: "provider-2", applied_network_revision: 1, failure_code: "policy_transition:policy:Error" });
+      .toEqual({ lifecycle_state: "stopped", sandbox_id: "provider-2", applied_network_revision: 0, failure_code: "policy_transition:policy:Error" });
     expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, applied_network_revision FROM terminal_workspace WHERE id = 1"))
       .toEqual({ lifecycle_state: "stopped", applied_network_revision: 2 });
   });
