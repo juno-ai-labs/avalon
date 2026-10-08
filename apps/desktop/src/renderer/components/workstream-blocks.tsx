@@ -73,6 +73,8 @@ import {
 import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useCopy } from '../lib/use-copy';
+import { useEmailMentionTarget } from '../lib/workspace-invitees';
+import { bareAddressAutolink, EMAIL_MENTION, EMAIL_MENTION_AT } from '@rally/contracts/email-mentions';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
@@ -464,34 +466,76 @@ function rallyMentionNode(): MarkdownRewriteNode {
 }
 
 /**
- * Draws a person's `@Rally` as a chip. Rally carries no stored mention
- * identity, so the text is the mention, exactly as the composer highlights it.
- * Links keep their labels and code stays literal.
+ * Where an `@address` goes: a span the `span` override resolves against the
+ * Organization's people when it renders, which is what lets the chip read as
+ * the person's name once they join. Its text is the fallback, so an address
+ * nobody here holds stays exactly as written.
+ */
+function emailMentionNode(email: string): MarkdownRewriteNode {
+  return {
+    type: 'emailMention',
+    data: { hName: 'span', hProperties: { dataEmailMention: email.toLowerCase() } },
+    children: [{ type: 'text', value: `@${email}` }],
+  };
+}
+
+/** `@Rally` and `@address` chips out of one text node, or nothing when it names neither. */
+function typedMentionParts(value: string): MarkdownRewriteNode[] | null {
+  const found = [
+    ...[...value.matchAll(RALLY_MENTION)].map((match) => ({
+      start: match.index + match[1]!.length, length: match[2]!.length, node: rallyMentionNode(),
+    })),
+    ...[...value.matchAll(EMAIL_MENTION)].map((match) => ({
+      start: match.index + match[1]!.length, length: match[2]!.length, node: emailMentionNode(match[3]!),
+    })),
+  ].sort((left, right) => left.start - right.start);
+  if (found.length === 0) return null;
+  const parts: MarkdownRewriteNode[] = [];
+  let cursor = 0;
+  for (const item of found) {
+    if (item.start < cursor) continue;
+    if (item.start > cursor) parts.push({ type: 'text', value: value.slice(cursor, item.start) });
+    parts.push(item.node);
+    cursor = item.start + item.length;
+  }
+  if (cursor < value.length) parts.push({ type: 'text', value: value.slice(cursor) });
+  return parts;
+}
+
+/**
+ * Draws a person's `@Rally` and `@address` as chips. Neither carries a stored
+ * mention identity, so the text is the mention, exactly as the composer
+ * highlights it. Links keep their labels and code stays literal; the one link
+ * read is the `mailto:` GFM makes of a bare address, which an `@` before it
+ * turns back into a mention.
  */
 function remarkRallyMentions() {
-  return (tree: unknown) => {
+  return (tree: unknown, file: { value?: unknown }) => {
+    const source = typeof file.value === 'string' ? file.value : String(file.value ?? '');
     const visit = (node: MarkdownRewriteNode): void => {
       if (node.type === 'link' || node.type === 'code' || node.type === 'inlineCode') return;
       const children = node.children;
       if (!children) return;
-      node.children = children.flatMap((child) => {
+      const rebuilt: MarkdownRewriteNode[] = [];
+      for (let index = 0; index < children.length; index += 1) {
+        const child = children[index]!;
         if (child.type !== 'text' || child.value === undefined) {
           visit(child);
-          return [child];
+          rebuilt.push(child);
+          continue;
         }
-        const value = child.value;
-        const parts: MarkdownRewriteNode[] = [];
-        let cursor = 0;
-        for (const match of value.matchAll(RALLY_MENTION)) {
-          const start = match.index + match[1]!.length;
-          if (start > cursor) parts.push({ type: 'text', value: value.slice(cursor, start) });
-          parts.push(rallyMentionNode());
-          cursor = start + match[2]!.length;
+        let value = child.value;
+        const address = EMAIL_MENTION_AT.test(value) ? bareAddressAutolink(children[index + 1], source) : undefined;
+        if (address !== undefined) value = value.slice(0, -1);
+        const parts = typedMentionParts(value);
+        if (parts) rebuilt.push(...parts);
+        else if (value) rebuilt.push({ ...child, value });
+        if (address !== undefined) {
+          rebuilt.push(emailMentionNode(address));
+          index += 1;
         }
-        if (cursor === 0) return [child];
-        if (cursor < value.length) parts.push({ type: 'text', value: value.slice(cursor) });
-        return parts;
-      });
+      }
+      node.children = rebuilt;
     };
     visit(tree as MarkdownRewriteNode);
   };
@@ -863,6 +907,37 @@ function MentionChip({ fallbackLabel, mention, personId }: {
         )}
       </span>
       <span className="mention-chip-label">{label}</span>
+    </span>
+  );
+}
+
+/**
+ * A typed `@address`: the member who holds it, as a person chip, or someone
+ * invited who has not joined, as a muted chip with the address. Anybody else's
+ * address is the text that was written.
+ */
+function EmailMentionChip({ children, email }: PropsWithChildren<{ email: string }>): React.JSX.Element {
+  const target = useEmailMentionTarget(email);
+  if (!target) return <>{children}</>;
+  if (target.kind === 'member') {
+    return (
+      <span className="mention-chip" data-person-id={target.member.id}>
+        <span aria-hidden="true" className="mention-chip-avatar">
+          <span>{mentionInitials(target.member.name)}</span>
+          {target.member.avatarUrl && (
+            <img alt="" onError={(event) => { event.currentTarget.hidden = true; }} src={target.member.avatarUrl} />
+          )}
+        </span>
+        <span className="mention-chip-label">{target.member.name}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="mention-chip mention-chip-invited" title={`${target.email} · Invited`}>
+      <span aria-hidden="true" className="mention-chip-avatar">
+        <span>{mentionInitials(target.email)}</span>
+      </span>
+      <span className="mention-chip-label">{target.email}</span>
     </span>
   );
 }
@@ -1280,6 +1355,11 @@ export function MarkdownBody({
           return <ConnectorEmbedCard connectorType={connectorType} label={alt} />;
         }
         return <CitationImage alt={alt} image={{ ...props, alt, src }} src={src} />;
+      },
+      span: ({ children: spanChildren, node, ...props }) => {
+        const email = node?.properties?.dataEmailMention;
+        if (typeof email === 'string') return <EmailMentionChip email={email}>{spanChildren}</EmailMentionChip>;
+        return <span {...props}>{spanChildren}</span>;
       },
       div: ({ children: divChildren, node, ...props }) => {
         if (!glance && node?.properties?.className instanceof Array && node.properties.className.includes('citation-card-row')) {

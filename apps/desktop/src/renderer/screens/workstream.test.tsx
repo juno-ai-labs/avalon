@@ -717,6 +717,30 @@ describe('AddParticipantDialog', () => {
     ...(status ? { status } : {}),
   });
 
+  it('offers Organization invitees after the members and shares by address when one is added', () => {
+    const onInvite = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <AddParticipantDialog
+          current={[]}
+          invitees={['dana@example.com']}
+          members={[member('member-1', 'Adam', 'active')]}
+          onAdd={vi.fn()}
+          onInvite={onInvite}
+          onRemove={vi.fn()}
+          onOpenChange={vi.fn()}
+          open
+          pending={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const invitee = screen.getByRole('button', { name: 'Add dana@example.com to main conversation' });
+    expect(invitee).toHaveTextContent('Invited');
+    fireEvent.click(invitee);
+    expect(onInvite).toHaveBeenCalledWith('dana@example.com');
+  });
+
   it('shows why an add was refused instead of leaving the dialog looking idle', () => {
     render(
       <Tooltip.Provider>

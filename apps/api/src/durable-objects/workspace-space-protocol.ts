@@ -160,9 +160,22 @@ export const WorkspaceSpaceAudienceNoteRequestSchema = SpaceActorSchema.extend({
   audience: z.strictObject({
     scope: SpaceRequestScopeSchema,
     participantUserIds: z.array(UserIdSchema).min(1),
+    /** Pending Organization invitees, the whole set; absent leaves them as stored. */
+    inviteeEmails: z.array(z.string().email()).optional(),
   }),
 }).strict();
 export type WorkspaceSpaceAudienceNoteRequest = z.infer<typeof WorkspaceSpaceAudienceNoteRequestSchema>;
+
+export const WorkspaceSpaceInviteesRequestSchema = SpaceActorSchema.extend({
+  spaceId: SpaceIdSchema,
+}).strict();
+export type WorkspaceSpaceInviteesRequest = z.infer<typeof WorkspaceSpaceInviteesRequestSchema>;
+
+/** Someone who just accepted an Organization invitation, by the address it was sent to. */
+export const WorkspaceSpaceSeatInviteeRequestSchema = SpaceActorSchema.extend({
+  email: z.string().email(),
+}).strict();
+export type WorkspaceSpaceSeatInviteeRequest = z.infer<typeof WorkspaceSpaceSeatInviteeRequestSchema>;
 
 export const WorkspaceSpaceMembershipRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,

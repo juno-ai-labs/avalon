@@ -44,6 +44,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { spaceAccessError } from "./channel-access-service";
+import { pendingInvitees } from "./workspace-service";
 import { ResourceService } from "./resource-service";
 import { chooseSpaceIcon } from "./workstream-naming-service";
 import { claimParentAnchor } from "./workstream-runtime-database";
@@ -385,10 +386,27 @@ export class SpaceService {
     const currentParticipants = new Set<string>(current.participants.map((participant) => participant.userId));
     const requested = new Set<string>(input.participantUserIds);
     const removed = [...currentParticipants].filter((userId) => !requested.has(userId));
-    if (removed.some((userId) => userId !== this.auth.userId)
-      && this.auth.role !== "owner" && this.auth.role !== "admin") {
+    const administrator = this.auth.role === "owner" || this.auth.role === "admin";
+    if (removed.some((userId) => userId !== this.auth.userId) && !administrator) {
       throw new ApiError(403, "participant_removal_denied",
         "Only an Organization owner or admin can remove another Space participant");
+    }
+    if (input.inviteeEmails !== undefined) {
+      // An invitee is a participant who has not joined, under the same rule:
+      // anybody may add one, and only an administrator takes one out.
+      const pending = new Set((await pendingInvitees(this.env.DB, this.auth.workspaceId)).map((invitee) => invitee.email));
+      const unknown = input.inviteeEmails.filter((email) => !pending.has(email));
+      if (unknown.length > 0) {
+        throw new ApiError(422, "space_invitee_not_invited",
+          "Only people with a pending invitation to the organization can be added by address");
+      }
+      if (!administrator) {
+        const requestedInvitees = new Set(input.inviteeEmails);
+        if ((await this.invitees(spaceId)).some((email) => !requestedInvitees.has(email))) {
+          throw new ApiError(403, "participant_removal_denied",
+            "Only an Organization owner or admin can remove another Space participant");
+        }
+      }
     }
     return this.settled(await (await this.workspace()).noteSpaceAudience({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
@@ -396,6 +414,17 @@ export class SpaceService {
       spaceId,
       audience: input,
     }), current.name);
+  }
+
+  /** The addresses of Organization invitees a Space lists, to whoever may edit it. */
+  async invitees(spaceId: SpaceId): Promise<string[]> {
+    const result = await (await this.workspace()).listSpaceInvitees({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      spaceId,
+    });
+    if (!result.ok) throw spaceRefusal(result.code, "");
+    return result.emails;
   }
 
   /**
