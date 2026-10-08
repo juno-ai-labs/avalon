@@ -22,9 +22,12 @@ import {
 } from "../../durable-objects/workspace-terminal-network-protocol";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 import { asWorkspaceId } from "@rally/contracts";
+import { codeShaped, isCodeShaped } from "@rally/contracts/zod-diagnostics";
+import { logWarn } from "../../observability/logger";
 import { parseTerminalRegionConfiguration } from "./contract";
 import type { TerminalSandboxProvider } from "./provider-contract";
 import { createTerminalFinalDiffPreserver } from "./lifecycle";
+import type { TerminalLifecycleState } from "../../durable-objects/workstream-terminal-storage";
 import {
   emitProductUsageTelemetry,
   telemetryCountBucket,
@@ -48,9 +51,16 @@ interface SandboxRow {
   title: string;
 }
 
-/** One sandbox's identity in this service's failure and outcome bookkeeping. */
-function sandboxKey(sandbox: Pick<SandboxRow, "workstream_id" | "substream_id">): string {
-  return `${sandbox.workstream_id}:${sandbox.substream_id}`;
+/**
+ * Which step of a policy change failed for one sandbox, and why. The reason is
+ * the thrown message when this service composed it as a code, else the error's
+ * class name: a provider's message is its own text and is not copied.
+ */
+function policyStepFailure(step: string, error: unknown): string {
+  const reason = error instanceof Error
+    ? isCodeShaped(error.message) ? error.message : error.name
+    : "non_error_thrown";
+  return codeShaped(`${step}:${reason}`);
 }
 
 export class TerminalSettingsService {
@@ -182,7 +192,6 @@ export class TerminalSettingsService {
     const customDomains = mutation.proposedDomains;
     const effectiveDomains = mutation.effectiveDomains;
     const previousCustomDomains = claim.currentCustomDomains;
-    const currentDomains = compileTerminalNetworkPolicy(current.mode, previousCustomDomains).effectiveDomains;
     const resultingRevision = current.revision + 1;
 
     const affected = await this.loadActiveSandboxes();
@@ -192,8 +201,12 @@ export class TerminalSettingsService {
     }
 
     const epochMs = Date.parse(timestamp);
-    const failures: string[] = [];
-    const deleted = new Set<string>();
+    // A sandbox that fails here is left for its next Terminal call to catch up
+    // on, never deleted and never a reason to undo the change for everyone:
+    // its applied revision stays behind, and acquisition reapplies the policy
+    // before it resumes a sandbox whose revision is stale. Deleting on failure
+    // destroyed every archived sandbox in an organization on 2026-10-08,
+    // because Daytona will not stop one that is already archived.
     for (const sandbox of affected) {
       const terminal = createTerminalPortFactory(this.env)(
         this.auth.workspaceId,
@@ -201,145 +214,65 @@ export class TerminalSettingsService {
         sandbox.substream_id,
       );
       await terminal.cancelUnsettledTasks(epochMs);
-      if (sandbox.state === "running") {
-        // Still the routed environment: the preserver writes the resource and
-        // its work-stream link, which are not Terminal tables.
-        await createTerminalFinalDiffPreserver(
-          this.env,
-          this.provider!,
-          this.auth.workspaceId,
-          sandbox.workstream_id,
-          sandbox.substream_id,
-        )(sandbox.provider_sandbox_id, sandbox.generation).catch(() => {
-          failures.push(`${sandboxKey(sandbox)}:final_diff`);
-        });
-      }
+      const running = sandbox.state === "running";
+      let stopped = false;
+      const failures: string[] = [];
+      let step = "stop";
       try {
-        await this.provider!.stopSandbox(sandbox.provider_sandbox_id);
+        if (running) {
+          // Still the routed environment: the preserver writes the resource and
+          // its work-stream link, which are not Terminal tables.
+          await createTerminalFinalDiffPreserver(
+            this.env,
+            this.provider!,
+            this.auth.workspaceId,
+            sandbox.workstream_id,
+            sandbox.substream_id,
+          )(sandbox.provider_sandbox_id, sandbox.generation).catch((error: unknown) => {
+            failures.push(policyStepFailure("final_diff", error));
+          });
+          await this.provider!.stopSandbox(sandbox.provider_sandbox_id);
+          const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
+          if (observed.state !== "stopped" && observed.state !== "archived") throw new Error(`provider_state_${observed.state}`);
+          stopped = true;
+        }
+        // A stopped or archived sandbox takes the new policy as it is; it has
+        // nothing running to stop.
+        step = "policy";
+        await this.provider!.updateNetworkPolicy(
+          sandbox.provider_sandbox_id,
+          mutation.proposedMode === "trusted_only" ? effectiveDomains : null,
+        );
         const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
-        if (observed.state !== "stopped" && observed.state !== "archived") throw new Error(`provider_state_${observed.state}`);
-        await terminal.settlePolicyTransition({
-          lifecycleState: "stopped",
-          failureCode: null,
-          clearSandboxId: false,
-          clearOperationLease: true,
-          appliedNetworkRevision: null,
-          generation: sandbox.generation,
-          sandboxId: sandbox.provider_sandbox_id,
-          now: epochMs,
+        const expected = mutation.proposedMode === "trusted_only" ? [...effectiveDomains].sort() : [];
+        if (observed.domainAllowList.slice().sort().join("\n") !== expected.join("\n")) throw new Error("provider_policy_mismatch");
+      } catch (error) {
+        failures.push(policyStepFailure(step, error));
+      }
+      const applied = failures.every((failure) => failure.startsWith("final_diff:"));
+      if (failures.length > 0) {
+        logWarn(this.env, "terminal_policy_sandbox_failed", {
+          workspace_id: this.auth.workspaceId,
+          mutation_id: input.mutationId,
+          workstream_id: sandbox.workstream_id,
+          substream_id: sandbox.substream_id,
+          sandbox_id: sandbox.provider_sandbox_id,
+          reason: failures.join(";"),
         });
-      } catch {
-        failures.push(`${sandboxKey(sandbox)}:stop`);
-        try {
-          await this.provider!.deleteSandbox(sandbox.provider_sandbox_id);
-          deleted.add(sandboxKey(sandbox));
-          await terminal.settlePolicyTransition({
-            lifecycleState: "failed",
-            failureCode: "policy_stop_failed_deleted",
-            clearSandboxId: true,
-            clearOperationLease: true,
-            appliedNetworkRevision: null,
-            generation: sandbox.generation,
-            sandboxId: sandbox.provider_sandbox_id,
-            now: epochMs,
-          });
-        } catch {
-          failures.push(`${sandboxKey(sandbox)}:delete`);
-          await terminal.settlePolicyTransition({
-            lifecycleState: "failed",
-            failureCode: "policy_quarantine_failed",
-            clearSandboxId: false,
-            clearOperationLease: true,
-            appliedNetworkRevision: null,
-            generation: sandbox.generation,
-            sandboxId: sandbox.provider_sandbox_id,
-            now: epochMs,
-          });
-        }
       }
-    }
-
-    if (failures.length === 0) {
-      const expected = mutation.proposedMode === "trusted_only" ? [...effectiveDomains].sort() : [];
-      for (const sandbox of affected) {
-        if (deleted.has(sandboxKey(sandbox))) continue;
-        try {
-          await this.provider!.updateNetworkPolicy(
-            sandbox.provider_sandbox_id,
-            mutation.proposedMode === "trusted_only" ? effectiveDomains : null,
-          );
-          const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
-          if (observed.domainAllowList.slice().sort().join("\n") !== expected.join("\n")) throw new Error("provider_policy_mismatch");
-        } catch {
-          failures.push(`${sandboxKey(sandbox)}:policy`);
-        }
-      }
-    }
-
-    if (failures.length > 0) {
-      for (const sandbox of affected) {
-        if (deleted.has(sandboxKey(sandbox))) continue;
-        try {
-          await this.provider!.updateNetworkPolicy(
-            sandbox.provider_sandbox_id,
-            current.mode === "trusted_only" ? currentDomains : null,
-          );
-          const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
-          const expected = current.mode === "trusted_only" ? [...currentDomains].sort() : [];
-          if (observed.domainAllowList.slice().sort().join("\n") !== expected.join("\n")) throw new Error("provider_policy_rollback_mismatch");
-        } catch {
-          await this.provider!.deleteSandbox(sandbox.provider_sandbox_id).then(async () => {
-            deleted.add(sandboxKey(sandbox));
-            await createTerminalPortFactory(this.env)(
-              this.auth.workspaceId,
-              sandbox.workstream_id,
-              sandbox.substream_id,
-            ).settlePolicyTransition({
-              lifecycleState: "failed",
-              failureCode: "policy_rollback_deleted",
-              clearSandboxId: true,
-              clearOperationLease: false,
-              appliedNetworkRevision: null,
-              generation: sandbox.generation,
-              sandboxId: sandbox.provider_sandbox_id,
-              now: Date.now(),
-            });
-          }).catch(() => undefined);
-        }
-      }
-      await this.failApplication(input.mutationId, current, "provider_policy_mismatch");
-      throw new ApiError(502, "terminal_policy_verification_failed", "Daytona did not confirm the requested network policy. Rally stopped or quarantined every affected sandbox and kept the last verified policy; retry the settings change or contact support.", {
-        reason: failures.slice(0, 10).join("; "),
-        sandboxOutcomes: affected.slice(0, 100).map((sandbox) => ({
-          workstreamId: sandbox.workstream_id,
-          substreamId: sandbox.substream_id,
-          title: sandbox.title,
-          outcome: deleted.has(sandboxKey(sandbox))
-            ? "deleted"
-            : failures.includes(`${sandboxKey(sandbox)}:delete`)
-              ? "quarantined"
-              : "stopped",
-        })),
-        outcomesTruncated: affected.length > 100,
-      });
-    }
-
-    for (const sandbox of affected.filter((entry) => !deleted.has(sandboxKey(entry)))) {
-      await createTerminalPortFactory(this.env)(
-        this.auth.workspaceId,
-        sandbox.workstream_id,
-        sandbox.substream_id,
-      ).settlePolicyTransition({
-        lifecycleState: "stopped",
-        failureCode: null,
+      await terminal.settlePolicyTransition({
+        lifecycleState: stopped ? "stopped" : sandbox.state as TerminalLifecycleState,
+        failureCode: failures.length > 0 ? codeShaped(`policy_transition:${failures.join(";")}`) : null,
         clearSandboxId: false,
-        clearOperationLease: false,
-        appliedNetworkRevision: resultingRevision,
+        clearOperationLease: stopped,
+        // Left as it was when the policy did not land, so the next claim reapplies it.
+        appliedNetworkRevision: applied ? resultingRevision : null,
         generation: sandbox.generation,
         sandboxId: sandbox.provider_sandbox_id,
-        now: Date.parse(timestamp),
+        now: epochMs,
       });
     }
+
     await (await this.workspace()).commitTerminalPolicyApplication({
       workspaceId: this.auth.workspaceId,
       mutationId: input.mutationId,

@@ -308,11 +308,16 @@ and JavaScript packages plus up to the remainder of Daytona's 20 exact/wildcard
 domain targets. Settings shows only workspace-approved domains; the managed
 baseline is not a participant-facing policy surface. Full internet clears
 `domainAllowList`. Schemes, ports, paths, IP addresses, CIDR, public suffixes,
-and private names are rejected. An admin previews canonical workspace-domain
-changes and affected sandboxes against a revision, then confirms. Rally cancels
-active tasks, preserves a final diff, stops each
-affected sandbox, applies and reads back the provider policy, and does not
-auto-restart it.
+and private names are rejected. An admin confirms one warning that running
+cloud computers may be interrupted; the client then previews against a revision
+and applies that preview in one step. For each sandbox Rally cancels active
+tasks; for a running one it also preserves a final diff and stops it. It then
+applies and reads back the provider policy on every sandbox, stopped and
+archived ones included, without stopping or restarting them. A sandbox whose
+stop, policy write or read-back fails keeps its old applied revision and a
+`policy_transition:<step>:<reason>` failure code, and the change still lands
+for the organization: the sandbox's next claim sees the stale revision and
+reapplies the policy before it resumes. A failure never deletes a sandbox.
 
 The workspace's alarm stops an idle running sandbox after five minutes,
 archives it after sixty minutes, and deletes it after thirty days. Idle means
@@ -642,8 +647,8 @@ personless; it is not duplicated into these product events.
 - **Resources cross through authorized regional services.** Giving Daytona R2
   credentials or treating a resource ID as authorization would break workspace,
   work-stream, principal, and residency boundaries.
-- **Network policy is host compiled, revision fenced, stopped before mutation,
-  and read back.** Letting the model edit egress or assuming a provider update
+- **Network policy is host compiled, revision fenced, applied to a running
+  sandbox only after it stops, and read back.** Letting the model edit egress or assuming a provider update
   succeeded would make Trusted only a UI label rather than an enforced state.
 - **No model-facing revisions, lifecycle, directory-listing, polling, PTY,
   network, credential, or raw-Daytona tools exist.** These duplicate trained CLI
@@ -1207,6 +1212,28 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-10-08 — A failed policy change no longer deletes sandboxes
+
+**What changed:** Applying an organization network policy stops only running
+sandboxes and writes the policy to stopped and archived ones as they are. A
+sandbox that fails any step keeps its old applied revision, records which step
+failed and why in `failure_code`, and is logged as
+`terminal_policy_sandbox_failed`; the change still commits. The rollback, the
+delete-on-failure fallback and the `terminal_policy_verification_failed` 502
+are gone. Settings replaced the inline review panel with one Continue/Cancel
+warning.
+
+**Why:** Apply called `stopSandbox` on every sandbox with an id, archived ones
+included. Daytona refuses to stop an archived sandbox, and a failed stop meant
+delete, so switching Juno Labs to Full internet on 2026-10-08 deleted nearly
+every idle sandbox in the organization, with no final diff because none was
+running. Any one failure, a final diff included, also rolled back and could
+delete every other sandbox. Acquisition already reapplies the policy when a
+sandbox's applied revision is stale, so leaving a failed sandbox behind is
+safe and cheaper than undoing everyone's change. The stored code was always
+`provider_policy_mismatch`, whatever had failed. A future change must not turn
+a per-sandbox failure back into a deletion or an organization-wide rollback.
 
 ### 2026-09-29 — The owner of a provider RPC client disposes it
 
