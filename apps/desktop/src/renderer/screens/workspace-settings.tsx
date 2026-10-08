@@ -43,6 +43,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
@@ -562,6 +563,21 @@ function providerCapabilitiesForScope(
   return [...provider.capabilities];
 }
 
+/** The phone layout's `max-width` in `app.css`; the two move together. */
+const PHONE_LAYOUT_QUERY = '(max-width: 640px)';
+
+// jsdom and some Electron startup states have no `matchMedia`, so it is reached
+// optionally and reads as wide.
+function subscribePhoneLayout(onChange: () => void): () => void {
+  const query = window.matchMedia?.(PHONE_LAYOUT_QUERY);
+  query?.addEventListener('change', onChange);
+  return () => query?.removeEventListener('change', onChange);
+}
+
+function isPhoneLayout(): boolean {
+  return window.matchMedia?.(PHONE_LAYOUT_QUERY).matches ?? false;
+}
+
 function linkedSettingsSection(): SettingsSection | null {
   const nativeSection = parseDesktopSettingsSection(
     new URLSearchParams(window.location.search).get('settingsSection'),
@@ -607,6 +623,25 @@ export function WorkspaceSettingsScreen({
   // so Settings opens on the list, unless a link named the page to show.
   // Above 640px CSS ignores it and both columns show.
   const [navigationOpen, setNavigationOpen] = useState(linkedSection === null);
+  const phoneLayout = useSyncExternalStore(subscribePhoneLayout, isPhoneLayout);
+  const navigationSheetOpen = phoneLayout && navigationOpen;
+  const navigationToggle = useRef<HTMLButtonElement>(null);
+  // While the sheet covers the page, the page is inert so Tab and a screen
+  // reader stay in the sheet. Escape shuts it and hands focus back to the
+  // button, as the shell's phone sheet does. It listens in the bubble phase:
+  // the search field's Escape clears the query first and stops there, and a
+  // menu or dialog open over the sheet takes the keystroke for itself.
+  useEffect(() => {
+    if (!navigationSheetOpen) return undefined;
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (document.querySelector('[role="menu"], [role="dialog"], [role="listbox"]')) return;
+      setNavigationOpen(false);
+      navigationToggle.current?.focus();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [navigationSheetOpen]);
   // Clamped while rendering, not after: a link or the hash can name a member's
   // section, and its reads would start in the frame before an effect moved on.
   const activeSection: SettingsSection = guest && !GUEST_SETTINGS_SECTIONS.has(requestedSection) ? 'account' : requestedSection;
@@ -1464,6 +1499,7 @@ export function WorkspaceSettingsScreen({
               className="sidebar-menu-toggle settings-menu-toggle window-no-drag"
               label={navigationOpen ? 'Close settings sections' : 'Open settings sections'}
               onClick={() => setNavigationOpen(!navigationOpen)}
+              ref={navigationToggle}
               showTooltip={false}
             >
               <Menu aria-hidden="true" className="sidebar-menu-glyph is-menu" size={18} />
@@ -1476,7 +1512,7 @@ export function WorkspaceSettingsScreen({
               <X aria-hidden="true" size={18} />
             </button>
           </header>
-          <div className="settings-content-scroll">
+          <div className="settings-content-scroll" inert={navigationSheetOpen}>
             {activeSection === 'account' && (
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading"><h2><SettingLabel setting={settings.profile} /></h2><p>Your Rally identity and access in this workspace.</p></div>
