@@ -81,6 +81,8 @@ export interface WorkspaceSocketConnection {
   /**
    * Writes one client event as JSON. False when this connection is no longer
    * the open one, so a request made for it can be dropped rather than queued.
+   * A connection that is closing still counts as open: the frame is dropped,
+   * and `onClosed` follows, which is when a pending request fails.
    */
   send(event: unknown): boolean;
 }
