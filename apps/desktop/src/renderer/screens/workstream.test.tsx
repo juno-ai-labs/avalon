@@ -17,7 +17,6 @@ import {
   highestVisibleAttentionSequence,
   initialTranscriptAnchorIndex,
   manualElicitationResponse,
-  preservedPrependScrollTop,
   RunFailureNotice,
   orderedTranscriptOwnsRunTiming,
   WorkstreamErrorState,
@@ -73,13 +72,6 @@ describe('a resource history follows swaps the rail did not make', () => {
   });
 });
 
-describe('transcript cursor pagination', () => {
-  it('preserves the visible anchor when an older page is prepended', () => {
-    expect(preservedPrependScrollTop(120, 2_000, 2_840)).toBe(960);
-    expect(preservedPrependScrollTop(120, 2_000, 1_900)).toBe(120);
-  });
-
-});
 
 describe('channel route handoff', () => {
   it('refuses to paint detail or transcript rows retained from another channel', () => {

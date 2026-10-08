@@ -77,6 +77,7 @@ import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useTranscriptHistory } from '../lib/use-transcript-history';
+import { useVirtualScrollAnchor } from '../lib/use-virtual-scroll-anchor';
 import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
@@ -865,14 +866,6 @@ export function initialTranscriptAnchorIndex(
     && message.attentionSequenceNumber != null
     && message.attentionSequenceNumber >= firstUnreadSequenceNumber);
   return firstUnreadIndex < 0 ? null : Math.max(0, firstUnreadIndex - 1);
-}
-
-export function preservedPrependScrollTop(
-  previousScrollTop: number,
-  previousScrollHeight: number,
-  nextScrollHeight: number,
-): number {
-  return previousScrollTop + Math.max(0, nextScrollHeight - previousScrollHeight);
 }
 
 export function highestVisibleAttentionSequence(
@@ -1708,6 +1701,9 @@ export function ConversationSurface({
       && adjacentTranscriptRange(orderedTranscript.data, 'newer') === null,
     conversationAddress,
   );
+  // After the virtualizer and the follow: an older range prepended above the
+  // reader keeps the row they were reading where it was, in the same commit.
+  useVirtualScrollAnchor(transcriptVirtualizer, transcriptRef, scrollTranscriptTo);
 
   useEffect(() => {
     if (!feedLive) requestedSearch.current = null;
@@ -1791,9 +1787,6 @@ export function ConversationSurface({
     pendingOlderAfterReconnectRef.current = false;
     setLoadingOlder(true);
     setOlderMessagesError(undefined);
-    const scrollElement = transcriptRef.current;
-    const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
-    const previousScrollTop = scrollElement?.scrollTop ?? 0;
     const request = (async (): Promise<void> => {
       try {
         while (stillCurrent()) {
@@ -1816,15 +1809,8 @@ export function ConversationSurface({
             throw error;
           }
         }
-        if (!stillCurrent()) return;
-        window.requestAnimationFrame(() => {
-          if (!stillCurrent()) return;
-          const element = transcriptRef.current;
-          if (!element) return;
-          scrollTranscriptTo(preservedPrependScrollTop(
-            previousScrollTop, previousScrollHeight, element.scrollHeight,
-          ));
-        });
+        // The reading position is held by `useVirtualScrollAnchor` in the
+        // commit that prepends the range, not restored here afterwards.
       } catch (error) {
         if (!stillCurrent()) return;
         if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
@@ -1841,7 +1827,7 @@ export function ConversationSurface({
       olderRequestsRef.current.delete(conversationAddress);
       if (activeConversationAddressRef.current === conversationAddress) setLoadingOlder(false);
     }
-  }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, scrollTranscriptTo, transcriptQueryKey]);
+  }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, transcriptQueryKey]);
   useEffect(() => {
     if (scrollToTurn === null || handledScrollNonce.current === scrollToTurn.nonce) return;
     if (revealTurn(scrollToTurn.turnId)) {
@@ -2996,8 +2982,11 @@ export function ConversationSurface({
         </ConnectingCardSlot>
         <div className="transcript-column" ref={transcriptContentRef}>
           {/* Over a seed the connecting card, sticky at this same edge, is the
-              affordance: a row here would sit under it saying the same thing. */}
-          <div role="status" className={loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)
+              affordance: a row here would sit under it saying the same thing.
+              Its space is held for as long as there is history to load, so the
+              status coming and going never moves the messages under it. */}
+          <div role="status" className={(olderTranscriptRange !== null && !olderMessagesError) || loadingOlder
+            || (nearHistoryEdge && !feedLive && !feedFromLocalCache)
             ? 'transcript-history-control' : undefined}>
             {(loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)) && <>
               <LoaderCircle aria-hidden="true" className="spin" size={14} />
