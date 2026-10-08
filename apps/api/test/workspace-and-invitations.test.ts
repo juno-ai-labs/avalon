@@ -865,3 +865,49 @@ describe("desktop login ticket PKCE binding", () => {
     expect(claims).toBe(2);
   });
 });
+
+describe("pending invitees for the people pickers", () => {
+  function seeded() {
+    const database = migratedSqliteDatabase();
+    const at = "2026-08-01T00:00:00.000Z";
+    const workspaceId = invitationRow.workspace_id;
+    const owner = ownerAuth.userId;
+    const guestId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79e1";
+    database.prepare(`INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?,?,?,?,?),(?,?,?,?,?)`)
+      .run(owner, "owner@example.com", "Owner", at, at, guestId, "guest@example.com", "Guest", at, at);
+    database.prepare(`INSERT INTO workspaces (id,name,slug,region,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`)
+      .run(workspaceId, "Avalon Studio", "avalon-studio", "global", owner, at, at);
+    database.prepare(`INSERT INTO workspace_members (workspace_id,user_id,role,access_class,status,joined_at) VALUES (?,?,?,?,?,?),(?,?,?,?,?,?)`)
+      .run(workspaceId, owner, "owner", "member", "active", at, workspaceId, guestId, null, "guest", "active", at);
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    const past = new Date(Date.now() - 86_400_000).toISOString();
+    const invite = database.prepare(`INSERT INTO workspace_invitations
+      (id,workspace_id,email,invited_by_user_id,token_hash,role,expires_at,accepted_at,revoked_at,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`);
+    invite.run("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7a01", workspaceId, "Pending@Example.com", owner, "h1", "member", future, null, null, at);
+    invite.run("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7a02", workspaceId, "accepted@example.com", owner, "h2", "member", future, at, null, at);
+    invite.run("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7a03", workspaceId, "revoked@example.com", owner, "h3", "member", future, null, at, at);
+    invite.run("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7a04", workspaceId, "expired@example.com", owner, "h4", "member", past, null, null, at);
+    // Shared a Channel before accepting: a guest membership already names them.
+    invite.run("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7a05", workspaceId, "guest@example.com", owner, "h5", "member", future, null, null, at);
+    return database;
+  }
+
+  it("lists only addresses still waiting to accept, for an ordinary member", async () => {
+    const database = seeded();
+    try {
+      const env = environment(new StubDatabase(() => undefined), { DB: sqliteD1(database) });
+      await expect(new WorkspaceService(env, { ...ownerAuth, role: "member" }).listInvitees())
+        .resolves.toEqual([{ email: "pending@example.com", invitedAt: "2026-08-01T00:00:00.000Z" }]);
+    } finally { database.close(); }
+  });
+
+  it("refuses a guest", async () => {
+    const database = seeded();
+    try {
+      const env = environment(new StubDatabase(() => undefined), { DB: sqliteD1(database) });
+      await expect(new WorkspaceService(env, { ...ownerAuth, role: null }).listInvitees())
+        .rejects.toMatchObject({ status: 403, code: "workspace_member_required" });
+    } finally { database.close(); }
+  });
+});

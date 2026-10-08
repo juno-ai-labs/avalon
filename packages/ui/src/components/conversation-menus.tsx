@@ -63,6 +63,12 @@ const MORE_VIEW: TitleMenuView = { key: 'more', label: 'More' };
  */
 export interface TitleMenuPeople {
   candidates: readonly WorkspaceMember[];
+  /**
+   * Addresses invited to the Organization that have not joined, lower case.
+   * Suggested after the members; adding one invites the address here through
+   * `invites`, so they are in the room when they arrive.
+   */
+  invitees?: readonly string[] | undefined;
   /** Settles when the add does; the host names a failure in `error`. */
   onAdd: (member: WorkspaceMember) => Promise<void>;
   adding: boolean;
@@ -187,7 +193,12 @@ function PeopleView({ members, noun, people, presentUserIds }: {
   const addable = (people?.candidates ?? []).filter((member) => !inRoom.has(member.id) && !asked.has(member.id)
     && (member.status ?? 'active') === 'active'
     && (!needle || member.name.toLocaleLowerCase().includes(needle) || (member.email ?? '').toLocaleLowerCase().includes(needle)));
+  // Already invited here is already in the room's list, as Invited.
+  const invitedHere = new Set(invites?.pending ?? []);
+  const inviteeSuggestions = invites ? (people?.invitees ?? []).filter((email) => !invitedHere.has(email)
+    && (!needle || email.includes(needle))) : [];
   const suggestions = needle ? addable : addable.slice(0, PEOPLE_SUGGESTIONS);
+  const suggestedInvitees = needle ? inviteeSuggestions : inviteeSuggestions.slice(0, Math.max(0, PEOPLE_SUGGESTIONS - suggestions.length));
   const tokens = needle.split(ADDRESS_SEPARATORS).filter(Boolean);
   const typedEmails = tokens.length > 0 && tokens.every((token) => EMAIL.safeParse(token).success);
   const change = (value: string): void => { setQuery(value); setEntryError(null); };
@@ -211,7 +222,9 @@ function PeopleView({ members, noun, people, presentUserIds }: {
     if (!typedEmails) {
       // A name narrowed to one person adds them, as clicking Add would.
       const only = suggestions.length === 1 ? suggestions[0] : undefined;
+      const onlyInvitee = suggestions.length === 0 && suggestedInvitees.length === 1 ? suggestedInvitees[0] : undefined;
       if (only) void run(query, [only], []);
+      else if (onlyInvitee) void run(query, [], [onlyInvitee]);
       else setEntryError('Enter email addresses separated by spaces, commas or semicolons.');
       return;
     }
@@ -265,7 +278,7 @@ function PeopleView({ members, noun, people, presentUserIds }: {
         onSelect={() => people.onRemove?.(member)}
       />}
     </div>)}
-    {!needle && invites?.pending?.map((email) => <div className="title-menu-person" key={email}>
+    {!needle && invites?.pending?.map((email) => <div className="title-menu-person is-invited" key={email}>
       <Avatar member={{ id: email, name: email, email, timezone: 'UTC' }} size="medium" />
       <span className="title-menu-person-copy">
         <span className="title-menu-person-name">{email}</span>
@@ -309,7 +322,7 @@ function PeopleView({ members, noun, people, presentUserIds }: {
         </div>;
       })}
     </>}
-    {people && suggestions.length > 0 && <>
+    {people && (suggestions.length > 0 || suggestedInvitees.length > 0) && <>
       <div className="title-menu-section-heading">{needle ? 'Add to this ' + noun : 'Suggested'}</div>
       {suggestions.map((member) => <div className="title-menu-person" key={member.id}>
         <Avatar member={member} size="medium" />
@@ -325,8 +338,22 @@ function PeopleView({ members, noun, people, presentUserIds }: {
           type="button"
         >Add</button>
       </div>)}
+      {suggestedInvitees.map((email) => <div className="title-menu-person is-invited" key={email}>
+        <Avatar member={{ id: email, name: email, email, timezone: 'UTC' }} size="medium" />
+        <span className="title-menu-person-copy">
+          <span className="title-menu-person-name">{email}</span>
+          <span className="title-menu-person-detail">Invited · hasn’t joined yet</span>
+        </span>
+        <button
+          aria-label={`Add ${email}`}
+          className="title-menu-add"
+          disabled={people.adding}
+          onClick={() => { if (!submitting.current) void run(query, [], [email]); }}
+          type="button"
+        >Add</button>
+      </div>)}
     </>}
-    {people && needle && suggestions.length === 0 && <p className="title-menu-empty">{typedEmails && invites
+    {people && needle && suggestions.length === 0 && suggestedInvitees.length === 0 && <p className="title-menu-empty">{typedEmails && invites
       ? `Press Enter to invite ${tokens.length === 1 ? 'them' : 'everyone'} as ${tokens.length === 1 ? 'a guest' : 'guests'}.`
       : 'Nobody else matches.'}</p>}
   </>;

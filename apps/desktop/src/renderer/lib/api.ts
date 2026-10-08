@@ -34,6 +34,8 @@ import {
   WorkspaceMemberSchema as WireWorkspaceMemberSchema,
   WorkspaceInvitationPreviewSchema as WireWorkspaceInvitationPreviewSchema,
   WorkspaceInvitationSchema as WireWorkspaceInvitationSchema,
+  WorkspaceInviteeSchema,
+  type WorkspaceInvitee,
   WorkspaceSchema as WireWorkspaceSchema,
   TerminalWorkspaceSettingsSchema as WireTerminalWorkspaceSettingsSchema,
   TerminalNetworkPolicyPreviewSchema as WireTerminalNetworkPolicyPreviewSchema,
@@ -236,6 +238,7 @@ const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSche
 const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ complete: z.boolean().optional() });
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
+const wireInviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
 const wireExecutionPrincipalClaimSchema = AutomationExecutionPrincipalClaimSchema;
 const wireWorkstreamAutomationPageSchema = z.object({
@@ -1017,6 +1020,12 @@ export class RallyApi {
       schema: WireWorkspaceInvitationPreviewSchema,
       signal,
     });
+  }
+
+  /** Addresses invited to the Organization and not yet joined, as any member may see them. */
+  async getWorkspaceInvitees(signal?: AbortSignal): Promise<WorkspaceInvitee[]> {
+    const page = await this.request('/workspace/invitees', { schema: wireInviteePageSchema, signal });
+    return page.items;
   }
 
   async getWorkspaceInvitations(signal?: AbortSignal): Promise<WorkspaceInvitation[]> {
