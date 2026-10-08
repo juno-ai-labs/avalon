@@ -3646,6 +3646,7 @@ pre {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
 }
 .mention-chip-invited :is(.mention-chip-label, .mention-chip-avatar) { opacity: .7; }
+.mention-chip-invited .mention-chip-label { font-style: italic; }
 .mention-chip-status {
   display: none;
   flex: 0 0 auto;
@@ -4760,9 +4761,11 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 [data-theme='dark'] .mention-popover :is(small, .mention-popover-kind) { color: var(--av-sys-color-text-muted); }
 /* An invitee's address is greyed until they join, here and wherever people are listed. */
 .mention-popover > button.is-invited strong,
+.mention-confirm-person.is-invited strong { font-style: italic; }
+.mention-popover > button.is-invited strong,
 .mention-confirm-person.is-invited strong,
 .title-menu-person.is-invited .title-menu-person-name,
-.new-channel-popover-row.is-invited .new-channel-popover-name { color: var(--av-sys-color-text-muted); }
+.new-channel-popover-row.is-invited .new-channel-popover-name { color: var(--av-sys-color-text-muted); font-style: italic; }
 .new-channel-popover-kind { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 12px; margin-left: auto; }
 .mention-confirm-person { align-items: center; display: flex; gap: 10px; }
 .mention-confirm-person > span { display: flex; flex-direction: column; }

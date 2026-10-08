@@ -948,7 +948,7 @@ function EmailMentionChip({ children, email }: PropsWithChildren<{ email: string
     );
   }
   return (
-    <span className="mention-chip mention-chip-invited" title={`${target.email} · Invited, hasn’t joined yet`}>
+    <span className="mention-chip mention-chip-invited" title={`${target.email} · Invited`}>
       <span aria-hidden="true" className="mention-chip-avatar">
         <span>{mentionInitials(target.email)}</span>
       </span>
