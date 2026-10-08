@@ -1,7 +1,7 @@
 import type { SpaceSummary } from '@rally/contracts';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { cloneElement, useId, useMemo, useState, type MouseEvent, type ReactElement, type SyntheticEvent } from 'react';
+import { cloneElement, useId, useMemo, useRef, useState, type MouseEvent, type ReactElement, type SyntheticEvent } from 'react';
 
 import { useSpaceChoices } from '../lib/space-choices';
 import { Button, InlineError, Modal, Tip } from './primitives';
@@ -59,6 +59,11 @@ export function NewWorkstreamMenu({
 }): React.JSX.Element {
   const formId = useId();
   const [spaceDialogOpen, setSpaceDialogOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  // Whether the press now under way started on the list's empty space. A touch
+  // opens the menu on a long press, which never passes through `contextmenu`,
+  // so the guard there cannot see it; this one is read when Radix asks to open.
+  const pressOnEmptySpace = useRef(true);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -129,7 +134,9 @@ export function NewWorkstreamMenu({
     : null;
 
   return <>
-    {direct ?? (trigger === 'context' ? <ContextMenu.Root>
+    {direct ?? (trigger === 'context' ? <ContextMenu.Root open={contextOpen} onOpenChange={(open) => {
+      if (!open || pressOnEmptySpace.current) setContextOpen(open);
+    }}>
       <ContextMenu.Trigger asChild disabled={disabled} onContextMenu={(event) => {
         // Claims the click so the menu stays shut; a row's own menu has
         // already claimed it the same way. A portalled menu or dialog opened
@@ -137,11 +144,7 @@ export function NewWorkstreamMenu({
         // outside the list's DOM is not its empty space either.
         if (!isEmptySpace(event)) event.preventDefault();
       }} onPointerDown={(event) => {
-        // A touch opens the menu on a long press, which never passes through
-        // `contextmenu`, so the guard above has to be repeated here: without
-        // it a long press on a row opened this menu over the row's own.
-        // Radix skips its long-press timer for a press already claimed.
-        if (event.pointerType !== 'mouse' && !isEmptySpace(event)) event.preventDefault();
+        pressOnEmptySpace.current = isEmptySpace(event);
       }}>{children}</ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="menu-content new-workstream-menu" collisionPadding={8}>{items}</ContextMenu.Content>
