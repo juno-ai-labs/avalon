@@ -318,8 +318,8 @@ describe("Terminal workspace settings", () => {
       .toBe(true);
   });
 
-  it("stops every affected sandbox even when the first provider stop fails", async () => {
-    const { database, objectStores, provider, service } = fixture();
+  it("keeps the change and leaves a sandbox whose stop fails for its next claim", async () => {
+    const { database, objectStore, objectStores, provider, service } = fixture();
     const second = "50000000-0000-4000-8000-000000000099";
     database.exec(`
       INSERT INTO workstreams
@@ -335,49 +335,48 @@ describe("Terminal workspace settings", () => {
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
 
     await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
-      .rejects.toMatchObject({ status: 502, code: "terminal_policy_verification_failed" });
-    expect(provider.stopSandbox).toHaveBeenCalledWith("provider-1");
-    expect(provider.stopSandbox).toHaveBeenCalledWith("provider-2");
+      .resolves.toMatchObject({ mode: "full_internet", revision: 2, verificationState: "verified" });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    // Its revision stays behind, so its next claim reapplies the policy.
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT lifecycle_state, sandbox_id, applied_network_revision, failure_code FROM terminal_workspace WHERE id = 1",
+    )).toEqual({
+      lifecycle_state: "running",
+      sandbox_id: "provider-1",
+      applied_network_revision: 1,
+      failure_code: "policy_transition:stop:Error",
+    });
     expect(workstreamObjectGet(
       objectStores.get(second)!,
-      "SELECT lifecycle_state FROM terminal_workspace WHERE id = 1",
-    )).toEqual({ lifecycle_state: "stopped" });
-    // The policy row is the object's, not the region's, so this reads what a
-    // person would see: the failed application kept the last verified policy
-    // and did not leave the workspace stuck in `pending`.
-    expect(await service.get()).toMatchObject({
-      mode: "trusted_only",
-      revision: 1,
-      verificationState: "verified",
-      failureCode: "provider_policy_mismatch",
-    });
+      "SELECT lifecycle_state, applied_network_revision, failure_code FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ lifecycle_state: "stopped", applied_network_revision: 2, failure_code: null });
   });
 
-  it("reports a sandbox as quarantined when neither stop nor deletion is confirmed", async () => {
-    const { provider, service } = fixture();
-    vi.mocked(provider.stopSandbox).mockRejectedValueOnce(new Error("stop failed"));
-    vi.mocked(provider.deleteSandbox).mockRejectedValueOnce(new Error("delete failed"));
+  it("changes an archived sandbox's policy without stopping it", async () => {
+    // Daytona refuses to stop an archived sandbox, and the stop failure used to
+    // delete it: every idle sandbox in an organization went that way.
+    const { objectStore, provider, service } = fixture();
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET lifecycle_state = 'archived' WHERE id = 1");
+    vi.mocked(provider.stopSandbox).mockRejectedValue(new Error("sandbox is archived"));
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
 
     await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
-      .rejects.toMatchObject({
-        status: 502,
-        code: "terminal_policy_verification_failed",
-        details: {
-          sandboxOutcomes: [{ workstreamId: S, title: "Settings", outcome: "quarantined" }],
-        },
-      });
+      .resolves.toMatchObject({ revision: 2, verificationState: "verified" });
+    expect(provider.updateNetworkPolicy).toHaveBeenCalledWith("provider-1", null);
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT lifecycle_state, sandbox_id, applied_network_revision, failure_code FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ lifecycle_state: "archived", sandbox_id: "provider-1", applied_network_revision: 2, failure_code: null });
   });
 
-  it("settles a side thread's deleted rollback on the side thread's own row", async () => {
+  it("records why a side thread's policy update failed on the side thread's own row", async () => {
     const { objectStore, objectStores, provider, service } = fixture();
     const thread = "00000000-0000-4000-8000-000000000077";
     const threadStore = seedSandboxObject(objectStores, `${S}:${thread}`, {
       state: "running", stableName: await terminalSandboxStableName(W, S, thread), providerSandboxId: "provider-2",
     });
-    // Daytona takes the new policy on the main sandbox and refuses it on the
-    // side thread's, then refuses to roll the side thread's back as well.
-    vi.mocked(provider.deleteSandbox).mockResolvedValue(undefined);
     const applyPolicy = vi.mocked(provider.updateNetworkPolicy);
     const base = applyPolicy.getMockImplementation()!;
     applyPolicy.mockImplementation(async (id, domains) => {
@@ -387,20 +386,12 @@ describe("Terminal workspace settings", () => {
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
 
     await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
-      .rejects.toMatchObject({
-        status: 502,
-        code: "terminal_policy_verification_failed",
-        details: { sandboxOutcomes: expect.arrayContaining([
-          expect.objectContaining({ workstreamId: S, substreamId: thread, outcome: "deleted" }),
-        ]) },
-      });
-    expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-2");
-    // The deletion is recorded on the row that named the sandbox, not on the
-    // main conversation's, which still holds its own, rolled-back sandbox.
-    expect(workstreamObjectGet(threadStore, "SELECT lifecycle_state, sandbox_id, failure_code FROM terminal_workspace WHERE id = 1"))
-      .toEqual({ lifecycle_state: "failed", sandbox_id: null, failure_code: "policy_rollback_deleted" });
-    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, sandbox_id FROM terminal_workspace WHERE id = 1"))
-      .toEqual({ lifecycle_state: "stopped", sandbox_id: "provider-1" });
+      .resolves.toMatchObject({ revision: 2, verificationState: "verified" });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(threadStore, "SELECT lifecycle_state, sandbox_id, applied_network_revision, failure_code FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "stopped", sandbox_id: "provider-2", applied_network_revision: 1, failure_code: "policy_transition:policy:Error" });
+    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, applied_network_revision FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "stopped", applied_network_revision: 2 });
   });
 
   it("reaches the main conversation's sandbox before its projection reaches the parent", async () => {

@@ -108,32 +108,24 @@ built-in list. Under the box, Rally shows how many slots remain, for example
 These domains apply only under **Trusted only**. Switching to **Full internet**
 makes them irrelevant, though Rally remembers them.
 
-### Review and confirm the change
+### Save the change
 
-Changing this setting takes two steps, because it affects everyone's work in
-progress.
-
-1. Make your change, then click **Review network change**.
-2. Rally shows a confirmation, for example **Confirm Trusted only**, with a
-   warning and how many active sandboxes (Terminals currently running) will be
-   stopped.
-3. Open **Review exact before and after targets** to see the approved domains
-   **Before** and **After**, and the **Channels stopped** by the change.
-4. If you want a copy of the new list for your records, click **Download
-   organization domains**. Rally saves it as a text file.
-5. Click **Confirm network change** to apply it, or **Cancel** to back out.
+1. Make your change, then click **Save network change**.
+2. Rally asks **Change network access?** and warns that cloud computers running
+   now may be interrupted.
+3. Click **Continue** to apply it, or **Cancel** to back out.
 
 > [!WARNING]
-> Confirming stops every Terminal that is running in the Organization, in every
-> Channel listed. Rally cancels the work those Terminals are doing, keeps a
-> record of the unsaved changes in each, and does not restart them on its own.
-> Pick a quiet moment, and tell the people in the listed Channels.
+> Continuing stops every Terminal that is running in the Organization. Rally
+> cancels the work those Terminals are doing, keeps a record of the unsaved
+> changes in each, and does not restart them on its own. Terminals that are
+> not running are left as they are, files included. Pick a quiet moment.
 
 Sidekick runs are not stopped. Each run uses the rules that were in place when
 it started.
 
-Next to the **Review network change** button, Rally shows a status badge and a
-**Revision** number, which goes up by one with each change you confirm.
+Next to the **Save network change** button, Rally shows a status badge and a
+**Revision** number, which goes up by one with each change you save.
 
 ### When the Terminal is unavailable
 
