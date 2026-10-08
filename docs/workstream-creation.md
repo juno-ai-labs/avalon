@@ -88,7 +88,11 @@ The setup above the composer is three controls:
 - **Participants.** The creator's avatar leads one pill summing up who is in
   the Channel; the pill opens the full list, which is where a person is taken
   back out, and the creator has no remove control. The dashed **+** widens in
-  place into the search field, its results opening upward. A Space's
+  place into the search field, its results opening upward. The field also
+  takes email addresses, separated by spaces, commas or semicolons, as the
+  Channel's People level does: Enter adds the member an address belongs to and
+  holds any other address as an invitee, shared the Channel once it exists. A
+  guest creator gets the search alone. A Space's
   participants are its listed members, not who is in its Channels, so the row
   never starts from them.
 - **Space.** The shared `DropdownSelect`, in its `pill` variant and opening
@@ -625,6 +629,30 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-08 — The Participants row invites by email address
+
+**What changed:** The new-Channel Participants search reads typed email
+addresses the way the Channel title menu's People level does. Enter adds the
+member who holds an address and holds every other address as an invitee
+(`inviteeAsMember`), which the create already shares the Channel with once it
+answers. An address with an organization account that is not active is refused
+in place, as the People level refuses it.
+
+**Why:** Asked for directly: someone outside the Organization could be invited
+to a Channel once it existed, but not while it was being started, so inviting
+them took a second trip to the People level.
+
+**Considered and rejected:** A separate invite field beside the search. One
+field that filters and invites is what the People level already teaches.
+Inviting before the create answers: there is no Channel to share yet, and the
+held-invitee path already shares it after, unawaited.
+
+**Consequences:** A typed address and a picked Organization invitee are the
+same entry until the create, so both are shared by one `createScopeInvitations`
+call and both show as **Invited**. A failed share is logged and shows as the
+address missing from the Channel's People, the failure mode picked invitees
+already had.
 
 ### 2026-10-07 — The Channel is set up beside its composer, and empty Spaces open on it
 
