@@ -311,11 +311,15 @@ baseline is not a participant-facing policy surface. Full internet clears
 and private names are rejected. An admin confirms one warning that running
 cloud computers may be interrupted; the client then previews against a revision
 and applies that preview in one step. For each sandbox Rally cancels active
-tasks; for a running one it also preserves a final diff and stops it. It then
+tasks and reads Daytona's state, not its own row; for one Daytona reports
+running it also preserves a final diff and stops it. It then
 applies and reads back the provider policy on every sandbox, stopped and
 archived ones included, without stopping or restarting them. A sandbox whose
-stop, policy write or read-back fails keeps its old applied revision and a
-`policy_transition:<step>:<reason>` failure code, and the change still lands
+observation, stop, policy write or read-back fails keeps its old applied
+revision and a `policy_transition:<step>:<reason>` failure code, where the
+reason is Rally's own code or the provider error's class, HTTP status and
+machine-readable code (`TerminalProviderError.code`, carried across the
+provider RPC hop) and never the provider's message, and the change still lands
 for the organization: the sandbox's next claim sees the stale revision and
 reapplies the policy before it resumes. A failure never deletes a sandbox.
 
@@ -1215,11 +1219,14 @@ update lag before changing the default.
 
 ### 2026-10-08 — A failed policy change no longer deletes sandboxes
 
-**What changed:** Applying an organization network policy stops only running
-sandboxes and writes the policy to stopped and archived ones as they are. A
+**What changed:** Applying an organization network policy stops only the
+sandboxes Daytona reports running and writes the policy to stopped and archived
+ones as they are. A
 sandbox that fails any step keeps its old applied revision, records which step
 failed and why in `failure_code`, and is logged as
-`terminal_policy_sandbox_failed`; the change still commits. The rollback, the
+`terminal_policy_sandbox_failed`; the change still commits. Provider RPC
+failures now carry a code (class, status, provider code) so that reason
+survives the hop without copying the provider's message. The rollback, the
 delete-on-failure fallback and the `terminal_policy_verification_failed` 502
 are gone. Settings replaced the inline review panel with one Continue/Cancel
 warning.

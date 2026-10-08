@@ -22,10 +22,11 @@ import {
 } from "../../durable-objects/workspace-terminal-network-protocol";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 import { asWorkspaceId } from "@rally/contracts";
-import { codeShaped, isCodeShaped } from "@rally/contracts/zod-diagnostics";
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { logWarn } from "../../observability/logger";
 import { parseTerminalRegionConfiguration } from "./contract";
-import type { TerminalSandboxProvider } from "./provider-contract";
+import { isTerminalProviderNotFound, terminalProviderErrorCode, type TerminalSandboxProvider } from "./provider-contract";
+import { TerminalToolError } from "./tools";
 import { createTerminalFinalDiffPreserver } from "./lifecycle";
 import type { TerminalLifecycleState } from "../../durable-objects/workstream-terminal-storage";
 import {
@@ -51,15 +52,23 @@ interface SandboxRow {
   title: string;
 }
 
+/** A policy step this service rejected itself, named by a code it composed. */
+class PolicyStepError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = "PolicyStepError";
+  }
+}
+
 /**
- * Which step of a policy change failed for one sandbox, and why. The reason is
- * the thrown message when this service composed it as a code, else the error's
- * class name: a provider's message is its own text and is not copied.
+ * Which step of a policy change failed for one sandbox, and why: this
+ * service's own code, the Terminal tool code, or the provider's error class and
+ * status. Never a provider's message, which is its text.
  */
 function policyStepFailure(step: string, error: unknown): string {
-  const reason = error instanceof Error
-    ? isCodeShaped(error.message) ? error.message : error.name
-    : "non_error_thrown";
+  const reason = error instanceof PolicyStepError || error instanceof TerminalToolError
+    ? error.code
+    : isTerminalProviderNotFound(error) ? "not_found" : terminalProviderErrorCode(error);
   return codeShaped(`${step}:${reason}`);
 }
 
@@ -214,11 +223,14 @@ export class TerminalSettingsService {
         sandbox.substream_id,
       );
       await terminal.cancelUnsettledTasks(epochMs);
-      const running = sandbox.state === "running";
       let stopped = false;
       const failures: string[] = [];
-      let step = "stop";
+      let step = "observe";
       try {
+        // Daytona's state, not Rally's intent: a row can still read stopped or
+        // archived while the sandbox runs, and a running one must stop first.
+        const running = (await this.provider!.getSandbox(sandbox.provider_sandbox_id)).state === "running";
+        step = "stop";
         if (running) {
           // Still the routed environment: the preserver writes the resource and
           // its work-stream link, which are not Terminal tables.
@@ -233,7 +245,7 @@ export class TerminalSettingsService {
           });
           await this.provider!.stopSandbox(sandbox.provider_sandbox_id);
           const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
-          if (observed.state !== "stopped" && observed.state !== "archived") throw new Error(`provider_state_${observed.state}`);
+          if (observed.state !== "stopped" && observed.state !== "archived") throw new PolicyStepError(`provider_state_${observed.state}`);
           stopped = true;
         }
         // A stopped or archived sandbox takes the new policy as it is; it has
@@ -245,7 +257,7 @@ export class TerminalSettingsService {
         );
         const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
         const expected = mutation.proposedMode === "trusted_only" ? [...effectiveDomains].sort() : [];
-        if (observed.domainAllowList.slice().sort().join("\n") !== expected.join("\n")) throw new Error("provider_policy_mismatch");
+        if (observed.domainAllowList.slice().sort().join("\n") !== expected.join("\n")) throw new PolicyStepError("provider_policy_mismatch");
       } catch (error) {
         failures.push(policyStepFailure(step, error));
       }
