@@ -187,7 +187,7 @@ describe('a title pill menu with levels', () => {
 
     // Already invited here is listed among the people, not suggested again.
     expect(screen.queryByRole('button', { name: 'Add waiting@example.test' })).not.toBeInTheDocument();
-    expect(screen.getByText('Invited · hasn’t joined yet')).toBeInTheDocument();
+    expect(screen.getByText('Invited', { selector: '.title-menu-person-detail' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Add dana@example.test' }));
 
     await vi.waitFor(() => expect(onInvite).toHaveBeenCalledExactlyOnceWith(['dana@example.test']));

@@ -298,7 +298,7 @@ an address that already has a membership. The desktop reads it under
 publication, which an invitation, acceptance and revocation each send, refreshes it.
 
 Three surfaces offer invitees after the members, labelled **Invited** with the
-address in muted ink; the `@` list also labels everyone else **Member** or
+address in muted italics; the `@` list also labels everyone else **Member** or
 **Guest** in place of the old **Person**:
 
 - **The composer's `@` list.** An invitee's mention is the typed `@address`;
