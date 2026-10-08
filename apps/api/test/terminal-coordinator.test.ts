@@ -1236,6 +1236,50 @@ describe("Terminal sandbox coordinator", () => {
     expect(provider.createSandbox).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps a Breakout's import of a resource its Channel attached", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const breakout = "00000000-0000-4000-8000-0000000000b8";
+    const channelResource = "00000000-0000-4000-8000-0000000000b1";
+    // The sandbox's object is the Breakout; the resource is linked only in its Channel's Main.
+    workstreamObjectRun(objectStore, `INSERT INTO substream_agent_identity (id, external_substream_id, created_at, updated_at)
+      VALUES (1, ?, 1, 1) ON CONFLICT(id) DO UPDATE SET external_substream_id = excluded.external_substream_id`, breakout);
+    const channelStore = testWorkstreamObjectStore();
+    openDatabases.push(channelStore);
+    seedWorkstreamObjectRoot(channelStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+    await env.DB.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, created_at, updated_at, uploaded_by_user_id, attachment_status)
+       VALUES (?, ?, 'file', 'avalon_upload', 'plan.md', '2026-08-13', '2026-08-13', ?, 'attached')`,
+    ).bind(channelResource, WORKSPACE_ID, USER_ID).run();
+    workstreamObjectRun(
+      channelStore,
+      `INSERT INTO workstream_resource_links
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+       VALUES (?, ?, 0, 'generated', ?, ?, ?)`,
+      channelResource, USER_ID, JSON.stringify({ id: channelResource }), Date.parse("2026-08-13"), Date.parse("2026-08-13"),
+    );
+    const breakoutLinks = testResourcePort(objectStore);
+    const channelLinks = testResourcePort(channelStore);
+    const resources = (_workspaceId: string, _workstreamId: string, substreamId?: string) =>
+      substreamId === "0" ? channelLinks : breakoutLinks;
+    const coordinator = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), resources, provider, clock,
+      undefined, false, undefined,
+      { parentKind: "workstream", runSubstreamId: breakout, authoritySubstreamId: breakout,
+        runsPort: () => testHarnessRunPort(objectStore) },
+    );
+    await coordinator.acquire(context());
+    await coordinator.release(context());
+    await testTerminalPortFactory(objectStore)(WORKSPACE_ID, WORKSTREAM_ID, breakout).recordImportedResource({
+      sandboxGeneration: 1, resourceId: channelResource, destinationPath: "/workspace/imports/plan.md",
+      sourceSha256: "a".repeat(64), sizeBytes: 1, state: "completed", importedAt: 1, now: 1,
+    });
+
+    // The Channel's link authorizes the import, so the sandbox is not replaced.
+    await expect(coordinator.acquire({ ...context(), toolCallId: "second" })).resolves.toMatchObject({ generation: 1 });
+    expect(provider.createSandbox).toHaveBeenCalledOnce();
+  });
+
   it("lets a background agent settle a command that outran its lease", async () => {
     const { objectStore } = fixture();
     const worker = "00000000-0000-4000-8000-000000000088";
