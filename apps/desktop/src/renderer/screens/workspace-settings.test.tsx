@@ -409,9 +409,6 @@ describe('Organization settings', () => {
     api.previewTerminalNetworkPolicy.mockResolvedValue({
       mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1,
       proposedMode: 'full_internet', customDomains: [], remainingCustomSlots: 7,
-      affectedWorkstreamIds: ['00000000-0000-7000-8000-000000000091'],
-      affectedWorkstreams: [{ id: '00000000-0000-7000-8000-000000000091', title: 'Customer export' }],
-      warning: 'Full internet lets cloud computers access any website or internet service.',
     });
     api.applyTerminalNetworkPolicy.mockResolvedValue({
       availability: 'supported', mode: 'full_internet', revision: 2, verificationState: 'verified',
@@ -738,8 +735,6 @@ describe('Organization settings', () => {
       mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1,
       proposedMode: 'trusted_only', customDomains: ['packages.example.com'],
       remainingCustomSlots: 6,
-      affectedWorkstreamIds: [], affectedWorkstreams: [],
-      warning: 'Trusted only applies managed and organization-approved access.',
     });
     renderSettings();
     openSettingsSection('Security');

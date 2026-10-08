@@ -4117,12 +4117,6 @@ export const TerminalNetworkPolicyPreviewSchema = z.strictObject({
   proposedMode: TerminalNetworkModeSchema,
   customDomains: z.array(z.string().min(1).max(253)).max(20),
   remainingCustomSlots: z.number().int().nonnegative().max(20),
-  affectedWorkstreamIds: z.array(IdSchema).max(1_000),
-  affectedWorkstreams: z.array(z.strictObject({
-    id: IdSchema,
-    title: z.string().min(1).max(500),
-  })).max(1_000),
-  warning: z.string().min(1).max(1_000),
 });
 export const ApplyTerminalNetworkPolicyRequestSchema = z.strictObject({
   mutationId: IdSchema,
