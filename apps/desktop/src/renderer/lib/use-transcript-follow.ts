@@ -45,6 +45,8 @@ export interface TranscriptFollow {
    * being updated — content growing below the fold fires no scroll event.
    */
   atEnd: boolean;
+  /** Whether the follow is holding the end now, read from its refs. */
+  isFollowing: () => boolean;
   onScroll: (element: HTMLElement) => void;
   onWheel: (element: HTMLElement, deltaY: number) => void;
   /** Stop following, because the screen has put the viewport somewhere else. */
@@ -88,6 +90,10 @@ export function useTranscriptFollow(
   // handler is not guaranteed to have been applied by then. A follow that runs
   // one more time has already taken the viewport back off the reader.
   const followingRef = useRef(true);
+  // Read by `isFollowing`, which a caller may ask during render, after this
+  // hook has run in the same pass.
+  const canFollowRef = useRef(canFollow);
+  canFollowRef.current = canFollow;
   const ownScrollTopRef = useRef<number | null>(null);
   const distanceFromEndRef = useRef(0);
   // A smooth scroll to the end delivers a scroll event per frame, each further
@@ -236,5 +242,10 @@ export function useTranscriptFollow(
     recordOwnScroll(element);
   }, [recordOwnScroll, scrollElementRef]);
 
-  return { atEnd, onScroll, onWheel, release, scrollTo, scrollToEnd };
+  const isFollowing = useCallback(
+    (): boolean => followingRef.current && canFollowRef.current,
+    [],
+  );
+
+  return { atEnd, isFollowing, onScroll, onWheel, release, scrollTo, scrollToEnd };
 }

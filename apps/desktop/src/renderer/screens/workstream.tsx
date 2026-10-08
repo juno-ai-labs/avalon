@@ -55,7 +55,6 @@ export {
   initialTranscriptAnchorIndex,
   manualElicitationResponse,
   orderedTranscriptOwnsRunTiming,
-  preservedPrependScrollTop,
   resourceVersionsQueryKey,
   workspaceMemberFromSession,
   workstreamPayloadBelongsToRoute,
