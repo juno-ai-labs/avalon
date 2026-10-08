@@ -221,8 +221,10 @@ function PeopleView({ members, noun, people, presentUserIds }: {
     if (!people || tokens.length === 0 || submitting.current) return;
     if (!typedEmails) {
       // A name narrowed to one person adds them, as clicking Add would.
-      const only = suggestions.length === 1 ? suggestions[0] : undefined;
-      const onlyInvitee = suggestions.length === 0 && suggestedInvitees.length === 1 ? suggestedInvitees[0] : undefined;
+      // One row across both lists, or Enter would pick between rows the reader can see.
+      const single = suggestions.length + suggestedInvitees.length === 1;
+      const only = single ? suggestions[0] : undefined;
+      const onlyInvitee = single ? suggestedInvitees[0] : undefined;
       if (only) void run(query, [only], []);
       else if (onlyInvitee) void run(query, [], [onlyInvitee]);
       else setEntryError('Enter email addresses separated by spaces, commas or semicolons.');
