@@ -3,6 +3,7 @@ import type { WorkstreamAppearance } from '@rally/contracts';
 import { IconCornerDownRight } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
+import { statusLabel } from '../lib/format';
 
 /**
  * What a Channel's feed knows about one of its Breakouts: enough to place it
@@ -21,16 +22,22 @@ export interface BreakoutMark {
   unseen?: boolean | undefined;
   /** A host that has no counts, only the directory's one flag. */
   needsAttention?: boolean | undefined;
+  /** The Breakout's run is paused on a question only it can answer. */
+  needsInput?: boolean | undefined;
 }
 
 /** Whether a Breakout has something its reader has not seen. */
 export function breakoutHasActivity(breakout: BreakoutMark): boolean {
-  return (breakout.unreadCount ?? 0) > 0 || breakout.youAreMentioned === true
+  return breakout.needsInput === true || (breakout.unreadCount ?? 0) > 0 || breakout.youAreMentioned === true
     || breakout.unseen === true || breakout.needsAttention === true;
 }
 
-/** "2 new", or "New" when the host knows there is news but not how much. */
+/**
+ * "Needs input" while a question waits, else "2 new", or "New" when the host
+ * knows there is news but not how much.
+ */
 export function breakoutNewsLabel(breakout: BreakoutMark): string | null {
+  if (breakout.needsInput === true) return statusLabel.needs_input;
   const count = breakout.unreadCount ?? 0;
   if (count > 0) return `${count} new`;
   return breakoutHasActivity(breakout) ? 'New' : null;
@@ -83,6 +90,7 @@ export function BreakoutChipRow({ breakouts, onOpen, openSubstreamId }: {
       const open = breakout.substreamId === openSubstreamId;
       const news = breakoutNewsLabel(breakout);
       return <button
+        aria-label={[breakout.title, news, open && 'Open'].filter(Boolean).join(', ')}
         aria-pressed={open}
         className={clsx('breakout-chip', open && 'is-open', news && 'has-news')}
         key={breakout.substreamId}
@@ -91,7 +99,9 @@ export function BreakoutChipRow({ breakouts, onOpen, openSubstreamId }: {
       >
         <IconCornerDownRight aria-hidden="true" className="breakout-chip-icon" size={13} stroke={1.9} />
         <span className="breakout-chip-title">{breakout.title}</span>
-        {news && <span className="breakout-chip-news">· {news}</span>}
+        {breakout.needsInput
+          ? <span className="breakout-chip-badge">{news}</span>
+          : news && <span className="breakout-chip-news">· {news}</span>}
         {open && <span className="breakout-chip-open">· Open</span>}
       </button>;
     })}

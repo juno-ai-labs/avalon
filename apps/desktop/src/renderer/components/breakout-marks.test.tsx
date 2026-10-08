@@ -23,6 +23,7 @@ describe('breakoutHasActivity', () => {
     expect(breakoutHasActivity(mark('mentioned', { youAreMentioned: true }))).toBe(true);
     expect(breakoutHasActivity(mark('unseen', { unseen: true }))).toBe(true);
     expect(breakoutHasActivity(mark('flagged', { needsAttention: true }))).toBe(true);
+    expect(breakoutHasActivity(mark('asking', { needsInput: true }))).toBe(true);
   });
 });
 
@@ -32,6 +33,10 @@ describe('breakoutNewsLabel', () => {
     expect(breakoutNewsLabel(mark('mentioned', { youAreMentioned: true }))).toBe('New');
     expect(breakoutNewsLabel(mark('flagged', { needsAttention: true, unreadCount: 0 }))).toBe('New');
     expect(breakoutNewsLabel(mark('quiet', { unreadCount: 0 }))).toBeNull();
+  });
+
+  it('says a waiting question ahead of any unread count', () => {
+    expect(breakoutNewsLabel(mark('asking', { needsInput: true, unreadCount: 3 }))).toBe('Needs input');
   });
 });
 
@@ -137,5 +142,17 @@ describe('BreakoutChipRow', () => {
 
     fireEvent.click(pricing!);
     expect(onOpen).toHaveBeenCalledWith('one');
+  });
+
+  it('badges a Breakout waiting on an answer, open or not', () => {
+    render(<BreakoutChipRow
+      breakouts={[mark('one', { title: 'Rain', needsInput: true }), mark('two', { title: 'Snow', needsInput: true })]}
+      onOpen={vi.fn()}
+      openSubstreamId="two"
+    />);
+
+    const [rain, snow] = within(screen.getByRole('group', { name: 'Breakouts from this message' })).getAllByRole('button');
+    expect(rain).toHaveAccessibleName('Rain, Needs input');
+    expect(snow).toHaveAccessibleName('Snow, Needs input, Open');
   });
 });

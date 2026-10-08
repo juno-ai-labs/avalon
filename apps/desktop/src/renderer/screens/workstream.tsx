@@ -98,18 +98,27 @@ export function railConversationNeedsAttention(
   });
 }
 
+/** Whether the conversation's run is paused on a question; the open detail is newer than the row. */
+export function railConversationNeedsInput(
+  projection: RailAttentionProjection,
+  selectedDetail?: WorkstreamDetail,
+): boolean {
+  return (selectedDetail?.harnessStatus ?? projection.harnessStatus) === 'needs_input';
+}
+
 export function railChildrenWithAttention<T extends RailAttentionProjection & { substreamId: string }>(
   directory: readonly T[] | undefined,
   selectedSubstreamId: string,
   selectedDetail?: WorkstreamDetail,
-): (T & { needsAttention?: boolean })[] | undefined {
-  return directory?.map((child) => ({
-    ...child,
-    needsAttention: railConversationNeedsAttention(
-      child,
-      child.substreamId === selectedSubstreamId ? selectedDetail : undefined,
-    ),
-  }));
+): (T & { needsAttention?: boolean; needsInput: boolean })[] | undefined {
+  return directory?.map((child) => {
+    const detail = child.substreamId === selectedSubstreamId ? selectedDetail : undefined;
+    return {
+      ...child,
+      needsAttention: railConversationNeedsAttention(child, detail),
+      needsInput: railConversationNeedsInput(child, detail),
+    };
+  });
 }
 
 type WorkstreamSidebarFailure =
@@ -616,6 +625,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     youAreMentioned: 'youAreMentioned' in child ? child.youAreMentioned : undefined,
     unseen: 'unseen' in child ? child.unseen : undefined,
     needsAttention: child.needsAttention,
+    needsInput: child.needsInput,
   })), [railChildren]);
   const breakoutAge = (breakout: BreakoutMark): React.ReactNode => breakout.lastActivityAt
     ? <RelativeTime value={breakout.lastActivityAt} />
