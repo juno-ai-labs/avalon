@@ -341,14 +341,9 @@ settings window is kept and reused, so a request for the Organization pane
 while it is already mounted counts as an opening too. There is no polling; the
 figure may lag by minutes as usage accrues and nothing gains from watching it.
 
-A plan change is the one push. It moves the quota at once, so the API sends
-the new meter as a `workspace_usage` event on the workspace socket, and
-`applyPushedOrganizationUsage` writes it into the query and the slice, after
-cancelling a read in flight that may have seen the old plan. The push is not
-replayed, so every subscribe answer marks the meter stale: an open one reads
-again, a closed one reads when it opens, as it would anyway. The Settings
-window holds no socket; the main window relays both as the name `usage`, and
-Settings reads its own meter again on it.
+A plan change is the one push: `applyPushedOrganizationUsage` writes the
+`workspace_usage` meter into the query and the slice
+([`usage-metering.md`](usage-metering.md)).
 
 `useOrganizationUsage` reads the row when it mounts and shows it while the
 request is in flight. The row is held beside the query rather than written
