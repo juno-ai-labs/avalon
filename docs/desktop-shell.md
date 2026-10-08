@@ -139,6 +139,12 @@ through its `leading` slot. Electron's window has an 860px minimum, so only
 the browser reaches this width. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx`
 repeats the CSS's 640.
 
+Settings has its own sheet at the same width. Its sections list covers the page
+under the header, and a menu button at the header's start, styled and animated
+like the shell's, opens and shuts it. It starts open, so Settings opens on the
+list, unless a link named a section. Picking a section or a search result shuts
+it. Above 640px CSS ignores the state and both columns show.
+
 On touch screens text fields render at 16px to stop iOS focus zoom; see the
 rule at the end of `app.css`.
 
@@ -336,6 +342,22 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-08 — Settings sections are a sheet at phone width
+
+**What changed:** At 640px and narrower, Settings drops its two columns. The
+sections list is a sheet under the header, toggled by a menu button there, and
+open when Settings opens.
+
+**Why:** On a phone the 174px list left the page about 200px wide, so rows
+wrapped a word to a line and fields were cut off.
+
+**Considered and rejected:** Opening on the Account page with the sheet shut.
+On a phone the list is how a reader finds the page they came for, so starting
+there saves a tap; a link that names a section still opens on that page.
+
+**Consequences:** The open state lives in the Settings screen, not
+`useUiStore`, since only that screen reads it.
 
 ### 2026-10-08 — A Breakout waiting on a question is badged in Main
 
