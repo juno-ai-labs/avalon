@@ -14,7 +14,7 @@ import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER, type AccountAc
 import { useShellCapabilities } from '../lib/collaboration-session';
 import type { WorkspaceMember } from '../lib/types';
 import { uuidV7 } from '../lib/telemetry';
-import { Button, Modal } from './primitives';
+import { ActivityCountBadge, Button, Modal, activityCountLabel } from './primitives';
 import { RelativeTime } from './relative-time';
 import { SupportWorkspaceMenuRow } from './support-workspace-menu';
 
@@ -74,26 +74,22 @@ function regionLabel(region: RallyRegion): string {
   return region;
 }
 
-/** What the dot means when nothing is waiting on this person. */
-export const UNREAD_ACTIVITY_DESCRIPTION = 'New activity since you last looked. Nothing is waiting on you.';
-
 /**
- * One green dot marks a background workspace with any activity at all; the
- * detail — how many work streams are waiting on this person and the
- * strongest reason among them, in the order WorkspaceDO ranks them — is
- * kept for the tooltip and the accessible name rather than shown as a count.
+ * A background row's count is `readerAttentionCount`: the conversations unread,
+ * unseen or mentioning this person, the same number as that Organization's
+ * attention menu and dock badge. Zero shows nothing. When some of them are
+ * waiting on this person, the strongest reason, in the order WorkspaceDO ranks
+ * them, is the badge's tooltip and part of the row's accessible name.
  */
-function attentionLabel(attention: WorkspaceAttention): string | null {
+function waitingLabel(attention: WorkspaceAttention): string | null {
   const count = attention.waitingForYou;
-  if (count > 0) {
-    const plural = count === 1 ? '' : 's';
-    return attention.waitingReason === 'mentioned'
-      ? `${count} mention${plural} waiting for you`
-      : attention.waitingReason === 'needs_input'
-        ? `${count} channel${plural} waiting for your input`
-        : `${count} new channel${plural} you have not opened`;
-  }
-  return attention.hasUnreadActivity ? 'Unread activity' : null;
+  if (count === 0) return null;
+  const plural = count === 1 ? '' : 's';
+  return attention.waitingReason === 'mentioned'
+    ? `${count} mention${plural} waiting for you`
+    : attention.waitingReason === 'needs_input'
+      ? `${count} channel${plural} waiting for your input`
+      : `${count} new channel${plural} you have not opened`;
 }
 
 function IndicatorTooltip({ children, label }: { children: React.ReactElement; label: string }): React.JSX.Element {
@@ -167,8 +163,11 @@ export function WorkspaceAccountMenu({
     const value = attention[desktopWorkspaceIdentityKey(workspace.region, workspace.id)];
     return value ? [value] : [];
   }) : [];
-  const backgroundHasAttention = backgroundAttention.some((value) => attentionLabel(value) !== null);
-  const backgroundAttentionDescription = backgroundAttention.some((value) => value.waitingForYou > 0)
+  // Only Organizations whose row shows a count, so the trigger's dot, its name
+  // and the rows agree.
+  const counted = backgroundAttention.filter((value) => value.readerAttentionCount > 0);
+  const backgroundHasAttention = counted.length > 0;
+  const backgroundAttentionDescription = counted.some((value) => value.waitingForYou > 0)
     ? 'attention in another organization'
     : backgroundHasAttention ? 'unread activity in another organization' : null;
   const multipleRegions = new Set(workspaces.map((workspace) => workspace.region)).size > 1;
@@ -285,10 +284,9 @@ export function WorkspaceAccountMenu({
                   const workspaceKey = desktopWorkspaceIdentityKey(workspace.region, workspace.id);
                   const active = workspace.id === activeWorkspace.id && workspace.region === activeWorkspace.region;
                   const workspaceAttention = active ? undefined : attention[workspaceKey];
-                  const attentionDescription = workspaceAttention ? attentionLabel(workspaceAttention) : null;
-                  const activityDetail = workspaceAttention && workspaceAttention.waitingForYou > 0
-                    ? attentionDescription
-                    : UNREAD_ACTIVITY_DESCRIPTION;
+                  const activityCount = workspaceAttention?.readerAttentionCount ?? 0;
+                  const activityDescription = activityCount > 0 ? activityCountLabel(activityCount) : null;
+                  const waitingDescription = activityCount > 0 && workspaceAttention ? waitingLabel(workspaceAttention) : null;
                   const switching = workspaceKey === switchingWorkspaceKey;
                   const signingIn = switching && workspaceKey === signingInWorkspaceKey;
                   const error = workspaceErrors[workspaceKey];
@@ -296,7 +294,8 @@ export function WorkspaceAccountMenu({
                     workspace.name,
                     ...(multipleRegions ? [regionLabel(workspace.region)] : []),
                     ...(active ? ['Current'] : []),
-                    ...(attentionDescription ? [attentionDescription] : []),
+                    ...(activityDescription ? [activityDescription] : []),
+                    ...(waitingDescription ? [waitingDescription] : []),
                     ...(signingIn ? [FINISH_SIGN_IN_IN_BROWSER] : []),
                     ...(error ? [error] : []),
                   ].join(', ');
@@ -335,9 +334,9 @@ export function WorkspaceAccountMenu({
                           />
                         )}
                         {active && <Check aria-label="Current" size={14} />}
-                        {!active && !switching && attentionDescription && activityDetail && (
-                          <IndicatorTooltip label={activityDetail}>
-                            <span aria-label={attentionDescription} className="workspace-activity-dot" />
+                        {!active && !switching && activityDescription && (
+                          <IndicatorTooltip label={waitingDescription ?? activityDescription}>
+                            <span className="workspace-activity-count"><ActivityCountBadge count={activityCount} /></span>
                           </IndicatorTooltip>
                         )}
                       </DropdownMenu.Item>

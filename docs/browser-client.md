@@ -85,7 +85,9 @@ page: the client drops the fragment from history. The server indexed those
 older shares itself, so signing in claims them like any other.
 
 For an unaddressed entry, the client lists the user's regional workspaces and can sign
-out through the ordinary browser-session logout. Workspace roots mount the shell,
+out through the ordinary browser-session logout. Once the list is on screen it
+reads `GET /browser/workspaces/attention` and gives each row with new activity a
+count badge ([multiple workspaces](multiple-workspaces.md#the-account-menus-directory)). Workspace roots mount the shell,
 and canonical Space, Channel, Breakout and Sidekick links activate the addressed
 workspace and open in it. A copied link reaches here from the site's handoff
 page, whose **Continue in browser** keeps the path and swaps the host

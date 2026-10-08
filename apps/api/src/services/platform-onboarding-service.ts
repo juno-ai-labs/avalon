@@ -11,6 +11,7 @@ import {
   asSpaceId,
   asUserId,
   asWorkspaceId,
+  WorkspaceAttentionSchema,
   WorkspaceSchema,
   type Region,
   type WorkspaceId,
@@ -19,7 +20,6 @@ import {
   type Workspace,
 } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
-import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
@@ -52,6 +52,8 @@ import {
 } from "./demo-workspace-visibility";
 import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
 import { claimScopeInvitations } from "./scope-invitation-claims";
+import { membershipAttention } from "./workspace-attention-service";
+import { settledFailureCode } from "../lib/settled-failure-code";
 import {
   PreferenceProjectionSchema,
   applyRegionalPreferenceProjection,
@@ -94,6 +96,12 @@ const regionalDiscoverySchema = z.object({
   workspaces: z.array(regionalWorkspaceSchema),
   invitations: z.array(regionalPendingInvitationSchema),
 });
+
+const regionalAttentionSchema = z.object({
+  attention: z.array(z.object({ region: RegionSchema, workspaceId: WorkspaceIdSchema, attention: WorkspaceAttentionSchema })),
+  failed: z.array(z.object({ workspaceId: z.string(), code: z.string() })),
+});
+export type RegionalAttention = z.infer<typeof regionalAttentionSchema>;
 
 const regionalActionBaseSchema = z.object({
   identity: platformIdentitySchema,
@@ -187,6 +195,7 @@ export type BrowserRegistration = z.infer<typeof browserRegistrationSchema>;
 /** Named WorkerEntrypoint RPC surface. It is intentionally not an HTTP route. */
 export interface RegionalIdentityBridgeBinding {
   discover(identity: PlatformIdentity): Promise<RegionalDiscovery>;
+  attention(identity: PlatformIdentity): Promise<RegionalAttention>;
   activate(input: RegionalActivateInput): Promise<Session>;
   activateBrowser(input: RegionalActivateInput): Promise<BrowserRegistration>;
   create(input: RegionalCreateInput): Promise<Session>;
@@ -197,6 +206,7 @@ export interface RegionalIdentityBridgeBinding {
 /** Raw Cloudflare RPC surface. Business failures are data, never thrown errors. */
 export interface RegionalIdentityBridgeRpcBinding {
   discover(identity: PlatformIdentity): Promise<RegionalRpcResult<RegionalDiscovery>>;
+  attention(identity: PlatformIdentity): Promise<RegionalRpcResult<RegionalAttention>>;
   activate(input: RegionalActivateInput): Promise<RegionalRpcResult<Session>>;
   activateBrowser(input: RegionalActivateInput): Promise<RegionalRpcResult<BrowserRegistration>>;
   create(input: RegionalCreateInput): Promise<RegionalRpcResult<Session>>;
@@ -210,6 +220,10 @@ export class RegionalIdentityBridgeClient implements RegionalIdentityBridgeBindi
 
   discover(identity: PlatformIdentity): Promise<RegionalDiscovery> {
     return this.call(this.rpc.discover(identity), regionalDiscoverySchema);
+  }
+
+  attention(identity: PlatformIdentity): Promise<RegionalAttention> {
+    return this.call(this.rpc.attention(identity), regionalAttentionSchema);
   }
 
   activate(input: RegionalActivateInput): Promise<Session> {
@@ -358,6 +372,21 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       workspaces: memberships.filter((workspace) => !withheld.has(workspace.id)),
       invitations: (invitationResult.results ?? []).map(mapPendingInvitation),
     });
+  }
+
+  /**
+   * Attention for each organization the identity is a member of here, for a
+   * browser that holds no workspace credential to ask each one itself.
+   */
+  async attention(rawIdentity: PlatformIdentity): Promise<RegionalAttention> {
+    // A read, so it never writes: `discover`, which the list ran first, is what
+    // links or refreshes the regional user. Not linked yet means no membership here.
+    const identity = platformIdentitySchema.parse(rawIdentity);
+    const user = await this.env.DB.prepare("SELECT id FROM users WHERE platform_user_id = ?")
+      .bind(identity.platformUserId).first<{ id: string }>();
+    if (!user) return { attention: [], failed: [] };
+    const workspaces = await new AuthService(this.env).listRegionalWorkspaces(user.id);
+    return membershipAttention(this.env, user.id, workspaces);
   }
 
   async activate(rawInput: RegionalActivateInput): Promise<Session> {
@@ -1277,8 +1306,22 @@ export class PlatformOnboardingService {
     return {
       workspaces: settled.flatMap((result) => result.status === "fulfilled" ? result.value.workspaces : []),
       failed: settled.flatMap((result, index) => result.status === "rejected"
-        ? [{ region: regions[index]!, code: result.reason instanceof ApiError ? result.reason.code : codeShaped(result.reason instanceof Error ? result.reason.name : "unknown") }]
+        ? [{ region: regions[index]!, code: settledFailureCode(result.reason, "regional_discovery") }]
         : []),
+    };
+  }
+
+  /** Attention in every other deployment, beside `otherDeploymentWorkspaces`; one down deployment hides only its own. */
+  async otherDeploymentAttention(): Promise<{ attention: RegionalAttention["attention"]; failed: Array<{ region: Region; workspaceId?: string; code: string }> }> {
+    const identity = await this.loadPlatformIdentity();
+    if (identity.loginIdentities.length === 0) return { attention: [], failed: [] };
+    const regions = configuredRegions.filter((region) => region !== this.env.AVALON_REGION);
+    const settled = await Promise.allSettled(regions.map(async (region) => this.gateway(region).attention(identity)));
+    return {
+      attention: settled.flatMap((result) => result.status === "fulfilled" ? result.value.attention : []),
+      failed: settled.flatMap((result, index) => result.status === "rejected"
+        ? [{ region: regions[index]!, code: settledFailureCode(result.reason, "regional_attention") }]
+        : result.value.failed.map((item) => ({ region: regions[index]!, workspaceId: item.workspaceId, code: item.code }))),
     };
   }
 

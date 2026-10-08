@@ -1717,14 +1717,27 @@ pre {
 .account-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .account-copy strong { font-size: 13px; font-weight: 500; line-height: 18px; overflow: hidden; white-space: nowrap; }
 .account-copy span { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; white-space: nowrap; }
-.account-attention-dot,
-.workspace-activity-dot {
+.account-attention-dot {
   background: var(--av-sys-color-workstream-unread);
   border-radius: var(--av-cmp-marker-radius);
   flex: 0 0 var(--av-cmp-marker-inline-size);
   height: var(--av-cmp-marker-inline-size);
   width: var(--av-cmp-marker-inline-size);
 }
+.activity-count-badge {
+  background: var(--av-sys-color-workstream-news);
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-palette-ink-light);
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 18px;
+  min-width: 18px;
+  padding-inline: 5px;
+  text-align: center;
+}
+.workspace-activity-count { display: flex; flex-shrink: 0; }
 .workspace-menu {
   max-height: var(--radix-dropdown-menu-content-available-height);
   min-width: 270px;
