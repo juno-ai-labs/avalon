@@ -144,7 +144,8 @@ under the header, and a menu button at the header's start, styled and animated
 like the shell's, opens and shuts it. It starts open, so Settings opens on the
 list, unless a link named a section. Picking a section or a search result shuts
 it. Above 640px CSS ignores the state and both columns show. At the same width
-each settings row puts its label over its control instead of beside it. In a
+each settings row puts its label over its control instead of beside it. The
+connection tables narrow their columns to fit rather than scroll sideways. In a
 browser tab Settings is a window surface, so it takes the whole tab at every
 width with no shell sidebar or top bar around it.
 
