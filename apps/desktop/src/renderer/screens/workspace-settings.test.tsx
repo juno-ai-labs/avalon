@@ -705,6 +705,34 @@ describe('Organization settings', () => {
     expect(api.applyTerminalNetworkPolicy).not.toHaveBeenCalled();
   }, 30_000);
 
+  it.each([
+    ['preview', 'The Terminal network policy changed; reload settings and preview the policy again.'],
+    ['apply', 'Daytona did not confirm the requested network policy.'],
+  ] as const)('keeps the draft and shows the error when the %s request fails', async (failing, message) => {
+    const failure = new ApiError(message, 409, 'terminal_policy_revision_conflict');
+    if (failing === 'preview') api.previewTerminalNetworkPolicy.mockRejectedValueOnce(failure);
+    else api.applyTerminalNetworkPolicy.mockRejectedValueOnce(failure);
+    renderSettings();
+    openSettingsSection('Security');
+    const fullInternet = await screen.findByRole('radio', { name: /^Full internet/ }, { timeout: 10_000 });
+    fireEvent.click(fullInternet);
+    fireEvent.click(screen.getByRole('button', { name: 'Save network change' }));
+    fireEvent.click(within(await screen.findByRole('dialog', undefined, { timeout: 10_000 })).getByRole('button', { name: 'Continue' }));
+
+    expect(await screen.findByText(message, undefined, { timeout: 10_000 })).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), { timeout: 10_000 });
+    expect(fullInternet).toBeChecked();
+    if (failing === 'preview') expect(api.applyTerminalNetworkPolicy).not.toHaveBeenCalled();
+
+    // A retry goes through with the same draft.
+    fireEvent.click(screen.getByRole('button', { name: 'Save network change' }));
+    fireEvent.click(within(await screen.findByRole('dialog', undefined, { timeout: 10_000 })).getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(api.applyTerminalNetworkPolicy).toHaveBeenLastCalledWith({
+      mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1, confirmed: true,
+    }), { timeout: 10_000 });
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
+  }, 30_000);
+
   it('keeps Rally-managed Trusted-only domains out of the settings surface', async () => {
     api.previewTerminalNetworkPolicy.mockResolvedValueOnce({
       mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1,

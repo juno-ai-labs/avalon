@@ -315,13 +315,14 @@ tasks and reads Daytona's state, not its own row; for one Daytona reports
 running it also preserves a final diff and stops it. It then
 applies and reads back the provider policy on every sandbox, stopped and
 archived ones included, without stopping or restarting them. A sandbox whose
-observation, stop, policy write or read-back fails keeps its old applied
-revision and a `policy_transition:<step>:<reason>` failure code, where the
+observation, stop, policy write or read-back fails gets applied revision 0 and a
+`policy_transition:<step>:<reason>` failure code, where the
 reason is Rally's own code or the provider error's class, HTTP status and
 machine-readable code (`TerminalProviderError.code`, carried across the
 provider RPC hop) and never the provider's message, and the change still lands
-for the organization: the sandbox's next claim sees the stale revision and
-reapplies the policy before it resumes. A failure never deletes a sandbox.
+for the organization: a run already holding the sandbox sees its claim go
+stale, and the next acquisition reapplies the policy, reads it back, and only
+then stamps the revision and resumes. A failure never deletes a sandbox.
 
 The workspace's alarm stops an idle running sandbox after five minutes,
 archives it after sixty minutes, and deletes it after thirty days. Idle means
@@ -1221,26 +1222,37 @@ update lag before changing the default.
 
 **What changed:** Applying an organization network policy stops only the
 sandboxes Daytona reports running and writes the policy to stopped and archived
-ones as they are. A
-sandbox that fails any step keeps its old applied revision, records which step
-failed and why in `failure_code`, and is logged as
-`terminal_policy_sandbox_failed`; the change still commits. Provider RPC
-failures now carry a code (class, status, provider code) so that reason
-survives the hop without copying the provider's message. The rollback, the
-delete-on-failure fallback and the `terminal_policy_verification_failed` 502
-are gone. Settings replaced the inline review panel with one Continue/Cancel
-warning.
+ones as they are. A sandbox that fails any step keeps applied revision 0,
+records the step and a code-only reason in `failure_code`, and is logged as
+`terminal_policy_sandbox_failed`; the change still commits. Acquisition now
+reads the policy back before stamping a revision. Provider RPC failures carry a
+code (class, status, provider code). The rollback, the delete-on-failure
+fallback and the `terminal_policy_verification_failed` 502 are gone. Settings
+replaced the inline review panel with one Continue/Cancel warning.
 
 **Why:** Apply called `stopSandbox` on every sandbox with an id, archived ones
 included. Daytona refuses to stop an archived sandbox, and a failed stop meant
 delete, so switching Juno Labs to Full internet on 2026-10-08 deleted nearly
 every idle sandbox in the organization, with no final diff because none was
 running. Any one failure, a final diff included, also rolled back and could
-delete every other sandbox. Acquisition already reapplies the policy when a
-sandbox's applied revision is stale, so leaving a failed sandbox behind is
-safe and cheaper than undoing everyone's change. The stored code was always
-`provider_policy_mismatch`, whatever had failed. A future change must not turn
-a per-sandbox failure back into a deletion or an organization-wide rollback.
+delete every other sandbox. The stored code was always
+`provider_policy_mismatch`, whatever had failed.
+
+**Considered and rejected:** Keeping the organization-wide rollback and only
+skipping archived sandboxes. One failing sandbox would still undo everyone's
+change and, if its rollback did not read back, still delete it. Acquisition
+already reapplies the policy to a sandbox whose revision is stale, so leaving a
+failed sandbox behind costs nothing a member can lose.
+
+**Consequences:** A sandbox whose stop fails during a switch to Trusted only
+keeps its old egress until its next claim or its five-minute idle stop; revision
+0 makes a run already holding it go stale on its next operation. Revision 0 is
+the "not applied" value and must stay outside the policy's own `revision >= 1`
+range. A future change must not turn a per-sandbox failure back into a deletion
+or an organization-wide rollback, and must not record a revision the provider
+has not read back.
+
+Shipped in #1168.
 
 ### 2026-09-29 — The owner of a provider RPC client disposes it
 
