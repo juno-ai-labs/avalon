@@ -508,19 +508,19 @@ describe('organization account menu', () => {
   });
 
   it.each([true, false])('shows the active organization\'s usage with organizations enabled=%s', async (enabled) => {
-    renderMenu({ enabled, activeUsage: <span>72% left this week</span> });
+    renderMenu({ enabled, activeUsage: <span>72% left till Thu 9:00 AM</span> });
     openMenu();
     const menu = await screen.findByRole('menu');
-    expect(within(menu).getAllByText('72% left this week')).toHaveLength(1);
+    expect(within(menu).getAllByText('72% left till Thu 9:00 AM')).toHaveLength(1);
     expect(within(menu).queryByText('Organizations') !== null).toBe(enabled);
   });
 
   it('puts the usage row right under Settings, ahead of the Organizations list', async () => {
-    renderMenu({ enabled: true, presentation: 'grok', activeUsage: <span>72% left this week</span> });
+    renderMenu({ enabled: true, presentation: 'grok', activeUsage: <span>72% left till Thu 9:00 AM</span> });
     openMenu();
     const menu = await screen.findByRole('menu');
     const settingsRow = within(menu).getByRole('menuitem', { name: 'Settings' });
-    const usage = within(menu).getByText('72% left this week');
+    const usage = within(menu).getByText('72% left till Thu 9:00 AM');
     const organizations = within(menu).getByText('Organizations');
     expect(settingsRow.nextElementSibling).toBe(usage);
     expect(usage.compareDocumentPosition(organizations) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

@@ -151,7 +151,7 @@ export function OrganizationUsageMenuItem({ api, onSelect }: {
   const state = useOrganizationUsage(api);
   if (state.status !== 'ready') return null;
   const { usage } = state.reading;
-  const line = usageMenuLabel(usage.quotaRemainingPercent);
+  const line = usageMenuLabel(usage.quotaRemainingPercent, usage.weekResetsAt);
   return (
     <DropdownMenu.Item aria-label={`Quota, ${line}`} className="menu-item workspace-usage-item" onSelect={onSelect}>
       <span className="workspace-usage-title">Quota</span>
