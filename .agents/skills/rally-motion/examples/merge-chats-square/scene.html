@@ -37,15 +37,16 @@ const MSGS_A = [
   pasted(3.95, 'alice', V2), say(4.27, 'Tuesday or Monday?'),
   { t: 4.98, who: 'alice', s: 'Wait, which version is this?' },
 ];
-// copy-paste trips: select an AI answer, carry it across, paste it; each one faster
+// copy-paste trips: each person reaches into the other's chat, selects that AI's answer
+// and drags it back into their own; each trip faster than the last
 const DRAGS = [
-  { t: 1.35, dur: .6, from: 'B', copy: V1, pre: .5 },
+  { t: 1.35, dur: .6, from: 'B', copy: V1, pre: .6 },
   { t: 3.5, dur: .45, from: 'B', copy: V2 },
   { t: 4.05, dur: .4, from: 'A', copy: PRICE },
   { t: 4.52, dur: .32, from: 'B', copy: V2 },
   { t: 4.84, dur: .24, from: 'A', copy: PRICE },
   { t: 5.02, dur: .2, from: 'B', copy: V1 },
-].map(d => ({ ...d, pre: d.pre || Math.min(.35, d.dur * .8) }));
+].map(d => ({ ...d, pre: d.pre || Math.min(.4, d.dur * .9) }));
 // how selected an AI answer is: picked up just before the drag, let go as it lands
 function selected(match, t) {
   let h = 0;
@@ -97,7 +98,7 @@ function aiWindow(ctx, t, w, side, who, msgs) {
   ctx.restore();
 }
 
-// a clip of the AI's answer, carried by the person's cursor
+// a clip of the AI's answer, pulled across by the receiver's cursor
 function pasteCard(ctx, t, d) {
   const p = prog(t, d.t, d.t + d.dur); if (t < d.t || p >= 1) return;
   const [x, y] = along(d, p), sc = (.6 + .4 * eo3(prog(t, d.t, d.t + .1))) * (1 - .5 * eiX(prog(p, .75, 1)));
@@ -114,7 +115,7 @@ function pasteCard(ctx, t, d) {
 function personCursor(ctx, t, side, who) {
   const w = side === 'B' ? WB : WA, rest = [w.x + w.w - 120, w.y + w.h - 175];
   let pos = [rest[0] + Math.sin(t * 2.1 + (side === 'B' ? 0 : 2)) * 9, rest[1] + Math.cos(t * 1.7) * 7], click = 0;
-  DRAGS.filter(d => d.from === side).forEach(d => {
+  DRAGS.filter(d => d.from !== side).forEach(d => { // the receiver does the dragging
     const back = Math.min(.3, d.dur * .8);
     if (t >= d.t - d.pre && t < d.t) pos = kf(t, [[d.t - d.pre, pos], [d.t - d.pre * .4, src(d), eo3], [d.t, src(d)]]);
     else if (t >= d.t && t < d.t + d.dur) pos = along(d, prog(t, d.t, d.t + d.dur));

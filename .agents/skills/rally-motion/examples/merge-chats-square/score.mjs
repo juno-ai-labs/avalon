@@ -12,7 +12,7 @@ const ai = t => m.blip(t, nf(64), .13, 0, 32); // the generic assistant: dull, n
 const human = (t, pan) => { m.blip(t, nf(81), .18, pan); m.blip(t + .1, nf(76), .08, pan, 30); };
 human(1.95, .4); ai(2.35); human(2.95, -.4); ai(3.2); human(3.95, .4); ai(4.27);
 human(4.45, -.4); ai(4.72); human(4.98, .4);
-// each paste: an AI answer selected, carried across, landing with a knock; the trips speed up
+// each paste: the receiver grabs the other AI's answer and drags it home, landing with a knock; the trips speed up
 [[1.35, .6, -1], [3.5, .45, -1], [4.05, .4, 1], [4.52, .32, -1], [4.84, .24, 1], [5.02, .2, -1]].forEach(([t, d, dir], i) => {
   m.tick(t, .12, dir * .6);
   m.whoosh(t + d * .2, d * .8, .22 + i * .03, .03, .45, dir * .7, -dir * .7);
