@@ -10,7 +10,7 @@ import type { Env } from "../env";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createIdentityObjectPort } from "../runtime/identity-port";
-import { createResourceObjectPort } from "../runtime/resource-port";
+import { createConversationResourceLinks } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
 import { createAutomation } from "./automation-service";
 
@@ -72,11 +72,14 @@ export class AgentCommunicationService {
   }
 
   private async validateAttachments(ids: string[]) {
-    const sourceResources = createResourceObjectPort(this.env, this.input.workspaceId, this.input.parentId,
-      undefined, this.input.substreamId ?? "0");
     const attachmentIds = [...new Set(ids)];
-    for (const resourceId of attachmentIds) {
-      if (!await sourceResources.isAttached({ resourceId })) throw new AgentCommunicationError("agent_attachment_unavailable");
+    if (attachmentIds.length === 0) return attachmentIds;
+    // What the sender can see, which for a Breakout includes its Channel's.
+    const { links } = await createConversationResourceLinks(this.env, this.input.workspaceId, this.input.parentId,
+      undefined, this.input.substreamId ?? "0").links({ resourceIds: attachmentIds });
+    const attached = new Set(links.map((link) => link.resource_id));
+    if (attachmentIds.some((resourceId) => !attached.has(resourceId))) {
+      throw new AgentCommunicationError("agent_attachment_unavailable");
     }
     return attachmentIds;
   }

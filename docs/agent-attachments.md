@@ -166,12 +166,12 @@ Knowledge of a resource ID or cursor does not bypass this query.
 **A Breakout sees its Channel's resources.** The links the query starts from are
 `ConversationResourceLinks`: the conversation's own `workstream_resource_links`,
 and when the conversation's object answers `inheritsChannelLinks` (a Breakout of
-a Channel, not a Sidekick's run child) every link its Channel's Main holds as
-well. Where both hold a link to the same resource, the Breakout's own wins. Every
+a Channel, not a Sidekick's run child or a `start_agent` worker) every link its
+Channel's Main holds as well. Where both hold a link to the same resource, the Breakout's own wins. Every
 model-facing reader takes these links rather than a bare port, so `list_resources`,
 `read_resource`, `search_resource`, `view_resource`, `summarize_resource`,
-Terminal's `import_resource`, image edits, artifact data and receipt replay all
-agree on what a Breakout can reach. The sidebar is not one of them: it still
+Terminal's `import_resource` and its revocation check, image edits, artifact
+data, `start_agent` attachments and receipt replay all agree on what a Breakout can reach. The sidebar is not one of them: it still
 shows a conversation's own set.
 
 `list_resources` returns 25 rows by default and at most 50, optionally
@@ -342,12 +342,10 @@ character envelope.
 
 ## Invariants
 
-- **A Breakout's visibility is its own links plus its Channel's Main.** Its
-  handoff summary names the Channel's documents, so a reader that took only the
-  Breakout's own links answered `resource_not_found` for a document anybody in
-  the Channel could open, and the unverified-attachment boundary then replaced
-  the whole reply. Build a reader with `createConversationResourceLinks`, never a
-  bare `createResourceObjectPort`, or that reader will disagree with the rest.
+- **Build every link reader with `createConversationResourceLinks`** (or
+  `conversationResourceLinksFrom` over an injected factory), never a bare
+  resource port, or it will disagree with the rest about what a Breakout can
+  reach.
 
 - **`ResourceService.list`'s `resourceTypes` distinguishes absent from empty.**
   Omitted means every type, which is what the product's own listing wants; `[]`
@@ -711,12 +709,15 @@ creation, and leaves out what the Channel attaches later. Threading a substream
 id through every reader: six of them hold only the port for the conversation
 they run in, and the object already knows what it is.
 
-**What a future change has to respect:** A Breakout member who cannot open the
-Channel still reaches its resources through the agent. That was an explicit
-product decision, not an oversight. Breakout compaction checkpoints written
-before this change carry `inventory:<n>` and stop matching once, which replays
-the transcript and compacts again. The sidebar and the human-facing resource
-routes still answer per conversation.
+**Consequences:** A Breakout member who cannot open the Channel still reaches
+its resources through the agent. That was an explicit product decision, not an
+oversight. Breakout compaction checkpoints written before this change carry
+`inventory:<n>` and stop matching once, which replays the transcript and
+compacts again. Workers and Sidekick run children still see only their own
+links. The sidebar and the human-facing resource routes still answer per
+conversation.
+
+Shipped in #1179.
 
 ### 2026-09-26 — Index the stored object a resource or version points at
 

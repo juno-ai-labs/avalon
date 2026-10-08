@@ -27,6 +27,7 @@ import { migratedSqliteDatabase } from "./helpers/sqlite-d1";
 import {
   seedWorkstreamObjectRoot,
   testConversationResourceLinks,
+  testResourcePort,
   testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
 
@@ -367,6 +368,22 @@ describe("a Breakout's resource links", () => {
     const { links } = await testConversationResourceLinks(breakout, channel).links({});
     expect(links.map((row) => [row.resource_id, row.relationship_type]))
       .toEqual([[PUBLISHED, "attachment"], [BACKUP, "generated"]]);
+  });
+
+  it("inherits only as a Breakout of a Channel", async ({ onTestFinished }) => {
+    const close = (fn: () => void) => onTestFinished(fn);
+    const inherits = (store: DatabaseSync) => testResourcePort(store).inheritsChannelLinks();
+    await expect(inherits(conversationStore(close, [], BREAKOUT))).resolves.toBe(true);
+    // A Channel's own conversation.
+    await expect(inherits(conversationStore(close, []))).resolves.toBe(false);
+    // A Sidekick's run child is a substream of an automation parent.
+    const run = conversationStore(close, [], BREAKOUT);
+    run.prepare(`UPDATE workstream SET parent_kind = 'automation' WHERE id = 1`).run();
+    await expect(inherits(run)).resolves.toBe(false);
+    // A start_agent worker is a substream of the Channel, and sees only what it was handed.
+    const worker = conversationStore(close, [], BREAKOUT);
+    worker.prepare(`INSERT INTO background_agent (id, execution_principal_json) VALUES (1, '{}')`).run();
+    await expect(inherits(worker)).resolves.toBe(false);
   });
 
   it("reads its own revision back from either fingerprint", () => {

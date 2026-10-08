@@ -4,7 +4,11 @@ import { newId, nowIso } from "@rally/db";
 import type { Env } from "../../env";
 import { numericEnv } from "../../env";
 import { sha256Hex } from "../../lib/crypto";
-import { createResourcePortFactory, type ResourcePortFactory } from "../../runtime/resource-port";
+import {
+  conversationResourceLinksFrom,
+  createResourcePortFactory,
+  type ResourcePortFactory,
+} from "../../runtime/resource-port";
 import { verifyAttachmentMimeType } from "../attachment-mime-verification";
 import { putStagedResourceObject, releaseStagedResourceObject } from "../resource-object-cleanup";
 import { allocateResourceSlugBesideCreation } from "../resource-slug";
@@ -13,7 +17,6 @@ import {
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
 import {
-  conversationResourceLinks,
   loadVisibleWorkstreamResourcesByIds,
   type VisibleWorkstreamResourceRow,
 } from "../workstream-resource-visibility";
@@ -121,10 +124,7 @@ export function createMultimodalGenerationResourceStore(
       const requested = [resourceId, ...(maskResourceId ? [maskResourceId] : [])];
       const rows = await loadVisibleWorkstreamResourcesByIds(
         env.DB,
-        conversationResourceLinks(
-          resourcePortFactory(context.workspaceId, context.workstreamId),
-          () => resourcePortFactory(context.workspaceId, context.workstreamId, "0"),
-        ),
+        conversationResourceLinksFrom(resourcePortFactory, context.workspaceId, context.workstreamId),
         {
           workspaceId: context.workspaceId,
           workstreamId: context.workstreamId,
