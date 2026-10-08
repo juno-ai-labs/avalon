@@ -204,7 +204,7 @@ describe("Terminal workspace settings", () => {
   it("previews before confirmation and reconciles active sandboxes without restarting", async () => {
     const { objectStore, provider, service } = fixture();
     const preview = await service.preview({ expectedRevision: 1, mode: "trusted_only", customDomains: ["custom.example"] });
-    expect(preview).toMatchObject({ affectedWorkstreamIds: [S], customDomains: ["custom.example"], remainingCustomSlots: 7 });
+    expect(preview).toMatchObject({ customDomains: ["custom.example"], remainingCustomSlots: 7 });
     expect(preview).not.toHaveProperty("effectiveDomains");
 
     await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true })).resolves.toMatchObject({
@@ -275,7 +275,6 @@ describe("Terminal workspace settings", () => {
       "UPDATE terminal_workspace SET lifecycle_state = 'failed' WHERE id = 1",
     );
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
-    expect(preview.affectedWorkstreamIds).toEqual([]);
 
     await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
       .resolves.toMatchObject({ revision: 2, verificationState: "verified" });

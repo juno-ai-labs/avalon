@@ -138,10 +138,8 @@ export class TerminalSettingsService {
     ) {
       throw new ApiError(409, "terminal_policy_unchanged", "The Terminal network policy is unchanged. Edit the mode or destinations before reviewing it.");
     }
-    const sandboxes = await this.loadActiveSandboxes();
-    // Several conversations of one work stream can each hold a sandbox; the
-    // preview names the work stream once.
-    const affectedWorkstreamIds = [...new Set(sandboxes.map((sandbox) => sandbox.workstream_id))];
+    // No sandbox walk: apply finds the sandboxes itself, and nothing reads a
+    // preview's list of them. Walking here doubled the slowest part of a save.
     const mutationId = newId();
     const timestamp = nowIso();
     await (await this.workspace()).recordTerminalPolicyPreview({
@@ -152,7 +150,6 @@ export class TerminalSettingsService {
       proposedMode: input.mode,
       proposedDomains: compiled.customDomains,
       effectiveDomains: compiled.effectiveDomains,
-      affectedWorkstreamIds,
       at: timestamp,
     });
     return {
@@ -161,14 +158,6 @@ export class TerminalSettingsService {
       proposedMode: input.mode,
       customDomains: compiled.customDomains,
       remainingCustomSlots: compiled.remainingCustomSlots,
-      affectedWorkstreamIds,
-      affectedWorkstreams: affectedWorkstreamIds.map((id) => ({
-        id,
-        title: sandboxes.find((sandbox) => sandbox.workstream_id === id)!.title,
-      })),
-      warning: input.mode === "full_internet"
-        ? "Full internet lets cloud computers access any website or internet service."
-        : "Trusted only lets cloud computers reach Rally-managed services and domains your organization approves.",
     };
   }
 

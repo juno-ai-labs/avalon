@@ -112,16 +112,15 @@ export function recordWorkspaceTerminalPolicyPreview(
   storage.sql.exec(
     `INSERT INTO workspace_sandbox_network_policy_mutations
        (id, workspace_id, expected_revision, proposed_mode, proposed_domains_json,
-        effective_domains_json, affected_sandboxes_json, state, requested_by_user_id,
+        effective_domains_json, state, requested_by_user_id,
         created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'preview', ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, 'preview', ?, ?, ?)`,
     request.mutationId,
     request.workspaceId,
     request.expectedRevision,
     request.proposedMode,
     JSON.stringify(request.proposedDomains),
     JSON.stringify(request.effectiveDomains),
-    JSON.stringify(request.affectedWorkstreamIds),
     request.requestedByUserId,
     request.at,
     request.at,

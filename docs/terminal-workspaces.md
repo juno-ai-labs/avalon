@@ -310,7 +310,9 @@ baseline is not a participant-facing policy surface. Full internet clears
 `domainAllowList`. Schemes, ports, paths, IP addresses, CIDR, public suffixes,
 and private names are rejected. An admin confirms one warning that running
 cloud computers may be interrupted; the client then previews against a revision
-and applies that preview in one step. For each sandbox Rally cancels active
+and applies that preview in one step. Preview only checks the revision, compiles
+the policy and issues a mutation id; it does not walk the organization's
+sandboxes, which apply does once. For each sandbox Rally cancels active
 tasks and reads Daytona's state, not its own row; for one Daytona reports
 running it also preserves a final diff and stops it. It then
 applies and reads back the provider policy on every sandbox, stopped and
@@ -1228,7 +1230,9 @@ records the step and a code-only reason in `failure_code`, and is logged as
 reads the policy back before stamping a revision. Provider RPC failures carry a
 code (class, status, provider code). The rollback, the delete-on-failure
 fallback and the `terminal_policy_verification_failed` 502 are gone. Settings
-replaced the inline review panel with one Continue/Cancel warning.
+replaced the inline review panel with one Continue/Cancel warning, and preview
+no longer walks every sandbox or returns `affectedWorkstreamIds`,
+`affectedWorkstreams` or `warning`.
 
 **Why:** Apply called `stopSandbox` on every sandbox with an id, archived ones
 included. Daytona refuses to stop an archived sandbox, and a failed stop meant
@@ -1250,7 +1254,9 @@ keeps its old egress until its next claim or its five-minute idle stop; revision
 the "not applied" value and must stay outside the policy's own `revision >= 1`
 range. A future change must not turn a per-sandbox failure back into a deletion
 or an organization-wide rollback, and must not record a revision the provider
-has not read back.
+has not read back. Desktop builds from before this change parse the preview
+with those three fields required, so they cannot save the policy until they
+update; that was accepted to halve the time a save takes.
 
 Shipped in #1168.
 
