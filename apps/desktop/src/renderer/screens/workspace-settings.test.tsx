@@ -470,6 +470,31 @@ describe('Organization settings', () => {
     expect(sheet).toHaveClass('is-mobile-open');
   });
 
+  it('makes the page inert under the open phone sheet and shuts it on Escape', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(max-width: 640px)',
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    renderSettings();
+    const toggle = await screen.findByRole('button', { name: 'Close settings sections' });
+    const page = screen.getByRole('main').querySelector('.settings-content-scroll');
+    expect(page).toHaveAttribute('inert');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveFocus();
+    expect(page).not.toHaveAttribute('inert');
+  });
+
+  it('leaves the page live beside the sections list when wider than a phone', async () => {
+    renderSettings();
+    await screen.findByRole('button', { name: 'Close settings sections' });
+    expect(screen.getByRole('main').querySelector('.settings-content-scroll')).not.toHaveAttribute('inert');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Close settings sections' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
   it('keeps the phone sections sheet shut when a link names the section', async () => {
     window.location.hash = '#/settings?section=workspace';
     try {

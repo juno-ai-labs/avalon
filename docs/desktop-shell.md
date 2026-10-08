@@ -143,7 +143,9 @@ Settings has its own sheet at the same width. Its sections list covers the page
 under the header, and a menu button at the header's start, styled and animated
 like the shell's, opens and shuts it. It starts open, so Settings opens on the
 list, unless a link named a section. Picking a section or a search result shuts
-it. Above 640px CSS ignores the state and both columns show. At the same width
+it, and so does Escape, which hands focus back to the button; while it is open
+the page behind it is `inert`. Above 640px CSS ignores the state, both columns
+show, and neither applies. At the same width
 each settings row puts its label over its control instead of beside it. The
 connection tables narrow their columns to fit rather than scroll sideways. In a
 browser tab Settings is a window surface, so it takes the whole tab at every
@@ -362,7 +364,11 @@ On a phone the list is how a reader finds the page they came for, so starting
 there saves a tap; a link that names a section still opens on that page.
 
 **Consequences:** The open state lives in the Settings screen, not
-`useUiStore`, since only that screen reads it.
+`useUiStore`, since only that screen reads it. Like the shell's sheet, the open
+sheet makes the page behind it inert and shuts on Escape, returning focus to the
+button; both apply only at phone width, where the sheet covers the page.
+
+Shipped in [#1174](https://github.com/juno-ai-labs/avalon/pull/1174).
 
 ### 2026-10-08 — A Breakout waiting on a question is badged in Main
 
