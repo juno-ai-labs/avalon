@@ -1,0 +1,158 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Multi-human ad (1:1)</title>
+<link rel="stylesheet" href="../../kit/fonts/fonts.css">
+<style>html,body{margin:0;background:#070707;overflow:hidden}canvas{display:block}</style>
+</head><body>
+<script src="../../kit/mark.js"></script>
+<script src="../../kit/engine.js"></script>
+<script src="../../kit/brand.js"></script>
+<script src="../../kit/components.js"></script>
+<script>
+// Two people, two private AI chats: Bob and Alice copy-paste outputs across the gap
+// until it strains, then the chats merge into one Channel with Rally and work flows.
+stage({ w: 1080, h: 1080, outW: 1200, duration: 15 });
+
+// the brief's cast (not the house cast); "AI" is a generic assistant, no logo
+P.bob = { name: 'Bob', color: C.blue, ink: '#0b0c0a' };
+P.alice = { name: 'Alice', color: C.orange, ink: '#0b0c0a' };
+P.ai = { name: 'AI', color: '#5a5a5a', ink: '#fcfcfc' };
+
+// ---------- timeline (seconds) ----------
+const T = { strain0: 2.9, strain1: 5.2, meet: 5.22, meetEnd: 5.5, open: 5.48, openEnd: 5.75, end: 11.4 };
+const WB = { x: 44, y: 318, w: 482, h: 722 }, WA = { x: 554, y: 318, w: 482, h: 722 };
+const APP = { x: 60, y: 318, w: 960, h: 722 };
+const AI = (t, s) => ({ t, who: 'rally', by: 'AI', s });
+const MSGS_B = [
+  { t: -1, who: 'bob', s: 'Draft our launch plan' }, AI(-1, 'Plan v1: launch Tuesday, five steps.'),
+  { t: 2.95, who: 'bob', s: 'Move launch to Monday.' }, AI(3.25, 'Plan v2: launch Monday.'),
+  { t: 4.45, who: 'bob', s: 'Pasted: Alice’s pricing' }, AI(4.72, 'Which pricing? I see two.'),
+];
+const MSGS_A = [
+  { t: -1, who: 'alice', s: 'Can you price the launch?' }, AI(-1, 'Which launch? I don’t have the plan.'),
+  { t: 1.95, who: 'alice', s: 'Pasted: Bob’s plan v1' }, AI(2.35, '$49 a month. Launch Tuesday.'),
+  { t: 3.9, who: 'alice', s: 'Pasted: Bob’s plan v2' }, AI(4.22, 'Tuesday or Monday?'),
+  { t: 4.98, who: 'alice', s: 'Wait, which version is this?' },
+];
+// copy-paste trips across the gap, each one faster than the last
+const DRAGS = [
+  { t: 1.35, dur: .6, from: 'B', label: 'Launch plan v1' },
+  { t: 3.45, dur: .45, from: 'B', label: 'Launch plan v2' },
+  { t: 4.05, dur: .4, from: 'A', label: 'Pricing' },
+  { t: 4.52, dur: .32, from: 'B', label: 'Plan v2 (final)' },
+  { t: 4.84, dur: .24, from: 'A', label: 'Pricing v2' },
+  { t: 5.02, dur: .2, from: 'B', label: 'plan_FINAL_final' },
+];
+const MSGS = [
+  { t: 5.85, who: 'bob', s: 'Draft our launch plan', mention: '@Rally' },
+  { t: 6.3, who: 'rally', s: 'Done: launch Monday, five steps.', stream: .45 },
+  { t: 7.2, who: 'alice', s: 'Add pricing to it' },
+  { t: 7.6, who: 'rally', s: 'Added $49 a month to step 3.', stream: .4 },
+  { t: 8.75, who: 'bob', s: 'Now the launch post' },
+  { t: 9.15, who: 'rally', s: 'Plan, pricing and post, all in #launch.', stream: .5, react: 9.95, reactors: [P.bob, P.alice] },
+  { t: 10.3, who: 'alice', s: 'Shipping it.' },
+];
+const CAPS = [
+  { t0: -1, lines: [[['Same launch.', C.paper]], [['Two AI chats.', C.volt]]] },
+  { t0: 2.6, lines: [[['Copy. Paste.', C.paper]], [['Re-explain.', C.volt]]] },
+  { t0: 5.75, lines: [[['One chat.', C.paper]], [['Everyone’s in it.', C.volt]]] },
+  { t0: 8.6, lines: [[['Less copying.', C.paper]], [['More shipping.', C.volt]]] },
+];
+
+// strain: 0 calm .. 1 at breaking point, just before the merge
+const strain = t => eio3(prog(t, T.strain0, T.strain1)) * (1 - prog(t, T.meet, T.meet + .1));
+// each paste lands with a knock on the window it lands in
+function knock(t, side) {
+  let k = 0;
+  DRAGS.forEach(d => { if ((d.from === 'B' ? 'A' : 'B') !== side) return; const x = t - d.t - d.dur; if (x > 0) k += Math.exp(-x * 14) * Math.sin(x * 70) * 9; });
+  return k;
+}
+function src(d) { const w = d.from === 'B' ? WB : WA; return [w.x + 150, w.y + 470]; }
+function dst(d) { const w = d.from === 'B' ? WA : WB; return [w.x + 200, w.y + w.h - 60]; }
+function along(d, p) { p = prog(p, .2, 1); const a = src(d), b = dst(d), e = eio3(p); return [lerp(a[0], b[0], e), lerp(a[1], b[1], e) - Math.sin(Math.PI * p) * 170]; }
+
+function aiWindow(ctx, t, w, side, who, msgs) {
+  const s = strain(t), m = eio5(prog(t, T.meet, T.meetEnd));
+  const dir = side === 'B' ? -1 : 1, cx = w.x + w.w / 2, by = w.y + w.h;
+  const jit = s * s * 4;
+  ctx.save();
+  ctx.translate((W / 2 - cx) * m + knock(t, side) * dir + Math.sin(t * 53 + dir) * jit, Math.cos(t * 47 + dir) * jit);
+  ctx.translate(cx, by); ctx.rotate(dir * s * .045 * (1 - m)); ctx.translate(-cx, -by);
+  ctx.globalAlpha = 1 - prog(t, T.open, T.open + .14);
+  const keep = CHAT.MAXW; CHAT.MAXW = 400;
+  channelWindow(ctx, w, { title: P[who].name + '’s AI', sub: 'Only ' + P[who].name + ' can see this', people: [P[who], P.ai], hash: false, composer: 'Message AI' });
+  chatStack(ctx, w, msgs, t);
+  CHAT.MAXW = keep;
+  ctx.restore();
+}
+
+function pasteCard(ctx, t, d) {
+  const p = prog(t, d.t, d.t + d.dur); if (t < d.t || p >= 1) return;
+  const [x, y] = along(d, p), sc = (.6 + .4 * eo3(prog(t, d.t, d.t + .1))) * (1 - .5 * eiX(prog(p, .75, 1)));
+  const f = F.ui(600, 30), w = measure(ctx, d.label, f) + 90;
+  ctx.save(); ctx.translate(x, y); ctx.scale(sc, sc); ctx.rotate((d.from === 'B' ? 1 : -1) * .08 * Math.sin(Math.PI * p));
+  ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 12;
+  rr(ctx, -20, -22, w, 70, 18); ctx.fillStyle = UI.raised; ctx.fill(); ctx.shadowColor = 'transparent';
+  ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.2)'; ctx.stroke();
+  ctx.save(); ctx.translate(16, 13); ctx.scale(.85, .85); glyph(ctx, 'doc', UI.text); ctx.restore();
+  text(ctx, d.label, 48, 24, f, UI.text);
+  ctx.restore();
+}
+function personCursor(ctx, t, side, who) {
+  const w = side === 'B' ? WB : WA, rest = [w.x + w.w - 120, w.y + w.h - 175];
+  let pos = [rest[0] + Math.sin(t * 2.1 + (side === 'B' ? 0 : 2)) * 9, rest[1] + Math.cos(t * 1.7) * 7], click = 0;
+  DRAGS.filter(d => d.from === side).forEach(d => {
+    const back = Math.min(.3, d.dur * .8);
+    if (t >= d.t - .18 && t < d.t) pos = kf(t, [[d.t - .18, pos], [d.t, src(d), eo3]]);
+    else if (t >= d.t && t < d.t + d.dur) pos = along(d, prog(t, d.t, d.t + d.dur));
+    else if (t >= d.t + d.dur && t < d.t + d.dur + back) pos = kf(t, [[d.t + d.dur, dst(d)], [d.t + d.dur + back, pos, eo3]]);
+    click = Math.max(click, Math.exp(-Math.abs(t - d.t) * 30), Math.exp(-Math.abs(t - d.t - d.dur) * 30));
+  });
+  const a = 1 - prog(t, T.meet, T.meet + .15);
+  cursor(ctx, pos[0], pos[1], P[who], 1.5, a, click);
+}
+
+function apart(ctx, t) {
+  if (t >= T.open + .14) return;
+  aiWindow(ctx, t, WB, 'B', 'bob', MSGS_B);
+  aiWindow(ctx, t, WA, 'A', 'alice', MSGS_A);
+  DRAGS.forEach(d => pasteCard(ctx, t, d));
+  personCursor(ctx, t, 'B', 'bob'); personCursor(ctx, t, 'A', 'alice');
+}
+
+function together(ctx, t) {
+  if (t < T.open) return;
+  const o = eoX(prog(t, T.open, T.openEnd)), half = lerp(WB.w / 2, APP.w / 2, o);
+  const fall = eiX(prog(t, T.end - .15, T.end + .25)); if (fall >= 1) return;
+  const push = 1 + .025 * prog(t, T.openEnd, T.end);
+  ctx.save(); ctx.globalAlpha = 1 - fall;
+  ctx.beginPath(); ctx.rect(W / 2 - half - 40, 0, half * 2 + 80, H); ctx.clip();
+  ctx.translate(W / 2, APP.y + APP.h); ctx.scale(push, push); ctx.translate(-W / 2, -(APP.y + APP.h));
+  const ap = { ...APP, x: W / 2 - half, w: half * 2 };
+  channelWindow(ctx, ap, { title: 'launch', people: [P.bob, P.alice, P.rally] });
+  if (o > .6) chatStack(ctx, APP, MSGS, t);
+  ctx.restore();
+  // the snap: a brief volt seam where the two chats meet
+  const f = 1 - prog(t, T.open, T.open + .3);
+  if (f > 0 && f < 1) { glow(ctx, W / 2, APP.y + APP.h / 2, 420, C.volt, .22 * f); ctx.fillStyle = rgba(C.volt, .8 * f); ctx.fillRect(W / 2 - 3, APP.y, 6, APP.h); }
+}
+
+function end(ctx, lt) {
+  endCard(ctx, lt, { cast: false });
+  const homes = { bob: [230, 250], alice: [790, 270], rally: [W / 2 + 300, 950] };
+  const starts = { bob: [-200, -100], alice: [W + 200, -150], rally: [W + 200, H + 170] };
+  Object.keys(homes).forEach((n, i) => {
+    const p = eo5(prog(lt, .7 + i * .07, 1.3 + i * .07)); if (p <= 0) return;
+    cursor(ctx, lerp(starts[n][0], homes[n][0], p) + Math.sin(lt * 2.3 + i) * 6 * p, lerp(starts[n][1], homes[n][1], p) + Math.cos(lt * 1.9 + i * 2) * 5 * p, P[n], 1.35, 1);
+  });
+}
+
+start((ctx, t) => {
+  if (t >= T.end) { end(ctx, t - T.end); return; }
+  glow(ctx, W * .8, H * .1, 900, C.volt, .06 * prog(t, T.open, T.open + .4));
+  captions(ctx, t, CAPS, { end: T.end });
+  apart(ctx, t);
+  together(ctx, t);
+  brandBug(ctx, 1 - prog(t, T.end - .1, T.end + .15));
+});
+</script>
+</body></html>

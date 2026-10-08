@@ -56,8 +56,8 @@ function captions(ctx, t, caps, { end, x = 72, y = 222, size = 74, lh = 80, top 
 // Sizes are ~2.3x the app's 14px so a phone can read them.
 const CHAT = { PAD: 36, MAXW: 640, MF: F.ui(420, 33), LH: 44, BYF: F.ui(500, 23), BIGF: F.disp(800, 50), BIGLH: 58 };
 
-/** The window shell: background, header with avatars, composer. app = { x, y, w, h }. */
-function channelWindow(ctx, app, { title, sub, people = [], lock = false, composer = 'Message #' + title } = {}) {
+/** The window shell: background, header with avatars, composer. app = { x, y, w, h }. hash: false drops the '# ' (a private AI chat, not a Channel). */
+function channelWindow(ctx, app, { title, sub, people = [], lock = false, hash = true, composer = 'Message #' + title } = {}) {
   const { PAD } = CHAT;
   ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 60; ctx.shadowOffsetY = 24;
   rr(ctx, app.x, app.y, app.w, app.h, 30); ctx.fillStyle = UI.bg; ctx.fill(); ctx.restore();
@@ -65,7 +65,7 @@ function channelWindow(ctx, app, { title, sub, people = [], lock = false, compos
   ctx.fillStyle = UI.line; ctx.fillRect(app.x, app.y + 104, app.w, 2);
   let x = app.x + PAD;
   if (lock) { lockIcon(ctx, x + 10, app.y + 52, 1.5, C.volt); x += 34; }
-  text(ctx, title.startsWith('#') || lock ? title : '# ' + title, x, app.y + 62, F.ui(700, 36), UI.text, 'left', -.4);
+  text(ctx, title.startsWith('#') || lock || !hash ? title : '# ' + title, x, app.y + 62, F.ui(700, 36), UI.text, 'left', -.4);
   if (sub) text(ctx, sub, x, app.y + 92, F.ui(500, 21), lock ? C.volt : UI.muted);
   people.forEach((p, i) => avatar(ctx, app.x + app.w - PAD - 20 - (people.length - 1 - i) * 34, app.y + 52, 22, p, 1));
   const y = app.y + app.h - 96;
@@ -78,7 +78,7 @@ const chatBottom = app => app.y + app.h - 128;
  * Messages, bottom-anchored like a real chat: each new one pushes the rest up.
  * msg kinds (all need t, the time it appears):
  *   { who: 'maya' | 'theo' | 'priya', s, mention? }        human bubble, right
- *   { who: 'rally', s, stream?, big?, segments?, react? }   Rally, left, no bubble
+ *   { who: 'rally', s, stream?, big?, segments?, react?, by? } Rally, left, no bubble (by: another assistant's byline)
  *   { who: 'history', person, agent, items }                imported thread as grey placeholders
  *   { who: 'divider', label }                               centred rule with a label
  * A message may also carry highlight: t => 0..1 (hover state).
@@ -160,7 +160,7 @@ function chatMsg(ctx, app, m, top, t) {
       rr(ctx, app.x + 14, top - 10, app.w - 28, hh, 16); ctx.fillStyle = `rgba(255,255,255,${.07 * hl})`; ctx.fill();
       ctx.fillStyle = rgba(C.volt, hl); ctx.fillRect(app.x + 14, top - 10, 5, hh);
     }
-    text(ctx, 'Rally', app.x + PAD, top + 24, BYF, UI.subtle);
+    text(ctx, m.by || 'Rally', app.x + PAD, top + 24, BYF, UI.subtle);
     const n = m.stream ? Math.floor(m.s.length * prog(t, m.t + .08, m.t + m.stream)) : m.s.length;
     if (m.segments) {
       // a coloured line (e.g. the brand line with "Your AI." in volt), streamed

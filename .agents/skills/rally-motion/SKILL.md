@@ -28,6 +28,7 @@ style rules there came from review; breaking one is how a draft gets sent back.
 | `kit/render.mjs` | `--preview t1,t2,...` contact sheet, or `--video --score score.mjs --out film.mp4` |
 | `kit/new.mjs` | Copies an example to a new folder with its kit paths fixed |
 | `examples/import-ad-square/` | 17.5s 1:1 ad: three statement cards with a strike-swap and a real menu item, imported history, live chat, end card |
+| `examples/merge-chats-square/` | 15s 1:1 ad: two private AI chats side by side, copy-paste trips that speed up and strain, a snap into one Channel, flow, end card |
 | `examples/bento-tour-16x9/` | 30s 16:9 feature tour of a bento grid, ending on the whole grid |
 
 ## Workflow
@@ -75,8 +76,14 @@ start((ctx, t) => {                                        // draw instant t (se
 ```
 
 Chat messages (`chatStack`): `{ t, who: 'maya'|'theo'|'priya', s, mention? }`,
-`{ t, who: 'rally', s, stream?, big?, segments?, react?, highlight? }`,
+`{ t, who: 'rally', s, stream?, big?, segments?, react?, highlight?, by? }`,
 `{ t, who: 'history', person, agent, items }`, `{ t, who: 'divider', label }`.
+
+A private, single-player AI chat (for a before/after against a Channel): draw
+`channelWindow(ctx, R, { title: 'Bob’s AI', hash: false, composer: 'Message AI' })`
+and give its assistant lines `who: 'rally', by: 'AI'`, so they read as a generic
+assistant rather than Rally. Narrow side-by-side windows need `CHAT.MAXW` lowered
+while they draw (set it back after).
 
 A breakout (see `reference/03` and `04`): highlight Rally's message with
 `highlight: t => ...`, place `actionPill(ctx, pillBeside(ctx, APP, msg), 'New breakout', { branch: true, pressedAt, t })`,
