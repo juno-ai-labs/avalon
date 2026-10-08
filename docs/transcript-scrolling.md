@@ -118,7 +118,8 @@ turn finishes.
 
 Rows are positioned from offsets, so the browser's own scroll anchoring cannot
 see a row inserted above the viewport. `useVirtualScrollAnchor` does it instead,
-on any commit that changes the list's count or first key:
+on any commit that changes the list's count or first key, or what is drawn above
+the list:
 
 - **In render**, while the old DOM is still on screen, it takes the first row
   whose bottom is below the viewport's top edge, finds that row's new index,
@@ -138,6 +139,18 @@ and the screen passes a `layoutKey` so a commit that changes only that content
 (a final page with no visible rows) is anchored too. If the row's key does not
 survive the commit, which happens when grouping re-keys a plugin group or work
 accordion spanning the page seam, the next row down is used.
+
+Holding a row and following the end are exclusive. While the follow holds the
+end, the anchor does nothing, so a commit that both prepends and appends during
+a streaming turn still lands at the end.
+
+The render half writes the virtualizer's `scrollOffset`, a public but
+undocumented field, as are `elementsCache`, `measurementsCache` and
+`indexFromElement`. A double render reads the same DOM and writes the same
+value; a render React discards would leave the prediction in place until the
+next scroll event, which nothing in this subtree risks today. The lockfile
+holds `@tanstack/react-virtual` at 3.14.10 (virtual-core 3.17.8), but its
+specifier is `latest`, so a lockfile refresh can change these fields.
 
 The **Loading earlier messages…** row keeps its space for as long as an older
 range exists, so the status coming and going does not move the feed either.
@@ -198,7 +211,10 @@ opening snapshot even if live events append newer turns.
   not recorded, so its own scroll event is read as the reader's and re-arms the
   follow behind them. The protocol used to be a "claim the next event" flag the
   caller had to remember; it was replaced precisely because remembering is not a
-  property a codebase has.
+  property a codebase has. One tolerated exception: when the virtualizer first
+  measures a row above the fold, it shifts `scrollTop` by the difference from
+  its estimate. Those writes are small, relative, and keep the visible text
+  still, and the prepend anchor overrides them in the commit where they matter.
 - **Nothing follows the end through the virtualizer.** `scrollToIndex` aimed at
   the last row with `align: 'end'` does not target a fixed offset — it targets
   `getMaxScrollOffset()`, which the virtualizer recomputes every frame for up to
@@ -322,12 +338,15 @@ so the complete interaction between real row measurements, unread positioning,
 follow, and paging still needs Electron verification. A passing DOM assertion
 does not prove that prepend restoration leaves the same message visible.
 
-`useVirtualScrollAnchor` has no jsdom test: everything it does is read from
-layout, and a test would assert on the rectangles it was given. Verify it in
-Electron by reopening a long Channel with a fresh window (the query cache keeps
-loaded history across Channel switches), sampling every visible row's position
-each animation frame while scrolling up, and checking that no row moves further
-than the scroll step in any frame.
+`use-virtual-scroll-anchor.test.tsx` runs the hook's decisions against rows
+whose rectangles come from a layout swapped in at commit: the bottom edge held
+across a prepend that adds a top gap, nothing done for an append, a vanished
+key, or while following, the fall-through past a re-keyed row, and a change
+above the list alone. Whether the window it predicts renders the right rows is
+an integration question: verify it in Electron by reopening a long Channel with
+a fresh window (the query cache keeps loaded history across Channel switches),
+sampling every visible row's position each animation frame while scrolling up,
+and checking that no row moves further than the scroll step in any frame.
 
 ### 2026-10-08 — Hold the reading row in the commit that prepends
 
@@ -344,21 +363,17 @@ status row appearing and disappearing moved the feed twice more per load. In
 Electron, the old code swapped every visible row for a frame on each prepend;
 the new code moved no row more than the wheel step.
 
-**Considered and rejected:** TanStack's `anchorTo: 'end'`, which does the same
-anchoring inside the virtualizer. It also follows the end on resize and writes
-`scrollTop` itself, unrecorded, which breaks the rule that only this module
-writes the transcript's `scrollTop` and adds the second follow the invariants
-forbid. Restoring from `scrollHeight` in a layout effect instead of a frame
+**Considered and rejected:** TanStack's `anchorTo: 'end'`, which anchors inside
+the virtualizer on the row's `start`. A prepend gives the old first row a top
+gap, so a start anchor moves its text down by that gap. It also follows the end
+on resize when within a pixel of it, a second follow beside this module's.
+Restoring from `scrollHeight` in a layout effect instead of a frame
 later still misses the virtualizer's own corrections for rows measured in that
 commit and renders the wrong window for a frame.
 
-**Consequences:** The anchor runs on any commit that changes the list's count or
-first key, not only an older-range load, so a row inserted above the reader for
-any reason holds still. It reads layout only on those commits. It must be
-called after the virtualizer, so its render half runs before the feed reads the
-virtualizer's window. The caller passes a `layoutKey` for whatever sits above the
-list, because a page with no visible rows can change that alone. A row re-keyed
-by grouping across the page seam is skipped for the next surviving row.
+**Consequences:** A row inserted above the reader for any reason now holds
+still, and the hook depends on undocumented virtualizer fields (see
+[Holding the row on screen](#holding-the-row-on-screen)).
 
 Shipped in [#1172](https://github.com/juno-ai-labs/avalon/pull/1172).
 

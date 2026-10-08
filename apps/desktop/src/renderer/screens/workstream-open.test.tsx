@@ -73,6 +73,7 @@ vi.mock('../lib/use-transcript-follow', () => ({
   TRANSCRIPT_END_SLACK: 24,
   useTranscriptFollow: () => ({
     atEnd: true,
+    isFollowing: () => true,
     onScroll: vi.fn(),
     onWheel: vi.fn(),
     release: vi.fn(),

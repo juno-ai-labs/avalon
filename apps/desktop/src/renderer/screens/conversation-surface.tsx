@@ -1688,6 +1688,7 @@ export function ConversationSurface({
   // transcript is a page away rather than loaded.
   const {
     atEnd: transcriptAtEnd,
+    isFollowing: isFollowingTranscript,
     onScroll: onTranscriptScroll,
     onWheel: onTranscriptWheel,
     release: releaseTranscriptFollow,
@@ -1700,16 +1701,6 @@ export function ConversationSurface({
       && orderedTranscript.data !== undefined
       && adjacentTranscriptRange(orderedTranscript.data, 'newer') === null,
     conversationAddress,
-  );
-  // After the virtualizer and the follow: an older range prepended above the
-  // reader keeps the row they were reading where it was, in the same commit.
-  // The layout key covers what sits above the feed: the history status row and
-  // the origin card, which change when the oldest range arrives or fails.
-  useVirtualScrollAnchor(
-    transcriptVirtualizer,
-    transcriptRef,
-    scrollTranscriptTo,
-    `${olderTranscriptRange === null}:${olderMessagesError !== undefined}`,
   );
 
   useEffect(() => {
@@ -1816,8 +1807,6 @@ export function ConversationSurface({
             throw error;
           }
         }
-        // The reading position is held by `useVirtualScrollAnchor` in the
-        // commit that prepends the range, not restored here afterwards.
       } catch (error) {
         if (!stillCurrent()) return;
         if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
@@ -1859,6 +1848,19 @@ export function ConversationSurface({
       && !searchTurnId && olderTranscriptRange !== null,
     canLoad: feedLive && !loadingOlder && !olderMessagesError,
     loadOlder: () => { void loadOlderMessages(); },
+  });
+
+  // After the virtualizer and the follow: rows prepended above the reader keep
+  // the row they were reading where it was, in the same commit. The layout key
+  // names what is drawn above the feed, which a page with no visible rows can
+  // change without changing the feed.
+  const historyStatusShown = (olderTranscriptRange !== null && !olderMessagesError) || loadingOlder
+    || (nearHistoryEdge && !feedLive && !feedFromLocalCache);
+  const historyRetryShown = olderTranscriptRange !== null && olderMessagesError !== undefined && !loadingOlder;
+  const originShown = Boolean(origin && breakoutOrigin && !olderTranscriptRange);
+  useVirtualScrollAnchor(transcriptVirtualizer, transcriptRef, scrollTranscriptTo, {
+    enabled: () => !isFollowingTranscript(),
+    layoutKey: `${historyStatusShown}:${historyRetryShown}:${olderMessagesError ?? ''}:${otherHistoryError ?? ''}:${originShown}`,
   });
 
   const loadNewerMessages = useCallback(async (): Promise<void> => {
@@ -2992,15 +2994,13 @@ export function ConversationSurface({
               affordance: a row here would sit under it saying the same thing.
               Its space is held for as long as there is history to load, so the
               status coming and going never moves the messages under it. */}
-          <div role="status" className={(olderTranscriptRange !== null && !olderMessagesError) || loadingOlder
-            || (nearHistoryEdge && !feedLive && !feedFromLocalCache)
-            ? 'transcript-history-control' : undefined}>
+          <div role="status" className={historyStatusShown ? 'transcript-history-control' : undefined}>
             {(loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)) && <>
               <LoaderCircle aria-hidden="true" className="spin" size={14} />
               <span>{feedLive ? 'Loading earlier messages…' : 'Waiting to reconnect…'}</span>
             </>}
           </div>
-          {olderTranscriptRange && olderMessagesError && !loadingOlder && (
+          {historyRetryShown && (
             <div className="transcript-history-control">
               <Button disabled={!feedLive} onClick={() => void loadOlderMessages()}>
                 <RefreshCcw aria-hidden="true" size={14} />
@@ -3015,7 +3015,7 @@ export function ConversationSurface({
               origin card is the Channel's own messages, which people did say,
               and only above the Breakout's first message, never above a
               window that still has earlier pages to load. */}
-          {origin && breakoutOrigin && !olderTranscriptRange && (
+          {originShown && origin && breakoutOrigin && (
             <BreakoutOrigin channelTitle={breakoutOrigin.channelTitle} context={origin.context} origin={origin.origin} />
           )}
           {/* Not while a run is going. A work stream opened the instant it was

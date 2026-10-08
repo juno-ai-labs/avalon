@@ -72,7 +72,6 @@ describe('a resource history follows swaps the rail did not make', () => {
   });
 });
 
-
 describe('channel route handoff', () => {
   it('refuses to paint detail or transcript rows retained from another channel', () => {
     const routeWorkstreamId = 'workstream-two';
