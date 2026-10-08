@@ -4,32 +4,22 @@ import {
   emptyMenuBarContent,
   menuBarLabel,
   menuBarMenuTemplate,
+  menuBarTitle,
   supportsSectionHeaders,
-  MENU_BAR_RECENT_LIMIT,
   type MenuBarActions,
+  type MenuBarAttentionRow,
   type MenuBarContent,
 } from './menu-bar-menu';
 
 function actions(): MenuBarActions {
   return {
     selected: vi.fn(),
-    openWorkstream: vi.fn(),
+    openConversation: vi.fn(),
+    openAccessRequest: vi.fn(),
     openRally: vi.fn(),
     quit: vi.fn(),
   };
 }
-
-/** Pinned to a Thursday so every recency heading has a reachable timestamp:
- * Sunday-start means "This week" needs a day between Monday and Tuesday here. */
-const NOW = new Date('2026-09-10T22:21:00');
-
-function at(offsetMs: number): string {
-  return new Date(NOW.getTime() - offsetMs).toISOString();
-}
-
-const MINUTE = 60_000;
-const HOUR = 3_600_000;
-const DAY = 86_400_000;
 
 function template(
   content: Partial<MenuBarContent>,
@@ -37,15 +27,13 @@ function template(
     signedIn?: boolean;
     sectionHeaders?: boolean;
     actions?: MenuBarActions;
-    now?: Date;
   } = {},
 ): MenuItemConstructorOptions[] {
   return menuBarMenuTemplate({
     appName: 'Rally',
-    content: { ...emptyMenuBarContent, ...content },
+    content: { ...emptyMenuBarContent, attentionComplete: true, ...content },
     signedIn: overrides.signedIn ?? true,
     sectionHeaders: overrides.sectionHeaders ?? true,
-    now: overrides.now ?? NOW,
     actions: overrides.actions ?? actions(),
   });
 }
@@ -60,117 +48,125 @@ function labels(items: MenuItemConstructorOptions[]): (string | undefined)[] {
   return items.map((item) => (item.type === 'separator' ? '—' : item.label));
 }
 
-/** Twelve work streams, each half an hour older than the last, so the whole set
- * lands inside "Last hour" and "Today" and the recent limit is what cuts it. */
-const workstreams = Array.from({ length: 12 }, (_value, index) => ({
+const workstreams = Array.from({ length: 7 }, (_value, index) => ({
   id: `workstream-${index}`,
   title: `Channel ${index}`,
-  lastActivityAt: at(index * 30 * MINUTE),
+  substreamId: null,
 }));
 
-describe('menu bar menu', () => {
-  it('starts nothing: the menu opens straight on its first section', () => {
-    // Every row that started something is gone — a meeting or note, a work
-    // stream, an automation. This surface reopens what already exists; starting
-    // belongs in the app, which the last two rows open.
-    const drawn = labels(template({ recents: workstreams }));
+function main(id: string, title: string, reason: MenuBarAttentionRow['reason'] = 'unread'): MenuBarAttentionRow {
+  return { key: id, workstreamId: id, substreamId: null, title, channelTitle: null, reason };
+}
 
-    for (const label of ['New Meeting/Note', 'New Channel', 'New Automation']) {
+const waiting = Array.from({ length: 7 }, (_value, index) => main(`waiting-${index}`, `Waiting ${index}`));
+
+describe('menu bar menu', () => {
+  it('draws Needs attention, then Most recent, then the app controls', () => {
+    const items = template({
+      attention: [
+        main('a', 'Acme renewal', 'mentioned'),
+        {
+          key: 'b:s',
+          workstreamId: 'b',
+          substreamId: 's',
+          title: 'Pricing breakout',
+          channelTitle: 'Pricing',
+          reason: 'unread',
+        },
+      ],
+      recents: [{ id: 'c', title: 'Hiring loop', substreamId: null }, { id: 'a', title: 'Acme renewal', substreamId: null }],
+    });
+
+    expect(labels(items)).toEqual([
+      'Needs attention',
+      'Acme renewal',
+      'Pricing breakout',
+      '—',
+      'Most recent',
+      'Hiring loop',
+      'Acme renewal',
+      '—',
+      'Open Rally',
+      'Quit Rally',
+    ]);
+    // The sidebar attention menu's detail line, with the Channel for a Breakout.
+    expect(items[1]?.sublabel).toBe('You were mentioned');
+    expect(items[2]?.sublabel).toBe('Unread in Pricing');
+  });
+
+  it('lists access requests first, counts them, and opens one in the main window', () => {
+    const subject = actions();
+    const items = template({
+      accessRequests: [{ id: 'r1', requesterName: 'Samantha Lee', title: 'Hiring plan' }],
+      attention: [main('a', 'Acme renewal', 'mentioned')],
+    }, { actions: subject });
+
+    expect(labels(items).slice(0, 3)).toEqual(['Needs attention', 'Samantha Lee asked to join Hiring plan', 'Acme renewal']);
+    expect(items[1]?.sublabel).toBe('Access request');
+    activate(items[1]);
+    expect(subject.openAccessRequest).toHaveBeenCalledWith('r1');
+    expect(subject.selected).toHaveBeenCalledWith('access_request');
+    expect(subject.openConversation).not.toHaveBeenCalled();
+  });
+
+  it('keeps the section to five rows when requests and conversations share it', () => {
+    const drawn = labels(template({
+      accessRequests: [0, 1].map((index) => ({ id: `r${index}`, requesterName: `Person ${index}`, title: 'Plan' })),
+      attention: waiting,
+    }));
+    expect(drawn.filter((label) => label?.startsWith('Person') || label?.startsWith('Waiting'))).toEqual([
+      'Person 0 asked to join Plan', 'Person 1 asked to join Plan', 'Waiting 0', 'Waiting 1', 'Waiting 2',
+    ]);
+  });
+
+  it('starts nothing', () => {
+    const drawn = labels(template({ attention: waiting, recents: workstreams }));
+
+    for (const label of ['New Meeting/Note', 'New Channel', 'New Automation', 'Suggestions']) {
       expect(drawn).not.toContain(label);
     }
-    // Nothing precedes the first header, so the leading rule has to be
-    // suppressed rather than drawn against nothing.
-    expect(drawn.at(0)).toBe('Last hour');
+    expect(drawn.at(0)).toBe('Needs attention');
   });
 
-  it('offers nothing to do with suggested work', () => {
-    // The Suggestions section is gone whole, header and empty state with it.
-    const drawn = labels(template({ recents: workstreams }));
+  it('lists at most five rows in each section, in the order given', () => {
+    const drawn = labels(template({ attention: waiting, recents: workstreams }));
 
-    expect(drawn).not.toContain('Suggestions');
-    expect(drawn.some((label) => label?.includes('suggestions'))).toBe(false);
+    expect(drawn.filter((label) => label?.startsWith('Waiting'))).toEqual([
+      'Waiting 0', 'Waiting 1', 'Waiting 2', 'Waiting 3', 'Waiting 4',
+    ]);
+    expect(drawn.filter((label) => label?.startsWith('Channel'))).toEqual([
+      'Channel 0', 'Channel 1', 'Channel 2', 'Channel 3', 'Channel 4',
+    ]);
   });
 
-  it('orders the drop-down as the product contract describes it', () => {
-    const items = template({
-      recents: [
-        { id: 'recent-a', title: 'Renewal thread', lastActivityAt: at(5 * MINUTE) },
-        { id: 'recent-b', title: 'Standup notes', lastActivityAt: at(4 * HOUR) },
-        { id: 'recent-c', title: 'Hiring loop', lastActivityAt: at(DAY) },
-        { id: 'recent-d', title: 'Pricing model', lastActivityAt: at(3 * DAY) },
-        { id: 'recent-e', title: 'Offsite plan', lastActivityAt: at(7 * DAY) },
-        { id: 'recent-f', title: 'Series A memo', lastActivityAt: at(200 * DAY) },
-      ],
-    });
-
-    // The recent list uses the sidebar's own headings rather than one flat
-    // "Recent" block. This surface has no selected Space, so it has no pins.
-    expect(labels(items)).toEqual([
-      'Last hour',
-      'Renewal thread',
+  it('says why a section is empty, in the sidebar\'s words', () => {
+    const quiet = template({ attention: [], recents: [] });
+    expect(labels(quiet)).toEqual([
+      'Needs attention',
+      'Nothing needs your attention',
       '—',
-      'Today',
-      'Standup notes',
-      '—',
-      'Yesterday',
-      'Hiring loop',
-      '—',
-      'This week',
-      'Pricing model',
-      '—',
-      'This month',
-      'Offsite plan',
-      '—',
-      'Before this month',
-      'Series A memo',
+      'Most recent',
+      'No recent channels',
       '—',
       'Open Rally',
       'Quit Rally',
     ]);
+    expect(quiet.find((item) => item.label === 'Nothing needs your attention')?.enabled).toBe(false);
   });
 
-  it('groups the recent channels the way the sidebar groups them', () => {
-    const items = template({
-      recents: [
-        { id: 'a', title: 'Just now', lastActivityAt: at(MINUTE) },
-        { id: 'b', title: 'Earlier today', lastActivityAt: at(6 * HOUR) },
-        { id: 'c', title: 'Also earlier today', lastActivityAt: at(8 * HOUR) },
-      ],
-    });
+  it('never claims nothing is waiting before every Channel has been read', () => {
+    const loading = labels(template({ attention: [], attentionComplete: false }));
+    expect(loading).not.toContain('Nothing needs your attention');
+    expect(loading).toContain('Still loading channels');
 
-    expect(labels(items)).toEqual([
-      'Last hour',
-      'Just now',
-      '—',
-      'Today',
-      'Earlier today',
-      'Also earlier today',
-      '—',
-      'Open Rally',
-      'Quit Rally',
-    ]);
+    // Rows read so far are real, and the line under them says they may not be all.
+    const partial = labels(template({ attention: [main('a', 'Acme')], attentionComplete: false }));
+    expect(partial.slice(0, 3)).toEqual(['Needs attention', 'Acme', 'Still loading channels']);
   });
 
-  it('orders the recent rows newest first, whatever order they arrive in', () => {
-    const items = template({
-      recents: [
-        { id: 'c', title: 'Oldest', lastActivityAt: at(9 * HOUR) },
-        { id: 'a', title: 'Newest', lastActivityAt: at(2 * HOUR) },
-        { id: 'b', title: 'Middle', lastActivityAt: at(5 * HOUR) },
-      ],
-    });
-
-    expect(labels(items).filter((label) => ['Newest', 'Middle', 'Oldest'].includes(label ?? '')))
-      .toEqual(['Newest', 'Middle', 'Oldest']);
-  });
-
-  it('shows the signed-out empty state', () => {
-    const items = template(emptyMenuBarContent, { signedIn: false });
-
-    // It has nothing to say to a stranger, and the one message that state needs
-    // is already on the Recent row.
-    expect(labels(items)).toEqual([
-      'Recent',
+  it('shows the signed-out state once, with nothing to list', () => {
+    expect(labels(template({ attention: waiting, recents: workstreams }, { signedIn: false }))).toEqual([
+      'Needs attention',
       'Sign in to Rally',
       '—',
       'Open Rally',
@@ -178,65 +174,15 @@ describe('menu bar menu', () => {
     ]);
   });
 
-  it('shows no more than ten recent channels', () => {
-    const items = template({ recents: workstreams });
-    const recentLabels = labels(items).filter((label) => label?.startsWith('Channel'));
-
-    expect(recentLabels).toHaveLength(MENU_BAR_RECENT_LIMIT);
-    expect(MENU_BAR_RECENT_LIMIT).toBe(10);
-    // Cut from the end of the recency order, so it is the oldest two that go.
-    expect(recentLabels).not.toContain('Channel 10');
-    expect(recentLabels).not.toContain('Channel 11');
-  });
-
-  it('names the recent section only when it has nothing to head', () => {
-    // With rows, the recency headings name themselves and a second "Recent"
-    // above them would label the same list twice. With none there is no
-    // recency to name, and a bare disabled sentence reads as a broken item.
-    expect(labels(template({ recents: workstreams }))).not.toContain('Recent');
-    expect(labels(template(emptyMenuBarContent))).toContain('Recent');
-  });
-
-  it('draws no header without rows under it, whatever a caller passes', () => {
-    // The guarantee `pushGroup` exists to hold: a header with a rule on either
-    // side and nothing between them reads as a menu that failed to draw.
-    for (const content of [
-      emptyMenuBarContent,
-      { recents: workstreams },
-    ]) {
-      for (const overrides of [{}, { signedIn: false }]) {
-        const items = template(content, overrides);
-        items.forEach((item, index) => {
-          if (item.type !== 'header') return;
-          const next = items[index + 1];
-          expect(next).toBeDefined();
-          expect(next?.type).not.toBe('separator');
-          expect(next?.type).not.toBe('header');
-        });
-      }
-    }
-  });
-
-  it('heads every group, and puts each empty state directly under its header', () => {
-    const items = template(emptyMenuBarContent);
-
-    expect(items.find((item) => item.label === 'Recent')?.type).toBe('header');
-    expect(labels(items).indexOf('Recent')).toBe(labels(items).indexOf('No recent channels') - 1);
-  });
-
-  it('heads every recency group it draws', () => {
-    const items = template({ recents: workstreams });
-
-    for (const label of ['Last hour', 'Today']) {
+  it('heads both sections, and falls back to a disabled row where macOS has no section headers', () => {
+    const items = template({ attention: waiting, recents: workstreams });
+    for (const label of ['Needs attention', 'Most recent']) {
       expect(items.find((item) => item.label === label)?.type).toBe('header');
     }
-  });
 
-  it('falls back to a disabled row where macOS has no section headers', () => {
-    const items = template({ recents: workstreams }, { sectionHeaders: false });
-
-    for (const label of ['Last hour']) {
-      const header = items.find((item) => item.label === label);
+    const old = template({ attention: waiting, recents: workstreams }, { sectionHeaders: false });
+    for (const label of ['Needs attention', 'Most recent']) {
+      const header = old.find((item) => item.label === label);
       expect(header?.type).toBeUndefined();
       // Still unclickable: a header that could be activated is a menu row that
       // does nothing, which is worse than an unstyled one.
@@ -245,12 +191,8 @@ describe('menu bar menu', () => {
     }
   });
 
-  it('never draws two rules in a row, whatever the content is', () => {
-    for (const content of [
-      emptyMenuBarContent,
-      { recents: workstreams },
-      { recents: [{ id: 'a', title: 'Old', lastActivityAt: at(400 * DAY) }] },
-    ]) {
+  it('never draws two rules in a row, or a rule at either end', () => {
+    for (const content of [{}, { attention: waiting }, { recents: workstreams }, { attentionComplete: false }]) {
       for (const overrides of [{}, { signedIn: false }]) {
         const drawn = labels(template(content, overrides));
         expect(drawn.some((label, index) => label === '—' && drawn[index + 1] === '—')).toBe(false);
@@ -260,28 +202,20 @@ describe('menu bar menu', () => {
     }
   });
 
-  it('says why the lower half is empty rather than dropping it', () => {
-    const signedIn = template(emptyMenuBarContent, { signedIn: true });
-    expect(signedIn.find((item) => item.label === 'No recent channels')?.enabled).toBe(false);
-
-    const signedOut = template(emptyMenuBarContent, { signedIn: false });
-    expect(signedOut.find((item) => item.label === 'Sign in to Rally')?.enabled).toBe(false);
-  });
-
   it('offers no login-item control: that preference lives in Settings', () => {
-    const items = template(emptyMenuBarContent);
-    // A menu rebuilt only when its content moves cannot be trusted to show a
-    // checkbox for state the operating system can change behind it. Settings
-    // reads the value fresh every time it opens.
+    const items = template({});
     expect(items.some((item) => item.type === 'checkbox')).toBe(false);
     expect(labels(items).some((label) => label?.toLowerCase().includes('login'))).toBe(false);
   });
 
-  it('routes each row to its action', () => {
+  it('routes each row to its conversation', () => {
     const menuActions = actions();
     const items = template(
       {
-        recents: [{ id: 'workstream-0', title: 'Renewal thread', lastActivityAt: at(MINUTE) }],
+        attention: [{
+          key: 'b:s', workstreamId: 'b', substreamId: 's', title: 'Breakout', channelTitle: 'Pricing', reason: 'unseen',
+        }],
+        recents: [{ id: 'workstream-0', title: 'Renewal thread', substreamId: null }],
       },
       { actions: menuActions },
     );
@@ -289,11 +223,12 @@ describe('menu bar menu', () => {
 
     // Headers carry no handler, so activating everything must not produce a
     // stray call.
-    expect(items.filter((item) => item.click).length).toBe(3);
-    expect(menuActions.openWorkstream).toHaveBeenCalledWith('workstream-0');
+    expect(items.filter((item) => item.click).length).toBe(4);
+    expect(vi.mocked(menuActions.openConversation).mock.calls).toEqual([['b', 's'], ['workstream-0', null]]);
     expect(menuActions.openRally).toHaveBeenCalledTimes(1);
     expect(menuActions.quit).toHaveBeenCalledTimes(1);
     expect(vi.mocked(menuActions.selected).mock.calls.map(([action]) => action)).toEqual([
+      'attention_conversation',
       'recent_workstream',
       'open_rally',
       'quit_rally',
@@ -303,11 +238,18 @@ describe('menu bar menu', () => {
   it('does not let failed selection reporting block the menu action', () => {
     const menuActions = actions();
     vi.mocked(menuActions.selected).mockImplementation(() => { throw new Error('telemetry unavailable'); });
-    const items = template(emptyMenuBarContent, { actions: menuActions });
+    const items = template({}, { actions: menuActions });
 
     activate(items.find((item) => item.label === 'Open Rally'));
 
     expect(menuActions.openRally).toHaveBeenCalledOnce();
+  });
+
+  it('writes the count beside the icon the way the sidebar button does', () => {
+    expect(menuBarTitle(0)).toBe('');
+    expect(menuBarTitle(1)).toBe('1');
+    expect(menuBarTitle(99)).toBe('99');
+    expect(menuBarTitle(100)).toBe('99+');
   });
 
   it('reads the macOS version that decides whether section headers exist', () => {

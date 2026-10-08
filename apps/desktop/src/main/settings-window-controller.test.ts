@@ -217,10 +217,10 @@ describe('SettingsWindowController', () => {
     const window = test.latest();
     window.callbacks.onReadyToShow();
 
-    await test.controller.open('github');
+    await test.controller.open('connections');
 
     expect(window.section).toBeNull();
-    expect(window.delivered).toEqual(['github']);
+    expect(window.delivered).toEqual(['connections']);
     expect(window.shown).toBe(1);
   });
 

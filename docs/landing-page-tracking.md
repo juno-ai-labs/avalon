@@ -13,38 +13,44 @@ forwarded to PostHog. The site loads no PostHog script and sets no cookie.
 | --- | --- | --- |
 | `$pageview` | A page loads | Page class, path, referring domain, `$utm_source` / `$utm_medium` / `$utm_campaign` |
 | `$pageleave` | The visitor leaves the page (`pagehide`) | Page class, path, time-on-page bucket (under 1s up to 10m+) |
-| `site_action_selected` | A tagged link is clicked | Action, placement, plan (pricing buttons only) |
+| `site_action_selected` | A tagged link is clicked | Action, placement, plan (pricing buttons only), flowId (web entry only) |
 
 Tagged links on the landing page, by `data-site-action` id:
 
 | Id | Link | Action · placement |
 | --- | --- | --- |
 | `download-header` | Header Download for Mac | download · header |
+| `sign-in-header` | Header sign-in button, its label rolling between Sign in to Rally and Sign up for Rally (shown instead of Download for Mac on touch-only devices) | primary_cta · header |
 | `download-hero` | Hero Download the macOS beta | download · hero |
-| `web-app-hero` | Hero Use the web app (`/start-fast/` only) | secondary_cta · hero |
+| `web-app-hero` | Hero Use the web app (app.rallywith.ai) | secondary_cta · hero |
 | `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
 | `demo-request` | Ask for a demo (emails Katherine and Alex) | demo_request · sidekicks |
 | `founder-contact` | Founder photos and names | founder_contact · team |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
 
+`web-app-hero` reports `secondary_cta · hero` on every device, including
+phones where it is the only hero button, so its clicks cannot be split by device.
+
+Each activation of `web-app-hero` or `sign-in-header` creates a fresh opaque
+`flowId`, reports it on the action, and sends it to the browser as `signupFlowId`.
+Copied links stay clean. Browser entry validates and retains it in tab-scoped
+session storage before removing the URL field, so refreshing before sign-in
+keeps the landing attribution. Authentication retires it. See
+[`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
+
 Not tracked: scrolling, section views, header nav clicks, and the founders'
 LinkedIn, GitHub and Hugging Face links.
 
 The footer is rendered from `apps/site/src/site-chrome.ts`, so its help@ link and
 its id live there, not in `index.html`. The `/compare/` pages share the header
-(`download-header`) and the footer, and count as page class `landing` with
+(`download-header` / `sign-in-header`) and the footer, and count as page class `landing` with
 their own `$pathname`; see [`landing-comparisons.md`](landing-comparisons.md).
 
-`/start-fast/` is a variant of the home page kept in its own file,
-`apps/site/start-fast/index.html`: the same sections, but a different headline
-and a hero offering both the macOS download and the web app, each under a label
-with an arrow. It counts as page class `landing` with its own `$pathname`, and
-carries `noindex` with a canonical link to the home page so search engines do
-not treat it as duplicate content. Clicks report the same ids as the home page,
-so a click event alone does not say which variant it came from; compare the
-variants by `$pathname` on page views. A future variant is another folder
-beside it, added to the build inputs in `apps/site/vite.config.ts`.
+`/start-fast/` is a variant of the home page with its own hero; everything below
+the hero is shared with `/` through `apps/site/src/landing-sections.html`. It
+uses the same link ids, so compare the two by `$pathname`, which every page view
+and click now carries. It is `noindex`, so search engines never list it beside `/`.
 
 ## Don't lose on a redesign
 
@@ -62,16 +68,20 @@ Check these on every edit to the landing page:
 5. **Put UTM tags on links that bring people to the page** (utm_source,
    utm_medium, utm_campaign), such as posts, emails and ads. The page reads them from its
    own URL; without them the campaign chart shows only "(none)".
-6. **Deploy the API before the site** when adding a new action, placement or
-   plan. A merge touching both starts both deploys at once, so run the API
+6. **Deploy the API before the site** when adding a new action, placement, plan or event property. A merge touching both starts both deploys at once, so run the API
    deploy first. Until the API knows a value it refuses the whole batch that
    carries it, including any page view in that batch.
+
+7. **Keep a fresh flow per web entry activation.** Its event and destination
+   must carry the same ID; never prepare a shared ID at page load or remove
+   browser reload persistence. Signup reports join separate subjects by flow.
 
 ## Where to look
 
 - **Dashboard:** [Landing page & GTM](https://us.posthog.com/project/541600/dashboard/2150285)
   in PostHog. It shows visits, which download link was clicked, weekly download
-  rate, and conversion by referrer and by campaign.
+  rate, conversion by referrer and by campaign, and two complete signup flows:
+  browser from the web CTA and desktop from opening a fresh install.
 - **Code:** `apps/site/src/telemetry.ts` (reporting and the link table),
   `packages/contracts/src/telemetry.ts` (allowed values).
 - **Mechanism:** [`public-site-telemetry.md`](public-site-telemetry.md).

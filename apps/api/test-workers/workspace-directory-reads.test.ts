@@ -31,6 +31,7 @@ import {
 } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
+import { writeSidekickDirectoryRow } from "./helpers/sidekick";
 /**
  * Its own workspace, not the shared fixture's.
  *
@@ -202,7 +203,8 @@ async function establishWorkspace(): Promise<void> {
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -466,6 +468,44 @@ describe("what the workspace object answers about its work streams", () => {
       });
 
       expect(page.items).toEqual([]);
+    });
+  });
+
+  describe("linkTitle — the name a shared link's page shows signed out", () => {
+    it("names a Channel by its id, private or not, and nothing for an id it does not hold", async () => {
+      const channel = await seedWorkstream({
+        title: "Q3 launch plan",
+        lastActivityAt: "2026-08-10T12:00:00.000Z",
+        scope: "personal",
+      });
+
+      await expect(workspace().linkTitle({ workspaceId: WORKSPACE_ID, target: { kind: "channel", workstreamId: channel } }))
+        .resolves.toEqual({ title: "Q3 launch plan" });
+      await expect(workspace().linkTitle({ workspaceId: WORKSPACE_ID, target: { kind: "channel", workstreamId: nextWorkstreamId() } }))
+        .resolves.toEqual({ title: null });
+    });
+
+    it("names a Space", async () => {
+      await seedSpacePlacements([[SPACE_ID, []]]);
+
+      await expect(workspace().linkTitle({ workspaceId: WORKSPACE_ID, target: { kind: "space", spaceId: SPACE_ID } }))
+        .resolves.toEqual({ title: "Batch test" });
+    });
+
+    it("names a live Sidekick and not a deleted one", async () => {
+      const row = {
+        workspaceId: WORKSPACE_ID, authorUserId: OWNER, scope: "workspace" as const,
+        owningWorkstreamId: null, title: "Weekly digest", description: "",
+      };
+      const live = "00000000-0000-7000-8000-0000000008e1";
+      const deleted = "00000000-0000-7000-8000-0000000008e2";
+      await writeSidekickDirectoryRow(env, { ...row, automationId: live, lifecycle: "active" });
+      await writeSidekickDirectoryRow(env, { ...row, automationId: deleted, lifecycle: "deleted" });
+
+      await expect(workspace().linkTitle({ workspaceId: WORKSPACE_ID, target: { kind: "sidekick", sidekickId: live } }))
+        .resolves.toEqual({ title: "Weekly digest" });
+      await expect(workspace().linkTitle({ workspaceId: WORKSPACE_ID, target: { kind: "sidekick", sidekickId: deleted } }))
+        .resolves.toEqual({ title: null });
     });
   });
 

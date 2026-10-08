@@ -185,6 +185,16 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "opportunity_provenance_edges",
   "opportunity_provenance_nodes",
   "scope_grant_directory", // Typed candidate projection/read RPCs own this table.
+  // A hosted Sidekick's tables (migration 91). `HostedSidekick` reads and
+  // writes them through the object's own storage, behind the `sidekick*`
+  // facade, and they are named in `WORKSPACE_TYPED_RPC_ONLY_TABLES`.
+  "sidekick_revisions",
+  "sidekick_schedules",
+  "sidekick_runs",
+  "sidekick_email_receipts",
+  "sidekick_children",
+  "sidekick_child_projections",
+  "sidekick_child_receipts",
   // The Space authority's ten tables. Every one of them is reached through
   // the typed Space RPCs in `workspace-space-protocol.ts` and nothing else — a
   // Space is a relationship the Organization owns, not product state a runtime
@@ -214,6 +224,9 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_batch_dispatches",
   "workspace_container_order",
   "workspace_pinned_order", // All's Pinned order; read and written only by the Space authority.
+  "member_personal_system_prompts", // Read and written only by the personal system prompt RPCs.
+  "member_preferences", // Read and written only by the member preference RPCs.
+  "conversation_access_requests", // Read and written only by the access request RPCs.
   "workspace_directory_state",
   "workspace_external_event_registrations",
   "external_registration_generations", // Owned by typed registration RPC only.
@@ -222,6 +235,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "spaces",
   "workspace_space_state",
   "space_viewers",
+  "space_invitees", // Read and written only by the Space audience and invitee RPCs.
   "workspace_sidebar_list_state",
   "workspace_socket_ticket_receipts",
   "workspace_socket_unheard", // The first-frame watch's ledger; socket paths and the alarm only.
@@ -258,10 +272,6 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "parent_invitations",
   "parent_connector_admissions",
   "parent_sidekicks",
-  "parent_direct_audience",
-  "parent_space_sources",
-  "parent_space_readers",
-  "parent_access_operations",
   // The Channel rail (WorkspaceDO migration 82): Main's reported attachments,
   // written only by the directory apply, and the change ledger its triggers
   // fill and the object drains.

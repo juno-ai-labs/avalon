@@ -100,6 +100,7 @@ The producers are:
   is gone, so none of that person's windows is admissible any longer. Their
   session rows are deliberately left alone: every authorization query joins
   membership, so a session stops resolving the moment the row is gone.
+  Organization settings calls this "Suspend" in each roster row's menu.
 - **A member leaves.** `WorkspaceService.leaveWorkspace` deletes the caller's
   membership, or atomically suspends it while abandoning a workspace whose last
   active member is leaving, then publishes the same membership-wide message.
@@ -116,6 +117,16 @@ The producers are:
   (`RETURNING id, user_id, workspace_id`) and publishes one message per row,
   carrying that session's id. Only the windows that presented that session are
   closed; the person's other windows are still theirs.
+- **Rally access ends.** `revokeSupportSessions` (`services/support-access.ts`)
+  expires support sessions at once, publishes one message per row, and marks
+  revoked only the rows it announced. One whose message fails stays expired
+  but unmarked, so the expiry sweep below announces it on its next run rather
+  than its sockets staying open with nothing left to retry. It runs when an
+  Organization revokes Rally access, and when a Juno Labs relationship delivery
+  says a staff membership ended, for that membership's incarnation only.
+  An expired grant needs no producer: a support session's `expires_at` never
+  passes its grant's, so the expiry sweep below closes it.
+  [`impersonation.md`](impersonation.md#support-access) owns the mechanism.
 - **A session expires.** Nobody performs an expiry, so no request would ever
   publish one. `reapExpiredSessions` is that writer: on the five-minute cron it
   marks up to 200 expired rows revoked and publishes each one.
@@ -134,7 +145,7 @@ workstream             ──▶ WorkspaceDO    ──▶ [substreamIds]   (revo
 workstream_audience_narrowed
                        ──▶ WorkspaceDO    ──▶ [substreams per closed reader] + [automationIds the room owns]
                                               (revokeNarrowedAudienceAccess)
-automation             ──▶ AutomationDO   ──▶ [substreamIds]   (listChildren; it holds no socket)
+automation             ──▶ WorkspaceDO    ──▶ [substreamIds]   (listChildren; a Sidekick holds no socket)
 space                  ──▶ WorkspaceDO    ──▶ [substreamIds]   (listChildren; a Space holds no socket)
 substream              ──▶ SubstreamAgent ──▶ (leaf)
 artifact               ──▶ ArtifactHostDO ──▶ (leaf)
@@ -184,8 +195,8 @@ would throw and drop a retraction.
 An automation is a *sibling* of the work streams under a workspace rather than a
 child of one, and like a work stream it is a parent of conversations: its own
 chat is substream `0` under it and each run is a further substream, all of them
-`SubstreamAgent`s with sockets. The automation object itself holds no socket,
-so its hop is `AutomationDO.listChildren` and one `substream` message per child,
+`SubstreamAgent`s with sockets. A Sidekick holds no socket, so its hop is the
+Organization's `listChildren` for the Sidekick and one `substream` message per child,
 keyed by the automation id as the parent. Its list comes from
 `automation_directory`, the one place the workspace knows an automation exists,
 and is unfiltered by person for the reason the artifact list is: an
@@ -263,8 +274,8 @@ from the rule. Close code
 `WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE` tells the desktop this was a retraction
 rather than a network drop.
 
-`AutomationDO` has no `revokeSocketAccess` at all: it holds no socket, and the
-consumer asks it `listChildren` and fans out one substream hop per child, so
+A Sidekick has no `revokeSocketAccess` at all: it holds no socket, and the
+consumer asks `WorkspaceDO.listChildren` for it and fans out one substream hop per child, so
 the conversations under it close through `SubstreamAgent`'s shared predicate
 like every other conversation.
 
@@ -314,8 +325,7 @@ room would go on seeing an evicted reader listed as present.
   access, and nothing will report it.
 - **Publishing never fails the request that wrote the fact.** The removal
   committed; failing the response would tell the operator it did not. A producer
-  that *can* still retry — the expiry sweep, which owns its own schedule, and a
-  Space retraction, which has a `space_intents` row behind it — reads the
+  that *can* still retry (the expiry sweep, which owns its own schedule) reads the
   returned flag and leaves the work for the next run instead. **Every producer
   reads the flag**; one that cannot retry names the refusal in a log rather than
   discarding it, because a discarded `false` is a retraction recorded as
@@ -325,18 +335,17 @@ room would go on seeing an evicted reader listed as present.
 
 ### A narrowing published from the Channel's own scope change has no durable gate
 
-`WorkstreamService.update` publishes `workstream_audience_narrowed` when a
-Channel's own scope goes from `workspace` to `personal`, and nothing durable
+`WorkstreamService.update` reads the Channel before the update and publishes
+`workstream_audience_narrowed` when its scope goes from `workspace` to
+`personal`, and nothing durable
 stands behind that send: a refusal is logged
 `channel_narrowing_publish_unannounced` and the Organization's non-participant
 readers keep whatever sockets they have open until they reconnect.
 
 This is a gap rather than a regression. Before the Spaces branch that path
 published *nothing at all*, so the announcement is strictly new and the missing
-gate is the part that was never built. The other narrowing — a Space's
-retraction — does have one: it is reached from an operation with a
-`space_intents` row, so a refused send fails the step, leaves the intent
-unsettled, and the WorkspaceDO alarm republishes the whole operation.
+gate is the part that was never built. It is now the only narrowing, because
+[a Space grants no reader](spaces.md#every-space-is-organization-wide).
 
 Closing it means giving the direct narrowing a durable intent of its own, which
 is a change with a table behind it rather than a line in this one; it is named
@@ -366,7 +375,7 @@ own:
   owns Channel and Space parents inside `WorkspaceDO`,
   [`workstream-durable-object.md`](workstream-durable-object.md) owns the
   conversations under them, and
-  [`automation-lifecycle.md`](automation-lifecycle.md) owns `AutomationDO`;
+  [`automation-lifecycle.md`](automation-lifecycle.md) owns Sidekicks;
   this module adds one method to each socket-holding object and reads the
   parent contract's `listChildren` from the one that holds none.
 - **Choosing a queue over RPC for a new hop.** [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md)
@@ -502,6 +511,27 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-10-07 — Organization settings can suspend a member
+
+**What changed:** Each row in the Organization settings roster has a menu, and
+its "Suspend" item, after a confirmation, calls the existing
+`DELETE /workspaces/:workspaceId/membership/member/:userId`, which had no
+client caller until now.
+
+**Why:** Administrators had no way in the product to take someone out of an
+organization. The removal write and its revocation publish already existed, so
+the menu reuses them rather than adding a second way to end a membership.
+
+**Considered and rejected:** A new `status = 'suspended'` write that keeps the
+row. `listMembers` hides suspended rows, so nobody could see a suspended person
+to restore them, and the `suspended` status today means "the last member left
+and the workspace closed". Removal is the reversible option that exists: an
+invitation brings the person back.
+
+**Consequences:** "Suspend" in the UI is removal on the server. If suspension
+ever needs to be undone in place, it needs its own status, a roster that shows
+it, and a restore write; this entry is where that change should start.
 
 ### 2026-09-25 — The Channel step runs inside the Organization object
 

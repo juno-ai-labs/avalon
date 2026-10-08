@@ -22,8 +22,11 @@ import {
 } from "../../durable-objects/workspace-terminal-network-protocol";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 import { asWorkspaceId } from "@rally/contracts";
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
+import { logWarn } from "../../observability/logger";
 import { parseTerminalRegionConfiguration } from "./contract";
-import type { TerminalSandboxProvider } from "./provider-contract";
+import { isTerminalProviderNotFound, terminalProviderErrorCode, type TerminalSandboxProvider } from "./provider-contract";
+import { TerminalToolError } from "./tools";
 import { createTerminalFinalDiffPreserver } from "./lifecycle";
 import {
   emitProductUsageTelemetry,
@@ -48,9 +51,24 @@ interface SandboxRow {
   title: string;
 }
 
-/** One sandbox's identity in this service's failure and outcome bookkeeping. */
-function sandboxKey(sandbox: Pick<SandboxRow, "workstream_id" | "substream_id">): string {
-  return `${sandbox.workstream_id}:${sandbox.substream_id}`;
+/** A policy step this service rejected itself, named by a code it composed. */
+class PolicyStepError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = "PolicyStepError";
+  }
+}
+
+/**
+ * Which step of a policy change failed for one sandbox, and why: this
+ * service's own code, the Terminal tool code, or the provider's error class and
+ * status. Never a provider's message, which is its text.
+ */
+function policyStepFailure(step: string, error: unknown): string {
+  const reason = error instanceof PolicyStepError || error instanceof TerminalToolError
+    ? error.code
+    : isTerminalProviderNotFound(error) ? "not_found" : terminalProviderErrorCode(error);
+  return codeShaped(`${step}:${reason}`);
 }
 
 export class TerminalSettingsService {
@@ -120,10 +138,8 @@ export class TerminalSettingsService {
     ) {
       throw new ApiError(409, "terminal_policy_unchanged", "The Terminal network policy is unchanged. Edit the mode or destinations before reviewing it.");
     }
-    const sandboxes = await this.loadActiveSandboxes();
-    // Several conversations of one work stream can each hold a sandbox; the
-    // preview names the work stream once.
-    const affectedWorkstreamIds = [...new Set(sandboxes.map((sandbox) => sandbox.workstream_id))];
+    // No sandbox walk: apply finds the sandboxes itself, and nothing reads a
+    // preview's list of them. Walking here doubled the slowest part of a save.
     const mutationId = newId();
     const timestamp = nowIso();
     await (await this.workspace()).recordTerminalPolicyPreview({
@@ -134,7 +150,6 @@ export class TerminalSettingsService {
       proposedMode: input.mode,
       proposedDomains: compiled.customDomains,
       effectiveDomains: compiled.effectiveDomains,
-      affectedWorkstreamIds,
       at: timestamp,
     });
     return {
@@ -143,14 +158,6 @@ export class TerminalSettingsService {
       proposedMode: input.mode,
       customDomains: compiled.customDomains,
       remainingCustomSlots: compiled.remainingCustomSlots,
-      affectedWorkstreamIds,
-      affectedWorkstreams: affectedWorkstreamIds.map((id) => ({
-        id,
-        title: sandboxes.find((sandbox) => sandbox.workstream_id === id)!.title,
-      })),
-      warning: input.mode === "full_internet"
-        ? "Full internet lets Terminal code contact arbitrary public destinations. Active sandboxes will stop and stay stopped until the next Terminal tool call."
-        : "Trusted only applies Rally-managed platform access and workspace-approved domains. Active sandboxes will stop while Daytona applies the policy.",
     };
   }
 
@@ -182,7 +189,6 @@ export class TerminalSettingsService {
     const customDomains = mutation.proposedDomains;
     const effectiveDomains = mutation.effectiveDomains;
     const previousCustomDomains = claim.currentCustomDomains;
-    const currentDomains = compileTerminalNetworkPolicy(current.mode, previousCustomDomains).effectiveDomains;
     const resultingRevision = current.revision + 1;
 
     const affected = await this.loadActiveSandboxes();
@@ -192,8 +198,12 @@ export class TerminalSettingsService {
     }
 
     const epochMs = Date.parse(timestamp);
-    const failures: string[] = [];
-    const deleted = new Set<string>();
+    // A sandbox that fails here is left for its next Terminal call to catch up
+    // on, never deleted and never a reason to undo the change for everyone:
+    // its applied revision stays behind, and acquisition reapplies the policy
+    // before it resumes a sandbox whose revision is stale. Deleting on failure
+    // destroyed every archived sandbox in an organization on 2026-10-08,
+    // because Daytona will not stop one that is already archived.
     for (const sandbox of affected) {
       const terminal = createTerminalPortFactory(this.env)(
         this.auth.workspaceId,
@@ -201,145 +211,72 @@ export class TerminalSettingsService {
         sandbox.substream_id,
       );
       await terminal.cancelUnsettledTasks(epochMs);
-      if (sandbox.state === "running") {
-        // Still the routed environment: the preserver writes the resource and
-        // its work-stream link, which are not Terminal tables.
-        await createTerminalFinalDiffPreserver(
-          this.env,
-          this.provider!,
-          this.auth.workspaceId,
-          sandbox.workstream_id,
-          sandbox.substream_id,
-        )(sandbox.provider_sandbox_id, sandbox.generation).catch(() => {
-          failures.push(`${sandboxKey(sandbox)}:final_diff`);
-        });
-      }
+      let stopped = false;
+      const failures: string[] = [];
+      let step = "observe";
       try {
-        await this.provider!.stopSandbox(sandbox.provider_sandbox_id);
+        // Daytona's state, not Rally's intent: a row can still read stopped or
+        // archived while the sandbox runs, and a running one must stop first.
+        const running = (await this.provider!.getSandbox(sandbox.provider_sandbox_id)).state === "running";
+        step = "stop";
+        if (running) {
+          // Still the routed environment: the preserver writes the resource and
+          // its work-stream link, which are not Terminal tables.
+          await createTerminalFinalDiffPreserver(
+            this.env,
+            this.provider!,
+            this.auth.workspaceId,
+            sandbox.workstream_id,
+            sandbox.substream_id,
+          )(sandbox.provider_sandbox_id, sandbox.generation).catch((error: unknown) => {
+            failures.push(policyStepFailure("final_diff", error));
+          });
+          await this.provider!.stopSandbox(sandbox.provider_sandbox_id);
+          const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
+          if (observed.state !== "stopped" && observed.state !== "archived") throw new PolicyStepError(`provider_state_${observed.state}`);
+          stopped = true;
+        }
+        // A stopped or archived sandbox takes the new policy as it is; it has
+        // nothing running to stop.
+        step = "policy";
+        await this.provider!.updateNetworkPolicy(
+          sandbox.provider_sandbox_id,
+          mutation.proposedMode === "trusted_only" ? effectiveDomains : null,
+        );
         const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
-        if (observed.state !== "stopped" && observed.state !== "archived") throw new Error(`provider_state_${observed.state}`);
-        await terminal.settlePolicyTransition({
-          lifecycleState: "stopped",
-          failureCode: null,
-          clearSandboxId: false,
-          clearOperationLease: true,
-          appliedNetworkRevision: null,
-          generation: sandbox.generation,
-          sandboxId: sandbox.provider_sandbox_id,
-          now: epochMs,
+        const expected = mutation.proposedMode === "trusted_only" ? [...effectiveDomains].sort() : [];
+        if (observed.domainAllowList.slice().sort().join("\n") !== expected.join("\n")) throw new PolicyStepError("provider_policy_mismatch");
+      } catch (error) {
+        failures.push(policyStepFailure(step, error));
+      }
+      const applied = failures.every((failure) => failure.startsWith("final_diff:"));
+      if (failures.length > 0) {
+        logWarn(this.env, "terminal_policy_sandbox_failed", {
+          workspace_id: this.auth.workspaceId,
+          mutation_id: input.mutationId,
+          workstream_id: sandbox.workstream_id,
+          substream_id: sandbox.substream_id,
+          sandbox_id: sandbox.provider_sandbox_id,
+          reason: failures.join("."),
         });
-      } catch {
-        failures.push(`${sandboxKey(sandbox)}:stop`);
-        try {
-          await this.provider!.deleteSandbox(sandbox.provider_sandbox_id);
-          deleted.add(sandboxKey(sandbox));
-          await terminal.settlePolicyTransition({
-            lifecycleState: "failed",
-            failureCode: "policy_stop_failed_deleted",
-            clearSandboxId: true,
-            clearOperationLease: true,
-            appliedNetworkRevision: null,
-            generation: sandbox.generation,
-            sandboxId: sandbox.provider_sandbox_id,
-            now: epochMs,
-          });
-        } catch {
-          failures.push(`${sandboxKey(sandbox)}:delete`);
-          await terminal.settlePolicyTransition({
-            lifecycleState: "failed",
-            failureCode: "policy_quarantine_failed",
-            clearSandboxId: false,
-            clearOperationLease: true,
-            appliedNetworkRevision: null,
-            generation: sandbox.generation,
-            sandboxId: sandbox.provider_sandbox_id,
-            now: epochMs,
-          });
-        }
       }
-    }
-
-    if (failures.length === 0) {
-      const expected = mutation.proposedMode === "trusted_only" ? [...effectiveDomains].sort() : [];
-      for (const sandbox of affected) {
-        if (deleted.has(sandboxKey(sandbox))) continue;
-        try {
-          await this.provider!.updateNetworkPolicy(
-            sandbox.provider_sandbox_id,
-            mutation.proposedMode === "trusted_only" ? effectiveDomains : null,
-          );
-          const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
-          if (observed.domainAllowList.slice().sort().join("\n") !== expected.join("\n")) throw new Error("provider_policy_mismatch");
-        } catch {
-          failures.push(`${sandboxKey(sandbox)}:policy`);
-        }
-      }
-    }
-
-    if (failures.length > 0) {
-      for (const sandbox of affected) {
-        if (deleted.has(sandboxKey(sandbox))) continue;
-        try {
-          await this.provider!.updateNetworkPolicy(
-            sandbox.provider_sandbox_id,
-            current.mode === "trusted_only" ? currentDomains : null,
-          );
-          const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
-          const expected = current.mode === "trusted_only" ? [...currentDomains].sort() : [];
-          if (observed.domainAllowList.slice().sort().join("\n") !== expected.join("\n")) throw new Error("provider_policy_rollback_mismatch");
-        } catch {
-          await this.provider!.deleteSandbox(sandbox.provider_sandbox_id).then(async () => {
-            deleted.add(sandboxKey(sandbox));
-            await createTerminalPortFactory(this.env)(
-              this.auth.workspaceId,
-              sandbox.workstream_id,
-              sandbox.substream_id,
-            ).settlePolicyTransition({
-              lifecycleState: "failed",
-              failureCode: "policy_rollback_deleted",
-              clearSandboxId: true,
-              clearOperationLease: false,
-              appliedNetworkRevision: null,
-              generation: sandbox.generation,
-              sandboxId: sandbox.provider_sandbox_id,
-              now: Date.now(),
-            });
-          }).catch(() => undefined);
-        }
-      }
-      await this.failApplication(input.mutationId, current, "provider_policy_mismatch");
-      throw new ApiError(502, "terminal_policy_verification_failed", "Daytona did not confirm the requested network policy. Rally stopped or quarantined every affected sandbox and kept the last verified policy; retry the settings change or contact support.", {
-        reason: failures.slice(0, 10).join("; "),
-        sandboxOutcomes: affected.slice(0, 100).map((sandbox) => ({
-          workstreamId: sandbox.workstream_id,
-          substreamId: sandbox.substream_id,
-          title: sandbox.title,
-          outcome: deleted.has(sandboxKey(sandbox))
-            ? "deleted"
-            : failures.includes(`${sandboxKey(sandbox)}:delete`)
-              ? "quarantined"
-              : "stopped",
-        })),
-        outcomesTruncated: affected.length > 100,
-      });
-    }
-
-    for (const sandbox of affected.filter((entry) => !deleted.has(sandboxKey(entry)))) {
-      await createTerminalPortFactory(this.env)(
-        this.auth.workspaceId,
-        sandbox.workstream_id,
-        sandbox.substream_id,
-      ).settlePolicyTransition({
-        lifecycleState: "stopped",
-        failureCode: null,
+      await terminal.settlePolicyTransition({
+        // Untouched unless this pass stopped it: the idle alarm may have moved it since it was loaded.
+        lifecycleState: stopped ? "stopped" : null,
+        failureCode: failures.length > 0 ? codeShaped(`policy_transition:${failures.join(".")}`) : null,
         clearSandboxId: false,
-        clearOperationLease: false,
-        appliedNetworkRevision: resultingRevision,
+        clearOperationLease: stopped,
+        // Revision 0 when the policy did not land: no organization revision is
+        // 0, so the next acquisition reapplies the policy, and a run holding
+        // this sandbox from before sees its claim go stale rather than keep
+        // using the old egress.
+        appliedNetworkRevision: applied ? resultingRevision : 0,
         generation: sandbox.generation,
         sandboxId: sandbox.provider_sandbox_id,
-        now: Date.parse(timestamp),
+        now: epochMs,
       });
     }
+
     await (await this.workspace()).commitTerminalPolicyApplication({
       workspaceId: this.auth.workspaceId,
       mutationId: input.mutationId,

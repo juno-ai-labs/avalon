@@ -9,10 +9,13 @@ substream `0` feed is dialled by a Node broker in the main process. The split
 lets the desktop open a useful swarm in parallel without moving protocol state
 or product caches out of the renderer.
 
-A desktop holds **one** workspace socket, in the main window: the Settings
-and Sidekicks windows consume it through main rather than dialling their own,
-and each dials only while no main window is publishing — see
+A desktop's windows hold **one** workspace socket, in the main window: the
+Settings and Sidekicks windows consume it through main rather than dialling
+their own, and each dials only while no main window is publishing — see
 [the Organization-sync relay](#one-workspace-socket-per-desktop-the-organization-sync-relay).
+On macOS, with the menu bar item on, the main process holds a second, its own,
+for the Channel rows behind the menu bar's attention count; it outlives every
+window ([`menu-bar.md`](menu-bar.md#the-content)).
 
 An automation's page uses the same feed socket kind: its conversation is
 substream `0` under the automation, dialled through the same broker and the
@@ -72,6 +75,7 @@ protocol inside each Durable Object.
 | `apps/desktop/src/preload/index.ts` | Exposes only the typed broker operations to the sandboxed renderer and validates events arriving from main. |
 | `apps/desktop/src/main/realtime-socket-ipc.ts` | Registers the main-window-only IPC boundary, parses every request, confines destinations, and relays broker events. |
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Node `ws` connections, follows Electron's complete ordered system/PAC route and operating-system CA trust, supplies the Rally application Origin, enforces the shared frame ceiling, relays events, and terminates sockets with their renderer owner. |
+| `apps/desktop/src/main/network-recovery.ts`, `network-recovery-ipc.ts`, `common/network-recovery.ts`, and `renderer/lib/network-recovery.ts` | One Chromium-session connection reset after repeated ticket timeouts, generation-fenced observations and the cross-window request barrier. |
 | `apps/api/src/routes/socket.ts` | Receives public WebSocket upgrades and sends each accepted request through the correct regional Durable Object namespace. |
 | `apps/api/src/services/socket-service.ts` | Issues and verifies purpose-specific socket tickets and constructs the clean upgrade subrequest. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API and publishes each Channel's row, with that viewer's breakouts and running background agents, on it. Still accepts the retired Channel control socket at the internal `/parent-socket` path, tagged `parent-control:<id>`, for clients released before this change. |
@@ -171,7 +175,7 @@ main's, the preload inbox's, the consumer's — compares both.
 | --- | --- | --- |
 | `state` | main window → main (`workspace-sync:publish`) | The provider's connection state. Attaches it as the source. |
 | `detach` | main window → main (`workspace-sync:publish`) | That provider unmounted with no successor. Ends the source if it is still the attached one. |
-| `topics` | main window → main → Settings and Sidekicks (`workspace-sync:relayed`) | Topic names and the waterline they moved at. |
+| `topics` | main window → main → Settings and Sidekicks (`workspace-sync:relayed`) | Topic names and the waterline they moved at. Besides the sync topics, the relay-only name `usage`. |
 | `source` | main → Settings and Sidekicks (`workspace-sync:relayed`, and the `workspace-sync:source` reply) | `{ revision, source: { region, workspaceId, state } \| null }`. |
 
 - **Publish (main window, `relay="publish"`).** The provider publishes its
@@ -183,8 +187,10 @@ main's, the preload inbox's, the consumer's — compares both.
   values themselves never cross, and the consumer refetches its own. A
   `workspace_sidebar_list` push of the `automations` list is published as the
   `automations` topic, the refetch that push amounts to for a window that does
-  not hold the list. Nothing else crosses: no sidebar, rows, presence or
-  directory pages.
+  not hold the list. A `workspace_usage` push, and every subscribe answer, is
+  published as `usage`, a relay-only name
+  ([`usage-metering.md`](usage-metering.md)). Nothing else crosses: no
+  sidebar, rows, presence, directory pages or meter values.
 - **Detach on unmount, unless replaced.** The provider's cleanup publishes
   `detach` on a microtask, and only if no other publisher has mounted in the
   renderer since. An Organization switch — and StrictMode — unmounts a
@@ -207,7 +213,7 @@ main's, the preload inbox's, the consumer's — compares both.
   relayed topics (in Settings, the connector OAuth reconcile re-runs on
   `connector_oauth_attempts` there), and invalidates exactly what a socket's
   topic would — except `workstream_directory`, which names a socket-owned list
-  neither window holds. While the source is another Organization it
+  neither window holds — and on `usage` reads its usage meter again. While the source is another Organization it
   waits, dialling nothing and reporting `connecting`: both windows follow one
   session but apply it at different moments (the window that asked for a
   switch applies it only after fetching the new Organization), so the main
@@ -485,6 +491,41 @@ timer immediately. An open feed replays the unresolved operation IDs once more,
 requests a single-flight canonical snapshot, and probes liveness without
 replacing an older pong deadline. Feeds with no pending command do nothing.
 
+### Desktop network recovery
+
+Socket retries alone cannot replace Chromium's shared connection state. On the
+desktop, two consecutive online ticket timeouts for the same ticket path escalate
+to `session.defaultSession.closeAllConnections()` in main. The user chose this
+trigger on 2026-10-05 because a reset interrupts other Chromium requests. An
+accepted ticket or a non-timeout outcome clears only its own path's streak: healthy Organization traffic
+must not mask a selectively stalled Channel. HTTP errors, owner cancellation and
+explicit offline timeouts do not count. The whole-open deadline identifies a
+ticket timeout explicitly when it aborts ticket acquisition.
+
+Main owns one recovery state for all Rally windows. It increments the generation
+before resetting, publishes `resetting`, and records the escalation before
+discarding connections. Each renderer aborts pending HTTP attempts from the old
+generation to abandon retries racing the reset when IPC arrives; delivery is asynchronous
+and is not an acknowledgement barrier before the native reset.
+Preload retains this state before React subscribes and
+ignores stale IPC replies. New windows wait for their initial state before
+starting requests. New API requests wait during the reset; ticket
+requests wait before starting their request-local deadline. Cancellation still
+settles a waiting owner. After the reset completes or fails, main publishes
+`awaiting_live` and normal reconnect loops resume with their existing backoff.
+Only a usable conversation snapshot (including its context chunks) or an applied
+Organization sidebar or a validated sequenced import-feed frame from a ticket acquired
+in the new generation marks recovery
+complete and rearms escalation. A ticket or a transport open alone does not.
+Old requests and old sockets cannot rearm it, and an unresolved outage does not
+cause repeated connection resets.
+
+This operation preserves windows, login, IndexedDB, drafts and transcript caches.
+Healthy Node-brokered feeds remain open. It neither retries interrupted REST
+mutations nor changes the existing socket command reconciliation contract. The
+ordinary failure surface remains available if the connection reset is insufficient.
+Browser and iOS clients retain their existing reconnect behavior.
+
 ### Best practices for extending proactive coverage
 
 Proactive connection is a latency optimization, not the default lifecycle for
@@ -683,8 +724,12 @@ move the workspace synchronization socket or dictation transport into Node.
 
 ## Testing
 
+Unit and integration tests do not prove Chromium's native connection reset; that requires real Electron.
+
 | Suite | Command | Covers |
 | --- | --- | --- |
+| Main, common and IPC network recovery suites | `pnpm --filter @rally/desktop exec vitest run src/main/network-recovery.test.ts src/common/network-recovery.test.ts src/main/network-recovery-ipc.test.ts` | Streaks, reset coalescing, generations, live rearming, state ordering and trusted IPC validation. |
+| Renderer network recovery and import run suites | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/network-recovery.test.ts src/renderer/lib/session-import-run.test.ts` | Initial state barrier, ticket deadlines, delayed IPC, cancellation through streamed bodies, and import live confirmation. |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-broker.test.ts` | Destination confinement, ordered PAC fallback, shared payload limit, event relay, normal close cleanup, sends, and renderer-owner teardown. |
 | `apps/desktop/src/main/realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-ipc.test.ts src/common/realtime-socket-validation.test.ts` | Shared channel wiring, main-window authorization, request confinement, broker relay, and strict dependency-free event validation. |
 | `apps/desktop/src/common/workspace-sync-relay.test.ts`, `apps/desktop/src/main/workspace-sync-relay.test.ts`, `apps/desktop/src/main/workspace-sync-relay-ipc.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/common/workspace-sync-relay.test.ts src/main/workspace-sync-relay.test.ts src/main/workspace-sync-relay-ipc.test.ts` | The preload inbox folding news that arrives before a listener and keeping it for the listener that replaces one unsubscribed before it could take it; main refusing a malformed or open publication with the field named, attaching, forwarding only the attached Organization (the same UUID in another region is another one), ignoring a stale detach, releasing once, and ordering by revision; each IPC channel refusing every window but its own. |
@@ -742,12 +787,24 @@ The Organization-sync relay is a separate, narrower IPC path, described with
 its sender checks and what may cross in
 [the Organization-sync relay](#one-workspace-socket-per-desktop-the-organization-sync-relay).
 
+Network recovery accepts observations only from existing trusted Rally renderers.
+Its closed schema admits a generation, a ticket path without query values, and
+one declared outcome. The renderer cannot choose a reset destination, headers,
+credentials or a storage operation. Recovery state broadcast to windows contains
+only the generation and phase.
+
 The signed ticket remains confined to the `Sec-WebSocket-Protocol` request
 header. It is not put in a URL, returned in an event, or logged. The Worker
 echoes only the public sentinel. See [`security.md`](security.md) for the wider
 Electron trust boundary.
 
 ## Operations
+
+On macOS, `desktop_network_recovery` records in Unified Logging carry the recovery
+generation, timeout count and phases `ticket_timeout`, `reset_started`,
+`reset_finished`, `reset_failed` and `live_restored`. They contain no request URL,
+ticket, credential or message content. The existing OS retention owns persistence;
+recovery adds no raw Chromium NetLog collection or new retention budget.
 
 Client `workstream_socket_started`, `realtime_socket_state`, and
 `renderer_perf_flow` records identify socket kind, reason, lease, and opening
@@ -787,6 +844,51 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-10-06 — The main process holds a workspace socket for the menu bar
+
+**What changed:** On macOS with the menu bar item on, the main process dials a
+workspace socket of its own through `watchWorkspaceSocket` (now the transport
+under `watchWorkspaceReach`) and the Node broker's route, walks every Space with
+`space_channels`, and applies row pushes. A desktop with a main window open
+therefore holds two workspace sockets.
+
+**Why:** The menu bar shows the sidebar's attention count, which needs each
+row's reader marks and Breakout lists; only this socket carries them, and the
+menu bar has to be right with no window open. The relay could not serve it: it
+carries topics, never rows, and ends with the main window.
+
+**Consequences:** The "one per desktop" rule now covers windows, not the main
+process. The second socket costs one subscribe answer and one Space walk per
+connect, and the same row pushes the window's socket receives. Its frame
+ceiling is off, as the renderer's is. [`menu-bar.md`](menu-bar.md) owns the
+mechanism.
+
+### 2026-10-05 — Repeated ticket timeouts can reset shared desktop connections
+
+**What changed:** Two consecutive online timeouts for one ticket path escalate
+from ordinary retries to one main-process Chromium connection reset. Requests in
+every Rally window share its barrier, and observations are fenced by generation.
+Only a usable live snapshot or Organization sync rearms recovery.
+
+**Why:** A production desktop launch repeatedly failed to open both old and new
+Channels. Renderer reload did not recover it; fully quitting Rally did. The API
+logged successful preflights without completed ticket GETs during the failure,
+then a 339 ms ticket response after restart. The precise Chromium failure was
+not captured, but retries through the same session were insufficient.
+
+**Considered and rejected:** Reloading the renderer repeated the observed failed
+recovery. Automatic application relaunch would disrupt drafts and the current
+screen. Clearing storage would discard unrelated local state. A connection reset
+is the narrower recovery to validate; it is not a claim that the incident's
+underlying networking defect has been identified.
+
+**Consequences:** Resetting Chromium connections interrupts in-flight HTTP
+requests, so mutations must not be blindly replayed. Healthy Node feeds stay
+open. Future recovery must preserve the cross-window generation fence and use
+live authority, rather than a ticket or handshake, as its success boundary.
+
+PR: [#1105](https://github.com/juno-ai-labs/avalon/pull/1105).
 
 ### 2026-10-03 — A frozen browser tab redials its workspace socket
 

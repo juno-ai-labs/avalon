@@ -19,7 +19,7 @@ import {
   attachWorkstreamRuntimeResource,
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
-import { createResourceObjectPort } from "../../runtime/resource-port";
+import { createConversationResourceLinks, createResourceObjectPort } from "../../runtime/resource-port";
 import { allocateResourceSlugBesideCreation } from "../resource-slug";
 import { ensureArtifactHostname } from "../artifact-hostname";
 import { putStagedResourceObject, releaseStagedResourceObject } from "../resource-object-cleanup";
@@ -631,7 +631,7 @@ export function createTerminalResourceBridge(
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {
       const rows = await loadVisibleWorkstreamResourcesByIds(
         env.DB,
-        createResourceObjectPort(env, context.workspaceId, context.workstreamId),
+        createConversationResourceLinks(env, context.workspaceId, context.workstreamId),
         {
           workspaceId: context.workspaceId,
           workstreamId: context.workstreamId,

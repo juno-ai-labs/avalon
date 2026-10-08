@@ -25,7 +25,7 @@ import {
   createHarnessRunPortFactory,
   type HarnessRunPortFactory,
 } from "../../runtime/harness-run-port";
-import type { ResourcePortFactory } from "../../runtime/resource-port";
+import { conversationResourceLinksFrom, type ResourcePortFactory } from "../../runtime/resource-port";
 import {
   executionPrincipalKey,
 } from "../workstream-resource-visibility";
@@ -881,6 +881,8 @@ export class TerminalSandboxCoordinator {
     // attachment stands. Asking the acquiring run's conversation instead
     // would read a background agent's imports against its owner's
     // attachments, and the owner's against the agent's, and revoke both.
+    // Read through the conversation's links, not its bare port: a Breakout
+    // imports what its Channel attached, and that link is not in its own table.
     const byConversation = new Map<string, Set<string>>();
     for (const link of links) {
       const substreamId = link.attachedSubstreamId ?? this.scope.authoritySubstreamId;
@@ -889,8 +891,9 @@ export class TerminalSandboxCoordinator {
       byConversation.set(substreamId, resourceIds);
     }
     for (const [substreamId, resourceIds] of byConversation) {
-      const attached = new Set((await this.resourcePort(context.workspaceId, context.workstreamId, substreamId)
-        .attachedLinks({ resourceIds: [...resourceIds] })).map((link) => link.resource_id));
+      const attached = new Set((await conversationResourceLinksFrom(
+        this.resourcePort, context.workspaceId, context.workstreamId, substreamId,
+      ).links({ resourceIds: [...resourceIds] })).links.map((link) => link.resource_id));
       for (const resourceId of resourceIds) {
         if (!attached.has(resourceId)) return true;
       }
@@ -1259,6 +1262,17 @@ export class TerminalSandboxCoordinator {
       const running = observation ? observation.state === "running" : row.lifecycleState === "running";
       if (running) await this.provider.stopSandbox(row.sandboxId);
       await this.provider.updateNetworkPolicy(row.sandboxId, domains.length ? domains : null);
+      // Read back before stamping the revision: a policy change that failed for
+      // this sandbox leaves it to this path, and a write Daytona accepted but did
+      // not apply would otherwise resume it on the old egress, no longer stale.
+      const applied = (await this.provider.getSandbox(row.sandboxId)).domainAllowList.slice().sort();
+      if (applied.join("\n") !== [...domains].sort().join("\n")) {
+        throw new TerminalToolError(
+          "network_policy_unverified",
+          "Daytona did not confirm the organization's network policy on this sandbox, so Rally left it stopped.",
+          { reason: "Retry the same tool; Rally applies the policy again before it starts the sandbox." },
+        );
+      }
     }
     await this.terminal(context).setAppliedNetworkRevision({ networkRevision: revision, now });
     return {

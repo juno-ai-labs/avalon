@@ -9,6 +9,7 @@ const IdentitySchema = z.object({
   installationId: z.string().regex(UUID_V7),
   anonymousEpochId: z.string().regex(UUID_V7),
   accountEpochId: z.string().regex(UUID_V7),
+  firstSignupFlowId: z.string().regex(UUID_V7).optional(),
 }).strict();
 
 export type TelemetryIdentity = z.infer<typeof IdentitySchema>;
@@ -56,6 +57,7 @@ export async function readTelemetryIdentityState(
     installationId: uuidV7(now),
     anonymousEpochId: uuidV7(now),
     accountEpochId: uuidV7(now),
+    ...(missing ? { firstSignupFlowId: uuidV7(now) } : {}),
   };
   await writeIdentity(path, identity);
   return { identity, created: missing };
@@ -63,8 +65,10 @@ export async function readTelemetryIdentityState(
 
 export async function rotateTelemetryEpochs(userDataDirectory: string, now = new Date()): Promise<TelemetryIdentity> {
   const current = await readTelemetryIdentity(userDataDirectory, now);
+  const retained = { ...current };
+  delete retained.firstSignupFlowId;
   const next: TelemetryIdentity = {
-    ...current,
+    ...retained,
     anonymousEpochId: uuidV7(now),
     accountEpochId: uuidV7(now),
   };

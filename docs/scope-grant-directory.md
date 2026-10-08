@@ -22,12 +22,12 @@ The lite browser consumes a canonical directory endpoint for shared navigation.
 ## How it works
 
 Every *direct* grant mutation invokes the parent's existing projection writer
-within its SQLite transaction, including invitation acceptance. A grant a Space
-seats does not: it carries `scope_grants.source_kind = 'space'` and the writer
-is suppressed for it, because that reader discovers the Channel through the
-Organization's Space directory instead. See
-[authorization](authorization.md#space-derived-access) for why — General holds
-every Channel in the Organization, so publishing one row per Space-derived
+within its SQLite transaction, including a claimed invitation. A grant a Space
+seated before WorkspaceDO migration 94 does not
+([a Space seats nobody now](authorization.md#space-derived-access)): it carries
+`scope_grants.source_kind = 'space'` and the writer is suppressed for it,
+because that reader discovers the Channel through the Organization's Space
+directory instead. General holds every Channel in the Organization, so publishing one row per Space-derived
 reader per Channel would size this index at the Organization times its
 Channels. Direct provenance wins where both apply, in both directions — a Space
 can neither claim such a row nor deactivate it — so a Channel a person also
@@ -89,8 +89,8 @@ each the guest holds, and so where a Breakout-only Channel opens.
 
 This module owns discovery delivery and candidate indexing. Identity and active
 relationships belong to D1; canonical grants belong to the Channel's parent in
-`WorkspaceDO`. Invitation
-redemption is described in [scope invitations](scope-invitations.md). Browser
+`WorkspaceDO`. Claiming an
+invitation is described in [scope invitations](scope-invitations.md). Browser
 entry and its limited collaboration surface belong to
 [browser client](browser-client.md). There is no new Queue or socket multiplexer.
 

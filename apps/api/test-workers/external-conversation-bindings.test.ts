@@ -29,7 +29,7 @@ import {
   type SpaceId,
   type UserId,
 } from "@rally/contracts";
-import { conversationEffectHash, type ParentEffect } from "@rally/contracts/conversation-effects";
+import { writeSidekickDirectoryRow } from "./helpers/sidekick";
 
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
@@ -108,9 +108,9 @@ async function resolve(path: string[], input: { addressed?: boolean; claimKey?: 
 }
 
 async function linkRoom(roomId: string, spaceId: string, input: {
-  scope?: "personal" | "workspace";
   userId?: UserId;
-  participantUserIds?: UserId[];
+  spaceMatch?: "matched" | "unmatched";
+  name?: string;
 } = {}) {
   return workspace().linkExternalRoom({
     workspaceId: WORKSPACE_ID,
@@ -118,8 +118,8 @@ async function linkRoom(roomId: string, spaceId: string, input: {
     path: [roomId],
     userId: input.userId ?? USER_ID,
     spaceId,
-    space: { name: `room ${roomId}`, scope: input.scope ?? "workspace" },
-    participantUserIds: input.participantUserIds ?? [],
+    space: { name: input.name ?? `room ${roomId}` },
+    ...(input.spaceMatch ? { spaceMatch: input.spaceMatch } : {}),
     at: at(),
   });
 }
@@ -230,23 +230,19 @@ describe("linking a shared room", () => {
     ]);
   });
 
-  it("gives a private room a personal Space of its known members, and a public room an Organization-wide one", async () => {
-    const privateRoom = await linkRoom("G1", "00000000-0000-7000-8000-000000000e11", {
-      scope: "personal", participantUserIds: [OTHER_USER_ID],
-    });
+  it("gives a private room and a public room alike an Organization-wide Space that lists only its linker", async () => {
+    const privateRoom = await linkRoom("G1", "00000000-0000-7000-8000-000000000e11");
     const publicRoom = await linkRoom("C1", "00000000-0000-7000-8000-000000000e12");
     if (!privateRoom.ok || !publicRoom.ok) throw new Error("link refused");
-    const privateSpace = await workspace().spaceSummary({
-      workspaceId: WORKSPACE_ID, userId: USER_ID, spaceId: asSpaceId(privateRoom.spaceId),
-    });
-    const publicSpace = await workspace().spaceSummary({
-      workspaceId: WORKSPACE_ID, userId: USER_ID, spaceId: asSpaceId(publicRoom.spaceId),
-    });
-    if (!privateSpace.ok || !publicSpace.ok) throw new Error("space unreadable");
-    expect(privateSpace.space.scope).toBe("personal");
-    expect(privateSpace.space.participants.map((participant) => participant.userId).sort())
-      .toEqual([USER_ID, OTHER_USER_ID].sort());
-    expect(publicSpace.space.scope).toBe("workspace");
+    for (const spaceId of [privateRoom.spaceId, publicRoom.spaceId]) {
+      // Read by somebody who did not link the room: an Organization-wide
+      // Space is theirs to see.
+      const summary = await workspace().spaceSummary({
+        workspaceId: WORKSPACE_ID, userId: OTHER_USER_ID, spaceId: asSpaceId(spaceId),
+      });
+      expect(summary).toMatchObject({ ok: true, space: { scope: "workspace", participants: [{ userId: USER_ID }] } });
+      if (summary.ok) expect(summary.space.participants).toHaveLength(1);
+    }
   });
 
   it("stops every thread when the bot is removed, and re-invitation reactivates the same binding and Space", async () => {
@@ -272,6 +268,115 @@ describe("linking a shared room", () => {
       target: { kind: "conversation", parentKind: "workstream", parentId: created.workstream.id, substreamId: "0" },
     });
     expect(await spaceIds()).toEqual([linked.spaceId]);
+  });
+});
+
+describe("a room named for an existing Space", () => {
+  const match = async (name: string) => (await workspace().externalRoomSpaceMatch({ workspaceId: WORKSPACE_ID, name })).spaceId;
+  const generalId = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ space_id: string }>(
+    "SELECT space_id FROM spaces WHERE system_role = 'general'",
+  ).one().space_id);
+
+  it("matches the live Organization-wide Space of that name ignoring case, and links the room into it", async () => {
+    const general = await generalId();
+    const archived = await linkRoom("C2", "00000000-0000-7000-8000-000000000e32");
+    if (!archived.ok) throw new Error("link refused");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE spaces SET archived_at = 1 WHERE space_id = ?", archived.spaceId);
+    });
+
+    expect(await match("  gEnErAl ")).toBe(general);
+    expect(await match("ROOM C2")).toBeNull();
+    expect(await match("generals")).toBeNull();
+
+    const linked = await linkRoom("C1", general, { spaceMatch: "matched", name: "general" });
+    expect(linked).toEqual({ ok: true, outcome: "linked", spaceId: general });
+    expect(await spaceIds()).toEqual([archived.spaceId]);
+    expect(await resolve(["C1", "1.0"], { addressed: true, claimKey: "event:general" }))
+      .toMatchObject({ outcome: "spawn", spaceId: general, spaceMatched: true });
+    // The record survives Slack renumbering the room, which the id could not.
+    await workspace().moveExternalConversationBindings({
+      workspaceId: WORKSPACE_ID, installationId: INSTALLATION, from: ["C1"], to: ["C9"], at: at(),
+    });
+    expect(await resolve(["C9", "1.0"], { addressed: true, claimKey: "event:moved" }))
+      .toMatchObject({ outcome: "spawn", spaceId: general, spaceMatched: true });
+    // A room's own Space is recorded as its own.
+    const own = await linkRoom("C5", "00000000-0000-7000-8000-000000000e39", { spaceMatch: "unmatched", name: "launch" });
+    if (!own.ok) throw new Error("link refused");
+    expect(await resolve(["C5", "1.0"], { addressed: true, claimKey: "event:own" }))
+      .toMatchObject({ outcome: "spawn", spaceId: own.spaceId, spaceMatched: false });
+  });
+
+  it("ignores spaces, dashes and underscores in a room's name, so `#room-c3`, `#room_c3` and `#roomc3` match \"room C3\"", async () => {
+    const spaced = await linkRoom("C3", "00000000-0000-7000-8000-000000000e33");
+    if (!spaced.ok) throw new Error("link refused");
+    expect(await match("ROOM-C3")).toBe(spaced.spaceId);
+    expect(await match("room--c3")).toBe(spaced.spaceId);
+    expect(await match("roomc3")).toBe(spaced.spaceId);
+    expect(await match("room_c3")).toBe(spaced.spaceId);
+    expect(await match("room.c3")).toBeNull();
+    // A name that is only separators matches nothing, not every such Space.
+    const dashes = await linkRoom("C4", "00000000-0000-7000-8000-000000000e34", { name: "-" });
+    if (!dashes.ok) throw new Error("link refused");
+    expect(await match("--")).toBeNull();
+  });
+
+  it("does not offer a Space whose creator is no longer a member, so the room gets its own", async () => {
+    const general = await generalId();
+    expect(await match("general")).toBe(general);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE spaces SET created_by_user_id = '00000000-0000-7000-8000-000000000ec9' WHERE space_id = ?", general,
+      );
+    });
+    expect(await match("general")).toBeNull();
+  });
+
+  it("joins a Space that started matching after the caller's ask, rather than making a second one", async () => {
+    const general = await generalId();
+    // The caller asked while nothing matched and minted the room's own id.
+    const linked = await linkRoom("C1", "00000000-0000-7000-8000-000000000e35", { spaceMatch: "unmatched", name: "general" });
+    expect(linked).toEqual({ ok: true, outcome: "linked", spaceId: general });
+    expect(await spaceIds()).toEqual([]);
+    // Without a match, the room's own id is used.
+    const own = await linkRoom("C2", "00000000-0000-7000-8000-000000000e36", { spaceMatch: "unmatched", name: "launch" });
+    expect(own).toEqual({ ok: true, outcome: "linked", spaceId: "00000000-0000-7000-8000-000000000e36" });
+  });
+
+  it("refuses the link when the matched Space's creator leaves while the link is in flight", async () => {
+    const general = await generalId();
+    const result = await runInDurableObject(workspace(), async (instance) => {
+      const target = instance as unknown as { spaceParentReservation: (spaceId: string) => Promise<unknown> };
+      const original = target.spaceParentReservation.bind(instance);
+      // The creator check has passed by now; the creator leaves before the commit.
+      vi.spyOn(target, "spaceParentReservation").mockImplementation(async (spaceId: string) => {
+        const state = (instance as unknown as { state: DurableObjectState }).state;
+        state.storage.sql.exec("UPDATE workspace_member_status SET relationship_json = NULL WHERE user_id = ?", USER_ID);
+        return original(spaceId);
+      });
+      return instance.linkExternalRoom({
+        workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["C1"], userId: USER_ID, spaceId: general,
+        space: { name: "general" }, spaceMatch: "matched", at: at(),
+      });
+    });
+    expect(result).toEqual({ ok: false, code: "space_not_found" });
+    expect(await bindingRows()).toEqual([]);
+  });
+
+  it("refuses to link a room into a matched Space that was renamed, made private or archived before the link", async () => {
+    const general = await generalId();
+    const edits = [
+      "UPDATE spaces SET title = 'Everyone' WHERE space_id = ?",
+      "UPDATE spaces SET title = 'General', scope = 'personal' WHERE space_id = ?",
+      "UPDATE spaces SET scope = 'workspace', archived_at = 1 WHERE space_id = ?",
+    ];
+    for (const edit of edits) {
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(edit, general);
+      });
+      expect(await linkRoom("C1", general, { spaceMatch: "matched", name: "general" })).toEqual({ ok: false, code: "space_not_found" });
+    }
+    expect(await bindingRows()).toEqual([]);
   });
 });
 
@@ -372,9 +477,7 @@ describe("a thread addressed under a linked room", () => {
   });
 
   it("starts two Channels for two addressed messages in a room without threads, for a sender with no Rally identity", async () => {
-    const linked = await linkRoom("G1", "00000000-0000-7000-8000-000000000e71", {
-      scope: "personal", participantUserIds: [OTHER_USER_ID],
-    });
+    const linked = await linkRoom("G1", "00000000-0000-7000-8000-000000000e71");
     if (!linked.ok) throw new Error("link refused");
     const created: string[] = [];
     for (const messageTs of ["5.0", "6.0"]) {
@@ -410,8 +513,9 @@ describe("a thread addressed under a linked room", () => {
       })).toEqual({ spaceIds: [linked.spaceId] });
     }
     expect(new Set(created).size).toBe(2);
-    // Born in the private room's Space, the Channels are personal, not widened,
-    // and ownerless: the sender has no Rally identity to credit.
+    // Born in the room's Organization-wide Space, the Channels keep the
+    // private room's audience, because a Space grants no reader, and are
+    // ownerless: the sender has no Rally identity to credit.
     const rows = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
       workstream_id: string; scope: string; created_by_user_id: string | null;
     }>(
@@ -423,9 +527,7 @@ describe("a thread addressed under a linked room", () => {
   });
 
   it("re-enters the Channel a failed attempt reserved when the same event is retried", async () => {
-    const linked = await linkRoom("G3", "00000000-0000-7000-8000-000000000e91", {
-      scope: "personal", participantUserIds: [OTHER_USER_ID],
-    });
+    const linked = await linkRoom("G3", "00000000-0000-7000-8000-000000000e91");
     if (!linked.ok) throw new Error("link refused");
     const attempt = () => new SlackWorkspaceWorkstreamService(creationEnv(), WORKSPACE_ID).create({
       actor: {
@@ -471,23 +573,7 @@ describe("a thread addressed under a linked room", () => {
     });
   });
 
-  it("refuses to place a Channel in a private room's Space its member cannot open, and binds nothing", async () => {
-    // The room was linked by another member: this one is not in its Space.
-    const linked = await linkRoom("G2", "00000000-0000-7000-8000-000000000e81", {
-      scope: "personal", userId: OTHER_USER_ID,
-    });
-    if (!linked.ok) throw new Error("link refused");
-    const failure = await createForThread("blocked", asSpaceId(linked.spaceId), ["G2", "1.0"])
-      .then(() => null, (error: unknown) => error);
-    expect(failure).toMatchObject({ status: 404 });
-    expect((await bindingRows()).filter((row) => row.path_json.startsWith("[\"G2\","))).toEqual([]);
-    const general = await workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID });
-    // Nothing fell back to General either.
-    const page = await workspace().listSpaceChannels({
-      workspaceId: WORKSPACE_ID, userId: USER_ID, spaceId: asSpaceId(general.generalSpaceId!), cursor: null,
-    });
-    expect(page.ok && page.page.items.length).toBe(0);
-  });
+
 });
 
 describe("suspending bindings", () => {
@@ -496,25 +582,14 @@ describe("suspending bindings", () => {
       workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["D1", "1.0"],
       target: { kind: "conversation", parentKind: "automation", parentId: SIDEKICK, substreamId: RUN }, at: at(),
     });
-    const effect = {
-      kind: "directory_automation",
-      automationId: SIDEKICK,
-      authorUserId: USER_ID,
-      lifecycle: "deleted",
-      scope: "workspace",
-      owningWorkstreamId: null,
-      title: "Weekly call prep",
-      description: "",
-      nextRunAt: null,
-    } satisfies Extract<ParentEffect, { kind: "directory_automation" }>;
-    await workspace().applyAutomationDirectory({
-      workspaceId: WORKSPACE_ID,
-      envelope: {
-        kind: "parent_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
-        parentKind: "automation", parentId: SIDEKICK, generation: 1, messageId: "deleted-v1",
-        partitionKey: "automation", sourceVersion: 1, requiredProjectionVersion: null,
-        payloadHash: conversationEffectHash(effect), effect,
-      },
+    // Through the product path: a person archives the Sidekick.
+    await workspace().sidekickCreate({
+      workspaceId: WORKSPACE_ID, automationId: SIDEKICK, authorUserId: USER_ID,
+      scope: "personal", owningWorkstreamId: null, authorityGeneration: 1,
+    });
+    await workspace().sidekickRemove({
+      workspaceId: WORKSPACE_ID, automationId: SIDEKICK,
+      actor: { userId: USER_ID, actorRole: "member", participantOfOwningWorkstream: false },
     });
     expect(await resolve(["D1", "1.0"])).toEqual({ outcome: "suspended", path: ["D1", "1.0"], reason: "sidekick_deleted" });
   });
@@ -564,25 +639,9 @@ describe("a lasting suspension during a disconnect", () => {
     await workspace().suspendExternalConversationBindings({
       workspaceId: WORKSPACE_ID, installationId: INSTALLATION, path: ["C1"], reason: "provider_membership_ended", at: at(),
     });
-    const effect = {
-      kind: "directory_automation",
-      automationId: SIDEKICK,
-      authorUserId: USER_ID,
-      lifecycle: "deleted",
-      scope: "workspace",
-      owningWorkstreamId: null,
-      title: "Weekly call prep",
-      description: "",
-      nextRunAt: null,
-    } satisfies Extract<ParentEffect, { kind: "directory_automation" }>;
-    await workspace().applyAutomationDirectory({
-      workspaceId: WORKSPACE_ID,
-      envelope: {
-        kind: "parent_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
-        parentKind: "automation", parentId: SIDEKICK, generation: 1, messageId: "deleted-while-disconnected",
-        partitionKey: "automation", sourceVersion: 1, requiredProjectionVersion: null,
-        payloadHash: conversationEffectHash(effect), effect,
-      },
+    await writeSidekickDirectoryRow(env, {
+      automationId: SIDEKICK, workspaceId: WORKSPACE_ID, authorUserId: USER_ID, lifecycle: "deleted",
+      scope: "workspace", owningWorkstreamId: null, title: "Weekly call prep", description: "",
     });
 
     await workspace().reactivateExternalConversationBindings({

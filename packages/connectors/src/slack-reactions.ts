@@ -3,8 +3,8 @@
  *
  * A reaction on the message that started a run is the only status a member sees
  * without opening the thread, so it is a state indicator rather than a receipt:
- * an acknowledgement while the prompt is admitted, a rotating working reaction
- * while the run is live, and one reaction naming the outcome when it ends. At
+ * an acknowledgement from the moment the prompt is admitted until the run ends,
+ * then one reaction naming the outcome. At
  * most one Avalon reaction sits on a message at a time — the alternative, adding
  * each state beside the last, leaves a row of pills and makes the current state
  * something the reader has to work out.
@@ -27,30 +27,11 @@ export const SlackEmojiNameSchema = z.string().min(1).max(100).regex(/^[a-zA-Z0-
 export interface SlackReactionSet {
   /** Added the moment the prompt is admitted, before any context is gathered. */
   acknowledgement: string;
-  /** Cycled while the run is live. Order is the rotation order. */
-  working: readonly string[];
-  /**
-   * How long each working reaction stays before the next one replaces it.
-   *
-   * The floor is Slack's, not taste. `reactions.add` and `reactions.remove` are
-   * Tier 3 methods — roughly 50 calls a minute, counted per method per workspace
-   * per app — and one rotation step spends one call in each bucket. At six
-   * seconds a single run spends ten of those fifty per minute, which leaves room
-   * for about five concurrent runs in a workspace before Slack starts refusing.
-   * Faster cycling looks better in a demo and stalls in a busy workspace, where
-   * the refusals land on whichever run happens to tick last.
-   */
-  workingIntervalMs: number;
   outcomes: Readonly<Record<SlackReactionOutcome, string>>;
 }
 
 export const SLACK_DEFAULT_REACTIONS: SlackReactionSet = {
   acknowledgement: "eyes",
-  // Deliberately drawn from different categories — thinking, searching,
-  // writing, working — so the rotation reads as a run making progress rather
-  // than one idea flickering.
-  working: ["brain", "mag", "writing_hand", "gear"],
-  workingIntervalMs: 6_000,
   outcomes: {
     completed: "white_check_mark",
     needs_input: "question",
@@ -65,8 +46,10 @@ export const SLACK_DEFAULT_REACTIONS: SlackReactionSet = {
  */
 export const SlackReactionOverrideSchema = z.strictObject({
   acknowledgement: SlackEmojiNameSchema.optional(),
-  working: z.array(SlackEmojiNameSchema).min(1).max(12).optional(),
-  workingIntervalMs: z.number().int().min(3_000).max(60_000).optional(),
+  // Retired with the rotating working reaction. Still accepted and ignored so
+  // an override saved while it existed keeps its other states.
+  working: z.unknown().optional(),
+  workingIntervalMs: z.unknown().optional(),
   outcomes: z.strictObject({
     completed: SlackEmojiNameSchema.optional(),
     needs_input: SlackEmojiNameSchema.optional(),
@@ -92,34 +75,23 @@ export function resolveSlackReactions(...overrides: readonly unknown[]): SlackRe
     if (!parsed.success) continue;
     resolved = {
       acknowledgement: parsed.data.acknowledgement ?? resolved.acknowledgement,
-      working: parsed.data.working ?? resolved.working,
-      workingIntervalMs: parsed.data.workingIntervalMs ?? resolved.workingIntervalMs,
       outcomes: { ...resolved.outcomes, ...stripUndefined(parsed.data.outcomes) },
     };
   }
   return resolved;
 }
 
-/** The working reaction at a rotation cursor, which wraps rather than ending. */
-export function slackWorkingReaction(set: SlackReactionSet, cursor: number): string {
-  const rotation = set.working.length ? set.working : SLACK_DEFAULT_REACTIONS.working;
-  const index = ((cursor % rotation.length) + rotation.length) % rotation.length;
-  return rotation[index]!;
-}
-
 /**
  * The default for a state, used when Slack rejects the configured emoji.
  *
  * Falling back to Avalon's own vocabulary is the point: a workspace that
- * configured an emoji that does not exist should see a working reaction, not
+ * configured an emoji that does not exist should still see a reaction, not
  * discover the feature silently switched itself off.
  */
 export function slackDefaultReactionFor(
-  state: "acknowledgement" | SlackReactionOutcome | "working",
-  cursor = 0,
+  state: "acknowledgement" | SlackReactionOutcome,
 ): string {
   if (state === "acknowledgement") return SLACK_DEFAULT_REACTIONS.acknowledgement;
-  if (state === "working") return slackWorkingReaction(SLACK_DEFAULT_REACTIONS, cursor);
   return SLACK_DEFAULT_REACTIONS.outcomes[state];
 }
 

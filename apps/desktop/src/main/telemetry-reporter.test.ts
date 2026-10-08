@@ -55,6 +55,20 @@ afterEach(async () => {
 });
 
 describe('TelemetryReporter', () => {
+  it('reports the fresh install with its signup flow once and respects opt-out', async () => {
+    const anonymous = { capability: 'a'.repeat(64), journeyId: '018f0000-0000-7000-8000-000000000005', expiresAt: '2026-08-12T21:00:00.000Z' };
+    const { reporter, spool } = await harness({ anonymous });
+    const flowId = '018f0000-0000-7000-8000-000000000006';
+    await reporter.freshInstallOpened(flowId);
+    await reporter.freshInstallOpened(flowId);
+    const rows = await spool.ready(new Date('2026-08-12T20:00:00.000Z'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.event).toMatchObject({ name: 'desktop_install_opened', source: 'desktop-main', category: 'product', identityScope: 'anonymous-epoch', eventId: flowId, properties: { flowId, clientPlatform: 'desktop' } });
+    const disabled = await harness({ anonymous, enabled: false });
+    await disabled.reporter.freshInstallOpened(flowId);
+    expect(await disabled.spool.ready(new Date('2026-08-12T20:00:00.000Z'))).toEqual([]);
+  });
+
   it('spools desktop action diagnostics through the authenticated semantic path and respects opt-out', async () => {
     const intent = {
       kind: 'desktop_action_phase' as const, actionId: '018f22f2-4c22-7abc-8def-0123456789ab',
@@ -106,7 +120,7 @@ describe('TelemetryReporter', () => {
     const { reporter, spool } = await harness({
       auth: { apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', workspace: true, route: 'global' },
     });
-    await reporter.menuBarOpened({ signedIn: true, recentCount: 10, pinnedCount: 2 });
+    await reporter.menuBarOpened({ signedIn: true, recentCount: 5, pinnedCount: 0, attentionCount: 12 });
     await reporter.menuBarActionSelected('open_rally');
     await reporter.commandShortcutsRevealed(9);
     await reporter.commandShortcutUsed(2, 'pinned_workstream');
@@ -120,7 +134,7 @@ describe('TelemetryReporter', () => {
       {
         name: 'menu_bar_opened',
         source: 'desktop-main',
-        properties: { signedIn: true, recentCount: 10, pinnedCount: 2 },
+        properties: { signedIn: true, recentCount: 5, pinnedCount: 0, attentionCount: 12 },
       },
       {
         name: 'menu_bar_action_selected',

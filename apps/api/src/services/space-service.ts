@@ -1,11 +1,11 @@
 import {
-  asAutomationId,
   asSpaceId,
   asUserId,
   asWorkspaceId,
   type ContainerOrder,
   ContainerOrderSchema,
   type CreateSpaceRequest,
+  DEFAULT_WORKSTREAM_ICON_KEY,
   MoveChannelBetweenSpacesResultSchema,
   type SpaceChannelPage,
   SpaceChannelPageSchema,
@@ -21,35 +21,32 @@ import {
   type WorkstreamId,
 } from "@rally/contracts";
 
-import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDefaultResultSchema,
   WorkspaceContainerOrderResultSchema,
   WorkspacePinnedOrderResultSchema,
   WorkspaceSpaceGeneralOpenResultSchema,
-  WorkspaceSpaceMembersResultSchema,
   WorkspaceSpaceMembershipMoveOutcomeSchema,
   WorkspaceSpaceMutationResultSchema,
   WorkspaceSpaceReserveResultSchema,
   WorkspaceSpaceChannelChangeResultSchema,
   WorkspaceSpaceIntentResumeResultSchema,
-  WorkspaceSpaceMemberWalkResultSchema,
   type SpaceActorAuth,
   type ParsedSpaceChannelRefusal,
-  type SpaceMemberWalkKind,
   type WorkspaceSpaceChannelChangeResult,
-  type SpaceMember,
-  type MemberWalkReach,
   type WorkspaceSpaceMutationResult,
 } from "../durable-objects/workspace-space-protocol";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
-import { diagnosticErrorCode, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { spaceAccessError } from "./channel-access-service";
+import { pendingInvitees } from "./workspace-service";
 import { ResourceService } from "./resource-service";
+import { chooseSpaceIcon } from "./workstream-naming-service";
 import { claimParentAnchor } from "./workstream-runtime-database";
 
 /**
@@ -165,16 +162,10 @@ export type SpaceIntentResumeOutcome =
 /**
  * The regional facade over the Organization's Space authority.
  *
- * Two authorities have to agree for a Space to mean anything, and this is
- * where they are ordered: WorkspaceDO owns what the Space *is* — its name,
- * appearance, scope, participants and defaults — and the relationship, staging
- * every operation behind a fence; each member Channel owns its own audience.
- *
- * Nothing here writes a Channel's audience itself. A membership, an audience
- * change, an archive, a restore and every resume are driven by WorkspaceDO
- * (`SpaceChannelAccess`), which applies the delta through the Channel's
- * canonical scope and participant operations so the retained-content
- * containment preflight and its SQL triggers stay the only fence.
+ * WorkspaceDO owns what the Space *is* (its name, appearance, participants and
+ * defaults) and which Channels it holds; each Channel owns its own audience.
+ * A Space grants no reader, so nothing here or in WorkspaceDO writes a
+ * Channel's audience, and every Space change is one WorkspaceDO transaction.
  */
 export class SpaceService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
@@ -268,8 +259,15 @@ export class SpaceService {
    * Space is listed. WorkspaceDO then writes the Space and its hosted parent in
    * one transaction, and that is the whole Space: nothing outside WorkspaceDO
    * holds any of it.
+   *
+   * A request with no icon is reserved under the catalog's neutral mark and
+   * handed to {@link chooseIcon}, off the caller's clock when `defer` is given.
    */
-  async create(input: CreateSpaceRequest, spaceId?: SpaceId): Promise<SpaceSummary> {
+  async create(
+    input: CreateSpaceRequest,
+    spaceId?: SpaceId,
+    defer?: (work: Promise<void>) => void,
+  ): Promise<SpaceSummary> {
     const workspace = await this.workspace();
     const actor = { workspaceId: asWorkspaceId(this.auth.workspaceId), userId: asUserId(this.auth.userId) };
     const admitted = await workspace.admitSpaceCreation(actor);
@@ -279,16 +277,57 @@ export class SpaceService {
       claimParentAnchor(this.env, this.auth.workspaceId, id, "space"));
     const reservation = WorkspaceSpaceReserveResultSchema.parse(await workspace.reserveSpace({
       ...actor,
-      space: input,
+      space: { ...input, iconKey: input.iconKey ?? DEFAULT_WORKSTREAM_ICON_KEY },
       spaceId: id,
     }));
     if (!reservation.ok) throw spaceRefusal(reservation.code, input.name, reservation.unreachableUserIds, reservation.blockedWorkstreamIds);
     const reserved = reservation.space;
+    // A replay that let Rally choose the icon cannot compare it: the first
+    // attempt's pass may already have written one.
     if (spaceId && (reserved.name !== input.name.trim() || reserved.scope !== input.scope
-      || reserved.iconKey !== input.iconKey || reserved.colorKey !== input.colorKey || reserved.reach === "through_channel")) {
+      || (input.iconKey !== undefined && reserved.iconKey !== input.iconKey)
+      || reserved.colorKey !== input.colorKey || reserved.reach === "through_channel")) {
       throw new ApiError(409, "space_revision_conflict", "The creation identity already names a different Space");
     }
+    if (input.iconKey === undefined && reservation.created) {
+      const choosing = this.chooseIcon(reserved);
+      if (defer) defer(choosing); else await choosing;
+    }
     return reserved;
+  }
+
+  /**
+   * Give a Space created without an icon one chosen from its name. Never
+   * rejects; see `docs/spaces.md#the-icon-rally-chooses`.
+   */
+  private async chooseIcon(space: SpaceSummary): Promise<void> {
+    const fields = { workspace_id: this.auth.workspaceId, space_id: space.id };
+    try {
+      const iconKey = await chooseSpaceIcon(this.env, {
+        workspaceId: this.auth.workspaceId,
+        spaceId: space.id,
+        name: space.name,
+        userId: this.auth.userId,
+      });
+      if (iconKey === null || iconKey === space.iconKey) return;
+      const result = await (await this.workspace()).noteSpacePresentation({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: asUserId(this.auth.userId),
+        spaceId: space.id,
+        presentation: { name: space.name, iconKey, colorKey: space.colorKey },
+        ifRevision: space.revision,
+      });
+      logInfo(this.env, "space_icon_chosen", {
+        ...fields,
+        icon: iconKey,
+        outcome: result.ok ? "written" : result.code,
+      });
+    } catch (error) {
+      logWarn(this.env, "space_icon_failed", {
+        ...fields,
+        error_code: diagnosticErrorCode(error, "space_icon_write_failed"),
+      });
+    }
   }
 
   /**
@@ -336,64 +375,56 @@ export class SpaceService {
   }
 
   /**
-   * Change who a Space is for, and carry that to every Channel it reaches.
+   * Change a Space's participants: one WorkspaceDO write.
    *
-   * Three things in order, and the order is the whole design. Every member
-   * Channel is asked first whether it *could* take the wider audience, because
-   * widening cannot be undone — somebody may have read — and discovering a
-   * retained-content fence on the fourth Channel after three are already wider
-   * is not a failure anybody can recover from. Then WorkspaceDO accepts the
-   * change, which advances the revision every staged membership is fenced on.
-   * Only then does each member Channel converge.
-   *
-   * Convergence is retract-then-apply rather than a second application.
-   * `audienceSourceApplicationPlan` only ever widens and seats — by
-   * construction, because a source that could narrow would be able to revoke
-   * access another source still supplies — so re-applying a shrunken roster
-   * would leave the readers it no longer names seated, with nothing accounting
-   * for them. Withdrawing the source first is what takes them out, and the
-   * retraction plan seats every surviving reader before it narrows anything.
+   * Every Space is Organization-wide, so the request only names its
+   * participants, and a Space grants no reader to its Channels: there is
+   * nothing to preflight and no member Channel to reach.
    */
   async updateAudience(spaceId: SpaceId, input: UpdateSpaceAudienceRequest): Promise<SpaceSummary> {
     const current = await this.editable(spaceId);
     const currentParticipants = new Set<string>(current.participants.map((participant) => participant.userId));
     const requested = new Set<string>(input.participantUserIds);
     const removed = [...currentParticipants].filter((userId) => !requested.has(userId));
-    if (removed.some((userId) => userId !== this.auth.userId)
-      && this.auth.role !== "owner" && this.auth.role !== "admin") {
+    const administrator = this.auth.role === "owner" || this.auth.role === "admin";
+    if (removed.some((userId) => userId !== this.auth.userId) && !administrator) {
       throw new ApiError(403, "participant_removal_denied",
         "Only an Organization owner or admin can remove another Space participant");
     }
-    // A person cannot narrow themselves out of a Space. `personal` admits its
-    // participants and nobody else, so this request would leave its own caller
-    // holding a Space they can no longer edit, and — unless a Channel in it is
-    // one they can read — no longer see. There is no undo: the Space's own
-    // authority accepts, the walk carries it to every member Channel, and the
-    // one person who would ask for it back is the one who cannot. Removing
-    // somebody else is the rule above, and stays theirs to make.
-    if (input.scope === "personal" && !requested.has(this.auth.userId)) {
-      throw spaceRefusal("space_audience_self_excluded", current.name);
+    if (input.inviteeEmails !== undefined) {
+      // An invitee is a participant who has not joined, under the same rule:
+      // anybody may add one, and only an administrator takes one out.
+      const pending = new Set((await pendingInvitees(this.env.DB, this.auth.workspaceId)).map((invitee) => invitee.email));
+      const unknown = input.inviteeEmails.filter((email) => !pending.has(email));
+      if (unknown.length > 0) {
+        throw new ApiError(422, "space_invitee_not_invited",
+          "Only people with a pending invitation to the organization can be added by address");
+      }
+      if (!administrator) {
+        const requestedInvitees = new Set(input.inviteeEmails);
+        if ((await this.invitees(spaceId)).some((email) => !requestedInvitees.has(email))) {
+          throw new ApiError(403, "participant_removal_denied",
+            "Only an Organization owner or admin can remove another Space participant");
+        }
+      }
     }
-    if (current.systemRole === "general" && input.scope === "personal") {
-      throw spaceRefusal("space_protected", current.name);
-    }
-    await this.preflightContainment(spaceId, input);
-
-    const operationId = uuidV7();
-    const updated = this.settled(await (await this.workspace()).noteSpaceAudience({
+    return this.settled(await (await this.workspace()).noteSpaceAudience({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
-      operationId,
       audience: input,
     }), current.name);
+  }
 
-    // Each member Channel converges by retract-then-apply in WorkspaceDO. The
-    // walk abandons if a later audience change overtakes it, because that
-    // change walks every member itself.
-    return this.walkMembers({
-      spaceId, operationId, kind: "audience", cursor: null, expectedSpaceRevision: updated.revision,
+  /** The addresses of Organization invitees a Space lists, to whoever may edit it. */
+  async invitees(spaceId: SpaceId): Promise<string[]> {
+    const result = await (await this.workspace()).listSpaceInvitees({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      spaceId,
     });
+    if (!result.ok) throw spaceRefusal(result.code, "");
+    return result.emails;
   }
 
   /**
@@ -458,54 +489,22 @@ export class SpaceService {
     return MoveChannelBetweenSpacesResultSchema.parse({ source, target });
   }
 
-  /**
-   * Archive a Space once no member Channel would be stranded by it.
-   *
-   * The fan-out asks for the Channels this Space still *reaches* rather than
-   * its active members, because `prepareSpaceArchive` is what takes them out of
-   * the active set: it flips every membership to `removing` before the first
-   * Channel is asked to withdraw anything. Reading the active set here would
-   * retract from nothing and leave this Space's access source live on every
-   * Channel it had, which is access nothing accounts for any more.
-   */
+  /** Archive a Space once no live member Channel would be stranded by it: one WorkspaceDO write. */
   async archive(spaceId: SpaceId): Promise<SpaceSummary> {
-    const workspace = await this.workspace();
-    // One id, minted here and carried to both halves. The settlement has to
-    // name the intent the preflight staged, and deriving it from the Space
-    // revision — which the archive itself advances — made the two halves agree
-    // by arithmetic over writes in two objects rather than by saying so.
-    const operationId = uuidV7();
-    this.settled(await workspace.prepareSpaceArchive({
+    return this.settled(await (await this.workspace()).archiveSpace({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
-      operationId,
     }), "");
-    // The last page of the walk finalizes the archive and answers with it.
-    return this.walkMembers({ spaceId, operationId, kind: "archive", cursor: null, expectedSpaceRevision: null });
   }
 
-  /**
-   * Bring an archived Space back, and with it the access it used to supply.
-   *
-   * Its memberships return first — the archive is what took them out — and then
-   * each Channel has this Space's source applied again. Re-applying rather than
-   * assuming, because the Channel's own audience has moved on in the meantime
-   * and the plan is a delta against what it is now.
-   */
+  /** Bring an archived Space back with the memberships its archive took out: one WorkspaceDO write. */
   async restore(spaceId: SpaceId): Promise<SpaceSummary> {
-    // One id, minted here and carried to both halves, exactly as an archive's
-    // is: the restore stages an intent and the walk below settles it.
-    const operationId = uuidV7();
-    this.settled(await (await this.workspace()).restoreSpace({
+    return this.settled(await (await this.workspace()).restoreSpace({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
-      operationId,
     }), "");
-    // Each membership the restore put back is re-applied at the generation the
-    // restore advanced it to, read in WorkspaceDO as the walk reaches it.
-    return this.walkMembers({ spaceId, operationId, kind: "restore", cursor: null, expectedSpaceRevision: null });
   }
 
   /**
@@ -525,15 +524,24 @@ export class SpaceService {
     if (kind === "resource") {
       await new ResourceService(this.env, this.auth).getAttachable(targetId);
       await this.assertResourceAudience(space, targetId);
-    } else {
-      await this.assertSidekickScope(targetId);
     }
+    // A Sidekick default must be an Organization Sidekick: a personal one
+    // would be offered in every member Channel and runnable by nobody but its
+    // author. The write checks that from the directory in the same call.
     const result = WorkspaceSpaceDefaultResultSchema.parse(await (await this.workspace()).addSpaceDefault({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
       spaceId,
       kind,
       targetId,
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message === "sidekick_not_found") {
+        throw new ApiError(404, "sidekick_not_found", "Sidekick not found");
+      }
+      if (error instanceof Error && error.message === "sidekick_attachment_scope_invalid") {
+        throw new ApiError(422, "sidekick_attachment_scope_invalid", "Choose an Organization Sidekick");
+      }
+      throw error;
     }));
     if (!result.ok) {
       throw spaceRefusal(result.code, space.name, result.unreachableUserIds, result.blockedWorkstreamIds);
@@ -561,76 +569,11 @@ export class SpaceService {
   }
 
   /**
-   * One page of the Channels the Space holds, archived ones included.
-   *
-   * `reach` is the difference between the Channels a surface would call members
-   * and the Channels this Space's access source is still on. A retraction
-   * fan-out runs *after* the prepare that staged it, and a prepare is what
-   * flips a membership out of `active` — so an archive that asked for the
-   * default set would walk nothing.
-   */
-  async memberPage(
-    spaceId: SpaceId,
-    reach: MemberWalkReach = "active",
-    cursor: string | null = null,
-  ): Promise<{ members: SpaceMember[]; nextCursor: string | null }> {
-    const result = WorkspaceSpaceMembersResultSchema.parse(await (await this.workspace()).listSpaceMembers({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId: asUserId(this.auth.userId),
-      spaceId,
-      reach,
-      cursor,
-    }));
-    if (!result.ok) throw spaceRefusal(result.code, "");
-    return { members: result.members, nextCursor: result.nextCursor };
-  }
-
-  /**
-   * Carry one staged operation to every member Channel, a page at a time.
-   *
-   * The one walk an audience change, an archive and a restore all take, and
-   * the one their resume takes. Each page is one WorkspaceDO call: it changes
-   * every member Channel's source there, through the Channel's own
-   * conversation, and writes the cursor the page ended at onto the intent
-   * before it answers. A Space past one invocation's budget fails part way,
-   * the intent stays unsettled with its cursor, and the resume continues from
-   * that page. The last page settles the intent (an archive is finalized) and
-   * answers with the Space.
-   */
-  private async walkMembers(input: {
-    spaceId: SpaceId;
-    operationId: string;
-    kind: SpaceMemberWalkKind;
-    cursor: string | null;
-    expectedSpaceRevision: number | null;
-  }): Promise<SpaceSummary> {
-    const workspace = await this.workspace();
-    let cursor = input.cursor;
-    for (;;) {
-      const page = WorkspaceSpaceMemberWalkResultSchema.parse(await workspace.walkSpaceMembers({
-        auth: this.actor(),
-        spaceId: input.spaceId,
-        operationId: input.operationId,
-        kind: input.kind,
-        cursor,
-        expectedSpaceRevision: input.expectedSpaceRevision,
-      }));
-      if (!page.ok) throw channelChangeRefusal(page.refusal);
-      if (page.outcome !== "page") return page.space;
-      cursor = page.cursor;
-    }
-  }
-
-  /**
    * Finish a staged operation whose request never came back, for a
    * `space_intent_resume` message already on the Queue.
    *
-   * WorkspaceDO resumes the intent from its row, as this person, one step per
-   * call (`SpaceChannelAccess.resume`); this calls it until the intent is no
-   * longer progressing. Every way of giving up is named to the caller rather
-   * than swallowed here, because the consumer is what writes the log line and
-   * an intent that settled without doing its work is the thing nobody would
-   * otherwise notice.
+   * Only intents staged before migration 94 exist; WorkspaceDO finishes each
+   * in one transaction (`resumeLegacyIntent`).
    */
   async resumeIntent(operationId: string): Promise<SpaceIntentResumeOutcome> {
     const workspace = await this.workspace();
@@ -642,75 +585,6 @@ export class SpaceService {
       if (!resumed.ok) throw channelChangeRefusal(resumed.refusal);
       if (resumed.outcome === "abandoned") return { outcome: "abandoned", reason: resumed.reason };
       if (resumed.outcome === "settled") return { outcome: "settled" };
-    }
-  }
-
-  /**
-   * Ask every member Channel whether the proposed audience still contains its
-   * retained content, before any of them is changed.
-   *
-   * An early-out rather than the fence. The fence is the canonical scope and
-   * participant operations, which run the same predicate inside the transaction
-   * that changes the audience; this exists because those operations run one
-   * Channel at a time and the first failure would leave the earlier Channels
-   * already wider.
-   *
-   * It reads pages but carries no cursor, and that is not the oversight it
-   * looks like. There is no intent yet — this runs in front of the write that
-   * stages one — and there is nothing to resume: the pass writes nothing, so a
-   * failure part way through refuses the request and the next attempt asks
-   * every Channel again.
-   */
-  private async preflightContainment(
-    spaceId: SpaceId,
-    audience: UpdateSpaceAudienceRequest,
-  ): Promise<void> {
-    const proposed = audience.scope === "workspace"
-      ? { scope: "workspace" as const }
-      : { scope: "personal" as const, userIds: [...audience.participantUserIds] };
-    let cursor: string | null = null;
-    do {
-      const page = await this.memberPage(spaceId, "active", cursor);
-      for (const { workstreamId } of page.members) {
-        // Tri-state: `true` admits, `false` is the content fence, and `null` is
-        // the object saying it is not that Channel's main conversation — so the
-        // question was never asked. Only `true` may pass, which is the reading
-        // `SpaceBootstrapService.admit` has always taken; treating `null` as
-        // consent let a Channel nobody could ask be widened on the strength of
-        // a non-answer.
-        // A throw is the same answer as a `null` and gets the same name: the
-        // question was never asked. Reported rather than propagated raw,
-        // because a rejection that crosses the RPC hop has no code on it and
-        // reached the route as `internal_error`.
-        const contains = await this.askContainment(workstreamId, proposed);
-        if (contains !== true) {
-          throw spaceRefusal(
-            contains === false ? "space_membership_content_fence" : "space_conversation_unreachable",
-            "",
-          );
-        }
-      }
-      cursor = page.nextCursor;
-    } while (cursor !== null);
-  }
-
-  private async askContainment(
-    workstreamId: WorkstreamId,
-    audience: { scope: "workspace" } | { scope: "personal"; userIds: string[] },
-  ): Promise<boolean | null> {
-    try {
-      return await (await this.conversationStub(workstreamId)).previewAudienceContainment({
-        workspaceId: asWorkspaceId(this.auth.workspaceId),
-        workstreamId,
-        audience,
-      });
-    } catch (error) {
-      logWarn(this.env, "space_conversation_unreachable", {
-        workspace_id: this.auth.workspaceId,
-        workstream_id: workstreamId,
-        reason: diagnosticErrorCode(error, "space_conversation_unreachable"),
-      });
-      return null;
     }
   }
 
@@ -731,32 +605,6 @@ export class SpaceService {
         if (!(error instanceof ApiError) || error.status !== 404) throw error;
         throw spaceRefusal("space_default_audience_mismatch", space.name);
       }
-    }
-  }
-
-  /**
-   * A Space hands down Organization Sidekicks only.
-   *
-   * The same eligibility `WorkstreamService.setSidekickRecommendation` asks
-   * for: a personal Sidekick recommended to a Space would be offered in every
-   * member Channel and runnable by nobody but its author.
-   */
-  private async assertSidekickScope(sidekickId: string): Promise<void> {
-    const source = await durableObjectStubForWorkspace(
-      this.env, this.env.AUTOMATION_DOS, this.auth.workspaceId,
-      automationDOName(
-        this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId), asAutomationId(sidekickId),
-      ),
-    );
-    const sidekick = await source.readAuthorizationFacts({
-      workspaceId: this.auth.workspaceId,
-      parentId: sidekickId,
-      userId: this.auth.userId,
-      substreamIds: [],
-    });
-    if (!sidekick.exists) throw new ApiError(404, "sidekick_not_found", "Sidekick not found");
-    if (sidekick.scope !== "workspace") {
-      throw new ApiError(422, "sidekick_attachment_scope_invalid", "Choose an Organization Sidekick");
     }
   }
 

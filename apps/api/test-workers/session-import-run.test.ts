@@ -22,7 +22,7 @@ import { conversationObjectName, workspaceDOName } from "../src/durable-objects/
 import { prepareSessionImport } from "../src/services/session-import-files";
 import { SessionImportRunService } from "../src/services/session-import-run-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
-import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { useOpenRouterDouble, type ProviderCall } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -80,7 +80,7 @@ beforeEach(async () => {
   // The regional rows creation writes around the object calls, as in
   // `conversation-creation.test.ts`; columns follow packages/db/migrations.
   await env.DB.batch([
-    env.DB.prepare(LINK_PAYLOADS_TABLE),
+    ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare(`CREATE TABLE workstream_create_receipts (
       workspace_id TEXT NOT NULL, creator_user_id TEXT NOT NULL, client_message_id TEXT NOT NULL,
       workstream_id TEXT NOT NULL, generation INTEGER NOT NULL, request_hash TEXT NOT NULL,
@@ -110,10 +110,14 @@ beforeEach(async () => {
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
 }, 30_000);
 
-async function personalSpace(): Promise<SpaceId> {
+/**
+ * A Space to import into. Organization-wide, as every Space is, and granting
+ * no reader: the imported Channel stays its creator's.
+ */
+async function importSpace(): Promise<SpaceId> {
   const reserved = await workspace().reserveSpace({
     workspaceId: WORKSPACE_ID, userId: USER_ID,
-    space: { name: "Private", iconKey: "briefcase", colorKey: "blue", scope: "personal" },
+    space: { name: "Imports", iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
   });
   if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
   return asSpaceId(reserved.space.id);
@@ -168,7 +172,7 @@ describe("a conversation import run", () => {
     (env as { TOOL_DEFAULT_TIMEOUT_MS?: string }).TOOL_DEFAULT_TIMEOUT_MS = "1000";
     const service = new SessionImportRunService(creationEnv(), AUTH);
     const clientMessageId = crypto.randomUUID();
-    const spaceIds = [await personalSpace()];
+    const spaceIds = [await importSpace()];
     const run = await service.start({ sourceUrl: SOURCE_URL, title: "Slow save", spaceIds, clientMessageId });
     const admission = await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: run.workstreamId,
       userId: USER_ID, substreamId: asSubstreamId(run.substreamId) });
@@ -272,7 +276,7 @@ describe("a conversation import run", () => {
   });
 
   it("reads the page through the desktop and opens the Channel with what it read", async () => {
-    const spaceId = await personalSpace();
+    const spaceId = await importSpace();
     const clientMessageId = crypto.randomUUID();
     const service = new SessionImportRunService(creationEnv(), AUTH);
     const run = await service.start({ sourceUrl: SOURCE_URL, title: "Garden irrigation", spaceIds: [spaceId], clientMessageId });
@@ -334,7 +338,7 @@ describe("a conversation import run", () => {
   }, 60_000);
 
   it("keeps a desktop's answer for the tool when the object loses the waiting call", async () => {
-    const spaceId = await personalSpace();
+    const spaceId = await importSpace();
     const service = new SessionImportRunService(creationEnv(), AUTH);
     const run = await service.start({ sourceUrl: SOURCE_URL, title: "Evicted", spaceIds: [spaceId], clientMessageId: crypto.randomUUID() });
     const agent = child(run.workstreamId, run.substreamId);
@@ -356,7 +360,7 @@ describe("a conversation import run", () => {
   }, 60_000);
 
   it("admits only the person the import is for to its hidden conversation", async () => {
-    const spaceId = await personalSpace();
+    const spaceId = await importSpace();
     const run = await new SessionImportRunService(creationEnv(), AUTH)
       .start({ sourceUrl: SOURCE_URL, title: "Refused", spaceIds: [spaceId], clientMessageId: crypto.randomUUID() });
     const other = asUserId(crypto.randomUUID());
@@ -367,7 +371,7 @@ describe("a conversation import run", () => {
   });
 
   it("refuses to discard any conversation but the caller's own import, and leaves its agent running", async () => {
-    const spaceId = await personalSpace();
+    const spaceId = await importSpace();
     const run = await new SessionImportRunService(creationEnv(), AUTH)
       .start({ sourceUrl: SOURCE_URL, title: "Kept", spaceIds: [spaceId], clientMessageId: crypto.randomUUID() });
     const stopRequested = () => runInDurableObject(child(run.workstreamId, run.substreamId), (_instance, state) =>
@@ -383,7 +387,7 @@ describe("a conversation import run", () => {
   }, 60_000);
 
   it("archives a new Channel its run ended without opening, with no discard from the desktop", async () => {
-    const spaceId = await personalSpace();
+    const spaceId = await importSpace();
     const clientMessageId = crypto.randomUUID();
     const service = new SessionImportRunService(creationEnv(), AUTH);
     const run = await service.start({ sourceUrl: SOURCE_URL, title: "Closed window", spaceIds: [spaceId], clientMessageId });
@@ -410,7 +414,7 @@ describe("a conversation import run", () => {
   }, 60_000);
 
   it("admits one run for two starts of the same import at once", async () => {
-    const spaceId = await personalSpace();
+    const spaceId = await importSpace();
     const clientMessageId = crypto.randomUUID();
     const input = { sourceUrl: SOURCE_URL, title: "Twice", spaceIds: [spaceId], clientMessageId };
     const [first, second] = await Promise.all([
@@ -423,7 +427,7 @@ describe("a conversation import run", () => {
   }, 60_000);
 
   it("refuses to discard a Channel a completing import has claimed", async () => {
-    const spaceId = await personalSpace();
+    const spaceId = await importSpace();
     const clientMessageId = crypto.randomUUID();
     const service = new SessionImportRunService(creationEnv(), AUTH);
     const run = await service.start({ sourceUrl: SOURCE_URL, title: "Opening", spaceIds: [spaceId], clientMessageId });
@@ -438,7 +442,7 @@ describe("a conversation import run", () => {
   }, 60_000);
 
   it("discarding a Channel that never opened archives it and retires its create key", async () => {
-    const spaceId = await personalSpace();
+    const spaceId = await importSpace();
     const clientMessageId = crypto.randomUUID();
     const service = new SessionImportRunService(creationEnv(), AUTH);
     const run = await service.start({ sourceUrl: SOURCE_URL, title: "Abandoned", spaceIds: [spaceId], clientMessageId });

@@ -28,7 +28,6 @@ import { __integrationTesting, runWorkstreamHarness } from "../src/services/inte
 import { encryptString } from "../src/lib/crypto";
 import { readWorkspaceRelationship } from "../src/services/workspace-relationship-service";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
-import { AutomationService } from "../src/services/automation-service";
 import { consumeAccessRevocationQueue } from "../src/queues/access-revocation-consumer";
 import {
   evictDurableObject,
@@ -41,7 +40,7 @@ import {
 } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { consumeEffectBodies, deliverChildEffects, deliverParentEffectsInOrder, deliverEffectsToWorkspaceInOrder } from "./helpers/conversation-effects";
+import { consumeEffectBodies, deliverChildEffects, deliverEffectsToWorkspaceInOrder } from "./helpers/conversation-effects";
 
 import {
   AutomationDraftSchema,
@@ -71,7 +70,6 @@ import {
 import { createCloudflareTestBinding } from "../test/helpers/cloudflare-test";
 import {
   artifactHostDOName,
-  automationDOName,
   conversationObjectName,
   substreamLoopId,
   workspaceDOName,
@@ -91,7 +89,7 @@ import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-t
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
 import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
 import { BOUND_PARAMETER_ID_CHUNK } from "../src/durable-objects/bound-parameters";
-import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 import {
   seedCanonicalMessageRecord,
@@ -141,6 +139,7 @@ const INTERLEAVED_TOOLS_MODEL = "pipeline-b12/primary";
 const QUEUED_FOLLOW_UP_MODEL = "pipeline-queued/primary";
 const RETRY_AFTER_ASSISTANT_TURN_MODEL = "pipeline-retry-fence/primary";
 const ASIDE_MODEL = "pipeline-aside/primary";
+const PERSONAL_PROMPT_MODEL = "pipeline-personal-prompt/primary";
 const ASIDE_WINDOW_MODEL = "pipeline-aside-window/primary";
 const ASIDE_ELICITATION_MODEL = "pipeline-aside-elicitation/primary";
 const ASIDE_BACKLOG_MODEL = "pipeline-aside-backlog/primary";
@@ -212,7 +211,7 @@ beforeEach(async () => {
   await reset();
   await ensureAuditSchema();
   await env.DB.batch([
-    env.DB.prepare(LINK_PAYLOADS_TABLE),
+    ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
       required_serving_contract_version INTEGER NOT NULL,
@@ -236,7 +235,8 @@ beforeEach(async () => {
       VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`).bind(WORKSPACE_ID, OTHER_USER_ID),
     env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
@@ -299,6 +299,7 @@ async function initializeWorkstream(
   openingMessage: string,
   modelOverride: string | null = null,
   participantUserIds: readonly string[] = [],
+  reason = "user_message",
 ): Promise<{
   status: number;
   body: Record<string, unknown>;
@@ -322,7 +323,7 @@ async function initializeWorkstream(
       attachmentIds: [],
       modelOverride,
       executionPrincipal: { type: "user", userId: USER_ID },
-      reason: "user_message",
+      reason,
     },
   });
 }
@@ -1897,6 +1898,63 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
+  it("renders a saved personal system prompt from the conversation's copy, a turn after it is saved", async () => {
+    const stub = agentStub();
+    const instructions = "Answer in French, and keep every reply under fifty words.";
+    const systemMessages = (requests: Awaited<ReturnType<typeof capturedProviderRequests>>) => requests
+      .filter((request) => request.url === "https://openrouter.ai/api/v1/chat/completions")
+      .map((request) => JSON.stringify((request.body.messages as Array<{ role?: unknown; content?: unknown }>)
+        .filter((message) => message.role === "system")));
+    try {
+      await env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID)).savePersonalSystemPrompt({
+        workspaceId: WORKSPACE_ID,
+        userId: USER_ID,
+        personalSystemPrompt: instructions,
+      });
+      await installScriptedProvider(stub, [
+        [{ choices: [{ delta: { content: "first answer" }, finish_reason: "stop" }] }],
+        [{ choices: [{ delta: { content: "second answer" }, finish_reason: "stop" }] }],
+      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [] });
+      const opened = await initializeWorkstream(stub, "first message", PERSONAL_PROMPT_MODEL, [], "opening_message");
+      await externallySettledRun(stub, opened.body.harnessRunId as string);
+      await waitForLoopRelease(stub);
+
+      // The first turn never waits on WorkspaceDO, so it ran on an empty copy
+      // and refreshed the copy behind itself.
+      expect(systemMessages(await capturedProviderRequests(stub))).toEqual([
+        expect.not.stringContaining(instructions),
+      ]);
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ text: string }>(
+          `SELECT text FROM personal_system_prompt_copies WHERE user_id = ?`,
+          USER_ID,
+        ).toArray()[0]?.text ?? null), {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "the first turn never refreshed the conversation's copy",
+      }).toBe(instructions);
+
+      const followUp = await product(stub, {
+        operation: "create_message",
+        auth: AUTH,
+        input: {
+          text: "second message",
+          clientMessageId: "pipeline-personal-prompt-1",
+          mentions: [],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+        },
+      });
+      expect(followUp.status).toBe(200);
+      await settledRunForTrigger(stub, (followUp.body.turn as { turnId: string }).turnId);
+
+      const [, second] = systemMessages(await capturedProviderRequests(stub));
+      expect(second).toContain(`<personal_system_prompt>\\n${instructions}\\n</personal_system_prompt>`);
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
   it("lands an aside sent behind a queued question under that question, without a run", async () => {
     // The production report: one person asks Rally for something while a run
     // is going, so it queues; a second person answers the first ("sounds good")
@@ -3084,10 +3142,11 @@ describe("a member's message travels the whole pipeline", () => {
       expect(resourceDecisions[2]).toMatchObject({ status:"allowed" });
       const makeSidekick = async (scope: "workspace" | "workstream" | "personal",owningWorkstreamId: string | null = null) => {
         const automationId = asAutomationId(crypto.randomUUID());
-        const sidekick = env.AUTOMATION_DOS.getByName(automationDOName("global",WORKSPACE_ID,automationId));
-        await sidekick.create({ workspaceId:WORKSPACE_ID,automationId,authorUserId:OTHER_USER_ID,
+        // Every Sidekick's parent is hosted by the Organization object.
+        const sidekick = workspace;
+        await sidekick.sidekickCreate({ workspaceId:WORKSPACE_ID,automationId,authorUserId:OTHER_USER_ID,
           scope,owningWorkstreamId,authorityGeneration:1 });
-        await sidekick.saveDefinition({ workspaceId:WORKSPACE_ID,automationId,
+        await sidekick.sidekickSaveDefinition({ workspaceId:WORKSPACE_ID,automationId,
           actor:{ userId:OTHER_USER_ID,actorRole:"member",participantOfOwningWorkstream:true },
           submittedByRunId:null,evaluatorRules:null,
           draft:AutomationDraftSchema.parse({ definitionVersion:2,name:`${scope} helper`,description:"Shared instructions",
@@ -3095,7 +3154,6 @@ describe("a member's message travels the whole pipeline", () => {
             expectedOutputs:[],defaultBehavior:{},recommendedPlugins:[],memoryTables:[],suggestedScope:scope,
             followUpQuestion:null,elicitation:null,ready:true }),
         });
-        await deliverParentEffectsInOrder(TEST_ENV,sidekick);
         return { automationId,sidekick };
       };
       const ownedSidekick = await makeSidekick("workstream",WORKSTREAM_ID);
@@ -3163,7 +3221,7 @@ describe("a member's message travels the whole pipeline", () => {
       expect(sources.every((source) => source.instructions === "Use short sentences.")).toBe(true);
       const freshSources = await resolveSidekickSkills(TEST_ENV,guestExecution,true);
       expect(freshSources.map((source) => source.id).sort()).toEqual([ownedSidekick.automationId,recommendedSidekick.automationId].sort());
-      await recommendedSidekick.sidekick.pause({ workspaceId:WORKSPACE_ID,automationId:recommendedSidekick.automationId,
+      await recommendedSidekick.sidekick.sidekickPause({ workspaceId:WORKSPACE_ID,automationId:recommendedSidekick.automationId,
         actor:{ userId:OTHER_USER_ID,actorRole:"member",participantOfOwningWorkstream:false } });
       const pausedRecommendations = await app.request(`${path}/recommended-sidekicks`,{ headers },apiEnv);
       expect(await pausedRecommendations.json()).toMatchObject({ items:expect.arrayContaining([{ id:recommendedSidekick.automationId,
@@ -3256,8 +3314,9 @@ describe("a member's message travels the whole pipeline", () => {
           actorUserId: OTHER_USER_ID, userId: USER_ID, target: parentTarget, active: true, expectedRevision: 0 }, "existing-member"))
           .toMatchObject({ status: "committed" });
       });
-      const ownedManagement = new AutomationService(TEST_ENV, { ...AUTH,role:null });
-      expect((await ownedManagement.actorRequest(ownedSidekick.automationId)).actor.participantOfOwningWorkstream).toBe(true);
+      // Whether the grant makes them one of the home's people is the
+      // Organization object's to decide, from its own rows; the request below
+      // is how that shows.
       const changedAppearance = await changeSidekickAppearance("blue");
       expect(changedAppearance.status, await changedAppearance.clone().text()).toBe(200);
       expect(await changedAppearance.json()).toMatchObject({ appearance: { color: "blue" } });
@@ -3332,13 +3391,12 @@ describe("a member's message travels the whole pipeline", () => {
           .toMatchObject({ status: "committed" });
       });
       expect((await recommendationMutation(recommendedSidekick.automationId, "DELETE")).status).toBe(403);
-      expect((await ownedManagement.actorRequest(ownedSidekick.automationId)).actor.participantOfOwningWorkstream).toBe(false);
       expect((await changeSidekickAppearance("red")).status).toBe(403);
       expect((await readAuthoringResource()).status).not.toBe(200);
       expect((await app.request(`/sidekicks/${ownedSidekick.automationId}`, { headers }, apiEnv)).status).toBe(404);
       expect((await app.request(`/conversations/${ownedSidekick.automationId}`, { headers }, apiEnv)).status).toBe(404);
       await runInDurableObject(ownedSidekick.sidekick,(_instance,state) => {
-        expect(JSON.parse(state.storage.sql.exec<{ appearance_json:string }>("SELECT appearance_json FROM automation WHERE id=1").one().appearance_json).color).toBe("blue");
+        expect(JSON.parse(state.storage.sql.exec<{ appearance_json:string }>("SELECT appearance_json FROM automation_directory WHERE automation_id=?",ownedSidekick.automationId).one().appearance_json).color).toBe("blue");
       });
       expect((await readOptions()).canManage).toBe(false);
       // Directory rows are applied inside the Organization object right after

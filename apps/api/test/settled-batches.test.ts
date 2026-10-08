@@ -1,9 +1,7 @@
 /**
- * The bounded overlap an archive's member walk runs its Channel steps with.
+ * The bounded overlap session imports run their uploads with.
  *
- * Unit-level: the subject is arithmetic over promises. What the walk does
- * with each step is proved against real objects in
- * `test-workers/space-routes.test.ts` and `test-workers/space-member-walk.test.ts`.
+ * Unit-level: the subject is arithmetic over promises.
  */
 import { describe, expect, it, vi } from "vitest";
 

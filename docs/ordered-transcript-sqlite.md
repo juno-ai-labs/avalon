@@ -194,8 +194,8 @@ not update an existing schema and is never a substitute for a forward migration.
 
 **What changed:** `AutomationAgent`, which installed this array inside its
 migration 1, was deleted with Wrangler tag `v9`. `SubstreamAgent` is the one
-host; an automation's chat and its runs are `SubstreamAgent`s under an
-`AutomationDO`, which installs no transcript.
+host; an automation's chat and its runs are `SubstreamAgent`s under a
+Sidekick hosted in `WorkspaceDO`, which installs no transcript.
 
 **Why:** [`automation-lifecycle.md`](automation-lifecycle.md) records the
 rebuild. For this module: the reason to extract the schema was a second host,

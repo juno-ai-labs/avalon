@@ -11,6 +11,7 @@ import { openEmailLoginSecret } from "../src/services/email-login-service";
 import { sha256 } from "../src/lib/crypto";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { creatingWorkspaceObjectBinding } from "./helpers/workspace-object-rpcs";
 
 let db: DatabaseSync;
 const origin = "https://app.example.test";
@@ -191,4 +192,65 @@ it("logs out every workspace session attached to the browser and clears its cook
   expect(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE revoked_at IS NULL").get()).toEqual({ n:0 });
   expect((await request("session",entry.cookie)).status).toBe(401);
   expect((await request("logout",entry.cookie,{})).status).toBe(204);
+});
+
+it("creates an organization for an email-only account and opens it with the cookie, holding no bearer",async () => {
+  const entry = await login();
+  // The real object class: creation initializes the Organization's object before it issues anything.
+  const workspaceObject = creatingWorkspaceObjectBinding(db);
+  const env = { ...bindings(),WORKSPACE_DOS:workspaceObject.binding };
+  const create = (body:unknown, cookie:string | null = entry.cookie) => createApp().request(`${apiOrigin}/browser/workspace/create`,{ method:"POST",
+    headers:{ origin,"content-type":"application/json",...(cookie ? { cookie } : {}) },body:JSON.stringify(body) },env);
+  const operationId = "01920000-0000-7000-8000-000000000001";
+  try {
+    const response = await create({ name:"Acme Research",operationId });
+    expect(response.status).toBe(201);
+    const created = await response.json() as { region:string; workspaceId:string };
+    expect(Object.keys(created).sort()).toEqual(["region","workspaceId"]);
+    expect(created.region).toBe("global");
+    expect(db.prepare("SELECT name FROM workspaces WHERE id=?").get(created.workspaceId)).toEqual({ name:"Acme Research" });
+    // The session the create path minted is revoked; only the browser's identity session stays open.
+    expect(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE revoked_at IS NULL").get()).toEqual({ n:1 });
+    // A retry of the same operation returns the same organization rather than a second.
+    const retry = await create({ name:"Acme Research",operationId });
+    expect(retry.status).toBe(201);
+    expect(await retry.json()).toEqual(created);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM workspaces").get()).toEqual({ n:1 });
+    const selected = await request("workspace/select",entry.cookie,{ workspaceId:created.workspaceId });
+    expect(selected.status).toBe(200);
+    expect(await selected.json()).toMatchObject({ workspace:{ id:created.workspaceId,name:"Acme Research",role:"owner" } });
+    expect((await create({ name:"Acme Research",operationId:crypto.randomUUID() },null)).status).toBe(401);
+    // A new creator sets the organization up; one already a member elsewhere keeps their exemption.
+    expect(db.prepare("SELECT onboarding_eligible FROM users WHERE id=?").get(entry.session.user.id)).toEqual({ onboarding_eligible:1 });
+    db.prepare("UPDATE users SET onboarding_eligible=0 WHERE id=?").run(entry.session.user.id);
+    // A second organization is a fresh operation and a fresh organization, even
+    // under the same name in the same minute.
+    const second = await create({ name:"Acme Research",operationId:"01920000-0000-7000-8000-000000000002" });
+    expect(second.status).toBe(201);
+    expect(db.prepare("SELECT onboarding_eligible FROM users WHERE id=?").get(entry.session.user.id)).toEqual({ onboarding_eligible:0 });
+  } finally { for (const database of workspaceObject.databases) database.close(); }
+});
+
+it("leaves an account's setup exemption alone when the create fails or it belongs to an organization in another deployment",async () => {
+  const eligible = (userId:string) => db.prepare("SELECT onboarding_eligible FROM users WHERE id=?").get(userId);
+  const create = (cookie:string, env:ReturnType<typeof bindings>, operationId:string) => createApp().request(`${apiOrigin}/browser/workspace/create`,{ method:"POST",
+    headers:{ origin,"content-type":"application/json",cookie },body:JSON.stringify({ name:"Acme Research",operationId }) },env);
+  const entry = await login();
+  const now = new Date().toISOString();
+  const workspaceObject = creatingWorkspaceObjectBinding(db);
+  const env = { ...bindings(),WORKSPACE_DOS:workspaceObject.binding };
+  // An operation id another account already used is refused before anything is created.
+  const taken = "01920000-0000-7000-8000-000000000011";
+  db.prepare(`INSERT INTO platform_workspace_operations(operation_id,platform_user_id,action,request_fingerprint,region,workspace_id,
+    placement_affinity,status,created_at,updated_at) VALUES (?,?,'create','other','global',?,'wnam','pending',?,?)`)
+    .run(taken,crypto.randomUUID(),crypto.randomUUID(),now,now);
+  expect((await create(entry.cookie,env,taken)).status).toBe(409);
+  expect(eligible(entry.session.user.id)).toEqual({ onboarding_eligible:0 });
+  // A member elsewhere: the binding to another deployment is all Global knows of it.
+  db.prepare(`INSERT INTO platform_workspace_bindings(platform_user_id,region,workspace_id,status,operation_id,created_at,updated_at)
+    VALUES (?,'enterprise',?,'active',?,?,?)`).run(entry.session.user.id,crypto.randomUUID(),crypto.randomUUID(),now,now);
+  try {
+    expect((await create(entry.cookie,env,"01920000-0000-7000-8000-000000000012")).status).toBe(201);
+    expect(eligible(entry.session.user.id)).toEqual({ onboarding_eligible:0 });
+  } finally { for (const database of workspaceObject.databases) database.close(); }
 });

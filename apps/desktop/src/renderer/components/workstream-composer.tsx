@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import { LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { RallyApi, MentionIdentity } from '../lib/api';
@@ -8,7 +9,8 @@ import {
   resolveMentionPayload,
   upsertMentionIdentity,
 } from '../lib/mention-draft';
-import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
+import type { WorkspaceInvitee } from '@rally/contracts';
+import { inviteeAsMember, mentionedInvitees, NO_INVITEES } from '../lib/workspace-invitees';
 import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import type { PendingAttachment } from '../lib/use-file-attachments';
@@ -26,13 +28,32 @@ import { Avatar, Button, IconButton, Modal } from './primitives';
  * connection is neither pickable nor highlighted in a draft written here. What
  * the transcript renders is unaffected — a connector mention that reaches it
  * from anywhere else still draws its chip.
+ *
+ * An invitee is somebody invited to the Organization who has not joined. They
+ * have no account, so their label is their address and the mention is the
+ * typed `@address`: no identity rides with it, and the host shares the
+ * conversation with the address when the message is sent.
  */
 interface MentionCandidate {
   id: string;
   label: string;
   description: string;
-  kind: 'rally' | 'person';
+  kind: 'rally' | 'person' | 'invitee';
   member?: WorkspaceMember;
+}
+
+const NO_SHARED: readonly string[] = [];
+
+/** Only a message that names an invitee says so, so every other send keeps its arity. */
+function invitedArgument(emails: string[]): [] | [string[]] {
+  return emails.length > 0 ? [emails] : [];
+}
+
+/** The right-hand word on a mention row: what kind of someone this is. */
+function mentionKindLabel(candidate: MentionCandidate): string {
+  if (candidate.kind === 'rally') return 'AI';
+  if (candidate.kind === 'invitee') return 'Invited';
+  return candidate.member?.accessClass === 'guest' ? 'Guest' : 'Member';
 }
 
 /**
@@ -65,6 +86,18 @@ interface WorkstreamComposerProps {
   substreamId?: string;
   members: WorkspaceMember[];
   /**
+   * People invited to the Organization who have not joined. Offered after the
+   * members, and named as their address; absent where the host cannot share
+   * the conversation with them.
+   */
+  invitees?: readonly WorkspaceInvitee[];
+  /**
+   * Invitees this conversation is already shared with. They are mentioned like
+   * any other, but neither confirmed nor handed to the host again: a second
+   * share would be a second email.
+   */
+  sharedInviteeEmails?: readonly string[];
+  /**
    * The model control, passed straight to the composer that draws it. Both
    * conversations this composer serves want one: a substream being started
    * takes the `choice` shape, and a conversation that already exists takes the
@@ -91,6 +124,8 @@ interface WorkstreamComposerProps {
     mentions: MentionIdentity[],
     confirmedParticipantUserIds?: string[],
     deliveryMode?: WorkstreamMessageDeliveryMode,
+    /** Invitees the message names, whom the host shares the conversation with before it sends. */
+    invitedEmails?: string[],
   ) => Promise<void>;
   onAttach: (files: FileList | File[]) => void;
   /** Every edit to the draft, for a host that clears its own notice on one. */
@@ -106,6 +141,7 @@ interface PendingMentionConfirmation {
   text: string;
   mentions: MentionIdentity[];
   members: WorkspaceMember[];
+  invitedEmails: string[];
   deliveryMode?: WorkstreamMessageDeliveryMode;
 }
 
@@ -133,6 +169,8 @@ export function WorkstreamComposer({
   draftKey,
   substreamId = '0',
   members,
+  invitees = NO_INVITEES,
+  sharedInviteeEmails = NO_SHARED,
   model,
   fileInputRef,
   sending,
@@ -179,7 +217,13 @@ export function WorkstreamComposer({
       description: participantIds.has(member.id) ? member.email : `${member.email} · not participating`,
       kind: 'person' as const,
       member,
-    }))], [members, participantIds]);
+    })),
+  ...invitees.map((invitee) => ({
+    id: `invitee:${invitee.email}`,
+    label: invitee.email,
+    description: '',
+    kind: 'invitee' as const,
+  }))], [invitees, members, participantIds]);
 
   const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
   const visibleCandidates = mentionQuery === null
@@ -351,11 +395,13 @@ export function WorkstreamComposer({
       if (participantIds.has(member.id)) return false;
       return resolvedPersonIds.has(member.id);
     });
-    if (workstream.scope === 'personal' && nonparticipants.length > 0) {
+    const invitedEmails = mentionedInvitees(trimmed, invitees).filter((email) => !sharedInviteeEmails.includes(email));
+    if (workstream.scope === 'personal' && (nonparticipants.length > 0 || invitedEmails.length > 0)) {
       setPendingConfirmation({
         text: trimmed,
         mentions: submitted.mentions,
         members: nonparticipants,
+        invitedEmails,
         ...(workstream.harnessStatus === 'running' ? { deliveryMode: 'steer' as const } : {}),
       });
       return;
@@ -365,11 +411,15 @@ export function WorkstreamComposer({
     const submittedDeliveryMode = workstream.harnessStatus === 'running' ? 'steer' as const : undefined;
     resetDraft();
     try {
-      await onSend(trimmed, mentions, undefined, submittedDeliveryMode);
+      await onSend(trimmed, mentions, undefined, submittedDeliveryMode, ...invitedArgument(invitedEmails));
     } catch {
       restoreDraft(trimmed, mentions, revision);
     }
   };
+
+  const confirmationNames = pendingConfirmation
+    ? [...pendingConfirmation.members.map((member) => member.name), ...pendingConfirmation.invitedEmails]
+    : [];
 
   const confirmAddAndSend = async (): Promise<void> => {
     if (!pendingConfirmation) return;
@@ -384,6 +434,7 @@ export function WorkstreamComposer({
         submitted.mentions,
         submitted.members.map((member) => member.id),
         submitted.deliveryMode,
+        ...invitedArgument(submitted.invitedEmails),
       );
     } catch {
       restoreDraft(submitted.text, submitted.mentions, revision);
@@ -416,9 +467,9 @@ export function WorkstreamComposer({
         <div className="mention-popover" id="workstream-mention-listbox" role="listbox" aria-label="Mentions">
           {visibleCandidates.map((candidate, index) => (
             <button
-              aria-label={`${candidate.label} — ${candidate.description} — ${candidate.kind === 'rally' ? 'Bot' : PERSON_MENTION_TYPE}`}
+              aria-label={[candidate.label, candidate.description, mentionKindLabel(candidate)].filter(Boolean).join(' — ')}
               aria-selected={index === mentionNavigation.activeIndex}
-              className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
+              className={clsx(index === mentionNavigation.activeIndex && 'is-selected', candidate.kind === 'invitee' && 'is-invited')}
               id={mentionOptionId(candidate.id)}
               key={candidate.id}
               onClick={() => insertMention(candidate)}
@@ -433,13 +484,15 @@ export function WorkstreamComposer({
               <span aria-hidden="true" className="mention-icon">
                 {candidate.member
                   ? <Avatar member={candidate.member} size="small" />
+                  : candidate.kind === 'invitee'
+                  ? <Avatar member={inviteeAsMember(candidate.label)} size="small" />
                   : <span className="avatar avatar-small avatar-rally"><span className="avatar-fallback">R</span></span>}
               </span>
               <span className="mention-popover-copy">
                 <strong>{candidate.label}</strong>
-                {candidate.kind === 'person' && <small>{candidate.description}</small>}
+                {candidate.kind !== 'rally' && candidate.description && <small>{candidate.description}</small>}
               </span>
-              <span className="mention-popover-kind">{candidate.kind === 'rally' ? 'Bot' : PERSON_MENTION_TYPE}</span>
+              <span className="mention-popover-kind">{mentionKindLabel(candidate)}</span>
             </button>
           ))}
         </div>
@@ -515,15 +568,15 @@ export function WorkstreamComposer({
       />
 
       <Modal
-        description={pendingConfirmation && pendingConfirmation.members.length > 1
-          ? `${pendingConfirmation.members.map((member) => member.name).join(', ')} are not currently participants. Would you like to add them with this message? If you do not add them, they will not be able to see the mentions or this ${substreamId === '0' ? 'channel' : 'breakout'}.`
-          : `${pendingConfirmation?.members[0]?.name ?? 'This person'} is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this ${substreamId === '0' ? 'channel' : 'breakout'}.`}
+        description={confirmationNames.length > 1
+          ? `${confirmationNames.join(', ')} are not currently participants. Would you like to add them with this message? If you do not add them, they will not be able to see the mentions or this ${substreamId === '0' ? 'channel' : 'breakout'}.`
+          : `${confirmationNames[0] ?? 'This person'} is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this ${substreamId === '0' ? 'channel' : 'breakout'}.`}
         footer={
           <>
             <Button disabled={confirming} onClick={() => setPendingConfirmation(null)}>Cancel</Button>
             <Button className="button-primary" disabled={confirming} onClick={() => void confirmAddAndSend()}>
               {confirming ? <LoaderCircle className="spin" size={14} /> : <UserPlus size={14} />}
-              {pendingConfirmation && pendingConfirmation.members.length > 1 ? 'Add all and mention' : 'Add and mention'}
+              {confirmationNames.length > 1 ? 'Add all and mention' : 'Add and mention'}
             </Button>
           </>
         }
@@ -531,12 +584,19 @@ export function WorkstreamComposer({
           if (!open && !confirming) setPendingConfirmation(null);
         }}
         open={Boolean(pendingConfirmation)}
-        title={pendingConfirmation && pendingConfirmation.members.length > 1 ? 'Add participants?' : 'Add participant?'}
+        title={confirmationNames.length > 1 ? 'Add participants?' : 'Add participant?'}
       >
         {pendingConfirmation?.members.map((member) => (
           <div className="mention-confirm-person" key={member.id}>
             <Avatar member={member} size="large" />
             <span><strong>{member.name}</strong><small>{member.email}</small></span>
+          </div>
+        ))}
+        {/* Shared by address: they join when they sign in with it. */}
+        {pendingConfirmation?.invitedEmails.map((email) => (
+          <div className="mention-confirm-person is-invited" key={email}>
+            <Avatar member={inviteeAsMember(email)} size="large" />
+            <span><strong>{email}</strong><small>Invited · joins when they sign in</small></span>
           </div>
         ))}
       </Modal>

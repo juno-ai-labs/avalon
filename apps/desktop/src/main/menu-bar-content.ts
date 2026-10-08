@@ -1,172 +1,60 @@
-import { z } from 'zod';
-import { workstreamRecencyAt } from '../common/recency-groups';
-import {
-  emptyMenuBarContent,
-  MENU_BAR_RECENT_LIMIT,
-  type MenuBarContent,
-  type MenuBarWorkstream,
-} from './menu-bar-menu';
+import { attentionItems, type BreakoutLists } from '../common/attention-items';
+import { compareRecentChannels } from '../common/recency-groups';
+import type { ChannelDirectorySnapshot } from './channel-directory-watch';
+import type { MenuBarContent, MenuBarWorkstream } from './menu-bar-menu';
 
-/**
- * Deliberately narrower than `@rally/contracts` describes this response. The
- * status item needs a handful of fields, and parsing the full work-stream
- * contract here would let an unrelated field addition empty the menu on an older
- * client. Everything the menu does not read is ignored rather than rejected.
- */
-const MenuBarWorkstreamPageSchema = z.object({
-  items: z.array(z.object({
-    id: z.string().min(1),
-    title: z.string(),
-    titleStatus: z.enum(['naming', 'automatic', 'settled']).default('settled'),
-    // What the recency headings are computed from. `lastAccessedAt` is absent
-    // on a server too old to report visits and null when nobody has visited;
-    // `workstreamRecencyAt` owns the difference, and the sidebar reads the same
-    // three fields the same way.
-    lastActivityAt: z.string().min(1),
-    createdAt: z.string().min(1).optional(),
-    lastAccessedAt: z.string().min(1).nullable().optional(),
-  })),
-});
-
-/** Shown for a work stream Rally has not finished naming. The renderer draws a
+/** Shown for a Channel Rally has not finished naming. The renderer draws a
  * skeleton in that state; a menu row cannot, and the placeholder title on the
  * wire is not written to be read. */
 const UNNAMED_WORKSTREAM_LABEL = 'Untitled channel';
 
-export interface MenuBarContentDependencies {
-  /** Performs an authorized request against the account's regional API and
-   * returns the decoded JSON body. Rejects when nobody is signed in. */
-  readonly requestJson: (path: string) => Promise<unknown>;
-  readonly onChange: (content: MenuBarContent) => void;
-  /** False while the active workspace is a guest's, who is refused the
-   * Channel list. Read from storage at launch, before any session exists. */
-  readonly available?: () => boolean | Promise<boolean>;
-  readonly logWarning: (message: string, error: unknown) => void;
-  /** Injected so the staleness window can be driven in tests. */
-  readonly now?: () => number;
-}
-
 /**
- * The menu's data, cached in the main process rather than pushed from a window.
+ * The menu's content, derived from the Channel directory the main process
+ * holds over its own workspace socket.
  *
- * Rally can be launched hidden at login, and the status item is then the only
- * surface there is — no renderer exists to hold a React Query cache or to answer
- * an IPC request. So this fetches for itself, against the same regional endpoint
- * and credential the rest of main uses.
+ * Both sections are the sidebar's lists computed the sidebar's way, from the
+ * same rows:
+ *
+ * - **Needs attention** is `attentionItems`, the function behind the sidebar's
+ *   attention button. Breakout lists are read only for a Channel whose row
+ *   counts a Breakout needing the reader, exactly as `useAttentionItems` reads
+ *   them, so a Breakout the sidebar would not list is not counted here either.
+ * - **Most recent** is every listed Channel in the sidebar's Recent order,
+ *   unfiltered by Space and ignoring pins, which belong to one Space. A Channel
+ *   listed to the reader only through a Breakout (`mainWithheld`) opens that
+ *   Breakout, as its sidebar row does, since Main is not theirs to open; one
+ *   whose Breakout list has not arrived is left out rather than opening Main.
  */
-export class MenuBarContentStore {
-  private cached: MenuBarContent = emptyMenuBarContent;
-  private inFlight: Promise<void> | null = null;
-  private inFlightGeneration = -1;
-  private lastRefreshStartedAt = Number.NEGATIVE_INFINITY;
-  /**
-   * Which account the cache describes. Every request carries the generation it
-   * was issued under and publishes only if that is still current, so an answer
-   * already on the wire when the account changed is dropped rather than written
-   * over what replaced it.
-   */
-  private generation = 0;
-
-  constructor(private readonly dependencies: MenuBarContentDependencies) {}
-
-  content(): MenuBarContent {
-    return this.cached;
+export function menuBarContentFromDirectory(directory: ChannelDirectorySnapshot): MenuBarContent {
+  const breakouts: Record<string, BreakoutLists[string]> = {};
+  for (const channel of directory.channels) {
+    if ((channel.breakoutAttentionCount ?? 0) > 0) breakouts[channel.id] = directory.breakouts[channel.id];
   }
-
-  /** Drops everything the previous account could see. Called on sign-out, where
-   * leaving the last titles in the menu would keep them readable to whoever
-   * signs in next — including through a request that was already in flight when
-   * they signed out, which is why this bumps the generation rather than only
-   * emptying the cache. */
-  clear(): void {
-    this.generation += 1;
-    this.lastRefreshStartedAt = Number.NEGATIVE_INFINITY;
-    if (this.cached === emptyMenuBarContent) return;
-    this.cached = emptyMenuBarContent;
-    this.dependencies.onChange(this.cached);
-  }
-
-  /**
-   * Refreshes only if the cache is older than `maxAgeMs`. The pointer reaching
-   * the status item is the trigger, and that fires whenever anyone crosses the
-   * menu bar; without this the menu would poll the API on mouse movement.
-   */
-  refreshIfStale(maxAgeMs: number): Promise<void> {
-    const now = (this.dependencies.now ?? Date.now)();
-    if (now - this.lastRefreshStartedAt < maxAgeMs) return Promise.resolve();
-    return this.refresh();
-  }
-
-  /**
-   * Coalesced, because the pointer reaching the status item and a sign-in can
-   * ask within moments of each other, and two overlapping refreshes would race
-   * to publish and could leave the older answer in place. Only a request issued
-   * under the *current* generation is reused: after a sign-out the answer
-   * already in flight describes a state that no longer exists, and handing it
-   * back would report it as fresh.
-   */
-  refresh(): Promise<void> {
-    if (this.inFlight && this.inFlightGeneration === this.generation) return this.inFlight;
-    const generation = this.generation;
-    this.lastRefreshStartedAt = (this.dependencies.now ?? Date.now)();
-    const request = this.refreshNow(generation).finally(() => {
-      // Only if it is still the newest. A superseded request settling later
-      // must not clear the one that replaced it.
-      if (this.inFlightGeneration === generation) this.inFlight = null;
-    });
-    this.inFlight = request;
-    this.inFlightGeneration = generation;
-    return request;
-  }
-
-  private async refreshNow(generation: number): Promise<void> {
-    // Cleared rather than left alone: the cache still holds the workspace this
-    // device switched away from, and its rows would open in this one.
-    if (await this.dependencies.available?.() === false) {
-      if (generation === this.generation) this.clear();
-      return;
-    }
-    // The menu has no selected Space, so it cannot project a placement-scoped
-    // pin. It asks only for recent Channels and sorts the returned first page by
-    // the same viewer recency used in the sidebar.
-    const page = await this.load(
-      'recent channels',
-      `/workstreams?limit=${MENU_BAR_RECENT_LIMIT}`,
-      MenuBarWorkstreamPageSchema,
-    );
-    if (!page) return;
-    // Sign-out while this was on the wire. What came back describes a state
-    // that no longer exists.
-    if (generation !== this.generation) return;
-    const workstreams = page.items.map((workstream) => ({
-        id: workstream.id,
-        title: workstream.titleStatus === 'naming' || workstream.title.trim().length === 0
-          ? UNNAMED_WORKSTREAM_LABEL
-          : workstream.title,
-        lastActivityAt: workstreamRecencyAt(workstream),
-      } satisfies MenuBarWorkstream));
-    this.cached = {
-      recents: workstreams
-        .sort((left, right) => Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt)
-          || left.id.localeCompare(right.id))
-        .slice(0, MENU_BAR_RECENT_LIMIT),
-      pinned: [],
-    };
-    this.dependencies.onChange(this.cached);
-  }
-
-  private async load<T>(
-    description: string,
-    path: string,
-    schema: z.ZodType<T>,
-  ): Promise<T | null> {
-    try {
-      const parsed = schema.safeParse(await this.dependencies.requestJson(path));
-      if (!parsed.success) throw new Error(`Rally returned an unreadable ${description} response`);
-      return parsed.data;
-    } catch (error) {
-      this.dependencies.logWarning(`could not read ${description} for the menu bar`, error);
-      return null;
-    }
-  }
+  const named = directory.channels.map((channel) => (
+    channel.titleStatus === 'naming' || channel.title.trim().length === 0
+      ? { ...channel, title: UNNAMED_WORKSTREAM_LABEL }
+      : channel
+  ));
+  return {
+    accessRequests: directory.accessRequests.map((request) => ({
+      id: request.id, requesterName: request.requesterName, title: request.title,
+    })),
+    attention: attentionItems(named, breakouts).map((item) => ({
+      key: item.key,
+      workstreamId: item.workstreamId,
+      substreamId: item.substreamId,
+      title: item.title,
+      channelTitle: item.channelTitle,
+      reason: item.reason,
+    })),
+    attentionComplete: directory.complete,
+    recents: named
+      .filter((channel) => !channel.archivedAt && !channel.systemKind)
+      .sort(compareRecentChannels)
+      .flatMap((channel): MenuBarWorkstream[] => {
+        if (channel.mainWithheld !== true) return [{ id: channel.id, title: channel.title, substreamId: null }];
+        const entry = directory.breakouts[channel.id]?.[0];
+        return entry ? [{ id: channel.id, title: channel.title, substreamId: entry.substreamId }] : [];
+      }),
+  };
 }

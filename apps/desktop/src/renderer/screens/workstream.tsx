@@ -1,16 +1,15 @@
-import { ShareConversationDialog } from "../components/scope-sharing-panel";
 import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui/components/conversation-menus';
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
-import { SpaceIcon } from '@rally/ui/components/space-icon';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
-import { BreakoutPillIcon, TitleMenuItem, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { BreakoutPillIcon, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
-import { conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
+import { logError } from '../../common/logger';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { mainOmitted, mainReachable, useConversationDirectory } from '../lib/conversation-directory';
 
@@ -20,9 +19,8 @@ import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-tra
 
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
-import { useSpaceDirectories } from '../lib/use-space-directories';
 import { AppearancePicker, AppearanceSubmenu } from '../components/appearance-picker';
-import { IconMail, IconPalette } from '@tabler/icons-react';
+import { IconPalette } from '@tabler/icons-react';
 import { RelativeTime } from '../components/relative-time';
 
 import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
@@ -57,7 +55,6 @@ export {
   initialTranscriptAnchorIndex,
   manualElicitationResponse,
   orderedTranscriptOwnsRunTiming,
-  preservedPrependScrollTop,
   resourceVersionsQueryKey,
   workspaceMemberFromSession,
   workstreamPayloadBelongsToRoute,
@@ -101,18 +98,27 @@ export function railConversationNeedsAttention(
   });
 }
 
+/** Whether the conversation's run is paused on a question; the open detail is newer than the row. */
+export function railConversationNeedsInput(
+  projection: RailAttentionProjection,
+  selectedDetail?: WorkstreamDetail,
+): boolean {
+  return (selectedDetail?.harnessStatus ?? projection.harnessStatus) === 'needs_input';
+}
+
 export function railChildrenWithAttention<T extends RailAttentionProjection & { substreamId: string }>(
   directory: readonly T[] | undefined,
   selectedSubstreamId: string,
   selectedDetail?: WorkstreamDetail,
-): (T & { needsAttention?: boolean })[] | undefined {
-  return directory?.map((child) => ({
-    ...child,
-    needsAttention: railConversationNeedsAttention(
-      child,
-      child.substreamId === selectedSubstreamId ? selectedDetail : undefined,
-    ),
-  }));
+): (T & { needsAttention?: boolean; needsInput: boolean })[] | undefined {
+  return directory?.map((child) => {
+    const detail = child.substreamId === selectedSubstreamId ? selectedDetail : undefined;
+    return {
+      ...child,
+      needsAttention: railConversationNeedsAttention(child, detail),
+      needsInput: railConversationNeedsInput(child, detail),
+    };
+  });
 }
 
 type WorkstreamSidebarFailure =
@@ -166,7 +172,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const { api, session } = useCollaborationSession();
-  const [sharingSubstream, setSharingSubstream] = useState<string | null>(null);
   const [importUpdateOpen, setImportUpdateOpen] = useState(false);
   const queryClient = useQueryClient();
   const openFirstWorkstream = useOpenFirstWorkstream();
@@ -190,7 +195,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // Breakout grant proves nothing about Main.
   const mainVisible = selectedSubstreamId === '0' || !conversationScoped;
   const mainConnection = useRetainedWorkstreamSocket(api, id, Boolean(api && id && !conversationScoped), 'workstream', '0');
-  const navigate = useNavigate();
   const parent = useQuery<WorkstreamDetail | undefined>({
     queryKey: ['workstream', id], queryFn: async () => undefined, enabled: false,
   });
@@ -380,8 +384,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     }).catch((cause: unknown) => {
       // Not over a newer menu action, or after leaving for another conversation.
       if (routeRef.current.visit !== visit || menuOperation.current !== operation) return;
-      // A refusal (an organization-wide Space still holds it, say) names what
-      // to change first; anything else is the action's own retry sentence.
+      // A refusal names what to change first; anything else is the action's
+      // own retry sentence.
       const fallback = workstreamSidebarFailureCopy[action];
       setSubstreamMenuFailure({ title: fallback.title, copy: spaceFailureSentence(cause, fallback.copy) });
       // Selecting a Breakout changes the visit without the reset a new Channel
@@ -518,6 +522,27 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         },
         opening.modelOverride,
       ));
+      // Shared once the breakout exists, and not awaited: it opens on the
+      // create alone, and the address is among its People as Invited when this
+      // lands. A failure leaves them out of that list, which is where to look.
+      if (opening.invitedEmails.length > 0 && session?.workspace) {
+        const workspaceId = session.workspace.id;
+        void Promise.resolve().then(() => api.createScopeInvitations({
+          operationId: uuidV7(),
+          parentId: attempt.parentId,
+          emails: [...opening.invitedEmails].sort(),
+          targets: [{
+            kind: 'conversation',
+            workspaceId: asWorkspaceId(workspaceId),
+            parentId: asWorkstreamId(attempt.parentId),
+            substreamId: asSubstreamId(created.substreamId),
+          }],
+          completeWorkstream: false,
+          expiresAt: null,
+        }))
+          .then(() => queryClient.invalidateQueries({ queryKey: ['scope-invitations', attempt.parentId, created.substreamId] }))
+          .catch((error: unknown) => logError('rally', `could not share the new breakout with ${opening.invitedEmails.join(', ')}`, error));
+      }
       const current = creationRef.current === attempt;
       if (!current) trace.end({ outcome: 'superseded' });
       else trace.annotate({ workstreamId: attempt.parentId });
@@ -610,14 +635,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     : undefined;
   const railTitle = parent.data?.title ?? row?.title ?? sharedParent?.title ?? undefined;
   const channelAppearance = rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance;
-  const { active: spaceDirectory } = useSpaceDirectories();
-  // The Space the Channel menu names: the one this route came through, or the
-  // Channel's first that is not General. General is no place anybody chose.
-  const menuSpace = useMemo(() => {
-    const spaces = spaceDirectory.data?.items ?? [];
-    const candidates = [linkSpaceId, ...linkSpaceIds].flatMap((spaceId) => spaces.find((space) => space.id === spaceId) ?? []);
-    return candidates.find((space) => space.systemRole !== 'general');
-  }, [linkSpaceId, linkSpaceIds, spaceDirectory.data?.items]);
   const breakoutMarks = useMemo<BreakoutMark[] | undefined>(() => railChildren?.map((child) => ({
     substreamId: child.substreamId,
     title: child.title,
@@ -629,6 +646,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     youAreMentioned: 'youAreMentioned' in child ? child.youAreMentioned : undefined,
     unseen: 'unseen' in child ? child.unseen : undefined,
     needsAttention: child.needsAttention,
+    needsInput: child.needsInput,
   })), [railChildren]);
   const breakoutAge = (breakout: BreakoutMark): React.ReactNode => breakout.lastActivityAt
     ? <RelativeTime value={breakout.lastActivityAt} />
@@ -674,13 +692,11 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     isPublic: parent.data?.scope === 'workspace',
     onSetPublic: !channelWritable || parent.data?.systemKind ? undefined : setPublic,
     publicDisabled: substreamPending,
-    onShare: (target: ConversationRowTarget) => setSharingSubstream(target.substreamId),
     onCopyLink: session?.workspace ? copyRowLink : undefined,
     onRename: (target: ConversationRowTarget) => { ++menuOperation.current; setRenameTarget({ ...target, parentId: id }); setRenameTitle(target.title); setSubstreamMenuFailure(null); },
     onArchive: !channelWritable ? undefined : (target: ConversationRowTarget) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
   } : undefined;
   const substreamActions = {
-    onShare: (target: ConversationRowTarget) => setSharingSubstream(target.substreamId),
     onCopyLink: session?.workspace ? copyRowLink : undefined,
     onRename: (child: ConversationRowTarget) => { ++menuOperation.current; setRenameTarget({ ...child, parentId: id }); setRenameTitle(child.title); setSubstreamMenuFailure(null); },
     onArchive: (child: ConversationRowTarget) => { ++menuOperation.current; setArchiveTarget({ ...child, parentId: id }); setSubstreamMenuFailure(null); },
@@ -698,7 +714,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     const naming = (detail?.titleStatus ?? row?.titleStatus) === 'naming';
     const glyph = <WorkstreamGlyph appearance={channelAppearance} id={id} size={24} />;
     const appearanceChange = channelWritable ? mainConnection.setAppearance : undefined;
-    const channelEmail = context?.detail.emailAddress ?? row?.emailAddress ?? null;
     return {
       key: `channel:${id}`,
       icon: glyph,
@@ -719,23 +734,21 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       ...(!onSelect && breakoutPaneOpen ? { chevron: 'right' as const } : {}),
       menu: <ChannelMenu
         actions={mainActions}
+        appearance={appearanceChange ? <AppearanceSubmenu
+          appearance={channelAppearance}
+          icon={<IconPalette aria-hidden="true" size={16} stroke={1.8} />}
+          id={id}
+          key={id}
+          label="Icon and color"
+          onChange={appearanceChange}
+        /> : undefined}
         addSidekick={(context || channelRail) && <SidekickPicker substreamId="0" workstreamId={id} />}
-        // Mail sent here lands in the Channel; the old header's menu carried it.
-        extraActions={channelEmail ? <TitleMenuItem
-          icon={<IconMail aria-hidden="true" size={16} stroke={1.8} />}
-          onSelect={() => {
-            void desktopBridge().copyText(channelEmail).then(() => reportTelemetryProductIntent({
-              kind: 'content_copied', contentType: 'workstream_email', resourceType: 'workstream', resourceId: id,
-            })).catch(() => undefined);
-          }}
-        >Copy channel email address</TitleMenuItem> : undefined}
         breakouts={breakoutMarks}
         // The update re-runs the import in the embedded browser, which only the Mac app has.
         onImportUpdates={api && desktopServicesAvailable() && importedSourceUpdatable(importedSource.data) ? () => setImportUpdateOpen(true) : undefined}
         onOpenArtifact={context?.openArtifact}
         onOpenBreakout={openBreakout}
         onOpenSidekick={(sidekickId) => void desktopBridge().openSidekicks(sidekickId)}
-        onParticipants={context?.openParticipantDialog}
         onRefreshSidekicks={context?.refreshSidekicks}
         onSidekickMenuOpen={context?.loadSidekickOptions}
         openSubstreamId={openBreakoutId}
@@ -749,11 +762,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         renderAge={breakoutAge}
         sidekickFailure={context?.sidekickFailure}
         sidekicks={context ? context.sidekicks : railSidekicks}
-        space={menuSpace ? {
-          icon: <SpaceIcon size={16} space={menuSpace} />,
-          name: menuSpace.name,
-          onOpen: () => void navigate(`/spaces/${menuSpace.id}`),
-        } : undefined}
         workstream={{
           id,
           title,
@@ -791,7 +799,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         />}
         breakout={{ substreamId: breakoutId, title }}
         channel={{ id, title: railTitle ?? '', appearance: channelAppearance }}
-        onParticipants={context.openParticipantDialog}
         onShowInChannel={mainVisible ? () => showInChannel(openBreakoutMark?.originTurnId) : undefined}
         origin={context.origin}
         addSidekick={<SidekickPicker substreamId={breakoutId} workstreamId={id} />}
@@ -859,7 +866,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
 
   return (
     <>
-    {api && session?.workspace && sharingSubstream !== null && <ShareConversationDialog api={api} workspaceId={session.workspace.id} parentId={id} substreamId={sharingSubstream} open onOpenChange={(open) => { if (!open) setSharingSubstream(null); }} />}
     {api && importedSourceUpdatable(importedSource.data) && <SessionImportUpdateDialog key={id} open={importUpdateOpen}
       onClose={() => setImportUpdateOpen(false)} source={importedSource.data} workstreamId={id} />}
     <SplitConversationLayout

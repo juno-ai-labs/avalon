@@ -1,6 +1,5 @@
 import { runInDurableObject } from "cloudflare:test";
 import {
-  asAutomationId,
   asWorkspaceId,
   ConversationEffectEnvelopeSchema,
   ParentEffectEnvelopeSchema,
@@ -9,7 +8,7 @@ import {
   type ParentEffectEnvelope,
 } from "@rally/contracts";
 import type { Env } from "../../src/env";
-import { automationDOName, workspaceDOName } from "../../src/durable-objects/names";
+import { workspaceDOName } from "../../src/durable-objects/names";
 import { consumeActivityQueue } from "../../src/queues/activity-consumer";
 
 /**
@@ -143,12 +142,7 @@ export function parentStubFor(
   region: string,
   parent: { workspaceId: string; parentKind: ConversationParentKind; parentId: string },
 ): DurableObjectStub {
-  if (parent.parentKind === "automation") {
-    return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
-      automationDOName(region, asWorkspaceId(parent.workspaceId), asAutomationId(parent.parentId)),
-    ));
-  }
-  // A Channel's and a Space's parent is hosted by the Organization object.
+  // Every parent (Channel, Space, Sidekick) is hosted by the Organization object.
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
     workspaceDOName(region, asWorkspaceId(parent.workspaceId)),
   ));

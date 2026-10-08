@@ -36,7 +36,6 @@ on:
       - "scripts/wrangler-config.mjs"
       - "scripts/entry-point.mjs"
       - "scripts/check-regional-health.mjs"
-      - "scripts/check-workspace-handoff-site.mjs"
       - "scripts/select-api-deploy-mode.mjs"
       - "scripts/deploy-api-direct-region.mjs"
   workflow_dispatch:
@@ -71,8 +70,8 @@ jobs:
   # The lanes mirror ci.yml's, deliberately: the same split is already balanced
   # against this repository's suites, and two workflows that verify the same
   # revision differently is a way to have one of them pass on something the
-  # other would have caught. Workers in particular must stay on their own four
-  # shards (`api-tests-workers-1-of-n` through `4-of-n`) rather than being dumped
+  # other would have caught. Workers in particular must stay on their own eight
+  # shards (`api-tests-workers-1-of-n` through `8-of-n`) rather than being dumped
   # unsharded onto a Node lane: `reset()` takes every object's input gate
   # run-wide, and an unsharded full-suite Miniflare is more interleave than PR
   # CI ever sees. The Wrangler dry-run builds live here rather than in `deploy`
@@ -102,22 +101,34 @@ jobs:
               pnpm --filter @rally/api build:artifacts &&
               pnpm --filter @rally/engineering-mcp build &&
               pnpm --filter @rally/desktop test:release
-          - name: desktop-tests-1-of-2
+          - name: desktop-tests-1-of-n
             command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
-          - name: desktop-tests-2-of-2
+          - name: desktop-tests-2-of-n
             command: pnpm --filter @rally/desktop exec vitest run --shard=2/2
-          - name: api-tests-1-of-2
-            command: pnpm --filter @rally/api exec vitest run --shard=1/2
-          - name: api-tests-2-of-2
-            command: pnpm --filter @rally/api exec vitest run --shard=2/2
+          - name: api-tests-1-of-n
+            command: pnpm --filter @rally/api exec vitest run --shard=1/4
+          - name: api-tests-2-of-n
+            command: pnpm --filter @rally/api exec vitest run --shard=2/4
+          - name: api-tests-3-of-n
+            command: pnpm --filter @rally/api exec vitest run --shard=3/4
+          - name: api-tests-4-of-n
+            command: pnpm --filter @rally/api exec vitest run --shard=4/4
           - name: api-tests-workers-1-of-n
-            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=1/4
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=1/8
           - name: api-tests-workers-2-of-n
-            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=2/4
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=2/8
           - name: api-tests-workers-3-of-n
-            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=3/4
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=3/8
           - name: api-tests-workers-4-of-n
-            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=4/4
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=4/8
+          - name: api-tests-workers-5-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=5/8
+          - name: api-tests-workers-6-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=6/8
+          - name: api-tests-workers-7-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=7/8
+          - name: api-tests-workers-8-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=8/8
           - name: crash-symbolicator-container
             command: pnpm --filter @rally/api test:crash-symbolicator-container
           - name: remaining-tests
@@ -266,14 +277,6 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      # The public site and API deploy from independent workflows. A writer
-      # release must not emit /app/workspaces links until Pages serves that
-      # rewrite and the live updater advertises a desktop that understands its
-      # native target. If either independent release is pending or failed, this
-      # run stops before migrations or Worker upload and can be re-run later.
-      - name: Require workspace-addressed link readers
-        run: node scripts/check-workspace-handoff-site.mjs
-
       - name: Require every R2 bucket declared by the regional Wrangler configs
         run: node scripts/check-cloudflare-r2-buckets.mjs
 
@@ -377,15 +380,28 @@ jobs:
           DEPLOY_SHA: ${{ needs.verify.outputs.verified_sha }}
         run: |
           set -euo pipefail
+          # Retry only the Pipeline binding form of error 10021, never the
+          # startup-budget form; see docs/api-worker-deployment.md.
           upload_version() {
             local config="$1"
             local output_name="$2"
             local output_file="${RUNNER_TEMP}/wrangler-${output_name}-${GITHUB_RUN_ATTEMPT}.json"
-            WRANGLER_OUTPUT_FILE_PATH="$output_file" \
-            pnpm --filter @rally/api exec wrangler versions upload \
-              --config "$config" \
-              --tag "$DEPLOY_SHA" \
-              --message "Verified GitHub deployment $DEPLOY_SHA"
+            local log_file="${RUNNER_TEMP}/wrangler-${output_name}-${GITHUB_RUN_ATTEMPT}.log"
+            local attempt
+            for attempt in 1 2; do
+              if WRANGLER_OUTPUT_FILE_PATH="$output_file" \
+                pnpm --filter @rally/api exec wrangler versions upload \
+                  --config "$config" \
+                  --tag "$DEPLOY_SHA" \
+                  --message "Verified GitHub deployment $DEPLOY_SHA" 2>&1 | tee "$log_file"; then
+                break
+              fi
+              if [ "$attempt" = 2 ] || ! grep -q 'Pipeline binding error' "$log_file"; then
+                return 1
+              fi
+              echo "::warning::Cloudflare Pipeline binding error (10021) uploading ${output_name}; retrying once in 60s"
+              sleep 60
+            done
             local version_id
             version_id="$(jq -r 'select(.type == "version-upload") | .version_id' "$output_file" | tail -n 1)"
             test -n "$version_id" && test "$version_id" != null

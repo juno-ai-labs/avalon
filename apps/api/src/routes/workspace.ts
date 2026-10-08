@@ -10,10 +10,13 @@ import {
   CreateWorkspaceInvitationRequestSchema,
   IdSchema,
   CreateWorkspaceInvitationResponseSchema,
+  MemberPreferencesSchema,
+  PersonalSystemPromptSchema,
   UpdateUserTimezoneRequestSchema,
   UpdateWorkspaceMemberRoleRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceInvitationSchema,
+  WorkspaceInviteeSchema,
   WorkspaceAttentionSchema,
   WorkspaceMemberSchema,
   WorkspaceSchema,
@@ -22,26 +25,30 @@ import {
   PreviewTerminalNetworkPolicyRequestSchema,
   ApplyTerminalNetworkPolicyRequestSchema,
   SocketTicketSchema,
+  SupportAccessSchema,
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { requireCurrentClientContract } from "../lib/client-contract";
+import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth } from "../middleware/auth";
 import { SpaceService } from "../services/space-service";
 import { WorkspaceService } from "../services/workspace-service";
+import { SupportAccessService } from "../services/support-access";
 import { workspaceAttention } from "../services/workspace-attention-service";
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
 import { createTerminalProviderRpcClient } from "../services/terminal/provider-rpc-client";
 import { TerminalSettingsService } from "../services/terminal/settings";
 import { issueWorkspaceSocketTicket } from "../services/socket-service";
-import { OrganizationUsageSchema } from "@rally/contracts/usage";
-import { readOrganizationUsage } from "../services/usage-metering";
+import { OrganizationUsageSchema, WorkspacePlanChangeSchema } from "@rally/contracts/usage";
+import { publishOrganizationUsage, readOrganizationUsage } from "../services/usage-metering";
 import { ApiError } from "../lib/api-error";
 
 const invitationParam = z.object({ id: IdSchema });
 const memberParam = z.object({ userId: IdSchema });
 const MemberPageSchema = z.object({ items: z.array(WorkspaceMemberSchema) });
 const InvitationPageSchema = z.object({ items: z.array(WorkspaceInvitationSchema) });
+const InviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
 
 /**
  * The workspace socket's ticket, for members and guests alike.
@@ -101,12 +108,47 @@ workspaceRoutes.get("/usage", async (c) => {
   if (!usage) throw new ApiError(404, "workspace_not_found", "Workspace not found");
   return c.json(OrganizationUsageSchema.parse(usage));
 });
+// An administrator choosing the Organization's plan. Answers with the meter as
+// it reads under the new plan, so the picker repaints without a second read,
+// and pushes the same meter to every other member after the response.
+workspaceRoutes.put("/plan", zValidator("json", WorkspacePlanChangeSchema), async (c) => {
+  const auth = getAuth(c);
+  const usage = await new WorkspaceService(c.env, auth).setPlan(c.req.valid("json").plan);
+  requestDeferral(c)(publishOrganizationUsage(c.env, auth.workspaceId));
+  return c.json(OrganizationUsageSchema.parse(usage));
+});
 workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), async (c) =>
   c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).updateWorkspace(c.req.valid("json")))),
 );
+// Rally access (`docs/impersonation.md`). Every member reads it; the service
+// lets only an administrator who is not a support session change it.
+workspaceRoutes.get("/support-access", async (c) =>
+  c.json(SupportAccessSchema.parse(await new SupportAccessService(c.env, getAuth(c)).status())));
+workspaceRoutes.put("/support-access", async (c) =>
+  c.json(SupportAccessSchema.parse(await new SupportAccessService(c.env, getAuth(c)).grant())));
+workspaceRoutes.delete("/support-access", async (c) =>
+  c.json(SupportAccessSchema.parse(await new SupportAccessService(c.env, getAuth(c)).revoke())));
 workspaceRoutes.patch("/me", zValidator("json", UpdateUserTimezoneRequestSchema), async (c) =>
   c.json(WorkspaceMemberSchema.parse(
     await new WorkspaceService(c.env, getAuth(c)).updateMyTimezone(c.req.valid("json").timezone))),
+);
+// Under `/me` and apart from the member record: other members read that record,
+// and only its author may read this.
+workspaceRoutes.get("/me/system-prompt", async (c) =>
+  c.json(PersonalSystemPromptSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).getMyPersonalSystemPrompt())),
+);
+workspaceRoutes.get("/me/preferences", async (c) =>
+  c.json(MemberPreferencesSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getMyPreferences())),
+);
+workspaceRoutes.put("/me/preferences", zValidator("json", MemberPreferencesSchema), async (c) =>
+  c.json(MemberPreferencesSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).updateMyPreferences(c.req.valid("json")))),
+);
+workspaceRoutes.put("/me/system-prompt", zValidator("json", PersonalSystemPromptSchema), async (c) =>
+  c.json(PersonalSystemPromptSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).updateMyPersonalSystemPrompt(
+      c.req.valid("json").personalSystemPrompt))),
 );
 /**
  * One person's order for one list they arranged by hand.
@@ -178,6 +220,13 @@ workspaceRoutes.post("/members/:id/promote", zValidator("param", invitationParam
   zValidator("json", PromoteWorkspaceGuestSchema), async (c) =>
     c.json(WorkspaceRelationshipSchema.parse(await new WorkspaceService(c.env, getAuth(c))
       .promoteGuest(c.req.valid("param").id, c.req.valid("json")))),
+);
+/**
+ * Pending Organization invitations as members see them, for the people
+ * pickers; `/invitations` is the administrator's full list.
+ */
+workspaceRoutes.get("/invitees", async (c) =>
+  c.json(InviteePageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listInvitees() })),
 );
 workspaceRoutes.get("/invitations", async (c) =>
   c.json(InvitationPageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listInvitations() })),

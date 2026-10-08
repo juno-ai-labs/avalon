@@ -17,6 +17,16 @@ export function browserOrigin(env: Env): URL {
   return origin;
 }
 
+/** A path on the browser host, kept to that origin; the query and fragment are dropped. */
+export function browserReturnUrl(env: Env, path: string | undefined): string {
+  const origin = browserOrigin(env).origin;
+  const target = new URL(path && path.startsWith("/") ? path : "/", origin);
+  if (target.origin !== origin || target.pathname.startsWith("//")) {
+    throw new ApiError(422, "invalid_return_uri", "The browser return path is not allowed");
+  }
+  return `${target.origin}${target.pathname}`;
+}
+
 function notConfigured(): ApiError {
   return new ApiError(503, "browser_configuration_required", "Browser access is not configured");
 }

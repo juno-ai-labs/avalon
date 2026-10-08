@@ -8,7 +8,7 @@ import {
   isSharedNotionIngress,
 } from "./lib/notion-ingress";
 import { apiOperationTelemetry } from "./middleware/api-operation-telemetry";
-import { requireAuth, requireIdentityAuth, requireWorkspaceAuth } from "./middleware/auth";
+import { auditSupportWrites, refuseSupportSession, requireAuth, requireIdentityAuth, requireWorkspaceAuth } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/errors";
 import { requestContext, securityMiddleware } from "./middleware/request-context";
 import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
@@ -36,6 +36,7 @@ import { slackIngressRoutes } from "./routes/slack";
 import { socketRoutes } from "./routes/socket";
 import { speechRoutes } from "./routes/speech";
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
+import { linkRoutes } from "./routes/links";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
 import { workOpportunityRoutes } from "./routes/work-opportunities";
 import { workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
@@ -57,6 +58,7 @@ import {
 } from "./services/slack-routing-service";
 
 import { privateAccessRoutes } from "./routes/private-access";
+import { conversationAccessRoutes } from "./routes/conversation-access";
 
 export function createApp(): Hono<HonoAppEnv> {
   const app = new Hono<HonoAppEnv>();
@@ -124,10 +126,12 @@ export function createApp(): Hono<HonoAppEnv> {
     await next();
   });
   app.use("*", apiOperationTelemetry());
+  app.use("*", auditSupportWrites);
 
   app.get("/", (c) => c.json({ service: "avalon-api", region: c.env.AVALON_REGION }));
   app.route("/health", healthRoutes);
   app.route("/access", privateAccessRoutes);
+  app.route("/conversation-access", conversationAccessRoutes);
   app.route("/auth", authRoutes);
   app.route("/browser",createBrowserRoutes((request,c) => {
     let executionContext;
@@ -143,6 +147,7 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/socket", socketRoutes);
   app.route("/slack", slackIngressRoutes);
   app.route("/telemetry", publicTelemetryRoutes);
+  app.route("/links", linkRoutes);
   app.route('/internal/telemetry', telemetryOperatorRoutes);
   app.route('/internal/demos', demoOperatorRoutes);
   app.route('/internal/connector-maintenance', connectorMaintenanceOperatorRoutes);
@@ -153,6 +158,10 @@ export function createApp(): Hono<HonoAppEnv> {
   // Both sub-apps are root-mounted. Hono runs their wildcard middleware in
   // order for protected routes, so `requireAuth` reuses this identity result.
   identityApi.use("*", requireIdentityAuth);
+  // Account setup and device registration mint or bind beyond one
+  // Organization; a support session may do neither.
+  identityApi.use("/onboarding/*", refuseSupportSession);
+  identityApi.use("/push-devices/*", refuseSupportSession);
   identityApi.route("/onboarding", onboardingRoutes);
   // Before the member-only `/workspace` routes, so a guest reaches these too.
   identityApi.get("/workspace/socket", requireWorkspaceAuth, workspaceSocketTicket);

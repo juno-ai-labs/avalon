@@ -2,7 +2,6 @@
 
 import { env } from "cloudflare:workers";
 import {
-  asAutomationId,
   asSpaceId,
   asSubstreamId,
   asUserId,
@@ -29,9 +28,10 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
-import { AUTOMATION_DO_SCHEMA_MIGRATIONS, AutomationDO } from "../src/durable-objects/automation-do";
+import { type SidekickDirectoryRow, writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
@@ -55,7 +55,6 @@ import {
   deliverEffectsToWorkspaceInOrder,
 } from "./helpers/conversation-effects";
 import {
-  automationDOName,
   conversationObjectName,
   substreamLoopId,
   workspaceDOName,
@@ -78,7 +77,6 @@ const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000102");
 const CHILD_SUBSTREAM_ID = asSubstreamId("00000000-0000-7000-8000-000000000103");
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000104");
 const SESSION_ID = "runtime-test-session";
-const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-00000000010a");
 const SPACE_ID = asSpaceId("00000000-0000-7000-8000-00000000010b");
 const OTHER_SPACE_ID = asSpaceId("00000000-0000-7000-8000-00000000010c");
 
@@ -131,7 +129,8 @@ async function seedOpenAuthority(): Promise<void> {
       workspace_id TEXT NOT NULL,
       region TEXT NOT NULL,
       revoked_at TEXT,
-      expires_at TEXT NOT NULL
+      expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`INSERT INTO sessions
       (id, user_id, workspace_id, region, revoked_at, expires_at)
@@ -257,7 +256,6 @@ function nextMessages(socket: WebSocket, count: number): Promise<MessageEvent[]>
 
 type DirectoryCommonEffect = Extract<ConversationEffect, { kind: "directory_common" }>;
 type DirectoryUserEffect = Extract<ConversationEffect, { kind: "directory_user" }>;
-type AutomationDirectoryEffect = Extract<ParentEffect, { kind: "directory_automation" }>;
 
 function partitionKeyFor(effect: ConversationEffect | ParentEffect): string {
   return effect.kind === "directory_user" ? `user:${effect.userId}` : "common";
@@ -306,29 +304,6 @@ function parentEffectEnvelope(
     generation: 1,
     messageId,
     partitionKey: partitionKeyFor(effect),
-    sourceVersion,
-    requiredProjectionVersion: null,
-    payloadHash: conversationEffectHash(effect),
-    effect,
-  };
-}
-
-/** An automation's own sidebar row, as its `AutomationDO` publishes it. */
-function automationDirectoryEnvelope(
-  effect: AutomationDirectoryEffect,
-  messageId: string,
-  sourceVersion = 1,
-): ParentEffectEnvelope {
-  return {
-    kind: "parent_effect",
-    contractVersion: 1,
-    region: "global",
-    workspaceId: WORKSPACE_ID,
-    parentKind: "automation",
-    parentId: effect.automationId,
-    generation: 1,
-    messageId,
-    partitionKey: "automation",
     sourceVersion,
     requiredProjectionVersion: null,
     payloadHash: conversationEffectHash(effect),
@@ -922,8 +897,9 @@ describe("Durable Objects in the Workers runtime", () => {
       region: "global" as const,
       role: "member" as const,
     };
-    // No `scope`, which is the whole point: `POST /workstreams` carries none,
-    // so this is the shape every create a person makes in Avalon arrives in.
+    // No `scope`, which is the whole point: an initialize nobody named an
+    // audience for is born private. `POST /workstreams` names `workspace`
+    // itself, so a Channel a person starts is not this case.
     const input = {
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
@@ -1079,23 +1055,6 @@ describe("Durable Objects in the Workers runtime", () => {
           "assistant_turn_reservations",
         ],
         absentTables: ["agent_run_dispatches", "run_steering"],
-      },
-      {
-        namespace: env.AUTOMATION_DOS,
-        name: automationDOName("global", WORKSPACE_ID, AUTOMATION_ID),
-        constructor: AutomationDO,
-        migrations: AUTOMATION_DO_SCHEMA_MIGRATIONS.length,
-        // Its own rows beside the parent tables the legacy WorkstreamDO had.
-        tables: [
-          "_sql_schema_migrations",
-          "automation",
-          "definition_revisions",
-          "schedules",
-          "runs",
-          "conversation_children",
-          "substream_directory",
-          "durable_outbox",
-        ],
       },
       {
         namespace: env.WORKSPACE_DOS,
@@ -1473,7 +1432,7 @@ describe("Durable Objects in the Workers runtime", () => {
         throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
       }
       expect(response.status).toBe(101);
-      await expect(stub.initializeWorkspace(WORKSPACE_ID, "wnam")).resolves.toBeUndefined();
+      await expect(stub.initializeWorkspace(WORKSPACE_ID, "wnam")).resolves.toEqual({ spacesReady: false });
       const socket = response.webSocket;
       expect(socket).toBeDefined();
       socket!.accept();
@@ -1532,9 +1491,11 @@ describe("Durable Objects in the Workers runtime", () => {
     ticketId: string,
     sessionId: string = SESSION_ID,
     userId: string = USER_ID,
+    impersonatorUserId?: string,
   ): Promise<WebSocket> {
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
+        ...(impersonatorUserId ? { [RALLY_HEADERS.SOCKET_IMPERSONATOR_ID]: impersonatorUserId } : {}),
         Upgrade: "websocket",
         "x-rally-workspace-id": WORKSPACE_ID,
         "x-rally-placement-affinity": "wnam",
@@ -1644,6 +1605,16 @@ describe("Durable Objects in the Workers runtime", () => {
       first.send(JSON.stringify({ type: "set_presence", revision: 2,
         applicationState: "foreground", foregroundWorkstreamId: null }));
       await appliedRevision(2);
+      expect((await workspace.listWorkstreams({ ...request, limit: 20 })).items
+        .find((item) => item.id === WORKSTREAM_ID)?.lastAccessedAt).toBeNull();
+      // A Rally access support session as this person opens the channel without
+      // recording that they visited it (docs/impersonation.md).
+      const support = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-000000000419",
+        SESSION_ID, USER_ID, otherUserId);
+      support.send(JSON.stringify({ type: "set_presence", revision: 9,
+        applicationState: "foreground", foregroundWorkstreamId: WORKSTREAM_ID }));
+      await appliedRevision(9);
+      support.close();
       expect((await workspace.listWorkstreams({ ...request, limit: 20 })).items
         .find((item) => item.id === WORKSTREAM_ID)?.lastAccessedAt).toBeNull();
       const delivered = nextMessageOfType(peer, "workspace_workstream_recency");
@@ -2070,6 +2041,55 @@ describe("Durable Objects in the Workers runtime", () => {
       });
     } finally {
       socket.close(1000, "test complete");
+    }
+  });
+
+  it("sends the meter after a plan change to every member socket, never a guest's, and drops one read before the last sent", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // Opened first and marked while it is the only socket, so the mark is on
+    // this one.
+    const guest = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060e");
+    await runInDurableObject(stub, (_instance, state) => {
+      const [socket] = state.getWebSockets();
+      socket!.serializeAttachment({ ...(socket!.deserializeAttachment() as object), accessClass: "guest" });
+    });
+    const first = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060c");
+    const second = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060d");
+    const usage = (plan: "starter" | "growth", quotaRemainingPercent: number) => ({
+      plan,
+      quotaRemainingPercent,
+      weekResetsAt: "2026-10-08T09:00:00.000Z",
+      overage: {
+        amountMicrousd: 0,
+        periodStart: "2026-10-01T09:00:00.000Z",
+        periodEndsAt: "2026-11-01T09:00:00.000Z",
+        billed: false as const,
+      },
+    });
+    const guestHeard: unknown[] = [];
+    guest.addEventListener("message", (event) => {
+      const decoded = JSON.parse(String(event.data)) as { type?: string };
+      if (decoded.type === "workspace_usage") guestHeard.push(decoded);
+    });
+    try {
+      const delivered = [nextMessageOfType(first, "workspace_usage"), nextMessageOfType(second, "workspace_usage")];
+      await expect(stub.publishUsage(usage("growth", 44), "2026-10-03T00:00:02.000Z", WORKSPACE_ID, "wnam"))
+        .resolves.toBe(2);
+      for (const message of await Promise.all(delivered)) {
+        expect(message).toMatchObject({ type: "workspace_usage", usage: usage("growth", 44) });
+      }
+      // The push for an earlier change, arriving last, would put Starter back.
+      await expect(stub.publishUsage(usage("starter", 0), "2026-10-03T00:00:01.000Z", WORKSPACE_ID, "wnam"))
+        .resolves.toBe(0);
+      expect(guestHeard).toEqual([]);
+    } finally {
+      first.close(1000, "test complete");
+      second.close(1000, "test complete");
+      guest.close(1000, "test complete");
     }
   });
 
@@ -2768,10 +2788,8 @@ describe("Durable Objects in the Workers runtime", () => {
         },
       ],
     })).resolves.toMatchObject({ status: 200 });
-    await expect(stub.applyAutomationDirectory({
-      workspaceId: WORKSPACE_ID,
-      envelope: automationDirectoryEnvelope({
-        kind: "directory_automation",
+    await writeSidekickDirectoryRow(env, {
+        workspaceId: WORKSPACE_ID,
         automationId: subscriptionId,
         authorUserId: USER_ID,
         lifecycle: "active",
@@ -2780,15 +2798,12 @@ describe("Durable Objects in the Workers runtime", () => {
         title: "Monday brief",
         description: "Every Monday",
         nextRunAt: null,
-      }, "monday-brief-v1"),
-    })).resolves.toEqual({ applied: true });
+      });
     // The author owns both rows, but this one belongs to the room's rail. If
     // the top-level query selects by author alone, its third scope makes the
     // whole WorkspaceSidebar schema fail before the socket can send anything.
-    await expect(stub.applyAutomationDirectory({
-      workspaceId: WORKSPACE_ID,
-      envelope: automationDirectoryEnvelope({
-        kind: "directory_automation",
+    await writeSidekickDirectoryRow(env, {
+        workspaceId: WORKSPACE_ID,
         automationId: workstreamSubscriptionId,
         authorUserId: USER_ID,
         lifecycle: "active",
@@ -2797,8 +2812,7 @@ describe("Durable Objects in the Workers runtime", () => {
         title: "Room-owned standup",
         description: "Lives on the work stream's own automation rail",
         nextRunAt: null,
-      }, "room-owned-standup-v1"),
-    })).resolves.toEqual({ applied: true });
+      });
 
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
@@ -2857,6 +2871,46 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(page.notes.waterline).toBeGreaterThanOrEqual(0);
     } finally {
       socket!.close(1000, "test complete");
+    }
+  });
+
+  it("answers subscribe with the viewer's stored display preferences", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // Nothing stored is every default.
+    await expect(stub.memberPreferences({ workspaceId: WORKSPACE_ID, userId: USER_ID }))
+      .resolves.toEqual({ showAgentWork: true });
+    await expect(stub.saveMemberPreferences({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      preferences: { showAgentWork: false },
+    })).resolves.toEqual({ showAgentWork: false });
+
+    const response = await stub.fetch("https://workspace.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000709",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    try {
+      const answer = nextMessage(socket);
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      const event = JSON.parse(String((await answer).data)) as { viewerPreferences?: unknown };
+      // On the answer itself, so the first frame hides the calls without a read.
+      expect(event.viewerPreferences).toEqual({ showAgentWork: false });
+    } finally {
+      socket.close(1000, "test complete");
     }
   });
 
@@ -2968,12 +3022,9 @@ describe("Durable Objects in the Workers runtime", () => {
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
 
     const subscriptionId = "00000000-0000-7000-8000-000000000803";
-    const row = (
-      lifecycle: "active" | "paused",
-      nextRunAt: string,
-    ): AutomationDirectoryEffect => ({
-      kind: "directory_automation",
+    const row = (lifecycle: "active" | "paused", nextRunAt: string): SidekickDirectoryRow => ({
       automationId: subscriptionId,
+      workspaceId: WORKSPACE_ID,
       authorUserId: USER_ID,
       lifecycle,
       scope: "workspace",
@@ -2982,10 +3033,7 @@ describe("Durable Objects in the Workers runtime", () => {
       description: "Every Monday",
       nextRunAt,
     });
-    await expect(stub.applyAutomationDirectory({
-      workspaceId: WORKSPACE_ID,
-      envelope: automationDirectoryEnvelope(row("active", "2026-08-28T09:00:00.000Z"), "weekly-changelog-v1"),
-    })).resolves.toEqual({ applied: true });
+    await writeSidekickDirectoryRow(env, row("active", "2026-08-28T09:00:00.000Z"));
 
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
@@ -3007,13 +3055,9 @@ describe("Durable Objects in the Workers runtime", () => {
       socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
       expect(JSON.parse(String((await subscribed).data))).toMatchObject({ type: "workspace_sync" });
 
-      // The automation's own row is the only automation write that reaches
-      // the workspace sidebar; the schedule itself stays in AutomationDO.
+      // The Sidekick's directory row is what reaches the workspace sidebar.
       const pushed = nextMessage(socket!);
-      await expect(stub.applyAutomationDirectory({
-        workspaceId: WORKSPACE_ID,
-        envelope: automationDirectoryEnvelope(row("active", "2026-09-04T09:00:00.000Z"), "weekly-changelog-v2", 2),
-      })).resolves.toEqual({ applied: true });
+      await writeSidekickDirectoryRow(env, row("active", "2026-09-04T09:00:00.000Z"));
 
       const event = JSON.parse(String((await pushed).data)) as {
         type: string;
@@ -3033,22 +3077,13 @@ describe("Durable Objects in the Workers runtime", () => {
       // leaves this one alone: two lists that change independently keep
       // independent counters, or a note write would hide an automation update.
       const secondPush = nextMessage(socket!);
-      await expect(stub.applyAutomationDirectory({
-        workspaceId: WORKSPACE_ID,
-        envelope: automationDirectoryEnvelope(row("paused", "2026-09-04T09:00:00.000Z"), "weekly-changelog-v3", 3),
-      })).resolves.toEqual({ applied: true });
+      await writeSidekickDirectoryRow(env, row("paused", "2026-09-04T09:00:00.000Z"));
       const second = JSON.parse(String((await secondPush).data)) as {
         waterline: number;
         items: Array<{ status: string }>;
       };
       expect(second.waterline).toBeGreaterThan(event.waterline);
       expect(second.items[0]?.status).toBe("paused");
-      // A stale version is not a write: the counter stays put and nothing is
-      // pushed, so a Queue redelivery cannot roll the sidebar back.
-      await expect(stub.applyAutomationDirectory({
-        workspaceId: WORKSPACE_ID,
-        envelope: automationDirectoryEnvelope(row("active", "2026-09-04T09:00:00.000Z"), "weekly-changelog-v2", 2),
-      })).resolves.toEqual({ applied: false });
     } finally {
       socket!.close(1000, "test complete");
     }
@@ -4044,6 +4079,11 @@ describe("Durable Objects in the Workers runtime", () => {
       workspaceDOName("global", WORKSPACE_ID),
     ));
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // Close the Space cutover, as the path that opens a new Organization does.
+    // A pending one is due at once, and when workerd fires it before the
+    // settle below, its page claim re-arms the alarm a retry delay out, which
+    // is earlier than the expiry this case measures.
+    await stub.finalizeSpaceBootstrap({ workspaceId: WORKSPACE_ID });
     const eventId = "00000000-0000-7000-8000-000000000316";
     const processingOwnerId = "00000000-0000-7000-8000-000000000317";
     await stub.ingestConnectorEvent({

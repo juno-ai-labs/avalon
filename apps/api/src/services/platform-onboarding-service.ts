@@ -8,7 +8,10 @@ import {
   PendingWorkspaceInvitationSchema,
   SessionSchema,
   WorkspaceIdSchema,
+  asSpaceId,
+  asUserId,
   asWorkspaceId,
+  WorkspaceAttentionSchema,
   WorkspaceSchema,
   type Region,
   type WorkspaceId,
@@ -17,11 +20,12 @@ import {
   type Workspace,
 } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
-import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
+import { workspaceSlug } from "../lib/workspace-slug";
+import { diagnosticErrorCode } from "../observability/logger";
 import { sha256 } from "../lib/crypto";
 import {
   deriveWorkspacePlacementAffinity,
@@ -35,20 +39,42 @@ import { BrowserSessionService } from "./browser-session-service";
 import { AuthService } from "./auth-service";
 import { openGeneralSpaceForNewWorkspace } from "./space-bootstrap-service";
 import {
+  acceptsNewWorkstreamWork,
+  readWorkstreamAuthorityControl,
+  type WorkstreamAuthorityControl,
+} from "./workstream-authority";
+import { parentRouteStatement, regionalWorkstreamAnchorStatement } from "./workstream-runtime-database";
+import type { WorkspaceGeneralOpening } from "../durable-objects/workspace-space-protocol";
+import { uuidV7 } from "../lib/uuid-v7";
+import {
   demoWorkspaceAdmission,
   withheldDemoWorkspaceIds,
 } from "./demo-workspace-visibility";
 import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
+import { claimScopeInvitations } from "./scope-invitation-claims";
+import { membershipAttention } from "./workspace-attention-service";
+import { settledFailureCode } from "../lib/settled-failure-code";
 import {
   PreferenceProjectionSchema,
   applyRegionalPreferenceProjection,
   loadOrCreateCanonicalPreferenceProjection,
 } from "../telemetry/preference";
 
+/**
+ * One verified sign-in method: `google` and its subject, `email` and its
+ * address, or any provider added later. A deployment links a person by these,
+ * never by a provider-specific column.
+ */
+export const loginIdentitySchema = z.object({
+  provider: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/u),
+  subject: z.string().min(1).max(320),
+});
+export type LoginIdentity = z.infer<typeof loginIdentitySchema>;
+
 export const platformIdentitySchema = z.object({
   accountOnboarding: AccountOnboardingSchema.optional(),
   platformUserId: z.string().uuid(),
-  googleSubject: z.string().min(1).max(255),
+  loginIdentities: z.array(loginIdentitySchema),
   email: z.string().email().max(254),
   name: z.string().min(1).max(255),
   avatarUrl: HttpUrlSchema.nullable(),
@@ -70,6 +96,12 @@ const regionalDiscoverySchema = z.object({
   workspaces: z.array(regionalWorkspaceSchema),
   invitations: z.array(regionalPendingInvitationSchema),
 });
+
+const regionalAttentionSchema = z.object({
+  attention: z.array(z.object({ region: RegionSchema, workspaceId: WorkspaceIdSchema, attention: WorkspaceAttentionSchema })),
+  failed: z.array(z.object({ workspaceId: z.string(), code: z.string() })),
+});
+export type RegionalAttention = z.infer<typeof regionalAttentionSchema>;
 
 const regionalActionBaseSchema = z.object({
   identity: platformIdentitySchema,
@@ -163,6 +195,7 @@ export type BrowserRegistration = z.infer<typeof browserRegistrationSchema>;
 /** Named WorkerEntrypoint RPC surface. It is intentionally not an HTTP route. */
 export interface RegionalIdentityBridgeBinding {
   discover(identity: PlatformIdentity): Promise<RegionalDiscovery>;
+  attention(identity: PlatformIdentity): Promise<RegionalAttention>;
   activate(input: RegionalActivateInput): Promise<Session>;
   activateBrowser(input: RegionalActivateInput): Promise<BrowserRegistration>;
   create(input: RegionalCreateInput): Promise<Session>;
@@ -173,6 +206,7 @@ export interface RegionalIdentityBridgeBinding {
 /** Raw Cloudflare RPC surface. Business failures are data, never thrown errors. */
 export interface RegionalIdentityBridgeRpcBinding {
   discover(identity: PlatformIdentity): Promise<RegionalRpcResult<RegionalDiscovery>>;
+  attention(identity: PlatformIdentity): Promise<RegionalRpcResult<RegionalAttention>>;
   activate(input: RegionalActivateInput): Promise<RegionalRpcResult<Session>>;
   activateBrowser(input: RegionalActivateInput): Promise<RegionalRpcResult<BrowserRegistration>>;
   create(input: RegionalCreateInput): Promise<RegionalRpcResult<Session>>;
@@ -186,6 +220,10 @@ export class RegionalIdentityBridgeClient implements RegionalIdentityBridgeBindi
 
   discover(identity: PlatformIdentity): Promise<RegionalDiscovery> {
     return this.call(this.rpc.discover(identity), regionalDiscoverySchema);
+  }
+
+  attention(identity: PlatformIdentity): Promise<RegionalAttention> {
+    return this.call(this.rpc.attention(identity), regionalAttentionSchema);
   }
 
   activate(input: RegionalActivateInput): Promise<Session> {
@@ -223,7 +261,7 @@ export class RegionalIdentityBridgeClient implements RegionalIdentityBridgeBindi
 interface RegionalUserRow {
   id: string;
   platform_user_id: string | null;
-  google_subject: string;
+  google_subject: string | null;
   email: string;
 }
 
@@ -291,6 +329,9 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   async discover(rawIdentity: PlatformIdentity): Promise<RegionalDiscovery> {
     const identity = platformIdentitySchema.parse(rawIdentity);
     const user = await this.ensureRegionalUser(identity);
+    // Before listing, so a joined Organization is listed. The identity's address
+    // is Global's verified one, which this deployment may not have recorded.
+    await claimScopeInvitations(this.env, user.id, identity.email);
     const [workspaceResult, invitationResult] = await Promise.all([
       this.env.DB.prepare(
         `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at,
@@ -331,6 +372,21 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       workspaces: memberships.filter((workspace) => !withheld.has(workspace.id)),
       invitations: (invitationResult.results ?? []).map(mapPendingInvitation),
     });
+  }
+
+  /**
+   * Attention for each organization the identity is a member of here, for a
+   * browser that holds no workspace credential to ask each one itself.
+   */
+  async attention(rawIdentity: PlatformIdentity): Promise<RegionalAttention> {
+    // A read, so it never writes: `discover`, which the list ran first, is what
+    // links or refreshes the regional user. Not linked yet means no membership here.
+    const identity = platformIdentitySchema.parse(rawIdentity);
+    const user = await this.env.DB.prepare("SELECT id FROM users WHERE platform_user_id = ?")
+      .bind(identity.platformUserId).first<{ id: string }>();
+    if (!user) return { attention: [], failed: [] };
+    const workspaces = await new AuthService(this.env).listRegionalWorkspaces(user.id);
+    return membershipAttention(this.env, user.id, workspaces);
   }
 
   async activate(rawInput: RegionalActivateInput): Promise<Session> {
@@ -379,8 +435,11 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     const input = regionalCreateSchema.parse(rawInput);
     this.requireCompatiblePlacementAffinity(input.placementAffinity);
     const user = await this.ensureRegionalUser(input.identity);
-    await applyRegionalPreferenceProjection(this.env, user.id, input.preference);
-    const replay = await this.loadOperation(input.operationId);
+    const [, replay, authority] = await Promise.all([
+      applyRegionalPreferenceProjection(this.env, user.id, input.preference),
+      this.loadOperation(input.operationId),
+      readWorkstreamAuthorityControl(this.env),
+    ]);
     if (replay) {
       this.assertOperation(replay, input, "create", null);
       await this.requireMembership(user.id, input.workspaceId);
@@ -389,8 +448,9 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
     }
 
-    await this.createOwnedWorkspace(user.id, input);
-    return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
+    const session = await new AuthService(this.env).prepareWorkspaceSession(user.id, input.workspaceId);
+    const results = await this.createOwnedWorkspace(user.id, input, authority, session.statements);
+    return session.issue(results);
   }
 
   /**
@@ -425,7 +485,10 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       name: input.name,
       placementAffinity,
     };
-    const replay = await this.loadOperation(input.operationId);
+    const [replay, authority] = await Promise.all([
+      this.loadOperation(input.operationId),
+      readWorkstreamAuthorityControl(this.env),
+    ]);
     if (replay) {
       this.assertOperation(replay, reference, "create", null);
       await this.requireMembership(user.id, input.workspaceId);
@@ -433,18 +496,35 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       await this.initializeWorkspaceObject(input.workspaceId, placementAffinity);
       return;
     }
-    await this.createOwnedWorkspace(user.id, reference);
+    await this.createOwnedWorkspace(user.id, reference, authority, []);
   }
 
-  /** The rows, the journal entry, the checks, and the object — for both creators above. */
+  /**
+   * The rows, the journal entry, General's anchor and the object, for both
+   * creators above. One D1 batch writes the workspace, its owner, the journal
+   * entry and General's anchor and route; `trailing` statements (the
+   * creator's session) go last, after the membership they need, and their
+   * results are returned. The batch is all or nothing and the workspace insert
+   * has no conflict clause, so a committed batch is the proof of the rows: no
+   * read-back follows. One object call then initializes the Organization and
+   * opens General in it. An authority that does not accept new work (closed,
+   * or mid-migration with a positive generation) gets no anchor here, and
+   * General is left to the slower path, which asks again.
+   */
   private async createOwnedWorkspace(
     userId: string,
     input: OperationReference & { name: string; placementAffinity: WorkspacePlacementAffinity },
-  ): Promise<void> {
+    authority: WorkstreamAuthorityControl,
+    trailing: D1PreparedStatement[],
+  ): Promise<D1Result[]> {
     const at = nowIso();
-    const slugBase = input.name.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "workspace";
-    const slug = `${slugBase}-${input.workspaceId.slice(0, 8)}`;
-    await this.env.DB.batch([
+    const slug = workspaceSlug(input.name, input.workspaceId);
+    // Minted here and never seen outside this call, so no Channel create can
+    // have claimed it and the claim read `claimParentAnchor` makes is not needed.
+    const general = acceptsNewWorkstreamWork(authority) && authority.generation >= 1
+      ? { creatorUserId: asUserId(userId), spaceId: asSpaceId(uuidV7()), authorityGeneration: authority.generation }
+      : undefined;
+    const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO workspaces
          (id, name, slug, region, timezone, placement_affinity,
@@ -468,10 +548,16 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = 'active'`,
       ).bind(input.workspaceId, userId, at, input.workspaceId, this.env.AVALON_REGION),
       this.operationStatement(input, "create", null, at),
+      ...(general ? [
+        regionalWorkstreamAnchorStatement(this.env, input.workspaceId, general.spaceId),
+        parentRouteStatement(this.env, {
+          workspaceId: input.workspaceId, parentId: general.spaceId, generation: general.authorityGeneration, at,
+        }),
+      ] : []),
+      ...trailing,
     ]);
-    await this.requireMembership(userId, input.workspaceId);
-    await this.requirePlacementAffinity(input.workspaceId, input.placementAffinity);
-    await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity);
+    await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity, general);
+    return trailing.length === 0 ? [] : results.slice(-trailing.length);
   }
 
   async accept(rawInput: RegionalAcceptInput): Promise<Session> {
@@ -511,43 +597,83 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   }
 
   private async ensureRegionalUser(identity: PlatformIdentity): Promise<RegionalUserRow> {
-    const user = await this.resolveRegionalUser(identity);
+    const resolved = await this.resolveRegionalUser(identity);
+    const { user } = resolved;
+    if (!resolved.profileApplied) {
+      const onboarding = this.onboardingStatements(user.id, identity);
+      if (onboarding.length > 0) await this.publishOnboardingChange(await this.env.DB.batch(onboarding));
+    }
+    return user;
+  }
+
+  /**
+   * The account onboarding profile Global sends, written to this deployment's
+   * user, and the memberships to tell when it changed anything. Empty in
+   * Global, which owns the profile. `publishOnboardingChange` takes these
+   * statements' results.
+   */
+  private onboardingStatements(userId: string, identity: PlatformIdentity): D1PreparedStatement[] {
     const profile = identity.accountOnboarding;
-    if (profile && this.env.AVALON_REGION !== 'global') {
-      const result = await this.env.DB.prepare(
+    if (!profile || this.env.AVALON_REGION === 'global') return [];
+    return [
+      this.env.DB.prepare(
         `UPDATE users SET onboarding_eligible = ?, onboarding_introduced = ?,
           name = COALESCE(?, name), presentation_json = ?, onboarding_revision = ?
          WHERE id = ? AND onboarding_revision <= ?
            AND (onboarding_revision < ? OR onboarding_eligible != ? OR onboarding_introduced != ? OR presentation_json IS NOT ?)`,
       ).bind(profile.eligible ? 1 : 0, profile.introduced ? 1 : 0,
         profile.presentation?.displayName ?? null, profile.presentation ? JSON.stringify(profile.presentation) : null,
-        profile.revision, user.id, profile.revision, profile.revision, profile.eligible ? 1 : 0, profile.introduced ? 1 : 0, profile.presentation ? JSON.stringify(profile.presentation) : null).run();
-      if (result.meta.changes) {
-        const memberships = await this.env.DB.prepare(
-          "SELECT workspace_id FROM workspace_members WHERE user_id = ? AND status = 'active'",
-        ).bind(user.id).all<{ workspace_id: string }>();
-        await Promise.all(memberships.results.map((row) =>
-          publishWorkspaceSync(this.env, row.workspace_id, ['workspace_profile', 'member_directory'])));
-      }
-    }
-    return user;
+        profile.revision, userId, profile.revision, profile.revision, profile.eligible ? 1 : 0, profile.introduced ? 1 : 0, profile.presentation ? JSON.stringify(profile.presentation) : null),
+      this.env.DB.prepare(
+        "SELECT workspace_id FROM workspace_members WHERE user_id = ? AND status = 'active'",
+      ).bind(userId),
+    ];
   }
 
-  private async resolveRegionalUser(identity: PlatformIdentity): Promise<RegionalUserRow> {
-    let user = await this.env.DB.prepare(
-      "SELECT id, platform_user_id, google_subject, email FROM users WHERE platform_user_id = ?",
-    ).bind(identity.platformUserId).first<RegionalUserRow>();
-    if (user) {
-      if (user.google_subject !== identity.googleSubject) {
+  private async publishOnboardingChange(results: readonly D1Result[]): Promise<void> {
+    if (!results[0]?.meta.changes) return;
+    const memberships = (results[1]?.results ?? []) as Array<{ workspace_id: string }>;
+    await Promise.all(memberships.map((row) =>
+      publishWorkspaceSync(this.env, row.workspace_id, ['workspace_profile', 'member_directory'])));
+  }
+
+  /**
+   * The regional user for this identity. A known user's profile, sign-in
+   * methods and onboarding profile are refreshed in one batch, after one
+   * parallel pair of reads, which is the path every create, accept and
+   * activation of a returning account takes (`profileApplied`).
+   */
+  private async resolveRegionalUser(identity: PlatformIdentity): Promise<{ user: RegionalUserRow; profileApplied: boolean }> {
+    const [known, owners] = await Promise.all([
+      this.env.DB.prepare(
+        "SELECT id, platform_user_id, google_subject, email FROM users WHERE platform_user_id = ?",
+      ).bind(identity.platformUserId).first<RegionalUserRow>(),
+      this.loginIdentityOwners(identity),
+    ]);
+    if (known) {
+      if (owners.some((owner) => owner.id !== known.id)) {
         throw new ApiError(409, "regional_identity_conflict", "The regional identity link does not match this account");
       }
-      await this.syncRegionalProfile(user.id, identity);
-      return { ...user, email: identity.email };
+      const profile = this.syncRegionalProfileStatement(known.id, identity);
+      const logins = this.loginIdentityStatements(known.id, identity);
+      const onboarding = this.onboardingStatements(known.id, identity);
+      let results: D1Result[];
+      try {
+        results = await this.env.DB.batch([profile, ...logins, ...onboarding]);
+      } catch (error) {
+        throw this.profileConflict(error);
+      }
+      if (onboarding.length > 0) await this.publishOnboardingChange(results.slice(1 + logins.length));
+      return { user: { ...known, email: identity.email }, profileApplied: true };
     }
+    return { user: await this.linkOrCreateRegionalUser(identity, owners), profileApplied: false };
+  }
 
-    user = await this.env.DB.prepare(
-      "SELECT id, platform_user_id, google_subject, email FROM users WHERE google_subject = ?",
-    ).bind(identity.googleSubject).first<RegionalUserRow>();
+  private async linkOrCreateRegionalUser(identity: PlatformIdentity, owners: RegionalUserRow[]): Promise<RegionalUserRow> {
+    if (owners.length > 1) {
+      throw new ApiError(409, "regional_identity_conflict", "This account's sign-in methods belong to different regional identities");
+    }
+    const user: RegionalUserRow | null = owners[0] ?? null;
     if (user) {
       if (user.platform_user_id && user.platform_user_id !== identity.platformUserId) {
         throw new ApiError(409, "regional_identity_conflict", "The regional identity is already linked to another account");
@@ -567,11 +693,18 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       if (Number(result.meta.changes ?? 0) !== 1) {
         throw new ApiError(409, "regional_identity_conflict", "The regional identity could not be linked safely");
       }
+      await this.recordLoginIdentities(user.id, identity);
       return { ...user, platform_user_id: identity.platformUserId, email: identity.email };
     }
 
+    // Nothing to link a new regional user by; refuse rather than mint one that
+    // no later sign-in could ever be matched to.
+    if (identity.loginIdentities.length === 0) {
+      throw new ApiError(409, "login_identity_required", "This account has no sign-in method to link in this deployment");
+    }
     const id = newId();
     const at = nowIso();
+    const googleSubject = identity.loginIdentities.find((entry) => entry.provider === "google")?.subject ?? null;
     try {
       await this.env.DB.prepare(
         `INSERT INTO users
@@ -579,7 +712,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
-        identity.googleSubject,
+        googleSubject,
         identity.email,
         identity.name,
         identity.avatarUrl,
@@ -592,27 +725,86 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       const raced = await this.env.DB.prepare(
         "SELECT id, platform_user_id, google_subject, email FROM users WHERE platform_user_id = ?",
       ).bind(identity.platformUserId).first<RegionalUserRow>();
-      if (!raced || raced.google_subject !== identity.googleSubject) {
+      if (!raced) {
         throw new ApiError(409, "regional_identity_conflict", "The regional identity could not be linked safely");
       }
+      await this.requireLoginIdentitiesFree(raced.id, identity);
       return raced;
     }
+    await this.recordLoginIdentities(id, identity);
     return {
       id,
       platform_user_id: identity.platformUserId,
-      google_subject: identity.googleSubject,
+      google_subject: googleSubject,
       email: identity.email,
     };
   }
 
-  private async syncRegionalProfile(userId: string, identity: PlatformIdentity): Promise<void> {
-    try {
-      await this.env.DB.prepare(
-        "UPDATE users SET email = ?, name = COALESCE(json_extract(presentation_json, '$.displayName'), ?), avatar_url = ?, updated_at = ? WHERE id = ?",
-      ).bind(identity.email, identity.name, identity.avatarUrl, nowIso(), userId).run();
-    } catch {
-      throw new ApiError(409, "regional_identity_conflict", "The verified account profile conflicts with a regional identity");
+  /**
+   * The regional users these sign-in methods already belong to. `users.google_subject`
+   * is read too: regional users this bridge created before it recorded login
+   * identities carry their Google subject only there.
+   */
+  private async loginIdentityOwners(identity: PlatformIdentity): Promise<RegionalUserRow[]> {
+    if (identity.loginIdentities.length === 0) return [];
+    const pairs = identity.loginIdentities.map(() => "(provider = ? AND subject = ?)").join(" OR ");
+    const google = identity.loginIdentities.filter((entry) => entry.provider === "google").map((entry) => entry.subject);
+    const legacy = google.length > 0 ? ` OR google_subject IN (${google.map(() => "?").join(",")})` : "";
+    const rows = await this.env.DB.prepare(
+      `SELECT id, platform_user_id, google_subject, email FROM users
+       WHERE id IN (SELECT user_id FROM user_login_identities WHERE ${pairs})${legacy}`,
+    ).bind(...identity.loginIdentities.flatMap((entry) => [entry.provider, entry.subject]), ...google)
+      .all<RegionalUserRow>();
+    return rows.results ?? [];
+  }
+
+  private async requireLoginIdentitiesFree(userId: string, identity: PlatformIdentity): Promise<void> {
+    if ((await this.loginIdentityOwners(identity)).some((owner) => owner.id !== userId)) {
+      throw new ApiError(409, "regional_identity_conflict", "The regional identity link does not match this account");
     }
+  }
+
+  /**
+   * Global verified each of these; the deployment keeps them so a later sign-in
+   * links to the same user. An email address Global no longer sends is dropped,
+   * as Global drops it when the mailbox changes: a kept old address would block
+   * its next owner here with a conflict.
+   */
+  private async recordLoginIdentities(userId: string, identity: PlatformIdentity): Promise<void> {
+    await this.env.DB.batch(this.loginIdentityStatements(userId, identity));
+  }
+
+  private loginIdentityStatements(userId: string, identity: PlatformIdentity): D1PreparedStatement[] {
+    const at = nowIso();
+    const emails = identity.loginIdentities.filter((entry) => entry.provider === "email").map((entry) => entry.subject);
+    return [
+      this.env.DB.prepare(
+        `DELETE FROM user_login_identities WHERE provider = 'email' AND user_id = ?
+         AND subject NOT IN (SELECT value FROM json_each(?))`,
+      ).bind(userId, JSON.stringify(emails)),
+      ...identity.loginIdentities.map((entry) => this.env.DB.prepare(
+        `INSERT INTO user_login_identities (provider, subject, user_id, verified_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(provider, subject) DO NOTHING`,
+      ).bind(entry.provider, entry.subject, userId, at)),
+    ];
+  }
+
+  private syncRegionalProfileStatement(userId: string, identity: PlatformIdentity): D1PreparedStatement {
+    return this.env.DB.prepare(
+      "UPDATE users SET email = ?, name = COALESCE(json_extract(presentation_json, '$.displayName'), ?), avatar_url = ?, updated_at = ? WHERE id = ?",
+    ).bind(identity.email, identity.name, identity.avatarUrl, nowIso(), userId);
+  }
+
+  /**
+   * A refused profile refresh. The verified email is the one column there that
+   * another regional user can already hold, so a uniqueness refusal is that
+   * conflict; anything else is the database failing and keeps its own error.
+   */
+  private profileConflict(error: unknown): unknown {
+    if (error instanceof Error && /UNIQUE constraint failed/iu.test(error.message)) {
+      return new ApiError(409, "regional_identity_conflict", "The verified account profile conflicts with a regional identity");
+    }
+    return error;
   }
 
   private async requireMembership(userId: string, workspaceId: string): Promise<void> {
@@ -660,9 +852,19 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     }
   }
 
+  /**
+   * Initialize the Organization's object before the session this call is about
+   * to issue, with General open in it. Every Channel belongs to a Space, so an
+   * Organization without General is one whose sidebar cannot be drawn, and
+   * the client shows the opening card until it can. The object answers that in
+   * the same call, for an Organization already open or for a new one whose
+   * General anchor `general` names; anything else takes the slower path that
+   * makes General and closes the cutover itself.
+   */
   private async initializeWorkspaceObject(
     workspaceId: WorkspaceId,
     placementAffinity: WorkspacePlacementAffinity,
+    general?: WorkspaceGeneralOpening,
   ): Promise<void> {
     const workspaceObject = await durableObjectStubForWorkspace(
       this.env,
@@ -671,10 +873,8 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       workspaceDOName(this.env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    await workspaceObject.initializeWorkspace(workspaceId, placementAffinity);
-    // Before the session this call is about to issue. Every Channel belongs to
-    // a Space, so an Organization without General is one whose sidebar cannot
-    // be drawn — and the client shows the opening card until it can.
+    const opened = await workspaceObject.initializeWorkspace(workspaceId, placementAffinity, general);
+    if (opened?.spacesReady === true) return;
     await openGeneralSpaceForNewWorkspace(this.env, workspaceId);
   }
 
@@ -785,14 +985,18 @@ export class D1PlatformBindingStore implements PlatformBindingStore {
   constructor(private readonly db: D1Database, private readonly now: () => Date = () => new Date()) {}
 
   async list(platformUserId: string): Promise<PlatformBindingRow[]> {
-    const result = await this.db.prepare(
+    const result = await this.listStatement(platformUserId).all<PlatformBindingRow>();
+    return result.results ?? [];
+  }
+
+  private listStatement(platformUserId: string): D1PreparedStatement {
+    return this.db.prepare(
       `SELECT platform_user_id, region, workspace_id, placement_affinity, status,
               operation_id, pending_expires_at
        FROM platform_workspace_bindings
        WHERE platform_user_id = ?
        ORDER BY created_at, region, workspace_id`,
-    ).bind(platformUserId).all<PlatformBindingRow>();
-    return result.results ?? [];
+    ).bind(platformUserId);
   }
 
   async reconcile(
@@ -878,40 +1082,44 @@ export class D1PlatformBindingStore implements PlatformBindingStore {
     // outcomes are never reclaimed automatically because the old regional action
     // could still commit after an apparent timeout.
     const expiresAt = new Date(this.now().getTime() + 2 * 60_000).toISOString();
-    await this.db.prepare(
-      `UPDATE platform_workspace_bindings
-       SET status = 'pending', operation_id = ?, pending_expires_at = ?, updated_at = ?
-       WHERE platform_user_id = ? AND region = ? AND workspace_id = ? AND status = 'inactive'
-         AND NOT EXISTS (
-           SELECT 1 FROM platform_workspace_bindings
-           WHERE platform_user_id = ? AND status = 'pending'
-         )`,
-    ).bind(
-      operationId,
-      expiresAt,
-      at,
-      platformUserId,
-      region,
-      workspaceId,
-      platformUserId,
-    ).run();
-    await this.db.prepare(
-      `INSERT OR IGNORE INTO platform_workspace_bindings
-       (platform_user_id, region, workspace_id, placement_affinity, status, operation_id,
-        pending_expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
-       `,
-    ).bind(
-      platformUserId,
-      region,
-      workspaceId,
-      placementAffinity,
-      operationId,
-      expiresAt,
-      at,
-      at,
-    ).run();
-    const rows = await this.list(platformUserId);
+    // One round trip: the reactivation, the insert, and the read of what won.
+    const results = await this.db.batch([
+      this.db.prepare(
+        `UPDATE platform_workspace_bindings
+         SET status = 'pending', operation_id = ?, pending_expires_at = ?, updated_at = ?
+         WHERE platform_user_id = ? AND region = ? AND workspace_id = ? AND status = 'inactive'
+           AND NOT EXISTS (
+             SELECT 1 FROM platform_workspace_bindings
+             WHERE platform_user_id = ? AND status = 'pending'
+           )`,
+      ).bind(
+        operationId,
+        expiresAt,
+        at,
+        platformUserId,
+        region,
+        workspaceId,
+        platformUserId,
+      ),
+      this.db.prepare(
+        `INSERT OR IGNORE INTO platform_workspace_bindings
+         (platform_user_id, region, workspace_id, placement_affinity, status, operation_id,
+          pending_expires_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+         `,
+      ).bind(
+        platformUserId,
+        region,
+        workspaceId,
+        placementAffinity,
+        operationId,
+        expiresAt,
+        at,
+        at,
+      ),
+      this.listStatement(platformUserId),
+    ]);
+    const rows = (results[2]?.results ?? []) as PlatformBindingRow[];
     const exact = rows.find((row) => sameDestination(
       { region: row.region, workspaceId: row.workspace_id },
       region,
@@ -966,16 +1174,21 @@ export class D1PlatformOperationStore implements PlatformOperationStore {
   constructor(private readonly db: D1Database, private readonly now: () => Date = () => new Date()) {}
 
   get(operationId: string): Promise<PlatformOperationRow | null> {
+    return this.getStatement(operationId).first<PlatformOperationRow>();
+  }
+
+  private getStatement(operationId: string): D1PreparedStatement {
     return this.db.prepare(
       `SELECT operation_id, platform_user_id, action, request_fingerprint, region,
               workspace_id, placement_affinity, invitation_id, status
        FROM platform_workspace_operations WHERE operation_id = ?`,
-    ).bind(operationId).first<PlatformOperationRow>();
+    ).bind(operationId);
   }
 
   async begin(row: PlatformOperationRow): Promise<PlatformOperationRow> {
     const at = this.now().toISOString();
-    await this.db.prepare(
+    // The insert and the read of whichever row won, in one round trip.
+    const results = await this.db.batch([this.db.prepare(
       `INSERT OR IGNORE INTO platform_workspace_operations
        (operation_id, platform_user_id, action, request_fingerprint, region,
         workspace_id, placement_affinity, invitation_id, status, created_at, updated_at)
@@ -991,8 +1204,8 @@ export class D1PlatformOperationStore implements PlatformOperationStore {
       row.invitation_id,
       at,
       at,
-    ).run();
-    const stored = await this.get(row.operation_id);
+    ), this.getStatement(row.operation_id)]);
+    const stored = results[1]?.results?.[0] as PlatformOperationRow | undefined;
     if (!stored) throw new ApiError(503, "workspace_operation_unavailable", "Workspace setup could not be reserved");
     return stored;
   }
@@ -1080,23 +1293,35 @@ export class PlatformOnboardingService {
 
   /**
    * Memberships in every other deployment, for the browser's list on Global.
-   * Only a Google identity is linked across deployments, so an email-only
-   * identity has none. Each deployment is asked on its own: one that fails is
-   * named in `failed` and the others still answer. Nothing is reconciled; the
-   * desktop's binding bookkeeping is not the browser's to change.
+   * A deployment links a person by their sign-in methods, so an account with
+   * none has nothing elsewhere. Each deployment is asked on its own: one that
+   * fails is named in `failed` and the others still answer. Nothing is
+   * reconciled; the desktop's binding bookkeeping is not the browser's to change.
    */
   async otherDeploymentWorkspaces(): Promise<{ workspaces: Workspace[]; failed: Array<{ region: Region; code: string }> }> {
-    const row = await this.env.DB.prepare("SELECT google_subject FROM users WHERE id = ?")
-      .bind(this.auth.userId).first<{ google_subject: string | null }>();
-    if (!row?.google_subject) return { workspaces: [], failed: [] };
     const identity = await this.loadPlatformIdentity();
+    if (identity.loginIdentities.length === 0) return { workspaces: [], failed: [] };
     const regions = configuredRegions.filter((region) => region !== this.env.AVALON_REGION);
     const settled = await Promise.allSettled(regions.map(async (region) => this.gateway(region).discover(identity)));
     return {
       workspaces: settled.flatMap((result) => result.status === "fulfilled" ? result.value.workspaces : []),
       failed: settled.flatMap((result, index) => result.status === "rejected"
-        ? [{ region: regions[index]!, code: result.reason instanceof ApiError ? result.reason.code : codeShaped(result.reason instanceof Error ? result.reason.name : "unknown") }]
+        ? [{ region: regions[index]!, code: settledFailureCode(result.reason, "regional_discovery") }]
         : []),
+    };
+  }
+
+  /** Attention in every other deployment, beside `otherDeploymentWorkspaces`; one down deployment hides only its own. */
+  async otherDeploymentAttention(): Promise<{ attention: RegionalAttention["attention"]; failed: Array<{ region: Region; workspaceId?: string; code: string }> }> {
+    const identity = await this.loadPlatformIdentity();
+    if (identity.loginIdentities.length === 0) return { attention: [], failed: [] };
+    const regions = configuredRegions.filter((region) => region !== this.env.AVALON_REGION);
+    const settled = await Promise.allSettled(regions.map(async (region) => this.gateway(region).attention(identity)));
+    return {
+      attention: settled.flatMap((result) => result.status === "fulfilled" ? result.value.attention : []),
+      failed: settled.flatMap((result, index) => result.status === "rejected"
+        ? [{ region: regions[index]!, code: settledFailureCode(result.reason, "regional_attention") }]
+        : result.value.failed.map((item) => ({ region: regions[index]!, workspaceId: item.workspaceId, code: item.code }))),
     };
   }
 
@@ -1130,10 +1355,17 @@ export class PlatformOnboardingService {
     requestLocation?: unknown,
     requestedOperationId?: string,
   ): Promise<Session> {
-    const identity = await this.loadPlatformIdentity();
-    const requestFingerprint = await sha256(JSON.stringify(["create", region, name]));
+    // The preference is read here, beside the identity, rather than beside
+    // the reservation: a read that fails after the reservation commits would
+    // leave a pending binding nothing releases.
+    const [identity, requestFingerprint, requested, preference] = await Promise.all([
+      this.loadPlatformIdentity(),
+      sha256(JSON.stringify(["create", region, name])),
+      requestedOperationId ? this.operations.get(requestedOperationId) : null,
+      this.canonicalPreference(),
+    ]);
     let operationId: string;
-    let existing = requestedOperationId ? await this.operations.get(requestedOperationId) : null;
+    let existing = requested;
     let workspaceId: string;
     let placementAffinity: WorkspacePlacementAffinity;
     if (existing) {
@@ -1160,7 +1392,7 @@ export class PlatformOnboardingService {
       workspaceId = existing.workspace_id;
       placementAffinity = existing.placement_affinity;
     }
-    return this.completeRegionalAction(
+    const session = await this.completeRegionalAction(
       identity,
       region,
       workspaceId,
@@ -1174,7 +1406,29 @@ export class PlatformOnboardingService {
         placementAffinity,
         preference,
       }),
+      preference,
+      () => this.makeFirstCreatorEligible(identity.platformUserId, region, workspaceId),
     );
+    return session;
+  }
+
+  /**
+   * Someone whose first organization this is sets it up as its creator, as a
+   * new Mac account does. An email sign-in starts ineligible, since most arrive
+   * as guests, and a guest relationship here does not exempt them. Runs only
+   * once the organization exists, so a failed create changes nothing. An
+   * active binding in another deployment keeps the exemption: the binding
+   * does not say member or guest, and an established member must not be sent
+   * through setup again.
+   */
+  private async makeFirstCreatorEligible(platformUserId: string, region: Region, workspaceId: string): Promise<void> {
+    await this.env.DB.prepare(
+      `UPDATE users SET onboarding_eligible = 1 WHERE id = ? AND onboarding_eligible = 0
+         AND NOT EXISTS (SELECT 1 FROM workspace_members WHERE user_id = users.id AND workspace_id <> ?
+           AND access_class = 'member' AND status = 'active')
+         AND NOT EXISTS (SELECT 1 FROM platform_workspace_bindings WHERE platform_user_id = ? AND region <> ?
+           AND status = 'active' AND NOT (region = ? AND workspace_id = ?))`,
+    ).bind(this.auth.userId, workspaceId, platformUserId, this.env.AVALON_REGION, region, workspaceId).run();
   }
 
   async acceptInvitation(
@@ -1182,8 +1436,11 @@ export class PlatformOnboardingService {
     region: Region,
     requestedOperationId?: string,
   ): Promise<Session> {
-    const identity = await this.loadPlatformIdentity();
-    const requestFingerprint = await sha256(JSON.stringify(["accept", region, invitationId]));
+    const [identity, requestFingerprint, preference] = await Promise.all([
+      this.loadPlatformIdentity(),
+      sha256(JSON.stringify(["accept", region, invitationId])),
+      this.canonicalPreference(),
+    ]);
     const operationId = requestedOperationId ?? this.createId();
     let operation = await this.operations.get(operationId);
     if (operation) {
@@ -1242,6 +1499,7 @@ export class PlatformOnboardingService {
         placementAffinity: operation.placement_affinity,
         preference,
       }),
+      preference,
     );
   }
 
@@ -1256,13 +1514,19 @@ export class PlatformOnboardingService {
     }
   }
 
+  /** The session names the canonical user, so its preference needs no identity read first. */
+  private canonicalPreference(): Promise<z.infer<typeof PreferenceProjectionSchema>> {
+    return loadOrCreateCanonicalPreferenceProjection(this.env, this.auth.userId);
+  }
+
   private async loadPlatformIdentity(): Promise<PlatformIdentity> {
-    const row = await this.env.DB.prepare(
+    // The session names the user, so the sign-in methods are read beside the row.
+    const [row, identities] = await Promise.all([this.env.DB.prepare(
       `SELECT id, google_subject, email, name, avatar_url, timezone, created_at, platform_user_id, onboarding_eligible, onboarding_introduced, onboarding_revision, presentation_json
        FROM users WHERE id = ?`,
     ).bind(this.auth.userId).first<{
       id: string;
-      google_subject: string;
+      google_subject: string | null;
       email: string;
       name: string;
       avatar_url: string | null;
@@ -1273,7 +1537,9 @@ export class PlatformOnboardingService {
       onboarding_introduced: number;
       onboarding_revision: number;
       presentation_json: string | null;
-    }>();
+    }>(), this.env.DB.prepare(
+      "SELECT provider, subject FROM user_login_identities WHERE user_id = ? ORDER BY provider, subject",
+    ).bind(this.auth.userId).all<LoginIdentity>()]);
     if (!row) throw new ApiError(401, "identity_not_found", "The signed-in user no longer exists");
     if (row.platform_user_id && row.platform_user_id !== row.id) {
       throw new ApiError(409, "platform_identity_conflict", "The Global identity record is not canonical");
@@ -1290,10 +1556,16 @@ export class PlatformOnboardingService {
         }
       }
     }
+    const loginIdentities = identities.results ?? [];
+    // A Google account created before login identities were recorded has its
+    // subject only on the user row.
+    if (row.google_subject && !loginIdentities.some((entry) => entry.provider === "google" && entry.subject === row.google_subject)) {
+      loginIdentities.push({ provider: "google", subject: row.google_subject });
+    }
     return platformIdentitySchema.parse({
       accountOnboarding: { eligible: row.onboarding_eligible === 1, introduced: row.onboarding_introduced === 1, revision: row.onboarding_revision, presentation: row.presentation_json ? PersonalPresentationSchema.parse(JSON.parse(row.presentation_json)) : null },
       platformUserId: row.id,
-      googleSubject: row.google_subject,
+      loginIdentities,
       email: row.email,
       name: row.name,
       avatarUrl: row.avatar_url,
@@ -1353,17 +1625,12 @@ export class PlatformOnboardingService {
       operationId: string,
       preference: z.infer<typeof PreferenceProjectionSchema>,
     ) => Promise<Session>,
+    preference: z.infer<typeof PreferenceProjectionSchema>,
+    /** Runs beside the binding's activation once the regional action has committed. */
+    committed?: () => Promise<void>,
   ): Promise<Session> {
-    const preference = await loadOrCreateCanonicalPreferenceProjection(
-      this.env,
-      identity.platformUserId,
-    );
     const reservation = await this.bindings.reserve(
-      identity.platformUserId,
-      region,
-      workspaceId,
-      placementAffinity,
-      operationId,
+      identity.platformUserId, region, workspaceId, placementAffinity, operationId,
     );
     if (!sameDestination({ region: reservation.region, workspaceId: reservation.workspace_id }, region, workspaceId)) {
       throw new ApiError(409, "workspace_binding_conflict", "The workspace route conflicts with this Rally account");
@@ -1372,7 +1639,13 @@ export class PlatformOnboardingService {
       throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
     }
     if (reservation.status === "active") {
-      return this.issueExistingSession(identity, region, workspaceId, placementAffinity);
+      // A replay of an action that committed: `committed` may not have run, or
+      // may have failed, the first time, and it is idempotent.
+      const [session] = await Promise.all([
+        this.issueExistingSession(identity, region, workspaceId, placementAffinity),
+        committed?.(),
+      ]);
+      return session;
     }
     if (reservation.operation_id !== operationId) {
       throw new ApiError(409, "workspace_setup_in_progress", "Workspace setup is already in progress");
@@ -1400,8 +1673,13 @@ export class PlatformOnboardingService {
       );
     }
     this.assertRegionalSession(session, region, workspaceId);
-    await this.bindings.activate(identity.platformUserId, operationId);
-    await this.operations.complete(identity.platformUserId, operationId);
+    // Independent writes: nothing reads an operation's status, and `committed`
+    // excludes this destination from what it reads.
+    await Promise.all([
+      this.bindings.activate(identity.platformUserId, operationId),
+      this.operations.complete(identity.platformUserId, operationId),
+      committed?.(),
+    ]);
     return session;
   }
 
@@ -1475,7 +1753,9 @@ export class PlatformOnboardingService {
       // A later discovery reconciles it if the regional membership committed.
     }
     if (originalError instanceof ApiError) throw originalError;
-    throw new ApiError(503, "regional_onboarding_unavailable", "The regional onboarding action could not be confirmed");
+    // The log names what went wrong; the caller still learns only that it is unconfirmed.
+    throw new ApiError(503, "regional_onboarding_unavailable", "The regional onboarding action could not be confirmed",
+      undefined, diagnosticErrorCode(originalError, "regional_action_failed"));
   }
 
   private assertRegionalSession(session: Session, region: Region, workspaceId: string): void {

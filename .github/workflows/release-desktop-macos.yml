@@ -303,9 +303,6 @@ jobs:
           echo "RALLY_MAC_PROVISIONING_PROFILE_PATH=$RALLY_MAC_PROVISIONING_PROFILE_PATH" >> "$GITHUB_ENV"
           printf '%s' "$RALLY_MAC_PROVISIONING_PROFILE" | openssl base64 -d -A > "$RALLY_MAC_PROVISIONING_PROFILE_PATH"
 
-      - name: Verify live Apple association before desktop release
-        run: node scripts/check-apple-app-association.mjs
-
       - name: Create the release tag locally
         if: needs.plan.outputs.create_tag == 'true'
         shell: bash

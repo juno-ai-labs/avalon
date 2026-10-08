@@ -112,6 +112,14 @@ export const OrganizationUsageSchema = z.object({
 });
 export type OrganizationUsage = z.infer<typeof OrganizationUsageSchema>;
 
+/** Sent on the workspace socket after a plan change; see docs/usage-metering.md. */
+export const WorkspaceUsageEventSchema = z.strictObject({
+  type: z.literal("workspace_usage"),
+  occurredAt: z.string().datetime(),
+  usage: OrganizationUsageSchema,
+});
+export type WorkspaceUsageEvent = z.infer<typeof WorkspaceUsageEventSchema>;
+
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** The start of the 7-day quota week containing `at`, anchored to creation. */
@@ -213,7 +221,7 @@ export function deriveOrganizationUsage(input: {
   };
 }
 
-/** An operator moving an Organization to a plan, from Ace (PRD non-goal 5). */
+/** Moving an Organization to a plan: an operator from Ace, or an administrator from Settings. */
 export const WorkspacePlanChangeSchema = z.strictObject({ plan: PlanIdSchema });
 export const WorkspacePlanResultSchema = z.strictObject({ workspaceId: z.string().uuid(), plan: PlanIdSchema });
 export type WorkspacePlanResult = z.infer<typeof WorkspacePlanResultSchema>;

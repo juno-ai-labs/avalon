@@ -1,3 +1,5 @@
+import { SidekickRunProvisionQueueMessageSchema } from "../durable-objects/automation-do-protocol";
+import { provisionSidekickRun } from "../services/sidekick-run-provisioning";
 import { publishAccessRevocation } from "../services/access-revocation";
 import type { Region } from "@rally/contracts/regions";
 import { ConnectorMaintenanceQueueSchema, runConnectorMaintenance } from "../services/connector-maintenance-service";
@@ -18,12 +20,11 @@ import {
   ActivityQueueMessageSchema,
   SlackIngressQueueMessageSchema,
   WorkspaceExternalEventDeliveryQueueMessageSchema,
-  asAutomationId,
   asSubstreamId,
   asWorkspaceId,
   asUserId,
   WorkspaceExternalEventMatchResultSchema,
-  type WorkspaceId
+  type WorkspaceId,
 } from "@rally/contracts";
 import { z } from "zod";
 
@@ -38,7 +39,7 @@ import {
   SpaceDefaultQueueMessageSchema,
   SpaceIntentResumeQueueMessageSchema,
 } from "../durable-objects/workspace-space-protocol";
-import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventClaimResultSchema,
   WorkspaceConnectorEventProcessQueueMessageSchema,
@@ -73,6 +74,7 @@ import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-updat
 import { SpaceBootstrapService, spaceBootstrapDriver } from "../services/space-bootstrap-service";
 import { SpaceService } from "../services/space-service";
 import { WorkstreamService } from "../services/workstream-service";
+import { hostedParentStub } from "../services/conversation-parent-client";
 
 /**
  * The shape of a Project default delivery, kept only to recognize one.
@@ -367,18 +369,13 @@ async function consumeOne(message: Message<unknown>, env: Env,
     // registration, so a redelivery finds its own receipt and does nothing.
     try {
       if (input.destination.kind === "automation") {
-        const automation = await durableObjectStubForWorkspace(
-          env,
-          env.AUTOMATION_DOS,
-          input.workspaceId,
-          automationDOName(input.region, input.workspaceId, asAutomationId(input.destination.automationId)),
-        );
+        const workspace = await hostedParentStub(env, input.workspaceId);
         // A `semantic_activity` trigger's written condition is tested here,
         // between the object's plan and its admission: it is the only trigger
         // type whose gate is a sentence, and the classifier that judges it
         // belongs in a Worker rather than inside the object.
         const result = await admitExternalEventWithSemanticGate(env, {
-          sidekick: automation,
+          sidekick: { admitExternalEvent: (admission) => workspace.sidekickAdmitExternalEvent(admission) },
           workspaceId: input.workspaceId,
           defer: runtimeDeferral,
           admission: {
@@ -506,17 +503,13 @@ async function consumeOne(message: Message<unknown>, env: Env,
       message.ack();
       return;
     }
-    const actorIds = await workspace.spaceDefaultTargetActors(target);
-    if (actorIds.length === 0) {
-      message.ack();
-      return;
-    }
+    // The delivery runs as the person whose action staged it: whoever put the
+    // Channel in the Space, or added the default. A Space's own roster has no
+    // say over its Channels, so it is never the actor.
     const member = await env.DB.prepare(
       `SELECT user_id, role FROM workspace_members
-        WHERE workspace_id = ? AND status = 'active' AND access_class = 'member'
-          AND user_id IN (${actorIds.map(() => "?").join(",")})
-        ORDER BY CASE WHEN user_id = ? THEN 0 ELSE 1 END, user_id LIMIT 1`,
-    ).bind(target.workspaceId, ...actorIds, target.requestedByUserId)
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active' AND access_class = 'member'`,
+    ).bind(target.workspaceId, target.requestedByUserId)
       .first<{ user_id: string; role: AuthContext["role"] }>();
     if (!member) {
       await workspace.failSpaceDefaultTarget(target);
@@ -679,9 +672,8 @@ async function consumeOne(message: Message<unknown>, env: Env,
         return;
       }
       // Said out loud, and written down. A resume that keeps failing is
-      // republished by the alarm every `SPACE_INTENT_RESUME_DELAY_MS` and
-      // retried here as well, so a silent catch makes a half-applied audience
-      // or a half-finished archive a thing that shows up only as a dead-letter
+      // retried by the alarm and here as well, so a silent catch makes a
+      // half-finished operation a thing that shows up only as a dead-letter
       // message with no reason on it — which is the diagnosis this costs on the
       // way in. The code goes on the intent as well as into the log, the way a
       // default target's does: the row outlives the log line, and whoever finds
@@ -707,6 +699,30 @@ async function consumeOne(message: Message<unknown>, env: Env,
     return;
   }
   if (await consumeWorkstreamBatchUpdate(message, env)) return;
+  const runProvision = SidekickRunProvisionQueueMessageSchema.safeParse(message.body);
+  if (runProvision.success) {
+    // A Sidekick's run, handed off by its Organization's alarm entry. The entry
+    // sends again on its own backoff until the run reports running, so a
+    // failure here is retried by the Queue and, past that, by the entry.
+    if (runProvision.data.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    try {
+      await provisionSidekickRun(env, runProvision.data);
+      message.ack();
+    } catch (error) {
+      logWarn(env, "sidekick_run_provision_retry", {
+        workspace_id: runProvision.data.workspaceId,
+        automation_id: runProvision.data.automationId,
+        run_id: runProvision.data.runId,
+        queue_attempts: message.attempts,
+        code: diagnosticErrorCode(error, "sidekick_run_provision_failed"),
+      });
+      message.retry();
+    }
+    return;
+  }
   const effect = EffectQueueMessageSchema.safeParse(message.body);
   if (effect.success) {
     await consumeEffect(message, effect.data, env);
@@ -1127,9 +1143,9 @@ async function consumeEffect(
       return;
     }
     if (envelope.effect.kind === "directory_automation") {
-      const workspace = await workspaceDirectory(env, envelope.workspaceId);
-      await workspace.applyAutomationDirectory({ workspaceId: envelope.workspaceId, envelope });
-      logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "applied", reason: "sidekick_directory_applied" });
+      // Only the deleted SidekickDO published this; a Sidekick's directory
+      // row is now written where the Sidekick lives, so a late copy is dropped.
+      logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "ignored", reason: "sidekick_directory_producer_deleted" });
       message.ack();
       return;
     }

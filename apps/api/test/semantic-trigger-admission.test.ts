@@ -50,14 +50,28 @@ function testEnv(overrides: { TYPESAFE_API_KEY?: string | undefined } = {}): Env
   });
 }
 
-function port(plan: Awaited<ReturnType<SemanticTriggerAdmissionPort["externalEventAdmissionPlan"]>>) {
-  const admissions: unknown[] = [];
+type Plan =
+  | { kind: "refuse"; outcomeCode: string }
+  | { kind: "admit" }
+  | { kind: "judge"; conditions: string[]; connectorType: string | null };
+
+/**
+ * The object's side of one admission, decided by a fixed plan: a refusal, an
+ * admission, or, for a gated plan asked without a verdict, the conditions to
+ * judge. Every call is recorded, so a test can count the Organization calls.
+ */
+function port(plan: Plan) {
+  const admissions: { conditionVerdict?: unknown }[] = [];
   return {
     admissions,
     port: {
-      externalEventAdmissionPlan: vi.fn(async () => plan),
-      admitExternalEvent: vi.fn(async (input: unknown) => {
+      admitExternalEvent: vi.fn(async (input: { conditionVerdict?: unknown }) => {
         admissions.push(input);
+        if (plan.kind === "refuse") return { admitted: false, outcomeCode: plan.outcomeCode };
+        if (plan.kind === "judge" && input.conditionVerdict === undefined) {
+          return { admitted: false, outcomeCode: "sidekick_semantic_condition_unjudged",
+            judge: { conditions: plan.conditions, connectorType: plan.connectorType } };
+        }
         return { admitted: true, outcomeCode: "sidekick_occurrence_admitted" };
       }),
     } satisfies SemanticTriggerAdmissionPort,
@@ -72,7 +86,7 @@ function answering(choice: string, confidence: number) {
 }
 
 describe("admitExternalEventWithSemanticGate", () => {
-  it("returns the plan's refusal without asking the object to admit or the classifier to judge", async () => {
+  it("returns the object's refusal from one call, without asking the classifier to judge", async () => {
     const fetcher = answering("condition_met", 0.99);
     const { port: sidekick } = port({ kind: "refuse", outcomeCode: "sidekick_paused" });
 
@@ -83,7 +97,7 @@ describe("admitExternalEventWithSemanticGate", () => {
       defer: () => undefined,
       fetch: fetcher,
     })).toEqual({ admitted: false, outcomeCode: "sidekick_paused" });
-    expect(sidekick.admitExternalEvent).not.toHaveBeenCalled();
+    expect(sidekick.admitExternalEvent).toHaveBeenCalledTimes(1);
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -99,6 +113,7 @@ describe("admitExternalEventWithSemanticGate", () => {
       fetch: fetcher,
     })).toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_admitted" });
     expect(fetcher).not.toHaveBeenCalled();
+    expect(admissions).toHaveLength(1);
     expect(admissions[0]).not.toHaveProperty("conditionVerdict");
   });
 
@@ -120,7 +135,7 @@ describe("admitExternalEventWithSemanticGate", () => {
 
     expect(result.admitted).toBe(true);
     expect(result.gate).toMatchObject({ code: "condition_met", confidence: 0.94, conditionCount: 1 });
-    expect(admissions[0]).toMatchObject({
+    expect(admissions[1]).toMatchObject({
       conditionVerdict: { admit: true, code: "condition_met", confidence: 0.94, model: "jev-1.13.0" },
     });
   });
@@ -141,7 +156,7 @@ describe("admitExternalEventWithSemanticGate", () => {
       fetch: fetcher,
     });
 
-    expect(admissions[0]).toMatchObject({
+    expect(admissions[1]).toMatchObject({
       conditionVerdict: { admit: false, code: "condition_not_met" },
     });
   });
@@ -164,7 +179,7 @@ describe("admitExternalEventWithSemanticGate", () => {
 
     expect(fetcher).not.toHaveBeenCalled();
     expect(result.gate).toMatchObject({ code: "classifier_unavailable", confidence: null });
-    expect(admissions[0]).toMatchObject({
+    expect(admissions[1]).toMatchObject({
       conditionVerdict: { admit: false, code: "classifier_unavailable" },
     });
   });

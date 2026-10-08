@@ -10,21 +10,18 @@ import type { Env } from "../env";
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 
 /**
- * The part of one Sidekick object this admission needs, so a test can supply it.
+ * The one Organization call this admission needs, so a test can supply it.
  *
- * Narrower than the stub on purpose: a fake for this is two methods rather than
- * a Durable Object, and the shape says exactly which two the delivery path is
- * allowed to call.
+ * An admission that arrives without a verdict for a Sidekick whose trigger
+ * carries a written condition is refused as unjudged, and the refusal carries
+ * the conditions to judge. Asking with a verdict is then the second and last
+ * call. Every other delivery is settled by the first.
  */
 export interface SemanticTriggerAdmissionPort {
-  externalEventAdmissionPlan(input: AutomationExternalEventAdmission): Promise<
-    | { kind: "refuse"; outcomeCode: string }
-    | { kind: "admit" }
-    | { kind: "judge"; conditions: string[]; connectorType: string | null }
-  >;
   admitExternalEvent(input: AutomationExternalEventAdmission): Promise<{
     admitted: boolean;
     outcomeCode: string;
+    judge?: { conditions: string[]; connectorType: string | null } | undefined;
   }>;
 }
 
@@ -44,11 +41,11 @@ export interface SemanticTriggerAdmissionResult {
 /**
  * Admit one matched external event, testing any written condition first.
  *
- * Three steps, and the middle one is the only one that costs anything: the
- * object says whether this delivery is gated, the classifier judges the
- * condition if it is, and the object admits. The object is asked first because
- * lifecycle, trigger membership and the activation boundary settle most
- * deliveries for free, and a paused Sidekick should not pay for a model call to
+ * The object is asked first, and for most deliveries that one call is the
+ * whole admission: lifecycle, trigger membership and the activation boundary
+ * settle them, and an ungated event is admitted on the spot. Only a gated one
+ * comes back with its conditions, is judged by the classifier, and is asked
+ * again with the verdict. A paused Sidekick does not pay for a model call to
  * be told it is paused.
  *
  * The model call runs here rather than inside the object deliberately. Every
@@ -74,9 +71,9 @@ export async function admitExternalEventWithSemanticGate(
     fetch?: typeof globalThis.fetch | undefined;
   },
 ): Promise<SemanticTriggerAdmissionResult> {
-  const plan = await input.sidekick.externalEventAdmissionPlan(input.admission);
-  if (plan.kind === "refuse") return { admitted: false, outcomeCode: plan.outcomeCode };
-  if (plan.kind === "admit") return input.sidekick.admitExternalEvent(input.admission);
+  const first = await input.sidekick.admitExternalEvent(input.admission);
+  if (!first.judge) return { admitted: first.admitted, outcomeCode: first.outcomeCode };
+  const plan = first.judge;
 
   const traceId = crypto.randomUUID();
   const decision: SemanticTriggerDecision = env.TYPESAFE_API_KEY

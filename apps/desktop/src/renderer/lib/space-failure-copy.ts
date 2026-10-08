@@ -12,8 +12,10 @@ import { ApiError } from './api';
  * change first, which a status code and a transport message cannot.
  *
  * `space_membership_final` is the invariant that every Channel has a home.
- * `space_audience_incompatible` remains here only so an older server's refusal
- * still has product copy during a rolling deployment.
+ * `space_audience_incompatible`, `channel_scope_locked_by_space` and
+ * `space_audience_self_excluded` remain here only so an older server's refusal
+ * still has product copy during a rolling deployment: every Space is
+ * Organization-wide now and none of them is raised any more.
  *
  * One table for every Space surface, deliberately. Each sentence is therefore
  * written to be true wherever the refusal can arrive — the same

@@ -12,6 +12,7 @@ import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
 import { conversationParentStub } from "../services/conversation-parent-client";
 import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
+import { SlackOriginContextSchema } from "@rally/contracts";
 import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-skills";
 import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from './authorization-projection';
 import { searchIndexingConfigured } from '../services/search-embedding';
@@ -96,6 +97,7 @@ import {
   recordHarnessRunObservation,
 } from "../observability/harness-run-observability";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
+import { PersonalSystemPromptRecordSchema } from "./personal-system-prompt";
 import { agentProfileFor, type AgentProfile } from "../services/agent-profiles";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
@@ -155,6 +157,7 @@ import {
 } from "../services/workstream-batch-update";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import type { WorkstreamRuntimeResourceAttacher } from "../services/workstream-object-client";
+import { recordSupportAction } from "../services/support-access";
 import {
   acceptsNewWorkstreamWork,
   permitsLegacyRuntimeDrain,
@@ -316,6 +319,12 @@ const SocketAttachmentSchema = z.object({
   // admitted role instead of paying for a second D1 session lookup.
   role: z.enum(["owner", "admin", "member"]).nullable().optional(),
   analyticsWorkspaceId: z.string().nullable().optional(),
+  /**
+   * The Rally staff member behind a support session (`docs/impersonation.md`):
+   * such a socket is never shown as present, never settles the person's
+   * unseen or read state, and audits the commands it sends.
+   */
+  impersonatorUserId: UserIdSchema.optional(),
   connectedAt: z.string().datetime({ offset: true }),
   afterSequence: z.number().int().nonnegative(),
   subscribed: z.boolean().default(false),
@@ -380,6 +389,7 @@ const SocketUpgradeIdentitySchema = z.object({
   role: z.enum(["owner", "admin", "member"]).nullable().optional(),
   analyticsWorkspaceId: z.string().optional(),
   membershipVersion: z.coerce.number().int().nonnegative().optional(),
+  impersonatorUserId: UserIdSchema.optional(),
 });
 
 type SocketUpgradeIdentity = z.infer<typeof SocketUpgradeIdentitySchema>;
@@ -400,19 +410,6 @@ const RuntimeResourceRequestSchema = z.strictObject({
 const RuntimeReaderAudienceRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
-});
-/**
- * A proposed audience, asked about rather than applied.
- *
- * Read-only by construction: it names the audience a caller is *considering*,
- * and the answer is a boolean. A Space audience change reaches several Channels
- * and widening cannot be taken back, so every one of them is asked before any
- * of them is changed.
- */
-const PreviewAudienceContainmentRequestSchema = z.strictObject({
-  workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
-  audience: WorkstreamReaderAudienceSchema,
 });
 const RuntimeBootstrapRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
@@ -496,23 +493,20 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("import_source_checkpoint_get") }),
   productOperation({ operation: z.literal("import_source_update"),
     operationId: IdSchema, conversation: PreparedConversationSchema }),
-  // `spaceSourceId` names the Space a participant change is being made on
-  // behalf of. It changes nothing about admission — the same roster or grant
-  // row is written either way — only where the resulting grant is published,
-  // and it is carried here because nothing downstream can infer it.
   productOperation({ operation: z.literal("add_participant"), userId: IdSchema,
-    operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
+    operationId: IdSchema.optional() }),
   // The appearance write over the product request. A Space admits no feed
   // socket, so the socket command that carries this for a Channel cannot reach
   // it; the write itself is the same one.
   productOperation({ operation: z.literal("set_appearance"),
     operationId: IdSchema, patch: WorkstreamAppearancePatchSchema }),
   productOperation({ operation: z.literal("remove_participant"), userId: IdSchema,
-    operationId: IdSchema.optional(), spaceSourceId: IdSchema.optional() }),
+    operationId: IdSchema.optional() }),
   productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("answer_elicitation"),
-    elicitationId: IdSchema, input: AnswerElicitationRequestSchema }),
+    elicitationId: IdSchema, input: AnswerElicitationRequestSchema,
+    slackOrigin: SlackOriginContextSchema.optional() }),
 ]);
 /**
  * The flow a product operation belongs to. An operation outside the three
@@ -553,6 +547,7 @@ interface AuthRoleRow {
   role: AuthContext["role"];
   analytics_workspace_id?: string | null;
   session_expires_at?: string;
+  impersonator_user_id?: string | null;
 }
 
 const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstreamId: WorkstreamIdSchema });
@@ -2356,35 +2351,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id);
   }
 
-  /**
-   * Whether this conversation's retained content would still be contained by a
-   * proposed audience.
-   *
-   * `null` when this object is not the addressed Channel's main conversation,
-   * the way `readerAudience` answers: a misaddressed call is a refusal rather
-   * than a wrong answer, and a preflight that read `false` as "no fences" would
-   * be the one place a fence could be skipped.
-   *
-   * It writes nothing and is not the fence. The fence is the canonical scope
-   * and participant operations, which run the same predicate inside the
-   * transaction that changes the audience; this only lets a caller stop before
-   * it has widened Channels it cannot un-widen.
-   */
-  async previewAudienceContainment(
-    input: z.input<typeof PreviewAudienceContainmentRequestSchema>,
-  ): Promise<boolean | null> {
-    await this.initialized;
-    const request = parseRpcInput(
-      PreviewAudienceContainmentRequestSchema, input, "preview_audience_containment",
-    );
-    const identity = this.objectStore.identity();
-    if (!identity
-      || identity.workspaceId !== request.workspaceId
-      || identity.parentId !== request.workstreamId
-      || this.externalSubstreamId() !== "0") return null;
-    return this.product.retainedContentContains(request.audience);
-  }
-
   async readerAudience(input: z.input<typeof RuntimeReaderAudienceRequestSchema>): Promise<WorkstreamReaderAudience | null> {
     await this.initialized;
     const request = RuntimeReaderAudienceRequestSchema.parse(input);
@@ -3567,8 +3533,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const substreamId = this.externalSubstreamId();
         const result = await parent.mutateParticipantGrant({ operationId: request.operationId ?? uuidV7(),
           actorUserId: current.userId, userId: UserIdSchema.parse(request.userId), active,
-          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId },
-          ...(request.spaceSourceId ? { spaceSourceId: request.spaceSourceId } : {}) });
+          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } });
         if (result.status === "denied") {
           if (result.reason === "inherited_access") throw new ApiError(409, "participant_inherited_access", "This person has work stream access. Remove that share from work stream sharing first.");
           if (result.reason === "participant_required") throw new ApiError(409, "workstream_participant_required", "At least one participant must remain in this work stream");
@@ -3623,6 +3588,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           current,
           request.elicitationId,
           request.input,
+          request.slackOrigin,
         );
         if (result.activationRequest) {
           try {
@@ -5136,6 +5102,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     };
     return {
       contextWindowTokensByModel: () => this.contextWindowTokensByModel(),
+      personalSystemPrompt: (userId) => this.personalSystemPromptCopy(input.workspaceId, userId),
       assignSidekickSkillNames: (sources) => {
         fence();
         return this.state.storage.transactionSync(() => {
@@ -5654,6 +5621,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       text,
       `${input.harnessRunId}:${outcome.status}`,
       outcome.status,
+      {
+        // The member whose message started this run, not the thread's opener:
+        // a needs-input connect prompt belongs to whoever asked.
+        triggeringSlackUserId: input.slackOrigin?.actorSlackUserId ?? null,
+        reactionAnchor: input.slackOrigin?.reactionAnchor ?? null,
+        // Follow-ups steered into this run have no run of their own; this one
+        // answered them, so it settles their messages too.
+        absorbedReactionAnchors: this.transcript.absorbedSlackOrigins(input.harnessRunId)
+          .flatMap((origin) => SlackOriginContextSchema.safeParse(origin).data?.reactionAnchor ?? []),
+      },
     );
     return settlementDiagnosticCode;
   }
@@ -5885,6 +5862,44 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         occurredAt: Date.parse(live.createdAtUtc), transcriptSequence: live.transcriptSequence,
         url: null, mimeType: null, archived: conversation.archived } } : {}) });
     return links;
+  }
+
+  /**
+   * This conversation's copy of a member's personal system prompt, plus a
+   * refresh the run does not wait for. See docs/personal-system-prompt.md.
+   */
+  private personalSystemPromptCopy(workspaceId: string, userId: string): string {
+    const copy = this.state.storage.sql.exec<{ text: string }>(
+      `SELECT text FROM personal_system_prompt_copies WHERE user_id = ?`,
+      userId,
+    ).toArray()[0];
+    this.state.waitUntil(this.refreshPersonalSystemPromptCopy(workspaceId, userId).catch((error: unknown) => {
+      logWarn(this.env, "personal_system_prompt_refresh_failed", {
+        workspace_id: workspaceId,
+        substream_id: this.externalSubstreamId(),
+        reason: diagnosticErrorCode(error, "personal_system_prompt_refresh_failed"),
+      });
+    }));
+    return copy?.text ?? "";
+  }
+
+  private async refreshPersonalSystemPromptCopy(workspaceId: string, userId: string): Promise<void> {
+    const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+      workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)));
+    const source = PersonalSystemPromptRecordSchema.parse(
+      await workspace.personalSystemPrompt({ workspaceId: asWorkspaceId(workspaceId), userId }));
+    // Two refreshes can overlap and resume in either order; the revision keeps
+    // a late, older answer from replacing a newer copy.
+    this.state.storage.sql.exec(
+      `INSERT INTO personal_system_prompt_copies (user_id, text, source_revision, copied_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET text = excluded.text, source_revision = excluded.source_revision,
+         copied_at = excluded.copied_at
+       WHERE excluded.source_revision > personal_system_prompt_copies.source_revision`,
+      userId,
+      source.personalSystemPrompt,
+      source.revision,
+      Date.now(),
+    );
   }
 
   /**
@@ -6136,6 +6151,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (parsed.data.type === "load_transcript_range") {
       await this.fulfillTranscriptRange(socket, attachment, parsed.data);
       return;
+    }
+
+    // Everything from here on writes. A support session's commands are
+    // audited in the background, never ahead of the command itself.
+    if (attachment.impersonatorUserId && attachment.sessionId) {
+      this.state.waitUntil(recordSupportAction(this.env, {
+        workspaceId: attachment.workspaceId,
+        impersonatorUserId: attachment.impersonatorUserId,
+        representedUserId: attachment.userId,
+        sessionId: attachment.sessionId,
+        action: "support_session.socket_command",
+        workstreamId: attachment.workstreamId,
+        metadata: { command: parsed.data.type, substreamId: attachment.substreamId },
+      }));
     }
 
     if (parsed.data.type === "create_message") {
@@ -6493,6 +6522,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           region: this.env.AVALON_REGION,
           role: attachment.role,
           analyticsWorkspaceId: attachment.analyticsWorkspaceId ?? null,
+          ...(attachment.impersonatorUserId ? { impersonatorUserId: attachment.impersonatorUserId } : {}),
         };
         span.setAttributes(identityAttributes({
           analyticsWorkspaceId: auth.analyticsWorkspaceId,
@@ -6899,7 +6929,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // `users` from a Durable Object, and no diagnostic is worth widening
         // what a socket's authorization depends on.
         `SELECT member.role, workspace.analytics_workspace_id,
-                session.expires_at AS session_expires_at
+                session.expires_at AS session_expires_at, session.impersonator_user_id
            FROM sessions session
            JOIN workspace_members member
              ON member.workspace_id = session.workspace_id
@@ -6931,6 +6961,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         region: this.env.AVALON_REGION,
         role: role.role,
         analyticsWorkspaceId: role.analytics_workspace_id ?? null,
+        ...(role.impersonator_user_id ? { impersonatorUserId: asUserId(role.impersonator_user_id) } : {}),
       },
       sessionExpiresAt,
     };
@@ -7522,6 +7553,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           request.headers,
           RALLY_HEADERS.SOCKET_ADMISSION_MEMBERSHIP_VERSION,
         ),
+        impersonatorUserId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_IMPERSONATOR_ID),
       });
 
     if (!identity.success) return jsonResponse({ error: "invalid_socket_identity" }, 400);
@@ -7633,6 +7665,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       sessionId: identity.data.sessionId,
       role: auth.role,
       analyticsWorkspaceId: auth.analyticsWorkspaceId ?? null,
+      ...((identity.data.impersonatorUserId ?? auth.impersonatorUserId)
+        ? { impersonatorUserId: identity.data.impersonatorUserId ?? auth.impersonatorUserId } : {}),
       connectedAt: new Date().toISOString(),
       afterSequence: identity.data.afterSequence ?? 0,
       subscribed: false,
@@ -8325,6 +8359,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           region: this.env.AVALON_REGION,
           role: attachment.role,
           analyticsWorkspaceId: attachment.analyticsWorkspaceId ?? null,
+          ...(attachment.impersonatorUserId ? { impersonatorUserId: attachment.impersonatorUserId } : {}),
         }
       // A socket hibernated by the previous deployment has no admitted role
       // in its attachment. Preserve it through the rolling deploy by taking
@@ -8346,6 +8381,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           attachment
           && attachment.subscribed
           && attachment.publishPresence
+          // Staff on a support session are not the person being present.
+          && !attachment.impersonatorUserId
           && attachment.workspaceId === workspaceId
           && attachment.workstreamId === workstreamId
         )

@@ -96,6 +96,7 @@ import { useLocalCacheScope } from './local-cache-scope';
 import { desktopBridge } from './platform';
 import {
   isSocketTicketRequestTimeoutError,
+  SocketTicketRequestTimeoutError,
   SOCKET_TICKET_REQUEST_TIMEOUT_MS,
 } from './socket-ticket-request';
 
@@ -111,7 +112,7 @@ export type WorkstreamSocketApi = Pick<
   'getSocketTicket' | 'messageMentionPayload'
   // Read, not called: which arriving turns are the reader's own.
   | 'viewerUserId'
->;
+> & Partial<Pick<RallyApi, 'confirmSocketTicket'>>;
 
 export interface CreateWorkstreamMessageInput {
   text: string;
@@ -2047,7 +2048,7 @@ export function useWorkstreamSocket(
           connectGeneration += 1;
           if (activeTicketAbort === ticketAbort) {
             activeTicketAbort = null;
-            ticketAbort.abort();
+            ticketAbort.abort(new SocketTicketRequestTimeoutError());
           }
           ticketRequestInFlight = false;
           clearHeartbeat();
@@ -2250,6 +2251,9 @@ export function useWorkstreamSocket(
               }
               applyEvent(event.data);
               const completedFromFrame = completeOpeningFromCanonicalCaches();
+              if (completedFromFrame && (event.data.type === 'snapshot' || event.data.type === 'initial_context_snapshot_chunk')) {
+                api.confirmSocketTicket?.(socketTicket);
+              }
               if (completedFromFrame && openTrace === trace) {
                 // The first server frame after `subscribe` is the one that
                 // made canonical state renderable. Replay-only events cannot

@@ -55,13 +55,59 @@ afterEach(() => {
 });
 
 describe('site telemetry reporter', () => {
+  it('joins the web CTA to its destination flow without changing the direct Mac download', async () => {
+    const api = stubApi();
+    await start('<a id="web" data-site-action="web-app-hero" href="https://app.rallywith.ai">Use the web app</a><a id="mac" data-site-action="download-hero" href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download>Download the macOS beta</a>');
+    const web = document.querySelector<HTMLAnchorElement>('#web')!;
+    expect(new URL(web.href).searchParams.has('signupFlowId')).toBe(false);
+    web.addEventListener('click', (event) => event.preventDefault());
+    web.click();
+    const flowId = new URL(web.href).searchParams.get('signupFlowId');
+    expect(flowId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    const mac = document.querySelector<HTMLAnchorElement>('#mac')!;
+    mac.addEventListener('click', (event) => event.preventDefault());
+    mac.click();
+    await vi.waitFor(() => expect(api.clicks()).toHaveLength(2));
+    expect(api.clicks().map((event) => event.properties)).toEqual([
+      { page: 'landing', pathname: '/', action: 'secondary_cta', placement: 'hero', flowId },
+      { page: 'landing', pathname: '/', action: 'download', placement: 'hero' },
+    ]);
+    expect(mac.href).toBe('https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg');
+  });
+
+  it('mints distinct matched flows for repeated and middle-click activations and restores a clean copyable link', async () => {
+    const api = stubApi();
+    await start('<a data-site-action="web-app-hero" href="https://app.rallywith.ai/?keep=yes#anchor">Use the web app</a>');
+    const link = document.querySelector<HTMLAnchorElement>('a')!;
+    link.addEventListener('click', event => event.preventDefault());
+    link.addEventListener('auxclick', event => event.preventDefault());
+    link.click();
+    const first = new URL(link.href).searchParams.get('signupFlowId');
+    link.dispatchEvent(new MouseEvent('auxclick', { button: 1, bubbles: true, cancelable: true }));
+    const second = new URL(link.href).searchParams.get('signupFlowId');
+    expect(second).not.toBe(first);
+    await vi.waitFor(() => expect(api.clicks()).toHaveLength(2));
+    expect(api.clicks().map(event => event.properties['flowId'])).toEqual([first, second]);
+    await vi.waitFor(() => expect(link.href).toBe('https://app.rallywith.ai/?keep=yes#anchor'));
+  });
+
+  it('names the page a click came from, so landing variants can be compared', async () => {
+    const api = stubApi();
+    history.replaceState(null, '', '/start-fast/');
+    await start('<a data-site-action="download-hero" href="#">Download the macOS beta</a>');
+    document.querySelector<HTMLElement>('a')!.click();
+
+    await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
+    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', pathname: '/start-fast/', action: 'download', placement: 'hero' });
+  });
+
   it('reports a click inside a tagged link with its closed values and keepalive', async () => {
     const api = stubApi();
     await start('<a data-site-action="download-pricing-grow" href="#"><span>Download</span></a>');
     document.querySelector('span')!.click();
 
     await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
-    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', action: 'download', placement: 'pricing', plan: 'grow' });
+    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', pathname: '/', action: 'download', placement: 'pricing', plan: 'grow' });
     expect(api.sent.find((request) => request.events.some((event) => event.name === 'site_action_selected'))!.keepalive).toBe(true);
   });
 
@@ -73,7 +119,7 @@ describe('site telemetry reporter', () => {
     document.querySelector<HTMLElement>('#header')!.click();
 
     await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
-    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', action: 'download', placement: 'header' });
+    expect(api.clicks()[0]!.properties).toEqual({ page: 'landing', pathname: '/', action: 'download', placement: 'header' });
   });
 
   it('sends a click made before bootstrap with keepalive and never an empty batch', async () => {

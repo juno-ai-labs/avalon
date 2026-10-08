@@ -15,7 +15,6 @@ import {
   slackAgentReactionSource,
   slackDefaultReactionFor,
   slackMarkdownMessages,
-  slackWorkingReaction,
   SLACK_DEFAULT_REACTIONS,
   type ConnectorConnectionContext,
   type SlackAgentReactionCommand,
@@ -32,7 +31,6 @@ import {
   LEGACY_WORKSTREAM_LINK_ORIGINS,
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
-  asAutomationId,
   asSpaceId,
   asUserId,
   asWorkspaceId,
@@ -60,7 +58,7 @@ import {
 } from "./slack-workstream-card";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
-import { automationDOName, workspaceDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logError, logInfo, logWarn, type LogEnv } from "../observability/logger";
@@ -126,6 +124,7 @@ import {
   ExternalBindingResolutionSchema,
   ExternalBindingSuspendResultSchema,
   ExternalRoomLinkResultSchema,
+  ExternalRoomSpaceMatchResultSchema,
   type ExternalBindingClaim,
   type ExternalBindingConversationTarget,
   type ExternalBindingResolution,
@@ -136,6 +135,7 @@ import { claimParentAnchor } from "./workstream-runtime-database";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { SLACK_THREAD_CLAIM_LEASE_MS } from "../durable-objects/workspace-slack-storage";
 import type { AdmitExternalMessageInput } from "../durable-objects/workstream-external-message-protocol";
+import { hostedParentStub } from "./conversation-parent-client";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -1273,7 +1273,13 @@ export class SlackAgentService {
     text: string | null,
     deliveryKey: string,
     outcomeStatus: "completed" | "needs_input" | "failed" | "stopped",
-    triggeringSlackUserId: string | null = null,
+    run: {
+      triggeringSlackUserId?: string | null;
+      /** Where this run's own status reaction sits; absent on payloads admitted before it was carried. */
+      reactionAnchor?: SlackReactionAnchor | null;
+      /** Follow-ups steered into this run, which have no run of their own to settle them. */
+      absorbedReactionAnchors?: readonly SlackReactionAnchor[];
+    } = {},
   ): Promise<void> {
     this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     const session = WorkspaceSlackSessionResultSchema.parse(
@@ -1301,7 +1307,7 @@ export class SlackAgentService {
     // belong to that one person, so delivery follows the member whose message
     // triggered this run. Old workflow payloads lack the field and safely fall
     // back to the opener while they drain during deployment.
-    const deliverySlackUserId = triggeringSlackUserId ?? session.slack_user_id;
+    const deliverySlackUserId = run.triggeringSlackUserId ?? session.slack_user_id;
     const deliveryUserLinked = responseText && outcomeStatus === "needs_input"
       ? await this.slackUserIsLinked(
         session.connection_id,
@@ -1396,13 +1402,10 @@ export class SlackAgentService {
       } catch (error) {
         logWarn(this.env, "slack_thread_status_cleanup_failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
       }
-      // Stopped before the swap, so a tick in flight cannot land a working
-      // reaction on top of the outcome and leave the message reading as busy.
-      await this.signalReactionTicker(session, "stop");
-      // Delivery is the authority on the outcome reaction, not the rotation:
-      // this runs on every terminal status, so the message ends up correct even
-      // when the ticker never started or was lost mid-run.
-      await this.applyOutcomeReaction(session, connection, token, outcomeStatus);
+      await this.applyOutcomeReaction(
+        session, connection, token, outcomeStatus,
+        run.reactionAnchor ?? null, run.absorbedReactionAnchors ?? [],
+      );
       if (session.slack_stream_ts) {
         await (await this.workspaceDirectory(workspaceId)).setSlackSessionStream({
           workspaceId,
@@ -1627,8 +1630,8 @@ export class SlackAgentService {
       ? {
           kind: "spawn",
           spaceId: resolution.spaceId,
-          spaceScope: resolution.space?.scope ?? "personal",
           spaceActorUserId: resolution.space?.createdByUserId ?? null,
+          spaceMatched: resolution.spaceMatched,
           claim: {
             installationId,
             path,
@@ -1686,19 +1689,23 @@ export class SlackAgentService {
       : activityChannelResolution
         ?? roomChannel
         ?? await resolveSlackChannelType(this.env, token, channelId, event.channel_type);
-    // A room linked while it was public holds an Organization-wide Space. If
-    // it has since become private, a new Channel there would publish a
-    // private conversation to the whole Organization: refuse, and say why.
-    if (route?.kind === "spawn" && route.spaceScope === "workspace"
-      && channelResolution.failure === null && channelResolution.channelType !== "public") {
+    // A room that joined an existing Space by name, rather than getting its
+    // own, may since have been shared through Slack Connect: an outside
+    // organization's thread must not open work in this Organization's Space.
+    // The binding records which it is; a room's own Space pays nothing, and
+    // Slack is asked again only when the lookup above did not ask it.
+    if (route?.kind === "spawn" && route.spaceMatched
+      && (channelResolution.externallyShared
+        ?? slackExternalRoom((await slackApi(token, "conversations.info", { channel: channelId }, AbortSignal.timeout(5_000))).channel)
+          .externallyShared)) {
       logWarn(this.env, "external_binding_placement_refused", {
         workspace_id: connection.workspace_id,
         connection_id: connection.id,
         space_id: route.spaceId,
-        code: "room_narrower_than_space",
+        code: "room_shared_externally",
       });
       await this.postRoutingFailure(
-        token, channelId, channelResolution.threadable === false ? undefined : rootTs, "room_narrower_than_space", claimKey,
+        token, channelId, channelResolution.threadable === false ? undefined : rootTs, "room_shared_externally", claimKey,
       );
       return;
     }
@@ -1807,7 +1814,7 @@ export class SlackAgentService {
         outcome: linked.outcome,
         ...(linked.outcome === "blocked" || linked.outcome === "ignored" ? { reason: linked.reason } : {}),
       });
-      if (linked.outcome === "linked" && linked.created) {
+      if (linked.outcome === "linked" && linked.newlyLinked) {
         // One line, once per room: what inviting Rally did, and how to use it.
         await slackApi(token, "chat.postMessage", {
           channel: channelId,
@@ -1884,7 +1891,7 @@ export class SlackAgentService {
      */
     unverifiable: "throw" | "fall_through" = "throw",
   ): Promise<
-    | { outcome: "linked"; spaceId: string; created?: boolean }
+    | { outcome: "linked"; spaceId: string; newlyLinked?: boolean }
     | { outcome: "ignored"; reason: string; channel?: SlackChannelResolution }
     | { outcome: "unresolved"; channel?: SlackChannelResolution }
     | { outcome: "blocked"; reason: string }
@@ -1923,6 +1930,7 @@ export class SlackAgentService {
       channelName: room.kind === "shared" ? room.displayName.slice(0, 255) : null,
       failure: null,
       threadable: room.threadable,
+      externallyShared: room.externallyShared,
     };
     if (room.kind === "direct") return { outcome: "ignored", reason: "direct_message", channel };
     if (room.archived) return { outcome: "ignored", reason: "room_archived", channel };
@@ -1959,10 +1967,6 @@ export class SlackAgentService {
         ? { outcome: "unresolved", channel }
         : { outcome: "blocked", reason: "no_rally_member_in_private_room" };
     }
-    // Named by the room, so two invitations racing (or an invitation retried
-    // after its link committed) claim one anchor, and the loser's link reads
-    // back `existing` instead of leaving an anchor for a Space never made.
-    const spaceId = await stableUuid(`external-room-space:${installationId}:${channelId}`);
     let linked: ExternalRoomLinkResult;
     try {
       // The creation coordinator's gate: no Space is written while the
@@ -1971,26 +1975,43 @@ export class SlackAgentService {
       if (control.phase !== "durable_object_open") {
         throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");
       }
-      // Asked before the D1 anchor, as `SpaceService.create` asks, so a
-      // refused actor leaves no anchor behind.
-      const admitted = await workspace.admitSpaceCreation({
-        workspaceId: asWorkspaceId(connection.workspace_id),
-        userId: asUserId(actorUserId),
-      });
-      if (!admitted.ok) {
-        return room.visibility === "public"
-          ? { outcome: "unresolved", channel }
-          : { outcome: "blocked", reason: admitted.code };
+      // A public room joins the Organization-wide Space its name matches. A
+      // private room never does, and neither does a Slack Connect room: their
+      // audience is not the Organization's.
+      const matchable = room.visibility === "public" && !room.externallyShared;
+      const matched = matchable
+        ? ExternalRoomSpaceMatchResultSchema.parse(await workspace.externalRoomSpaceMatch({
+          workspaceId: connection.workspace_id,
+          name: room.displayName,
+        })).spaceId
+        : null;
+      // Otherwise named by the room, so two invitations racing (or an
+      // invitation retried after its link committed) claim one anchor, and the
+      // loser's link reads back `existing` instead of leaving an anchor for a
+      // Space never made.
+      const spaceId = matched ?? await stableUuid(`external-room-space:${installationId}:${channelId}`);
+      if (!matched) {
+        // Asked before the D1 anchor, as `SpaceService.create` asks, so a
+        // refused actor leaves no anchor behind.
+        const admitted = await workspace.admitSpaceCreation({
+          workspaceId: asWorkspaceId(connection.workspace_id),
+          userId: asUserId(actorUserId),
+        });
+        if (!admitted.ok) {
+          return room.visibility === "public"
+            ? { outcome: "unresolved", channel }
+            : { outcome: "blocked", reason: admitted.code };
+        }
+        await claimParentAnchor(this.env, connection.workspace_id, spaceId, "space");
       }
-      await claimParentAnchor(this.env, connection.workspace_id, spaceId, "space");
       linked = ExternalRoomLinkResultSchema.parse(await workspace.linkExternalRoom({
         workspaceId: connection.workspace_id,
         installationId,
         path: [channelId],
         userId: actorUserId,
         spaceId,
-        space: { name: room.displayName, scope: room.visibility === "public" ? "workspace" : "personal" },
-        participantUserIds: room.visibility === "private" ? audience.userIds : [],
+        space: { name: room.displayName },
+        ...(matchable ? { spaceMatch: matched ? "matched" as const : "unmatched" as const } : {}),
         at: nowIso(),
       }));
     } catch (error) {
@@ -2010,7 +2031,7 @@ export class SlackAgentService {
         ? { outcome: "unresolved", channel }
         : { outcome: "blocked", reason: codeShaped(linked.code) };
     }
-    return { outcome: "linked", spaceId: linked.spaceId, created: linked.outcome === "linked" };
+    return { outcome: "linked", spaceId: linked.spaceId, newlyLinked: linked.outcome === "linked" };
   }
 
   /** The active Rally member a Slack user is, when Rally knows; never a guest. */
@@ -2161,12 +2182,7 @@ export class SlackAgentService {
 
   /** A Sidekick run's state and its Sidekick's lifecycle, from the Sidekick object. */
   private async sidekickRunState(connection: SlackConnectionRow, sidekickId: string, runId: string) {
-    return (await durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_DOS,
-      asWorkspaceId(connection.workspace_id),
-      automationDOName(this.env.AVALON_REGION, asWorkspaceId(connection.workspace_id), asAutomationId(sidekickId)),
-    )).readRunState({
+    return (await hostedParentStub(this.env, connection.workspace_id)).sidekickReadRunState({
       workspaceId: asWorkspaceId(connection.workspace_id),
       automationId: sidekickId,
       runId,
@@ -2310,13 +2326,24 @@ export class SlackAgentService {
         });
       }
     }
-    const slackOrigin = await this.slackOriginContext(
+    const originContext = await this.slackOriginContext(
       connection,
       teamId,
       slackUserId,
       source,
       matchedWorkspaceUserId,
     );
+    // The run carries its own anchor to delivery; see "The status reaction"
+    // in docs/slack-integration.md.
+    const slackOrigin: SlackOriginContext = reactionSource
+      ? {
+          ...originContext,
+          reactionAnchor: {
+            channelId: reactionSource.channelId,
+            messageTs: reactionSource.timestamp,
+          },
+        }
+      : originContext;
     const channel = channelId ?? await this.openDm(token, slackUserId);
     const thread = threadTs ?? await this.createUserPromptRoot(token, channel, requestedPrompt);
     const openingClientMessageId = clientMessageId.slice(0, 120);
@@ -2408,8 +2435,6 @@ export class SlackAgentService {
     if (session) {
       await this.clearPendingPrompt(connection.workspace_id, connection.id, channel, thread, slackUserId);
       // Each prompt in a thread moves the status onto the message that made it.
-      // The rotation restarts with it, so a continuation does not resume the
-      // previous run's position and appear to have skipped a step.
       if (reactionSource) {
         await (await this.workspaceDirectory(connection.workspace_id)).anchorSlackSessionReaction({
           workspaceId: connection.workspace_id,
@@ -2419,12 +2444,7 @@ export class SlackAgentService {
           reaction: placedReaction,
           at: nowIso(),
         });
-        session = { ...session, reaction_channel_id: reactionSource.channelId, reaction_message_ts: reactionSource.timestamp, reaction_current: placedReaction, reaction_cursor: 0 };
-        await this.signalReactionTicker(
-          session,
-          "start",
-          resolveSlackReactions(slackConnectionReactionOverride(connection)).workingIntervalMs,
-        );
+        session = { ...session, reaction_channel_id: reactionSource.channelId, reaction_message_ts: reactionSource.timestamp, reaction_current: placedReaction };
       }
     }
     if (session && session.workstream_id) {
@@ -2484,6 +2504,7 @@ export class SlackAgentService {
             connection.workspace_id,
             session.workstream_id,
             requestedPrompt,
+            slackOrigin,
           )) {
             await service.createMessage(session.workstream_id, {
               text: requestedPrompt,
@@ -2568,13 +2589,11 @@ export class SlackAgentService {
       input.teamId,
       input.channel,
     );
-    // Under a linked room the Space decides who the Channel is for: a public
-    // room's Space is Organization-wide, and a private room's or group DM's is
-    // personal whatever its member count. The member-count promotion applies
-    // only to a Channel with no linked Space.
-    const scope = spawn
-      ? spawn.spaceScope
-      : connectorWorkstreamScope({
+    // The room decides who the Channel is for, linked or not: its Space is
+    // Organization-wide and grants no reader, so a private room's thread is
+    // private to the room's members until the room passes the member-count
+    // promotion.
+    const scope = connectorWorkstreamScope({
         audience: input.source.channelType === "public" ? "public" : "private",
         memberCount: audience.memberCount,
         workspaceScopeThreshold: SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD,
@@ -3049,6 +3068,7 @@ export class SlackAgentService {
     workspaceId: string,
     workstreamId: string,
     response: string,
+    slackOrigin: SlackOriginContext,
   ): Promise<boolean> {
     const elicitation = await createSchedulingObjectPort(this.env, workspaceId, workstreamId)
       .oldestOpenElicitation();
@@ -3061,6 +3081,7 @@ export class SlackAgentService {
           "text" | "radio" | "single_select" | "multi_select",
         options_json: elicitation.options_json,
       }, response),
+      slackOrigin,
     );
     return true;
   }
@@ -3742,7 +3763,8 @@ export class SlackAgentService {
   }
 
   /**
-   * Swaps the reaction on a run's source message for the one naming its outcome.
+   * Swaps the reaction on each message a run answered for the one naming its
+   * outcome: the message that started it, and any follow-up steered into it.
    *
    * Never throws. A reaction is decoration on a run that has already happened,
    * and the persisted Avalon run stays canonical whatever Slack answers here —
@@ -3753,41 +3775,75 @@ export class SlackAgentService {
     connection: SlackConnectionRow,
     token: string,
     outcome: SlackReactionOutcome,
+    ownAnchor: SlackReactionAnchor | null,
+    absorbedAnchors: readonly SlackReactionAnchor[],
   ): Promise<void> {
-    if (!session.reaction_channel_id || !session.reaction_message_ts) return;
+    if (ownAnchor || session.reaction_channel_id) {
+      await this.settleOutcomeReaction(session, connection, token, outcome, ownAnchor);
+    }
+    for (const anchor of absorbedAnchors) {
+      await this.settleOutcomeReaction(session, connection, token, outcome, anchor);
+    }
+  }
+
+  /** One message's outcome transition; `anchor` null is a run admitted before anchors were carried. */
+  private async settleOutcomeReaction(
+    session: WorkspaceSlackSession,
+    connection: SlackConnectionRow,
+    token: string,
+    outcome: SlackReactionOutcome,
+    anchor: SlackReactionAnchor | null,
+  ): Promise<void> {
     try {
       // Re-read rather than trusting the snapshot `deliverWorkstreamOutcome`
       // took at the top. Between that read and this call a legacy stream close,
-      // the complete saved-turn post, the needs-input DMs,
-      // and the status clear have all run on 5-10s timeouts, and the ticker has
-      // been rewriting `reaction_current` every six seconds throughout. Removing
-      // the stale emoji answers `no_reaction`, which is swallowed as success —
-      // leaving the working reaction *and* the outcome on the message, which is
-      // the one invariant this feature has.
+      // the complete saved-turn post, the needs-input DMs, and the status clear
+      // have all run on 5-10s timeouts, and another writer may have changed
+      // `reaction_current` meanwhile. Removing a stale emoji answers
+      // `no_reaction`, which is swallowed as success — leaving two Rally
+      // reactions on the message, which is the one invariant this feature has.
       const workspace = await this.workspaceDirectory(session.workspace_id);
-      const placed = WorkspaceSlackSessionResultSchema.parse(
+      const current = WorkspaceSlackSessionResultSchema.parse(
         await workspace.slackSessionById({
           workspaceId: session.workspace_id,
           sessionId: session.id,
         }),
-      ).session?.reaction_current ?? null;
+      ).session;
+      if (!current) return;
+      // The session's one slot may since belong to a newer prompt, usually
+      // with the same emoji; see "The status reaction" in
+      // docs/slack-integration.md.
+      const target = anchor
+        ?? (current.reaction_channel_id && current.reaction_message_ts
+          ? { channelId: current.reaction_channel_id, messageTs: current.reaction_message_ts }
+          : null);
+      if (!target) return;
+      const anchored = current.reaction_channel_id === target.channelId
+        && current.reaction_message_ts === target.messageTs;
       const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
+      // Once the slot has moved on, nothing records this message any more, and
+      // the only Rally emoji admission puts there is the acknowledgement. If
+      // that never landed, removing it answers `no_reaction`, which the adapter
+      // treats as success.
+      const placed = anchored ? current.reaction_current : reactions.acknowledgement;
       const result = await this.executeSlackReaction(connection, token, {
         kind: "reaction",
-        channelId: session.reaction_channel_id,
-        timestamp: session.reaction_message_ts,
+        channelId: target.channelId,
+        timestamp: target.messageTs,
         add: reactions.outcomes[outcome],
         remove: placed,
         fallback: slackDefaultReactionFor(outcome),
       });
-      // Conditional on the value this transition actually removed, so a tick
-      // that slipped in behind the read is detected rather than overwritten.
-      // `IS` rather than `=` because the column is nullable and NULL is a real
-      // state here: it means Avalon has placed nothing.
+      // The slot belongs to the newer anchor; its emoji is not this run's to record.
+      if (!anchored) return;
+      // Conditional on the anchor and the emoji removed, so a write or a
+      // re-anchor that slipped in behind the read is detected, not overwritten.
       const written = WorkspaceSlackSessionReactionResultSchema.parse(
         await workspace.settleSlackSessionReaction({
           workspaceId: session.workspace_id,
           sessionId: session.id,
+          channelId: target.channelId,
+          messageTs: target.messageTs,
           expected: placed,
           reaction: result?.reaction ?? null,
           at: nowIso(),
@@ -3808,121 +3864,6 @@ export class SlackAgentService {
         session_id: session.id,
         connection_id: connection.id,
         outcome,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-    }
-  }
-
-  /**
-   * Advances the rotating working reaction one step.
-   *
-   * Returns whether the run is still live and worth another tick. It does not
-   * throw: the caller is an alarm, and a thrown alarm is retried by the runtime,
-   * which would spend Slack's rate limit redrawing an emoji. A Slack refusal —
-   * a rate limit above all — keeps the rotation alive and simply leaves the
-   * current reaction in place until the next tick.
-   */
-  async advanceSessionReaction(input: {
-    workspaceId: string;
-    sessionId: string;
-    deliveryKey: string;
-  }): Promise<boolean> {
-    try {
-      // The session read is a typed method now, so it needs no scoped env of its
-      // own. The scoping stays because the rest of this path — the connection
-      // lookup behind `connectionById` — is still routed SQL.
-      this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
-      const workspace = await this.workspaceDirectory(input.workspaceId);
-      const session = WorkspaceSlackSessionResultSchema.parse(
-        await workspace.slackSessionById({
-          workspaceId: input.workspaceId,
-          sessionId: input.sessionId,
-        }),
-      ).session;
-      if (!session?.reaction_channel_id || !session.reaction_message_ts) return false;
-      // Liveness comes from the run, not the ticker's own bookkeeping: delivery
-      // stamps a new key, so a key that has moved means this run is over even if
-      // the explicit stop never arrived. Comparing against the baseline rather
-      // than against "has ever delivered" is what keeps a follow-up prompt in an
-      // existing thread rotating — it inherits the previous run's key.
-      if ((session.last_delivery_key ?? "") !== input.deliveryKey) return false;
-      const connection = await this.connectionById(session.connection_id);
-      const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
-      // The cursor names the reaction this tick places, and the *next* position
-      // is what gets persisted. Pre-incrementing skipped the first emoji
-      // entirely: admission resets the cursor to 0, so the first tick showed
-      // `working[1]` and the documented order never started where it says it
-      // does — most runs finished before it wrapped around to the first.
-      const cursor = session.reaction_cursor;
-      try {
-        const result = await this.executeSlackReaction(connection, await this.botToken(connection), {
-          kind: "reaction",
-          channelId: session.reaction_channel_id,
-          timestamp: session.reaction_message_ts,
-          add: slackWorkingReaction(reactions, cursor),
-          remove: session.reaction_current,
-          fallback: slackDefaultReactionFor("working", cursor),
-        });
-        // Conditional on the emoji this tick removed, so a terminal transition
-        // that landed in between is not overwritten by a working reaction.
-        await workspace.settleSlackSessionReaction({
-          workspaceId: input.workspaceId,
-          sessionId: session.id,
-          expected: session.reaction_current,
-          reaction: result.reaction,
-          cursor: cursor + 1,
-          at: nowIso(),
-        });
-      } catch (error) {
-        // A rate limit above all: keep the rotation alive and leave the current
-        // reaction until the next tick rather than ending it on one refusal.
-        logWarn(this.env, "slack_working_reaction_failed", {
-          session_id: session.id,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-      }
-      return true;
-    } catch (error) {
-      logWarn(this.env, "slack_reaction_tick_abandoned", {
-        session_id: input.sessionId,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-      return false;
-    }
-  }
-
-  /** Starts or stops the rotation for a session, never failing the run for it. */
-  private async signalReactionTicker(
-    session: WorkspaceSlackSession,
-    action: "start" | "stop",
-    intervalMs = SLACK_DEFAULT_REACTIONS.workingIntervalMs,
-  ): Promise<void> {
-    try {
-      // Workspace-scoped rather than a regional singleton: the ticker belongs to
-      // one Slack session inside one workspace, so it takes that workspace's
-      // placement affinity like every other product object.
-      const ticker = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.SLACK_REACTION_TICKERS,
-        session.workspace_id,
-        `${this.env.AVALON_REGION}:slack-reaction:${session.id}`,
-      );
-      await ticker.fetch(`https://slack-reaction-ticker.internal/${action}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(action === "start"
-          ? {
-              workspaceId: session.workspace_id,
-              sessionId: session.id,
-              deliveryKey: session.last_delivery_key ?? "",
-              intervalMs,
-            }
-          : {}),
-      });
-    } catch (error) {
-      logWarn(this.env, "slack_reaction_ticker_signal_failed", {
-        session_id: session.id,
-        action,
         reason: error instanceof Error ? error.message : "unknown",
       });
     }
@@ -4179,8 +4120,8 @@ function slackRoutingFailureText(reason: string): string {
   switch (reason) {
     case "space_archived":
       return "This conversation's Rally Space is archived, so Rally did not start work here. A Rally admin can restore the Space in Rally.";
-    case "room_narrower_than_space":
-      return "This conversation is private now, but its Rally Space is open to the whole organization, so Rally did not start work here. A Rally admin can make the Space private in Rally.";
+    case "room_shared_externally":
+      return "This conversation is now shared with another organization, and its Rally Space holds this organization's own work, so Rally did not start work here.";
     case "no_rally_member_in_private_room":
       return "Rally didn't start work here because nobody in this private conversation has a Rally account it can recognize yet. Connect your Rally account in App Home, then mention Rally again.";
     case "space_access_denied":
@@ -4197,6 +4138,8 @@ type SlackChannelResolution = {
   failure: SlackPromptSource["channelResolutionFailure"];
   /** Absent reads as threadable: only Slack's explicit flag turns threads off. */
   threadable?: boolean;
+  /** Shared through Slack Connect; absent when the source did not ask Slack. */
+  externallyShared?: boolean;
 };
 
 type SlackThreadRoute =
@@ -4204,8 +4147,9 @@ type SlackThreadRoute =
   | {
       kind: "spawn";
       spaceId: string;
-      spaceScope: "personal" | "workspace";
       spaceActorUserId: string | null;
+      /** The room joined this Space by name rather than getting its own. */
+      spaceMatched: boolean;
       claim: ExternalBindingClaim;
     };
 
@@ -4351,6 +4295,9 @@ async function stableUuid(value: string): Promise<string> {
 /** What a run with no text response says, rather than posting nothing at all. */
 const SLACK_EMPTY_RESULT_TEXT = "Rally completed the task without a text response.";
 
+/** The message a run's status reaction sits on. */
+type SlackReactionAnchor = NonNullable<SlackOriginContext["reactionAnchor"]>;
+
 /**
  * The reaction vocabulary a workspace installation has configured, if any.
  *
@@ -4432,10 +4379,11 @@ async function resolveSlackChannelType(
     // a conversation as public; anything else stays private, because this
     // classification gates whether Avalon will start a workspace task here.
     const threadable = result.channel.is_non_threadable !== true;
+    const externallyShared = result.channel.is_ext_shared === true || result.channel.is_pending_ext_shared === true;
     if (result.channel.is_mpim === true || result.channel.is_private !== false) {
-      return { channelType: "private", channelName, failure: null, threadable };
+      return { channelType: "private", channelName, failure: null, threadable, externallyShared };
     }
-    return { channelType: "public", channelName, failure: null, threadable };
+    return { channelType: "public", channelName, failure: null, threadable, externallyShared };
   } catch (error) {
     const reason = slackErrorReason(error);
     logWarn(env, "slack_conversation_privacy_lookup_failed", {

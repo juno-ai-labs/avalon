@@ -1,5 +1,6 @@
+import type { ConversationAccessRequestItem } from '@rally/contracts';
 import { ShareConversationDialog } from './scope-sharing-panel';
-import { useOptionalCollaborationSession } from '../lib/collaboration-session';
+import { useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { IconPin, IconShare2 } from '@tabler/icons-react';
 import { ChannelRowContent, NavigationRowContent } from '@rally/ui/components/navigation';
 import {
@@ -12,16 +13,16 @@ import {
   SidebarScroll,
 } from '@rally/ui/components/resizable-sidebar';
 import { SidebarTopActions } from '@rally/ui/components/space-pills';
-import { IconCloudDownload, IconDeviceDesktopDown, IconMessagePlus, IconSearch } from '@tabler/icons-react';
+import { IconCloudDownload, IconDeviceDesktopDown, IconMenu2, IconMessagePlus, IconSearch, IconX } from '@tabler/icons-react';
 import { NewWorkstreamMenu } from './new-workstream-menu';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { conversationNeedsViewer, type CreateSpaceRequest, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
+import { type CreateSpaceRequest, type SpaceSummary, type WorkstreamBatchFilter, type WorkstreamBatchUpdate } from '@rally/contracts';
 import { IconArrowsSort, IconDots } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Menu, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TransitionEvent } from 'react';
+import { Archive, Check, CircleHelp, Clock, Cog, Copy, EyeOff, FolderMinus, FolderPlus, Globe2, Info, LogOut, Megaphone, Pencil, Pin, PinOff, Settings, Smartphone } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type TransitionEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
@@ -29,16 +30,24 @@ import {
   consumeDeepLinkWorkstreamNavigation,
   useDeepLinkWorkstreamNavigation,
 } from '../lib/deep-link-navigation';
-import { formatDateTime, formatTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, recencyTimestamp, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
-import { layoutRowAt } from '../lib/list-motion';
-import { committedOrder, moveWithin, orderByStoredIds } from '../lib/personal-order';
-import { compareAlphabeticalName, compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
+import { formatDateTime, formatSidebarActivityTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
+import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
+import { committedOrder, moveWithin } from '../lib/personal-order';
+import { compareAlphabeticalName } from '@rally/ui/lib/alphabetical';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
+import type { AttentionItem } from '../lib/attention-items';
 import { desktopBridge } from '../lib/platform';
 import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
 import { spaceFailureOf, spaceFailureSentence } from '../lib/space-failure-copy';
 import { useSpaceChoices } from '../lib/space-choices';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import {
+  compareChannels,
+  orderPinnedWorkstreams,
+  spacePinPosition,
+  workstreamAttentionCount,
+  workstreamHasActivityForViewer,
+} from '../lib/sidebar-channel-order';
 import { MIN_SIDEBAR_WIDTH, SIDEBAR_CONTENT_MIN_WIDTH, type SidebarChannelSort, useUiStore } from '../lib/ui-store';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { layoutKey, useSemanticScroll } from '../lib/desktop-layout';
@@ -46,17 +55,28 @@ import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useListMotion } from '../lib/use-list-motion';
 import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
+import { channelDestination, emptySpaceRoute } from '../lib/workstream-landing';
 import { Avatar, Button, IconButton, InlineError, Meter, Modal, StatusDot, Tip } from './primitives';
 import { AcknowledgedErrorDialog } from './acknowledged-error-dialog';
 import { ManageAccessDialog } from './manage-access-dialog';
 import { ContextNestedMenu } from './nested-menu';
 import { SpacePills } from './space-pills';
 import { RelativeTime } from './relative-time';
-import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
+import { SidebarGhostChannelRow, SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { WorkstreamGlyph } from './workstream-glyph';
+import { AttentionMenu, type AccessDecision } from './attention-menu';
 
 interface SidebarProps {
   onOpenSearch?: () => void;
+  /** Conversations waiting for this reader, for the attention menu. */
+  attentionItems?: readonly AttentionItem[];
+  /** Access requests waiting on this person; the attention menu lists them first. */
+  accessRequests?: readonly ConversationAccessRequestItem[];
+  onDecideAccessRequest?: (request: ConversationAccessRequestItem, decision: AccessDecision) => void;
+  onOpenAccessRequest?: (request: ConversationAccessRequestItem) => void;
+  accessDecisionFailed?: boolean;
+  /** False while some Channels are not loaded yet; see `AttentionMenu`. */
+  attentionComplete?: boolean;
   workspace: Workspace;
   /**
    * The active Space directory, or absent for a host with no Space navigation.
@@ -82,7 +102,7 @@ interface SidebarProps {
   /**
    * The Spaces whose Channels have been loaded, when they load a Space at a
    * time. A Space missing here with no rows yet draws placeholders rather than
-   * "No channels yet". Absent means every Channel held is all there is.
+   * the empty list. Absent means every Channel held is all there is.
    */
   loadedSpaceIds?: ReadonlySet<string>;
   /** The Space on screen changed: load its Channels ahead of the others. */
@@ -122,7 +142,7 @@ interface SidebarProps {
   onPreviewWorkstreamBatch: (
     filter: WorkstreamBatchFilter,
   ) => Promise<{ matchedCount: number; matchedNoteCount: number }>;
-  onCreateChannel?: (input: { name: string; spaceId: string }) => Promise<void>;
+  onCreateChannel?: (input: { spaceId: string }) => void;
   onCreateSpace?: (input: CreateSpaceRequest) => Promise<SpaceSummary>;
   onAddChannelToSpace?: (spaceId: string, workstreamId: string) => Promise<void>;
   onMoveChannelToSpace?: (sourceSpaceId: string, targetSpaceId: string, workstreamId: string) => Promise<void>;
@@ -172,79 +192,19 @@ function batchSubject(target: WorkstreamBatchTarget): string {
 }
 
 /**
- * How many of this Channel's conversations need this reader: its Breakouts,
- * plus Main when the row shows Main. One count for the row's bold title, its
- * dot, and the Needs you sort, so the three cannot disagree.
- */
-function workstreamAttentionCount(workstream: WorkstreamSummary): number {
-  const mainVisible = !workstream.associativeSubstreamId || workstream.associativeSubstreamId === '0';
-  return (workstream.breakoutAttentionCount ?? 0)
-    + Number(mainVisible && conversationNeedsViewer(workstream));
-}
-
-/** Whether the row reads as unread: the input to its bold title. */
-function workstreamHasActivityForViewer(workstream: WorkstreamSummary): boolean {
-  return workstream.hasUnread === true || workstreamAttentionCount(workstream) > 0;
-}
-
-/**
- * Newest last activity first, ties A to Z. The Channel's own last activity,
- * not when this reader last opened it: the row's time shows the same value,
- * so the order and the times down the list agree.
- */
-function compareRecent(left: WorkstreamSummary, right: WorkstreamSummary): number {
-  return recencyTimestamp(right) - recencyTimestamp(left) || compareAlphabeticalTitle(left, right);
-}
-
-type WorkstreamComparator = (left: WorkstreamSummary, right: WorkstreamSummary) => number;
-
-/**
- * The sort toggle's cycle: each order's label, how it is read aloud, its
- * comparator, and what a click moves to. `heldId` is the open Channel that was
- * bold when the reader opened it; only Needs you reads it.
+ * The sort toggle's cycle: each order's label, how it is read aloud, and what
+ * a click moves to. The comparators are `compareChannels`, shared with the
+ * landing a leave opens.
  */
 const CHANNEL_SORTS: Record<SidebarChannelSort, {
   label: string;
   spoken: string;
-  compare: (heldId: string | null) => WorkstreamComparator;
   next: SidebarChannelSort;
 }> = {
-  alphabetical: { label: 'A–Z', spoken: 'A to Z', compare: () => compareAlphabeticalTitle, next: 'recent' },
-  recent: { label: 'Recent', spoken: 'by recent activity', compare: () => compareRecent, next: 'needs_you' },
-  // Every bold row first, then the rest, each half in Recent order. Opening a
-  // bold row reads it, and without the hold it would drop out from under the
-  // pointer while the reader is still in it; it stays until they move on.
-  needs_you: {
-    label: 'Needs you',
-    spoken: 'by what needs you',
-    compare: (heldId) => {
-      const needsYou = (workstream: WorkstreamSummary): number => Number(
-        workstream.id === heldId || workstreamHasActivityForViewer(workstream),
-      );
-      return (left, right) => needsYou(right) - needsYou(left) || compareRecent(left, right);
-    },
-    next: 'alphabetical',
-  },
+  alphabetical: { label: 'A–Z', spoken: 'A to Z', next: 'recent' },
+  recent: { label: 'Recent', spoken: 'by recent activity', next: 'needs_you' },
+  needs_you: { label: 'Needs you', spoken: 'by what needs you', next: 'alphabetical' },
 };
-
-const sidebarWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
-const sidebarMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-
-function formatSidebarActivityTime(value: string, now = new Date()): string {
-  const date = new Date(value);
-  const timestamp = date.getTime();
-  if (!Number.isFinite(timestamp)) return 'Unknown time';
-
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
-  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
-  const startOfWeekWindow = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
-
-  if (timestamp >= startOfToday && timestamp < startOfTomorrow) return formatTime(value);
-  if (timestamp >= startOfYesterday && timestamp < startOfToday) return 'Yesterday';
-  if (timestamp >= startOfWeekWindow && timestamp < startOfYesterday) return sidebarWeekday.format(date);
-  return sidebarMonthDay.format(date);
-}
 
 /** How close the pointer comes to the navigation's edge before its pill shows. */
 
@@ -259,6 +219,21 @@ const LOAD_MORE_DISTANCE = 400;
 
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
+const NAVIGATION_SHEET_ID = 'rally-navigation';
+/** The `max-width` of the phone layout in `app.css`; the two move together. */
+const PHONE_LAYOUT_MAX_WIDTH = 640;
+const WIDE_LAYOUT_QUERY = `(min-width: ${PHONE_LAYOUT_MAX_WIDTH + 1}px)`;
+
+function subscribeWideLayout(onChange: () => void): () => void {
+  const query = window.matchMedia?.(WIDE_LAYOUT_QUERY);
+  query?.addEventListener('change', onChange);
+  return () => query?.removeEventListener('change', onChange);
+}
+
+/** Whether the sidebar is drawn as a column rather than the phone sheet. */
+function useWideLayout(): boolean {
+  return useSyncExternalStore(subscribeWideLayout, () => window.matchMedia?.(WIDE_LAYOUT_QUERY).matches ?? true);
+}
 
 /**
  * How long the sidebar will wait for the list to carry a pin before it stops
@@ -412,6 +387,8 @@ export interface WorkstreamRowDrag {
  * change what the control makes.
  */
 const NEW_STREAM_LABEL = 'New channel';
+const IMPORT_LABEL = 'Import from ChatGPT or Claude';
+const IMPORT_DESKTOP_ONLY = 'Import from Claude/ChatGPT is only available in the macOS app as we use computer use to read your chat for accuracy';
 
 /**
  * How a public row says so. The row carries no badge: its glyph matches the
@@ -474,6 +451,32 @@ function PendingWorkstreamRow({ workstream }: { workstream: WorkstreamSummary })
         className="workstream-row is-pending"
       >
         <NavigationRowContent appearance={workstream.appearance} id={workstream.id} naming={naming} title={workstream.title} />
+      </SidebarRow>
+    </div>
+  );
+}
+
+/**
+ * The slot Pinned holds open for a Channel dragged in from below: a faded copy
+ * of that Channel's row, drawn the way the row being reordered inside the
+ * section is drawn, so arriving and rearranging look the same. Hidden from
+ * assistive technology and from the sidebar's row lookups — it carries no
+ * `data-workstream-id` — since the Channel is not pinned yet.
+ */
+function PinnedDropGhost({ spaceSubtitle, workstream }: {
+  spaceSubtitle?: string | undefined;
+  workstream: WorkstreamSummary;
+}): React.JSX.Element {
+  return (
+    <div aria-hidden="true" className="sidebar-context-target is-dragging pinned-drop-ghost">
+      <SidebarRow as="div" className="workstream-row channel-row">
+        <ChannelRowContent
+          appearance={workstream.appearance}
+          id={workstream.id}
+          subtitle={spaceSubtitle}
+          time={<RelativeTime format={formatSidebarActivityTime} value={workstream.lastActivityAt} />}
+          title={workstream.title}
+        />
       </SidebarRow>
     </div>
   );
@@ -546,10 +549,15 @@ function WorkstreamRow({
   const socketOpenContext = useWorkstreamSocketOpenContext(workstream.id);
   const attentionCount = workstreamAttentionCount(workstream);
   const hasActivityForViewer = workstreamHasActivityForViewer(workstream);
-  const destination = `/workstreams/${workstream.id}${workstream.associativeSubstreamId && workstream.associativeSubstreamId !== '0'
-    ? `?substream=${encodeURIComponent(workstream.associativeSubstreamId)}`
-    : ''}`;
+  const destination = channelDestination(workstream);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // A touch drag starts with the same long press that opens this menu, and
+  // iOS lifts the row without sending the move or cancel that would stop the
+  // menu's timer. A modal menu over a drag also leaves the page deaf to the
+  // pointer, so the drag would find no drop target: a drag closes the menu and
+  // keeps it shut until the next press.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const dragStarted = useRef(false);
   const previewOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelPreviewTimer = useCallback(() => {
@@ -667,7 +675,9 @@ function WorkstreamRow({
       workstreamId={workstream.id}
       workstreamTitle={workstream.title}
     />}
-    <ContextMenu.Root>
+    <ContextMenu.Root open={menuOpen} onOpenChange={(open) => {
+      if (!open || !dragStarted.current) setMenuOpen(open);
+    }}>
       <ContextMenu.Trigger asChild>
         <div
           className={clsx('sidebar-context-target', drag && 'is-draggable', drag?.dragging && 'is-dragging')}
@@ -722,6 +732,8 @@ function WorkstreamRow({
             : undefined}
           onDragStart={(event) => {
               closePreview();
+              dragStarted.current = true;
+              setMenuOpen(false);
               // Chromium refuses to start a drag with an empty payload, and the
               // id is the payload every other surface would want anyway. The
               // order itself is tracked in the sidebar's own state: reading it
@@ -768,6 +780,7 @@ function WorkstreamRow({
               drag.onMove(workstream, event.key === 'ArrowUp' ? -1 : 1);
             }
             : undefined}
+          onPointerDown={() => { dragStarted.current = false; }}
           onPointerEnter={() => {
             socketWarmup.onPointerEnter();
             openPreviewFromPointer();
@@ -958,35 +971,6 @@ function WorkstreamRow({
 }
 
 /**
- * The pinned work streams, in the order to render them.
- *
- * `pinPosition` is the server's answer and the only order that survives a
- * reload. `dragOrder` is the arrangement a drag is currently building, and wins
- * while it exists so rows move under the pointer rather than after the round
- * trip. Ids in `dragOrder` that are no longer pinned — unpinned in another
- * window mid-drag — drop out, and anything pinned that the drag never saw is
- * appended, so the section always shows every pin exactly once.
- */
-export function orderPinnedWorkstreams(
-  workstreams: WorkstreamSummary[],
-  dragOrder: readonly string[] | null,
-): WorkstreamSummary[] {
-  const pinned = workstreams
-    .filter((workstream) => workstream.pinPosition !== null)
-    // The id breaks a tie the way both server readers do. Positions are unique
-    // today, so this cannot fire — it is here because "readers of this list
-    // agree on the order" is stated as an invariant, and a third reader that
-    // fell back to arrival order would be the one place it was not true.
-    .sort((left, right) =>
-      (left.pinPosition ?? 0) - (right.pinPosition ?? 0) || left.id.localeCompare(right.id));
-  // The same arrangement rule every other hand-ordered list in the app is
-  // drawn by, with the drag standing in for the stored order: ids it names
-  // first, then everything it never saw, and an id that is no longer pinned —
-  // unpinned in another window mid-drag — dropped rather than drawn as a gap.
-  return orderByStoredIds(pinned, dragOrder ?? [], (workstream) => workstream.id);
-}
-
-/**
  * Where a Channel sits in **All**'s Pinned section, or null when it is pinned
  * nowhere.
  *
@@ -1067,6 +1051,12 @@ const sidebarMenuFailureCopy: Record<SidebarMenuFailure, { title: string; copy: 
 
 export function Sidebar({
   onOpenSearch,
+  attentionItems = [],
+  attentionComplete = true,
+  accessRequests = [],
+  onDecideAccessRequest,
+  onOpenAccessRequest,
+  accessDecisionFailed = false,
   workspace,
   spaces,
   spacesReadOnly = false,
@@ -1088,7 +1078,7 @@ export function Sidebar({
   onReorderAllPinned,
   onRenameWorkstream,
   onPreviewWorkstreamBatch,
-  onCreateChannel = async () => { throw new Error('Channel creation is unavailable.'); },
+  onCreateChannel = () => { throw new Error('Channel creation is unavailable.'); },
   onCreateSpace = async () => {
     throw new Error('Space creation is unavailable.');
   },
@@ -1109,6 +1099,46 @@ export function Sidebar({
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  const menuToggle = useRef<HTMLButtonElement>(null);
+  // While the phone sheet is open, `AppShell` makes the conversation behind it
+  // inert. Escape closes it as it would any menu and hands focus back to the
+  // button, since the control that held it is about to be hidden. Widening
+  // past the phone layout closes it too, so an open sheet never leaves the
+  // conversation inert at a width where no sheet is drawn.
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      // A menu or dialog open over the sheet takes this Escape for itself. A
+      // tooltip does not, though Radix marks its Escape handled too: every
+      // focused top-bar button shows one. Heard in the capture phase, before
+      // Radix's own listener has closed the menu this looks for.
+      if (event.key !== 'Escape' || document.querySelector('[role="menu"], [role="dialog"]')) return;
+      setSidebarOpen(false);
+      menuToggle.current?.focus();
+    };
+    const closeWhenWide = (): void => {
+      if (window.innerWidth > PHONE_LAYOUT_MAX_WIDTH) setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape, true);
+    window.addEventListener('resize', closeWhenWide);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape, true);
+      window.removeEventListener('resize', closeWhenWide);
+    };
+  }, [setSidebarOpen, sidebarOpen]);
+  // Anything that opens somewhere new closes the sheet, whoever navigated: a
+  // row, a search result, or the New channel form, whose dialogs portal
+  // outside the sheet. A pill that had to leave the open Channel does not: the
+  // reader is switching Spaces to browse that Space's Channels, so the sheet
+  // stays open on the list they just picked.
+  const pillNavigating = useRef(false);
+  useEffect(() => {
+    if (pillNavigating.current) {
+      pillNavigating.current = false;
+      return;
+    }
+    setSidebarOpen(false);
+  }, [location.pathname, setSidebarOpen]);
   const selectedSpaceFilter = useUiStore((state) => state.sidebarSpaceFilter);
   const setSelectedSpaceFilter = useUiStore((state) => state.setSidebarSpaceFilter);
   const channelSort = useUiStore((state) => state.sidebarChannelSort);
@@ -1348,6 +1378,10 @@ export function Sidebar({
   const [dragOrder, setDragOrder] = useState<{ spaceId: string; itemIds: string[] } | null>(null);
   const pinnedDrag = useRef<{ dropped: boolean; workstreamId: string } | null>(null);
   const [pinDropWorkstreamId, setPinDropWorkstreamId] = useState<string | null>(null);
+  // Where an unpinned Channel dragged over Pinned would land, and, once
+  // released, that Channel until its pin comes back.
+  const [pinDropIndex, setPinDropIndex] = useState<number | null>(null);
+  const [pinArrival, setPinArrival] = useState<{ index: number; scope: string | null; workstream: WorkstreamSummary } | null>(null);
   const motionMoveIntent = useRef<{ id: string; pinned: boolean } | null>(null);
   const [archiveWorkstreamTarget, setArchiveWorkstreamTarget] = useState<WorkstreamSummary | null>(null);
   const [archivingWorkstream, setArchivingWorkstream] = useState(false);
@@ -1366,9 +1400,7 @@ export function Sidebar({
         ...workstream,
         pinPosition: selectedSpaceId === null
           ? allPinPosition(workstream, generalSpaceId)
-          : workstream.spaceIds.includes(selectedSpaceId)
-            ? workstream.spacePins?.find((pin) => pin.spaceId === selectedSpaceId)?.position ?? null
-            : null,
+          : spacePinPosition(workstream, selectedSpaceId),
       }))
   ), [generalSpaceId, selectedSpaceId, spaces, spacesReady, workstreams]);
   const selectedSpace = spaces?.find((space) => space.id === selectedSpaceId);
@@ -1439,8 +1471,17 @@ export function Sidebar({
   const unpinnedWorkstreams = useMemo(() => (
     visibleWorkstreams
       .filter((workstream) => workstream.pinPosition === null)
-      .sort(CHANNEL_SORTS[channelSort].compare(heldOpen.heldId))
+      .sort(compareChannels(channelSort, heldOpen.heldId))
   ), [channelSort, heldOpen.heldId, visibleWorkstreams]);
+  let pinGhost: { index: number; workstream: WorkstreamSummary } | null = null;
+  if (pinArrival !== null) {
+    // Only in the list it was dropped into, and gone once the real row is pinned.
+    const arrived = pinnedWorkstreams.some((pinned) => pinned.id === pinArrival.workstream.id);
+    if (pinArrival.scope === selectedSpaceId && !arrived) pinGhost = pinArrival;
+  } else if (pinDropIndex !== null && pinDropWorkstreamId !== null) {
+    const workstream = unpinnedWorkstreams.find((candidate) => candidate.id === pinDropWorkstreamId);
+    if (workstream) pinGhost = { index: pinDropIndex, workstream };
+  }
   const displayedWorkstreams = useMemo(
     () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
     [pinnedWorkstreams, unpinnedWorkstreams],
@@ -1479,7 +1520,7 @@ export function Sidebar({
     if (!next && (hasMoreWorkstreams || loadingMoreWorkstreams)) return;
     const destination = next
       ? `/workstreams/${encodeURIComponent(next.id)}`
-      : `/spaces/${encodeURIComponent(pendingChannelMoveNavigation.spaceId)}`;
+      : emptySpaceRoute(pendingChannelMoveNavigation.spaceId, !spacesReadOnly);
     owned.destination = destination;
     setPendingChannelMoveNavigation(null);
     void navigate(destination, { replace: true });
@@ -1490,18 +1531,23 @@ export function Sidebar({
     loadingMoreWorkstreams,
     navigate,
     pendingChannelMoveNavigation,
+    spacesReadOnly,
   ]);
   // A pill that hides the open Channel opens the first Channel the filtered
-  // list draws, once that Space's Channels have loaded, or the Space's
-  // dashboard when it holds none. Dropped if the reader leaves the route or
-  // picks another pill first.
+  // list draws, once that Space's Channels have loaded, or the screen that
+  // starts one when it holds none. A new-Channel screen for another Space
+  // counts as hidden too. Dropped if the reader leaves the route or picks
+  // another pill first.
   const [pendingPillNavigation, setPendingPillNavigation] = useState<{ origin: string; spaceId: string } | null>(null);
   const selectSpaceFromPill = useCallback((spaceId: string | null): void => {
     setSelectedSpaceId(spaceId);
-    setPendingPillNavigation(spaceId !== null && routeWorkstream && !routeWorkstream.spaceIds.includes(spaceId)
+    const hidesRoute = routeWorkstream
+      ? !routeWorkstream.spaceIds.includes(spaceId ?? '')
+      : onNewStreamRoute && routeSpaceId !== spaceId;
+    setPendingPillNavigation(spaceId !== null && hidesRoute
       ? { origin: currentRouteRef.current, spaceId }
       : null);
-  }, [routeWorkstream, setSelectedSpaceId]);
+  }, [onNewStreamRoute, routeSpaceId, routeWorkstream, setSelectedSpaceId]);
   useEffect(() => {
     if (pendingPillNavigation === null) return;
     if (currentRoute !== pendingPillNavigation.origin || selectedSpaceId !== pendingPillNavigation.spaceId) {
@@ -1512,9 +1558,10 @@ export function Sidebar({
     const first = displayedWorkstreams.find((workstream) => !workstream.pending);
     if (!first && (hasMoreWorkstreams || loadingMoreWorkstreams)) return;
     setPendingPillNavigation(null);
+    pillNavigating.current = true;
     void navigate(first
       ? `/workstreams/${encodeURIComponent(first.id)}`
-      : `/spaces/${encodeURIComponent(pendingPillNavigation.spaceId)}`);
+      : emptySpaceRoute(pendingPillNavigation.spaceId, !spacesReadOnly));
   }, [
     channelsLoading,
     currentRoute,
@@ -1524,6 +1571,7 @@ export function Sidebar({
     navigate,
     pendingPillNavigation,
     selectedSpaceId,
+    spacesReadOnly,
   ]);
   // Whether this session has the hierarchy at all. A host that hands over no
   // directory (no active workspace) keeps the flat, time-grouped list this
@@ -1551,6 +1599,16 @@ export function Sidebar({
    */
   const placementSpaces = useMemo(() => (spaces !== undefined && spacesReady ? [...spaces] : [])
     .sort(compareAlphabeticalName), [spaces, spacesReady]);
+  const { host } = useShellCapabilities();
+  const wideLayout = useWideLayout();
+  const [spaceActionSlot, setSpaceActionSlot] = useState<HTMLSpanElement | null>(null);
+  // The phone sheet keeps the row: its top bar shows while the sheet is shut.
+  const spacePillsInline = host === 'browser'
+    && wideLayout
+    && spaces !== undefined
+    && spacesReady
+    && directoryLoading !== true
+    && !placementSpaces.some((space) => space.systemRole !== 'general');
   /**
    * The line under a Channel's title: the Spaces it lives in, General left
    * out because General is where a Channel is when it is in no Space at all.
@@ -1559,7 +1617,8 @@ export function Sidebar({
     .filter((space) => space.systemRole !== 'general')
     .map((space) => [space.id, space.name])), [placementSpaces]);
   // Importing reads the conversation in Rally's own browser, which only the
-  // desktop host has. Under a Space the import starts there and offers no other.
+  // desktop host has; the web host draws the button disabled and says why.
+  // Under a Space the import starts there and offers no other.
   const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
   const importSpaces = useSpaceChoices(placementSpaces).filter((space) => space.reach !== 'through_channel'
     && (selectedSpaceId === null || space.id === selectedSpaceId));
@@ -1746,13 +1805,13 @@ export function Sidebar({
     workstream: WorkstreamSummary,
     pinned: boolean,
     filter: string | null = selectedSpaceId,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const targets = channelPinTargets(workstream, pinned, {
       activeSpaceIds: new Set(placementSpaces.map((space) => space.id)),
       generalSpaceId,
       selectedSpaceId: filter,
     });
-    if (targets.length === 0) return;
+    if (targets.length === 0) return false;
     const motionIntent = { id: workstream.id, pinned };
     motionMoveIntent.current = motionIntent;
     setPinPendingWorkstreamId(workstream.id);
@@ -1780,12 +1839,14 @@ export function Sidebar({
           origin: workstream.systemKind ? 'system' : 'ad_hoc',
           pinned,
         });
-      } else if (motionMoveIntent.current === motionIntent) {
-        motionMoveIntent.current = null;
+        return true;
       }
+      if (motionMoveIntent.current === motionIntent) motionMoveIntent.current = null;
+      return false;
     } catch {
       if (motionMoveIntent.current === motionIntent) motionMoveIntent.current = null;
       setMenuFailure(pinned ? 'pin' : 'unpin');
+      return false;
     } finally {
       setPinPendingWorkstreamId((current) => current === workstream.id ? null : current);
     }
@@ -1840,6 +1901,37 @@ export function Sidebar({
       // first response snap the list back to an order the second has already
       // moved past — visibly, and for as long as the second request takes.
       setDragOrder((current) => current === preview ? null : current);
+    }
+  };
+
+  // A pin, then a reorder into the slot. A Space's run appends a new pin, so an
+  // end drop there needs no reorder; All's saved order keeps an unpinned
+  // Channel's old slot, so under All it does.
+  const pinAt = async (workstream: WorkstreamSummary, index: number): Promise<void> => {
+    const spaceId = pinOrderSpaceId;
+    const visible = pinnedWorkstreams.map((pinned) => pinned.id);
+    const stored = storedPinnedWorkstreams.map((pinned) => pinned.id);
+    // Search only shows some pins; the new one goes before the visible row it
+    // was dropped above, wherever that row sits among the hidden ones.
+    const anchor = visible[index];
+    const at = anchor === undefined ? stored.length : stored.indexOf(anchor);
+    const saves = spaceId !== null && at >= 0 && (anchor !== undefined || spaceId === ALL_PINNED);
+    const preview = !saves || spaceId === null ? null : {
+      spaceId,
+      itemIds: [...visible.slice(0, index), workstream.id, ...visible.slice(index)],
+    };
+    setPinArrival({ index, scope: selectedSpaceId, workstream });
+    if (preview !== null) setDragOrder(preview);
+    try {
+      if (!await togglePin(workstream, true) || preview === null) return;
+      const completeOrder = [...stored.slice(0, at), workstream.id, ...stored.slice(at)];
+      if (preview.spaceId === ALL_PINNED) await onReorderAllPinned?.(completeOrder);
+      else await onReorderPinnedWorkstreams(preview.spaceId, completeOrder);
+    } catch {
+      setMenuFailure('reorder_pinned');
+    } finally {
+      setPinArrival((current) => current?.workstream.id === workstream.id ? null : current);
+      if (preview !== null) setDragOrder((current) => current === preview ? null : current);
     }
   };
 
@@ -1952,7 +2044,10 @@ export function Sidebar({
       {...(drag && !spacesReadOnly ? { drag } : {})}
       pinPending={pinPendingWorkstreamId === workstream.id}
       canDragToPinned={spacesReady}
-      onPinDragEnd={(target) => setPinDropWorkstreamId((current) => current === target.id ? null : current)}
+      onPinDragEnd={(target) => {
+        setPinDropWorkstreamId((current) => current === target.id ? null : current);
+        setPinDropIndex(null);
+      }}
       onPinDragStart={(target) => setPinDropWorkstreamId(target.id)}
       motionMove={motionMoveIntent.current?.id === workstream.id
         && motionMoveIntent.current.pinned === (workstream.pinPosition !== null)}
@@ -2086,19 +2181,17 @@ export function Sidebar({
   // the same toggle.
   useListMotion(scrollRef, compact, layoutSettling);
 
-  const createChannelFromSidebar = useCallback(async (input: { name: string; spaceId: string }): Promise<void> => {
+  const createChannelFromSidebar = useCallback((input: { spaceId: string }): void => {
     markSurfaceEntrypoint('sidebar_new');
-    try {
-      await onCreateChannel(input);
-    } catch (cause) {
-      markSurfaceEntrypoint('direct');
-      throw cause;
-    }
+    onCreateChannel(input);
   }, [onCreateChannel]);
   const createSpaceFromSidebar = useCallback(async (name: string): Promise<void> => {
-    const created = await onCreateSpace({ name, colorKey: 'blue', iconKey: 'briefcase', scope: 'personal' });
-    void navigate(`/spaces/${created.id}`);
-  }, [navigate, onCreateSpace]);
+    // No icon: Rally chooses one from the name a moment later. `workspace` is
+    // the only scope a Space can have.
+    const created = await onCreateSpace({ name, colorKey: 'blue', scope: 'workspace' });
+    // A new Space holds no Channel yet, so it opens on starting one.
+    void navigate(emptySpaceRoute(created.id, !spacesReadOnly));
+  }, [navigate, onCreateSpace, spacesReadOnly]);
 
   const moveChannelFromSelectedSpace = useCallback((
     sourceSpaceId: string,
@@ -2117,7 +2210,7 @@ export function Sidebar({
         : displayedWorkstreams[index + 1] ?? displayedWorkstreams[index - 1];
       const destination = next
         ? `/workstreams/${encodeURIComponent(next.id)}`
-        : (selectedSpace?.channelCount ?? 0) <= 1 ? `/spaces/${encodeURIComponent(sourceSpaceId)}` : null;
+        : (selectedSpace?.channelCount ?? 0) <= 1 ? emptySpaceRoute(sourceSpaceId, !spacesReadOnly) : null;
       navigationToken = channelMoveNavigationGeneration.current + 1;
       channelMoveNavigationGeneration.current = navigationToken;
       channelMoveNavigation.current = {
@@ -2153,17 +2246,14 @@ export function Sidebar({
     routeWorkstreamId,
     selectedSpace?.channelCount,
     selectedSpaceId,
+    spacesReadOnly,
   ]);
-
 
   return (
     <>
-      <IconButton className="mobile-sidebar-trigger" label="Open navigation" onClick={() => setSidebarOpen(true)}>
-        <Menu size={17} />
-      </IconButton>
-      {sidebarOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setSidebarOpen(false)} type="button" />}
       <ResizableSidebar
         aria-label="Rally navigation"
+        id={NAVIGATION_SHEET_ID}
         className={clsx('sidebar single-sidebar', sidebarOpen && 'is-mobile-open')}
         collapsible={false}
         compact={false}
@@ -2175,23 +2265,53 @@ export function Sidebar({
         sidebarRef={panel}
         width={sidebarWidth}
       >
-        <SidebarTopActions aria-label="Rally actions">
+        {/* The phone sheet's menu button; CSS hides it above 640px. */}
+        <SidebarTopActions
+          aria-label="Rally actions"
+          leading={<IconButton
+            aria-controls={NAVIGATION_SHEET_ID}
+            aria-expanded={sidebarOpen}
+            className="sidebar-menu-toggle window-no-drag"
+            label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            ref={menuToggle}
+            showTooltip={false}
+          >
+            {/* Both glyphs stay mounted so CSS can turn one into the other. */}
+            <IconMenu2 aria-hidden="true" className="sidebar-menu-glyph is-menu" size={18} stroke={1.8} />
+            <IconX aria-hidden="true" className="sidebar-menu-glyph is-close" size={18} stroke={1.8} />
+          </IconButton>}
+        >
           {downloadedUpdate !== null && <IconButton className="sidebar-top-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
             <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
           </IconButton>}
+          <AttentionMenu
+            complete={attentionComplete}
+            decisionFailed={accessDecisionFailed}
+            items={attentionItems}
+            {...(onDecideAccessRequest ? { onDecide: onDecideAccessRequest } : {})}
+            {...(onOpenAccessRequest ? { onOpenRequest: onOpenAccessRequest } : {})}
+            requests={accessRequests}
+          />
           <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>
             <IconSearch aria-hidden="true" size={16} stroke={1.9} />
           </IconButton>
-          {!spacesReadOnly && openBrowserImport && <IconButton
+          {!spacesReadOnly && (openBrowserImport ? <IconButton
             disabled={importSpaces.length === 0}
-            label="Import from ChatGPT or Claude"
+            label={IMPORT_LABEL}
             onClick={() => void openBrowserImport({
               spaces: importSpaces.map((space) => ({ id: space.id, name: space.name })),
               ...(selectedSpaceId !== null ? { spaceLocked: true } : {}),
             })}
           >
             <IconCloudDownload aria-hidden="true" size={17} stroke={1.8} />
-          </IconButton>}
+          </IconButton> : <Tip label={IMPORT_DESKTOP_ONLY}>
+            {/* `aria-disabled` rather than `disabled`: a disabled button takes
+                no hover or focus, so the reason would never show. */}
+            <IconButton aria-disabled="true" label={IMPORT_LABEL} showTooltip={false}>
+              <IconCloudDownload aria-hidden="true" size={17} stroke={1.8} />
+            </IconButton>
+          </Tip>)}
           {!spacesReadOnly && <NewWorkstreamMenu
             canCreateSpace={spaces !== undefined && spacesReady}
             lockedSpaceId={selectedSpaceId}
@@ -2206,8 +2326,11 @@ export function Sidebar({
               <IconMessagePlus aria-hidden="true" size={17} stroke={1.8} />
             </button>
           </NewWorkstreamMenu>}
+          {/* Holds New space when the Space row folds into this bar. */}
+          <span className="sidebar-top-space-slot" ref={setSpaceActionSlot} />
         </SidebarTopActions>
         {spaces !== undefined && <SpacePills
+          inlineTarget={spacePillsInline ? spaceActionSlot : null}
           inactiveSpaces={inactiveSpaces}
           loading={directoryLoading}
           readOnly={spacesReadOnly}
@@ -2242,34 +2365,14 @@ export function Sidebar({
         <SidebarScroll
           as="nav"
           aria-label={spaces === undefined ? 'Organization navigation' : 'Channels'}
-          onClick={() => setSidebarOpen(false)}
+          // Opening a Channel closes the phone sheet; a sort toggle or a row
+          // menu inside it does not.
+          onClick={(event) => {
+            if ((event.target as Element).closest('a')) setSidebarOpen(false);
+          }}
           onScroll={loadMoreWhenNearBottom}
           scrollRef={scrollRef}
         >
-          {/*
-            A member with no Channels at all, told so.
-
-            The line the time-grouped list used to carry, in the one state that
-            list existed to describe: a brand-new Organization shows **Spaces →
-            General → No channels** and then, without this, nothing — a sidebar
-            that has stopped talking rather than one that is empty. It sits
-            under the hierarchy because that is where the reader has just been
-            told where Channels live, and it is one line rather than a section
-            because there is no list to head.
-
-            Nothing pinned and nothing unplaced are both implied by the test:
-            all three sections draw from the same rows.
-          */}
-          {spacesEnabled && !channelsLoading && visibleWorkstreams.length === 0 && (
-            // In a section of its own, for the gap every other section carries:
-            // hung directly off the nav it lands against the last Space's own
-            // "No channels" and reads as a second line of that Space's rather
-            // than as the sidebar's.
-            <div className="sidebar-section">
-              <p className="sidebar-empty">No channels yet</p>
-            </div>
-          )}
-
           {/* Always there once the Organization is open, empty or not: an
               empty section is where a Channel is dragged to pin it, so it has
               to exist before anything is pinned. */}
@@ -2291,6 +2394,17 @@ export function Sidebar({
               onDragOver={spacesReadOnly ? undefined : (event) => {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
+                if (pinnedDrag.current || pinDropWorkstreamId === null || pinArrival !== null) return;
+                // A list with no order to save can only take a new pin at the end.
+                setPinDropIndex(pinOrderSpaceId === null ? pinnedWorkstreams.length : layoutInsertIndex(
+                  event.currentTarget.querySelectorAll('.sidebar-list > [data-workstream-id]'),
+                  event.clientY,
+                ));
+              }}
+              onDragLeave={spacesReadOnly ? undefined : (event) => {
+                // Crossing from the section into one of its own rows is not
+                // leaving it, and closing the slot there would flicker it.
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPinDropIndex(null);
               }}
               onDrop={spacesReadOnly ? undefined : (event) => {
                 event.preventDefault();
@@ -2301,7 +2415,8 @@ export function Sidebar({
                   const unpinned = unpinnedWorkstreams.find((workstream) => workstream.id === draggedId);
                   if (unpinned) {
                     setPinDropWorkstreamId(null);
-                    void togglePin(unpinned, true);
+                    setPinDropIndex(null);
+                    void pinAt(unpinned, pinDropIndex ?? pinnedWorkstreams.length);
                   }
                 }
               }}
@@ -2324,7 +2439,7 @@ export function Sidebar({
                 Hold Alt and press the up or down arrow to move a pinned channel.
               </p>}
               <SidebarList>
-                {pinnedWorkstreams.length === 0 && (
+                {pinnedWorkstreams.length === 0 && pinGhost === null && (
                   <div
                     className={clsx('pinned-empty-drop-surface', pinDropWorkstreamId !== null && 'is-armed')}
                   >
@@ -2332,7 +2447,11 @@ export function Sidebar({
                     <span>Move a channel here to pin it</span>
                   </div>
                 )}
-                {pinnedWorkstreams.map((pinned, index) => (
+                {pinnedWorkstreams.map((pinned, index) => <Fragment key={pinned.id}>
+                  {pinGhost?.index === index && <PinnedDropGhost
+                    spaceSubtitle={spaceSubtitleFor(pinGhost.workstream)}
+                    workstream={pinGhost.workstream}
+                  />}
                   <WorkstreamRow
                     {...workstreamRowActions}
                     debugEnabled={debugEnabled}
@@ -2350,7 +2469,11 @@ export function Sidebar({
                     workspace={workspace}
                     workstream={pinned}
                   />
-                ))}
+                </Fragment>)}
+                {pinGhost !== null && pinGhost.index >= pinnedWorkstreams.length && <PinnedDropGhost
+                  spaceSubtitle={spaceSubtitleFor(pinGhost.workstream)}
+                  workstream={pinGhost.workstream}
+                />}
               </SidebarList>
               <SidebarHorizontalLine className="pinned-section-line" />
             </section>
@@ -2402,14 +2525,10 @@ export function Sidebar({
                 <SidebarSkeletonGroup count={3} />
               </>
             ) : spacesEnabled ? (
-              unpinnedWorkstreams.length > 0 && (
-                /* The selected Space above is the heading for this rail. A
-                   second "Channels" label only restates the level the rail
-                   already represents and pushes its rows down. */
+              unpinnedWorkstreams.length > 0 || (pinnedWorkstreams.length === 0 && !spacesReadOnly) ? (
                 <>
-                {/* Named whenever the list has rows, pinned or not: the heading
-                    carries the sort toggle, and a reader with no pins is the
-                    one who most needs Recent and Needs you to find their way. */}
+                {/* Also shown with no Channels at all, over a ghost row; hidden
+                    when everything is pinned. */}
                 <div className="sidebar-section-heading" data-motion-hold="" data-motion-key="heading:channels">
                   <h2>Channels</h2>
                   <button
@@ -2424,16 +2543,24 @@ export function Sidebar({
                     <IconArrowsSort aria-hidden="true" size={13} stroke={1.8} />
                   </button>
                 </div>
-                <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
-                  {unpinnedWorkstreams.map((workstream) => (
-                    <Fragment key={workstream.id}>{renderWorkstream(
-                      workstream,
-                      undefined,
-                      selectedSpaceId ?? undefined,
-                    )}</Fragment>
-                  ))}
-                </SidebarList>
+                {unpinnedWorkstreams.length === 0 ? <>
+                  <SidebarList><SidebarGhostChannelRow /></SidebarList>
+                  <p className="sr-only">No channels yet</p>
+                </> : (
+                  <SidebarList data-motion-scope={selectedSpaceId ? `space:${selectedSpaceId}` : undefined}>
+                    {unpinnedWorkstreams.map((workstream) => (
+                      <Fragment key={workstream.id}>{renderWorkstream(
+                        workstream,
+                        undefined,
+                        selectedSpaceId ?? undefined,
+                      )}</Fragment>
+                    ))}
+                  </SidebarList>
+                )}
                 </>
+              ) : (
+                // A guest cannot create a Channel, so there is no slot to show.
+                pinnedWorkstreams.length === 0 && <p className="sidebar-empty">No channels yet</p>
               )
             ) : groups.length === 0 ? (
               // Pinned work streams are work streams, so the empty line only

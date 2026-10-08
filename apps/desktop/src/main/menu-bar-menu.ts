@@ -1,32 +1,60 @@
 import type { MenuItemConstructorOptions } from 'electron';
-import { groupActivityItems, type RecencyGroup } from '../common/recency-groups';
+import { statusLabel } from '@rally/ui/lib/format';
+import type { ReaderMarkerStatus } from '../common/attention-items';
 
 export interface MenuBarWorkstream {
   readonly id: string;
   readonly title: string;
-  /** The recency the sidebar sorts and groups this row by — a visit where the
-   * server reports one, otherwise the last message. See `workstreamRecencyAt`. */
-  readonly lastActivityAt: string;
+  /** The Breakout the row opens, for a Channel listed to this reader only through one; null opens Main. */
+  readonly substreamId: string | null;
+}
+
+/** One conversation waiting for the reader: a Channel's Main, or a Breakout in it. */
+export interface MenuBarAttentionRow {
+  readonly key: string;
+  readonly workstreamId: string;
+  /** Null for Main. */
+  readonly substreamId: string | null;
+  readonly title: string;
+  /** The Channel a Breakout sits in; null for Main. */
+  readonly channelTitle: string | null;
+  readonly reason: ReaderMarkerStatus;
+}
+
+/** A request to join a Channel or Breakout, waiting on this person. */
+export interface MenuBarAccessRequestRow {
+  readonly id: string;
+  readonly requesterName: string;
+  readonly title: string;
 }
 
 export interface MenuBarContent {
+  /** Access requests waiting on this person, newest first; listed above the conversations and counted with them. */
+  readonly accessRequests: readonly MenuBarAccessRequestRow[];
+  /** Every waiting conversation, in the sidebar's attention order. The menu draws the first few; the count is all of them. */
+  readonly attention: readonly MenuBarAttentionRow[];
+  /** False while the Channel directory is still being read, so an empty list is not yet "nothing". */
+  readonly attentionComplete: boolean;
+  /** Channels in the sidebar's Recent order under All. */
   readonly recents: readonly MenuBarWorkstream[];
-  /** In the reader's own hand-arranged order. See `workstream-pinning.md`. */
-  readonly pinned: readonly MenuBarWorkstream[];
 }
 
-export const emptyMenuBarContent: MenuBarContent = { recents: [], pinned: [] };
+export const emptyMenuBarContent: MenuBarContent = { accessRequests: [], attention: [], attentionComplete: false, recents: [] };
 
 export type MenuBarAction =
+  | 'attention_conversation'
+  | 'access_request'
   | 'recent_workstream'
-  | 'pinned_workstream'
   | 'open_rally'
   | 'quit_rally';
 
 export interface MenuBarActions {
   /** Observational only: a reporting failure must not block the selected row. */
   readonly selected: (action: MenuBarAction) => void;
-  readonly openWorkstream: (workstreamId: string) => void;
+  /** `substreamId` names a Breakout; null opens Main. */
+  readonly openConversation: (workstreamId: string, substreamId: string | null) => void;
+  /** Opens the main window on this request's approve-or-decline dialog. */
+  readonly openAccessRequest: (requestId: string) => void;
   readonly openRally: () => void;
   readonly quit: () => void;
 }
@@ -38,8 +66,6 @@ export interface MenuBarMenuOptions {
   /** Whether this macOS draws real section headers. See
    * {@link supportsSectionHeaders}. */
   readonly sectionHeaders: boolean;
-  /** Injected so the recency headings can be driven in tests. */
-  readonly now?: Date;
   readonly actions: MenuBarActions;
 }
 
@@ -62,19 +88,19 @@ function sectionHeader(label: string, supported: boolean): MenuItemConstructorOp
   return supported ? { label, type: 'header' } : { label, enabled: false };
 }
 
+/** How many rows each section draws, per the product contract. */
+export const MENU_BAR_SECTION_LIMIT = 5;
+
 /**
- * How many recent work streams the menu shows, per the product contract. Read
- * as a page size too: `GET /workstreams` returns this many *unpinned* rows plus
- * the whole pinned list, which is exactly what the two sections need.
+ * The status item's title: the sidebar attention button's number, capped the
+ * same way, so the two never read differently. Empty when nothing is waiting,
+ * which leaves the icon alone.
  */
-export const MENU_BAR_RECENT_LIMIT = 10;
-/**
- * How many pinned work streams the menu shows — the top of the reader's own
- * arrangement. This is a **display** limit for a menu that has to stay a menu,
- * not a cap on pinning: `workstream-pinning.md` records why nothing counts pins
- * against a limit, and nothing here starts.
- */
-export const MENU_BAR_PINNED_LIMIT = 5;
+export function menuBarTitle(count: number): string {
+  if (count <= 0) return '';
+  return count > 99 ? '99+' : String(count);
+}
+
 /**
  * A macOS menu is as wide as its widest row, so one long label stretches every
  * other one. Work-stream titles are model-written and allowed 180 characters by
@@ -126,30 +152,23 @@ export function menuBarLabel(rawLabel: string): string {
   return `${truncated.join('').replace(TRAILING_PUNCTUATION, '')}…`;
 }
 
-/**
- * The heading the recent list falls back to when it has nothing under it.
- *
- * With rows, the recent list carries the sidebar's own recency headings and no
- * heading of its own — the two surfaces list the same work streams and should
- * not label them differently. With no rows there is no recency to name, and a
- * bare disabled sentence at the bottom of the menu reads as a stray broken item
- * rather than as an answer, so the section names itself instead.
- */
-const RECENT_EMPTY_HEADER = 'Recent';
+const ATTENTION_HEADER = 'Needs attention';
+const RECENT_HEADER = 'Most recent';
 
 /**
  * Builds the status item's drop-down as a plain Electron template, so the whole
  * mapping from content to menu is testable without a display server.
  *
- * The product contract is the recent work streams under the same recency
- * headings the sidebar uses. Pins are scoped to a selected Space, and this
- * windowless surface has no Space context, so it must not choose or merge one.
+ * Two sections, each the top of a list the sidebar also draws: **Needs
+ * attention**, the sidebar attention menu's rows in its order, and **Most
+ * recent**, the Channels in the sidebar's Recent order under All. The menu has
+ * no selected Space, so neither section filters by one or shows a pin.
  *
- * Nothing above them starts anything. Every row here reopens something that
- * already exists, which is the one thing this surface can do that no window can
- * — Rally can be launched hidden at login, and then the menu is the whole
- * application. The trailing group is not part of the contract but is what makes
- * the item usable at all: it is the only way to open a window or quit.
+ * Nothing here starts anything. Every row reopens something that already
+ * exists, which is the one thing this surface can do that no window can —
+ * Rally can be launched hidden at login, and then the menu is the whole
+ * application. The trailing group is what makes the item usable at all: it is
+ * the only way to open a window or quit.
  */
 export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstructorOptions[] {
   const { actions, content } = options;
@@ -163,69 +182,55 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
   };
   const template: MenuItemConstructorOptions[] = [];
 
-  const openWorkstreamRow = (workstream: MenuBarWorkstream): MenuItemConstructorOptions => ({
-    label: menuBarLabel(workstream.title),
-    click: tracked('recent_workstream', () => actions.openWorkstream(workstream.id)),
-  });
-
-  // Only between rows. The first section is always the top of the menu now, and
-  // a menu that opens on a rule looks like it failed to draw its first item.
+  // Only between sections. A menu that opens on a rule looks like it failed to
+  // draw its first item.
   const pushSeparator = (): void => {
     if (template.length > 0) template.push({ type: 'separator' });
   };
 
   /**
-   * Draws one titled section, and owns the rule above it.
-   *
-   * The two failures this exists to make unrepresentable are a header with
-   * nothing under it and a rule with nothing on one side of it, both of which
-   * read as a menu that failed to draw rather than as an answer. So a group
-   * that would be empty is not drawn at all — header and rule together — and a
-   * section that must survive being empty says so by passing `emptyLabel`,
-   * which is the line shown in place of no rows.
-   *
-   * Three outcomes, and no fourth: rows, the caller's empty line, or nothing.
-   * A caller cannot get a bare header by passing an empty array, which is what
-   * the earlier shape of this helper allowed once its empty line stopped being
-   * a required argument.
+   * Draws one titled section, and owns the rule above it. A section with no
+   * rows says why in a disabled line rather than leaving a bare header, which
+   * reads as a menu that failed to draw rather than as an answer.
    */
-  const pushGroup = (
-    title: RecencyGroup | string,
-    rows: MenuItemConstructorOptions[],
-    emptyLabel?: string,
-  ): void => {
-    const body = rows.length > 0
-      ? rows
-      : emptyLabel === undefined ? [] : [{ label: emptyLabel, enabled: false }];
-    if (body.length === 0) return;
+  const pushSection = (title: string, rows: MenuItemConstructorOptions[], trailing: string | null): void => {
     pushSeparator();
-    template.push(sectionHeader(title, options.sectionHeaders), ...body);
+    template.push(sectionHeader(title, options.sectionHeaders), ...rows);
+    if (trailing !== null) template.push({ label: trailing, enabled: false });
   };
 
-  // The same grouping the sidebar draws, from the same function, so a heading
-  // never means one thing in the window and another in the menu. Recency is
-  // taken at build time rather than at open, which is also when the menu is
-  // rebuilt — a heading can therefore be an hour stale on a menu nobody has
-  // touched, and the refresh the pointer triggers is what corrects it.
-  const recents = content.recents.slice(0, MENU_BAR_RECENT_LIMIT);
-  if (recents.length > 0) {
-    // Each group arrives non-empty — `groupActivityItems` drops a heading with
-    // nothing under it — so none of these needs an empty line, and a group that
-    // somehow had none would correctly not be drawn.
-    for (const group of groupActivityItems(recents, options.now ?? new Date())) {
-      pushGroup(
-        group.label,
-        group.streams.map((workstream) => openWorkstreamRow(workstream)),
-      );
-    }
+  // Signed out there is nothing to list in either section; say so once.
+  if (!options.signedIn) {
+    pushSection(ATTENTION_HEADER, [], 'Sign in to Rally');
   } else {
-    pushGroup(
-      RECENT_EMPTY_HEADER,
-      [],
-      // A menu that silently loses its lower half reads as broken. Say which of
-      // the two reasons it is: nothing to show, or nobody to show it to.
-      options.signedIn ? 'No recent channels' : 'Sign in to Rally',
-    );
+    // Requests first: each is somebody waiting on this person, and the menu
+    // cannot approve in place, so a row opens the decision in the main window.
+    const requests = content.accessRequests.slice(0, MENU_BAR_SECTION_LIMIT).map((row): MenuItemConstructorOptions => ({
+      label: menuBarLabel(`${row.requesterName} asked to join ${row.title}`),
+      sublabel: 'Access request',
+      click: tracked('access_request', () => actions.openAccessRequest(row.id)),
+    }));
+    const conversations = content.attention.slice(0, Math.max(0, MENU_BAR_SECTION_LIMIT - requests.length)).map((row): MenuItemConstructorOptions => ({
+      label: menuBarLabel(row.title),
+      // The sidebar menu's detail line: why it is waiting, and where for a Breakout.
+      sublabel: menuBarLabel(row.channelTitle === null
+        ? statusLabel[row.reason]
+        : `${statusLabel[row.reason]} in ${row.channelTitle}`),
+      click: tracked('attention_conversation', () => actions.openConversation(row.workstreamId, row.substreamId)),
+    }));
+    // The sidebar's own wording: "nothing" only once every Channel has been
+    // read, and "still loading" under rows that may not be all of them.
+    const attention = [...requests, ...conversations];
+    const attentionTrailing = !content.attentionComplete
+      ? 'Still loading channels'
+      : attention.length === 0 ? 'Nothing needs your attention' : null;
+    pushSection(ATTENTION_HEADER, attention, attentionTrailing);
+
+    const recents = content.recents.slice(0, MENU_BAR_SECTION_LIMIT).map((workstream): MenuItemConstructorOptions => ({
+      label: menuBarLabel(workstream.title),
+      click: tracked('recent_workstream', () => actions.openConversation(workstream.id, workstream.substreamId)),
+    }));
+    pushSection(RECENT_HEADER, recents, recents.length === 0 ? 'No recent channels' : null);
   }
 
   pushSeparator();

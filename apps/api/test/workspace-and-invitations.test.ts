@@ -1,3 +1,5 @@
+import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
+import { drainWaitUntil } from './helpers/cloudflare-workers';
 import "../../../tests/isolated-region";
 import { asWorkspaceId } from "@rally/contracts";
 import { asUserId } from "@rally/contracts";
@@ -182,7 +184,7 @@ describe("workspace preferences", () => {
       .resolves.toMatchObject({ timezone: "America/Los_Angeles" });
 
     const update = database.runs.find((statement) => statement.sql.startsWith("UPDATE workspaces"));
-    expect(update?.values[0]).toBe("Europe/London");
+    expect(update?.values.slice(0, 2)).toEqual([null, "Europe/London"]);
   });
 
   it("records that the account timezone was chosen rather than inferred", async () => {
@@ -630,36 +632,21 @@ describe("workspace invitation lifecycle", () => {
 });
 
 describe("organization setup intent", () => {
-  it("keeps workspace and invitation setup out of the identity OAuth state", async () => {
-    const database = new StubDatabase(() => undefined);
-    const authorize = await new AuthService(environment(database)).beginIdentity({
-      returnUri: "avalon://auth/complete",
-      desktopAttemptId: "a".repeat(43),
-      desktopCodeChallenge: "c".repeat(43),
-    });
-
-    expect(database.runs).toHaveLength(1);
-    const stateInsert = database.runs[0]!;
-    expect(stateInsert.sql).toContain("workspace_name, invitation_id");
-    // Workspace, name and invitation are written as NULL; only identity values are bound.
-    expect(stateInsert.sql).toContain("NULL, NULL, NULL, ?, ?, ?, ?)");
-    expect(stateInsert.values.slice(1, 3)).toEqual(["global", "identity"]);
-    expect(stateInsert.values.slice(4, 6)).toEqual(["a".repeat(43), "c".repeat(43)]);
-    expect(stateInsert.values).toHaveLength(8);
-    const google = new URL(authorize);
-    expect(google.hostname).toBe("accounts.google.com");
-    expect(google.searchParams.get("scope")).toBe("openid email profile");
-  });
-
-  it("allows identity-only sign-in before organization selection", async () => {
-    const database = new StubDatabase(() => undefined);
-    await expect(new AuthService(environment(database)).beginIdentity({
-      desktopAttemptId: "a".repeat(43),
-      desktopCodeChallenge: "c".repeat(43),
-    })).resolves.toContain("accounts.google.com");
-    expect(database.runs).toHaveLength(1);
-    expect(database.runs[0]!.sql).toContain("NULL, NULL, NULL, ?, ?, ?, ?)");
-    expect(database.runs[0]!.values).toHaveLength(8);
+  it.each(["avalon://auth/complete", undefined])("persists identity-only OAuth state for return URI %s", async returnUri => {
+    const database = migratedSqliteDatabase();
+    try {
+      const env = environment(new StubDatabase(() => undefined), { DB: sqliteD1(database), LOG_LEVEL: 'error', APP_ENV: 'development' });
+      const authorize = await new AuthService(env).beginIdentity({
+        ...(returnUri ? { returnUri } : {}), desktopAttemptId: "a".repeat(43), desktopCodeChallenge: "c".repeat(43),
+      });
+      const google = new URL(authorize);
+      expect(google.hostname).toBe("accounts.google.com");
+      expect(google.searchParams.get("scope")).toBe("openid email profile");
+      const state = database.prepare(`SELECT purpose,workspace_id,workspace_name,invitation_id,desktop_attempt_id,desktop_code_challenge
+        FROM oauth_states WHERE id=?`).get(google.searchParams.get('state'));
+      expect(state).toEqual({ purpose:'identity',workspace_id:null,workspace_name:null,invitation_id:null,
+        desktop_attempt_id:'a'.repeat(43),desktop_code_challenge:'c'.repeat(43) });
+    } finally { await drainWaitUntil(); database.close(); }
   });
 });
 
@@ -876,5 +863,42 @@ describe("desktop login ticket PKCE binding", () => {
     await expect(service.exchangeDesktopTicket({ ...request, codeVerifier: "v".repeat(64) }))
       .rejects.toMatchObject({ status: 401, code: "invalid_login_ticket" });
     expect(claims).toBe(2);
+  });
+});
+
+describe("pending invitees for the people pickers", () => {
+  function seeded() {
+    const database = migratedSqliteDatabase();
+    const at = "2026-08-01T00:00:00.000Z";
+    const workspaceId = invitationRow.workspace_id;
+    const owner = ownerAuth.userId;
+    const guestId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79e1";
+    database.prepare(`INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?,?,?,?,?),(?,?,?,?,?)`)
+      .run(owner, "owner@example.com", "Owner", at, at, guestId, "guest@example.com", "Guest", at, at);
+    database.prepare(`INSERT INTO workspaces (id,name,slug,region,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`)
+      .run(workspaceId, "Avalon Studio", "avalon-studio", "global", owner, at, at);
+    database.prepare(`INSERT INTO workspace_members (workspace_id,user_id,role,access_class,status,joined_at) VALUES (?,?,?,?,?,?),(?,?,?,?,?,?)`)
+      .run(workspaceId, owner, "owner", "member", "active", at, workspaceId, guestId, null, "guest", "active", at);
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    const past = new Date(Date.now() - 86_400_000).toISOString();
+    const invite = database.prepare(`INSERT INTO workspace_invitations
+      (id,workspace_id,email,invited_by_user_id,token_hash,role,expires_at,accepted_at,revoked_at,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`);
+    invite.run("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7a01", workspaceId, "Pending@Example.com", owner, "h1", "member", future, null, null, at);
+    invite.run("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7a02", workspaceId, "accepted@example.com", owner, "h2", "member", future, at, null, at);
+    invite.run("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7a03", workspaceId, "revoked@example.com", owner, "h3", "member", future, null, at, at);
+    invite.run("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7a04", workspaceId, "expired@example.com", owner, "h4", "member", past, null, null, at);
+    // Shared a Channel before accepting: a guest membership already names them.
+    invite.run("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7a05", workspaceId, "guest@example.com", owner, "h5", "member", future, null, null, at);
+    return database;
+  }
+
+  it("lists only addresses still waiting to accept, for an ordinary member", async () => {
+    const database = seeded();
+    try {
+      const env = environment(new StubDatabase(() => undefined), { DB: sqliteD1(database) });
+      await expect(new WorkspaceService(env, { ...ownerAuth, role: "member" }).listInvitees())
+        .resolves.toEqual([{ email: "pending@example.com", invitedAt: "2026-08-01T00:00:00.000Z" }]);
+    } finally { database.close(); }
   });
 });

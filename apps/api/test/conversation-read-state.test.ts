@@ -90,23 +90,10 @@ function environment(recorded: Recorded): Env {
     WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
       idFromName: () => createTestDurableObjectId("workspace"),
       get: () => ({
-        resolveHostedParent: async () => {
-          const exists = recorded.parentKind === "workstream";
-          return {
-            kind: exists ? "workstream" : null,
-            authority: { exists, authorityGeneration: 7, archived: recorded.archived },
-          };
-        },
-        authorizeViewer: recorded.authorizeViewer,
-      }),
-    }),
-    AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
-      idFromName: () => createTestDurableObjectId("automation"),
-      get: () => ({
-        authority: async () => ({
-          exists: recorded.parentKind === "automation",
-          authorityGeneration: 7,
-          archived: recorded.archived,
+        // Every parent, a Sidekick's included, is answered by the Organization.
+        resolveHostedParent: async () => ({
+          kind: recorded.parentKind,
+          authority: { exists: true, authorityGeneration: 7, archived: recorded.archived },
         }),
         authorizeViewer: recorded.authorizeViewer,
       }),

@@ -39,11 +39,20 @@ export function sameWorkspaceSyncIdentity(
   return Boolean(left && right && left.region === right.region && left.workspaceId === right.workspaceId);
 }
 
+/**
+ * A name the relay carries beside the sync topics. `usage` is the meter a plan
+ * change pushes by value on the socket (`workspace_usage`); the relay carries
+ * names, not values, so a window without the socket reads its own meter again.
+ * It is not a sync topic, since that enum is the server's and closed, and it
+ * holds no waterline of its own.
+ */
+export type WorkspaceSyncRelayTopic = WorkspaceSyncTopic | 'usage';
+
 /** Topics that moved, and the waterline they moved at. */
 export type WorkspaceSyncTopicsEvent = WorkspaceSyncIdentity & {
   type: 'topics';
   waterline: number;
-  topics: WorkspaceSyncTopic[];
+  topics: WorkspaceSyncRelayTopic[];
 };
 
 export type WorkspaceSyncPublication =

@@ -75,7 +75,7 @@ export function sqliteD1(database: DatabaseSync): D1Database {
   const legacyWorkstreamProductColumns = (database.prepare(
     "PRAGMA table_info(workstreams)",
   ).all() as Array<{ name: string }>).some((column) => column.name === "title");
-  const minimalAnchorInsert = /^\s*INSERT OR IGNORE INTO workstreams\s*\(id, workspace_id, do_identity_anchor\)\s*VALUES \(\?, \?, 1\)\s*$/iu;
+  const minimalAnchorInsert = /^\s*INSERT (?:OR IGNORE )?INTO workstreams\s*\(id, workspace_id, do_identity_anchor\)\s*VALUES \(\?, \?, 1\)(?:\s*ON CONFLICT\(id\) DO NOTHING)?\s*$/iu;
   const prepare = (sql: string) => {
     // A focused service fixture sometimes keeps the through-0089 product
     // tables in this one SQLite connection while the code under test correctly
@@ -127,7 +127,15 @@ export function sqliteD1(database: DatabaseSync): D1Database {
         });
       },
       async run<T>() {
-        const result = database.prepare(executableSql).run(...values as SQLInputValue[]);
+        // D1's `run` answers a statement's rows as well as its changes, and a
+        // batch is a list of runs: a read inside one is read off its result.
+        const prepared = database.prepare(executableSql);
+        if (prepared.columns().length > 0) {
+          const rows = prepared.all(...values as SQLInputValue[]) as T[];
+          const changes = /^\s*(?:SELECT|WITH)/iu.test(sql) ? 0 : rows.length;
+          return createTestD1Result<T>({ success: true, results: rows, meta: { changes } });
+        }
+        const result = prepared.run(...values as SQLInputValue[]);
         return createTestD1Result<T>({ success: true, results: [], meta: { changes: Number(result.changes) } });
       },
     };

@@ -4,7 +4,11 @@ import { newId, nowIso } from "@rally/db";
 import type { Env } from "../../env";
 import { numericEnv } from "../../env";
 import { sha256Hex } from "../../lib/crypto";
-import { createResourceObjectPort, type ResourcePortFactory } from "../../runtime/resource-port";
+import {
+  conversationResourceLinksFrom,
+  createResourcePortFactory,
+  type ResourcePortFactory,
+} from "../../runtime/resource-port";
 import { verifyAttachmentMimeType } from "../attachment-mime-verification";
 import { putStagedResourceObject, releaseStagedResourceObject } from "../resource-object-cleanup";
 import { allocateResourceSlugBesideCreation } from "../resource-slug";
@@ -101,9 +105,7 @@ const ACCEPTED_EDIT_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp
 export function createMultimodalGenerationResourceStore(
   env: Env,
   inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
-  resourcePortFactory: ResourcePortFactory = (workspaceId, workstreamId) => (
-    createResourceObjectPort(env, workspaceId, workstreamId)
-  ),
+  resourcePortFactory: ResourcePortFactory = createResourcePortFactory(env),
 ): MultimodalGenerationResourceStore {
   const attachResource = inObjectResourceAttacher
     ?? ((input) => attachWorkstreamRuntimeResource(env, input));
@@ -122,7 +124,7 @@ export function createMultimodalGenerationResourceStore(
       const requested = [resourceId, ...(maskResourceId ? [maskResourceId] : [])];
       const rows = await loadVisibleWorkstreamResourcesByIds(
         env.DB,
-        resourcePortFactory(context.workspaceId, context.workstreamId),
+        conversationResourceLinksFrom(resourcePortFactory, context.workspaceId, context.workstreamId),
         {
           workspaceId: context.workspaceId,
           workstreamId: context.workstreamId,

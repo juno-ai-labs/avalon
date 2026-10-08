@@ -1,6 +1,6 @@
 import { promoteWorkspaceGuest } from "./workspace-relationship-service";
 import type { Region } from "@rally/contracts/regions";
-import { PersonalPresentationSchema } from '@rally/contracts';
+import { MemberPreferencesSchema, PersonalPresentationSchema, type MemberPreferences } from '@rally/contracts';
 import {
   AssignableMemberRoleSchema,
   asUserId,
@@ -13,10 +13,13 @@ import {
   type WorkspaceInvitationRole,
 } from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import type { OrganizationUsage, PlanId } from "@rally/contracts/usage";
+import { readOrganizationUsage, setWorkspacePlan } from "./usage-metering";
 import { newId, nowIso } from "@rally/db";
 import { downloadGrantUrl, issueDownloadGrant, revokeDownloadGrant, revokeDownloadGrantsForInvitation } from "@rally/db/private-access";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
+import { workspaceSlug } from "../lib/workspace-slug";
 import { randomToken, sha256 } from "../lib/crypto";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import {
@@ -25,9 +28,12 @@ import {
   type InvitationEmailDelivery,
 } from "./invitation-email-service";
 import { dispatchWorkspaceRelationshipChanges } from "./workspace-relationship-delivery";
-import { publishWorkspaceSync } from "./workspace-realtime-service";
+import { publishWorkspaceSync, seatSpaceInvitee } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { rebuildDigestSchedulesForTimezone } from "./digest-service";
+import { workspaceDOName } from "../durable-objects/names";
+import { PersonalSystemPromptRecordSchema } from "../durable-objects/personal-system-prompt";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   emitProductUsageTelemetry,
   resourceTelemetryEventId,
@@ -117,6 +123,28 @@ const invitationSelect = `SELECT i.id, i.workspace_id, w.name AS workspace_name,
   FROM workspace_invitations i
   JOIN workspaces w ON w.id = i.workspace_id
   JOIN users inviter ON inviter.id = i.invited_by_user_id`;
+
+/**
+ * Addresses with a pending invitation to this Organization and no membership
+ * in it yet, lower case: the people a picker may name before they join.
+ */
+export async function pendingInvitees(db: D1Database, workspaceId: string): Promise<Array<{ email: string; invitedAt: string }>> {
+  const result = await db.prepare(
+    `SELECT i.email, i.created_at
+     FROM workspace_invitations i
+     JOIN workspaces w ON w.id = i.workspace_id
+     WHERE i.workspace_id = ? AND i.accepted_at IS NULL AND i.revoked_at IS NULL
+       AND w.abandoned_at IS NULL AND i.expires_at > ?
+       AND NOT EXISTS (
+         SELECT 1 FROM workspace_members m JOIN users u ON u.id = m.user_id
+         WHERE m.workspace_id = i.workspace_id AND u.email = i.email COLLATE NOCASE
+       )
+     ORDER BY i.email COLLATE NOCASE`,
+  )
+    .bind(workspaceId, nowIso())
+    .all<{ email: string; created_at: string }>();
+  return (result.results ?? []).map((row) => ({ email: row.email.toLowerCase(), invitedAt: String(row.created_at) }));
+}
 
 function invitationStatus(row: InvitationRow): WorkspaceInvitation["status"] {
   if (row.abandoned_at) return "revoked";
@@ -251,6 +279,13 @@ export async function acceptInvitationForUser(
       logWarn(env, "search_authorization_member_push_failed", { workspace_id: invitation.workspace_id, user_id: user.id,
         error_code: error instanceof Error ? error.message : "unknown" });
     }
+    // Spaces that listed this address before they joined now seat them. A
+    // failure leaves them out of those Spaces, and the warning is the notice.
+    try { await seatSpaceInvitee(env, invitation.workspace_id, user.id, invitation.email); }
+    catch (error) {
+      logWarn(env, "space_invitee_seat_failed", { workspace_id: invitation.workspace_id, user_id: user.id,
+        error_code: error instanceof Error ? error.message : "unknown" });
+    }
     await notifyInvitationResolution(env, invitation, user, "accepted");
     await emitInvitationTerminal(env, invitation, {
       userId: asUserId(user.id),
@@ -383,6 +418,49 @@ export class WorkspaceService {
     };
   }
 
+  private workspaceObject() {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
+  }
+
+  async getMyPreferences() {
+    return MemberPreferencesSchema.parse(await (await this.workspaceObject()).memberPreferences({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: this.auth.userId,
+    }));
+  }
+
+  async updateMyPreferences(preferences: MemberPreferences) {
+    return MemberPreferencesSchema.parse(await (await this.workspaceObject()).saveMemberPreferences({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: this.auth.userId,
+      preferences,
+    }));
+  }
+
+  async getMyPersonalSystemPrompt() {
+    const { personalSystemPrompt } = PersonalSystemPromptRecordSchema.parse(
+      await (await this.workspaceObject()).personalSystemPrompt({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: this.auth.userId,
+      }));
+    return { personalSystemPrompt };
+  }
+
+  async updateMyPersonalSystemPrompt(text: string) {
+    const { personalSystemPrompt } = PersonalSystemPromptRecordSchema.parse(
+      await (await this.workspaceObject()).savePersonalSystemPrompt({
+        workspaceId: asWorkspaceId(this.auth.workspaceId),
+        userId: this.auth.userId,
+        personalSystemPrompt: text,
+      }));
+    return { personalSystemPrompt };
+  }
+
   async updateMyTimezone(timezone: string) {
     // `timezone_source` is what stops the next sign-in writing the machine's
     // zone back over this choice.
@@ -422,15 +500,17 @@ export class WorkspaceService {
     };
   }
 
-  async updateWorkspace(input: { timezone: string }) {
+  async updateWorkspace(input: { name?: string | undefined; timezone?: string | undefined }) {
     this.requireAdmin();
+    // One statement for either field: a field left out keeps its stored value.
     await this.env.DB.prepare(
       `UPDATE workspaces
-       SET timezone = ?, updated_at = ?
+       SET name = COALESCE(?, name), timezone = COALESCE(?, timezone), updated_at = ?
        WHERE id = ?`,
     )
       .bind(
-        input.timezone,
+        input.name ?? null,
+        input.timezone ?? null,
         nowIso(),
         this.auth.workspaceId,
       )
@@ -511,6 +591,22 @@ export class WorkspaceService {
       );
     }
     await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId });
+  }
+
+  /**
+   * Move this Organization to a plan. Administrators only, as with every other
+   * Organization-wide setting; there is no billing behind it yet, so the change
+   * is the quota alone (docs/usage-metering.md).
+   */
+  async setPlan(plan: PlanId): Promise<OrganizationUsage> {
+    this.requireAdmin();
+    const now = Date.now();
+    if (!await setWorkspacePlan(this.env, this.auth.workspaceId, plan, now)) {
+      throw new ApiError(404, "workspace_not_found", "Workspace not found");
+    }
+    const usage = await readOrganizationUsage(this.env, this.auth.workspaceId, now);
+    if (!usage) throw new ApiError(404, "workspace_not_found", "Workspace not found");
+    return usage;
   }
 
   /**
@@ -881,6 +977,17 @@ export class WorkspaceService {
     }));
   }
 
+  /**
+   * Addresses with a pending invitation, for every member to pick from. A
+   * guest never reaches this: `requireAuth` refuses a session with no role, as
+   * it does for the roster. An address that already has
+   * a membership here, a guest who was shared a Channel before accepting, is
+   * left out so it appears once, as that membership.
+   */
+  async listInvitees(): Promise<Array<{ email: string; invitedAt: string }>> {
+    return pendingInvitees(this.env.DB, this.auth.workspaceId);
+  }
+
   async listInvitations(): Promise<WorkspaceInvitation[]> {
     this.requireAdmin();
     const result = await this.env.DB.prepare(
@@ -1075,8 +1182,7 @@ export class WorkspaceOnboardingService {
 
     const workspaceId = newId();
     const normalized = name.trim();
-    const slugBase = normalized.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "workspace";
-    const slug = `${slugBase}-${workspaceId.slice(0, 8)}`;
+    const slug = workspaceSlug(normalized, workspaceId);
     const at = nowIso();
     await this.env.DB.batch([
       this.env.DB.prepare(

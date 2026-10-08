@@ -2114,6 +2114,9 @@ export class WorkstreamObjectProductService {
   ): Promise<Workstream> {
     const input = AcknowledgeWorkstreamReadRequestSchema.parse(rawInput);
     const root = await this.authorize(auth);
+    // Rally staff on a support session read without moving the person's read
+    // position (`docs/impersonation.md`).
+    if (auth.impersonatorUserId) return this.summary(root, auth.userId);
     const latest = Math.max(0, root.next_attention_ordinal - 1);
     if (input.readThroughSequenceNumber > latest) {
       throw new ApiError(
@@ -2154,6 +2157,7 @@ export class WorkstreamObjectProductService {
 
   async markUnread(auth: AuthContext): Promise<Workstream> {
     const root = await this.authorize(auth);
+    if (auth.impersonatorUserId) return this.summary(root, auth.userId);
     const latest = Math.max(0, root.next_attention_ordinal - 1);
     if (latest === 0) return this.summary(root, auth.userId);
     const now = Date.now();
@@ -2314,6 +2318,7 @@ export class WorkstreamObjectProductService {
   /** Settle unseen state after a speculative socket is promoted by navigation. */
   async markOpenedAdmitted(auth: AuthContext): Promise<boolean> {
     this.locallyAuthorizedRoot(auth);
+    if (auth.impersonatorUserId) return false;
     return this.markOpened(auth.userId);
   }
 
@@ -2328,7 +2333,8 @@ export class WorkstreamObjectProductService {
     // "they have now seen it" is true. Ordered before the read below so the
     // detail this call returns already says so, rather than telling the
     // client it is unseen and correcting itself over the socket a beat later.
-    if (markOpened) await this.markOpened(auth.userId);
+    // A support session opens it without it becoming opened for the person.
+    if (markOpened && !auth.impersonatorUserId) await this.markOpened(auth.userId);
     const [workstream, participants, resources, connections] = await Promise.all([
       this.summary(root, auth.userId),
       this.participants(),
@@ -5068,8 +5074,14 @@ export class WorkstreamObjectProductService {
     auth: AuthContext,
     elicitationId: string,
     rawInput: WorkstreamObjectAnswerElicitationInput,
+    /**
+     * The Slack message that carried the answer, when one did. Server-owned,
+     * like `createMessage`'s: only the internal product request reaches here
+     * with it, and the run the answer starts delivers back to that message.
+     */
+    slackOrigin?: unknown,
   ): Promise<WorkstreamObjectAnswerElicitationResult> {
-    return this.answerElicitationWithAuthority(auth, elicitationId, rawInput, true);
+    return this.answerElicitationWithAuthority(auth, elicitationId, rawInput, true, slackOrigin);
   }
 
   /** Answer from a room socket whose hibernation attachment already admitted this identity. */
@@ -5086,6 +5098,7 @@ export class WorkstreamObjectProductService {
     elicitationId: string,
     rawInput: WorkstreamObjectAnswerElicitationInput,
     reauthorizeWorkspaceMembership: boolean,
+    slackOrigin?: unknown,
   ): Promise<WorkstreamObjectAnswerElicitationResult> {
     const input = AnswerElicitationRequestSchema.parse(rawInput);
     const requestHash = workstreamImportHash({
@@ -5314,6 +5327,7 @@ export class WorkstreamObjectProductService {
           reason: "elicitation_answer",
           elicitationId,
           parentHarnessRunId: row.run_id,
+          slackOrigin: slackOrigin ?? null,
         }),
         attachmentsJson: "[]",
         mentionsJson: "[]",

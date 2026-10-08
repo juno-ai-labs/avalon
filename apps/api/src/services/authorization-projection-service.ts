@@ -1,10 +1,7 @@
-import { asAutomationId } from '@rally/contracts';
 import { ConversationParentKindSchema } from '@rally/contracts/conversation-parent';
 import type { Env } from '../env';
 import type { AuthorizationProjectionJob } from '../durable-objects/authorization-projection';
 import { authorizationWorkspace } from './authorization-service';
-import { durableObjectStubForWorkspace } from '../lib/durable-object-namespace';
-import { automationDOName } from '../durable-objects/names';
 import { createIdentityObjectPort } from '../runtime/identity-port';
 import { createResourceObjectPort } from '../runtime/resource-port';
 
@@ -22,14 +19,8 @@ export async function projectAuthorization(env: Env, job: AuthorizationProjectio
     const resolved = await workspace.resolveHostedParent({ workspaceId: job.workspaceId, parentId: job.parentId });
     if (resolved.kind === 'space') throw new Error('authorization_projection_space_parent_unsupported');
     const request = { workspaceId: job.workspaceId, parentId: job.parentId };
-    let substreamIds: string[];
-    if (resolved.kind === 'workstream') substreamIds = (await workspace.listAuthorizationChildren(request)).substreamIds;
-    else {
-      const automation = await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, job.workspaceId,
-        automationDOName(env.AVALON_REGION, job.workspaceId, asAutomationId(job.parentId)));
-      const present = await automation.authorizationDiscoveryChildren(request);
-      substreamIds = present.substreamIds;
-    }
+    // The Organization answers a Sidekick's children here too.
+    const { substreamIds } = await workspace.listAuthorizationChildren(request);
     if (job.substreamId === undefined || !substreamIds.includes(job.substreamId)) {
       await workspace.registerAuthorizationChildren({ workspaceId: job.workspaceId, parentId: job.parentId,
         substreamIds, ...(job.mutationAt === undefined ? {} : { mutationAt: job.mutationAt }), refreshExisting: job.substreamId === undefined ? refreshExisting : false });

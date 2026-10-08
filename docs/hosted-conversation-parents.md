@@ -1,6 +1,7 @@
 # Hosted conversation parents
 
-A **Channel** and a **Space** are conversation parents: each owns who may read
+A **Channel**, a **Space** and a **Sidekick** are conversation parents. A
+Channel and a Space each each owns who may read
 its conversations, its breakout registry, its grants, invitations and Space
 access provenance, and the per-viewer state the sidebar and the Channel screen
 draw. That state lives inside the Organization's `WorkspaceDO`, keyed by
@@ -13,10 +14,15 @@ own Durable Object (`WorkstreamDO`, and `SpaceDO`, which was `WorkstreamDO`
 under a role); both classes are deleted, and [How the parents
 moved](#how-the-parents-moved) records how their rows got here.
 
+A Sidekick's parent, its definition, revisions, schedules and runs, moved in
+beside them ([A Sidekick is hosted beside them](#a-sidekick-is-hosted-beside-them)).
+Its legacy `SidekickDO` was deleted once every Sidekick outside a retired
+Organization had been imported.
+
 The conversations themselves do not move. Every Channel main conversation, every
 breakout and every Sidekick run is still a `SubstreamAgent`: a transcript and an agent loop are a real concurrency and size
-boundary, and they stay one object each. `SidekickDO` is also unchanged; it
-keeps its own parent object ([`automation-lifecycle.md`](automation-lifecycle.md)).
+boundary, and they stay one object each. What a Sidekick does, and who may do
+it, is [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 ## Where the code lives
 
@@ -27,9 +33,12 @@ keeps its own parent object ([`automation-lifecycle.md`](automation-lifecycle.md
 | `apps/api/src/durable-objects/sql-write-observer.ts` | `observeSqlWrites`: the state `WorkspaceDO` hands everything, whose SQL handle schedules the rail drain after every write. |
 | `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 72: the `parent_*` tables and the directory renames. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel rows on the workspace socket (with each viewer's breakouts and running background agents), the retired Channel control socket kept for older clients, the in-transaction apply of what a parent publishes, the outbox drain, and the workspace relationship table. |
-| `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts`, `workstream-access-storage.ts` | The grant, invitation and Space-provenance repositories, now scoped by `parent_id`. |
-| `apps/api/src/services/conversation-parent-client.ts` | `conversationParentStub`: `WorkspaceDO` for a Channel or a Space, `SidekickDO` for a Sidekick. |
-| `apps/api/src/queues/activity-consumer.ts` | A `conversation_effect` for a Channel or a Space goes to `WorkspaceDO.receiveChildEffects`. |
+| `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts` | The grant and invitation repositories, now scoped by `parent_id`. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: one Sidekick's parent and lifecycle, scoped to a `sidekick_id` inside `WorkspaceDO`'s SQLite. The port of what `SidekickDO` did for one object. Also `sidekickReaderAllows`, the read rule the library listing shares. |
+| `apps/api/src/durable-objects/hosted-sidekick-schema.ts` | `WorkspaceDO` migration 91: the definition columns on `automation_directory`, the `sidekick_*` tables and the `sidekick_imports` ledger, which migration 92 drops. |
+| `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: the Queue consumer step that opens a run's conversation and starts its loop, off the Organization's alarm. |
+| `apps/api/src/services/conversation-parent-client.ts` | `hostedParentStub` and `conversationParentStub`: `WorkspaceDO` for every parent. |
+| `apps/api/src/queues/activity-consumer.ts` | A `conversation_effect` for any parent goes to `WorkspaceDO.receiveChildEffects`; a `sidekick_run_provision` message to `provisionSidekickRun`. |
 
 ## How it works
 
@@ -74,7 +83,7 @@ The parent state moved in under a `parent_` prefix, one row set per parent:
 | `scope_invitations`, `scope_invitation_operations` | `parent_invitations`, `parent_invitation_operations` |
 | `connector_participant_admissions` | `parent_connector_admissions` |
 | `workstream_sidekick_attachments` | `parent_sidekicks` |
-| `workstream_direct_audience`, `workstream_space_access_sources`, `workstream_space_supplied_readers`, `workstream_access_operations` | `parent_direct_audience`, `parent_space_sources`, `parent_space_readers`, `parent_access_operations` |
+| `workstream_direct_audience`, `workstream_space_access_sources`, `workstream_space_supplied_readers`, `workstream_access_operations` | `parent_direct_audience`, `parent_space_sources`, `parent_space_readers`, `parent_access_operations` (dropped by WorkspaceDO migration 94) |
 | `workstream_socket_ticket_receipts` | `workspace_socket_ticket_receipts` (already existed) |
 | `scope_grant_deliveries` | dropped; nothing had written it since WorkstreamDO migration 17 |
 
@@ -238,7 +247,7 @@ with set reads over `json_each`, and the workspace socket answers
   Channel is opened (`wakeMainConversation` passes `reportAttachments` while
   `mainAttachmentsUnreported` holds). Until a Main reports, its rail omits
   `attached` and the desktop reads that list over REST. Recommended and attached
-  entries are shown under the Sidekick audience predicate `SidekickDO` shares
+  entries are shown under the Sidekick audience predicate `HostedSidekick` shares
   ([`automation-lifecycle.md`](automation-lifecycle.md)).
 - **Resources** are Main's links in `workspace_workstream_resource_links`
   rowid order (the table is replaced whole, so rowid is display order),
@@ -330,8 +339,81 @@ already fell back to past their retention. The hosted parent keeps its own
 receipt ledger, `parent_child_receipts`, with the legacy 180-day retention; see
 [Performance and cost](#performance-and-cost).
 
+### A Sidekick is hosted beside them
+
+`HostedSidekick` is constructed per call, like `HostedParent`, with the
+Organization's storage and the Sidekick's id. It is a sibling class rather than
+a third `HostedParent` role: a Sidekick's lifecycle (drafts, revisions,
+schedules, runs, inbound email) shares nothing with a Channel's, and Channel
+code scans the `parent_*` tables across every parent, where a Sidekick's runs
+would read as Breakouts.
+
+| Legacy `SidekickDO` table | Hosted |
+| --- | --- |
+| `automation` (`id = 1`) | `automation_directory`, which gains the definition columns: the sidebar row and the definition row are one row, so there is no copy to publish |
+| `definition_revisions`, `schedules`, `runs`, `inbound_email_receipts` | `sidekick_revisions`, `sidekick_schedules`, `sidekick_runs`, `sidekick_email_receipts` |
+| `conversation_children`, `substream_directory`, `child_effect_receipts` | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts` |
+| `_internal_durable_alarms` | the Organization's own, keyed `<sidekickId>:<key>`; `sidekick_publication` became `sidekick_memory_tables` |
+| `durable_outbox` | none: the directory row is written in place |
+
+The facade answers each Sidekick method as `sidekick*` (`sidekickPause`,
+`sidekickRunNow`) and the parent contract under the shared names, with the
+Sidekick tried before the Channel fallback. Callers hold the Organization's
+stub and call it directly. Three rules keep it fast:
+
+- **A read does no write's work.** A write (`sidekickCall`) publishes the
+  sidebar if the row moved and re-arms the alarm once, after the Sidekick's
+  own code; a read (`sidekickRead`) does neither. A run reads its state before
+  every provider write.
+- **Several Sidekicks are one call.** Every Sidekick in an Organization is
+  answered by this one object, which runs one request at a time, so a caller
+  that fanned out one call per Sidekick now queues them behind each other.
+  `sidekickReadSkillSummaries`, `sidekickReadSkillSources` and
+  `sidekickReadDetails` take a list of ids, a Channel (whose recommended and
+  owned Sidekicks are read here), or every loadable Sidekick, and answer from
+  local rows. Resolving a run's skills is one call on the common path, and the
+  summaries and sources are one statement inside it: `selectSidekickRows`
+  picks and orders the Sidekicks and joins each one's accepted revision, and
+  the pure `skillSummary` and `skillSource` decide each row.
+- **One read per question, one statement per change.** A question that needs
+  several of a Sidekick's rows joins them (`runView`, `withAccepted`), and a
+  change writes with a returned witness (`UPDATE ... RETURNING`, an upsert's
+  returned row) rather than reading first.
+- **A check rides the write it guards.** A Channel or Space recommendation
+  checks the Sidekick's scope inside `setSidekickRecommendation` and
+  `addSpaceDefault`; an external event is admitted in one call, whose unjudged
+  refusal carries the written conditions for the classifier, so only a gated
+  event costs a second.
+
+A run's conversation is opened off the alarm: the run's entry registers its
+child and sends a `sidekick_run_provision` message, whose consumer bootstraps
+the conversation, starts its loop and reports `sidekickRunProvisioned`. The
+entry is moved later after each send, since the drain deletes an entry at the
+instant that ran whatever its handler returned; the wait grows with the run's
+age, and the report settles it.
+
+A Channel-scoped Sidekick keeps the two access rules it had: who may manage the
+owning Channel (its grants and an archive included) manages it and reads its
+detail, and the Channel's participant rows decide who views it and sees it
+listed, which costs no read beyond this object's. A Breakout-homed one admits
+the Breakout's members for both. The library listing takes the caller's access
+class and role from its authentication rather than reading them again.
+
+**How Sidekicks moved.** Migration 91 put every Sidekick the directory held on
+a `sidekick_imports` ledger, and each one was imported from its legacy
+`SidekickDO` on first use or on the alarm. Once every Organization outside a
+retired one had imported, the class was deleted (Wrangler tag `v13`) and
+migration 92 dropped the ledger. A Sidekick still pending in a retired
+Organization was never imported; the Organization refuses new work, so nothing
+reads it.
+
 ## Invariants
 
+- **A hosted Sidekick reads the Organization's tables with `sql.exec`.** Not
+  through the runtime database adapter (`localWorkspaceEnv(...).DB`), which
+  parses every statement, applies the typed-table guard and does the sidebar
+  bookkeeping a request needs and an in-object read does not. A read after an
+  `await` reads again: another call may have changed the row meanwhile.
 - **A parent's presentation is read from its directory row.** A Channel's
   title, scope, archive state and every other presentation column come from
   `channels`; a Space's title, scope and archive state from `spaces`
@@ -367,18 +449,24 @@ receipt ledger, `parent_child_receipts`, with the legacy 180-day retention; see
   that moves neither a trigger nor an explicit bump is invisible until
   something unrelated moves it. A new rail source adds its trigger or bump in
   the same change; the drain needs nothing from it.
+- **Every `sidekick_*` statement names `sidekick_id`, and a Sidekick's alarm
+  entries are keyed `<sidekickId>:`.** Without it a pause or a cancel reaches
+  every Sidekick in the Organization; `cancelSidekickAlarms` cancels by that
+  prefix, never by kind.
+- **A Sidekick's alarm is re-armed by the facade, once per call.**
+  `HostedSidekick` writes entries; it does not arm the native alarm.
 - **Parent-kind is carried, never probed.** A lookup that tries a namespace to
   see whether something is there creates the object it asked about.
 
 ## Boundary
 
-This module owns Channel and Space parent state inside `WorkspaceDO`, what a
-Channel's workspace-socket row carries for each viewer, and the retired Channel
-control socket. It does not own
+This module owns Channel, Space and Sidekick parent state inside `WorkspaceDO`,
+what a Channel's workspace-socket row carries for each
+viewer, and the retired Channel control socket. It does not own
 the conversations ([`workstream-durable-object.md`](workstream-durable-object.md)),
 Space membership, ordering and defaults ([`spaces.md`](spaces.md)), the grant
 directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
-([`scope-invitations.md`](scope-invitations.md)) or Sidekick parents
+([`scope-invitations.md`](scope-invitations.md)) or what a Sidekick does
 ([`automation-lifecycle.md`](automation-lifecycle.md)).
 
 ## Failure modes and limits
@@ -387,6 +475,7 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | --- | --- |
 | A local apply fails inside a parent write (a viewer row before its Channel row, a constraint, a schema rejection) | The parent transaction rolls back. A child's delivery throws and the Queue redelivers it; a request fails with the error. Nothing is left in the outbox. |
 | A write meets somebody the member table has never heard of | The transaction rolls back with `workspace_member_unknown`; the ids are learned with one D1 read each and the write runs once more. A second miss fails the write with that code. |
+| One Sidekick's pause or resume fails during a Channel archive | That Sidekick's transaction rolls back and `sidekick_owning_room_archival_failed` names it; the archive and every other Sidekick's pause stand. |
 | A `parent_outbox` send fails | The row stays `pending`, with its code in `last_error_code`, and is due again on the alarm's retry schedule. `parent_effect_delivery_deferred` names the rows. |
 | A `parent_outbox` or `workspace_directory_followups` row does not parse (a follow-up row in the shape written before #989 is one), or an outbox row's destination refuses its shape | It is kept as `failed` with a `zodDiagnosticCode` naming the field, logged (`parent_outbox_row_unreadable`, `directory_followup_unreadable`), and never retried. An operator reads it with `run_workspace_sql` and deletes or repairs it. |
 | A directory row is found in `parent_outbox` | It is kept as `failed` with `parent_outbox_directory_row` and not applied. Directory rows apply in the parent's own transaction, so nothing writes one there. |
@@ -396,6 +485,7 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | A stored row fails the rail's schema | That rail is sent as `oversized` and logged `channel_rail_invalid` naming the field; the answer still ends with its `final` frame. A Sidekick whose stored appearance no longer parses is listed without one and logged `automation_directory_appearance_invalid`. |
 | A drained rail change's row push fails | Logged `channel_rows_publish_failed`; nothing retries it, because rows are best effort and a reconnect reads the current waterline. The change is not lost, only the prompt to ask for it. |
 | The drain itself throws | Logged `channel_rail_drain_failed`. The ledger keeps its rows and the next write's drain takes them; nothing arms the alarm for them. |
+| A run's provisioning message is lost | The run's entry sends it again; the wait grows with the run's age until `sidekickRunProvisioned` settles it. |
 | The Organization object is unavailable | Channels and Spaces cannot be opened, listed or changed. That was already true of the sidebar; it is now true of a Channel's viewer check too. |
 
 ## Testing
@@ -435,6 +525,20 @@ pushed with a higher waterline for each trigger family and explicit bump, and
 none for a Channel rename or an owned Sidekick's next run;
 `channel-rail-migration.test.ts` upgrades a populated v79 object across 80, 81
 and 82 in one wake and proves migration 82's defaults and live triggers.
+`hosted-sidekick.test.ts` drives a Sidekick through the Organization object's
+`sidekick*` surface: publish, a refused registration leaving nothing applied, a
+refused memory-table step finishing from its entry, pause and resume, a run
+provisioned off the alarm and asked about again until it reports, a pause that
+leaves another Sidekick's run armed, a run's terminal deadline, a principal
+claim that rebinds a plugin whose connection is gone and unbinds one whose
+connection is another member's, and a child effect redelivered with different
+bytes refused. `automation-directory.test.ts` lists a Channel's Sidekick to its
+participants and reads a batch in the order asked, and `scheduled-alarms.test.ts`
+cancels by key prefix only in the kinds named.
+`workspace-do-schema.test.ts` proves migration 92 drops the import ledger and
+keeps every directory row, and `forced-migration.test.ts` that a queued
+migration command for `SidekickDO` or `AutomationDO` is acknowledged rather
+than retried.
 `workspace-member-status.test.ts` proves which writer may replace a
 relationship row (a removed incarnation never returns, a new one replaces it,
 an older event does not move a newer revision back) and that the consumer
@@ -444,7 +548,8 @@ records a removal even when the revocation walk fails. Run with
 ## Operations
 
 **Deleting the legacy classes cannot be undone.** The wrangler `v12` tag
-destroyed every `WorkstreamDO` and `SpaceDO` object with its storage, and a
+destroyed every `WorkstreamDO` and `SpaceDO` object with its storage, and `v13`
+every `SidekickDO` object, and a
 build from before it still binds those classes, so it cannot be deployed
 again. Rollback past this change is forward-fix only, as it already was past
 migration 72, which renamed the directory tables in the same migration as the
@@ -493,6 +598,102 @@ Space in an Organization now shares one SQLite database and one socket set.
   deleting those objects is its own decision.
 
 ## Changelog
+
+### 2026-10-06 — Hosted Sidekick SQL reads and writes as one object
+
+**What changed:** `HostedSidekick` and the `WorkspaceDO` Sidekick facade answer
+each question with one read that joins what it needs, and make each change
+with one statement that returns its witness. Connector and resource reads use
+`sql.exec` instead of the runtime database adapter, a principal claim reads and
+rebinds in one transaction, batch skill reads select every Sidekick in one
+statement, and `ScheduledAlarmStore.cancelByKeyPrefix` cancels a Sidekick's
+entries in one. The schedule-kind refresh after a Sidekick's registrations
+change is gone.
+
+**Why:** The move kept `SidekickDO`'s method shapes, which read the row again
+in every helper and reached the Organization's tables through the runtime
+database adapter. In one object, each re-read is a statement that buys nothing,
+and each adapter call pays a Zod parse, the typed-table guard and sidebar
+bookkeeping meant for requests. Every Sidekick in an Organization queues behind
+them. The refresh rebuilt the `schedules` table's entries, which no Sidekick
+writes: a Sidekick's schedule entries are written in its own transaction.
+Reading the bindings and the connections in the claim's own transaction also
+closes a gap where a connection could move between the read and the rebind.
+
+**Considered and rejected:** One transaction for every Sidekick a Channel
+archive moves: a failure would roll back the others' pauses, so each keeps its
+own. Folding the child projection's version check into its upsert: the reuse
+warning needs the old version, which an upsert's `RETURNING` does not give.
+
+**Consequences:** A new Sidekick read that needs several rows joins them; a
+helper that re-reads the row inside a method that already has it is the
+pattern this removed. A read that comes after an `await` is the exception: it
+must read again, because another call may have changed the row meanwhile.
+
+Shipped in [#1111](https://github.com/juno-ai-labs/avalon/pull/1111).
+
+### 2026-10-06 — `SidekickDO` and the Sidekick import are deleted
+
+**What changed:** The `SidekickDO` class, its `AUTOMATION_DOS` binding and its
+export are gone; Wrangler tag `v13` deletes the class. `WorkspaceDO` loses the
+import (`ensureSidekickImported`, the alarm's `sidekick_import` phase,
+`retrySidekickImport`, the `sidekick_parent_moved` refusal, and the legacy
+directory receiver `applyAutomationDirectory`), and migration 92 drops
+`sidekick_imports`. The engineering MCP loses `run_sidekick_sql` and
+`retry_sidekick_import`. A late `directory_automation` message is acknowledged
+and logged as ignored.
+
+**Why:** This is step 3 of the PRD. Step 2's checks found every Organization at
+schema 91 and 46 of 48 Sidekicks imported; the two still pending belong to
+retired Organizations, which refuse new work. Keeping the class kept a second
+code path for every Sidekick request alive for objects nothing reads.
+
+**Considered and rejected:** Importing the two pending Sidekicks first. Their
+Organizations are retired, so an import would move rows nobody can reach.
+
+**Consequences:** The deletion cannot be undone: `v13` destroys every
+`SidekickDO` object with its storage, and a build from before this change
+binds the class, so it cannot be deployed again. Migration 91 still creates
+`sidekick_imports` for a new object, and 92 drops it at once; neither is ever
+edited.
+
+### 2026-10-05 — Sidekick parents move into WorkspaceDO
+
+**What changed:** A Sidekick's parent, definition, revisions, schedules, runs,
+inbound-email receipts and child registry live in `WorkspaceDO` (migration 91,
+`HostedSidekick`), beside Channels and Spaces. `automation_directory` became the
+Sidekick's definition row. Each Sidekick moves on first use or on the alarm's
+`sidekick_import` phase, from a legacy `SidekickDO` that freezes on export and
+otherwise answers `sidekick_parent_moved`. Callers call the Organization's
+`sidekick*` methods directly; reads that fanned out per Sidekick are batch
+calls; pure reads skip the alarm re-arm; a run's conversation is provisioned on
+the activity Queue rather than awaited in the alarm. The engineering MCP gains
+`retry_sidekick_import`. `ConversationParentDurableObject` is deleted with its
+last subclass's methods.
+
+**Why:** The PRD (`docs/PRDs/2026-10-03_sidekick-parent-into-workspace-do/`)
+records the case: a Sidekick's parent was the last parent in its own object,
+and every request that touched one paid a cross-object hop and a second copy of
+its directory row. Three choices differ from the PRD's design and are
+recorded in its decision log: the definition row is `automation_directory`
+rather than a new `sidekicks` table, so every reader of the directory keeps
+working and a pending Sidekick is served by the row it already had; a Sidekick's
+child rows have their own tables, because Channel code scans `parent_*` across
+every parent; and `HostedSidekick` is a sibling class, not a `HostedParent`
+role. A compatibility client that kept `SidekickDO`'s method names was
+written and removed in the same change: it hid that every call landed on one
+single-threaded object, which is how per-Sidekick fan-outs survived the move.
+Writing the tests found that returning `waitMs` from an entry whose source is
+not re-derived drops the entry, so a run's entry is moved later instead.
+
+**Consequences:** Every `sidekick_*` statement names `sidekick_id`, and a
+Sidekick's alarm keys start `<id>:`. A caller that needs several Sidekicks uses
+a batch method, or adds one, rather than a loop of calls. A Channel-scoped
+Sidekick's managers are the Channel's managers, and its viewers the Channel's
+participants; collapsing those two rules changes who may act. The legacy class,
+its binding, `run_sidekick_sql` and `retry_sidekick_import` are deleted only in
+the PRD's step 3, after every Organization has imported, and that deletion
+cannot be undone.
 
 ### 2026-10-01 — A breakout row says where it branched and when it last moved
 

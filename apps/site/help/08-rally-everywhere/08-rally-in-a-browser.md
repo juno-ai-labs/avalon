@@ -1,6 +1,6 @@
 ---
 title: Rally in a web browser
-description: Use the lightweight browser version to join conversations someone shared with you.
+description: Use the lightweight browser version to join conversations someone shared with you, or to start an Organization.
 ---
 
 Rally has a lightweight version that runs in an ordinary web browser, at
@@ -9,38 +9,30 @@ someone has shared with you. A client you invited into a single Channel, a
 contractor helping with one Breakout, or a teammate on a computer without the
 Mac app can all open the browser version and join in, with nothing to install.
 
-It is the light option on purpose. You cannot create an Organization, set up
-connections or make Sidekicks there, and there is no guided setup. All of that
-stays on the Mac. The conversations, though, are the same ones everyone else
-sees.
+It is the light option on purpose, and a few things stay on the Mac (see [the
+conversation itself](#the-conversation-itself)). You can start an Organization
+there, though. The conversations are the same ones everyone else sees.
 
 [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md)
 covers the other side of this: how you invite someone, and how you take that
 access back.
 
-## Accepting an invitation
+## Opening something shared with you
 
 When someone shares a conversation with you, you get an email with a link.
 
-1. Click the link. The browser version opens with your email address already
-   filled in, and asks you to sign in with the address that received the
-   invitation.
-2. Sign in (see the next section).
-3. Click **Accept invitation**. It shows **Joining…** for a moment.
-4. You see **You're ready to collaborate**, with a link for each thing shared
-   with you, such as **Open channel**, **Open main conversation** or **Open
-   shared breakout**. If only one thing was shared, it opens straight away.
+1. Click the link. The browser version asks you to sign in.
+2. Sign in with the email address the invitation was sent to (see the next
+   section).
+3. The shared conversation opens. There is nothing to accept: signing in with
+   that address is all it takes.
 
-Nothing happens until you click. Opening the link, or switching tabs, does not
-sign you in or accept anything on your behalf, so you always know who you are
-joining as.
-
-- If the invitation has been withdrawn or has expired, the page says the
-  invitation is unavailable. Ask the person who sent it for a new one.
-- After you open the link, Rally removes the secret part from the address bar.
-  If you reload the page after that, open the link from the email again.
-- If you finish signing in from the email in another tab, go back to the
-  invitation tab. It notices that you are signed in and carries on.
+- Signing in with a different address opens nothing. The share belongs to the
+  address it was sent to, so a forwarded email is no use to anyone else.
+- If the invitation has been withdrawn or has expired, signing in shows no new
+  conversation. Ask the person who sent it for a new one.
+- If you already use Rally with that address, the shared conversation is
+  already in your list. You get the email so you know it is there.
 
 > [!NOTE]
 > An invitation to a shared conversation is different from an invitation to
@@ -48,12 +40,14 @@ joining as.
 > opens the Mac app instead (see [Create or join an
 > Organization](../01-getting-started/02-create-or-join-an-organization.md)).
 
-## Signing in by email
+## Signing in
 
-The browser version signs you in with your email address, no password needed.
-(The Mac and iPhone apps use Google instead.)
+The browser version signs you in with Google or with your email address, no
+password needed. Click **Continue with Google** to use your Google account. To
+use email instead:
 
-1. Type your email address and click **Email me a sign-in link**.
+1. Click **Continue with email**, type your email address and click **Email me a
+   sign-in link**.
 2. The page changes to **Check your email**. Rally sends you an email titled
    **Sign in to Rally**, containing a code and a link.
 3. Either type the code into the **Sign-in code** box and click **Continue**, or
@@ -64,8 +58,17 @@ The code and the link each work for one sign-in only. If the email does not
 arrive, or you typed the wrong address, click **Use another email or request a
 new code** to start again.
 
-Once you are signed in you see **Your shared work**, or a list of your
-Organizations if you belong to any.
+Once you are signed in you see **Your organizations**, a list of the
+Organizations you belong to.
+
+## Starting an Organization
+
+If you do not belong to an Organization yet, ask a teammate to share a Channel
+or Breakout with you, or start your own: **Your organizations** offers **Create
+an organization**. Click it, type a name and click **Create organization**. The new
+Organization opens and walks you through the same setup as the Mac app:
+how you look to your team, then inviting teammates. Click **Back** to
+return without creating one.
 
 ### Staying signed in
 
@@ -94,7 +97,7 @@ has been shared with you.
 - Breakouts open beside their Channel, as on the Mac. See
   [Breakouts](../03-spaces-and-breakouts/03-breakouts.md#a-breakout-beside-its-channel).
 - The account menu has **Switch organization** and **Sign out**.
-- A **Download the Mac app** button sits above the account menu. The Mac app is for Macs with Apple silicon.
+- On a computer, a **Download the Mac app** button sits above the account menu. The Mac app is for Macs with Apple silicon. Phones and tablets do not show it.
 - You can rename a Channel or Breakout, and archive a Breakout, from its title
   pill menu. An archived Breakout shows **Restore breakout**. An archived Channel has to be
   restored before its conversations can reopen.
@@ -128,8 +131,10 @@ title pill and choose **Share**. Type
 one or more email addresses, separated by spaces, commas or semicolons, and
 send. Each person gets an invitation like the one you received.
 
-- The dialog only takes email addresses. There is no choice of access level and
-  no list of who has already been invited.
+- The dialog only takes email addresses. There is no choice of access level.
+- People who have not signed in yet are listed under the form as **Guest**, and
+  you can remove them there. Someone who already uses Rally with that address
+  joins straight away and appears among the participants instead.
 - Sharing **Main** shares only **Main**, not the Breakouts. Sharing one Breakout
   does not reveal **Main** or the other Breakouts.
 - Whether you may share at all depends on your role in the Organization; see

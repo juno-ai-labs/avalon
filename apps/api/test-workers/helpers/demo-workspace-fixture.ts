@@ -17,11 +17,10 @@
 import { env } from "cloudflare:workers";
 import { runDurableObjectAlarm } from "cloudflare:test";
 
-import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
 
 import type { Env } from "../../src/env";
-import { automationDOName, conversationObjectName, workspaceDOName } from "../../src/durable-objects/names";
-import type { SidekickDO } from "../../src/durable-objects/sidekick-do";
+import { conversationObjectName, workspaceDOName } from "../../src/durable-objects/names";
 import type { SubstreamAgent } from "../../src/durable-objects/substream-agent";
 import { DemoPackSchema } from "../../src/services/demo-pack";
 import {
@@ -261,12 +260,6 @@ export function demoRunStub(sidekickId: string, runId: string): DurableObjectStu
   )) as DurableObjectStub<SubstreamAgent>;
 }
 
-export function demoSidekickStub(sidekickId: string): DurableObjectStub<SidekickDO> {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
-    automationDOName("global", DEMO_WORKSPACE_ID, asAutomationId(sidekickId)),
-  )) as DurableObjectStub<SidekickDO>;
-}
-
 export function demoSeedEnv(): Env {
   return new Proxy(env, {
     get: (current, property, receiver) => property === "WORKSTREAM_EMAIL_ADDRESS_KEY"
@@ -369,11 +362,11 @@ export async function playDemoAction(
     await runDurableObjectAlarm(demoRoomStub(progress.workstreamId, progress.substreamId));
   }
   if (progress.state === "sidekick_run_pending") {
-    // Two alarms, in order: the Sidekick's, which provisions the run and hands
-    // it to its own conversation, and then that conversation's, which executes
-    // it. Same reason as the room's above — a contended shard starves the
+    // Two alarms, in order: the Organization's, which provisions the Sidekick's
+    // run and hands it to its own conversation, and then that conversation's,
+    // which executes it. Same reason as the room's above — a contended shard starves the
     // auto-fired alarm under the seeder's polling reads.
-    await runDurableObjectAlarm(demoSidekickStub(progress.sidekickId));
+    await runDurableObjectAlarm(demoWorkspaceStub());
     await runDurableObjectAlarm(demoRunStub(progress.sidekickId, progress.sidekickRunId));
   }
   return settleDemoSeedAction(demoSeedEnv(), session, progress, {

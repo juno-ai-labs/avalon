@@ -19,7 +19,7 @@ import {
 } from "./helpers/cloudflare-test";
 import {
   createTestWorkspaceDO,
-  testWorkspaceObjectBinding,
+  workspaceObjectRpcs,
 } from "./helpers/workspace-object-rpcs";
 import {
   seedWorkstreamObjectRoot,
@@ -981,6 +981,21 @@ function environment(
     admitInboundEmail?: (...args: unknown[]) => unknown;
   } = {},
 ): Env {
+  const workspaceRpcs = {
+    ...workspaceObjectRpcs(database.workspaceObject.instance, [
+      "claimInboundEmailReceipt",
+      "renewInboundEmailLease",
+      "settleInboundEmailProcessed",
+      "recordInboundEmailFailure",
+      "upsertInboundEmailResource",
+    ]),
+    ...(automation.admitInboundEmail ? { sidekickAdmitInboundEmail: automation.admitInboundEmail } : {}),
+  };
+  const workspaceBinding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+    idFromName: (name: string) => createTestDurableObjectId(name),
+    get: () => workspaceRpcs,
+    jurisdiction: (): Env["WORKSPACE_DOS"] => workspaceBinding,
+  });
   const agent = testSubstreamAgentsBinding(database.objectStore, {
     extra: {
       attachRuntimeResource: async (input: { workstreamId: string; resourceId: string }) => {
@@ -1004,20 +1019,11 @@ function environment(
     // The email receipt lease and the email's resource are typed methods on
     // the workspace object; the real WorkspaceDO answers them over its own
     // schema, so replay, takeover and settlement below are the object's.
-    WORKSPACE_DOS: testWorkspaceObjectBinding(database.workspaceObject.instance, [
-      "claimInboundEmailReceipt",
-      "renewInboundEmailLease",
-      "settleInboundEmailProcessed",
-      "recordInboundEmailFailure",
-      "upsertInboundEmailResource",
-    ]),
-    // The automation's own object decides an automation email in one call.
-    // Only that call is doubled here; what it decides is proved in
-    // `test-workers/automation-do.test.ts`.
-    AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
-      idFromName: (name: string) => createTestDurableObjectId(name),
-      get: () => automation,
-    }),
+    //
+    // The Sidekick, hosted in the same object, decides an automation email in
+    // one call. Only that call is doubled here; what it decides is proved in
+    // `test-workers/hosted-sidekick.test.ts`.
+    WORKSPACE_DOS: workspaceBinding,
     AVALON_REGION: region,
     APP_ENV: "test",
     WORKSTREAM_EMAIL_DOMAIN: DOMAIN,

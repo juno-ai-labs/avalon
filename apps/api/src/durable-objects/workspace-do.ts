@@ -29,6 +29,9 @@ import {
   WorkspaceSocketClientEventTypeSchema,
   isUnknownSocketEvent,
   safeParseSocketEvent,
+  type AutomationDetail,
+  type SidekickAttachment,
+  type SidekickSkillSource,
 } from "@rally/contracts";
 import {
   InstallationCreateSchema,
@@ -67,7 +70,6 @@ import {
   ExternalEventRegistrationProjectionV1Schema,
   WorkspaceExternalEventDeliveryQueueMessageSchema,
   WorkspaceExternalEventMatchResultSchema,
-  asAutomationId,
   asSpaceId,
   asSubstreamId,
   asUserId,
@@ -105,6 +107,8 @@ import {
   WorkspacePresenceEventSchema,
   WorkspaceReachChangedEventSchema,
   WorkspaceSocketSyncEventSchema,
+  DEFAULT_MEMBER_PREFERENCES,
+  type MemberPreferences,
   WorkspaceSyncTopicSchema,
   WORKSTREAM_NAMING_GRACE_MS,
   WorkstreamIdSchema,
@@ -114,9 +118,11 @@ import {
   type WorkspaceSidebar,
   type PersonalOrder,
   type SpaceErrorCode,
+  type SpaceId,
   type SpaceSummary,
   type SpaceSnapshot,
   type Workstream,
+  type WorkstreamId,
   type WorkspaceSocketSyncEvent,
   type WorkspaceSyncTopic,
   type WorkstreamBatchFilter,
@@ -128,6 +134,13 @@ import {
   type UpdateOnboardingJourney,
 } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import type { OrganizationUsage, WorkspaceUsageEvent } from "@rally/contracts/usage";
+import { WorkspaceAccessRequestsEventSchema } from "@rally/contracts";
+import {
+  AccessRequestRefSchema, AccessRequestSubjectRequestSchema, AccessRequestSubjectSchema, CONVERSATION_ACCESS_REQUESTS_MIGRATION,
+  ConversationAccessRequestStorage, conversationMark, RecordAccessRequestSchema, ResolveAccessRequestSchema,
+  type StoredAccessRequest,
+} from "./conversation-access-request-storage";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 import {
@@ -184,7 +197,7 @@ import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { judgeUnheardSockets, nextFirstFrameDeadline, type UnheardSocket } from "./socket-first-frame-watch";
 import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
-import { observedAfterBirthSource, resolveSpaceWorkstreamStart, type ObservedBirthChannel } from "../lib/channel-audience";
+import { resolveSpaceWorkstreamStart } from "../lib/channel-audience";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import {
   descendantRevocation,
@@ -219,7 +232,7 @@ import {
 import { boundParameterChunks } from "./bound-parameters";
 import { projectionSupersedes, type StoredProjection } from "./projection-fence";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
-import { automationDOName, conversationObjectName, workspaceDOName } from "./names";
+import { conversationObjectName, workspaceDOName } from "./names";
 import {
   OBJECT_RETIREMENT_SCHEMA_STATEMENTS,
   applyRetirementGate,
@@ -393,10 +406,10 @@ import {
   WorkspaceBatchDispatchBeginRequestSchema,
   WorkspaceBatchDispatchBeginResultSchema,
   WorkspaceDirectoryApplyResultSchema,
-  WorkspaceAutomationDirectoryApplyRequestSchema,
   WorkspaceDirectoryDueRequestSchema,
   WorkspaceDirectoryListRequestSchema,
   WorkspaceDirectoryLookupRequestSchema,
+  WorkspaceLinkTitleRequestSchema,
   WorkspaceDirectoryLookupResultSchema,
   WorkspaceDirectoryRecentRequestSchema,
   WorkspaceDirectoryReadableIdsRequestSchema,
@@ -639,8 +652,9 @@ import {
   WorkspaceChannelSpacesResultSchema,
   WorkspaceCanonicalChannelSpaceRequestSchema,
   WorkspaceCanonicalChannelSpaceResultSchema,
-  WorkspaceSpaceStagedRequestSchema,
   WorkspaceSpaceAudienceNoteRequestSchema,
+  WorkspaceSpaceInviteesRequestSchema,
+  WorkspaceSpaceSeatInviteeRequestSchema,
   WorkspaceSpaceBootstrapStatusSchema,
   WorkspaceSpaceChannelPageRequestSchema,
   WorkspaceSpaceChannelPageResultSchema,
@@ -655,10 +669,10 @@ import {
   type WorkspacePinnedOrderRequest,
   type WorkspacePinnedOrderResult,
   WorkspaceSpaceListRequestSchema,
-  WorkspaceSpaceMembersRequestSchema,
-  WorkspaceSpaceMembersResultSchema,
   WorkspaceSpaceGeneralOpenResultSchema,
   WorkspaceSpaceGeneralRequestSchema,
+  WorkspaceGeneralOpeningSchema,
+  type WorkspaceGeneralOpening,
   WorkspaceSpaceMembershipMoveOutcomeSchema,
   WorkspaceSpaceMembershipMoveRequestSchema,
   WorkspaceSpaceMutationResultSchema,
@@ -673,20 +687,13 @@ import {
   WorkspaceChannelReservationResultSchema,
   WorkspaceSpaceChannelChangeRequestSchema,
   WorkspaceGeneralPlacementRequestSchema,
-  WorkspaceSpaceChannelChangeResultSchema,
   WorkspaceSpaceIntentResumeRequestSchema,
-  WorkspaceSpaceIntentResumeResultSchema,
-  WorkspaceSpaceMemberWalkRequestSchema,
-  WorkspaceSpaceMemberWalkResultSchema,
-  type SpaceActorAuth,
   type SpaceChannelRefusal,
   type WorkspaceSpaceChannelChangeRequest,
   type WorkspaceGeneralPlacementRequest,
   type WorkspaceSpaceChannelChangeResult,
   type WorkspaceSpaceIntentResumeRequest,
   type WorkspaceSpaceIntentResumeResult,
-  type WorkspaceSpaceMemberWalkRequest,
-  type WorkspaceSpaceMemberWalkResult,
   type WorkspaceChannelReservationRequest,
   type WorkspaceChannelReservationResult,
   type SpaceDefaultQueueMessage,
@@ -695,8 +702,9 @@ import {
   type WorkspaceChannelSpacesResult,
   type WorkspaceCanonicalChannelSpaceRequest,
   type WorkspaceCanonicalChannelSpaceResult,
-  type WorkspaceSpaceStagedRequest,
   type WorkspaceSpaceAudienceNoteRequest,
+  type WorkspaceSpaceInviteesRequest,
+  type WorkspaceSpaceSeatInviteeRequest,
   type WorkspaceSpaceBootstrapStatus,
   type WorkspaceSpaceChannelPageRequest,
   type WorkspaceSpaceChannelPageResult,
@@ -707,8 +715,6 @@ import {
   type WorkspaceSpaceBootstrapSettleRequest,
   type WorkspaceContainerOrderResult,
   type WorkspaceSpaceListRequest,
-  type WorkspaceSpaceMembersRequest,
-  type WorkspaceSpaceMembersResult,
   type WorkspaceSpaceGeneralOpenResult,
   type WorkspaceSpaceGeneralRequest,
   type WorkspaceSpaceMembershipMoveOutcome,
@@ -738,11 +744,26 @@ import {
   SPACE_BOOTSTRAP_PAGE_SIZE,
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WORKSPACE_PINNED_ORDER_MIGRATION,
+  SPACE_PUBLIC_ONLY_MIGRATION,
+  SPACE_INVITEES_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
-import { SpaceChannelAccess } from "./workspace-space-channel-access";
-import { ObservedChannelSchema } from "./workstream-access-protocol";
+import {
+  PersonalSystemPromptReadRequestSchema,
+  PersonalSystemPromptWriteRequestSchema,
+  WORKSPACE_PERSONAL_SYSTEM_PROMPT_MIGRATION,
+  type PersonalSystemPromptReadRequest,
+  type PersonalSystemPromptRecord,
+  type PersonalSystemPromptWriteRequest,
+} from "./personal-system-prompt";
+import {
+  MemberPreferencesReadRequestSchema,
+  MemberPreferencesWriteRequestSchema,
+  WORKSPACE_MEMBER_PREFERENCES_MIGRATION,
+  type MemberPreferencesReadRequest,
+  type MemberPreferencesWriteRequest,
+} from "./member-preferences";
 import {
   SELECT_WORKSPACE_BREAKOUT,
   WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS,
@@ -769,7 +790,7 @@ import {
   PARTICIPANT_MIGRATION_ALARM,
   PARTICIPANT_PROJECTION_ALARM,
 } from "./scope-grant-storage";
-import { SCOPE_INVITATION_DELIVERY_ALARM } from "./scope-invitation-storage";
+import { SCOPE_INVITATION_DELIVERY_ALARM, SCOPE_INVITATION_INDEX_ALARM } from "./scope-invitation-storage";
 import {
   applyWorkstreamRegionalEnvelope,
   insertWorkstreamEffectReceipt,
@@ -982,11 +1003,14 @@ import {
   ExternalBindingSuspendRequestSchema,
   ExternalBindingSuspendResultSchema,
   ExternalRoomLinkRequestSchema,
+  ExternalRoomSpaceMatchRequestSchema,
+  type ExternalRoomSpaceMatchResult,
   type ExternalBindingResolution,
   type ExternalRoomLinkResult,
 } from "./workspace-external-binding-protocol";
 import {
   EXTERNAL_CONVERSATION_BINDINGS_MIGRATION,
+  EXTERNAL_BINDING_SPACE_MATCHED_MIGRATION,
   ExternalConversationBindingStorage,
 } from "./workspace-external-binding-storage";
 import {
@@ -1030,6 +1054,7 @@ import {
 } from "./workspace-transcription-storage";
 import {
   SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS,
+  admissionAddress,
   attachSidekickConversation,
   conversationIdOf,
   conversationsTitled,
@@ -1038,6 +1063,23 @@ import {
   parseConversationId,
   scopeConversations,
 } from "./workspace-sidekick-conversation-storage";
+import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
+import {
+  HostedSidekick,
+  hostedSidekickAlarmTarget,
+  skillSource,
+  skillSummary,
+  type HostedSidekickRow,
+  sidekickReaderAllows,
+  type HostedSidekickHost,
+} from "./hosted-sidekick";
+import {
+  SidekickBatchDetailRequestSchema,
+  SidekickBatchSkillReadRequestSchema,
+  type SidekickBatchDetailRequest,
+  type SidekickBatchSkillReadRequest,
+  SidekickRunProvisionQueueMessageSchema,
+} from "./automation-do-protocol";
 import {
   ConversationToolAttachRequestSchema,
   ConversationToolResolveRequestSchema,
@@ -1047,6 +1089,7 @@ import {
   type ConversationToolRefusal,
   type ConversationToolRefusalCode,
   type ConversationToolResolveResult,
+  type ConversationToolScope,
   type ConversationToolScopeResult,
 } from "./workspace-conversation-tool-protocol";
 
@@ -1057,6 +1100,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   'search_authorization_push', 'search_authorization_keys', 'search_authorization_dependencies',
   "resource_search_versions",
   "onboarding_journeys",
+  "conversation_access_requests",
   "workstream_notification_intents",
   "workspace_socket_unheard", // The first-frame watch's ledger.
   // Converted to typed methods, so a generic statement naming one is a
@@ -1066,6 +1110,9 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   // against storage nobody meant to reach generically.
   "automation_directory",
   "sidekick_conversation_attachments",
+  // A hosted Sidekick's own rows: `HostedSidekick` is their only writer.
+  "sidekick_revisions", "sidekick_schedules", "sidekick_runs", "sidekick_email_receipts",
+  "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
@@ -1138,6 +1185,12 @@ const SocketIdentitySchema = z.object({
   sessionId: z.string().min(1).max(200),
   ticketId: z.string().uuid(),
   ticketExpiresAt: z.coerce.number().int().positive(),
+  /**
+   * The Rally staff member behind a support session (`docs/impersonation.md`),
+   * from the signed ticket. Such a socket never shows the person as present
+   * and never records them opening a Channel.
+   */
+  impersonatorUserId: UserIdSchema.optional(),
 });
 
 type SocketIdentity = z.infer<typeof SocketIdentitySchema>;
@@ -1359,30 +1412,6 @@ function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTa
  * directly, and two more cascade from `project_default_resources` beneath it.
  * Ordered parents-first so the list can be replayed as inserts.
  */
-/**
- * How long a staged Space operation waits before the alarm republishes it.
- *
- * Bounds: how long an interrupted membership, audience change or archive can
- *   sit half-applied before the alarm finishes it.
- * Without it: a request that died between staging an intent in WorkspaceDO and
- *   applying it on the Channel leaves the Channel without the Space's audience
- *   and the Space without a settled membership, and nothing ever notices —
- *   the caller is gone and the Channel was never asked.
- * Direction: a lower bound on the wait, so a healthy request that finishes in
- *   the ordinary way settles its intent before this fires and nothing is
- *   published at all.
- * Trips: one in-place resume per unsettled intent (a `space_intent_resume`
- *   message for a stored `move`), re-run against the same fences, which
- *   converges rather than repeating.
- * Derive from: how long the slowest healthy operation takes end to end — a
- *   Space audience change walks every member Channel — against how long a
- *   half-applied audience may persist. Thirty seconds is comfortably past the
- *   first and short enough that a person retrying by hand has not given up,
- *   but it is a guess only in the sense that nobody here has the first number
- *   measured; it is the team's to set.
- */
-const SPACE_INTENT_RESUME_DELAY_MS = 30_000;
-
 /**
  * A hosted-parent transaction met somebody the member table has never heard
  * of. It rolls the transaction back; the caller learns them with one D1 read
@@ -4117,6 +4146,61 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // A table of its own, not a new kind in `workspace_container_order`, so an
   // older Worker never reads a row it cannot parse; see docs/workstream-pinning.md.
   statements: WORKSPACE_PINNED_ORDER_MIGRATION,
+}, {
+  version: 88,
+  description: "a member's personal system prompt",
+  statements: WORKSPACE_PERSONAL_SYSTEM_PROMPT_MIGRATION,
+}, {
+  version: 89,
+  description: "a member's display preferences",
+  statements: WORKSPACE_MEMBER_PREFERENCES_MIGRATION,
+}, {
+  version: 90,
+  description: "record whether a room's Space is one it joined by name",
+  // Provenance the Slack Connect spawn check needs, which neither the room
+  // id nor the Space's scope keeps; see docs/external-conversation-bindings.md.
+  statements: EXTERNAL_BINDING_SPACE_MATCHED_MIGRATION,
+}, {
+  version: 91,
+  description: "Sidekick parents move into the Organization object",
+  // The directory row becomes the definition row, beside the revisions,
+  // schedules, runs and children the Sidekick's own object held, and a ledger
+  // of the Sidekicks still to import. See hosted-sidekick-schema.ts.
+  statements: HOSTED_SIDEKICK_SCHEMA_STATEMENTS,
+}, {
+  version: 92,
+  description: "drop the Sidekick import ledger",
+  // Every Sidekick outside a retired Organization was imported before the
+  // legacy class was deleted, so the ledger has nothing left to record.
+  statements: [`DROP TABLE sidekick_imports`],
+}, {
+  version: 93,
+  description: "index shares that were pending before shares were claimed at sign-in",
+  // Signing in finds a share through D1's scope_share_recipients, which only
+  // shares made after it existed have rows in. One alarm per parent with a
+  // pending share writes its rows, once, with the alarm system's retries.
+  statements: [`INSERT INTO _internal_durable_alarms
+       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
+     SELECT 'parent_invitation_index', parent_id, unixepoch() * 1000, NULL, 0, 0, NULL,
+            unixepoch() * 1000, unixepoch() * 1000
+       FROM parent_invitations
+      WHERE json_extract(summary_json, '$.status') = 'pending'
+      GROUP BY parent_id
+     ON CONFLICT(kind, alarm_key) DO NOTHING`],
+}, {
+  version: 94,
+  description: "make every private Space Organization-wide",
+  // Every Space is Organization-wide. A Space grants no reader to its
+  // Channels, so no Channel changes; see docs/spaces.md#every-space-is-organization-wide.
+  statements: SPACE_PUBLIC_ONLY_MIGRATION,
+}, {
+  version: 95,
+  description: "requests to join a Channel or Breakout, addressed to an approver",
+  statements: CONVERSATION_ACCESS_REQUESTS_MIGRATION,
+}, {
+  version: 96,
+  description: "Organization invitees listed in a Space until they join",
+  statements: SPACE_INVITEES_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4204,7 +4288,9 @@ function contributesPresence(
 } {
   return attachment?.subscribed === true
     && attachment.applicationState === "foreground"
-    && attachment.foregroundWorkstreamId !== null;
+    && attachment.foregroundWorkstreamId !== null
+    // Staff on a support session are not the person being present.
+    && !attachment.impersonatorUserId;
 }
 
 /**
@@ -4876,6 +4962,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * signals that survive one.
    */
   private lastSocketEventAt: number | null = null;
+  /** When the newest meter `publishUsage` sent was read. */
+  private lastUsageReadAtMs: number | null = null;
   /**
    * `WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS`, held per instance so a runtime
    * test can shorten it and drive the real accept and alarm paths.
@@ -5201,7 +5289,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private readonly pendingParentFollowUps: { id: number; json: string }[] = [];
   /** Space intents a request, a Queue delivery or the alarm is running now, by operation id. */
-  private readonly spaceIntentRuns = new Map<string, Promise<void>>();
 
   /**
    * Apply what a hosted parent just published, inside the parent's own
@@ -5563,6 +5650,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       await this.parentWrite(async () => (await this.hostedParent(parentId)).runParticipantMigration(asSubstreamId(substreamId)));
       return true;
     }
+    if (alarm.kind === SCOPE_INVITATION_INDEX_ALARM) {
+      await (await this.hostedParent(alarm.key)).indexPendingInvitations();
+      return true;
+    }
     if (alarm.kind === SCOPE_INVITATION_DELIVERY_ALARM) {
       const [parentId, invitationId] = alarm.key.split(":");
       if (!parentId || !invitationId) throw new Error("parent_invitation_delivery_key_invalid");
@@ -5586,11 +5677,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     parentId: string;
     viewer?: Omit<Parameters<HostedParent["authorizeViewer"]>[0], "workspaceId" | "parentId">;
   }): Promise<{
-    kind: "workstream" | "space" | null;
+    kind: "workstream" | "space" | "automation" | null;
     authority: Awaited<ReturnType<HostedParent["authority"]>>;
     viewer?: Awaited<ReturnType<HostedParent["authorizeViewer"]>>;
   }> {
     const request = z.object({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }).parse(input);
+    const sidekick = await this.sidekickParent(request.parentId, request.workspaceId);
+    if (sidekick) {
+      const authority = sidekick.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
+      if (!input.viewer || !authority.exists) return { kind: authority.exists ? "automation" : null, authority };
+      const viewer = await sidekick.authorizeViewer({ ...input.viewer, workspaceId: request.workspaceId, parentId: request.parentId });
+      return { kind: "automation", authority, viewer };
+    }
     const parent = await this.hostedParent(request.parentId, request.workspaceId);
     const authority = await parent.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
     const kind = authority.exists ? parent.role.kind : null;
@@ -5602,14 +5700,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async authority(input: Parameters<HostedParent["authority"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.authority(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).authority(input);
   }
 
   async authorizeViewer(input: Parameters<HostedParent["authorizeViewer"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.authorizeViewer(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).authorizeViewer(input);
   }
 
   async reserveChild(input: Parameters<HostedParent["reserveChild"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.reserveChild(input);
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveChild(input));
   }
 
@@ -5630,6 +5734,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async reserveAgentChild(input: Parameters<HostedParent["reserveAgentChild"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.reserveAgentChild(input);
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveAgentChild(input));
   }
 
@@ -5643,15 +5749,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async listChildren(input: Parameters<HostedParent["listChildren"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.listChildren(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).listChildren(input);
   }
 
   async childTerminalDeadlines(input: Parameters<HostedParent["childTerminalDeadlines"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.childTerminalDeadlines(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).childTerminalDeadlines(input);
   }
 
   /** The children a hosted parent knows, for the retirement walk. */
   async childrenForRetirement(input: { workspaceId: string; parentId: string }) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) return sidekick.childrenForRetirement();
     const parent = await this.hostedParent(input.parentId, input.workspaceId);
     if (!parent.metadataRow()) return { status: "missing" as const };
     return { status: "ok" as const, children: parent.childrenForRetirement() };
@@ -5668,6 +5780,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // parent is served and, on a new object, the object's own identity.
     const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
     const envelope = request.envelopes[0]!;
+    if (envelope.parentKind === "automation") {
+      const sidekick = await this.sidekickParent(envelope.parentId, envelope.workspaceId);
+      if (!sidekick) throw new Error("sidekick_missing");
+      return { accepted: sidekick.receiveChildEffects(request) };
+    }
     if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") {
       throw new Error("conversation_effect_parent_kind_unhosted");
     }
@@ -5692,11 +5809,360 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async listAuthorizationChildren(input: Parameters<HostedParent["listAuthorizationChildren"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (sidekick) {
+      return sidekick.authorizationDiscoveryChildren({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.parentId });
+    }
     return (await this.hostedParent(input.parentId, input.workspaceId)).listAuthorizationChildren(input);
   }
 
   async readAuthorizationFacts(input: Parameters<HostedParent["readAuthorizationFacts"]>[0]) {
     return (await this.hostedParent(input.parentId, input.workspaceId)).readAuthorizationFacts(input);
+  }
+
+  /** A Sidekick's authorization facts, which are shaped unlike a Channel's. */
+  async sidekickReadAuthorizationFacts(input: Parameters<HostedSidekick["readAuthorizationFacts"]>[0]) {
+    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
+    if (!sidekick) return { exists: false as const, validatedAt: Date.now() };
+    return sidekick.readAuthorizationFacts(input);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hosted Sidekicks. `HostedSidekick` is the Sidekick's parent; these lend it
+  // this object's storage and the Organization facts it reads. See
+  // docs/hosted-conversation-parents.md and docs/automation-lifecycle.md.
+  // ---------------------------------------------------------------------------
+
+  /** Set by a hosted Sidekick write that moved a directory row; the sidebar list is published after it. */
+  private sidekickDirectoryMoved = false;
+
+  /**
+   * Whether an id names a Sidekick: its directory row. Asked before the
+   * Channel fallback, which would otherwise read a Sidekick as a Channel.
+   */
+  private isSidekickParent(parentId: string): boolean {
+    return this.state.storage.sql.exec(
+      `SELECT 1 FROM automation_directory WHERE automation_id = ? LIMIT 1`, parentId,
+    ).toArray().length > 0;
+  }
+
+  private hostedSidekickHost(): HostedSidekickHost {
+    return {
+      env: this.env,
+      storage: this.state.storage,
+      alarms: this.scheduledAlarms,
+      writeRegistrations: (automationId, evaluators) => this.writeSidekickRegistrations(automationId, evaluators),
+      afterRegistrations: (automationId, revision, evaluators) => this.afterSidekickRegistrations(automationId, revision, evaluators),
+      noteDirectoryChanged: (automationId, deleted, now) => {
+        this.state.storage.sql.exec(
+          `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`,
+        );
+        // A deleted Sidekick's runs take no more input, so the threads its
+        // sends opened stop routing to them; the rows stay, suspended.
+        if (deleted) this.externalBindings().suspendDeletedSidekick(automationId, new Date(now).toISOString());
+        this.sidekickDirectoryMoved = true;
+      },
+      isChannelParticipant: (workstreamId, userId) => this.isWorkstreamParticipant(workstreamId, userId),
+      // A Sidekick's home is a Channel or one of its Breakouts, never another
+      // Sidekick, so this asks the hosted Channel parent directly.
+      channelViewer: async (input) => (await this.hostedParent(input.parentId, input.workspaceId)).authorizeViewer({
+        workspaceId: asWorkspaceId(input.workspaceId),
+        parentId: input.parentId,
+        substreamId: asSubstreamId(input.substreamId),
+        userId: asUserId(input.userId),
+        ...(input.requireGrantAuthority ? { requireGrantAuthority: true } : {}),
+      }),
+      readManagementAccess: async (input) => {
+        const access = await this.readManagementAccess(input);
+        return { allowed: access.allowed, writable: access.allowed ? access.writable : false };
+      },
+      readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
+      sendRunProvision: async (message) => {
+        await this.env.ACTIVITY_QUEUE.send(SidekickRunProvisionQueueMessageSchema.parse({
+          kind: "sidekick_run_provision", region: this.env.AVALON_REGION, ...message,
+        }));
+      },
+    };
+  }
+
+  /** The hosted parent for a Sidekick id; `null` for an id that names no Sidekick. */
+  private async sidekickParent(parentId: string, workspaceId?: string): Promise<HostedSidekick | null> {
+    await this.initialized;
+    if (!this.isSidekickParent(parentId)) return null;
+    if (workspaceId !== undefined) await this.ensureParentWorkspace(workspaceId);
+    return new HostedSidekick(this.hostedSidekickHost(), parentId);
+  }
+
+  /** A Sidekick for a method that may also create it. */
+  private async hostedSidekick(automationId: string, workspaceId: string): Promise<HostedSidekick> {
+    await this.initialized;
+    await this.ensureParentWorkspace(workspaceId);
+    return new HostedSidekick(this.hostedSidekickHost(), automationId);
+  }
+
+  /** Run a hosted Sidekick call, then publish the sidebar list and arm what it scheduled. */
+  private async sidekickCall<T>(automationId: string, workspaceId: string, run: (sidekick: HostedSidekick) => Promise<T> | T): Promise<T> {
+    const sidekick = await this.hostedSidekick(automationId, workspaceId);
+    try {
+      return await run(sidekick);
+    } finally {
+      if (this.sidekickDirectoryMoved) {
+        this.sidekickDirectoryMoved = false;
+        this.publishSidebarList("automations");
+      }
+      await this.armNextAlarm();
+    }
+  }
+
+  /**
+   * Run a hosted Sidekick read. A read writes nothing, so it skips what a
+   * write owes afterward: no sidebar publish and no alarm re-arm. A run asks
+   * for its state before every provider write, so this is a hot path.
+   */
+  private async sidekickRead<T>(automationId: string, workspaceId: string, run: (sidekick: HostedSidekick) => T): Promise<T> {
+    return run(await this.hostedSidekick(automationId, workspaceId));
+  }
+
+  /**
+   * The Sidekicks a batch read covers, each with its accepted revision, in one
+   * statement: the ids asked for, plus every one a Channel recommends or owns
+   * when `channelId` is given, plus every active loadable one when
+   * `allLoadable` is set. Order is the caller's, then the Channel's
+   * recommendations, then what it owns, then the Organization's, with no
+   * repeats; an id that names no Sidekick is skipped, and `onlyScope` keeps
+   * one scope.
+   */
+  private selectSidekickRows(selection: {
+    workspaceId: string;
+    automationIds?: readonly string[] | undefined;
+    channelId?: string | undefined;
+    allLoadable?: boolean | undefined;
+    onlyScope?: string | undefined;
+  }): (HostedSidekickRow & { accepted_definition_json: string | null })[] {
+    return this.state.storage.sql.exec<HostedSidekickRow & { accepted_definition_json: string | null }>(
+      `WITH requested(automation_id, tier, position) AS (
+         SELECT value, 0, key FROM json_each(?1)
+         UNION ALL
+         SELECT sidekick_id, 1, ROW_NUMBER() OVER (ORDER BY attached_at, sidekick_id)
+           FROM parent_sidekicks WHERE ?2 IS NOT NULL AND parent_id = ?2
+         UNION ALL
+         SELECT automation_id, 2, ROW_NUMBER() OVER (ORDER BY automation_id)
+           FROM automation_directory WHERE ?2 IS NOT NULL AND owning_workstream_id = ?2 AND lifecycle <> 'deleted'
+         UNION ALL
+         SELECT automation_id, 3, ROW_NUMBER() OVER (ORDER BY automation_id)
+           FROM automation_directory WHERE ?3 = 1 AND workspace_id = ?4 AND lifecycle = 'active' AND loadable = 1
+       ), ranked AS (
+         SELECT automation_id, ROW_NUMBER() OVER (ORDER BY tier, position) AS rank
+           FROM (
+             SELECT automation_id, tier, position,
+                    ROW_NUMBER() OVER (PARTITION BY automation_id ORDER BY tier, position) AS occurrence
+               FROM requested
+           )
+          WHERE occurrence = 1
+       )
+       SELECT directory.*, accepted.definition_json AS accepted_definition_json
+         FROM ranked
+         JOIN automation_directory directory
+           ON directory.automation_id = ranked.automation_id
+          AND directory.workspace_id = ?4 AND directory.region IS NOT NULL
+         LEFT JOIN sidekick_revisions accepted
+           ON accepted.sidekick_id = directory.automation_id
+          AND accepted.definition_revision = directory.accepted_definition_revision
+        WHERE ?5 IS NULL OR directory.scope = ?5
+        ORDER BY ranked.rank`,
+      JSON.stringify(selection.automationIds ?? []),
+      selection.channelId ?? null,
+      selection.allLoadable ? 1 : 0,
+      selection.workspaceId,
+      selection.onlyScope ?? null,
+    ).toArray();
+  }
+
+  /**
+   * Replace a hosted Sidekick's connector registrations inside the caller's
+   * transaction, and return the event sequence they take effect after. No
+   * generation fence: the Sidekick's own transaction orders its writes, and
+   * the legacy fence row is removed so the legacy RPC path cannot reuse it.
+   */
+  private writeSidekickRegistrations(automationId: string, evaluators: readonly unknown[]): number {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) throw new Error("workspace_identity_unknown");
+    // A source generation, though none is fenced on: with one, each row keeps
+    // its evaluator's id, which is what an admitted event names.
+    const request = ExternalEventRegistrationProjectionV1Schema.parse({
+      schemaVersion: 1, workspaceId, destination: { kind: "automation", automationId }, sourceGeneration: 1, evaluators,
+    });
+    const destinationKey = `automation:${automationId}`;
+    this.state.storage.sql.exec(`DELETE FROM external_registration_generations WHERE destination_key = ?`, destinationKey);
+    return this.replaceExternalEventRegistrationRows(request, destinationKey, Date.now()).effectiveAfterEventSequence;
+  }
+
+  /**
+   * After a hosted Sidekick's registrations committed: its Slack sources'
+   * joins, keyed on its revision. Its schedule entries were written in the
+   * change's own transaction, and the caller re-arms the native alarm.
+   */
+  private async afterSidekickRegistrations(automationId: string, revision: number | null, evaluators: readonly unknown[]): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (!workspaceId) return;
+    if (revision !== null && evaluators.length > 0) await this.joinSidekickSlackSources(workspaceId, automationId, revision, evaluators);
+  }
+
+  /** A Sidekick's Slack sources' joins, keyed on the revision whose registrations named them. */
+  private async joinSidekickSlackSources(
+    workspaceId: string, automationId: string, revision: number, evaluators: readonly unknown[],
+  ): Promise<void> {
+    const parsed = ExternalEventRegistrationProjectionV1Schema.parse({
+      schemaVersion: 1, workspaceId, destination: { kind: "automation", automationId }, evaluators,
+    });
+    await this.joinSlackSourceConversations(workspaceId, automationId, revision, parsed.evaluators);
+  }
+
+  // The Sidekick methods. Each calls the `HostedSidekick` method of the same
+  // name, with the same request.
+
+  async sidekickCreate(input: Parameters<HostedSidekick["create"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.create(input));
+  }
+
+  async sidekickSaveDefinition(input: Parameters<HostedSidekick["saveDefinition"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.saveDefinition(input));
+  }
+
+  async sidekickSubmitDefinition(input: Parameters<HostedSidekick["submitDefinition"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.submitDefinition(input));
+  }
+
+  async sidekickApply(input: Parameters<HostedSidekick["apply"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.apply(input));
+  }
+
+  async sidekickReconcileLoadable(input: Parameters<HostedSidekick["reconcileLoadable"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.reconcileLoadable(input));
+  }
+
+  async sidekickReadDetail(input: Parameters<HostedSidekick["readDetail"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readDetail(input));
+  }
+
+  async sidekickSetAppearance(input: Parameters<HostedSidekick["setAppearance"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setAppearance(input));
+  }
+
+  async sidekickPause(input: Parameters<HostedSidekick["pause"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.pause(input));
+  }
+
+  async sidekickResume(input: Parameters<HostedSidekick["resume"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.resume(input));
+  }
+
+  async sidekickRemove(input: Parameters<HostedSidekick["remove"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.remove(input));
+  }
+
+  async sidekickRunNow(input: Parameters<HostedSidekick["runNow"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runNow(input));
+  }
+
+  async sidekickRunSeeded(input: Parameters<HostedSidekick["runSeeded"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runSeeded(input));
+  }
+
+  async sidekickListRuns(input: Parameters<HostedSidekick["listRuns"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.listRuns(input));
+  }
+
+  async sidekickClaimExecutionPrincipal(input: Parameters<HostedSidekick["claimExecutionPrincipal"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.claimExecutionPrincipal(input));
+  }
+
+  async sidekickAdmitExternalEvent(input: Parameters<HostedSidekick["admitExternalEvent"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitExternalEvent(input));
+  }
+
+  async sidekickAdmitInboundEmail(input: Parameters<HostedSidekick["admitInboundEmail"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitInboundEmail(input));
+  }
+
+  async sidekickReadSkillSource(input: Parameters<HostedSidekick["readSkillSource"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readSkillSource(input));
+  }
+
+  async sidekickReadSkillSummary(input: Parameters<HostedSidekick["readSkillSummary"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readSkillSummary(input));
+  }
+
+  async sidekickReadRunDefinition(input: Parameters<HostedSidekick["readRunDefinition"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readRunDefinition(input));
+  }
+
+  async sidekickReadRunState(input: Parameters<HostedSidekick["readRunState"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readRunState(input));
+  }
+
+  async sidekickContinueRun(input: Parameters<HostedSidekick["continueRun"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.continueRun(input));
+  }
+
+  /** For the provisioning consumer: what to start, or `null` once the run is no longer pending. */
+  async sidekickRunProvisioning(input: Parameters<HostedSidekick["runProvisioning"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.runProvisioning(input));
+  }
+
+  /** For the provisioning consumer: the run's loop started. */
+  async sidekickRunProvisioned(input: Parameters<HostedSidekick["runProvisioned"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runProvisioned(input));
+  }
+
+  // Batch reads. Every Sidekick in an Organization is here, so a caller that
+  // needs several asks once: one call, answered from local rows, instead of
+  // one call per Sidekick queued behind each other on this object.
+
+  /** Rail metadata for each selected Sidekick the audience may see, optionally only Organization ones. */
+  async sidekickReadSkillSummaries(input: SidekickBatchSkillReadRequest): Promise<SidekickAttachment[]> {
+    await this.initialized;
+    const { automationIds, channelId, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
+    await this.ensureParentWorkspace(request.workspaceId);
+    return this.selectSidekickRows({ workspaceId: request.workspaceId, automationIds, channelId, allLoadable, onlyScope })
+      .flatMap((row) => skillSummary(row, request) ?? []);
+  }
+
+  /** What each selected Sidekick lends a run as a skill; one entry per Sidekick that lends one. */
+  async sidekickReadSkillSources(input: SidekickBatchSkillReadRequest): Promise<SidekickSkillSource[]> {
+    await this.initialized;
+    const { automationIds, channelId, allLoadable, onlyScope, ...request } = SidekickBatchSkillReadRequestSchema.parse(input);
+    await this.ensureParentWorkspace(request.workspaceId);
+    return this.selectSidekickRows({ workspaceId: request.workspaceId, automationIds, channelId, allLoadable, onlyScope })
+      .flatMap((row) => skillSource(row, request) ?? []);
+  }
+
+  /** The detail of each selected Sidekick, for an actor who may read every one of them. */
+  async sidekickReadDetails(input: SidekickBatchDetailRequest): Promise<AutomationDetail[]> {
+    await this.initialized;
+    const { automationIds, channelOwnedBy, ...request } = SidekickBatchDetailRequestSchema.parse(input);
+    const ids = [...new Set([...(automationIds ?? []), ...(channelOwnedBy === undefined ? [] : this.automationIdsOwnedBy(channelOwnedBy))])];
+    await this.ensureParentWorkspace(request.workspaceId);
+    const host = this.hostedSidekickHost();
+    const details: AutomationDetail[] = [];
+    // Each detail is an access decision for this actor, so each is its own read.
+    for (const automationId of ids) {
+      details.push(await new HostedSidekick(host, automationId).readDetail({ ...request, automationId }));
+    }
+    return details;
+  }
+
+  /**
+   * A Sidekick a Channel or Space may recommend: one that exists and belongs
+   * to the Organization. Read from the directory row, which carries its scope
+   * before an import too, so the check costs no call of its own.
+   */
+  private assertRecommendableSidekick(sidekickId: string): void {
+    const row = this.state.storage.sql.exec<{ scope: string; lifecycle: string }>(
+      `SELECT scope, lifecycle FROM automation_directory WHERE automation_id = ?`, sidekickId,
+    ).toArray()[0];
+    if (!row || row.lifecycle === "deleted") throw new Error("sidekick_not_found");
+    if (row.scope !== "workspace") throw new Error("sidekick_attachment_scope_invalid");
   }
 
   // Sidekick recommendations.
@@ -5710,42 +6176,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async setSidekickRecommendation(input: Parameters<HostedParent["setSidekickRecommendation"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).setSidekickRecommendation(input);
-  }
-
-  // Space access provenance.
-
-  async readAccessSources(input: Parameters<HostedParent["readAccessSources"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).readAccessSources(input);
-  }
-
-  async readPersistedSpaceAccessSources(input: Parameters<HostedParent["readPersistedSpaceAccessSources"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).readPersistedSpaceAccessSources(input);
-  }
-
-  async setDirectScope(input: Parameters<HostedParent["setDirectScope"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).setDirectScope(input);
-  }
-
-  async noteDirectReader(input: Parameters<HostedParent["noteDirectReader"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).noteDirectReader(input);
-  }
-
-  async applySpaceAccessSource(input: Parameters<HostedParent["applySpaceAccessSource"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).applySpaceAccessSource(input);
-  }
-
-  async confirmSpaceAccessSource(input: Parameters<HostedParent["confirmSpaceAccessSource"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).confirmSpaceAccessSource(input);
-  }
-
-  /** The same swap `moveSpaceMembership` makes inside its transaction, over RPC for its suite. */
-  async replaceEquivalentSpaceAccessSource(input: Parameters<HostedParent["replaceEquivalentSpaceAccessSource"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).replaceEquivalentSpaceAccessSource(input);
-  }
-
-  async retractSpaceAccessSource(input: Parameters<HostedParent["retractSpaceAccessSource"]>[0]) {
-    return (await this.hostedParent(input.parentId, input.workspaceId)).retractSpaceAccessSource(input);
+    // The Sidekick is checked after the caller's access, so a refusal does
+    // not say whether an id names a Sidekick.
+    return (await this.hostedParent(input.parentId, input.workspaceId))
+      .setSidekickRecommendation(input, (sidekickId) => this.assertRecommendableSidekick(sidekickId));
   }
 
   // Grants, invitations and the participant handoff.
@@ -5766,12 +6200,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).createScopeInvitations(input));
   }
 
-  async acceptScopeInvitation(input: Parameters<HostedParent["acceptScopeInvitation"]>[0]) {
-    return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).acceptScopeInvitation(input));
-  }
-
-  async describeScopeInvitation(input: Parameters<HostedParent["describeScopeInvitation"]>[0]) {
-    return (await this.channelParent(input.parentId, input.workspaceId)).describeScopeInvitation(input);
+  async claimScopeInvitations(input: Parameters<HostedParent["claimScopeInvitations"]>[0]) {
+    return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).claimScopeInvitations(input));
   }
 
   async revokeScopeInvitation(input: Parameters<HostedParent["revokeScopeInvitation"]>[0]) {
@@ -6428,6 +6858,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // Somebody listed the Channel only through a Breakout opens that
     // Breakout, not Main, so Main is not theirs to wake.
     if (this.mainOpenable(viewerOf(attachment), workstreamId)) this.wakeMainConversation(workstreamId);
+    // A support session reads without becoming the person's recent history
+    // (`docs/impersonation.md`); the wake above is only about speed.
+    if (attachment.impersonatorUserId) return;
     this.state.storage.transactionSync(() => {
       this.state.storage.sql.exec(
         `INSERT INTO workspace_workstream_access(user_id, workstream_id, last_accessed_at)
@@ -6885,6 +7318,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       async () => {
         const workspaceId = this.workspaceId();
         if (!workspaceId) return;
+        const sidekickTarget = hostedSidekickAlarmTarget(alarm);
+        if (sidekickTarget) {
+          const sidekick = await this.sidekickParent(sidekickTarget.sidekickId);
+          // A Sidekick deleted from the directory has nothing left to run.
+          if (!sidekick) return;
+          try {
+            return await sidekick.runAlarm(alarm, sidekickTarget.key);
+          } finally {
+            if (this.sidekickDirectoryMoved) {
+              this.sidekickDirectoryMoved = false;
+              this.publishSidebarList("automations");
+            }
+          }
+        }
         if (await this.runHostedParentAlarm(alarm)) return;
         if (alarm.kind === PRODUCT_ALARM_KIND) {
           await this.runProductAlarm(workspaceId);
@@ -7312,6 +7759,49 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * Send the Organization's meter, as it reads after a plan change, to every
+   * subscribed member socket. The meter is the same for every member, so the
+   * caller reads it once and this object only fans it out. Not on the
+   * waterline: a socket that was away rereads the meter when it subscribes
+   * again.
+   *
+   * `readAt` is when the caller started reading the meter. Two quick changes
+   * each publish, and the first can arrive last; a meter read before the last
+   * one sent is dropped, so a late push cannot put back the earlier plan. The
+   * mark lives in memory: after an eviction the next push is sent whatever
+   * its time, which is right, because nothing older is still in flight for
+   * long.
+   */
+  async publishUsage(
+    usage: OrganizationUsage,
+    readAt: string,
+    workspaceId: string,
+    placementAffinity: WorkspacePlacementAffinity,
+  ): Promise<number> {
+    await this.initialized;
+    this.ensureIdentity(workspaceId, placementAffinity);
+    const readAtMs = Date.parse(readAt);
+    if (this.lastUsageReadAtMs !== null && readAtMs < this.lastUsageReadAtMs) return 0;
+    this.lastUsageReadAtMs = readAtMs;
+    // The meter is our own reader's, one hop away; the desktop parses it.
+    const payload = JSON.stringify({ type: "workspace_usage", occurredAt: readAt, usage } satisfies WorkspaceUsageEvent);
+    let sent = 0;
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      // A guest is not a member: `GET /workspace/usage` refuses them, so the
+      // plan and overage are not theirs to be sent either.
+      if (!attachment?.subscribed || viewerOf(attachment).accessClass === "guest") continue;
+      try {
+        socket.send(payload);
+        sent += 1;
+      } catch {
+        // Hibernation owns cleanup; a reconnect rereads the meter.
+      }
+    }
+    return sent;
+  }
+
+  /**
    * Re-evaluate one product flag for every connected person and send the full
    * client contract privately to each socket. The Queue/RPC wake-up carries no
    * value: Flagship remains authoritative, and two members of this workspace
@@ -7521,100 +8011,57 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray().map((row) => row.workstream_id);
   }
 
-  /** Pin the workspace identity before any child object can be resolved. */
+  /**
+   * Pin the workspace identity before any child object can be resolved, and
+   * answer whether the Organization's Spaces are ready to draw. With
+   * `general` (whose D1 anchor the caller wrote), a new Organization's General
+   * is made and its cutover closed here. See docs/spaces.md#general.
+   */
   async initializeWorkspace(
     workspaceId: string,
     placementAffinity: WorkspacePlacementAffinity,
-  ): Promise<void> {
+    general?: WorkspaceGeneralOpening,
+  ): Promise<{ spacesReady: boolean }> {
     await this.initialized;
     this.ensureIdentity(workspaceId, placementAffinity);
+    // The identity above is the call's contract; the Spaces are best effort, as
+    // `openGeneralSpaceForNewWorkspace` is, so a failure there answers not
+    // ready and the caller's slower path (and the alarm behind it) takes over
+    // rather than failing an Organization whose rows are already committed.
+    try {
+      return { spacesReady: await this.openSpaces(workspaceId, general) };
+    } catch (error) {
+      logWarn(this.env, "space_general_open_failed", {
+        workspace_id: workspaceId,
+        reason: diagnosticErrorCode(error, "space_general_open_failed"),
+      });
+      return { spacesReady: false };
+    }
   }
 
-  /**
-   * One automation's sidebar row, as its object published it.
-   *
-   * Fenced on the automation's own `sourceVersion`: a strictly newer version
-   * replaces the row, an older one is ignored, and the same version carrying
-   * different bytes is the conflict this refuses. The row is content-free by
-   * design; `AutomationDO` is the authority and the detail read goes there.
-   */
-  async applyAutomationDirectory(input: unknown): Promise<{ applied: boolean }> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceAutomationDirectoryApplyRequestSchema, input, "apply_automation_directory");
-    this.assertWorkspace(request.workspaceId);
-    const envelope = request.envelope;
-    const effect = envelope.effect;
-    if (effect.kind !== "directory_automation") throw new Error("sidekick_directory_effect_kind_invalid");
-    const result = this.state.storage.transactionSync(() => {
-      const existing = this.state.storage.sql.exec<{ source_version: number; payload_hash: string }>(
-        `SELECT source_version, payload_hash FROM automation_directory WHERE automation_id = ?`,
-        effect.automationId,
-      ).toArray()[0];
-      if (existing) {
-        if (existing.source_version > envelope.sourceVersion) return { applied: false };
-        if (existing.source_version === envelope.sourceVersion) {
-          if (existing.payload_hash !== envelope.payloadHash) {
-            throw new Error("sidekick_directory_version_conflict");
-          }
-          return { applied: false };
-        }
+  private async openSpaces(workspaceId: string, general: WorkspaceGeneralOpening | undefined): Promise<boolean> {
+    const storage = this.spaceStorage();
+    if (!storage.ready()) return false;
+    if (storage.bootstrapStatus().ready) return true;
+    if (storage.generalSpaceId() === null) {
+      if (general === undefined) return false;
+      const opening = parseRpcInput(WorkspaceGeneralOpeningSchema, general, "initialize_workspace_general");
+      const refusal = await this.spaceRefusalCode(workspaceId, opening.creatorUserId, "write");
+      const opened = refusal === null
+        ? await this.reserveGeneral(
+          { workspaceId, userId: opening.creatorUserId },
+          opening.spaceId,
+          opening.authorityGeneration,
+        )
+        : { ok: false as const, code: refusal };
+      if (!opened.ok) {
+        logWarn(this.env, "space_general_open_refused", { workspace_id: workspaceId, reason: opened.code });
+        return false;
       }
-      this.state.storage.sql.exec(
-        `INSERT INTO automation_directory
-           (automation_id, workspace_id, author_user_id, run_as_user_id, source_version, payload_hash,
-            lifecycle, scope, owning_workstream_id, owning_substream_id, title, description, next_run_at,
-            projected_at, loadable, appearance_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(automation_id) DO UPDATE SET
-           author_user_id = excluded.author_user_id,
-           -- An effect queued before the field existed keeps what is known.
-           run_as_user_id = COALESCE(excluded.run_as_user_id, run_as_user_id),
-           source_version = excluded.source_version,
-           payload_hash = excluded.payload_hash,
-           lifecycle = excluded.lifecycle,
-           scope = excluded.scope,
-           owning_workstream_id = excluded.owning_workstream_id,
-           owning_substream_id = excluded.owning_substream_id,
-           title = excluded.title,
-           description = excluded.description,
-           next_run_at = excluded.next_run_at,
-           projected_at = excluded.projected_at,
-           loadable = excluded.loadable,
-           appearance_json = excluded.appearance_json`,
-        effect.automationId,
-        request.workspaceId,
-        effect.authorUserId,
-        effect.runAsUserId ?? null,
-        envelope.sourceVersion,
-        envelope.payloadHash,
-        effect.lifecycle,
-        effect.scope,
-        effect.owningWorkstreamId,
-        effect.owningSubstreamId ?? "0",
-        effect.title,
-        effect.description,
-        epoch(effect.nextRunAt),
-        Date.now(),
-        effect.loadable === undefined ? null : effect.loadable ? 1 : 0,
-        effect.appearance ? JSON.stringify(effect.appearance) : null,
-      );
-      this.state.storage.sql.exec(
-        `UPDATE workspace_sidebar_list_state
-            SET waterline = waterline + 1
-          WHERE list = 'automations'`,
-      );
-      if (effect.lifecycle === "deleted") {
-        // A deleted Sidekick's runs take no more input, so the threads its
-        // sends opened stop routing to them. The rows stay, suspended, so a
-        // reply is logged as `binding_suspended` rather than read as a new
-        // conversation.
-        this.externalBindings().suspendDeletedSidekick(effect.automationId, new Date().toISOString());
-      }
-      return { applied: true };
-    });
-    if (result.applied) this.publishSidebarList("automations");
-    await this.armNextAlarm();
-    return result;
+    }
+    if (storage.completeBootstrap() !== "complete") return false;
+    this.publishSpaceSnapshot();
+    return true;
   }
 
   /** Which room owns an automation, and which of its conversations is home, for a caller resolving participation. */
@@ -7646,7 +8093,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ConversationToolScopeRequestSchema, input, "conversation_tool_scope");
     this.assertWorkspace(request.workspaceId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
-    const conversations = await this.reachableConversations(request.workspaceId, scoped, request.userId);
+    const conversations = await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId);
     return { conversations: conversations.map(conversationToolEntry) };
   }
 
@@ -7654,10 +8101,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * The unarchived conversations of a scope this person can read, as each
    * Channel's own authority answers it (`readableSubstreams`, the rule its
    * canonical reads and search's audience apply) for this person's
-   * relationship. Asked once per Channel, inside this object.
+   * relationship, each through its `admissionAddress`. Asked once per Channel,
+   * inside this object.
    */
   private async reachableConversations<T extends { parentId: string; substreamId: string; readable: boolean; archived: boolean }>(
     workspaceId: string,
+    scope: ConversationToolScope,
     scoped: readonly T[],
     userId: string,
   ): Promise<T[]> {
@@ -7669,7 +8118,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const parentId of new Set(unarchived.map((conversation) => conversation.parentId))) {
       readable.set(parentId, new Set((await this.hostedParent(parentId)).readableSubstreams(asUserId(userId), relationship)));
     }
-    return unarchived.filter((conversation) => readable.get(conversation.parentId)?.has(conversation.substreamId) === true);
+    return unarchived.filter((conversation) => {
+      const admitted = admissionAddress(scope, conversation);
+      return readable.get(admitted.parentId)?.has(admitted.substreamId) === true;
+    });
   }
 
   /**
@@ -7706,7 +8158,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId);
     // Only a refusal lists what the person can reach, so only a refusal pays for it.
-    const available = async () => (await this.reachableConversations(request.workspaceId, scoped, request.userId))
+    const available = async () => (await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId))
       .map((conversation) => conversation.conversationId);
     let target;
     if (request.reference === null) {
@@ -7722,7 +8174,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const resourceId = target.substreamId === "0" ? target.parentId : target.substreamId;
     if (target.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
-    const admission = await this.conversationToolAdmission(request.workspaceId, target, request.userId);
+    const admission = await this.conversationToolAdmission(
+      request.workspaceId, admissionAddress(request.scope, target), request.userId,
+    );
     if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], resourceId);
     if (admission.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
     const sidekickName = request.scope.kind !== "sidekick" ? null
@@ -7803,9 +8257,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
+    return this.loadableSidekickIds(request.workspaceId);
+  }
+
+  private loadableSidekickIds(workspaceId: string): string[] {
     return this.state.storage.sql.exec<{ automation_id: string }>(
       `SELECT automation_id FROM automation_directory WHERE workspace_id = ? AND lifecycle = 'active' AND loadable = 1 ORDER BY automation_id`,
-      request.workspaceId,
+      workspaceId,
     ).toArray().map((row) => row.automation_id);
   }
 
@@ -7825,22 +8283,49 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * and `AutomationService.listSidekicks` for an authenticated request. Scope
    * filtering remains local.
    */
-  async listSidekickDirectoryForAuthorizedMember(input: { workspaceId: string; userId: string }): Promise<{ items: AutomationSummary[] }> {
+  async listSidekickDirectoryForAuthorizedMember(input: {
+    workspaceId: string;
+    userId: string;
+    /** What the caller's authentication already read; the object reads it only when absent. */
+    accessClass?: "member" | "guest";
+    role?: "owner" | "admin" | "member" | null;
+  }): Promise<{ items: AutomationSummary[] }> {
     await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
+    const request = z.strictObject({
+      workspaceId: WorkspaceIdSchema, userId: UserIdSchema,
+      accessClass: z.enum(["member", "guest"]).optional(),
+      role: z.enum(["owner", "admin", "member"]).nullable().optional(),
+    }).parse(input);
     this.assertWorkspace(request.workspaceId);
-    const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & { author_user_id: string }>(
+    const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & {
+      author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string;
+    }>(
       `SELECT * FROM automation_directory WHERE workspace_id = ? AND lifecycle <> 'deleted'
        ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId,
     ).toArray();
+    // The management read rule (`sidekickReaderAllows`), the same one the
+    // detail screen applies: a guest is not listed Organization-scope
+    // Sidekicks, a Breakout-homed one is listed to that Breakout's members,
+    // and a personal one to the person it runs as.
+    // The role decides Organization-scope rows only, so it is read at most
+    // once and only when such a row is not already the person's own.
+    let actorRole: "owner" | "admin" | "member" | null | undefined = request.accessClass === undefined
+      ? undefined
+      : request.accessClass === "guest" ? null : request.role ?? null;
+    const host = this.hostedSidekickHost();
     const items: AutomationSummary[] = [];
     for (const row of candidates) {
-      const accessible = row.scope === "workspace"
-        || (row.scope === "personal" && row.author_user_id === request.userId)
-        || (row.owning_workstream_id !== null && (await this.workstreamParticipant({
-          workspaceId: request.workspaceId, workstreamId: row.owning_workstream_id, userId: request.userId,
-        })).participant);
-      if (accessible) items.push(automationSummary(row, this.invalidAppearanceReporter(request.workspaceId)));
+      const own = row.author_user_id === request.userId || row.run_as_user_id === request.userId;
+      if (actorRole === undefined && row.scope === "workspace" && !own) {
+        const relationship = await this.readRelationship(request.workspaceId, request.userId);
+        actorRole = relationship?.accessClass === "guest" ? null : relationship?.role ?? null;
+      }
+      const actor = { userId: request.userId, actorRole: actorRole ?? null };
+      // A Main-homed Channel Sidekick asks `isWorkstreamParticipant`, a local
+      // read; only a Breakout-homed one asks the Breakout's viewer rule.
+      if (await sidekickReaderAllows({ ...row, run_as_user_id: row.run_as_user_id ?? null }, actor, host)) {
+        items.push(automationSummary(row, this.invalidAppearanceReporter(request.workspaceId)));
+      }
     }
     return { items };
   }
@@ -7954,84 +8439,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (previous && (request.sourceGeneration === undefined || request.sourceGeneration <= previous.source_generation)) {
         return { effectiveAfterEventSequence: previous.effective_after_event_sequence, applied: false };
       }
-      const now = Date.now();
-      const cutoff = this.latestConnectorEventSequence();
+      const replaced = this.replaceExternalEventRegistrationRows(request, destinationKey, Date.now());
       if (request.sourceGeneration !== undefined) this.state.storage.sql.exec(
         `INSERT INTO external_registration_generations VALUES (?, ?, ?)
          ON CONFLICT(destination_key) DO UPDATE SET source_generation = excluded.source_generation, effective_after_event_sequence = excluded.effective_after_event_sequence`,
-        destinationKey, request.sourceGeneration, cutoff,
+        destinationKey, request.sourceGeneration, replaced.effectiveAfterEventSequence,
       );
-      this.state.storage.sql.exec(
-        `UPDATE workspace_external_event_registrations
-            SET state = 'removed', updated_at = ?
-          WHERE destination_kind = ? AND destination_key = ?
-            AND state = 'active'`,
-        now,
-        destinationKind,
-        destinationKey,
-      );
-      this.state.storage.sql.exec(
-        `UPDATE schedules SET enabled = 0, updated_at = ? WHERE id IN (
-          SELECT registration_id FROM workspace_external_event_registrations
-          WHERE destination_key = ? AND connector_type = 'canva')`,
-        new Date(now).toISOString(), destinationKey,
-      );
-      for (const evaluator of request.evaluators) {
-        this.state.storage.sql.exec(
-          `INSERT INTO workspace_external_event_registrations
-             (registration_id, destination_key, workspace_id, effective_after_event_sequence,
-              connection_id, connector_type, event_type, resource_id, evaluator_json,
-              destination_kind, automation_id, workstream_id, substream_id,
-              destination_resource_id, state, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
-           ON CONFLICT(registration_id) DO UPDATE SET state = 'active', effective_after_event_sequence = excluded.effective_after_event_sequence,
-             connection_id = excluded.connection_id, connector_type = excluded.connector_type,
-             event_type = excluded.event_type, resource_id = excluded.resource_id, evaluator_json = excluded.evaluator_json,
-             updated_at = excluded.updated_at`,
-          request.sourceGeneration === undefined && evaluator.source.connectorType !== "canva" ? uuidV7() : evaluator.evaluatorId,
-          destinationKey,
-          request.workspaceId,
-          cutoff,
-          evaluator.source.connectionId,
-          evaluator.source.connectorType,
-          evaluator.source.eventType,
-          evaluator.source.resourceId ?? null,
-          JSON.stringify(evaluator),
-          destinationKind,
-          destinationKind === "automation" ? request.destination.automationId : null,
-          destinationKind === "workstream_resource_update" ? request.destination.workstreamId : null,
-          destinationKind === "workstream_resource_update" ? request.destination.substreamId : null,
-          destinationKind === "workstream_resource_update" ? request.destination.resourceId : null,
-          now,
-          now,
-        );
-      }
-      for (const evaluator of request.evaluators) {
-        if (evaluator.source.connectorType !== "canva" || destinationKind !== "automation") continue;
-        if (!evaluator.source.resourceId) throw new Error("canva_trigger_requires_design");
-        const resource = this.state.storage.sql.exec<{ id: string }>(
-          "SELECT id FROM resources WHERE id = ? AND connection_id = ? AND provider = 'canva' AND resource_type = 'canva_design'",
-          evaluator.source.resourceId, evaluator.source.connectionId,
-        ).toArray()[0];
-        if (!resource) throw new Error("canva_trigger_design_unavailable");
-        const at = new Date(now).toISOString();
-        this.state.storage.sql.exec(
-          `INSERT INTO schedules (id, workspace_id, connector_connection_id, schedule_type,
-             interval_seconds, timezone, next_run_at, enabled, version, created_at, updated_at)
-           VALUES (?, ?, ?, 'interval', ?, 'UTC', ?, 1, 1, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET enabled = 1, connector_connection_id = excluded.connector_connection_id, next_run_at = excluded.next_run_at, updated_at = excluded.updated_at`,
-          evaluator.evaluatorId, request.workspaceId, evaluator.source.connectionId,
-          CANVA_POLL_SECONDS, new Date(now + CANVA_POLL_SECONDS * 1_000).toISOString(), at, at,
-        );
-      }
-      // Rows removed long ago are noise in every candidate scan; keep the
-      // table to what still matches.
-      this.state.storage.sql.exec(
-        `DELETE FROM workspace_external_event_registrations
-          WHERE state = 'removed' AND updated_at < ?`,
-        now - 24 * 60 * 60_000,
-      );
-      return { effectiveAfterEventSequence: cutoff, applied: true };
+      return replaced;
     });
     await this.refreshScheduleKinds(request.workspaceId, ["schedule"]);
     // A stale projection changed nothing, so it has nothing to join.
@@ -8044,6 +8458,93 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       );
     }
     return { effectiveAfterEventSequence: result.effectiveAfterEventSequence };
+  }
+
+  /**
+   * Replace one destination's registration rows, inside the caller's
+   * transaction, and return the event sequence they take effect after: an
+   * event admitted before the call is never matched by a rule that did not
+   * exist when it arrived. The legacy RPC and a hosted Sidekick's own
+   * transaction both write through here.
+   */
+  private replaceExternalEventRegistrationRows(
+    request: z.infer<typeof ExternalEventRegistrationProjectionV1Schema>,
+    destinationKey: string,
+    now: number,
+  ): { effectiveAfterEventSequence: number; applied: true } {
+    const destinationKind = request.destination.kind;
+    const cutoff = this.latestConnectorEventSequence();
+    this.state.storage.sql.exec(
+      `UPDATE workspace_external_event_registrations
+          SET state = 'removed', updated_at = ?
+        WHERE destination_kind = ? AND destination_key = ?
+          AND state = 'active'`,
+      now,
+      destinationKind,
+      destinationKey,
+    );
+    this.state.storage.sql.exec(
+      `UPDATE schedules SET enabled = 0, updated_at = ? WHERE id IN (
+        SELECT registration_id FROM workspace_external_event_registrations
+        WHERE destination_key = ? AND connector_type = 'canva')`,
+      new Date(now).toISOString(), destinationKey,
+    );
+    for (const evaluator of request.evaluators) {
+      this.state.storage.sql.exec(
+        `INSERT INTO workspace_external_event_registrations
+           (registration_id, destination_key, workspace_id, effective_after_event_sequence,
+            connection_id, connector_type, event_type, resource_id, evaluator_json,
+            destination_kind, automation_id, workstream_id, substream_id,
+            destination_resource_id, state, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+         ON CONFLICT(registration_id) DO UPDATE SET state = 'active', effective_after_event_sequence = excluded.effective_after_event_sequence,
+           connection_id = excluded.connection_id, connector_type = excluded.connector_type,
+           event_type = excluded.event_type, resource_id = excluded.resource_id, evaluator_json = excluded.evaluator_json,
+           updated_at = excluded.updated_at`,
+        request.sourceGeneration === undefined && evaluator.source.connectorType !== "canva" ? uuidV7() : evaluator.evaluatorId,
+        destinationKey,
+        request.workspaceId,
+        cutoff,
+        evaluator.source.connectionId,
+        evaluator.source.connectorType,
+        evaluator.source.eventType,
+        evaluator.source.resourceId ?? null,
+        JSON.stringify(evaluator),
+        destinationKind,
+        destinationKind === "automation" ? request.destination.automationId : null,
+        destinationKind === "workstream_resource_update" ? request.destination.workstreamId : null,
+        destinationKind === "workstream_resource_update" ? request.destination.substreamId : null,
+        destinationKind === "workstream_resource_update" ? request.destination.resourceId : null,
+        now,
+        now,
+      );
+    }
+    for (const evaluator of request.evaluators) {
+      if (evaluator.source.connectorType !== "canva" || destinationKind !== "automation") continue;
+      if (!evaluator.source.resourceId) throw new Error("canva_trigger_requires_design");
+      const resource = this.state.storage.sql.exec<{ id: string }>(
+        "SELECT id FROM resources WHERE id = ? AND connection_id = ? AND provider = 'canva' AND resource_type = 'canva_design'",
+        evaluator.source.resourceId, evaluator.source.connectionId,
+      ).toArray()[0];
+      if (!resource) throw new Error("canva_trigger_design_unavailable");
+      const at = new Date(now).toISOString();
+      this.state.storage.sql.exec(
+        `INSERT INTO schedules (id, workspace_id, connector_connection_id, schedule_type,
+           interval_seconds, timezone, next_run_at, enabled, version, created_at, updated_at)
+         VALUES (?, ?, ?, 'interval', ?, 'UTC', ?, 1, 1, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET enabled = 1, connector_connection_id = excluded.connector_connection_id, next_run_at = excluded.next_run_at, updated_at = excluded.updated_at`,
+        evaluator.evaluatorId, request.workspaceId, evaluator.source.connectionId,
+        CANVA_POLL_SECONDS, new Date(now + CANVA_POLL_SECONDS * 1_000).toISOString(), at, at,
+      );
+    }
+    // Rows removed long ago are noise in every candidate scan; keep the
+    // table to what still matches.
+    this.state.storage.sql.exec(
+      `DELETE FROM workspace_external_event_registrations
+        WHERE state = 'removed' AND updated_at < ?`,
+      now - 24 * 60 * 60_000,
+    );
+    return { effectiveAfterEventSequence: cutoff, applied: true };
   }
 
   /**
@@ -8391,7 +8892,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * `space_not_found`, the answer an identity the caller cannot use as a Space
    * always gets; a generation D1 cannot supply is `space_authority_unreachable`.
    */
-  private async spaceParentReservation(spaceId: string): Promise<
+  private async spaceParentReservation(spaceId: string, authorityGeneration?: number): Promise<
     | { ok: false; code: "space_not_found" | "space_authority_unreachable" }
     | { ok: true; reserve: (userId: string, space: SpaceSummary) => void }
   > {
@@ -8399,7 +8900,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       "SELECT parent_kind FROM parent_metadata WHERE parent_id = ?", spaceId,
     ).toArray()[0]?.parent_kind;
     if (known !== undefined && known !== "space") return { ok: false, code: "space_not_found" };
-    const authority = await readWorkstreamAuthorityControl(this.env);
+    const authority = authorityGeneration === undefined
+      ? await readWorkstreamAuthorityControl(this.env)
+      : { generation: authorityGeneration };
     if (authority.generation < 1) return { ok: false, code: "space_authority_unreachable" };
     const workspaceId = this.workspaceId();
     if (!workspaceId) throw new Error("workspace_identity_unknown");
@@ -8446,32 +8949,46 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (refusal) return { ok: false, code: refusal };
     const storage = this.spaceStorage();
     const existing = storage.generalSpaceId();
-    let general: { space: SpaceSummary; created: boolean };
     if (existing !== null) {
       const space = storage.readable(member(request.userId), existing);
       if (space === false) return { ok: false, code: "space_not_found" };
-      general = { space, created: false };
-    } else if (request.spaceId === undefined) {
-      return { ok: true, absent: true };
-    } else {
-      const spaceId = request.spaceId;
-      const parent = await this.spaceParentReservation(spaceId);
-      if (!parent.ok) return { ok: false, code: parent.code };
-      general = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
-        const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId);
-        if (ensured.created) parent.reserve(request.userId, ensured.space);
-        return ensured;
-      }));
-      if (!general.created && storage.readable(member(request.userId), general.space.id) === false) {
-        return { ok: false, code: "space_not_found" };
-      }
+      storage.noteGeneralSpace(space.id);
+      return WorkspaceSpaceGeneralOpenResultSchema.parse({ ok: true, space, created: false });
+    }
+    if (request.spaceId === undefined) return { ok: true, absent: true };
+    const general = await this.reserveGeneral(request, request.spaceId);
+    if (!general.ok) return general;
+    return WorkspaceSpaceGeneralOpenResultSchema.parse({ ok: true, space: general.space, created: general.created });
+  }
+
+  /**
+   * Write General and its hosted parent under `spaceId`, whose D1 anchor the
+   * caller has written, or answer with the General a concurrent caller made.
+   * The caller has passed `spaceRefusalCode`. `authorityGeneration` is the
+   * generation that anchor was written at, when the caller already read it.
+   */
+  private async reserveGeneral(
+    request: { workspaceId: string; userId: string },
+    spaceId: string,
+    authorityGeneration?: number,
+  ): Promise<{ ok: true; space: SpaceSummary; created: boolean } | { ok: false; code: SpaceErrorCode }> {
+    const storage = this.spaceStorage();
+    const parent = await this.spaceParentReservation(spaceId, authorityGeneration);
+    if (!parent.ok) return { ok: false, code: parent.code };
+    const general = await this.withMembersLearned(() => this.state.storage.transactionSync(() => {
+      const ensured = storage.ensureGeneral(WorkspaceDO.generalReservation(request), spaceId);
+      if (ensured.created) parent.reserve(request.userId, ensured.space);
+      return ensured;
+    }));
+    if (!general.created && storage.readable(member(request.userId), general.space.id) === false) {
+      return { ok: false, code: "space_not_found" };
     }
     storage.noteGeneralSpace(general.space.id);
     if (general.created) {
       this.publishSpaceSnapshot();
       await this.afterParentWrite();
     }
-    return WorkspaceSpaceGeneralOpenResultSchema.parse({ ok: true, space: general.space, created: general.created });
+    return { ok: true, ...general };
   }
 
   private static generalReservation(request: { workspaceId: string; userId: string }): WorkspaceSpaceReserveRequest {
@@ -8555,6 +9072,66 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
     this.publishSpaceSnapshot(request.userId);
     return result;
+  }
+
+  /** This person's personal system prompt here; empty text and revision 0 for none. */
+  async personalSystemPrompt(input: PersonalSystemPromptReadRequest): Promise<PersonalSystemPromptRecord> {
+    await this.initialized;
+    const request = parseRpcInput(PersonalSystemPromptReadRequestSchema, input, "personal_system_prompt");
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{ text: string; revision: number }>(
+      `SELECT text, revision FROM member_personal_system_prompts WHERE user_id = ?`,
+      request.userId,
+    ).toArray()[0];
+    return { personalSystemPrompt: row?.text ?? "", revision: row?.revision ?? 0 };
+  }
+
+  /** Replace this person's personal system prompt and answer with what was stored. */
+  async savePersonalSystemPrompt(input: PersonalSystemPromptWriteRequest): Promise<PersonalSystemPromptRecord> {
+    await this.initialized;
+    const request = parseRpcInput(PersonalSystemPromptWriteRequestSchema, input, "save_personal_system_prompt");
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{ text: string; revision: number }>(
+      `INSERT INTO member_personal_system_prompts (user_id, text, revision, updated_at) VALUES (?, ?, 1, ?)
+       ON CONFLICT (user_id) DO UPDATE SET text = excluded.text, revision = revision + 1,
+         updated_at = excluded.updated_at
+       RETURNING text, revision`,
+      request.userId,
+      request.personalSystemPrompt,
+      Date.now(),
+    ).one();
+    return { personalSystemPrompt: row.text, revision: row.revision };
+  }
+
+  async memberPreferences(input: MemberPreferencesReadRequest): Promise<MemberPreferences> {
+    await this.initialized;
+    const request = parseRpcInput(MemberPreferencesReadRequestSchema, input, "member_preferences");
+    this.assertWorkspace(request.workspaceId);
+    return this.readMemberPreferences(request.userId);
+  }
+
+  /** Replace this person's display preferences and answer with what was stored. */
+  async saveMemberPreferences(input: MemberPreferencesWriteRequest): Promise<MemberPreferences> {
+    await this.initialized;
+    const request = parseRpcInput(MemberPreferencesWriteRequestSchema, input, "save_member_preferences");
+    this.assertWorkspace(request.workspaceId);
+    this.state.storage.sql.exec(
+      `INSERT INTO member_preferences (user_id, show_agent_work, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET show_agent_work = excluded.show_agent_work,
+         updated_at = excluded.updated_at`,
+      request.userId,
+      request.preferences.showAgentWork ? 1 : 0,
+      Date.now(),
+    );
+    return request.preferences;
+  }
+
+  private readMemberPreferences(userId: string): MemberPreferences {
+    const row = this.state.storage.sql.exec<{ show_agent_work: number }>(
+      `SELECT show_agent_work FROM member_preferences WHERE user_id = ?`,
+      userId,
+    ).toArray()[0];
+    return row ? { showAgentWork: row.show_agent_work === 1 } : { ...DEFAULT_MEMBER_PREFERENCES };
   }
 
   async spaceSummary(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
@@ -8651,33 +9228,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ok: true,
       page: { items, nextCursor: page.nextCursor },
     });
-  }
-
-  /**
-   * One page of the Channels a Space holds, archived ones included;
-   * server-to-server.
-   *
-   * The page is the Space's whole membership with no viewer predicate on it,
-   * so `WorkspaceSpaceStorage.members` gates it on the edit rule rather than
-   * on "may I see this Space" — see that method for why there is no
-   * viewer-scoped page to narrow to instead. `"not_editable"` is that refusal
-   * and gets the same word every other one does; `space_not_found` is left to
-   * a Space this caller cannot see at all, because it is a lie about a Space
-   * whose name is on their sidebar.
-   */
-  async listSpaceMembers(input: WorkspaceSpaceMembersRequest): Promise<WorkspaceSpaceMembersResult> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceMembersRequestSchema, input, "list_space_members");
-    this.assertWorkspace(request.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "read");
-    if (refusal) return { ok: false, code: refusal };
-    const page = this.spaceStorage().members(
-      request.userId, request.spaceId, request.reach, request.cursor,
-    );
-    if (page === "not_editable") return { ok: false, code: "space_access_denied" };
-    return WorkspaceSpaceMembersResultSchema.parse(page === false
-      ? { ok: false, code: "space_not_found" }
-      : { ok: true, members: page.members, nextCursor: page.nextCursor });
   }
 
   /** The active Spaces one Channel currently sits in. */
@@ -8779,6 +9329,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const space = this.spaceStorage().applyPresentation(request);
+    if (space === "stale") return { ok: false, code: "space_revision_conflict", unreachableUserIds: [], blockedWorkstreamIds: [] };
     if (space !== false) this.publishSpaceSnapshot();
     return WorkspaceSpaceMutationResultSchema.parse(space === false
       ? { ok: false, code: "space_not_found" }
@@ -8786,12 +9337,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Record the scope and participants the Space's own authority accepted, and
-   * advance the revision every staged membership is fenced on.
-   *
-   * General is refused a personal audience here rather than at the Space's own
-   * object: the Organization is what depends on General being reachable by
-   * everybody, and this is the object that knows it is General.
+   * Record a Space's participants. Every Space is Organization-wide and grants no
+   * reader to its Channels, so this is the whole change: no intent, no walk.
    */
   async noteSpaceAudience(input: WorkspaceSpaceAudienceNoteRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
@@ -8799,44 +9346,50 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const storage = this.spaceStorage();
-    if (request.audience.scope === "personal" && storage.generalSpaceId() === request.spaceId) {
-      return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
     const activeMembers = await Promise.all(request.audience.participantUserIds.map((userId) => (
       this.activeSpaceMember(request.workspaceId, userId)
     )));
     if (activeMembers.some((active) => !active)) {
       return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
-    const space = storage.applyAudience(request);
-    if (space === "self_excluded") {
-      return {
-        ok: false,
-        code: "space_audience_self_excluded",
-        unreachableUserIds: [],
-        blockedWorkstreamIds: [],
-      };
-    }
+    const space = this.spaceStorage().applyAudience(request);
     if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    // Staged before the member Channels are touched. The service walks them
-    // next, and a request that dies half way through leaves this pending for
-    // the alarm to republish rather than leaving some Channels on the old
-    // audience with nothing left to notice.
-    storage.recordIntent({
-      operationId: request.operationId,
-      kind: "audience",
-      spaceId: request.spaceId,
-      workstreamId: null,
-      spaceRevision: space.revision,
-      membershipGeneration: null,
-      deliveryGeneration: null,
-      requestedByUserId: request.userId,
-      notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
-    });
     this.publishSpaceSnapshot();
-    await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
+  }
+
+  /**
+   * The addresses a Space lists for people invited to the Organization, to
+   * whoever may edit it. Not on the Space summary, which shipped clients parse
+   * strictly.
+   */
+  async listSpaceInvitees(input: WorkspaceSpaceInviteesRequest): Promise<{ ok: true; emails: string[] } | { ok: false; code: SpaceErrorCode }> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceInviteesRequestSchema, input, "list_space_invitees");
+    this.assertWorkspace(request.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
+    if (refusal) return { ok: false, code: refusal };
+    return { ok: true, emails: this.spaceStorage().invitees(request.spaceId) };
+  }
+
+  /**
+   * Seat someone who just accepted an Organization invitation in every Space
+   * that listed the address it was sent to. Server-to-server, from the
+   * acceptance, so the membership is read from D1 rather than this object's
+   * copy: the copy may still say guest, or nothing, until the relationship
+   * delivery lands.
+   */
+  async seatSpaceInvitee(input: WorkspaceSpaceSeatInviteeRequest): Promise<{ seatedSpaceIds: string[] }> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceSeatInviteeRequestSchema, input, "seat_space_invitee");
+    this.assertWorkspace(request.workspaceId);
+    const relationship = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId);
+    if (relationship?.status !== "active" || relationship.accessClass !== "member") return { seatedSpaceIds: [] };
+    const storage = this.spaceStorage();
+    if (!storage.ready()) return { seatedSpaceIds: [] };
+    const seatedSpaceIds = storage.seatInvitees(request.userId, request.email);
+    if (seatedSpaceIds.length > 0) this.publishSpaceSnapshot();
+    return { seatedSpaceIds };
   }
 
   /**
@@ -8904,22 +9457,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * A new Channel's Organization-side birth: its Space memberships, the
-   * defaults those Spaces hand a new member, its parent row with the
-   * provisional directory row, and the record of which Space supplied which
-   * reader, in one transaction.
+   * defaults those Spaces hand a new member, and its parent row with the
+   * provisional directory row, in one transaction. A Space adds no reader:
+   * the Channel starts with its creator and whoever the creator named.
    *
    * Every row a creation needs from this object is in this database, so there
-   * is no staged membership, intent or cancellation: adding a Channel that
-   * already exists is `addSpaceChannel`, where the Channel's canonical
-   * operations run between the plan and the commit.
-   *
-   * The sources are recorded in birth mode: the coordinator opens the
-   * conversation with the union of these Spaces' audiences already written,
-   * so there is no canonical operation to run between the plan and its commit.
+   * is no staged membership, intent or cancellation; adding a Channel that
+   * already exists is `addSpaceChannel`.
    *
    * Idempotent for a retry of the same create: an active membership keeps its
-   * generation, the reservation finds its child registered, and the sources
-   * are recorded again at whatever revision the Spaces are at now.
+   * generation and the reservation finds its child registered.
    */
   async reserveChannelInSpaces(input: WorkspaceChannelReservationRequest): Promise<WorkspaceChannelReservationResult> {
     await this.initialized;
@@ -8965,32 +9512,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           authorityGeneration: request.authorityGeneration,
           directory: { ...request.directory, scope: start.scope, systemKind: null },
         });
-        const participantUserIds = [...new Set(request.requestedParticipantUserIds)];
-        let born: ObservedBirthChannel = {
-          readers: request.requestedScope === "workspace"
-            ? { scope: "workspace" }
-            : { scope: "personal", userIds: participantUserIds },
-          participantUserIds,
-        };
-        for (const entry of placed) {
-          const participants = entry.space.participants.map((participant) => participant.userId);
-          const applied = parent.applySpaceAccessSource({
-            workspaceId: request.workspaceId,
-            parentId: workstreamId,
-            spaceId: entry.space.id,
-            scope: entry.space.scope,
-            participantUserIds: participants,
-            spaceRevision: entry.space.revision,
-            membershipGeneration: entry.membershipGeneration,
-            operationId: uuidV7(),
-            channel: born,
-            commitWithPlan: true,
-          });
-          if (!applied.ok) throw new ChannelReservationRefused(applied.code, entry.space.id);
-          born = observedAfterBirthSource(born, {
-            sourceId: entry.space.id, scope: entry.space.scope, participantUserIds: participants,
-          }, applied.plan.seatUserIds);
-        }
         if (request.externalBinding) {
           const claimed = this.externalBindings().claim(request.externalBinding, {
             kind: "conversation", parentKind: "workstream", parentId: workstreamId, substreamId: "0",
@@ -9018,18 +9539,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Move a Channel between two Spaces that grant the same audience, in one
-   * transaction of this object.
-   *
-   * The Space memberships, the Channel's recorded Space provenance (its hosted
-   * parent's `parent_access_sources`) and the source's retired defaults, pins
-   * and arrangement all live in this database, so the move is one
-   * `transactionSync` rather than a staged intent, a provenance RPC and a
-   * settlement. No audience changes: the two Spaces grant the same readers, so
-   * the Channel's canonical scope and participant operations have nothing to
-   * do. `moved: false` sends the caller down the add-then-remove path, which
-   * is also what happens when the Channel's record does not match the Spaces
-   * as they are now; nothing is written in that case.
+   * Move a Channel between two Spaces in one transaction of this object. A
+   * Space grants no reader, so nothing outside it takes part. `moved: false`
+   * only for a target already staged `joining` before migration 94, which the
+   * caller finishes as an add then a removal.
    */
   async moveSpaceMembership(
     input: WorkspaceSpaceMembershipMoveRequest,
@@ -9039,18 +9552,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceMoveRefusal(request);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const channel = await this.hostedParent(request.workstreamId, request.workspaceId);
-    const operationId = uuidV7();
-    const result = WorkspaceSpaceMembershipMoveOutcomeSchema.parse(
-      this.spaceStorage().moveEquivalentMembership(request, (fences) => channel.replaceEquivalentSpaceAccessSource({
-        workspaceId: request.workspaceId,
-        parentId: request.workstreamId,
-        sourceSpaceId: request.sourceSpaceId,
-        targetSpaceId: request.targetSpaceId,
-        ...fences,
-        operationId,
-      }).ok),
-    );
+    const result = WorkspaceSpaceMembershipMoveOutcomeSchema.parse(await this.withMembersLearned(() => (
+      this.spaceStorage().moveMembership(request)
+    )));
     if (result.ok && result.moved) {
       this.publishSpaceSnapshot();
       this.publishSpaceConversationsChanged({
@@ -9077,15 +9581,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return null;
   }
 
-  /**
-   * Put an existing Channel in a Space: the whole operation, in one call.
-   *
-   * WorkspaceDO stages the membership and plans the Channel's source in one
-   * transaction, asks the Channel's conversation for the canonical audience
-   * operations as the caller (it is the audience authority: the
-   * retained-content fence and the roster live there), then confirms the
-   * source and activates the membership in a second transaction.
-   */
+  /** Put an existing Channel in a Space: one transaction of this object. */
   async addSpaceChannel(input: WorkspaceSpaceChannelChangeRequest): Promise<WorkspaceSpaceChannelChangeResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceChannelChangeRequestSchema, input, "add_space_channel");
@@ -9100,15 +9596,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         refusal: { about: "conversation", status: 404, code: "workstream_not_found", message: "Channel not found" },
       };
     }
-    return WorkspaceSpaceChannelChangeResultSchema.parse(await this.spaceChannelAccess().addChannel(
-      request.auth, request.spaceId, request.workstreamId, null,
-    ));
+    return this.addChannelToSpace(request.auth.workspaceId, request.auth.userId, request.spaceId, request.workstreamId);
   }
 
-  /**
-   * Take a Channel out of a Space, in one call: stage the removal and plan the
-   * retraction, run the Channel's canonical operations, then settle.
-   */
+  /** Take a Channel out of a Space that is not its last: one transaction. */
   async removeSpaceChannel(input: WorkspaceSpaceChannelChangeRequest): Promise<WorkspaceSpaceChannelChangeResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceChannelChangeRequestSchema, input, "remove_space_channel");
@@ -9117,17 +9608,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.auth.workspaceId, request.auth.userId, "write", request.spaceId,
     );
     if (refusal) return this.spaceChannelRefusal(refusal);
-    return WorkspaceSpaceChannelChangeResultSchema.parse(await this.spaceChannelAccess().removeChannel(
-      request.auth, request.spaceId, request.workstreamId, null,
-    ));
+    const storage = this.spaceStorage();
+    const result = storage.removeMembership({
+      workspaceId: request.auth.workspaceId, userId: request.auth.userId,
+      spaceId: request.spaceId, workstreamId: request.workstreamId,
+    });
+    if (!result.ok) return this.spaceMutationRefusal(result);
+    this.publishSpaceSnapshot();
+    // The Space is named alongside the Channel: the membership is `removed`
+    // by now, so the Channel no longer resolves to the Space it just left.
+    this.publishSpaceConversationsChanged({
+      spaceIdsThroughChannel: new Map([[request.workstreamId, [request.spaceId]]]),
+    });
+    this.deferSpaceMembershipConvergence(request.auth.workspaceId, request.workstreamId, true);
+    return { ok: true, space: result.space };
   }
 
   /**
    * Place one Channel in General for the cutover, as one of the people who
-   * may act on it: `addSpaceChannel` without the sidebar-visibility gate, and
-   * able to place an archived Channel, which the cutover has to home too.
-   * The caller has already asked the Channel whether General's audience fits
-   * its retained content; the canonical operations ask again.
+   * may act on it: `addSpaceChannel` without the sidebar-visibility gate, so
+   * it can place an archived Channel, which the cutover has to home too.
    */
   async placeChannelInGeneral(input: WorkspaceGeneralPlacementRequest): Promise<WorkspaceSpaceChannelChangeResult> {
     await this.initialized;
@@ -9137,297 +9637,143 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (generalSpaceId === null) return this.spaceChannelRefusal("space_bootstrap_pending");
     const refusal = await this.spaceRefusalCode(request.auth.workspaceId, request.auth.userId, "write", generalSpaceId);
     if (refusal) return this.spaceChannelRefusal(refusal);
-    return WorkspaceSpaceChannelChangeResultSchema.parse(await this.spaceChannelAccess().addChannel(
-      request.auth, asSpaceId(generalSpaceId), request.workstreamId, null, { archived: true },
-    ));
+    return this.addChannelToSpace(
+      request.auth.workspaceId, request.auth.userId, asSpaceId(generalSpaceId), request.workstreamId,
+    );
+  }
+
+  /** The membership write an add or a placement shares, and what it publishes. */
+  private async addChannelToSpace(
+    workspaceId: string,
+    userId: string,
+    spaceId: SpaceId,
+    workstreamId: WorkstreamId,
+  ): Promise<WorkspaceSpaceChannelChangeResult> {
+    const storage = this.spaceStorage();
+    const result = await this.withMembersLearned(() => storage.addMembership({
+      workspaceId: asWorkspaceId(workspaceId), userId: asUserId(userId), spaceId, workstreamId,
+    }));
+    if (!result.ok) return this.spaceMutationRefusal(result);
+    this.publishSpaceSnapshot();
+    // Through the Channel: the people whose Space dashboard changed are the
+    // people who can list it.
+    this.publishSpaceConversationsChanged({ spaceIdsThroughChannel: new Map([[workstreamId, [spaceId]]]) });
+    this.deferSpaceMembershipConvergence(workspaceId, workstreamId, false);
+    await this.afterSidekickDefaultsApplied(storage, workspaceId);
+    return { ok: true, space: result.space };
+  }
+
+  private spaceMutationRefusal(
+    result: Extract<WorkspaceSpaceMutationResult, { ok: false }>,
+  ): { ok: false; refusal: SpaceChannelRefusal } {
+    return {
+      ok: false,
+      refusal: {
+        about: "space", code: result.code, subject: "",
+        unreachableUserIds: [...result.unreachableUserIds], blockedWorkstreamIds: [...result.blockedWorkstreamIds],
+      },
+    };
   }
 
   /**
-   * One page of an audience change's, an archive's or a restore's member
-   * walk, run here: each member Channel's source is planned, changed through
-   * its conversation and confirmed without a round trip back to the Worker,
-   * and the page's cursor is written to the intent before the answer.
-   */
-  async walkSpaceMembers(input: WorkspaceSpaceMemberWalkRequest): Promise<WorkspaceSpaceMemberWalkResult> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceMemberWalkRequestSchema, input, "walk_space_members");
-    this.assertWorkspace(request.auth.workspaceId);
-    const refusal = await this.spaceRefusalCode(request.auth.workspaceId, request.auth.userId, "read");
-    if (refusal) return this.spaceChannelRefusal(refusal);
-    return this.exclusiveSpaceIntent(request.operationId, async () => {
-      // The alarm may have walked pages of this intent while the request was
-      // between calls, or finished it; the row says where it is now.
-      const storage = this.spaceStorage();
-      const intent = storage.unsettledIntent(request.operationId);
-      if (!intent) {
-        const space = storage.readable(member(request.auth.userId), request.spaceId);
-        return space === false
-          ? this.spaceChannelRefusal("space_not_found")
-          : { ok: true as const, outcome: "walked" as const, space };
-      }
-      return WorkspaceSpaceMemberWalkResultSchema.parse(await this.spaceChannelAccess().walkPage(request.auth, {
-        ...request, cursor: intent.cursor ?? request.cursor,
-      }));
-    });
-  }
-
-  /**
-   * Take one step of a staged intent as the caller, through the path the
-   * request takes: `progressed` while a walk has pages left. The alarm resumes
-   * intents in place itself; this is for a `space_intent_resume` message
-   * already on the Queue, which the consumer finishes by calling it until the
-   * intent settles.
+   * Finish one intent staged before migration 94, for a `space_intent_resume`
+   * message already on the Queue. Nothing stages new ones; the alarm finishes
+   * the rest in place.
    */
   async resumeSpaceIntent(input: WorkspaceSpaceIntentResumeRequest): Promise<WorkspaceSpaceIntentResumeResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceIntentResumeRequestSchema, input, "resume_space_intent");
     this.assertWorkspace(request.auth.workspaceId);
-    return this.exclusiveSpaceIntent(request.operationId, async () => {
-      const intent = this.spaceStorage().unsettledIntent(request.operationId);
-      // Settled or cancelled already, by the request, the alarm or an earlier resume.
-      if (!intent) return { ok: true as const, outcome: "settled" as const };
-      return WorkspaceSpaceIntentResumeResultSchema.parse(await this.spaceChannelAccess().resume(request.auth, intent));
-    });
+    const intent = this.spaceStorage().unsettledIntent(request.operationId);
+    // Settled or cancelled already, by the alarm or an earlier delivery.
+    if (intent) await this.finishLegacyIntent(request.auth.workspaceId, intent);
+    return { ok: true, outcome: "settled" };
   }
 
-  /**
-   * Run `run` as the only work on this intent in this object: a request, a
-   * Queue delivery and the alarm each wait for one already running. The
-   * alarm skips a held intent instead (`spaceIntentHeld`); the request that
-   * holds it is finishing it.
-   */
-  private async exclusiveSpaceIntent<T>(operationId: string, run: () => Promise<T>): Promise<T> {
-    for (let running = this.spaceIntentRuns.get(operationId); running; running = this.spaceIntentRuns.get(operationId)) {
-      await running;
-    }
-    const release = this.holdSpaceIntent(operationId);
-    try {
-      return await run();
-    } finally {
-      release();
-    }
-  }
-
-  private holdSpaceIntent(operationId: string): () => void {
-    let settle!: () => void;
-    const running = new Promise<void>((resolve) => { settle = resolve; });
-    this.spaceIntentRuns.set(operationId, running);
-    return () => {
-      if (this.spaceIntentRuns.get(operationId) === running) this.spaceIntentRuns.delete(operationId);
-      settle();
-    };
-  }
-
-  /**
-   * Take one step of each staged intent the alarm claimed, as the person who
-   * staged it.
-   *
-   * One step: an add, a removal or a move is finished, and a walk advances one
-   * page, after which it is due again at once rather than after the claim's
-   * retry gate, so a large Space is walked a page per alarm with the other
-   * alarm work in between. An intent a request or a Queue delivery is running
-   * is skipped; that run finishes it.
-   *
-   * The requester is read from the local relationship table, which the
-   * relationship events keep current. Somebody who is no longer an active
-   * member gets the failure written on the row and nothing is run as them;
-   * every other failure is named on the row too, and the retry gate the claim
-   * advanced brings the intent back.
-   */
+  /** Finish each staged intent the alarm claimed. */
   private async resumeSpaceIntentsInPlace(workspaceId: string, intents: readonly WorkspaceSpaceIntentClaim[]): Promise<void> {
-    const storage = this.spaceStorage();
     for (const intent of intents) {
-      if (this.spaceIntentRuns.has(intent.operationId)) continue;
-      const release = this.holdSpaceIntent(intent.operationId);
       try {
-        const relationship = await this.readRelationship(workspaceId, intent.requestedByUserId);
-        if (relationship?.status !== "active" || relationship.accessClass !== "member") {
-          storage.recordIntentFailure(intent.operationId, "space_intent_requester_inactive");
-          logWarn(this.env, "space_intent_resume_failed", {
-            workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
-            kind: intent.kind, reason: "space_intent_requester_inactive",
-          });
-          continue;
-        }
-        const actor: SpaceActorAuth = {
-          sessionId: `space-intent:${intent.operationId}`,
-          userId: asUserId(intent.requestedByUserId),
-          workspaceId: asWorkspaceId(workspaceId),
-          region: this.env.AVALON_REGION,
-          role: relationship.role,
-          principal: "connector",
-        };
-        const current = storage.unsettledIntent(intent.operationId);
-        if (!current) continue;
-        const resumed = await this.spaceChannelAccess().resume(actor, current);
-        if (!resumed.ok) {
-          storage.recordIntentFailure(intent.operationId, resumed.refusal.code);
-          logWarn(this.env, "space_intent_resume_failed", {
-            workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
-            kind: intent.kind, reason: resumed.refusal.code,
-          });
-        } else if (resumed.outcome === "progressed") {
-          storage.rescheduleIntent(intent.operationId, Date.now());
-        } else if (resumed.outcome === "abandoned") {
-          logWarn(this.env, "space_intent_resume_abandoned", {
-            workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
-            kind: intent.kind, reason: resumed.reason,
-          });
-        }
+        await this.finishLegacyIntent(workspaceId, intent);
       } catch (error) {
         const reason = diagnosticErrorCode(error, "space_intent_resume_failed");
-        storage.recordIntentFailure(intent.operationId, reason);
+        this.spaceStorage().recordIntentFailure(intent.operationId, reason);
         logWarn(this.env, "space_intent_resume_failed", {
           workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
           kind: intent.kind, reason,
         });
-      } finally {
-        release();
       }
     }
     await this.armNextAlarm();
+  }
+
+  /**
+   * One intent staged before every Space was Organization-wide, finished in a
+   * single transaction (`resumeLegacyIntent`), then published. A Space grants
+   * no reader, so no Channel is asked.
+   *
+   * The intent runs as its requester, so somebody who has left the
+   * Organization has nothing run as them: the row keeps
+   * `space_intent_requester_inactive`, as the Queue consumer writes it.
+   */
+  private async finishLegacyIntent(workspaceId: string, intent: WorkspaceSpaceIntentClaim): Promise<void> {
+    const storage = this.spaceStorage();
+    if (!this.knownActiveMember(intent.requestedByUserId)) {
+      storage.recordIntentFailure(intent.operationId, "space_intent_requester_inactive");
+      logWarn(this.env, "space_intent_resume_failed", {
+        workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
+        kind: intent.kind, reason: "space_intent_requester_inactive",
+      });
+      return;
+    }
+    const finished = storage.resumeLegacyIntent(intent);
+    this.publishSpaceSnapshot();
+    if (finished.spaceChanged) this.publishSpaceConversationsChanged({ spaceIds: finished.spaceIds });
+    if (finished.membershipChanged && finished.workstreamId) {
+      this.publishSpaceConversationsChanged({
+        spaceIdsThroughChannel: new Map([[finished.workstreamId, finished.spaceIds]]),
+      });
+      this.deferSpaceMembershipConvergence(workspaceId, finished.workstreamId, true);
+      await this.afterSidekickDefaultsApplied(storage, workspaceId);
+    }
   }
 
   private spaceChannelRefusal(code: SpaceErrorCode): { ok: false; refusal: SpaceChannelRefusal } {
     return { ok: false, refusal: { about: "space", code, subject: "", unreachableUserIds: [], blockedWorkstreamIds: [] } };
   }
 
-  /** The Space source coordinator, over this object's storage and publications. */
-  private spaceChannelAccess(): SpaceChannelAccess {
-    return new SpaceChannelAccess({
-      env: this.env,
-      storage: this.state.storage,
-      transaction: (run) => this.withMembersLearned(() => this.state.storage.transactionSync(run)),
-      spaceStorage: () => this.spaceStorage(),
-      hostedParent: (parentId, workspaceId) => this.hostedParent(parentId, workspaceId),
-      archivedChannel: (workstreamId) => {
-        const projected = this.channelDirectoryObservation(workstreamId);
-        return projected.found && projected.archived
-          ? { channel: ObservedChannelSchema.parse(projected.channel), title: projected.title }
-          : null;
-      },
-      intentResumeAt: () => Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
-      holdIntent: (operationId) => this.holdSpaceIntent(operationId),
-      armNextAlarm: async () => {
-        await this.armNextAlarm();
-      },
-      publishSpaceSnapshot: () => this.publishSpaceSnapshot(),
-      publishMembershipChanged: (workstreamId, spaceIds) => this.publishSpaceConversationsChanged({
-        spaceIdsThroughChannel: new Map([[workstreamId, [...spaceIds]]]),
-      }),
-      deferSpaceMembershipConvergence: (workspaceId, workstreamId, includeDirectory) =>
-        this.deferSpaceMembershipConvergence(workspaceId, workstreamId, includeDirectory),
-      afterSidekickDefaultsApplied: (storage, workspaceId) => this.afterSidekickDefaultsApplied(storage, workspaceId),
-      finalizeArchive: (workspaceId, userId, spaceId, operationId) =>
-        this.finalizeArchiveAs(workspaceId, userId, spaceId, operationId),
-    });
-  }
-
-  /** Stage an archive, refusing one that would strand any live member Channel. */
-  async prepareSpaceArchive(input: WorkspaceSpaceStagedRequest): Promise<WorkspaceSpaceMutationResult> {
+  /** Archive a Space that strands no live Channel: one transaction. */
+  async archiveSpace(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "prepare_space_archive");
+    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "archive_space");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const result = WorkspaceSpaceMutationResultSchema.parse(
-      this.spaceStorage().prepareArchive(request.userId, request.spaceId),
-    );
-    if (result.ok) {
-      this.spaceStorage().recordIntent({
-        operationId: request.operationId,
-        kind: "archive",
-        spaceId: request.spaceId,
-        workstreamId: null,
-        spaceRevision: result.space.revision,
-        membershipGeneration: null,
-        deliveryGeneration: null,
-        requestedByUserId: request.userId,
-        notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
-      });
-      this.publishSpaceSnapshot();
-      await this.armNextAlarm();
-    }
+    const result = WorkspaceSpaceMutationResultSchema.parse(this.spaceStorage().archive(request.userId, request.spaceId));
+    if (!result.ok) return result;
+    this.publishSpaceSnapshot();
+    // An archive takes every member Channel off this Space's dashboard and a
+    // restore puts them back. `spaceIds`, which names the Space to everybody
+    // who reaches it, is right here: the Space's own disappearance and return
+    // are visible to all of them anyway.
+    this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
+    await this.armNextAlarm();
     return result;
   }
 
-  async finalizeSpaceArchive(input: WorkspaceSpaceStagedRequest): Promise<WorkspaceSpaceMutationResult> {
+  /** Bring an archived Space back with the memberships the archive took out: one transaction. */
+  async restoreSpace(input: WorkspaceSpaceRequest): Promise<WorkspaceSpaceMutationResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "finalize_space_archive");
-    this.assertWorkspace(request.workspaceId);
-    return this.finalizeArchiveAs(request.workspaceId, request.userId, request.spaceId, request.operationId);
-  }
-
-  /** Archive a Space whose member walk has finished, and settle its intent. */
-  private async finalizeArchiveAs(
-    workspaceId: string,
-    userId: string,
-    spaceId: string,
-    operationId: string,
-  ): Promise<WorkspaceSpaceMutationResult> {
-    const request = { workspaceId, userId, spaceId, operationId };
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
-    if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const storage = this.spaceStorage();
-    const space = storage.finalizeArchive(request.userId, request.spaceId);
-    if (space === "protected") {
-      return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    }
-    if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
-    storage.settleIntent(request.operationId, "archived", true);
-    this.publishSpaceSnapshot();
-    // An archive takes every member Channel off this Space's dashboard and a
-    // restore puts the ones it withdrew back. Both are page changes for every
-    // reader still holding the page — and `spaceIds`, which names the Space to
-    // everybody who reaches it including through one Channel in it, is right
-    // here in a way it is not for a membership: the Space's own disappearance
-    // and return are visible to all of them anyway.
-    this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
-    await this.armNextAlarm();
-    return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
-  }
-
-  /**
-   * Bring an archived Space back, and stage the fan-out that follows it.
-   *
-   * Staged like the other four, and for the reason the other four are: the
-   * restore commits here and then the service re-applies this Space's source to
-   * every member Channel, so a request that dies in between leaves the Space
-   * active in the directory, on every socket and in every sidebar, with half
-   * its members holding no source from it — and, without an intent, with
-   * nothing that would ever notice. It was the one Space operation whose
-   * half-finished state nothing could resume.
-   */
-  async restoreSpace(input: WorkspaceSpaceStagedRequest): Promise<WorkspaceSpaceMutationResult> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceStagedRequestSchema, input, "restore_space");
+    const request = parseRpcInput(WorkspaceSpaceRequestSchema, input, "restore_space");
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
-    const storage = this.spaceStorage();
-    const space = storage.restore(request.workspaceId, request.userId, request.spaceId);
+    const space = this.spaceStorage().restore(request.workspaceId, request.userId, request.spaceId);
     if (space === false) {
       return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
-    // Fenced on the revision the restore itself produced, which is what the
-    // resumed applications carry: a Space that moved again afterwards is a
-    // newer operation with a walk of its own.
-    storage.recordIntent({
-      operationId: request.operationId,
-      kind: "restore",
-      spaceId: request.spaceId,
-      workstreamId: null,
-      spaceRevision: space.revision,
-      membershipGeneration: null,
-      deliveryGeneration: null,
-      requestedByUserId: request.userId,
-      notBefore: Date.now() + SPACE_INTENT_RESUME_DELAY_MS,
-    });
     this.publishSpaceSnapshot();
-    // `spaceIds` for the reason the archive above uses it: a Space coming back
-    // is visible to everybody who reaches it, however they reach it.
     this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
-    await this.armNextAlarm();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
   }
 
@@ -9437,6 +9783,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    if (request.kind === "sidekick") this.assertRecommendableSidekick(request.targetId);
     const storage = this.spaceStorage();
     // A Sidekick default is also the Space's recommendation, which a Channel
     // created in the Space reads from its hosted parent. Written right after
@@ -9472,13 +9819,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.spaceStorage().defaultTargetCurrent(request);
   }
 
-  async spaceDefaultTargetActors(input: SpaceDefaultQueueMessage): Promise<string[]> {
-    await this.initialized;
-    const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "space_default_target_actors");
-    this.assertWorkspace(request.workspaceId);
-    return this.spaceStorage().defaultTargetActors(request);
-  }
-
   async completeSpaceDefaultTarget(input: SpaceDefaultQueueMessage): Promise<boolean> {
     await this.initialized;
     const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "complete_space_default_target");
@@ -9501,7 +9841,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(SpaceDefaultQueueMessageSchema, input, "fail_space_default_target");
     this.assertWorkspace(request.workspaceId);
-    return this.spaceStorage().failDefaultTarget(request, "space_no_active_participant");
+    return this.spaceStorage().failDefaultTarget(request, "space_default_requester_inactive");
   }
 
   /**
@@ -11228,6 +11568,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     this.publishChannelRows(this.collectRailChanges(rows));
+    // A Channel archive pauses the Sidekicks it owns during the pass; their
+    // list goes out with nothing awaited after the Channel's row.
+    if (this.sidekickDirectoryMoved) {
+      this.sidekickDirectoryMoved = false;
+      this.publishSidebarList("automations");
+    }
     if (topicsWorkspaceId !== null) {
       try {
         await this.publishSync([...topics], topicsWorkspaceId,
@@ -11279,6 +11625,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       channelIds: [...commonChanges, ...breakoutChanges],
       viewerChannelIds: mergeViewerChanges(viewerChanges, breakoutViewerChanges),
     });
+    // An access request names its conversation as it is now, and leaves out
+    // one since archived; its approver's list moves with the conversation.
+    for (const approverUserId of this.accessRequestStorage().approversFor([...commonChanges, ...breakoutChanges])) {
+      this.publishAccessRequests(approverUserId);
+    }
     // A Channel row carries its live Breakout total. A child projection does
     // not advance the parent's directory waterline, so republish the parent
     // row; the receiver may accept this aggregate from a duplicate version.
@@ -11386,6 +11737,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       );
     }
     return relationship;
+  }
+
+  /** `activeSpaceMember` from the table alone, for a synchronous commit; unknown reads as no. */
+  private knownActiveMember(userId: string): boolean {
+    const known = this.knownRelationship(userId);
+    return known?.status === "active" && known.accessClass === "member";
   }
 
   /** The table's answer, with no D1 read; `undefined` for somebody it has never heard of. */
@@ -11554,6 +11911,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     workspaceId: string,
     workstreamIds: readonly string[],
     breakoutKeys: readonly string[] = [],
+    onlyAutomationId: string | null = null,
   ): Promise<void> {
     const owned = this.state.storage.sql.exec<{
       automation_id: string;
@@ -11571,6 +11929,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           AND breakout.workstream_id = automation.owning_workstream_id
           AND breakout.substream_id = automation.owning_substream_id
         WHERE automation.lifecycle <> 'deleted'
+          AND (?3 IS NULL OR automation.automation_id = ?3)
           AND (automation.owning_workstream_id IN (SELECT value FROM json_each(?1))
             OR (automation.owning_substream_id <> '0'
               AND automation.owning_workstream_id || '/' || automation.owning_substream_id
@@ -11578,31 +11937,44 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         ORDER BY automation.automation_id`,
       JSON.stringify(workstreamIds),
       JSON.stringify(breakoutKeys),
+      onlyAutomationId,
     ).toArray();
     if (owned.length === 0) return;
-    const settled = await Promise.allSettled(owned.map(async (row) => {
-      const automation = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.AUTOMATION_DOS,
-        workspaceId,
-        automationDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), asAutomationId(row.automation_id)),
-      );
-      await automation.setOwningRoomArchived({
-        workspaceId: asWorkspaceId(workspaceId),
-        automationId: row.automation_id,
-        workstreamId: row.workstream_id,
-        archived: row.archived_at !== null || row.breakout_archived_at !== null,
-      });
-    }));
-    for (const [index, outcome] of settled.entries()) {
-      if (outcome.status !== "rejected") continue;
-      logWarn(this.env, "sidekick_owning_room_archival_failed", {
-        workspace_id: workspaceId,
-        automation_id: owned[index]?.automation_id ?? null,
-        workstream_id: owned[index]?.workstream_id ?? null,
-        code: diagnosticErrorCode(outcome.reason, "sidekick_owning_room_archival_failed"),
-      });
+    await this.ensureParentWorkspace(workspaceId);
+    const host = this.hostedSidekickHost();
+    // Each Sidekick's pause or resume, its registrations and its alarm entries
+    // commit in one local transaction per Sidekick, right after the archive
+    // that caused them, so one that fails leaves the others moved.
+    for (const row of owned) {
+      try {
+        const sidekick = new HostedSidekick(host, row.automation_id);
+        const now = Date.now();
+        const outcome = this.state.storage.transactionSync(() => sidekick.setOwningRoomArchived({
+          workspaceId: asWorkspaceId(workspaceId),
+          automationId: row.automation_id,
+          workstreamId: row.workstream_id,
+          archived: row.archived_at !== null || row.breakout_archived_at !== null,
+        }, now));
+        if (outcome.outcomeCode === "sidekick_resumed") {
+          const resumed = sidekick.row();
+          const evaluators = resumed ? JSON.parse(resumed.evaluator_projection_json) as unknown[] : [];
+          if (resumed?.accepted_definition_revision != null && evaluators.length > 0) {
+            await this.joinSidekickSlackSources(workspaceId, row.automation_id, resumed.accepted_definition_revision, evaluators);
+          }
+        }
+      } catch (error) {
+        logWarn(this.env, "sidekick_owning_room_archival_failed", {
+          workspace_id: workspaceId,
+          automation_id: row.automation_id,
+          workstream_id: row.workstream_id,
+          code: diagnosticErrorCode(error, "sidekick_owning_room_archival_failed"),
+        });
+      }
     }
+    // The automations list is not published here: the pass that ran this
+    // sends it right after the archived Channel's row, in the same turn, so
+    // a client sees the archive and its pauses together.
+    await this.armNextAlarm();
   }
 
   private async reconcileWorkstreamResourceRegistrations(input: {
@@ -11853,7 +12225,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       waiting_for_you: number;
       waiting_priority: number;
       has_unread_activity: number;
-      unread_and_needs_input: number;
     }>(
       `SELECT
          COALESCE(SUM(CASE
@@ -11876,20 +12247,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
              )
              OR viewer.manual_unread_from_ordinal IS NOT NULL
              OR viewer.unseen = 1
-           ) THEN 1 ELSE 0 END), 0) AS has_unread_activity,
-         COALESCE(SUM(CASE
-           WHEN (
-             (directory.scope = 'workspace' OR viewer.is_participant = 1) AND (
-               directory.latest_attention_ordinal > COALESCE(
-                 viewer.seen_attention_ordinal,
-                 directory.unread_tracking_start_ordinal
-               )
-               OR viewer.manual_unread_from_ordinal IS NOT NULL
-               OR viewer.unseen = 1
-             )
-           ) OR (
-             viewer.is_participant = 1 AND directory.exact_state = 'needs_input'
-           ) THEN 1 ELSE 0 END), 0) AS unread_and_needs_input
+           ) THEN 1 ELSE 0 END), 0) AS has_unread_activity
        FROM channels directory
        LEFT JOIN channel_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
@@ -11910,7 +12268,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       waitingForYou: row.waiting_for_you,
       waitingReason,
       hasUnreadActivity: row.has_unread_activity === 1,
-      unreadAndNeedsInputCount: row.unread_and_needs_input,
+      readerAttentionCount: this.spaceStorage().readerAttentionCount({ userId: request.userId, accessClass: request.accessClass ?? "member" }),
     });
   }
 
@@ -13038,11 +13396,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Settle the status reaction against the emoji the caller removed.
+   * Settle the status reaction against the anchor the caller acted on and the
+   * emoji it removed.
    *
-   * Answers `raced` when another transition — a working tick, or the terminal
-   * outcome — moved `reaction_current` while the caller was talking to Slack.
-   * The decision comes from the `RETURNING` witness, not a row count.
+   * Answers `raced` when another transition moved `reaction_current`, or a
+   * follow-up moved the anchor, while the caller was talking to Slack. The
+   * decision comes from the `RETURNING` witness, not a row count.
    */
   async settleSlackSessionReaction(
     input: WorkspaceSlackSessionReactionRequest,
@@ -13227,6 +13586,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * The Organization-wide Space a public room should join instead of making
+   * its own. A Space whose creator is no longer an active member is not
+   * offered: an unlinked sender's Channel is placed as that creator.
+   */
+  async externalRoomSpaceMatch(input: unknown): Promise<ExternalRoomSpaceMatchResult> {
+    await this.initialized;
+    const request = parseRpcInput(ExternalRoomSpaceMatchRequestSchema, input, "external_room_space_match");
+    this.assertWorkspace(request.workspaceId);
+    return { spaceId: (await this.roomSpaceMatch(request.workspaceId, request.name)).usable };
+  }
+
+  /** The Space `name` matches (`found`), and that Space if it may be offered (`usable`). */
+  private async roomSpaceMatch(workspaceId: string, name: string): Promise<{ found: string | null; usable: string | null }> {
+    const match = this.spaceStorage().organizationSpaceNamed(name);
+    const usable = match?.createdByUserId != null && await this.activeSpaceMember(workspaceId, match.createdByUserId);
+    return { found: match?.spaceId ?? null, usable: usable ? match.spaceId : null };
+  }
+
+  /**
    * Link a shared provider room: its Space and its room binding in one
    * transaction, or the Space an existing binding already names.
    *
@@ -13259,32 +13637,36 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return { ok: false, code: refusal };
-    const parent = await this.spaceParentReservation(request.spaceId);
+    // This link decides the match, whatever the caller's earlier ask answered:
+    // a Space that now matches is joined, and a `matched` id that no longer
+    // does is refused, since it has no anchor of its own to be created under.
+    const match = request.spaceMatch ? await this.roomSpaceMatch(request.workspaceId, request.space.name) : null;
+    if (request.spaceMatch === "matched" && match?.usable !== request.spaceId) return { ok: false, code: "space_not_found" };
+    const spaceId = match?.usable ?? request.spaceId;
+    const parent = await this.spaceParentReservation(spaceId);
     if (!parent.ok) return { ok: false, code: parent.code };
     const storage = this.spaceStorage();
     const reservation: WorkspaceSpaceReserveRequest = {
       workspaceId: asWorkspaceId(request.workspaceId),
       userId: asUserId(request.userId),
-      spaceId: asSpaceId(request.spaceId),
-      space: { name: request.space.name, iconKey: "users", colorKey: "blue", scope: request.space.scope },
+      spaceId: asSpaceId(spaceId),
+      space: { name: request.space.name, iconKey: "users", colorKey: "blue", scope: "workspace" },
     };
-    const participants = [...new Set([request.userId, ...request.participantUserIds])];
     const linked = await this.withMembersLearned(() => this.state.storage.transactionSync(() => (
       bindings.linkRoom(request.installationId, request.path, request.at, () => {
-        const reserved = storage.reserveForCreation(reservation, request.spaceId);
+        // The awaits above let a Space edit or a departure in; the match, and
+        // whether its creator may still be offered, must be the ones decided.
+        if (match) {
+          const current = storage.organizationSpaceNamed(request.space.name);
+          const usable = current?.createdByUserId != null && this.knownActiveMember(current.createdByUserId)
+            ? current.spaceId
+            : null;
+          if ((current?.spaceId ?? null) !== match.found || usable !== match.usable) return null;
+        }
+        const reserved = storage.reserveForCreation(reservation, spaceId);
         if (!reserved.space) return null;
         if (reserved.created) parent.reserve(request.userId, reserved.space);
-        if (request.space.scope === "personal" && participants.length > 1) {
-          const seated = storage.applyAudience({
-            workspaceId: asWorkspaceId(request.workspaceId),
-            userId: asUserId(request.userId),
-            spaceId: asSpaceId(request.spaceId),
-            operationId: uuidV7(),
-            audience: { scope: "personal", participantUserIds: participants.map(asUserId) },
-          });
-          if (seated === false || seated === "self_excluded") throw new Error("external_room_audience_refused");
-        }
-        return request.spaceId;
+        return { spaceId, matched: match?.usable != null };
       })
     )));
     if (!linked) return { ok: false, code: "space_not_found" };
@@ -14074,6 +14456,153 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /**
+   * The title of whatever a shared link names, or null when nothing here has
+   * that id. Holding the link is the permission: a link's title is shown to
+   * anyone who has it, so this reads no viewer and checks no scope. A deleted
+   * Sidekick is gone; an archived Channel, Breakout or Space keeps its name.
+   */
+  async linkTitle(input: unknown): Promise<{ title: string | null }> {
+    await this.initialized;
+    const { workspaceId, target } = parseRpcInput(WorkspaceLinkTitleRequestSchema, input, "link_title");
+    // An object no Organization ever opened, reached only where placement
+    // falls back outside production: it holds nothing to name.
+    if (this.workspaceId() === null) return { title: null };
+    this.assertWorkspace(workspaceId);
+    const sql = this.state.storage.sql;
+    const row = target.kind === "channel"
+      ? sql.exec<{ title: string }>(`SELECT title FROM channels WHERE workstream_id = ?`, target.workstreamId).toArray()[0]
+      : target.kind === "breakout"
+        ? sql.exec<{ title: string }>(
+          `SELECT title FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
+          target.workstreamId, target.substreamId,
+        ).toArray()[0]
+        : target.kind === "space"
+          ? sql.exec<{ title: string }>(`SELECT title FROM spaces WHERE space_id = ?`, target.spaceId).toArray()[0]
+          : sql.exec<{ title: string }>(
+            `SELECT title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+            target.sidekickId,
+          ).toArray()[0];
+    return { title: row?.title.trim() || null };
+  }
+
+  /**
+   * The name, mark and creator of one unarchived Channel or Breakout, for an
+   * access request. Asks nothing of the viewer: the caller has already proved
+   * an active member and holds the id, and this names only what a Channel
+   * reached through a Breakout already names (`docs/channel-access-requests.md`).
+   */
+  async accessRequestSubject(input: { workspaceId: string; parentId: string; substreamId: string }): Promise<{
+    kind: "channel" | "breakout";
+    title: string;
+    appearance: z.infer<typeof WorkstreamAppearanceSchema> | null;
+    markId: string;
+    createdByUserId: string | null;
+  } | null> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestSubjectRequestSchema, input, "access_request_subject");
+    this.assertWorkspace(request.workspaceId);
+    const breakout = request.substreamId !== "0";
+    const row = this.state.storage.sql.exec<{
+      title: string; appearance_json: string | null; created_by_user_id: string | null; parent_appearance_json?: string | null;
+    }>(
+      breakout
+        ? `SELECT breakout.title, breakout.appearance_json, breakout.created_by_user_id,
+              parent.appearance_json AS parent_appearance_json
+             FROM breakouts breakout JOIN channels parent ON parent.workstream_id = breakout.workstream_id
+            WHERE breakout.workstream_id = ? AND breakout.substream_id = ?
+              AND breakout.archived_at IS NULL AND parent.archived_at IS NULL`
+        : `SELECT title, appearance_json, created_by_user_id FROM channels
+            WHERE workstream_id = ? AND archived_at IS NULL`,
+      ...(breakout ? [request.parentId, request.substreamId] : [request.parentId]),
+    ).toArray()[0];
+    if (!row) return null;
+    return AccessRequestSubjectSchema.parse({
+      kind: breakout ? "breakout" : "channel",
+      title: row.title,
+      ...conversationMark({
+        parentId: request.parentId, substreamId: request.substreamId,
+        appearanceJson: row.appearance_json, parentAppearanceJson: row.parent_appearance_json ?? null,
+      }),
+      createdByUserId: row.created_by_user_id,
+    });
+  }
+
+  private accessRequestStorage(): ConversationAccessRequestStorage {
+    return new ConversationAccessRequestStorage(this.state.storage.sql);
+  }
+
+  /** Record a request, or return the one already pending; the approver's sockets get their new list. */
+  async recordConversationAccessRequest(input: {
+    workspaceId: string; parentId: string; substreamId: string; requesterUserId: string;
+    requesterName: string; approverUserId: string;
+  }): Promise<{ request: StoredAccessRequest; created: boolean }> {
+    await this.initialized;
+    const request = parseRpcInput(RecordAccessRequestSchema, input, "record_conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    const recorded = this.accessRequestStorage().record({ ...request, id: uuidV7(), now: Date.now() });
+    if (recorded.created) this.publishAccessRequests(request.approverUserId);
+    return recorded;
+  }
+
+  async conversationAccessRequest(input: { workspaceId: string; id: string }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestRefSchema, input, "conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    return this.accessRequestStorage().get(request.id);
+  }
+
+  /** Settle a pending request; null when it was already settled. The approver's sockets get their new list. */
+  async resolveConversationAccessRequest(input: {
+    workspaceId: string; id: string; status: "approved" | "declined";
+  }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    const request = parseRpcInput(ResolveAccessRequestSchema, input, "resolve_conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    const resolved = this.accessRequestStorage().resolve(request.id, request.status, Date.now());
+    if (resolved) this.publishAccessRequests(resolved.approverUserId);
+    return resolved;
+  }
+
+  /** The approver's email for this request went out. */
+  async markConversationAccessRequestEmailed(input: { workspaceId: string; id: string }): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestRefSchema, input, "mark_conversation_access_request_emailed");
+    this.assertWorkspace(request.workspaceId);
+    this.accessRequestStorage().markEmailed(request.id, Date.now());
+  }
+
+  /** An approval whose grant failed goes back to pending; the approver's sockets get it back. */
+  async reopenConversationAccessRequest(input: { workspaceId: string; id: string }): Promise<StoredAccessRequest | null> {
+    await this.initialized;
+    const request = parseRpcInput(AccessRequestRefSchema, input, "reopen_conversation_access_request");
+    this.assertWorkspace(request.workspaceId);
+    const reopened = this.accessRequestStorage().reopen(request.id);
+    if (reopened) this.publishAccessRequests(reopened.approverUserId);
+    return reopened;
+  }
+
+  /**
+   * The approver's whole pending list, to their sockets only. Outside the
+   * waterline: the subscribe answer carries it again on every connect.
+   */
+  private publishAccessRequests(approverUserId: string): void {
+    let payload: string | null = null;
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed || attachment.userId !== approverUserId) continue;
+      payload ??= JSON.stringify(WorkspaceAccessRequestsEventSchema.parse({
+        type: "workspace_access_requests",
+        requests: this.accessRequestStorage().pendingFor(approverUserId, this.spaceStorage().breakoutsReady()),
+      }));
+      try {
+        socket.send(payload);
+      } catch {
+        // Hibernation owns cleanup; a reconnecting client is sent the list again.
+      }
+    }
+  }
+
   async recentWorkstreamDirectory(
     input: WorkspaceDirectoryRecentRequest,
   ): Promise<WorkspaceDirectoryLookupResult> {
@@ -14429,7 +14958,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * statements in the caller's transaction rather than a Queue hop to a Worker
    * that would call straight back into this object for the list and the
    * registration. A conversation job and a Sidekick parent (its children are
-   * in AutomationDO) still go through the Queue.
+   * `sidekick_children` rows, which this path does not read) still go through
+   * the Queue.
    *
    * Returns how many `authorization_delivery` rows it wrote, from the rows the
    * write returned: the caller's only reason to re-arm the alarm.
@@ -14694,6 +15224,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       sessionId: readRallyHeader(request.headers, RALLY_HEADERS.SESSION_ID) ?? null,
       ticketId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_ID) ?? null,
       ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
+      impersonatorUserId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_IMPERSONATOR_ID),
     });
     if (!identity.success) return json({ error: "invalid_socket_identity" }, 400);
 
@@ -16157,6 +16688,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // ignore.
     const sidebar = this.sidebarPayload(attachment);
     this.logWorkspaceSocketHandshake(attachment, "sidebar_built", diagnosticAttemptId);
+    const viewerPreferences = this.readMemberPreferences(attachment.userId);
+    // Only a member is ever an approver; a guest's answer carries no list.
+    const accessRequests = attachment.accessClass === "guest"
+      ? undefined : this.accessRequestStorage().pendingFor(attachment.userId, this.spaceStorage().breakoutsReady());
     let events: WorkspaceSocketSyncEvent[];
     if (afterWaterline === 0) {
       events = [{
@@ -16230,7 +16765,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
     this.logWorkspaceSocketHandshake(attachment, "flags_resolved", diagnosticAttemptId);
     for (const event of events) {
-      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({ ...event, featureFlags })));
+      socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({
+        ...event, featureFlags, viewerPreferences, ...(accessRequests ? { accessRequests } : {}),
+      })));
     }
     this.logWorkspaceSocketHandshake(attachment, "sync_sent", diagnosticAttemptId);
     socket.serializeAttachment({
@@ -16530,12 +17067,6 @@ applyRetirementGate(WorkspaceDO, {
     // `replayed` is this receiver's terminal answer — it already means "this
     // changed nothing, do not send it again", which is exactly true here.
     applyWorkstreamRegionalEffect: () => ({ replayed: true, notificationIntentId: null }),
-    // The third queue-driven receiver, and the one that was missed. The
-    // activity consumer calls all three side by side; this one refused, so its
-    // message retried with backoff until it dead-lettered — the exact loop the
-    // other two exist to avoid. `applied: false` is its ordinary "nothing
-    // changed" answer, which is true of a workspace that is closed.
-    applyAutomationDirectory: () => ({ applied: false }),
     // A visibility question answered rather than refused, as the deleted `WorkstreamDO` did:
     // nobody can read anything in a retired workspace, and a caller that asks
     // can act on `false` where it cannot act on a throw.

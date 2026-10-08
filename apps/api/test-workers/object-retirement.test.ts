@@ -33,10 +33,8 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
-import { ConversationParentDurableObject } from "../src/durable-objects/conversation-parent-object";
-import { SidekickDO } from "../src/durable-objects/sidekick-do";
 import {
   RETIREMENT_REFUSAL_CODE,
   gatedSurface,
@@ -48,7 +46,6 @@ import {
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import {
-  automationDOName,
   conversationObjectName,
   workspaceDOName,
 } from "../src/durable-objects/names";
@@ -121,7 +118,7 @@ describe("object retirement", () => {
     expect((refusal as Error).message).toContain(`(${RETIREMENT_REFUSAL_CODE})`);
   });
 
-  it("refuses a product call on a retired conversation object and on a retired Sidekick", async () => {
+  it("refuses a product call on a retired conversation object", async () => {
     // The class the feature exists for: the refusal the spike observed came
     // from `SubstreamAgent`, and it is the class whose runtime recovery is
     // permitted — so it is where a permit that reached too far would show.
@@ -138,14 +135,6 @@ describe("object retirement", () => {
       substreamId: "0",
     } as never));
     expect((agentRefusal as { code?: string } | undefined)?.code).toBe(RETIREMENT_REFUSAL_CODE);
-
-    const automationId = asAutomationId("00000000-0000-7000-8000-00000000dea2");
-    const sidekick = TEST_ENV.AUTOMATION_DOS.get(TEST_ENV.AUTOMATION_DOS.idFromName(
-      automationDOName(TEST_ENV.AVALON_REGION, WORKSPACE_ID, automationId),
-    )) as DurableObjectStub<SidekickDO>;
-    await sidekick.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
-    const sidekickRefusal = await refusalOf(() => sidekick.listChildren({ workspaceId: WORKSPACE_ID, parentId: automationId }));
-    expect((sidekickRefusal as { code?: string } | undefined)?.code).toBe(RETIREMENT_REFUSAL_CODE);
   });
 
   it("answers a visibility question with no rather than refusing it", async () => {
@@ -424,11 +413,11 @@ describe("object retirement", () => {
   });
 
   it("drops and acknowledges each queue receiver on a retired WorkspaceDO in the shape its consumer parses", async () => {
-    // The three receivers the activity consumer calls side by side. The third
-    // was found refusing in production — one message retried until it
-    // dead-lettered — and nothing asserted the shapes the other two answer, so
-    // a wrong shape would have been a `strictObject` parse failure in the
-    // consumer: the same loop, one layer up.
+    // The receivers the activity consumer calls side by side. A third, the
+    // Sidekick directory receiver, was found refusing in production — one
+    // message retried until it dead-lettered — and nothing asserted the shapes
+    // these two answer, so a wrong shape would have been a `strictObject` parse
+    // failure in the consumer: the same loop, one layer up.
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000deb0");
     const stub = TEST_ENV.WORKSPACE_DOS.get(
       TEST_ENV.WORKSPACE_DOS.idFromName(workspaceDOName(TEST_ENV.AVALON_REGION, workspaceId)),
@@ -440,12 +429,10 @@ describe("object retirement", () => {
     expect(directory).toEqual({ accepted: [envelope], directoryChanged: false });
     const regional = await stub.applyWorkstreamRegionalEffect({ workspaceId } as never);
     expect(regional).toEqual({ replayed: true, notificationIntentId: null });
-    const automation = await stub.applyAutomationDirectory({ workspaceId } as never);
-    expect(automation).toEqual({ applied: false });
   });
 
   it("rebuilds every gated class after eviction, and revokes access on it", async () => {
-    // One test across all three object classes on purpose. The two failures this
+    // One test across both gated object classes on purpose. The two failures this
     // covers were both *category* failures — a method on the construction path
     // that nobody classified, and a permitted entry point reaching a private
     // helper nobody listed — and both were found one class at a time. Neither
@@ -457,7 +444,6 @@ describe("object retirement", () => {
     // revocation hop is asserted on that object.
     const retiredAt = Date.now();
     const workstreamId = freshWorkstreamId();
-    const automationId = asAutomationId("00000000-0000-7000-8000-00000000dea1");
     const revocation = {
       workspaceId: EVICTION_WORKSPACE_ID,
       userId: ACTOR_ID,
@@ -467,17 +453,11 @@ describe("object retirement", () => {
     const workspaceStub = TEST_ENV.WORKSPACE_DOS.get(
       TEST_ENV.WORKSPACE_DOS.idFromName(workspaceDOName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID)),
     ) as DurableObjectStub<WorkspaceDO>;
-    const automationStub = TEST_ENV.AUTOMATION_DOS.get(
-      TEST_ENV.AUTOMATION_DOS.idFromName(
-        automationDOName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID, automationId),
-      ),
-    ) as DurableObjectStub<SidekickDO>;
     const agentStub = TEST_ENV.SUBSTREAM_AGENTS.get(
       TEST_ENV.SUBSTREAM_AGENTS.idFromName(
         conversationObjectName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID, workstreamId, "0"),
       ),
     ) as DurableObjectStub<SubstreamAgent>;
-    // A Sidekick holds no sockets of its own, so it has nothing to revoke.
     const targets = [
       {
         name: "WorkspaceDO",
@@ -487,7 +467,6 @@ describe("object retirement", () => {
           await workspaceStub.revokeParentSocketAccess({ parentId: workstreamId, revocation });
         },
       },
-      { name: "SidekickDO", stub: automationStub, revoke: null },
       { name: "SubstreamAgent", stub: agentStub, revoke: () => agentStub.revokeSocketAccess(revocation) },
     ] as const;
 
@@ -524,8 +503,6 @@ describe("object retirement", () => {
   it("fences every callable method on every gated class, and classifies the ones retirement itself needs", () => {
     const gated = [
       { name: "WorkspaceDO", target: WorkspaceDO },
-      { name: "ConversationParentDurableObject", target: ConversationParentDurableObject },
-      { name: "SidekickDO", target: SidekickDO },
       { name: "SubstreamAgent", target: SubstreamAgent },
     ] as const;
 
@@ -552,9 +529,10 @@ describe("object retirement", () => {
 
     // The dispositions the design depends on, pinned by name. Each is a
     // decision a future edit could undo without any test above noticing.
-    // `WorkspaceDO` is on this list because it hosts every Channel and Space
-    // parent; its conversation-parent contract methods are the same doors.
-    for (const target of [ConversationParentDurableObject, SidekickDO, WorkspaceDO]) {
+    // `WorkspaceDO` is on this list because it hosts every Channel, Space and
+    // Sidekick parent; its conversation-parent contract methods are the same
+    // doors.
+    for (const target of [WorkspaceDO]) {
       // The walk's own read, on a parent that may already hold a tombstone.
       expect(retirementDisposition(target, "childrenForRetirement")).toBe("permit");
       // A product enumeration stays refused; the revocation consumer acks it.

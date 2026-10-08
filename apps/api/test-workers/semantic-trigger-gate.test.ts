@@ -31,8 +31,7 @@ import {
   type AutomationDraft,
 } from "@rally/contracts";
 
-import type { AutomationDO } from "../src/durable-objects/automation-do";
-import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
+import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
@@ -40,6 +39,7 @@ import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { writeSidekickRegistrations } from "./helpers/sidekick";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ae0");
 const CONNECTION_ID = "00000000-0000-7000-8000-000000000ae1";
@@ -104,12 +104,6 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-function automation(): DurableObjectStub<AutomationDO> {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
-    automationDOName("global", WORKSPACE_ID, AUTOMATION_ID),
-  ));
-}
-
 async function activate(definition: AutomationDraft): Promise<void> {
   const created = await createAutomation(TEST_ENV, {
     workspaceId: WORKSPACE_ID,
@@ -123,19 +117,11 @@ async function activate(definition: AutomationDraft): Promise<void> {
   // Registrations are written directly rather than through the apply tail, so
   // the activation boundary is set once and the event sequence stays this test's
   // to control.
-  await workspace().applyExternalEventRegistrations({
-    sourceGeneration: await runInDurableObject(automation(), (_instance, state) => state.storage.sql.exec<{ registration_generation: number }>(
-      `UPDATE automation SET registration_generation = registration_generation + 1 WHERE id = 1 RETURNING registration_generation`,
-    ).one().registration_generation),
-    schemaVersion: 1,
-    workspaceId: WORKSPACE_ID,
-    destination: { kind: "automation", automationId: AUTOMATION_ID },
-    evaluators: [{
-      evaluatorId: REGISTRATION_ID,
-      source: { connectorType: "ashby", connectionId: CONNECTION_ID, eventType: EVENT_TYPE },
-      when: { kind: "always" },
-    }],
-  });
+  await writeSidekickRegistrations(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, [{
+    evaluatorId: REGISTRATION_ID,
+    source: { connectorType: "ashby", connectionId: CONNECTION_ID, eventType: EVENT_TYPE },
+    when: { kind: "always" },
+  }]);
 }
 
 /**
@@ -147,7 +133,7 @@ async function activate(definition: AutomationDraft): Promise<void> {
  * plan has already been read.
  */
 async function submitAndApply(definition: AutomationDraft): Promise<void> {
-  await automation().submitDefinition({
+  await workspace().sidekickSubmitDefinition({
     workspaceId: WORKSPACE_ID,
     automationId: AUTOMATION_ID,
     draft: definition,
@@ -165,7 +151,7 @@ async function submitAndApply(definition: AutomationDraft): Promise<void> {
     }),
     submittedByRunId: null,
   });
-  const detail = await runInDurableObject(automation(), (instance: AutomationDO) => instance.apply({
+  const detail = await runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.sidekickApply({
     workspaceId: WORKSPACE_ID,
     automationId: AUTOMATION_ID,
     actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },
@@ -238,8 +224,8 @@ async function admission(eventId: string) {
 }
 
 function runCount(): Promise<number> {
-  return runInDurableObject(automation(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM runs`,
+  return runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+    `SELECT COUNT(*) AS count FROM sidekick_runs WHERE sidekick_id = ?`, AUTOMATION_ID,
   ).one().count);
 }
 
@@ -293,24 +279,16 @@ describe("semantic trigger conditions", () => {
     });
   });
 
-  it("names the conditions a delivery has to judge, and the connector they watch", async () => {
-    await activate(SEMANTIC_DEFINITION);
-    await ingest(EVENT_ID, "event-plan");
-
-    expect(await automation().externalEventAdmissionPlan(await admission(EVENT_ID))).toEqual({
-      kind: "judge",
-      conditions: [CONDITION],
-      connectorType: "ashby",
-    });
-  });
-
-  it("refuses a gated event that arrives with no verdict, and starts no run", async () => {
+  it("refuses a gated event that arrives with no verdict, names what to judge, and starts no run", async () => {
     await activate(SEMANTIC_DEFINITION);
     await ingest(EVENT_ID, "event-unjudged");
 
-    expect(await automation().admitExternalEvent(await admission(EVENT_ID))).toEqual({
+    // The refusal carries the conditions and their connector, so the caller
+    // judges them and asks once more rather than reading a plan first.
+    expect(await workspace().sidekickAdmitExternalEvent(await admission(EVENT_ID))).toEqual({
       admitted: false,
       outcomeCode: "sidekick_semantic_condition_unjudged",
+      judge: { conditions: [CONDITION], connectorType: "ashby" },
     });
     expect(await runCount()).toBe(0);
   });
@@ -319,7 +297,7 @@ describe("semantic trigger conditions", () => {
     await activate(SEMANTIC_DEFINITION);
     await ingest(EVENT_ID, "event-not-met");
 
-    expect(await automation().admitExternalEvent({
+    expect(await workspace().sidekickAdmitExternalEvent({
       ...await admission(EVENT_ID),
       conditionVerdict: { admit: false, code: "condition_not_met", confidence: 0.91, model: "jev-1.13.0" },
     })).toEqual({ admitted: false, outcomeCode: "sidekick_semantic_condition_not_met" });
@@ -330,7 +308,7 @@ describe("semantic trigger conditions", () => {
     await activate(SEMANTIC_DEFINITION);
     await ingest(SECOND_EVENT_ID, "event-met");
 
-    expect(await automation().admitExternalEvent({
+    expect(await workspace().sidekickAdmitExternalEvent({
       ...await admission(SECOND_EVENT_ID),
       conditionVerdict: { admit: true, code: "condition_met", confidence: 0.93, model: "jev-1.13.0" },
     })).toEqual({ admitted: true, outcomeCode: "sidekick_occurrence_admitted" });
@@ -340,7 +318,7 @@ describe("semantic trigger conditions", () => {
   /**
    * Why a verdict does not need to carry what it judged.
    *
-   * The classifier runs between the plan read and the admission, so an `apply`
+   * The classifier runs between the unjudged refusal and the admission, so an `apply`
    * can change the condition while the model call is in flight, keeping the same
    * registration identity — which looks like a window where the object sees the
    * new condition and admits on a verdict for the old one. It is closed, by
@@ -363,7 +341,7 @@ describe("semantic trigger conditions", () => {
     await ingest(FOURTH_EVENT_ID, "event-replanned");
 
     const request = await admission(FOURTH_EVENT_ID);
-    expect(await automation().externalEventAdmissionPlan(request)).toMatchObject({ kind: "judge" });
+    expect(await workspace().sidekickAdmitExternalEvent(request)).toMatchObject({ judge: { conditions: [CONDITION] } });
 
     await submitAndApply({
       ...SEMANTIC_DEFINITION,
@@ -379,7 +357,7 @@ describe("semantic trigger conditions", () => {
 
     // A verdict for the condition that has just been replaced, at the highest
     // confidence the classifier can report: the point is that it cannot admit.
-    expect(await automation().admitExternalEvent({
+    expect(await workspace().sidekickAdmitExternalEvent({
       ...request,
       conditionVerdict: { admit: true, code: "condition_met", confidence: 0.99, model: "jev-1.13.0" },
     })).toEqual({ admitted: false, outcomeCode: "sidekick_event_before_activation_boundary" });
@@ -414,11 +392,7 @@ describe("semantic trigger conditions", () => {
     await ingest(FIFTH_EVENT_ID, "event-unresolved");
 
     const request = await admission(FIFTH_EVENT_ID);
-    expect(await automation().externalEventAdmissionPlan(request)).toEqual({
-      kind: "refuse",
-      outcomeCode: "sidekick_semantic_condition_unresolved",
-    });
-    expect(await automation().admitExternalEvent(request)).toEqual({
+    expect(await workspace().sidekickAdmitExternalEvent(request)).toEqual({
       admitted: false,
       outcomeCode: "sidekick_semantic_condition_unresolved",
     });
@@ -438,7 +412,7 @@ describe("semantic trigger conditions", () => {
     await activate(SEMANTIC_DEFINITION);
     await ingest(SIXTH_EVENT_ID, "event-incoherent");
 
-    expect(await automation().admitExternalEvent({
+    expect(await workspace().sidekickAdmitExternalEvent({
       ...await admission(SIXTH_EVENT_ID),
       conditionVerdict: { admit: true, code: "classifier_unavailable", confidence: null, model: null },
     })).toEqual({ admitted: false, outcomeCode: "sidekick_semantic_classifier_unavailable" });
@@ -450,8 +424,7 @@ describe("semantic trigger conditions", () => {
     await ingest(THIRD_EVENT_ID, "event-deterministic");
 
     const request = await admission(THIRD_EVENT_ID);
-    expect(await automation().externalEventAdmissionPlan(request)).toEqual({ kind: "admit" });
-    expect(await automation().admitExternalEvent(request)).toEqual({
+    expect(await workspace().sidekickAdmitExternalEvent(request)).toEqual({
       admitted: true,
       outcomeCode: "sidekick_occurrence_admitted",
     });

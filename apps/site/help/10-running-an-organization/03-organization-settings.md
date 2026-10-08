@@ -4,8 +4,8 @@ description: Set the Organization's name and time zone, decide where Rally's cod
 ---
 
 A handful of settings apply to everyone in the Organization at once. They live
-in three places in the Settings window: **Organization**, its child page
-**Internet access**, and **Connections**. Everyone can look at them. Only
+in three places in the Settings window: **Organization**, **Security**, and
+**Connections**. Everyone can look at them. Only
 owners and administrators can change them.
 
 ## Organization preferences
@@ -15,13 +15,16 @@ preferences**, says it holds **organization details and defaults shared by
 organization automations**. "Automations" is the old name for Sidekicks; the
 screen has not caught up yet.
 
-It has two rows.
+It has three rows.
 
 - **Organization** shows the Organization's name. It is for reference only:
   there is no control to rename the Organization on this screen.
 - **Default timezone** is the time zone an Organization Sidekick uses when it
   does not name one of its own. Pick one from the list and it saves straight
   away.
+- **Allow Rally access** lets the Rally team help you set up and fix your
+  Organization by signing in as people in it. See
+  [Letting the Rally team in](#letting-the-rally-team-in) below.
 
 The default time zone matters for anything scheduled. A Sidekick set to run "at
 9 every weekday" needs to know whose 9 o'clock. If most of your team is in one
@@ -32,6 +35,28 @@ Your own time zone is a different setting, under **Settings → Account**,
 described in
 [The Settings window](../09-settings-and-shortcuts/01-the-settings-window.md).
 
+## Letting the Rally team in
+
+Sometimes the quickest way for us to help is to see Rally the way one of your
+people sees it: set up a Sidekick for them, check why a connection fails, or
+tidy up a Space. **Allow Rally access** lets the Rally team do that for seven
+calendar days.
+
+Press **Grant access**. The row then counts down how long is left (**6 days
+left**, then hours, then minutes) and shows **Revoke access**. Press **Revoke
+access** at any time and it ends at once, including for anyone on the Rally
+team who is signed in as one of your people at that moment. When the seven
+days run out, the row goes back to **Grant access** by itself.
+
+While access is on, someone on the Rally team can sign in as any member or
+guest of your Organization and act as them, with exactly what that person can
+see and do. What they do shows up as that person. Rally keeps a separate record
+of who on the Rally team started each session.
+
+Only owners and administrators can grant or revoke access. Someone on the Rally
+team signed in as one of your administrators can revoke it, but cannot grant it
+or extend it.
+
 ## Internet access for the Terminal
 
 Rally has its own private computer for running code, the Terminal, which you
@@ -40,10 +65,9 @@ This setting decides where code running on that computer may connect on the
 internet. It is the one setting in this chapter that is mainly about security,
 so read this section slowly.
 
-Open **Settings → Organization → Internet access**. The page is headed
-**Terminal network access**, and its description mentions **Daytona**. Daytona
-is the company that runs the computers behind Rally's Terminal, so wherever
-you read "Daytona" on this page, think "Rally's Terminal".
+Open **Settings → Security** and find **Terminal network access**. The
+Terminal runs on cloud computers, so wherever the page says "cloud computers",
+it means Rally's Terminal.
 
 ### The two choices
 
@@ -84,32 +108,24 @@ built-in list. Under the box, Rally shows how many slots remain, for example
 These domains apply only under **Trusted only**. Switching to **Full internet**
 makes them irrelevant, though Rally remembers them.
 
-### Review and confirm the change
+### Save the change
 
-Changing this setting takes two steps, because it affects everyone's work in
-progress.
-
-1. Make your change, then click **Review network change**.
-2. Rally shows a confirmation, for example **Confirm Trusted only**, with a
-   warning and how many active sandboxes (Terminals currently running) will be
-   stopped.
-3. Open **Review exact before and after targets** to see the approved domains
-   **Before** and **After**, and the **Channels stopped** by the change.
-4. If you want a copy of the new list for your records, click **Download
-   organization domains**. Rally saves it as a text file.
-5. Click **Confirm network change** to apply it, or **Cancel** to back out.
+1. Make your change, then click **Save network change**.
+2. Rally asks **Change network access?** and warns that cloud computers running
+   now may be interrupted.
+3. Click **Continue** to apply it, or **Cancel** to back out.
 
 > [!WARNING]
-> Confirming stops every Terminal that is running in the Organization, in every
-> Channel listed. Rally cancels the work those Terminals are doing, keeps a
-> record of the unsaved changes in each, and does not restart them on its own.
-> Pick a quiet moment, and tell the people in the listed Channels.
+> Continuing stops every Terminal that is running in the Organization. Rally
+> cancels the work those Terminals are doing, keeps a record of the unsaved
+> changes in each, and does not restart them on its own. Terminals that are
+> not running are left as they are, files included. Pick a quiet moment.
 
 Sidekick runs are not stopped. Each run uses the rules that were in place when
 it started.
 
-Next to the **Review network change** button, Rally shows a status badge and a
-**Revision** number, which goes up by one with each change you confirm.
+Next to the **Save network change** button, Rally shows a status badge and a
+**Revision** number, which goes up by one with each change you save.
 
 ### When the Terminal is unavailable
 
@@ -117,7 +133,7 @@ The page may show **Terminal unavailable** with one of two explanations:
 
 - **Temporarily disabled by the regional safety switch.** Rally has switched
   the Terminal off for now, usually while fixing a problem. Try again later.
-- **This regional service has not enabled Daytona Terminal.** The Terminal is
+- **Cloud computer not enabled.** The Terminal is
   not available for your Organization's region.
 
 Either way the controls are greyed out until it comes back.

@@ -26,7 +26,8 @@ the different question of who a work stream is *for*.
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The flat-array cache key and the only typed write boundary for it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | `applyPinnedWorkstreams` derives the new pin positions before handing the list update to the cache boundary. |
 | `apps/desktop/src/renderer/screens/workstream-landing.tsx` | The Space-less root route: resolves to the most recent row, else the composer. |
-| `apps/desktop/src/renderer/lib/workstream-landing.ts` | Shared landing selection and `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` state it carries. |
+| `apps/desktop/src/renderer/lib/sidebar-channel-order.ts` | The order the sidebar draws a Space's Channels in (pins by position, then the reader's sort), and `firstSidebarChannelInSpace`, its top row, for the landing to agree with. The landing applies the same `associativeWorkstreamsForSidebar` rows from `conversation-directory.ts`. |
+| `apps/desktop/src/renderer/lib/workstream-landing.ts` | Shared landing selection and `useOpenFirstWorkstream`, the one way a screen leaves for that route, and the `skipWorkstreamIds` and optional `spaceId` state it carries. |
 
 ### Pinning
 
@@ -57,6 +58,14 @@ same rule whatever the list is filtered to (`channelPinTargets`).
 The section is always drawn once the Organization is open. Empty, it is a
 dashed drop zone reading **Move a channel here to pin it**, which takes the
 accent while a Channel is being dragged; dropping one there pins it.
+
+While an unpinned Channel is dragged over the section, a faded copy of its row
+shows where a release would put it, and the pinned rows after it move down to
+make room. A release pins the Channel into that slot.
+
+On a touch screen the drag starts with the same long press that opens a row's
+menu. A row drag closes that menu and keeps it shut until the next press, and
+the channel list's own menu ignores a long press that lands on a row.
 
 All's order lives in `workspace_pinned_order` (WorkspaceDO migration 87) and
 reaches clients as `pinnedOrder` on the sidebar payload and the Space snapshot.
@@ -122,9 +131,10 @@ screen goes when what it was showing is no longer there to show: an archived
 work stream, note, or project, a deleted automation or archived draft, a work
 stream the reader left, one they marked unread, the not-found screen's way out,
 the end of onboarding, and the main window's hand-off to the Sidekicks window.
-A workspace with nothing in it lands on General's dashboard, or on an empty
-state for a guest, who has no Space directory. The composer is reached by the
-sidebar's creation dialog alone, which names the Space the Channel starts in.
+A workspace with nothing in it lands on starting a Channel in General, or on an
+empty state for a guest, who has no Space directory. The composer is reached by
+the sidebar's **New channel**, or by a Space with no Channel to open, and
+always names the Space the Channel starts in.
 The `workstreams/new` and `automations/new` deep links name no Space, so they
 open the app rather than a composer. The macOS status menu no longer offers
 one — see [`menu-bar.md`](menu-bar.md).
@@ -448,6 +458,99 @@ Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
+
+### 2026-10-08 — A touch drag no longer opens the row menus over itself
+
+**What changed:** A row's menu and the channel list's empty-space menu are
+now controlled. A row's menu closes when the row is dragged and refuses to open
+until the next press; the list's menu refuses to open for a press that began on
+a row, link or button.
+
+**Why:** In Safari on iPhone a long press on a channel lifted it into a drag
+and also opened two menus: the row's own and the list's "Start New Channel".
+Radix opens a context menu 700ms into a touch press and cancels only on a
+pointer move, up or cancel, none of which iOS sends the page when it starts a
+native drag. The list's check for "a row has its own menu" ran only on
+`contextmenu`, which a touch long press never fires. With a modal menu open
+the rest of the page ignores the pointer, so the drag found no drop target and
+the Pinned placeholder never appeared.
+
+**Considered and rejected:** Turning the drag off on touch screens and leaving
+Pin in the menu as the touch path. It removes a gesture iPad users expect.
+Calling `preventDefault` on the list's touch `pointerdown`, which makes Radix
+skip its timer: it cancels every tap on a row too, and WebKit ties a tap's
+`click` and gestures to that event. Sending a synthetic `pointercancel` and
+Escape to the uncontrolled menus worked in tests but leaned on Radix
+internals.
+
+**Consequences:** Both menus own their `open` state now; anything else that
+opens or closes them has to go through it. Not yet confirmed on a device:
+iOS's timing of the drag start against the 700ms timer was inferred from a
+screenshot.
+
+Shipped in juno-ai-labs/avalon#1169, a follow-up to juno-ai-labs/avalon#1166.
+
+### 2026-10-07 — Pinned holds a slot open for a Channel dragged into it
+
+**What changed:** Dragging an unpinned Channel over **Pinned** now draws a
+faded copy of it where it would land and pushes the pinned rows below aside. A
+release pins it there: the pin, then a reorder unless the slot is the end of a
+Space's run.
+
+**Why:** The drop zone only said "pin". With pins already present the reader
+could not tell where the Channel would land, and it always landed at the end,
+which then needed a second drag. Reordering inside the section already showed
+the row in place, so a drag in from outside read as a cruder action.
+
+**Considered and rejected:** A pin-and-place endpoint that takes the slot.
+Two existing writes cover it, and a release at the end of a Space's run, the
+common case, still costs one.
+
+**Consequences:** The placeholder carries no `data-workstream-id`, so the
+reveal effect and the slot lookups never mistake it for a pinned row; keep it
+that way. Keep the preview order from the release until the pin lands, or the
+new row flashes at the end first. Under All an end drop must still save the
+order, because an unpin leaves the Channel in All's saved order. A second pin
+to the same Space issued while the first is in flight supersedes its response,
+and the first Channel then stays at the end; this was accepted rather than
+serializing the two writes.
+
+Shipped in juno-ai-labs/avalon#1166.
+
+### 2026-10-07 — Leaving a Channel lands on its Space's top sidebar row
+
+**What changed:** Leaving a Channel's Main now opens the row the sidebar draws
+first in that Space: its first pin, or else the first Channel under the
+reader's sort, opened the way that row opens (a Breakout when Main is not the
+reader's). A Space the leave emptied opens on starting a Channel there. The
+Space is the sidebar's filter when the Channel is in it, otherwise the
+Channel's first Space, and the destination carries `?space=` so the sidebar
+selects it and the landed row is the top row on screen. The sidebar's order moved into
+`sidebar-channel-order.ts` and the conversation directory's row rule into
+`conversation-directory.ts`, so the sidebar and the landing read one copy.
+
+**Why:** Leaving a personal Channel left the reader on "Channel could not be
+opened". The server closes the leaver's socket before it answers the DELETE,
+and that close evicts the cached detail; the leave handler read the scope from
+the cache in `onSuccess`, found nothing, and never left the route. It now
+snapshots the scope and Space in `onMutate`, before the request. The landing's
+old answer, the most recent Channel across the Organization, also dropped the
+reader out of the Space they were working in.
+
+**Considered and rejected:** Keeping the detail through the revocation.
+Evicting on revoke is the access boundary in `docs/access-revocation.md`, and
+the leave only needs two facts it already had. A recency-only pick inside the
+Space was the first cut; it disagreed with the sidebar whenever a pin or an
+A–Z sort put another row on top, which is what "first channel" means to the
+reader.
+
+**Consequences:** A Space landing waits for that Space's whole list, as the
+sidebar does, because its first pin can sit on a later page than a row that
+matches. Any new reader of "the top row" must call `firstSidebarChannelInSpace`
+rather than sort on its own. Leaving an Organization-wide Channel still stays
+put, since the reader keeps read access.
+
+Shipped in juno-ai-labs/avalon#1141.
 
 ### 2026-10-02 — All's Pinned section keeps an order of its own, and is always there
 

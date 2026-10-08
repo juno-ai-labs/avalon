@@ -66,7 +66,7 @@ import type {
   BindLoopTransition,
   BindProviderBoundary,
 } from "./bind-loop-projection";
-import { modelDefaultReasoningEffort } from "./model-inference-defaults";
+import { reasoningEffortFor } from "./model-inference-defaults";
 
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
@@ -850,8 +850,7 @@ export class OpenRouterClient {
                 trace: { ...builtTracePayload.trace, trace_id: traceId },
               }
             : undefined;
-          const reasoningEffort = input.reasoningEffort
-            ?? modelDefaultReasoningEffort(model);
+          const reasoningEffort = reasoningEffortFor(model, input.reasoningEffort);
           const reasoning = structuredReasoning(reasoningEffort);
           const requestPayload = serializeOpenRouterChatRequest({
             model,
@@ -1136,7 +1135,7 @@ export class OpenRouterClient {
         max_total_results: input.maxWebResults ?? 8
       });
     }
-    const reasoningEffort = input.reasoningEffort ?? modelDefaultReasoningEffort(model);
+    const reasoningEffort = reasoningEffortFor(model, input.reasoningEffort);
     try {
       const requestPayload = serializeOpenRouterChatRequest({
         model,
@@ -3970,6 +3969,13 @@ export interface RunHarnessInput {
     signal: AbortSignal,
   ) => Promise<ReadonlyMap<string, AzureModelPricing>>;
   systemPrompt: string;
+  /**
+   * Text the run's principal supplied for the turns they start, appended last
+   * to the system message of every model turn. The compaction summariser never
+   * sees it: its summary becomes the loop's shared checkpoint, which other
+   * participants' runs read.
+   */
+  principalSystemSection?: string;
   messages: ModelMessage[];
   /** Exact durable head to resume. Absent only when this loop has never started. */
   bindLoopProjection?: BindLoopProjectionState | null;

@@ -114,6 +114,13 @@ export const RALLY_HEADERS = Object.freeze({
   SOCKET_ADMISSION_MEMBERSHIP_VERSION: "x-rally-socket-admission-membership-version",
   SOCKET_ANALYTICS_WORKSPACE_ID: "x-rally-socket-analytics-workspace-id",
   SOCKET_AFTER_SEQUENCE: "x-rally-socket-after-sequence",
+  /**
+   * The Rally staff member behind a support session (`docs/impersonation.md`),
+   * signed into the socket ticket and forwarded to the object on upgrade so
+   * the socket skips the person's read, unseen and presence writes and audits
+   * its own. Internal only; the edge strips every inbound spelling first.
+   */
+  SOCKET_IMPERSONATOR_ID: "x-rally-socket-impersonator-id",
   SOCKET_SPECULATIVE: "x-rally-socket-speculative",
   SOCKET_TICKET_EXPIRES_AT: "x-rally-socket-ticket-expires-at",
   SOCKET_TICKET_ID: "x-rally-socket-ticket-id",

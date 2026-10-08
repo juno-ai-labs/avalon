@@ -1,5 +1,6 @@
 import {
   WorkspaceSyncTopicSchema,
+  asUserId,
   asWorkspaceId,
   type WorkspaceSyncTopic,
 } from "@rally/contracts";
@@ -23,6 +24,22 @@ export interface WorkspaceSyncDetail {
   audienceUserIds?: readonly string[];
   /** The connection the change was to: its owner hears of it when it is personal, everyone when it is not. */
   connectionId?: string;
+}
+
+/** Seat a member who just accepted their invitation in the Spaces that listed its address. */
+export async function seatSpaceInvitee(env: Env, workspaceId: string, userId: string, email: string): Promise<string[]> {
+  const placementAffinity = await workspacePlacementAffinity(env, workspaceId);
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    workspaceId,
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+    placementAffinity,
+  );
+  const result = await workspace.seatSpaceInvitee({
+    workspaceId: asWorkspaceId(workspaceId), userId: asUserId(userId), email: email.toLowerCase(),
+  });
+  return result.seatedSpaceIds;
 }
 
 /** Publish one durable, replayable invalidation through the workspace control plane. */
@@ -137,12 +154,16 @@ export function workspaceSyncPublicationsForMutation(
   // A person's own onboarding journey; the Organization's profile is
   // `PATCH /workspace`.
   if (pathname === "/workspace/onboarding") return [{ topics: ["workspace_profile"], audience: ACTOR }];
+  // A person's own display preferences, for their other windows.
+  if (pathname === "/workspace/me/preferences") return [{ topics: ["viewer_preferences"], audience: ACTOR }];
   if (pathname === "/workspace/me") return organization("workspace_profile", "member_directory");
   if (pathname.startsWith("/workspace/terminal")) return organization("terminal_policy");
   if (pathname.startsWith("/workspace/invitations")) {
     return organization("member_directory", "invitation_directory");
   }
   if (pathname === "/workspace") return organization("workspace_profile");
+  // Rally access is shown beside the profile, to every administrator.
+  if (pathname === "/workspace/support-access") return organization("workspace_profile");
   if (pathname === "/connections" || pathname.startsWith("/connections/")) return connectionPublications(pathname);
   // A digest belongs to one person (`routes/digest.ts`).
   if (pathname.startsWith("/digest")) return [{ topics: ["digest_schedule"], audience: ACTOR }];

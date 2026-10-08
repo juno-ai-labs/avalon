@@ -21,37 +21,30 @@ interface MembershipAddress {
 }
 
 /**
- * Put a Channel in a Space's membership without asking the Channel's
- * conversation for the audience it implies.
+ * Put a Channel in a Space's membership without the sidebar-visibility gate
+ * `addSpaceChannel` takes.
  *
  * For suites whose subject is what the Organization does with a membership
  * (the directories, the dashboards, the reach it gives, the defaults it
- * stages) rather than how a Channel's audience changes; those suites address
- * Channels that have no conversation behind them. `space-routes.test.ts` proves
- * the product path, `addSpaceChannel`, end to end. This writes the rows that
- * path's settlement writes, through the same storage calls, and makes the same
- * publications.
+ * stages); those suites address Channels that have no directory row behind
+ * them. `space-routes.test.ts` and `space-authority.test.ts` prove the product
+ * path, `addSpaceChannel`, end to end. This runs the same single-transaction
+ * storage write that path runs and makes the same publications.
  */
 export async function placeMembership(
   stub: DurableObjectStub<WorkspaceDO>,
   address: MembershipAddress,
-): Promise<{ space: SpaceSummary; membershipGeneration: number }> {
+): Promise<{ space: SpaceSummary }> {
   return runInDurableObject(stub, (instance) => {
     const internals = instance as unknown as SpaceInternals;
-    const storage = internals.spaceStorage();
-    const plan = storage.prepareMembership(address);
-    if (!plan.ok) throw new Error(`prepareMembership refused: ${plan.code}`);
-    const space = storage.finalizeMembership({
-      ...address, spaceRevision: plan.space.revision, membershipGeneration: plan.membershipGeneration,
-    });
-    if (space === "conflict" || space === false) throw new Error(`finalizeMembership refused: ${String(space)}`);
-    storage.stageDefaultsForMember(address.spaceId, address.workstreamId, plan.membershipGeneration, address.userId);
+    const result = internals.spaceStorage().addMembership(address);
+    if (!result.ok) throw new Error(`addMembership refused: ${result.code}`);
     internals.publishSpaceSnapshot();
     internals.publishSpaceConversationsChanged({
       spaceIdsThroughChannel: new Map([[address.workstreamId, [address.spaceId]]]),
     });
     internals.deferSpaceMembershipConvergence(address.workspaceId, address.workstreamId, false);
-    return { space, membershipGeneration: plan.membershipGeneration };
+    return { space: result.space };
   });
 }
 
@@ -62,19 +55,14 @@ export async function removeMembership(
 ): Promise<SpaceSummary> {
   return runInDurableObject(stub, (instance) => {
     const internals = instance as unknown as SpaceInternals;
-    const storage = internals.spaceStorage();
-    const plan = storage.prepareMembershipRemoval(address);
-    if (!plan.ok) throw new Error(plan.code);
-    const space = storage.finalizeMembershipRemoval({
-      ...address, spaceRevision: plan.space.revision, membershipGeneration: plan.membershipGeneration,
-    });
-    if (space === false) throw new Error("space_not_found");
+    const result = internals.spaceStorage().removeMembership(address);
+    if (!result.ok) throw new Error(result.code);
     internals.publishSpaceSnapshot();
     internals.publishSpaceConversationsChanged({
       spaceIdsThroughChannel: new Map([[address.workstreamId, [address.spaceId]]]),
     });
     internals.deferSpaceMembershipConvergence(address.workspaceId, address.workstreamId, true);
-    return space;
+    return result.space;
   });
 }
 

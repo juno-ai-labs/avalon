@@ -1,12 +1,12 @@
 import { newId } from "@rally/db";
-import { asAutomationId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import type {
   ConversationParentAuthorizeViewerRequest,
   ConversationParentAuthorizeViewerResult,
   ConversationParentKind,
 } from "@rally/contracts/conversation-parent";
 
-import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -78,16 +78,11 @@ export class ConversationService {
         ...(hosted.viewer ? { decision: hosted.viewer } : {}),
       };
     }
-    if (hosted.kind === "space") throw new ApiError(404, "conversation_not_found", "Conversation not found");
-    const automation = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_DOS,
-      this.auth.workspaceId,
-      automationDOName(this.env.AVALON_REGION, this.auth.workspaceId, asAutomationId(parentId)),
-    );
-    const asAutomation = await automation.authority({ workspaceId: this.auth.workspaceId, parentId });
-    if (asAutomation.exists) {
-      return { parent: { kind: "automation", id: parentId, membershipVersion: 0, ...asAutomation } };
+    if (hosted.kind === "automation") {
+      return {
+        parent: { kind: "automation", id: parentId, membershipVersion: 0, ...hosted.authority },
+        ...(hosted.viewer ? { decision: hosted.viewer } : {}),
+      };
     }
     throw new ApiError(404, "conversation_not_found", "Conversation not found");
   }
@@ -110,7 +105,7 @@ export class ConversationService {
     };
     const resolved = await this.resolveParentFor(parentId, viewer);
     const parent = resolved.parent;
-    // A hosted Channel answered in the resolve; a Sidekick parent is asked now.
+    // The Organization object answered in the resolve, for every kind it hosts.
     const decision: ConversationParentAuthorizeViewerResult = resolved.decision
       ?? await this.parentStub(parent).then((stub) => stub.authorizeViewer({
         workspaceId: this.auth.workspaceId,
@@ -321,15 +316,8 @@ export class ConversationService {
   }
 
   private async parentStub(parent: ResolvedConversationParent) {
+    void parent;
     const workspaceId = asWorkspaceId(this.auth.workspaceId);
-    if (parent.kind === "automation") {
-      return durableObjectStubForWorkspace(
-        this.env,
-        this.env.AUTOMATION_DOS,
-        workspaceId,
-        automationDOName(this.env.AVALON_REGION, workspaceId, asAutomationId(parent.id)),
-      );
-    }
     return durableObjectStubForWorkspace(
       this.env,
       this.env.WORKSPACE_DOS,

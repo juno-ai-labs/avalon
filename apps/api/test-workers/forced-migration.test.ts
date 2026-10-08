@@ -16,13 +16,13 @@ import "../../../tests/isolated-region";
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { asAutomationId, asWorkspaceId } from "@rally/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import type {
   DurableObjectMigrationCommand,
   DurableObjectMigrationReport,
 } from "@rally/contracts/durable-object-migrations";
 
-import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
+import { workspaceDOName } from "../src/durable-objects/names";
 import {
   latestMigrationVersion,
   reportForcedMigration,
@@ -141,7 +141,7 @@ describe("forceMigration", () => {
   it("cannot address an object through another class's namespace", async () => {
     await expect(applyMigrationCommand(env, command({
       objectId: workspaceObjectId("02"),
-      className: "SidekickDO",
+      className: "SubstreamAgent",
     }))).rejects.toThrow(/not valid for this namespace/u);
   });
 
@@ -164,7 +164,7 @@ describe("forceMigration", () => {
     await runInDurableObject(stub, async (instance) => {
       await expect(instance.forceMigration(command({
         objectId: workspaceObjectId("03"),
-        className: "SidekickDO",
+        className: "SubstreamAgent",
       }))).rejects.toThrow(/durable_object_migration_command_class_mismatch/u);
 
       await expect(instance.forceMigration(command({
@@ -175,18 +175,7 @@ describe("forceMigration", () => {
 
   it("has a dispatcher for every class the tracker may name", () => {
     expect(Object.keys(migrationCommandDispatchers(env)).sort())
-      .toEqual(["AutomationDO", "SidekickDO", "SubstreamAgent", "WorkspaceDO"]);
-  });
-
-  it("accepts renamed and already-queued legacy Sidekick migration commands", async () => {
-    const objectId = env.AUTOMATION_DOS.idFromName(automationDOName("global", asWorkspaceId("00000000-0000-7000-8000-000000000001"), asAutomationId("00000000-0000-7000-8000-000000000002"))).toString();
-    for (const className of ["AutomationDO", "SidekickDO"]) {
-      const result = await applyMigrationCommand(env, command({ className, objectId }));
-      expect(result).toMatchObject({ className: "SidekickDO", schemaVersion: MIGRATION_COMMAND_HEADS.SidekickDO });
-      const delivery = batch([command({ className, objectId })]);
-      await consumeMigrationCommandQueue(delivery.batch, env);
-      expect(delivery.messages[0]).toMatchObject({ acked: true, retried: false });
-    }
+      .toEqual(["SubstreamAgent", "WorkspaceDO"]);
   });
 
   it("refuses a class this Worker does not deploy", async () => {
@@ -326,7 +315,7 @@ describe("consumeMigrationCommandQueue", () => {
    * applied successfully could not give — the consumer would ack either way.
    */
   it("drops a command addressed to the other region rather than rerouting it", async () => {
-    const foreign = env.AUTOMATION_DOS.idFromName("global:not-this-namespace").toString();
+    const foreign = env.SUBSTREAM_AGENTS.idFromName("global:not-this-namespace").toString();
     const delivery = batch([command({ region: "enterprise", objectId: foreign })]);
     await consumeMigrationCommandQueue(delivery.batch, env);
 
@@ -334,11 +323,14 @@ describe("consumeMigrationCommandQueue", () => {
   });
 
   it("acknowledges a command for a deleted class instead of retrying it", async () => {
-    // A run dispatched before WorkstreamDO and SpaceDO were deleted can still
-    // be queued after; no binding can ever apply it.
+    // A run dispatched before WorkstreamDO, SpaceDO and SidekickDO were
+    // deleted can still be queued after; no binding can ever apply it.
+    // AutomationDO is SidekickDO's earlier name, which old commands carry.
     const delivery = batch([
       command({ className: "WorkstreamDO", objectId: workspaceObjectId("05") }),
       command({ className: "SpaceDO", objectId: workspaceObjectId("06") }),
+      command({ className: "SidekickDO", objectId: workspaceObjectId("07") }),
+      command({ className: "AutomationDO", objectId: workspaceObjectId("08") }),
     ]);
     await consumeMigrationCommandQueue(delivery.batch, env);
 

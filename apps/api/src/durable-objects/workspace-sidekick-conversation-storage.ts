@@ -191,6 +191,31 @@ export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope
   return scoped;
 }
 
+/**
+ * The conversation whose admission stands for `target` within `scope`.
+ *
+ * A Breakout has full access to its Channel's Main, so in a Breakout's scope
+ * Main is admitted by the Breakout itself: a Breakout member who cannot open
+ * the Channel still reads what was said there. Breakout membership does not
+ * require the Channel, so this is what lets a Breakout's agent use the
+ * Channel it was branched from at all for such a member. Every other target
+ * is admitted as itself.
+ *
+ * Read access only: a Breakout loop is offered list and read, never post. A
+ * post offered to it later must not take this path, or a member outside the
+ * Channel could post to Main.
+ */
+export function admissionAddress(
+  scope: ConversationToolScope,
+  target: Pick<ConversationAddress, "parentId" | "substreamId">,
+): Pick<ConversationAddress, "parentId" | "substreamId"> {
+  if (scope.kind === "conversation" && scope.substreamId !== "0"
+    && target.parentId === scope.parentId && target.substreamId === "0") {
+    return { parentId: scope.parentId, substreamId: scope.substreamId };
+  }
+  return target;
+}
+
 export type ReferenceMatch<T> =
   | { outcome: "found"; conversation: T }
   | { outcome: "ambiguous"; matches: T[] }

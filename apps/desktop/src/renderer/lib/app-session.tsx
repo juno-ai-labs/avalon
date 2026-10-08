@@ -10,7 +10,7 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { AccountOnboarding, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
+import type { AccountOnboarding, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 import {
@@ -30,6 +30,8 @@ import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { CollaborationSessionProvider, shellCapabilities, type ConnectorSetupCapability, type PendingConnectorOAuth } from './collaboration-session';
 export type { PendingConnectorOAuth } from './collaboration-session';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
+import { workspaceFromSession } from './session-workspace';
+import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
 import { markDeepLinkWorkstreamNavigation } from './deep-link-navigation';
 import { clearAllLocalCache, clearWorkspaceLocalCache } from './local-cache';
@@ -113,6 +115,9 @@ export interface AppSessionValue {
   setWorkspaceName: (name: string) => void;
   editWorkspaceSetup: () => void;
   pendingInvitation: PendingInvitation | null;
+  /** An access request the menu bar asked the main window to decide; see `AccessRequestDialog`. */
+  pendingAccessRequestId: string | null;
+  clearPendingAccessRequest: () => void;
   pendingConnectorOAuth: PendingConnectorOAuth | null;
   updateCurrentUserName: (name: string) => void;
   setPendingConnectorOAuth: (attempt: PendingConnectorOAuth | null) => void;
@@ -147,6 +152,17 @@ export interface AppSessionValue {
   signOut: () => Promise<void>;
   signOutIfCredentialCleared: () => Promise<void>;
   surrenderActiveWorkspace: () => Promise<void>;
+  /**
+   * Rally staff support access (`docs/impersonation.md`). The Organization
+   * list is `null` for anybody who is not Rally staff, and rejects only on a
+   * failure worth retrying.
+   * Starting a session makes the chosen person's view the active one, and
+   * ending it returns to the Organization used before.
+   */
+  listSupportWorkspaces: () => Promise<SupportWorkspace[] | null>;
+  listSupportPeople: (workspaceId: string) => Promise<SupportPerson[]>;
+  startSupportSession: (target: { region: Region; workspaceId: string }, userId: string) => Promise<void>;
+  endSupportSession: () => Promise<void>;
   clearDeepLinkError: () => void;
 }
 
@@ -180,6 +196,10 @@ export type AppSessionDesktopBridge = Pick<
   | 'reselectActiveWorkspace'
   | 'showDeepLinkError'
   | 'surrenderActiveWorkspace'
+  | 'listSupportWorkspaces'
+  | 'listSupportPeople'
+  | 'startSupportSession'
+  | 'endSupportSession'
 >;
 
 function configuredApiBase(runtime: RuntimeConfig, region: Region): string {
@@ -219,12 +239,22 @@ function sessionsShareDraftScope(
     && (previousSession.workspace?.id ?? null) === (nextSession.workspace?.id ?? null);
 }
 
+/**
+ * Send the main window home when a support session ends. Settings and the
+ * other auxiliary windows route by hash under a `?surface=`, so they keep
+ * their own route.
+ */
+function leaveSupportRoute(): void {
+  if (!new URLSearchParams(window.location.search).has('surface')) window.location.hash = '/';
+}
+
 export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.Element {
   const [runtime, setRuntime] = useState<RuntimeConfig | null>(null);
   const [region, setRegion] = useState<Region | null>(() => readDevicePreferences().selectedRegion ?? null);
   const [workspaceName, setWorkspaceNameState] = useState(() => readDevicePreferences().workspaceName ?? '');
   const [session, setSession] = useState<DesktopSession | null>(null);
   const [pendingInvitation, setPendingInvitation] = useState<PendingInvitation | null>(null);
+  const [pendingAccessRequestId, setPendingAccessRequestId] = useState<string | null>(null);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const pendingConnectorOAuthRef = useRef(pendingConnectorOAuth);
   pendingConnectorOAuthRef.current = pendingConnectorOAuth;
@@ -244,8 +274,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
   const sessionRef = useRef<DesktopSession | null>(null);
   sessionRef.current = session;
-  /** The workspace a menu switch is in the middle of landing; see the session-changed listener. */
-  const pendingActivationRef = useRef<{ region: Region; workspaceId: string } | null>(null);
+  /** The workspace a switch or a creation is in the middle of landing; see the
+   * session-changed listener. A creation's `workspaceId` is `null`. */
+  const pendingActivationRef = useRef<{
+    region: Region;
+    workspaceId: string | null;
+    /** The last broadcast held for this mark, for a creation that fails to apply. */
+    held?: DesktopSession;
+  } | null>(null);
   /** Whoever is waiting on the browser sign-in this renderer last started, and the attempt it is waiting on. */
   const pendingAccountSignInRef = useRef<{
     attemptId: string;
@@ -327,13 +363,25 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // make the switch look like a session change that already happened.
     const pending = pendingActivationRef.current;
     if (
-      pending && nextSession?.workspace
-      && nextSession.workspace.id === pending.workspaceId && nextSession.workspace.region === pending.region
+      pending && nextSession?.workspace && nextSession.workspace.region === pending.region
+      // A creation does not know its workspace's id until main answers, so it
+      // holds any other workspace in the region it asked for; a renewal of the
+      // one on screen passes, since a browser sign-in can keep a creation
+      // waiting for minutes. Its own answer is main's active session, and a
+      // failed creation applies the last broadcast it held.
+      && (pending.workspaceId === null
+        ? nextSession.workspace.id !== sessionRef.current?.workspace?.id
+        : nextSession.workspace.id === pending.workspaceId)
     ) {
+      pending.held = nextSession;
       return;
     }
     const previousSession = sessionRef.current;
     sessionRef.current = nextSession;
+    // A support session that ended underneath the window (revoked, expired,
+    // or ended in another window) leaves a route into somebody else's
+    // Organization; start over from the root of the one now in front.
+    if (previousSession?.impersonator && previousSession.user.id !== nextSession?.user.id) leaveSupportRoute();
     if (!sessionsShareCacheScope(previousSession, nextSession)) queryClient.clear();
     setSession(nextSession);
     if (nextSession) {
@@ -500,28 +548,41 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
    * open in the previous workspace must not be looked up in the next one.
    * The feature flags ride across the same way so the account menu keeps its
    * shape while the new workspace's answer is on its way.
+   *
+   * The record is fetched first only for a session that cannot describe the
+   * workspace; otherwise the session is the shell's placeholder. The account's
+   * onboarding state (identity-scoped) rides with the flags, except across a
+   * creation that could make an ineligible account eligible.
    */
   const applyActivatedSession = useCallback(async (
     nextSession: DesktopSession,
     previous: DesktopSession | null,
+    landing: 'activation' | 'creation' = 'activation',
   ): Promise<void> => {
     const target = nextSession.workspace;
+    // A support session can be the same Organization as somebody else, which
+    // is a different view of it all the same.
     const workspaceChanged = !target || !previous?.workspace
-      || previous.workspace.id !== target.id || previous.workspace.region !== target.region;
-    const prefetched = target
+      || previous.workspace.id !== target.id || previous.workspace.region !== target.region
+      || previous.user.id !== nextSession.user.id;
+    const prefetched = target && !workspaceFromSession(nextSession)
       ? await new RallyApi(nextSession.apiBaseUrl, nextSession).getWorkspace().catch(() => null)
       : null;
     const flags = queryClient.getQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY);
+    const accountKey = accountOnboardingQueryKey(nextSession.user.email);
+    const held = previous?.user.email === nextSession.user.email
+      ? queryClient.getQueryData<AccountOnboarding>(accountKey)
+      : undefined;
+    const account = landing === 'creation' && held?.eligible !== true ? undefined : held;
     if (workspaceChanged) window.location.hash = '/';
     applySession(nextSession);
     if (prefetched && target) {
       queryClient.setQueryData(['workspace', target.id, nextSession.user.id], prefetched);
     }
-    if (flags !== undefined) {
-      // Carried, not trusted: stamped stale so the new workspace's own answer
-      // replaces it on the first render that asks.
-      queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, flags, { updatedAt: 0 });
-    }
+    // Carried, not trusted: stamped stale so the new workspace's own answer
+    // replaces each on the first render that asks.
+    if (flags !== undefined) queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, flags, { updatedAt: 0 });
+    if (account !== undefined) queryClient.setQueryData(accountKey, account, { updatedAt: 0 });
   }, [applySession, queryClient]);
 
   const activateWorkspace = useCallback(async (
@@ -557,6 +618,34 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (pendingActivationRef.current === activation) pendingActivationRef.current = null;
     }
   }, [applyActivatedSession, bridge, withAccountIdentity]);
+
+  const startSupportSession = useCallback(async (
+    { region: targetRegion, workspaceId }: { region: Region; workspaceId: string },
+    userId: string,
+  ): Promise<void> => {
+    const previous = sessionRef.current;
+    // Held like an activation, so main's broadcast does not tear the shell
+    // down before the chosen person's view is ready to draw.
+    const activation = { region: targetRegion, workspaceId };
+    pendingActivationRef.current = activation;
+    try {
+      await applyActivatedSession(await bridge.startSupportSession({ workspaceId, userId }), previous);
+    } finally {
+      if (pendingActivationRef.current === activation) pendingActivationRef.current = null;
+    }
+  }, [applyActivatedSession, bridge]);
+
+  const endSupportSession = useCallback(async (): Promise<void> => {
+    const ending = sessionRef.current;
+    const nextSession = await bridge.endSupportSession();
+    // What the staff member saw as somebody else does not stay on this device.
+    if (ending?.impersonator && ending.workspace) {
+      await clearWorkspaceLocalCache(ending.user.id, ending.workspace.region, ending.workspace.id);
+    }
+    leaveSupportRoute();
+    queryClient.clear();
+    applySession(nextSession);
+  }, [applySession, bridge, queryClient]);
 
   const acceptInvitation = useCallback(async (
     invitationRegion: Region,
@@ -605,12 +694,35 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     if (normalized.length < 2) throw new Error('Enter an organization name with at least two characters.');
     setDeviceWorkspaceName(normalized);
     setWorkspaceNameState(normalized);
-    const nextSession = await withAccountIdentity(
-      () => bridge.createWorkspace({ region: selectedRegion, name: normalized, operationId }),
-      progress,
-    );
-    applySession(nextSession);
-  }, [applySession, bridge, withAccountIdentity]);
+    // Landed the way a switch lands. Without the mark, main's broadcast of the
+    // new workspace reached the listener before this call returned, cleared
+    // the cache and remounted the shell on the previous workspace's route,
+    // with the flags and the account's onboarding state gone.
+    const creation: { region: Region; workspaceId: null; held?: DesktopSession } = {
+      region: selectedRegion, workspaceId: null,
+    };
+    pendingActivationRef.current = creation;
+    try {
+      const nextSession = await withAccountIdentity(
+        () => bridge.createWorkspace({ region: selectedRegion, name: normalized, operationId }),
+        progress,
+      );
+      // What is on screen now, not when the creation began: a renewal may
+      // have landed while it waited.
+      await applyActivatedSession(nextSession, sessionRef.current, 'creation');
+    } catch (error) {
+      // A creation holds every broadcast in its region, so a workspace another
+      // window activated there meanwhile was held for this call's answer. A
+      // failed creation has no answer: that broadcast is main's session now.
+      if (creation.held && pendingActivationRef.current === creation) {
+        pendingActivationRef.current = null;
+        applySession(creation.held);
+      }
+      throw error;
+    } finally {
+      if (pendingActivationRef.current === creation) pendingActivationRef.current = null;
+    }
+  }, [applyActivatedSession, applySession, bridge, withAccountIdentity]);
 
   /**
    * Drafted text and cached attachment bytes are workspace content, so a device
@@ -634,13 +746,25 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // discard the draft the last run left behind.
     if (previousSession && !sessionsShareDraftScope(previousSession, session)) {
       abandonPendingWorkstreamFeedOpen();
-      const sameAccount = session?.user.email.toLocaleLowerCase('en-US')
-        === previousSession.user.email.toLocaleLowerCase('en-US');
+      // The account is who signed in to this device: on a support session, the
+      // Rally staff member rather than the person shown.
+      const account = (value: DesktopSession) => (value.impersonator?.email ?? value.user.email).toLocaleLowerCase('en-US');
+      const sameAccount = session !== null && account(session) === account(previousSession);
       // The local cache is workspace content too — transcripts, not just the
       // sentence being typed — and leaves the device on the same transition.
       if (!sameAccount) {
         void clearAllDrafts();
         void clearAllLocalCache();
+      } else {
+        // Entering or leaving a support session keeps the staff member's own
+        // drafts elsewhere, but drafts are keyed by Organization and
+        // conversation, not person: those in the support Organization go, so
+        // nobody's unsent text is restored to, or sent as, somebody else.
+        for (const side of [previousSession, session]) {
+          if (!side.impersonator || !side.workspace) continue;
+          void clearWorkspaceDrafts(side.workspace.region, side.workspace.id);
+          void clearWorkspaceLocalCache(side.user.id, side.workspace.region, side.workspace.id);
+        }
       }
     }
     if (!legacyDraftMigrationStarted.current && session?.workspace) {
@@ -1017,6 +1141,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         }
         return;
       }
+      if (intent.kind === 'access-request') {
+        const openRequest = (): void => {
+          setDeepLinkError(null);
+          setPendingAccessRequestId(intent.requestId);
+        };
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, openRequest);
+        else if (requireActiveWorkspace('Sign in before answering this access request.')) openRequest();
+        return;
+      }
       if (intent.kind === 'invitation') {
         setPendingInvitation({ token: intent.token, region: intent.region });
         setDeepLinkError(null);
@@ -1057,7 +1190,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
               queryClient.invalidateQueries({ queryKey: ['automation'] }),
             ]);
             const stayInPlace = pendingMatches
-              && (pending.source === 'onboarding' || pending.source === 'conversation');
+              && pending.source === 'conversation';
             if (intent.target && !stayInPlace) await bridge.openSettings('connections');
           } else {
             reportDeepLinkFailure(
@@ -1224,6 +1357,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       setWorkspaceName,
       editWorkspaceSetup,
       pendingInvitation,
+      pendingAccessRequestId,
+      clearPendingAccessRequest: () => setPendingAccessRequestId(null),
       pendingConnectorOAuth,
       setPendingConnectorOAuth,
       updateCurrentUserName,
@@ -1249,6 +1384,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       signOut,
       signOutIfCredentialCleared,
       surrenderActiveWorkspace,
+      listSupportWorkspaces: () => bridge.listSupportWorkspaces(),
+      listSupportPeople: (workspaceId: string) => bridge.listSupportPeople(workspaceId),
+      startSupportSession,
+      endSupportSession,
       clearDeepLinkError: () => setDeepLinkError(null),
     }),
     [
@@ -1268,6 +1407,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       finishWorkspaceSetup,
       getOnboardingState,
       pendingInvitation,
+      pendingAccessRequestId,
       pendingConnectorOAuth,
       updateCurrentUserName,
       invitationApi,
@@ -1279,6 +1419,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       signOut,
       signOutIfCredentialCleared,
       surrenderActiveWorkspace,
+      startSupportSession,
+      endSupportSession,
       selectRegion,
       setWorkspaceName,
       editWorkspaceSetup,

@@ -186,8 +186,8 @@ which appears only while Application → Developer → **Debug enabled** is on. 
 work stream carries the choice directly, and so does a new substream, through
 `POST …/substreams/confirm`; [`substream-creation.md`](substream-creation.md)
 owns that half. An automation's pin is the
-`model_override` column on its `AutomationDO` row; there is exactly one path
-that creates a run, the object's `provisionRun`, which serves manual,
+`model_override` column on its `automation_directory` row; there is exactly one path
+that creates a run, `provisionSidekickRun`, which serves manual,
 scheduled, connector-event, and inbound-email triggers alike, and it copies
 `model_override` onto the run's child conversation, so a run resolves its model
 from its own row like every other conversation.
@@ -237,7 +237,7 @@ about flags.
 An automation's pin follows the same rule from a different place. The
 automation row's `model_override` is a plain nullable string, a record of what
 was authorized rather than a second validator, and `readRunDefinition` hands it
-to the run as `modelOverride`. `AutomationDO.provisionRun` re-validates it
+to the run as `modelOverride`. `provisionSidekickRun` re-validates it
 through `automationModelOverride` on the way onto each run, so a model retired
 from `AGENT_MODEL_OVERRIDES` since it was set drops back to the flag's choice
 and logs `workstream_model_override_unknown` rather than being handed to the
@@ -427,7 +427,7 @@ carve-out.
   it crosses the authority fence, logs an operational error, and suppresses the
   now-readable row for ten seconds. Later runs load the complete work-stream
   attributes normally.
-- Scheduled creation uses the same resolver. `AutomationDO.provisionRun`
+- Scheduled creation uses the same resolver. `provisionSidekickRun`
   calls `scheduledWorkstreamModel` after the run's child conversation is
   provisioned but before its harness run is admitted, when the authoritative
   shell still carries placeholder facts, which is not a valid targeting
@@ -648,7 +648,7 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   a separate column, so nothing inherits: a substream is pinned by being created
   pinned. Copying a parent's pin downward would move work nobody chose for it.
 - **The one path that creates a run copies `model_override` onto that run's
-  conversation.** `AutomationDO.provisionRun` reads it from the automation row.
+  conversation.** `provisionSidekickRun` reads it from the Sidekick's row.
   The invariant used to read "every path", because there were three and two of
   them built the row inline; a pin that reached only one looked correct under
   **Run now** and was silently ignored by every scheduled run. A second producer
@@ -1105,6 +1105,26 @@ both intent enqueue and delivery. Turning it off stops queued sends as well as
 hiding the Notifications section.
 
 ## Changelog
+
+### 2026-10-05 — Naming defaults to GPT-5.6 Terra
+
+**What changed:** `OPENROUTER_CLASSIFIER_MODEL`, the default route for
+`agent-model-workstream-naming`, is now `openai/gpt-5.6-terra` in the Worker
+variables, the sandbox defaults and Ace's catalog.
+
+**Why:** `google/gemini-2.5-flash-lite` answers every naming request with a
+400: Google AI Studio refuses the 253-value icon enum as "too much branching
+for serving". Production names only because its flag already serves Terra, so
+any unreachable or absent flag, and every local sandbox, got no names and no
+icons. Terra accepts the schema.
+
+**Consequences:** The Gemini fallbacks serve naming only with the plain-string
+icon and `reasoningRequired` from the same pull request; see
+[`workstream-naming.md`](workstream-naming.md#changelog). A
+`.env.local` that sets the key, as one copied from the old `.env.example` does,
+outranks the new default until it is edited.
+
+Pull request: [#1099](https://github.com/juno-ai-labs/avalon/pull/1099).
 
 ### 2026-10-02 — Reasoning is part of the atomic model route
 
