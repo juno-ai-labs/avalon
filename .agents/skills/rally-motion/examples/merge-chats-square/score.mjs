@@ -21,20 +21,20 @@ human(4.45, -.4); ai(4.72); human(4.98, .4);
 });
 m.riser(3.0, 2.25, .32);
 
-// the merge: windows slam together, then open into one Channel
-m.whoosh(5.18, .32, .4, .02, .5, -.8, .8);
-m.impact(5.48, 1); m.bell(5.5, nf(86), .1, 0);
+// the merge: both chats' messages slide into one interleaved Channel, newest first
+m.whoosh(5.18, .6, .4, .02, .5, -.8, .8);
+for (let j = 0; j < 6; j++) m.tick(5.62 + j * .035, .07, j % 2 ? .5 : -.5); // messages landing
+m.impact(5.72, 1); m.bell(5.74, nf(86), .1, 0);
 
 // together: the groove, a blip per person, a bell when Rally speaks
-m.groove({ from: 5.5, to: 11.4, beat: .5, bar: 2, chords: [D, A, Bm, G] });
-m.blip(5.85, nf(83), .2, .3); m.blip(5.97, nf(88), .1, .3, 30); // Bob
-m.bell(6.3, nf(81), .12, -.3); for (let i = 0; i < 10; i++) m.tick(6.35 + i * .04, .03, -.35);
-m.blip(7.2, nf(79), .2, .3); // Alice
-m.bell(7.6, nf(83), .12, -.3); for (let i = 0; i < 9; i++) m.tick(7.65 + i * .04, .03, -.35);
-m.blip(8.75, nf(83), .2, .3); // Bob
-m.bell(9.15, nf(86), .12, -.3); for (let i = 0; i < 12; i++) m.tick(9.2 + i * .04, .03, -.35);
-[86, 90].forEach((n, i) => m.blip(10.0 + i * .12, nf(n), .1, i - .5, 30)); // reactions
-m.blip(10.3, nf(88), .2, .3); m.stab(10.3, D, .06); // Shipping it.
+m.groove({ from: 5.72, to: 11.4, beat: .5, bar: 2, chords: [D, A, Bm, G] });
+m.blip(6.15, nf(83), .2, .3); m.blip(6.27, nf(88), .1, .3, 30); // Bob
+m.bell(6.6, nf(81), .12, -.3); for (let i = 0; i < 11; i++) m.tick(6.65 + i * .04, .03, -.35);
+m.blip(7.5, nf(79), .2, .3); // Alice
+m.bell(7.9, nf(83), .12, -.3); for (let i = 0; i < 12; i++) m.tick(7.95 + i * .04, .03, -.35);
+[86, 90].forEach((n, i) => m.blip(8.95 + i * .12, nf(n), .1, i - .5, 30)); // reactions
+m.blip(9.4, nf(83), .2, .3); // Bob
+m.blip(10.1, nf(88), .2, .3); m.stab(10.1, D, .06); // Shipping it.
 
 m.riser(10.75, .65, .3);
 m.endCard(11.4, 3.6);
