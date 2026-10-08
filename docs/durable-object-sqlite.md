@@ -119,7 +119,7 @@ committed graph a deployed object actually contains.
 
 This behavior is shared by every Rally object with an implementation-hash
 receipt: `SubstreamAgent`,
-`WorkspaceDO`, `SidekickDO`, `ArtifactHostDO`, and `SlackReactionTicker` all call
+`WorkspaceDO`, and `ArtifactHostDO` all call
 this runner. The migration tracker's `MigrationRegistry` uses a separate
 version-only bootstrap, `MigrationProbeDO` is intentionally empty, and an
 artifact facet's schema is model-owned data; none of those three has a

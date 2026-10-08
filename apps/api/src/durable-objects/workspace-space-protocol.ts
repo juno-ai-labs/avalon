@@ -12,6 +12,7 @@ import {
   SpaceIdSchema,
   SpaceColorKeySchema,
   SpaceDefaultKindSchema,
+  SpaceRequestScopeSchema,
   SpaceScopeSchema,
   SpaceSummarySchema,
   UserIdSchema,
@@ -60,8 +61,21 @@ export const WorkspaceSpaceGeneralRequestSchema = SpaceActorSchema.extend({
 }).strict();
 export type WorkspaceSpaceGeneralRequest = z.infer<typeof WorkspaceSpaceGeneralRequestSchema>;
 
+/**
+ * `initializeWorkspace`'s General Space for a new Organization: the person
+ * creating it, the id whose D1 anchor the caller has written, and the
+ * authority generation it wrote that anchor at.
+ */
+export const WorkspaceGeneralOpeningSchema = z.strictObject({
+  creatorUserId: UserIdSchema,
+  spaceId: SpaceIdSchema,
+  authorityGeneration: z.number().int().positive(),
+});
+export type WorkspaceGeneralOpening = z.infer<typeof WorkspaceGeneralOpeningSchema>;
+
 export const WorkspaceSpaceReserveRequestSchema = SpaceActorSchema.extend({
-  space: CreateSpaceRequestSchema,
+  /** Always with an icon: the service stands one in when the person chose none. */
+  space: CreateSpaceRequestSchema.extend({ iconKey: SpaceIconKeySchema }),
   /**
    * The creation identity. `SpaceService` always names one, because the D1
    * anchor is written under it before this call; absent only for a caller
@@ -75,27 +89,6 @@ export const WorkspaceSpaceRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
 }).strict();
 export type WorkspaceSpaceRequest = z.infer<typeof WorkspaceSpaceRequestSchema>;
-
-/**
- * A whole-Space operation staged and settled under one operation id the caller
- * owns: an archive, or a restore.
- *
- * Separate from {@link WorkspaceSpaceRequestSchema} because the settlement has
- * to name the intent the staging wrote, and the id an archive used to
- * reconstruct that from — the Space revision, minus one, read back after the
- * archive advanced it — was arithmetic over two writes in two objects. The
- * caller mints one and hands it to both halves.
- *
- * One schema for both, because they are the same request: a Space id, and the
- * id of the operation the fan-out after it belongs to. Two identical
- * declarations named after their callers would be two places to change when the
- * next whole-Space operation arrives.
- */
-export const WorkspaceSpaceStagedRequestSchema = SpaceActorSchema.extend({
-  spaceId: SpaceIdSchema,
-  operationId: IdSchema,
-}).strict();
-export type WorkspaceSpaceStagedRequest = z.infer<typeof WorkspaceSpaceStagedRequestSchema>;
 
 /**
  * One person's order for one container: the Organization's Spaces, a Space's
@@ -153,20 +146,36 @@ export const WorkspaceSpacePresentationRequestSchema = SpaceActorSchema.extend({
     iconKey: SpaceIconKeySchema,
     colorKey: SpaceColorKeySchema,
   }),
+  /**
+   * Write only if the Space is still at this revision. Set by the icon Rally
+   * chooses after creation, so it never lands over anything a person changed.
+   */
+  ifRevision: z.number().int().positive().optional(),
 }).strict();
 export type WorkspaceSpacePresentationRequest = z.infer<typeof WorkspaceSpacePresentationRequestSchema>;
 
-/** The scope and participants a Space's own authority has just accepted. */
+/** A Space's participants; its scope is always Organization-wide. */
 export const WorkspaceSpaceAudienceNoteRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
-  /** The operation this change is staged under, so its receipts can settle it. */
-  operationId: IdSchema,
   audience: z.strictObject({
-    scope: SpaceScopeSchema,
+    scope: SpaceRequestScopeSchema,
     participantUserIds: z.array(UserIdSchema).min(1),
+    /** Pending Organization invitees, the whole set; absent leaves them as stored. */
+    inviteeEmails: z.array(z.string().email()).optional(),
   }),
 }).strict();
 export type WorkspaceSpaceAudienceNoteRequest = z.infer<typeof WorkspaceSpaceAudienceNoteRequestSchema>;
+
+export const WorkspaceSpaceInviteesRequestSchema = SpaceActorSchema.extend({
+  spaceId: SpaceIdSchema,
+}).strict();
+export type WorkspaceSpaceInviteesRequest = z.infer<typeof WorkspaceSpaceInviteesRequestSchema>;
+
+/** Someone who just accepted an Organization invitation, by the address it was sent to. */
+export const WorkspaceSpaceSeatInviteeRequestSchema = SpaceActorSchema.extend({
+  email: z.string().email(),
+}).strict();
+export type WorkspaceSpaceSeatInviteeRequest = z.infer<typeof WorkspaceSpaceSeatInviteeRequestSchema>;
 
 export const WorkspaceSpaceMembershipRequestSchema = SpaceActorSchema.extend({
   spaceId: SpaceIdSchema,
@@ -331,77 +340,6 @@ export const WorkspaceSpaceChannelPageResultSchema = z.union([
   SpaceFailureSchema,
 ]);
 export type WorkspaceSpaceChannelPageResult = z.infer<typeof WorkspaceSpaceChannelPageResultSchema>;
-
-/**
- * Which memberships a fan-out is asking about.
- *
- * Named for the walk rather than for the membership because `reach` is also
- * what a *viewer's* relationship to a Space is called — `SpaceSummary.reach`,
- * `participant | organization | through_channel` — and the two met three
- * lines apart inside `WorkspaceSpaceStorage.members`, where reading this one
- * as that one says the page is already viewer-scoped. It is not.
- *
- * `active` is what a surface means by a member. `reaching` also counts the ones
- * a staged removal or a staged archive has already flipped to `removing`: this
- * Space's access source is still on those Channels, and taking it off is
- * exactly the work the staged operation has left to do. An archive's fan-out
- * that asked for `active` would run over nothing, because the prepare it
- * follows is what emptied that set.
- */
-export const MemberWalkReachSchema = z.enum(["active", "reaching"]);
-export type MemberWalkReach = z.infer<typeof MemberWalkReachSchema>;
-
-export const WorkspaceSpaceMembersRequestSchema = SpaceActorSchema.extend({
-  spaceId: SpaceIdSchema,
-  reach: MemberWalkReachSchema.default("active"),
-  /** Where the walk got to; `null` starts it at the first Channel. */
-  cursor: z.string().min(1).nullable().default(null),
-}).strict();
-/**
- * The *input* side of the schema, because `reach` and `cursor` have defaults: a
- * caller that means the first page of active members says neither, and the
- * parse is what supplies the words the storage branches on.
- */
-export type WorkspaceSpaceMembersRequest = z.input<typeof WorkspaceSpaceMembersRequestSchema>;
-
-/**
- * One membership a fan-out is about: the Channel, and the generation its row
- * is at.
- *
- * The generation travels with the id because every fan-out that re-applies
- * this Space's source has to fence on it, and the alternative was the literal
- * `1` at three call sites — a constant fed into a fence the module document
- * calls load-bearing, which reads as "generation one" and means "we did not
- * look".
- */
-export const SpaceMemberSchema = z.strictObject({
-  workstreamId: WorkstreamIdSchema,
-  membershipGeneration: z.number().int().positive(),
-});
-export type SpaceMember = z.infer<typeof SpaceMemberSchema>;
-
-/**
- * One page of the Channels a Space holds, archived ones included.
- *
- * Separate from {@link WorkspaceSpaceChannelPageResultSchema} for the reason
- * `listProjectMembers` is separate from `ProjectSummary.workstreamIds`: a page
- * is what a surface can list, and an archived member is not that — while an
- * audience change still has to reach it. Server-to-server, and paged for the
- * reason every read in this object is: the answer grows with the Organization,
- * and every caller is a fan-out that spends several cross-object awaits per
- * row, so an unbounded one is an operation that can never finish rather than a
- * slow one. The caller follows `nextCursor` and records it on the intent, so
- * an interrupted walk resumes from the page it reached.
- */
-export const WorkspaceSpaceMembersResultSchema = z.union([
-  z.strictObject({
-    ok: z.literal(true),
-    members: z.array(SpaceMemberSchema),
-    nextCursor: z.string().min(1).nullable(),
-  }),
-  SpaceFailureSchema,
-]);
-export type WorkspaceSpaceMembersResult = z.infer<typeof WorkspaceSpaceMembersResultSchema>;
 
 export const WorkspaceChannelSpacesRequestSchema = SpaceActorSchema.extend({
   workstreamId: WorkstreamIdSchema,
@@ -743,40 +681,6 @@ export const WorkspaceSpaceChannelChangeResultSchema = z.union([
   z.strictObject({ ok: z.literal(false), refusal: SpaceChannelRefusalSchema }),
 ]);
 export type WorkspaceSpaceChannelChangeResult = z.input<typeof WorkspaceSpaceChannelChangeResultSchema>;
-
-/** The walks an audience change, an archive and a restore take over their member Channels. */
-export const SpaceMemberWalkKindSchema = z.enum(["audience", "archive", "restore"]);
-export type SpaceMemberWalkKind = z.infer<typeof SpaceMemberWalkKindSchema>;
-
-/**
- * `walkSpaceMembers`: one page of a staged walk, run by WorkspaceDO.
- *
- * `expectedSpaceRevision` is the request path's fence: an audience change
- * abandons its walk when the Space moves under it, because the change that
- * overtook it walks every member itself. `null` converges on the Space as it
- * is now, which is what a resume does.
- */
-export const WorkspaceSpaceMemberWalkRequestSchema = z.strictObject({
-  auth: SpaceActorAuthSchema,
-  spaceId: SpaceIdSchema,
-  operationId: IdSchema,
-  kind: SpaceMemberWalkKindSchema,
-  cursor: z.string().min(1).nullable(),
-  expectedSpaceRevision: z.number().int().positive().nullable(),
-});
-export type WorkspaceSpaceMemberWalkRequest = z.infer<typeof WorkspaceSpaceMemberWalkRequestSchema>;
-
-/**
- * `page` names where the next page starts, already written to the intent.
- * `walked` and `abandoned` mean the intent is settled (an archive also
- * finalized) and carry the Space as the actor now sees it.
- */
-export const WorkspaceSpaceMemberWalkResultSchema = z.union([
-  z.strictObject({ ok: z.literal(true), outcome: z.literal("page"), cursor: z.string().min(1) }),
-  z.strictObject({ ok: z.literal(true), outcome: z.enum(["walked", "abandoned"]), space: SpaceSummarySchema }),
-  z.strictObject({ ok: z.literal(false), refusal: SpaceChannelRefusalSchema }),
-]);
-export type WorkspaceSpaceMemberWalkResult = z.input<typeof WorkspaceSpaceMemberWalkResultSchema>;
 
 /**
  * `resumeSpaceIntent`: one step of one staged intent in WorkspaceDO, as the

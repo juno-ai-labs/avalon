@@ -54,10 +54,18 @@ conversation itself, not loose copies of the files.
 > the address before you click **Share**. A typo sends that text to whoever owns
 > the wrong address, and taking the invitation back later cannot unsend an email.
 
+> [!IMPORTANT]
+> If the address already belongs to someone who uses Rally, they get access the
+> moment you click **Share**, without being asked, and join your Organization as
+> a guest. Anyone else gets access the first time they sign in with that
+> address.
+
 ## What the guest sees
 
-The guest gets an email with a link. Only someone who can sign in as that email
-address can accept it, so a forwarded invitation is no use to anyone else.
+The guest gets an email with a link to the conversation. Signing in with that
+email address is all it takes: there is nothing to accept. Only someone who can
+sign in as that address gets in, so a forwarded invitation is no use to anyone
+else.
 
 Guests use Rally in a web browser, in a lighter version of the app made for
 this. They see the conversations shared with them and the names of the
@@ -70,11 +78,13 @@ In the **Members** list in Settings, guests appear with a **Guest** badge.
 
 ## Taking access back
 
-Today, the **Share conversation** window only sends invitations. Rally does not
-yet have a button in the app for withdrawing an invitation that has not been
-accepted, or for ending a guest's access to a conversation they have joined.
+People you shared with who have not signed in yet are listed under the share
+form as **Guest**. Click the **×** beside one to withdraw their invitation. If
+they signed in a moment before, Rally says **They have already joined. Remove
+them from the participants instead.**
 
-If you need either of those done, write to
+Rally does not yet have a button in the app for ending the access of a guest who
+has joined. If you need that done, write to
 [help@rallywith.ai](mailto:help@rallywith.ai) with the conversation and the
 guest's email address. [Contacting support](../12-help-and-glossary/03-contact-support.md)
 says what else to include. In the meantime, do not post anything in that
@@ -84,8 +94,8 @@ However access ends, the same things happen:
 
 - Once access is removed, the guest stops seeing the conversation within moments,
   even if they have it open, and cannot reopen it.
-- A withdrawn invitation link stops working. The person following it is told
-  only that the link cannot be used, not why.
+- A withdrawn invitation opens nothing. The person following its link can sign
+  in, but the conversation is not there for them.
 - Ending access to a shared Breakout leaves anything else that was shared with
   them separately, such as the main conversation, untouched.
 

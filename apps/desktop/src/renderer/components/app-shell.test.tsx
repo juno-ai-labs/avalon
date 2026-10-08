@@ -2,7 +2,7 @@ import { render } from '@testing-library/react';
 import { activeRealtimeWorkstreamId, backgroundRealtimeWorkstreamIds } from '../lib/workspace-workstream-sockets';
 import { openWorkstreamId } from '../lib/workstream-landing';
 import { QueryClient } from '@tanstack/react-query';
-import { asSpaceId, asSubstreamId, SpaceSummarySchema, type SpaceDirectory } from '@rally/contracts';
+import { asSpaceId, asSubstreamId, SpaceSummarySchema, WorkstreamPrivateChildSchema, type SpaceDirectory } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useLayoutEffect } from 'react';
@@ -10,10 +10,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { associativeWorkstreamsForSidebar } from '../lib/conversation-directory';
 import { patchCachedWorkstream, setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
   applyArchivedSpace,
-  associativeWorkstreamsForSidebar,
+  searchChannelPlaces,
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
   archiveSpaceMutationHandler,
@@ -25,6 +26,7 @@ import {
   useLatestCommittedValue,
   upsertSpaceDirectory,
   windowControlsShellClass,
+  withActiveWorkspaceName,
   batchArchiveSkipIds,
   workstreamMatchesBatchFilter,
 } from './app-shell';
@@ -175,6 +177,35 @@ describe('spacesEnabledForSession', () => {
   });
 });
 
+describe('searchChannelPlaces', () => {
+  const member = asSubstreamId('00000000-0000-7000-8000-0000000000b1');
+  const granted = asSubstreamId('00000000-0000-7000-8000-0000000000b2');
+  const archived = asSubstreamId('00000000-0000-7000-8000-0000000000b3');
+  const directory: SharedNavigationDirectory = {
+    spaces: [],
+    workstreams: [{
+      parentId: workstreamId, title: 'Draft the reply', scope: 'personal', archived: false,
+      conversations: [
+        { substreamId: asSubstreamId('0'), title: 'Main', scope: 'personal', archived: false },
+        { substreamId: member, title: 'Stale title', scope: 'personal', archived: false },
+        { substreamId: granted, title: 'Granted notes', appearance: { icon: 'rocket', color: 'violet' }, scope: 'personal', archived: false },
+        { substreamId: archived, title: 'Old notes', scope: 'personal', archived: true },
+      ],
+    }],
+  };
+
+  it('lists a Breakout reached through a grant beside the ones the reader is a member of', () => {
+    const held = { [workstreamId]: [WorkstreamPrivateChildSchema.parse({ substreamId: member, title: 'Member notes',
+      createdByUserId: workstreamId, createdAt: '2026-10-05T00:00:00.000Z', updatedAt: '2026-10-05T00:00:00.000Z' })] };
+    expect(searchChannelPlaces([summary('completed')], held, directory).map((place) => [place.kind, place.id, place.name])).toEqual([
+      ['channel', workstreamId, 'Draft the reply'],
+      // The member list's own row wins over the directory's for the same Breakout.
+      ['breakout', member, 'Member notes'],
+      ['breakout', granted, 'Granted notes'],
+    ]);
+  });
+});
+
 describe('associativeWorkstreamsForSidebar', () => {
   const directory: SharedNavigationDirectory = {
     spaces: [{
@@ -228,6 +259,16 @@ describe('upsertSpaceDirectory', () => {
       waterline: 4,
       items: [space],
     });
+  });
+
+  it('keeps a newer revision the socket delivered before the create response', () => {
+    const iconChosen = SpaceSummarySchema.parse({ ...space, iconKey: 'rocket', revision: space.revision + 1 });
+    expect(upsertSpaceDirectory({ waterline: 4, items: [iconChosen] }, space).items).toEqual([iconChosen]);
+  });
+
+  it('takes a response newer than the space it holds', () => {
+    const renamed = SpaceSummarySchema.parse({ ...space, name: 'Recruiting', revision: space.revision + 1 });
+    expect(upsertSpaceDirectory({ waterline: 4, items: [space] }, renamed).items).toEqual([renamed]);
   });
 });
 
@@ -724,5 +765,22 @@ describe('windowControlsShellClass', () => {
   // than jumping it sideways when the answer lands.
   it('names nothing while the platform is still unknown', () => {
     expect(windowControlsShellClass(undefined)).toBe('');
+  });
+});
+
+describe('withActiveWorkspaceName', () => {
+  const row = (id: string, region: string, name: string) => ({
+    id, name, slug: id, region, role: 'owner' as const, createdAt: '2026-08-01T00:00:00.000Z',
+  });
+
+  it('renames only the active row, matched on id and region together', () => {
+    const rows = [row('a', 'global', 'Old'), row('a', 'eu', 'Same id elsewhere'), row('b', 'global', 'Other')];
+    expect(withActiveWorkspaceName(rows, { id: 'a', region: 'global', name: 'Juno Labs' }).map((r) => r.name))
+      .toEqual(['Juno Labs', 'Same id elsewhere', 'Other']);
+  });
+
+  it('leaves a directory without the active row as it was', () => {
+    const rows = [row('b', 'global', 'Other')];
+    expect(withActiveWorkspaceName(rows, { id: 'a', region: 'global', name: 'Juno Labs' })).toEqual(rows);
   });
 });

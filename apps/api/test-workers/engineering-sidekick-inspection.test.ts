@@ -1,15 +1,14 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * Which SidekickDO the engineering MCP is allowed to open, against real objects.
+ * What the engineering MCP sees of a Sidekick, against real objects.
  *
- * The fence is the interesting part. A Sidekick and a work stream share one
- * parent-id namespace in `workstream_authority_routes`, so an active route
- * cannot tell them apart, and naming a SidekickDO for a work stream's id would
- * create an object that never existed. The workspace's `automation_directory`
- * is what separates them, and these tests drive it through the real creation
- * path — `createAutomation` plus the effect leg that lands the row — rather
- * than writing the table, so a projection that stopped applying cannot pass.
+ * A Sidekick and a work stream share one parent-id namespace in
+ * `workstream_authority_routes`, so an active route cannot tell them apart.
+ * The listing reads the workspace's `automation_directory`, and a run
+ * conversation is reached only through the Sidekick's own registry. These
+ * tests drive both through the real creation path, `createAutomation`, rather
+ * than writing the tables.
  */
 
 import { env } from "cloudflare:workers";
@@ -18,17 +17,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
-import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
+import { workspaceDOName } from "../src/durable-objects/names";
 import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridge";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
-import { deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { hostedParentStub } from "./helpers/hosted-parent";
-import {
-  seedInspectableWorkspace,
-  seedSecondInspectableWorkspace,
-} from "./helpers/engineering-inspection-fixture";
+import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ef10");
@@ -36,7 +31,6 @@ const AUTHOR_ID = asUserId("00000000-0000-7000-8000-00000000ef11");
 const ROOM_ID = asWorkstreamId("00000000-0000-7000-8000-00000000ef12");
 const SIDEKICK_ID = asAutomationId("00000000-0000-7000-8000-00000000ef13");
 const SESSION_ID = "00000000-0000-7000-8000-00000000ef14";
-const OTHER_WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ef15");
 const NOW = "2026-09-17T10:00:00.000Z";
 const TEST_ENV: Env = env;
 
@@ -44,12 +38,6 @@ useHeldEffectQueue();
 
 function bridge(): EngineeringInspectionBridge {
   return new EngineeringInspectionBridge(createExecutionContext(), TEST_ENV);
-}
-
-function sidekickStub(sidekickId: string) {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
-    automationDOName("global", WORKSPACE_ID, asAutomationId(sidekickId)),
-  ));
 }
 
 async function seedRegionalDatabase(): Promise<void> {
@@ -98,9 +86,9 @@ async function createSidekick(): Promise<void> {
     owningWorkstreamId: null,
     automationId: SIDEKICK_ID,
   });
+  // Its directory row is written in the Organization object by the create
+  // itself; there is no copy to deliver.
   expect(created.created).toBe(true);
-  const delivered = await deliverParentEffects(TEST_ENV, sidekickStub(SIDEKICK_ID));
-  expect(delivered.map((envelope) => envelope.effect.kind)).toEqual(["directory_automation"]);
 }
 
 beforeEach(async () => {
@@ -109,13 +97,10 @@ beforeEach(async () => {
   await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
     .initializeWorkspace(WORKSPACE_ID, "wnam");
   await seedRoom();
-  await seedSecondInspectableWorkspace(env.DB, { workspaceId: OTHER_WORKSPACE_ID });
-  await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", OTHER_WORKSPACE_ID)))
-    .initializeWorkspace(OTHER_WORKSPACE_ID, "wnam");
 });
 
-describe("engineering inspection of a Sidekick's own object", () => {
-  it("lists a Sidekick and runs SQL against the SidekickDO its directory row names", async () => {
+describe("engineering inspection of a Sidekick", () => {
+  it("lists a Sidekick from its directory row", async () => {
     await createSidekick();
     const inspection = bridge();
 
@@ -128,36 +113,13 @@ describe("engineering inspection of a Sidekick's own object", () => {
         items: [{ sidekickId: SIDEKICK_ID, lifecycle: "draft", scope: "personal", owningWorkstreamId: null }],
       },
     });
-
-    const target = await inspection.resolveSidekick({ workspaceId: WORKSPACE_ID, sidekickId: SIDEKICK_ID });
-    expect(target).toMatchObject({ found: true, value: { authorityGeneration: 1 } });
-    if (!target.found) throw new Error("Expected the Sidekick to resolve");
-
-    // `automation` holds the object's own single identity row, so reading it
-    // back proves the named object is the Sidekick that was created and not a
-    // freshly migrated empty one.
-    const executed = await inspection.runSidekickSql({
-      workspaceId: WORKSPACE_ID,
-      sidekickId: SIDEKICK_ID,
-      authorityGeneration: target.value.authorityGeneration,
-      query: { sql: "SELECT automation_id, lifecycle FROM automation WHERE id = 1", bindings: [] },
-    });
-    expect(executed).toMatchObject({
-      found: true,
-      value: {
-        workspaceId: WORKSPACE_ID,
-        workstreamId: null,
-        substreamId: null,
-        sidekickId: SIDEKICK_ID,
-        result: { rows: [{ automation_id: SIDEKICK_ID, lifecycle: "draft" }] },
-      },
-    });
   });
 
   it("reaches a Sidekick's run conversation through its own registry, and nothing it has not registered", async () => {
     await createSidekick();
     const runId = asSubstreamId("00000000-0000-7000-8000-00000000ef16");
-    await sidekickStub(SIDEKICK_ID).reserveChild({
+    // Registered where the Sidekick's parent lives: its Organization object.
+    await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID))).reserveChild({
       workspaceId: WORKSPACE_ID, parentId: SIDEKICK_ID, substreamId: runId, kind: "child",
       createdByUserId: AUTHOR_ID, authorityGeneration: 1,
     });
@@ -174,78 +136,5 @@ describe("engineering inspection of a Sidekick's own object", () => {
     expect(await inspection.runSubstreamSql({
       workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: runId, authorityGeneration: 1, query,
     })).toEqual({ found: false });
-  });
-
-  it("refuses a work stream that holds an active route but no directory row", async () => {
-    await createSidekick();
-    const inspection = bridge();
-    const roomAsSidekick = asAutomationId(ROOM_ID);
-
-    expect(await inspection.resolveSidekick({ workspaceId: WORKSPACE_ID, sidekickId: roomAsSidekick }))
-      .toEqual({ found: false });
-    expect(await inspection.runSidekickSql({
-      workspaceId: WORKSPACE_ID,
-      sidekickId: roomAsSidekick,
-      authorityGeneration: 1,
-      query: { sql: "CREATE TABLE inspection_should_never_run (id INTEGER)", bindings: [] },
-    })).toEqual({ found: false });
-
-    // Nothing ran against the object that name would have addressed. Opening it
-    // here migrates it, so its emptiness proves nothing on its own — the
-    // statement's own table is what a routed call would have left behind.
-    const tables = await sidekickStub(ROOM_ID).runInspectionSql({
-      sql: "SELECT name FROM sqlite_schema WHERE name = 'inspection_should_never_run'",
-      bindings: [],
-    });
-    expect(tables.rows).toEqual([]);
-  });
-
-  it("refuses a real Sidekick addressed through a workspace that does not hold it", async () => {
-    await createSidekick();
-    const inspection = bridge();
-
-    // The second workspace is active and open, so a refusal here is the
-    // directory's and not the route's. What it protects is that the object
-    // consulted is the *caller's* workspace, never one derived from the target:
-    // directory rows live in each WorkspaceDO's own storage, so asking the
-    // wrong workspace must find nothing.
-    expect(await inspection.resolveSidekick({
-      workspaceId: OTHER_WORKSPACE_ID,
-      sidekickId: SIDEKICK_ID,
-    })).toEqual({ found: false });
-    expect(await inspection.runSidekickSql({
-      workspaceId: OTHER_WORKSPACE_ID,
-      sidekickId: SIDEKICK_ID,
-      authorityGeneration: 1,
-      query: { sql: "CREATE TABLE crossed_from_another_workspace (id INTEGER)", bindings: [] },
-    })).toEqual({ found: false });
-
-    // The sentinel is the proof: the real Sidekick still holds its own identity
-    // row and nothing the refused statement would have written.
-    const sidekick = await sidekickStub(SIDEKICK_ID).runInspectionSql({
-      sql: "SELECT name FROM sqlite_schema WHERE name = 'crossed_from_another_workspace'",
-      bindings: [],
-    });
-    expect(sidekick.rows).toEqual([]);
-    expect((await sidekickStub(SIDEKICK_ID).runInspectionSql({
-      sql: "SELECT automation_id FROM automation WHERE id = 1",
-      bindings: [],
-    })).rows).toEqual([{ automation_id: SIDEKICK_ID }]);
-  });
-
-  it("refuses a stale caller generation and a quarantined regional authority", async () => {
-    await createSidekick();
-    const inspection = bridge();
-
-    expect(await inspection.runSidekickSql({
-      workspaceId: WORKSPACE_ID,
-      sidekickId: SIDEKICK_ID,
-      authorityGeneration: 2,
-      query: { sql: "SELECT 1 AS answer", bindings: [] },
-    })).toEqual({ found: false });
-
-    await env.DB.prepare(`UPDATE workstream_authority_control SET phase = 'quarantined' WHERE id = 1`).run();
-    expect(await inspection.resolveSidekick({ workspaceId: WORKSPACE_ID, sidekickId: SIDEKICK_ID }))
-      .toEqual({ found: false });
   });
 });

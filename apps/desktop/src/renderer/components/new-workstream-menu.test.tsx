@@ -36,12 +36,12 @@ const reachedThroughChannel = SpaceSummarySchema.parse({
 });
 
 type MenuCallbacks = {
-  onCreateChannel: (input: { name: string; spaceId: string }) => Promise<void>;
+  onCreateChannel: (input: { spaceId: string }) => void;
   onCreateSpace: (name: string) => Promise<void>;
 };
 
 function renderMenu(callbacks: MenuCallbacks = {
-  onCreateChannel: vi.fn(async () => undefined),
+  onCreateChannel: vi.fn(),
   onCreateSpace: vi.fn(async () => undefined),
 }) {
   render(<Tooltip.Provider>
@@ -58,7 +58,7 @@ describe('sidebar creation menu', () => {
   it('offers import only where Rally has a browser to import through', () => {
     vi.stubGlobal('rally', { openBrowserImport: vi.fn(async () => undefined) });
     const desktop = render(<Tooltip.Provider>
-      <NewWorkstreamMenu onCreateChannel={vi.fn(async () => undefined)} onCreateSpace={vi.fn(async () => undefined)} spaces={[general]}>
+      <NewWorkstreamMenu onCreateChannel={vi.fn()} onCreateSpace={vi.fn(async () => undefined)} spaces={[general]}>
         <button type="button">Plus</button>
       </NewWorkstreamMenu>
     </Tooltip.Provider>);
@@ -74,108 +74,59 @@ describe('sidebar creation menu', () => {
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Start New Channel', 'Create New Space']);
   });
 
-  it('collects a Space and Channel name before continuing to the composer', async () => {
+  // The new-Channel screen names and places the Channel beside its composer,
+  // so starting one opens it at once rather than asking first.
+  it('starts a Channel without a dialog, in All when no Space is locked', () => {
     const callbacks = renderMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel' }));
-    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
-    expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('All');
-    expect(within(dialog).queryByRole('textbox', { name: 'URL' })).not.toBeInTheDocument();
-    const name = within(dialog).getByRole('textbox', { name: 'Name of channel' });
-    expect(name).toHaveAttribute('maxlength', '180');
-    fireEvent.change(name, { target: { value: 'Launch' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
-    await waitFor(() => expect(callbacks.onCreateChannel).toHaveBeenCalledWith({ name: 'Launch', spaceId: general.id }));
+    expect(callbacks.onCreateChannel).toHaveBeenCalledWith({ spaceId: general.id });
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('starts on All and lists it first whatever order the Spaces arrive in', () => {
+  it('starts in All whatever order the Spaces arrive in', () => {
+    const onCreateChannel = vi.fn();
     const accounts = SpaceSummarySchema.parse({ ...planning, id: '00000000-0000-7000-8000-0000000000f3', name: 'Accounts' });
     render(<Tooltip.Provider>
-      <NewWorkstreamMenu onCreateChannel={vi.fn(async () => undefined)} onCreateSpace={vi.fn(async () => undefined)}
+      <NewWorkstreamMenu onCreateChannel={onCreateChannel} onCreateSpace={vi.fn(async () => undefined)}
         spaces={[planning, accounts, general]}>
         <button type="button">Plus</button>
       </NewWorkstreamMenu>
     </Tooltip.Provider>);
     fireEvent.keyDown(screen.getByRole('button', { name: 'Plus' }), { key: 'ArrowDown' });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel' }));
-    const select = screen.getByRole('combobox', { name: 'Space' });
-    expect(select).toHaveTextContent('All');
-    fireEvent.click(select);
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['All', 'Accounts', 'Planning']);
+    expect(onCreateChannel).toHaveBeenCalledWith({ spaceId: general.id });
   });
 
-  it('repairs a selection when the live directory removes its Space', async () => {
-    const callbacks = {
-      onCreateChannel: vi.fn(async () => undefined),
-      onCreateSpace: vi.fn(async () => undefined),
-    };
-    const view = render(<Tooltip.Provider>
-      <NewWorkstreamMenu {...callbacks} spaces={[general, planning]}>
-        <button type="button">Plus</button>
-      </NewWorkstreamMenu>
-    </Tooltip.Provider>);
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Plus' }), { key: 'ArrowDown' });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel' }));
-    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Launch' } });
-    expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('All');
-
-    view.rerender(<Tooltip.Provider>
-      <NewWorkstreamMenu {...callbacks} spaces={[planning]}>
-        <button type="button">Plus</button>
-      </NewWorkstreamMenu>
-    </Tooltip.Provider>);
-
-    await waitFor(() => expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('Planning'));
-    expect(within(dialog).getByRole('button', { name: 'Create' })).toBeEnabled();
-  });
-
-  it('keeps an open locked dialog on the Space it opened with', async () => {
-    const onCreateChannel = vi.fn(async () => undefined);
-    const menu = (lockedSpaceId: string) => <Tooltip.Provider>
-      <NewWorkstreamMenu lockedSpaceId={lockedSpaceId} offer="channel" spaces={[general, planning]} trigger="context"
+  it('starts a Channel in the Space the reader is looking at', async () => {
+    const onCreateChannel = vi.fn();
+    render(<Tooltip.Provider>
+      <NewWorkstreamMenu lockedSpaceId={planning.id} offer="channel" spaces={[general, planning]} trigger="context"
         onCreateChannel={onCreateChannel} onCreateSpace={vi.fn(async () => undefined)}>
         <div data-testid="list" />
       </NewWorkstreamMenu>
-    </Tooltip.Provider>;
-    const view = render(menu(general.id));
+    </Tooltip.Provider>);
     fireEvent.contextMenu(screen.getByTestId('list'), { clientX: 20, clientY: 20 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Start New Channel' }));
-    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Launch' } });
-
-    // The sidebar's selection moves, as a deep link would move it.
-    view.rerender(menu(planning.id));
-
-    const picker = within(dialog).getByRole('combobox', { name: 'Space' });
-    expect(picker).toHaveTextContent('All');
-    expect(picker).toBeDisabled();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
-    await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'Launch', spaceId: general.id }));
+    expect(onCreateChannel).toHaveBeenCalledWith({ spaceId: planning.id });
   });
 
-  it('omits Spaces reached only through a shared Channel', () => {
+  it('offers no Channel in a Space reached only through a shared Channel', () => {
+    const onCreateChannel = vi.fn();
     render(<Tooltip.Provider>
-      <NewWorkstreamMenu
-        onCreateChannel={vi.fn(async () => undefined)}
-        onCreateSpace={vi.fn(async () => undefined)}
-        spaces={[reachedThroughChannel, general]}
-      >
+      <NewWorkstreamMenu lockedSpaceId={reachedThroughChannel.id} offer="channel" trigger="direct"
+        onCreateChannel={onCreateChannel} onCreateSpace={vi.fn(async () => undefined)}
+        spaces={[reachedThroughChannel, general]}>
         <button type="button">Plus</button>
       </NewWorkstreamMenu>
     </Tooltip.Provider>);
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Plus' }), { key: 'ArrowDown' });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel' }));
-    const select = screen.getByRole('combobox', { name: 'Space' });
-    expect(select).toHaveTextContent('All');
-    fireEvent.click(select);
-    expect(screen.queryByRole('option', { name: 'Shared project' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Plus' })).toBeDisabled();
   });
 
   it('disables the launcher while Space capabilities are unavailable', () => {
     render(<Tooltip.Provider>
       <NewWorkstreamMenu
         canCreateSpace={false}
-        onCreateChannel={vi.fn(async () => undefined)}
+        onCreateChannel={vi.fn()}
         onCreateSpace={vi.fn(async () => undefined)}
         spaces={[]}
       >
@@ -193,25 +144,6 @@ describe('sidebar creation menu', () => {
     expect(openBrowserImport).toHaveBeenCalledWith({ spaces: [{ id: general.id, name: 'All' }] });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(callbacks.onCreateChannel).not.toHaveBeenCalled();
-  });
-
-  it('keeps the form locked while creation is in flight', async () => {
-    let resolveCreate: (() => void) | undefined;
-    const callbacks = renderMenu({
-      onCreateChannel: vi.fn(() => new Promise<void>((resolve) => { resolveCreate = resolve; })),
-      onCreateSpace: vi.fn(async () => undefined),
-    });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Start New Channel' }));
-    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Launch' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => expect(callbacks.onCreateChannel).toHaveBeenCalledTimes(1));
-    expect(within(dialog).getByRole('button', { name: 'Creating…' })).toBeDisabled();
-    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
-
-    resolveCreate?.();
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Start a new channel' })).not.toBeInTheDocument());
   });
 
   it('creates a Space from its name alone', async () => {

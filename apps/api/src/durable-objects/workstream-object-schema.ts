@@ -1,3 +1,4 @@
+import { SUBSTREAM_PERSONAL_SYSTEM_PROMPT_MIGRATION } from "./personal-system-prompt";
 import { CONVERSATION_LINK_SEARCH_SCHEMA } from './conversation-link-search';
 import { TOOL_PAGE_SCHEMA, TOOL_PAGE_CONSUMER_INDEX } from './tool-page-storage';
 import { PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA } from "./participant-authority-transfer";
@@ -24,7 +25,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 71;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 73;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3415,6 +3416,28 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       // Null is the ordinary conversation. A profile replaces the run's system
       // prompt, model role and tool surface; see `agent-profiles.ts`.
       `ALTER TABLE workstream ADD COLUMN agent_profile TEXT`,
+    ],
+  },
+  {
+    version: 72,
+    description: "this conversation's copy of members' personal system prompts",
+    statements: SUBSTREAM_PERSONAL_SYSTEM_PROMPT_MIGRATION,
+  },
+  {
+    version: 73,
+    description: "the Slack origins of steers a run absorbed",
+    statements: [
+      // A steer merges into the live run instead of starting its own, so its
+      // Slack message has no run of its own to settle its status reaction.
+      // The run that answered it does, from these rows. Written in the commit
+      // that promotes the steer; `input_id` makes that write idempotent.
+      `CREATE TABLE run_absorbed_slack_origins (
+        input_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        slack_origin_json TEXT NOT NULL CHECK (json_valid(slack_origin_json)),
+        created_at INTEGER NOT NULL
+      ) STRICT`,
+      `CREATE INDEX run_absorbed_slack_origins_run ON run_absorbed_slack_origins (run_id)`,
     ],
   },
 ];

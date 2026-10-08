@@ -1,6 +1,6 @@
 import { fireEvent } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { hasUserInputSinceWindowActivation, installWindowActivationTracking } from './window-activation';
+import { focusFollowsKeyboard, hasUserInputSinceWindowActivation, installWindowActivationTracking } from './window-activation';
 
 let stopTracking: (() => void) | null = null;
 
@@ -99,6 +99,22 @@ describe('window activation', () => {
     fireEvent.pointerDown(window, { clientX: 420, clientY: 260 });
 
     expect(hasUserInputSinceWindowActivation()).toBe(true);
+  });
+
+  it('reads a focus as the keyboard\'s until a pointer press, and again after a key', () => {
+    expect(focusFollowsKeyboard()).toBe(true);
+    track();
+
+    fireEvent.pointerDown(window, { pointerType: 'touch' });
+    expect(focusFollowsKeyboard()).toBe(false);
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(focusFollowsKeyboard()).toBe(true);
+
+    fireEvent.pointerDown(window);
+    stopTracking?.();
+    stopTracking = null;
+    expect(focusFollowsKeyboard()).toBe(true);
   });
 
   it('re-arms on every switch rather than only the first', () => {

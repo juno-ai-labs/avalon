@@ -124,14 +124,9 @@ class AuthorityDatabase {
           connectorEvent: async () => (this.state.activityExists
             ? { connectorType: "github", activity: connectorActivity() }
             : null),
-        }),
-      }),
-      // The automation's own object, which is the only authority on whether it
-      // still wants this run finished.
-      AUTOMATION_DOS: createCloudflareTestBinding<Env["AUTOMATION_DOS"]>({
-        idFromName: (name: string) => createTestDurableObjectId(name),
-        get: () => ({
-          readRunState: async (request: Record<string, unknown>) => {
+          // The Sidekick, hosted here, is the only authority on whether it
+          // still wants this run finished.
+          sidekickReadRunState: async (request: Record<string, unknown>) => {
             this.runStateReads.push(request);
             return this.state.run;
           },
@@ -296,11 +291,12 @@ describe("durable run authority revalidation", () => {
       .rejects.toThrow(/no longer running/i);
   });
 
+  // `pending` is not here: provisioning starts a run's loop before it reports
+  // the run running, so a pending row is live (sidekick-run-continuation.test.ts).
   it.each([
     "stopped",
     "completed",
     "failed",
-    "pending",
   ] as const)("stops a run its automation marked %s before a provider write", async (runState) => {
     const database = new AuthorityDatabase(state());
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
@@ -377,7 +373,8 @@ describe("durable run authority revalidation", () => {
       : null);
     const namespace = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
       idFromName: (name: string) => createTestDurableObjectId(name),
-      get: () => ({ connectorEvent }),
+      // The run's own state is the Sidekick's, hosted in the same object.
+      get: () => ({ connectorEvent, sidekickReadRunState: async () => database.state.run }),
     });
     const env = createTestEnv({
       ...database.env,

@@ -14,6 +14,7 @@ import {
   orderedTranscriptMessages,
   composeTranscript,
   groupPluginToolMessages,
+  withoutAgentWork,
   groupThinkingMessages,
   mergeCanonicalTranscriptSnapshot,
   mergeRealtimeTranscriptActivity,
@@ -141,7 +142,7 @@ describe('transcript messages', () => {
     const messages = orderedTranscriptMessages(snapshot, 'workstream-one');
     const grouped = groupPluginToolMessages(messages).filter((message) => message.pluginActivity);
     expect(grouped).toHaveLength(3);
-    expect(grouped.map((message) => message.pluginActivity?.icon)).toEqual(['plug', 'plug', 'slack']);
+    expect(grouped.map((message) => message.pluginActivity?.icon)).toEqual(['model-context-protocol', 'model-context-protocol', 'slack']);
     const live = createToolEventMessage({ ...base, id: 'live', toolEvent: {
       id: 'live', name: 'search', status: 'started', pluginId: 'plugin_custom_mcp',
       plugin: { pluginId: 'plugin_custom_mcp', canonicalId: 'connection:custom', connectorType: 'custom_mcp', displayName: 'Slack', icon: 'plug' },
@@ -1891,6 +1892,53 @@ describe('grouping tool calls by plugin', () => {
     ]);
 
     expect(grouped.map((message) => message.sequenceNumber)).toEqual([1, 2]);
+  });
+});
+
+describe('hiding the agent\'s work', () => {
+  const row = (id: string, extra: Partial<Message>): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'text',
+    createdAt: '2026-08-26T12:00:00.000Z',
+    ...extra,
+  });
+  const tool = (id: string): Message => row(id, {
+    messageType: 'tool_event',
+    toolEvent: { id, toolCallId: id, name: `${id}_call`, status: 'completed', pluginId: 'p', pluginName: 'P' },
+  });
+
+  it('drops thinking, tool and plugin rows but keeps agent messages, the run timer and what the reader must act on', () => {
+    const shown = withoutAgentWork([
+      row('reply', {}),
+      tool('read'),
+      row('activity', {
+        messageType: 'plugin_activity',
+        pluginActivity: {
+          groupKey: 'p', name: 'P', icon: 'plug', active: false, durationMs: 10, activeVerb: 'using', completedVerb: 'used',
+        },
+      }),
+      // A teammate's message: counted, carrying the turn's read position.
+      row('teammate', {
+        messageType: 'plugin_activity',
+        attentionSequenceNumber: 7,
+        pluginActivity: {
+          groupKey: 'agents', name: 'Agents', icon: 'rally', active: false, durationMs: null, count: 1,
+          activeVerb: 'messaging', completedVerb: 'messaged',
+        },
+      }),
+      tool('connect'),
+      row('thinking', {
+        messageType: 'thought',
+        thoughtEvent: { status: 'completed', durationMs: 900, activeVerb: 'thinking', completedVerb: 'thought' },
+      }),
+      // The response's own total: the live timer, then "Worked for".
+      row('working', { messageType: 'thought', thoughtEvent: { status: 'started', durationMs: 0 } }),
+    ], (message) => message.id === 'connect');
+
+    expect(shown.map((message) => message.id)).toEqual(['reply', 'teammate', 'connect', 'working']);
   });
 });
 

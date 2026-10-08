@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatDateTime } from '../lib/format';
 import { ApiError } from '../lib/api';
+import { CollaborationSessionProvider } from '../lib/collaboration-session';
 import {
   consumeDeepLinkWorkstreamNavigation,
   markDeepLinkWorkstreamNavigation,
@@ -34,7 +35,7 @@ const workstreamSocketOpenContext = vi.hoisted(() => vi.fn((workstreamId: string
 const updateStatus = vi.hoisted(() => ({ current: { kind: 'idle' } as { kind: string; version?: string } }));
 const installDownloadedUpdate = vi.hoisted(() => vi.fn(async () => undefined));
 const applicationSettings = vi.hoisted(() => ({
-  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
+  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
   listeners: new Set<(settings: unknown) => void>(),
 }));
 
@@ -223,9 +224,9 @@ describe('Sidebar channel markers', () => {
     startWorkstreamSocketWarmup.mockReset();
     cancelWorkstreamSocketWarmup.mockReset();
     workstreamSocketOpenContext.mockReset().mockReturnValue({ state: 'cold' });
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
-    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 320, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
       unobserve(): void {}
@@ -255,24 +256,75 @@ describe('Sidebar channel markers', () => {
     expect(screen.queryByRole('link', { name: /New channel/u })).not.toBeInTheDocument();
   });
 
-  it('marks sidebar creation telemetry only when the Channel setup is submitted', async () => {
-    const onCreateChannel = vi.fn(async () => undefined);
+  it('opens the phone sheet from the menu button and closes it on Escape or on opening a Channel', () => {
+    render(<MemoryRouter><Tooltip.Provider><Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[general()]}
+      workspace={workspace}
+      workstreams={[workstream('ws-a', 'Alpha', 'completed'), workstream('ws-b', 'Beta', 'completed')]} /></Tooltip.Provider></MemoryRouter>);
+    const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+    const toggle = screen.getByRole('button', { name: 'Open navigation' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(navigation).not.toHaveClass('is-mobile-open');
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAccessibleName('Close navigation');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(navigation).toHaveClass('is-mobile-open');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(navigation).not.toHaveClass('is-mobile-open');
+    // The control that held focus is hidden with the sheet.
+    expect(toggle).toHaveFocus();
+
+    fireEvent.click(toggle);
+    // Re-sorting the list is not leaving it.
+    fireEvent.click(screen.getByRole('button', { name: /^Sorted /u }));
+    expect(navigation).toHaveClass('is-mobile-open');
+    fireEvent.click(screen.getByRole('link', { name: /Beta/u }));
+    expect(navigation).not.toHaveClass('is-mobile-open');
+    expect(toggle).toHaveAccessibleName('Open navigation');
+  });
+
+  it('closes the phone sheet on navigation from outside it and when the window leaves phone width', () => {
+    function Elsewhere(): React.JSX.Element {
+      const navigate = useNavigate();
+      return <button onClick={() => void navigate('/workstreams/ws-b')} type="button">Search result</button>;
+    }
+    const innerWidth = window.innerWidth;
+    render(<MemoryRouter><Tooltip.Provider><Elsewhere /><Sidebar {...defaultActions} onSignOut={vi.fn()}
+      workspace={workspace} workstreams={[workstream('ws-b', 'Beta', 'completed')]} /></Tooltip.Provider></MemoryRouter>);
+    const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Search result' }));
+    expect(navigation).not.toHaveClass('is-mobile-open');
+
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      window.innerWidth = 390;
+      fireEvent(window, new Event('resize'));
+      expect(navigation).toHaveClass('is-mobile-open');
+      window.innerWidth = 1024;
+      fireEvent(window, new Event('resize'));
+      expect(navigation).not.toHaveClass('is-mobile-open');
+    } finally {
+      window.innerWidth = innerWidth;
+    }
+  });
+
+  it('opens the new-Channel screen from New channel and marks it as the sidebar\'s', () => {
+    const onCreateChannel = vi.fn();
     render(<MemoryRouter><Tooltip.Provider>
       <Sidebar {...defaultActions} onCreateChannel={onCreateChannel}
         onSignOut={vi.fn()} spaces={[general()]} workspace={workspace} workstreams={[]} />
     </Tooltip.Provider></MemoryRouter>);
-    // The header's New channel opens the form directly, with no menu between.
+    // No menu and no dialog between: the screen names and places the Channel.
     const launcher = screen.getByRole('button', { name: 'New channel' });
     expect(launcher).not.toHaveAttribute('aria-haspopup');
     fireEvent.click(launcher);
-    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
 
-    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Launch' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'Launch', spaceId: general().id }));
+    expect(onCreateChannel).toHaveBeenCalledWith({ spaceId: general().id });
     expect(markSurfaceEntrypoint).toHaveBeenCalledWith('sidebar_new');
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -319,14 +371,14 @@ describe('Sidebar channel markers', () => {
     );
 
     const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+    expect(resizer).toHaveAttribute('aria-valuenow', '320');
 
     fireEvent.keyDown(resizer, { key: 'ArrowRight' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '316');
-    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('316');
+    expect(resizer).toHaveAttribute('aria-valuenow', '336');
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('336');
 
     fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+    expect(resizer).toHaveAttribute('aria-valuenow', '320');
   });
 
   // Same as the work-stream divider: the press must not open what the hover
@@ -343,7 +395,7 @@ describe('Sidebar channel markers', () => {
     const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
     resizer.setPointerCapture = vi.fn();
     vi.spyOn(screen.getByRole('complementary', { name: 'Rally navigation' }), 'getBoundingClientRect')
-      .mockReturnValue({ bottom: 900, height: 900, left: 0, right: 300, toJSON: () => ({}), top: 0, width: 300, x: 0, y: 0 });
+      .mockReturnValue({ bottom: 900, height: 900, left: 0, right: 320, toJSON: () => ({}), top: 0, width: 320, x: 0, y: 0 });
 
     fireEvent.focus(resizer);
     expect(screen.getByRole('tooltip')).toHaveTextContent('Drag to resize');
@@ -352,16 +404,16 @@ describe('Sidebar channel markers', () => {
 
     fireEvent.doubleClick(resizer);
     fireEvent.keyDown(resizer, { key: 'Enter' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '300');
-    expect(resizer).toHaveAttribute('aria-valuemin', '240');
+    expect(resizer).toHaveAttribute('aria-valuenow', '320');
+    expect(resizer).toHaveAttribute('aria-valuemin', '306');
 
-    fireEvent.pointerDown(resizer, { button: 0, clientX: 300, pointerId: 5 });
+    fireEvent.pointerDown(resizer, { button: 0, clientX: 320, pointerId: 5 });
     fireEvent.pointerMove(window, { clientX: 60, pointerId: 5 });
     fireEvent.pointerUp(window, { pointerId: 5 });
-    expect(resizer).toHaveAttribute('aria-valuenow', '240');
+    expect(resizer).toHaveAttribute('aria-valuenow', '306');
 
     for (let step = 0; step < 4; step += 1) fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
-    expect(resizer).toHaveAttribute('aria-valuenow', '240');
+    expect(resizer).toHaveAttribute('aria-valuenow', '306');
     expect(screen.queryByRole('button', { name: /Expand|Collapse/u })).not.toBeInTheDocument();
   });
 
@@ -745,13 +797,13 @@ describe('Sidebar channel markers', () => {
     const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
     expect(resizer).not.toHaveClass('is-near');
 
-    fireEvent.pointerMove(window, { clientX: 316, clientY: 780 });
+    fireEvent.pointerMove(window, { clientX: 336, clientY: 780 });
     expect(resizer).toHaveClass('is-near');
 
-    fireEvent.pointerMove(window, { clientX: 316, clientY: 90 });
+    fireEvent.pointerMove(window, { clientX: 336, clientY: 90 });
     expect(resizer).toHaveClass('is-near');
 
-    fireEvent.pointerMove(window, { clientX: 340, clientY: 400 });
+    fireEvent.pointerMove(window, { clientX: 360, clientY: 400 });
     expect(resizer).not.toHaveClass('is-near');
   });
 
@@ -777,21 +829,21 @@ describe('Sidebar channel markers', () => {
 
     const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
     resizer.setPointerCapture = vi.fn();
-    layOutPanelAt(300);
+    layOutPanelAt(320);
 
-    fireEvent.pointerDown(resizer, { clientX: 318, pointerId: 3 });
+    fireEvent.pointerDown(resizer, { clientX: 338, pointerId: 3 });
     expect(resizer).toHaveFocus();
-    fireEvent.pointerMove(window, { clientX: 318, pointerId: 3 });
+    fireEvent.pointerMove(window, { clientX: 338, pointerId: 3 });
     expect(document.querySelector('.sidebar-drag-guide')).not.toBeNull();
-    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+    expect(resizer).toHaveAttribute('aria-valuenow', '320');
 
-    fireEvent.pointerMove(window, { clientX: 358, pointerId: 3 });
-    expect(resizer).toHaveAttribute('aria-valuenow', '340');
+    fireEvent.pointerMove(window, { clientX: 378, pointerId: 3 });
+    expect(resizer).toHaveAttribute('aria-valuenow', '360');
 
     fireEvent.pointerUp(window, { pointerId: 3 });
     expect(document.querySelector('.sidebar-drag-guide')).toBeNull();
     fireEvent.pointerMove(window, { clientX: 400, pointerId: 3 });
-    expect(resizer).toHaveAttribute('aria-valuenow', '340');
+    expect(resizer).toHaveAttribute('aria-valuenow', '360');
   });
 
   // OnboardingChecklist is disabled (demo-only, local-state-only, and had no
@@ -1349,10 +1401,11 @@ describe('Sidebar channel markers', () => {
     it('offers channel creation locked to the selected Space from empty list space', async () => {
       const hiring = space();
       const target = placedIn(workstream('empty-area', 'Quarterly planning', 'completed'), hiring.id);
+      const onCreateChannel = vi.fn();
       render(
         <MemoryRouter>
           <Tooltip.Provider>
-            <Sidebar {...defaultActions} onSignOut={vi.fn()}
+            <Sidebar {...defaultActions} onCreateChannel={onCreateChannel} onSignOut={vi.fn()}
               spaces={[general(), hiring]} workspace={workspace} workstreams={[target]} />
           </Tooltip.Provider>
         </MemoryRouter>,
@@ -1383,10 +1436,68 @@ describe('Sidebar channel markers', () => {
 
       fireEvent.contextMenu(screen.getByRole('navigation', { name: 'Channels' }), { clientX: 120, clientY: 300 });
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Start New Channel' }));
-      const dialog = await screen.findByRole('dialog', { name: 'Start a new channel' });
-      const picker = within(dialog).getByRole('combobox', { name: 'Space' });
-      expect(picker).toHaveTextContent('Hiring');
-      expect(picker).toBeDisabled();
+      expect(onCreateChannel).toHaveBeenCalledWith({ spaceId: hiring.id });
+    });
+  });
+
+  describe('on a touch screen', () => {
+    // Radix opens a context menu on a touch press held this long.
+    const LONG_PRESS_MS = 700;
+    beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+    afterEach(() => vi.useRealTimers());
+
+    function renderList(): void {
+      const hiring = space();
+      render(
+        <MemoryRouter>
+          <Tooltip.Provider>
+            <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[general(), hiring]} workspace={workspace}
+              workstreams={[placedIn(workstream('touch-row', 'Quarterly planning', 'completed'), hiring.id)]} />
+          </Tooltip.Provider>
+        </MemoryRouter>,
+      );
+      selectSpace('Hiring');
+    }
+    const row = (): HTMLElement => screen.getByRole('link', { name: /Quarterly planning/u });
+    const rowWrapper = (): HTMLElement => row().closest<HTMLElement>('.sidebar-context-target')!;
+    const holdPress = (target: Element): void => {
+      fireEvent.pointerDown(target, { pointerType: 'touch' });
+      act(() => { vi.advanceTimersByTime(LONG_PRESS_MS); });
+    };
+    const transfer = { dropEffect: 'move', effectAllowed: '', setData: () => undefined };
+
+    it('opens only a row\'s own menu on a long press of the row, and the list\'s on empty space', () => {
+      renderList();
+
+      holdPress(row());
+      expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+      expect(screen.queryByRole('menuitem', { name: 'Start New Channel' })).toBeNull();
+      fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Rename' }), { key: 'Escape' });
+
+      holdPress(screen.getByRole('navigation', { name: 'Channels' }));
+      expect(screen.getByRole('menuitem', { name: 'Start New Channel' })).toBeInTheDocument();
+    });
+
+    it('opens no menu when the press lifts the row into a drag', () => {
+      renderList();
+
+      fireEvent.pointerDown(row(), { pointerType: 'touch' });
+      fireEvent.dragStart(rowWrapper(), { dataTransfer: transfer });
+      act(() => { vi.advanceTimersByTime(LONG_PRESS_MS); });
+
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
+
+    it('closes the row\'s menu when a drag starts after it opened', () => {
+      renderList();
+      // Found first: the open menu hides the rest of the page from role queries.
+      const wrapper = rowWrapper();
+
+      holdPress(row());
+      expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+      fireEvent.dragStart(wrapper, { dataTransfer: transfer });
+
+      expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
     });
   });
 
@@ -1446,7 +1557,8 @@ describe('Sidebar channel markers', () => {
     );
   });
 
-  it('starts the new Channel Space picker on All, then orders it like the Space pills', async () => {
+  it('starts a new Channel under All in General', () => {
+    const onCreateChannel = vi.fn();
     const accounts = space('00000000-0000-7000-8000-0000000000f6', 'Accounts');
     const hiring = space();
     const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
@@ -1455,6 +1567,7 @@ describe('Sidebar channel markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
+            onCreateChannel={onCreateChannel}
             onSignOut={vi.fn()}
             spaces={[general(), launch, accounts, hiring]}
             workspace={workspace}
@@ -1466,13 +1579,7 @@ describe('Sidebar channel markers', () => {
 
     expect(pillNames()).toEqual(['All', 'Accounts', 'Hiring', 'Launch']);
     fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
-
-    const dialog = screen.getByRole('dialog', { name: 'Start a new channel' });
-    const spacePicker = within(dialog).getByRole('combobox', { name: 'Space' });
-    expect(spacePicker).toHaveTextContent('All');
-    fireEvent.click(spacePicker);
-    expect(screen.getAllByRole('option').map((option) => option.textContent))
-      .toEqual(['All', 'Accounts', 'Hiring', 'Launch']);
+    expect(onCreateChannel).toHaveBeenCalledWith({ spaceId: general().id });
   });
 
   it('removes a channel from the space whose placement menu was opened', async () => {
@@ -2890,6 +2997,8 @@ describe('pinned channels', () => {
   ])('scrolls with $behavior when reduced motion is $reduced', async ({ reduced, behavior }) => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: reduced && query.includes('prefers-reduced-motion'),
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
     }));
     renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
@@ -3175,7 +3284,7 @@ describe('pinned channels', () => {
 describe('Sidebar channel paging', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
@@ -3284,7 +3393,7 @@ describe('Sidebar channel paging', () => {
 describe('the sidebar without a recency list', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300, sidebarSpaceFilter: null });
     vi.stubGlobal('ResizeObserver', class {
@@ -3389,16 +3498,23 @@ describe('the sidebar without a recency list', () => {
   });
 
   /**
-   * The state the removed list was the only thing describing.
-   *
-   * A member of a brand-new Organization sees Spaces, General, and "No
-   * channels" under it — and then, without this line, nothing: a sidebar that
-   * has stopped talking rather than one that is empty.
+   * A member of a brand-new Organization sees the empty Pinned section and the
+   * Channels heading with its sort, not a "No channels yet" line.
    */
-  it('given a member with no channels at all, when the sidebar is drawn, then it says so', () => {
+  it('given a member with no channels at all, when the sidebar is drawn, then it shows the Channels heading and no empty line', () => {
     renderSidebar({ spaces: [space()], workstreams: [] });
 
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
+    expect(screen.getByRole('button', { name: /^Sorted / })).toBeVisible();
+    expect(screen.getByText('No channels yet')).toHaveClass('sr-only');
+  });
+
+  it('given a guest with no channels, when the sidebar is drawn, then it says so instead of drawing a slot', () => {
+    renderSidebar({ spaces: [space()], spacesReadOnly: true, workstreams: [] });
+
     expect(screen.getByText('No channels yet')).toBeVisible();
+    expect(screen.getByText('No channels yet')).not.toHaveClass('sr-only');
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
   });
 
   it('given Channels loaded a Space at a time, when the Space on screen has not answered, then it waits rather than saying it is empty', () => {
@@ -3408,12 +3524,12 @@ describe('the sidebar without a recency list', () => {
     renderSidebar({ spaces: [hiring], workstreams: [], loadedSpaceIds: new Set(), onViewSpace });
 
     expect(onViewSpace).toHaveBeenLastCalledWith(hiring.id);
-    expect(screen.queryByText('No channels yet')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Channels' })).not.toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Loading your spaces and channels');
 
     cleanup();
     renderSidebar({ spaces: [hiring], workstreams: [], loadedSpaceIds: new Set([hiring.id]), onViewSpace });
-    expect(screen.getByText('No channels yet')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Channels' })).toBeVisible();
   });
 
   it('given a channel being created in the selected Space, then it shows dimmed and inert in place of the empty line', () => {
@@ -3479,7 +3595,7 @@ describe('the sidebar without a recency list', () => {
 describe('alphabetical channels inside a space', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     // Every case here is about the list under one Space, so that Space is
     // the filter the sidebar opens on.
@@ -3827,6 +3943,69 @@ describe('alphabetical channels inside a space', () => {
     await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(bravo, hiring.id, true));
   });
 
+  it('holds a slot open in Pinned under the pointer and pins the dropped Channel into it', async () => {
+    const charlie = placedIn(workstream('ws-charlie', 'Charlie', 'completed', '2026-07-31T09:00:00.000Z'), hiring.id);
+    const onPinWorkstream = vi.fn(async () => true);
+    const onReorderPinnedWorkstreams = vi.fn(async () => undefined);
+    renderSidebar({
+      onPinWorkstream,
+      onReorderPinnedWorkstreams,
+      workstreams: [pinned(alpha, 0), pinned(bravo, 1), charlie],
+    });
+    const section = screen.getByRole('region', { name: 'Pinned' });
+    // jsdom lays nothing out: the two pinned rows are given one 48px slot each.
+    for (const [index, id] of [alpha.id, bravo.id].entries()) {
+      const row = section.querySelector<HTMLElement>(`[data-workstream-id="${id}"]`)!;
+      row.getBoundingClientRect = () => DOMRect.fromRect({ x: 0, y: index * 48, width: 200, height: 48 });
+    }
+    const slots = (): string[] => [...section.querySelectorAll('.sidebar-list > .sidebar-context-target')]
+      .map((row) => `${row.classList.contains('pinned-drop-ghost') ? 'ghost:' : ''}${row.querySelector('.sidebar-row-title-copy')?.textContent ?? ''}`);
+    const transfer = channelTransfer();
+    const source = dragTarget(/Charlie/u);
+    // jsdom has no DragEvent, and the plain Event it falls back to drops `clientY`.
+    const dragOverAt = (clientY: number): void => {
+      const event = createEvent.dragOver(section, { dataTransfer: transfer });
+      Object.defineProperty(event, 'clientY', { value: clientY });
+      fireEvent(section, event);
+    };
+
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    // Below Alpha's middle and above Bravo's: the slot between them.
+    dragOverAt(60);
+    expect(slots()).toEqual(['Alpha', 'ghost:Charlie', 'Bravo']);
+
+    fireEvent.dragLeave(section, { dataTransfer: transfer, relatedTarget: document.body });
+    expect(slots()).toEqual(['Alpha', 'Bravo']);
+
+    dragOverAt(60);
+    fireEvent.drop(section, { dataTransfer: transfer });
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+
+    await waitFor(() => expect(onReorderPinnedWorkstreams)
+      .toHaveBeenCalledWith(hiring.id, [alpha.id, charlie.id, bravo.id]));
+    expect(onPinWorkstream).toHaveBeenCalledWith(charlie, hiring.id, true);
+    // Charlie never comes back pinned here, so the slot closes once the answer is in.
+    await waitFor(() => expect(slots()).toEqual(['Alpha', 'Bravo']));
+  });
+
+  it('leaves a dropped Channel\'s slot behind when the reader switches Space mid-pin', () => {
+    // The pin never answers, so the slot would stay open in Hiring.
+    renderSidebar({ onPinWorkstream: () => new Promise<boolean>(() => undefined), workstreams: [pinned(alpha, 0), bravo] });
+    const section = screen.getByRole('region', { name: 'Pinned' });
+    const transfer = channelTransfer();
+    const source = dragTarget(/Bravo/u);
+
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    fireEvent.dragOver(section, { dataTransfer: transfer });
+    fireEvent.drop(section, { dataTransfer: transfer });
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+    expect(document.querySelector('.pinned-drop-ghost')).toHaveTextContent('Bravo');
+
+    act(() => useUiStore.setState({ sidebarSpaceFilter: launch.id }));
+
+    expect(document.querySelector('.pinned-drop-ghost')).toBeNull();
+  });
+
   it('settles the empty Pinned drop zone when the Channel drag is cancelled', () => {
     renderSidebar({ workstreams: [alpha, bravo] });
     const transfer = channelTransfer('none');
@@ -3881,6 +4060,118 @@ describe('the sidebar Space filter', () => {
   });
 
   afterEach(() => vi.unstubAllGlobals());
+
+  it('in a browser tab, draws New space alone in the top bar until the first Space exists', () => {
+    const renderIn = (spaces: ReturnType<typeof space>[]) => (
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              onSignOut={vi.fn()}
+              spaces={spaces}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(renderIn([home]));
+    const topBar = screen.getByRole('generic', { name: 'Rally actions' });
+
+    expect(within(topBar).getByRole('button', { name: 'New space' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+
+    rerender(renderIn([home, hiring]));
+
+    expect(within(topBar).queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Hiring' })).toBeVisible();
+  });
+
+  it('in a browser tab, moves New space between the top bar and the Space row as the window crosses phone width', () => {
+    let wide = false;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      get matches() { return query.includes('min-width') ? wide : false; },
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    }));
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              onSignOut={vi.fn()}
+              spaces={[home]}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    const topBar = screen.getByRole('generic', { name: 'Rally actions' });
+
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New space' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+
+    act(() => {
+      wide = true;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(within(topBar).getByRole('button', { name: 'New space' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+
+    act(() => {
+      wide = false;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(within(topBar).queryByRole('button', { name: 'New space' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+  });
+
+  it('in a browser tab, keeps an open restore dialog when the window crosses phone width', async () => {
+    let wide = true;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      get matches() { return query.includes('min-width') ? wide : false; },
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    }));
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <CollaborationSessionProvider api={null} host="browser" session={null}>
+            <Sidebar
+              {...defaultActions}
+              inactiveSpaces={[space(hiring.id, 'Hiring', { status: 'archived' })]}
+              onSignOut={vi.fn()}
+              spaces={[home]}
+              workspace={workspace}
+              workstreams={[alpha]}
+            />
+          </CollaborationSessionProvider>
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'New space' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Restore archived space' }));
+    expect(await screen.findByRole('dialog', { name: 'Restore archived space' })).toBeVisible();
+
+    act(() => {
+      wide = false;
+      listeners.forEach((listener) => listener());
+    });
+
+    expect(screen.getByRole('dialog', { name: 'Restore archived space' })).toBeVisible();
+  });
 
   function renderFiltered(props: Partial<React.ComponentProps<typeof Sidebar>> = {}): void {
     render(
@@ -4059,9 +4350,16 @@ describe('the sidebar Space filter', () => {
     expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
   });
 
-  it('pins a Channel dropped on the Pinned section under All', async () => {
+  it('pins a Channel dropped at the end of All\'s Pinned section there, past its old saved slot', async () => {
     const onPinWorkstream = vi.fn(async () => true);
-    renderFiltered({ onPinWorkstream, onReorderAllPinned: vi.fn(async () => undefined) });
+    const onReorderAllPinned = vi.fn(async () => undefined);
+    renderFiltered({
+      // Charlie was pinned once and unpinned; All's saved order still names it first.
+      allPinnedOrder: [charlie.id, alpha.id],
+      onPinWorkstream,
+      onReorderAllPinned,
+      workstreams: [{ ...alpha, spacePins: [{ spaceId: home.id, position: 0 }] }, bravo, charlie, delta],
+    });
     // jsdom has no DataTransfer; the row reads and writes only these.
     const data = new Map<string, string>();
     const transfer = {
@@ -4075,11 +4373,15 @@ describe('the sidebar Space filter', () => {
 
     fireEvent.dragStart(source, { dataTransfer: transfer });
     const pinnedSection = screen.getByRole('region', { name: 'Pinned' });
-    fireEvent.dragOver(pinnedSection, { dataTransfer: transfer });
+    // Below every pinned row: the end. jsdom's plain drag Event drops `clientY`.
+    const over = createEvent.dragOver(pinnedSection, { dataTransfer: transfer });
+    Object.defineProperty(over, 'clientY', { value: 1000 });
+    fireEvent(pinnedSection, over);
     fireEvent.drop(pinnedSection, { dataTransfer: transfer });
     fireEvent.dragEnd(source, { dataTransfer: transfer });
 
-    await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(expect.objectContaining({ id: charlie.id }), hiring.id, true));
+    await waitFor(() => expect(onReorderAllPinned).toHaveBeenCalledWith([alpha.id, charlie.id]));
+    expect(onPinWorkstream).toHaveBeenCalledWith(expect.objectContaining({ id: charlie.id }), hiring.id, true);
   });
 
   it('widens a Space filter to All when the open Channel is not in that Space', () => {
@@ -4117,16 +4419,21 @@ describe('the sidebar Space filter', () => {
   describe('a pill picked while a Channel is open', () => {
     const empty = space('00000000-0000-7000-8000-0000000000f6', 'Empty');
 
-    function renderOpen(workstreamId: string): void {
+    function renderOpen(workstreamId: string, path = `/workstreams/${workstreamId}`): void {
       function CurrentRoute(): React.JSX.Element {
         return <output aria-label="Current route">{useLocation().pathname}</output>;
       }
+      function Elsewhere(): React.JSX.Element {
+        const navigate = useNavigate();
+        return <button onClick={() => void navigate(`/workstreams/${delta.id}`)} type="button">Search result</button>;
+      }
       render(
-        <MemoryRouter initialEntries={[`/workstreams/${workstreamId}`]}>
+        <MemoryRouter initialEntries={[path]}>
           <Tooltip.Provider>
             <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[home, hiring, launch, empty]}
               workspace={workspace} workstreams={[alpha, bravo, charlie, delta]} />
             <CurrentRoute />
+            <Elsewhere />
           </Tooltip.Provider>
         </MemoryRouter>,
       );
@@ -4143,12 +4450,36 @@ describe('the sidebar Space filter', () => {
       expect(pill('Launch')).toHaveAttribute('aria-pressed', 'true');
     });
 
-    it('opens the Space\'s dashboard when that Space holds no Channels', async () => {
+    it('keeps the phone sheet open while it opens that Space\'s first Channel', async () => {
+      renderOpen(alpha.id);
+      const navigation = screen.getByRole('complementary', { name: 'Rally navigation' });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      selectSpace('Launch');
+      await waitFor(() => expect(route()).toBe(`/workstreams/${charlie.id}`));
+      expect(navigation).toHaveClass('is-mobile-open');
+
+      // The pill's pass is spent: the next route change closes the sheet,
+      // even one from outside it.
+      fireEvent.click(screen.getByRole('button', { name: 'Search result' }));
+      expect(navigation).not.toHaveClass('is-mobile-open');
+    });
+
+    it('starts a Channel in that Space when it holds none', async () => {
       renderOpen(alpha.id);
 
       selectSpace('Empty');
-      await waitFor(() => expect(route()).toBe(`/spaces/${empty.id}`));
+      await waitFor(() => expect(route()).toBe(`/spaces/${empty.id}/workstreams/new`));
       expect(pill('Empty')).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('leaves a new-Channel screen for another Space as it leaves a Channel', async () => {
+      renderOpen(alpha.id, `/spaces/${hiring.id}/workstreams/new`);
+
+      selectSpace('Launch');
+      await waitFor(() => expect(route()).toBe(`/workstreams/${charlie.id}`));
+      selectSpace('Empty');
+      await waitFor(() => expect(route()).toBe(`/spaces/${empty.id}/workstreams/new`));
     });
 
     it('stays on the open Channel when that Space holds it', () => {
@@ -4191,10 +4522,15 @@ describe('the sidebar Space filter', () => {
       });
     });
 
-    it('offers no import outside the desktop host', () => {
+    it('draws import disabled outside the desktop host and says why', async () => {
       renderFiltered();
 
-      expect(screen.queryByRole('button', { name: 'Import from ChatGPT or Claude' })).not.toBeInTheDocument();
+      const button = screen.getByRole('button', { name: 'Import from ChatGPT or Claude' });
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.focus(button);
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(
+        'Import from Claude/ChatGPT is only available in the macOS app as we use computer use to read your chat for accuracy',
+      );
     });
 
     it('offers a restart only once an update has been downloaded', async () => {
@@ -4212,18 +4548,13 @@ describe('the sidebar Space filter', () => {
       expect(screen.queryByRole('button', { name: /Restart to update/u })).not.toBeInTheDocument();
     });
 
-    it('starts a channel in the selected Space from New channel', async () => {
-      const onCreateChannel = vi.fn(async () => undefined);
+    it('starts a channel in the selected Space from New channel', () => {
+      const onCreateChannel = vi.fn();
       renderFiltered({ onCreateChannel });
       selectSpace('Launch');
 
       fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
-      const dialog = await screen.findByRole('dialog', { name: 'Start a new channel' });
-      expect(within(dialog).getByRole('combobox', { name: 'Space' })).toHaveTextContent('Launch');
-      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name of channel' }), { target: { value: 'Roadmap' } });
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
-
-      await waitFor(() => expect(onCreateChannel).toHaveBeenCalledWith({ name: 'Roadmap', spaceId: launch.id }));
+      expect(onCreateChannel).toHaveBeenCalledWith({ spaceId: launch.id });
     });
   });
 });

@@ -53,7 +53,8 @@ export const PREVIEW_BYTES = Math.floor((GMAIL_CLIP_BYTES - TEMPLATE_BYTES) / (P
 /** Two seconds on Rally, for a recipient who has never heard of it and is being asked to sign in to it. */
 const ABOUT_RALLY = "Rally keeps each piece of work in one shared conversation, where your team and its Sidekicks work it through together.";
 
-const NOT_ACCESS_YET = "This invitation does not grant access until you sign in and accept it.";
+/** Why a forwarded copy of this email opens nothing: the share belongs to the address, not the link. */
+const ADDRESS_ONLY = "Only someone signed in with this email address can open it.";
 
 /** Collapsed and trimmed: a name or a title carrying a newline would forge lines in the text part. */
 const line = (value: string | null): string => value ? singleLine(value).trim() : "";
@@ -92,7 +93,7 @@ function textPart(content: ScopeInvitationEmailContent, rendered: ReturnType<typ
   return [
     rendered.heading,
     "",
-    `Sign in with ${content.recipientEmail} and accept:`,
+    `Sign in with ${content.recipientEmail} to open it:`,
     content.link,
     // Quoted with `>`, and after everything this email says in its own voice,
     // because the turns are written by workspace members: a message ending in a
@@ -107,7 +108,7 @@ function textPart(content: ScopeInvitationEmailContent, rendered: ReturnType<typ
     ...(rendered.earlier && rendered.turns.length > 0 ? [rendered.earlier] : []),
     ...rendered.turns.flatMap((turn) => ["", `> ${turn.author}: ${turn.text}`]),
     "",
-    NOT_ACCESS_YET,
+    ADDRESS_ONLY,
     "",
     ABOUT_RALLY,
   ].join("\n");
@@ -146,10 +147,10 @@ function htmlPart(content: ScopeInvitationEmailContent, rendered: ReturnType<typ
           <tr><td><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="padding-right:10px;vertical-align:middle"><img src="https://rallywith.ai/brand/rally-mark-email.png" width="32" height="32" alt="" style="display:block;border:0"></td><td style="font-size:18px;font-weight:700;color:#141414;vertical-align:middle">Rally</td></tr></table></td></tr>
           <tr><td><h1 style="margin:18px 0 12px;font-size:28px;line-height:1.2;color:#141414">${escapeHtml(rendered.title || rendered.workspace || "Join the conversation")}</h1></td></tr>
           <tr><td style="font-size:16px;line-height:1.6;color:#3d3d3d">${sentence}</td></tr>
-          <tr><td style="padding-top:8px;font-size:16px;line-height:1.6;color:#3d3d3d">Sign in with <strong style="color:#141414">${escapeHtml(content.recipientEmail)}</strong> to accept.</td></tr>
-          <tr><td style="padding:28px 0"><a href="${link}" style="display:inline-block;background:#070707;color:#fcfcfc;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:8px">Accept invitation</a></td></tr>
+          <tr><td style="padding-top:8px;font-size:16px;line-height:1.6;color:#3d3d3d">Sign in with <strong style="color:#141414">${escapeHtml(content.recipientEmail)}</strong> to open it.</td></tr>
+          <tr><td style="padding:28px 0"><a href="${link}" style="display:inline-block;background:#070707;color:#fcfcfc;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:8px">Open in Rally</a></td></tr>
           ${previewRows(rendered)}
-          <tr><td style="font-size:13px;line-height:1.6;color:#696969">${NOT_ACCESS_YET}</td></tr>
+          <tr><td style="font-size:13px;line-height:1.6;color:#696969">${ADDRESS_ONLY}</td></tr>
           <tr><td style="padding-top:24px;font-size:12px;line-height:1.5;color:#696969;border-top:1px solid #e5e5e5">${ABOUT_RALLY}</td></tr>
         </table>
       </td></tr>

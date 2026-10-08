@@ -157,8 +157,10 @@ Usage beyond quota this month   $̶1̶2̶.̶4̶0̶   Not billed
   "Usage", so searching "quota", "usage" or "plan" finds it.
 
 **Organization menu** (the account and Organization dropdown in the sidebar).
-Under the active Organization's row, a thin meter and one line: "72% left this
-week". Selecting it opens Settings → Organization at the Usage section. Other
+Under the active Organization's row, a thin meter and one line, with no title: "72% left till
+Thu 9:00 AM", naming when the week resets in the viewer's local time. Below
+20% left it adds ", overage enabled", since a spent quota never stops work and
+members should not ration what is left. Selecting it opens Settings → Organization at the Usage section. Other
 Organizations in the list show no meter.
 
 The meter is a new shared `Meter` primitive in `packages/ui`: a track, a fill,
@@ -175,10 +177,10 @@ color. There is no notification.
 | --- | --- | --- |
 | Loading, nothing cached | Track with no fill; "Checking usage…" | Line hidden |
 | Loading, cached value | Cached value right away, refreshed in the background | Same |
-| No usage yet (new week or new Organization) | 100%, full bar | "100% left this week" |
+| No usage yet (new week or new Organization) | 100%, full bar | "100% left till Thu 9:00 AM" |
 | Partly used | Percentage and bar | Percentage and bar |
-| Low (below 20%) | Bar in the warning color | Bar in the warning color |
-| Quota spent | 0%, empty bar, "Quota used for this week" | "Quota used this week" |
+| Low (below 20%) | Bar in the warning color | Bar in the warning color; line ends ", overage enabled" |
+| Quota spent | 0%, empty bar, "Quota used for this week" | "0% left till Thu 9:00 AM, overage enabled" |
 | Overage this month | Overage line, struck through, **Not billed** | Not shown |
 | Error | "Usage isn't available right now." with **Try again** | Line hidden |
 | Offline | Last cached value, labelled "as of 2:14 PM" | Last cached value |

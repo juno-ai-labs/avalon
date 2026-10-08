@@ -1,4 +1,5 @@
 import type { ClientSession } from "@rally/contracts/client-session";
+import type { NetworkRecoveryState, NetworkTicketObservation } from './network-recovery';
 import type {
   TelemetryEventProperties,
   WorkspaceAttention,
@@ -6,6 +7,8 @@ import type {
   WorkspaceDepartureOutcome,
   AccountOnboarding,
   UpdateAccountOnboarding,
+  SupportPerson,
+  SupportWorkspace,
 } from '@rally/contracts';
 import type { Region } from "@rally/contracts/regions";
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
@@ -43,6 +46,8 @@ export interface DesktopDeepLinkNavigation {
 }
 
 export interface RuntimeConfig {
+  /** Opaque first-install signup flow; absent after an account was observed. */
+  firstSignupFlowId?: string;
   appVersion: string;
   isPackaged: boolean;
   platform: string;
@@ -81,6 +86,8 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
   /** Whether the Rally status item is in the macOS menu bar. On by default. */
   pushNotificationsEnabled: boolean;
   pushNotificationStatus: string;
+  /** macOS's "Badge application icon" switch for Rally; `unknown` until read. */
+  notificationBadgeStatus: 'enabled' | 'disabled' | 'unknown';
   menuBarEnabled: boolean;
   /** Whether this platform has a menu bar Rally can live in at all. The
    * preference is still stored where it is not, so moving the same profile to a
@@ -379,6 +386,11 @@ export type DesktopUpdateStatus =
   | { readonly kind: 'downloaded'; readonly version: string };
 
 export interface RallyDesktopBridge {
+  /** Desktop session recovery; absent from browser bridges. */
+  waitForNetworkRecoveryState?: () => Promise<void>;
+  getNetworkRecoveryState?: () => NetworkRecoveryState;
+  reportNetworkTicket?: (observation: NetworkTicketObservation) => Promise<void>;
+  onNetworkRecoveryState?: (listener: (state: NetworkRecoveryState) => void) => () => void;
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   /** Whether any Rally window currently owns application focus. */
   getApplicationForegroundState: () => Promise<boolean>;
@@ -394,6 +406,11 @@ export interface RallyDesktopBridge {
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setPushNotificationsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   openNotificationSettings: () => Promise<void>;
+  /**
+   * The dock icon's badge: the sidebar attention menu's count, `0` to clear.
+   * macOS shows it only while notifications, with badges, are allowed.
+   */
+  setDockBadgeCount: (count: number) => Promise<void>;
   setMenuBarEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setLaunchAtLogin: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setProductAnalyticsEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
@@ -451,6 +468,16 @@ export interface RallyDesktopBridge {
   }) => Promise<WorkspaceDeparture>;
   activateWorkspace: (input: { region: RallyRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
   /**
+   * Rally staff support access (`docs/impersonation.md`). The Organization
+   * list is `null` for anybody who is not Rally staff, and rejects only on a
+   * failure worth retrying. Starting a session makes it the active one;
+   * ending it returns to the Organization used before.
+   */
+  listSupportWorkspaces: () => Promise<SupportWorkspace[] | null>;
+  listSupportPeople: (workspaceId: string) => Promise<SupportPerson[]>;
+  startSupportSession: (input: { workspaceId: string; userId: string }) => Promise<DesktopSession>;
+  endSupportSession: () => Promise<DesktopSession | null>;
+  /**
    * Answers a link that names the active workspace with the session already
    * in use, taking a selection intent so the link is the newest selection and
    * an activation still in flight cannot take over the window. Resolves `null`
@@ -490,6 +517,8 @@ export interface RallyDesktopBridge {
   /** The import window's Spaces, as the main window last offered them. */
   getBrowserImportContext: () => Promise<BrowserImportContext | null>;
   onBrowserImportContextChanged: (listener: () => void) => () => void;
+  /** View → Refresh Organization List: reread the account menu's Organizations. */
+  onOrganizationListRefreshRequested: (listener: () => void) => () => void;
   /** The import window's hand-off: the main window opens the Channel and this window closes. */
   completeBrowserImport: (workstreamId: string) => Promise<void>;
   /**

@@ -539,6 +539,10 @@ pre {
   border-radius: var(--av-sys-size-radius-sm);
   color: var(--av-cmp-tooltip-foreground);
   font-size: 12px;
+  /* A long label wraps instead of running across the window. 280px is the
+     width the tooltips that already capped themselves had each settled on. */
+  max-width: 280px;
+  overflow-wrap: break-word;
   padding: 5px 8px;
   z-index: 1000;
 }
@@ -837,6 +841,7 @@ pre {
 }
 
 .empty-state p:not(.empty-state-title) { margin: 0 0 14px; }
+.empty-state-actions { display: flex; gap: 8px; justify-content: center; }
 
 .dialog-overlay {
   animation: fade-in 130ms ease-out;
@@ -1573,6 +1578,18 @@ pre {
 .skeleton-row:nth-child(5n+2) .skeleton-row-subline { width: 62%; }
 .skeleton-row:nth-child(5n+4) .skeleton-row-subline { width: 33%; }
 
+/* The empty Channel list's one row; the mark keeps the glyph's pebble. */
+.ghost-channel-row { pointer-events: none; }
+.ghost-channel-mark { height: 40px; width: 40px; }
+.ghost-channel-mark > .workstream-glyph-shape {
+  background: transparent;
+  border: 1.5px dashed var(--av-sys-color-border-strong);
+  box-shadow: none;
+}
+.ghost-channel-row .channel-row-heading { align-items: center; }
+.ghost-channel-title { flex: 0 1 auto; height: 9px; width: 58%; }
+.ghost-channel-time { flex: none; height: 7px; margin-left: auto; width: 44px; }
+
 .skeleton-group-label {
   animation: skeleton-pulse 1.5s ease-in-out infinite;
   height: 0.6em;
@@ -1695,17 +1712,32 @@ pre {
 }
 
 .account-trigger:hover { background-image: var(--hover-layer); }
+/* A support session: the staff member acting, beside the person acted as. */
+.account-impersonator { display: flex; flex-shrink: 0; }
 .account-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .account-copy strong { font-size: 13px; font-weight: 500; line-height: 18px; overflow: hidden; white-space: nowrap; }
 .account-copy span { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; white-space: nowrap; }
-.account-attention-dot,
-.workspace-activity-dot {
+.account-attention-dot {
   background: var(--av-sys-color-workstream-unread);
   border-radius: var(--av-cmp-marker-radius);
   flex: 0 0 var(--av-cmp-marker-inline-size);
   height: var(--av-cmp-marker-inline-size);
   width: var(--av-cmp-marker-inline-size);
 }
+.activity-count-badge {
+  background: var(--av-sys-color-workstream-news);
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-palette-ink-light);
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 18px;
+  min-width: 18px;
+  padding-inline: 5px;
+  text-align: center;
+}
+.workspace-activity-count { display: flex; flex-shrink: 0; }
 .workspace-menu {
   max-height: var(--radix-dropdown-menu-content-available-height);
   min-width: 270px;
@@ -1735,6 +1767,11 @@ pre {
 .workspace-menu-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-copy small { color: var(--av-sys-color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-error { color: var(--av-sys-color-danger-base) !important; }
+/* Rally access rows (docs/impersonation.md): another Organization's people. */
+.support-workspace-mark { color: var(--av-sys-color-text-muted); flex-shrink: 0; }
+.support-people-menu { max-height: var(--radix-dropdown-menu-content-available-height); min-width: 240px; overflow-y: auto; }
+.support-person-item { min-height: 38px; }
+.support-people-status { white-space: normal; }
 .workspace-region-tag {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-sys-color-border-subtle);
@@ -1819,13 +1856,11 @@ pre {
   padding: 6px 10px;
 }
 
-/* The active Organization's usage line, set under its name: the inset is the
-   row's padding plus the 18px mark and the row's 8px gap. After the popup's
-   rule above, which it has to override at the same specificity. */
-.menu-content .workspace-usage-item.menu-item { align-items: stretch; flex-direction: column; gap: 5px; min-height: 0; padding: 0 10px 8px 36px; }
+/* The Quota row under Settings: the meter spans the menu's width, past the
+   icon column the rows above it indent their labels to. After the popup's rule
+   above, which it has to override at the same specificity. */
+.menu-content .workspace-usage-item.menu-item { align-items: stretch; flex-direction: column; gap: 5px; min-height: 0; padding: 6px 10px 8px; }
 .workspace-usage-item small { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-font-size-meta); }
-/* With no Organizations list there is no row to indent under. */
-.menu-content .workspace-usage-standalone .workspace-usage-item.menu-item { padding: 6px 10px 8px; }
 
 .account-menu-item-with-value.menu-item { grid-template-columns: 18px minmax(0, 1fr) auto 14px; }
 .account-menu-item.menu-item[data-highlighted] { background-image: var(--hover-layer); }
@@ -1842,8 +1877,6 @@ pre {
 }
 
 [data-theme='dark'] .account-menu-item.menu-item[data-highlighted] { background-image: var(--hover-layer); }
-.mobile-sidebar-trigger { display: none; left: 8px; position: fixed; top: 9px; z-index: 25; }
-.sidebar-scrim { display: none; }
 .mobile-only { display: none; }
 
 /* Deep-link failure window
@@ -2060,6 +2093,26 @@ pre {
 .screen-with-titlebar { height: 100%; position: relative; }
 .screen-drag-strip { height: var(--screen-drag-strip-height); left: 0; position: absolute; right: 0; top: 0; }
 .screen-error-state { align-items: center; display: flex; height: 100%; justify-content: center; }
+.conversation-access-request {
+  align-items: center;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 400px;
+  padding: 32px 20px;
+  text-align: center;
+}
+.conversation-access-request p { margin: 0; }
+.conversation-access-request-title {
+  color: var(--av-sys-color-text-default);
+  font-size: 18px;
+  font-weight: 620;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.conversation-access-request-sent { color: var(--av-sys-color-text-subtle); }
+.conversation-access-request-sent svg { display: inline-block; margin-right: 4px; vertical-align: -2px; }
 .screen-state-actions { align-items: center; display: flex; gap: 2px; position: absolute; right: 10px; top: 9px; }
 .muted-notice { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 
@@ -2083,6 +2136,8 @@ pre {
   grid-template-columns: 198px minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
+  /* The phone sheet starts under the header, so both read this. */
+  --settings-header-height: 58px;
 }
 
 .settings-sidebar {
@@ -2163,6 +2218,10 @@ pre {
   padding-left: 35px;
 }
 .settings-navigation-group button.settings-navigation-child svg { height: 14px; width: 14px; }
+.settings-navigation-group button.settings-navigation-child .connector-mark { flex: none; height: 14px; width: 14px; }
+/* A connection's name is its creator's, often with an account after it, so it
+   truncates rather than wrapping the sidebar row to two lines. */
+.settings-navigation-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-search-empty { color: var(--av-sys-color-text-muted); font-size: 11px; padding: 18px 9px; }
 
 .settings-search-results { min-height: 0; overflow-y: auto; padding-top: 14px; }
@@ -2208,7 +2267,7 @@ pre {
   border-bottom: 1px solid transparent;
   display: flex;
   justify-content: space-between;
-  min-height: 58px;
+  min-height: var(--settings-header-height);
   padding: 11px 22px 7px 28px;
   position: relative;
   z-index: 2;
@@ -2253,14 +2312,15 @@ pre {
 .settings-pane-heading-count > span { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
 .settings-subsection { margin-top: 30px; }
 
-/* Settings → Organization → Usage. */
-.usage-summary { display: flex; flex-direction: column; gap: 4px; padding: 14px; }
-.usage-summary .meter { margin: 6px 0 4px; }
-.usage-plan { font-size: 13px; font-weight: 500; }
-.usage-remaining { display: flex; flex-wrap: wrap; font-size: 13px; gap: 6px; margin: 0; }
-.usage-as-of,
-.usage-summary small { color: var(--av-sys-color-text-muted); font-size: 12px; }
-.usage-summary + .usage-overage::before { background: var(--av-sys-color-border-subtle); content: ''; height: .5px; left: 14px; position: absolute; right: 14px; top: 0; }
+/* Settings → Organization → Usage. The meter fills in the text colour,
+   near-black in the light appearance and near-white in the dark, rather than
+   the brand accent; the warning fill still wins below the low-quota line. */
+.usage-quota-value .meter { --av-cmp-meter-fill: var(--av-sys-color-text-default); }
+/* The Weekly quota row's value: the meter over how much is left, right-aligned
+   like the other rows' values. */
+.usage-quota-value { display: flex; flex-direction: column; gap: 6px; text-align: right; width: 200px; }
+.usage-quota-value small { color: var(--av-sys-color-text-muted); font-size: 12px; }
+.usage-plan-error { color: var(--av-sys-color-danger-soft); }
 .usage-overage-value { align-items: center; display: inline-flex; font-size: 13px; gap: 8px; }
 .usage-overage-value s { color: var(--av-sys-color-text-muted); }
 .usage-not-billed:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 1px; }
@@ -2324,10 +2384,22 @@ pre {
 }
 
 .settings-row-value { align-items: flex-end; display: flex; flex-direction: column; gap: 4px; text-align: right; }
+/* Allow Rally access: the time left sits before the button that ends it. */
+.support-access-controls { align-items: center; display: flex; flex-shrink: 0; gap: 12px; }
+.support-access-remaining { color: var(--av-sys-color-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .settings-row-value strong { font-size: 11.5px; }
 .workspace-settings-screen .settings-profile-card strong,
 .workspace-settings-screen .settings-member-row strong,
 .workspace-settings-screen .settings-row-value strong { font-size: 13px; font-weight: 400; }
+.inline-editable-text { border-radius: 6px; cursor: text; margin: -3px -6px; padding: 3px 6px; }
+/* Hover previews the field it opens into; a plain tint is lost on a Settings card. */
+.inline-editable-text:hover { background: var(--av-sys-color-surface-sunken); box-shadow: inset 0 0 0 1px var(--av-ref-color-line-3); }
+.inline-editable-text[aria-busy="true"] { cursor: progress; }
+.inline-editable-text[aria-busy="true"]:hover { background: none; box-shadow: none; }
+.inline-editable-field { align-items: flex-end; display: flex; flex-direction: column; gap: 4px; width: min(240px, 100%); }
+.inline-editable-reason { color: var(--av-sys-color-danger-soft); font-size: 12px; }
+/* The box itself is the Settings text field, shared with `.invite-form input` below. */
+.inline-editable-input { font-size: 13px; min-width: 0; }
 .workspace-settings-screen .settings-profile-card small,
 .workspace-settings-screen .settings-member-row small { font-size: 12px; }
 
@@ -2367,8 +2439,7 @@ pre {
 .workspace-settings-screen .settings-toggle:has(input:checked) > span::after { background: var(--av-sys-color-text-on-inverse); }
 
 .terminal-network-card { display: flex; flex-direction: column; }
-.terminal-network-notice,
-.terminal-network-confirmation {
+.terminal-network-notice {
   align-items: center;
   background: var(--av-sys-color-surface-subtle);
   border-bottom: 1px solid var(--av-sys-color-border-subtle);
@@ -2377,14 +2448,10 @@ pre {
   gap: 10px;
   padding: 12px 14px;
 }
-.terminal-network-notice > svg,
-.terminal-network-confirmation > svg { color: var(--av-sys-color-text-muted); flex: none; }
-.terminal-network-notice > span,
-.terminal-network-confirmation > span { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.terminal-network-notice strong,
-.terminal-network-confirmation strong { color: var(--av-sys-color-text-default); font-size: var(--av-cmp-control-font-size); }
-.terminal-network-notice small,
-.terminal-network-confirmation small { font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin-top: 2px; }
+.terminal-network-notice > svg { color: var(--av-sys-color-text-muted); flex: none; }
+.terminal-network-notice > span { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.terminal-network-notice strong { color: var(--av-sys-color-text-default); font-size: var(--av-cmp-control-font-size); }
+.terminal-network-notice small { font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin-top: 2px; }
 .terminal-network-modes { border: 0; display: grid; gap: 8px; margin: 0; padding: 14px; }
 .terminal-network-modes legend {
   color: var(--av-sys-color-text-muted);
@@ -2426,6 +2493,21 @@ pre {
 }
 .terminal-network-domains textarea:focus { border-color: var(--av-sys-color-focus-default); box-shadow: var(--av-sys-focus-ring-default); }
 .terminal-network-domains small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 1.45; }
+.personal-system-prompt { display: flex; flex-direction: column; gap: 9px; padding: 14px; position: relative; }
+.personal-system-prompt > label { display: flex; flex-direction: column; gap: 9px; }
+.personal-system-prompt textarea {
+  background: var(--av-sys-color-surface-default);
+  border: 1px solid var(--av-ref-color-line-3);
+  border-radius: var(--av-cmp-control-radius);
+  color: var(--av-sys-color-text-default);
+  font: var(--av-cmp-control-font-size)/1.5 var(--av-sys-font-family-ui);
+  min-height: 96px;
+  padding: 8px 9px;
+  resize: vertical;
+}
+.personal-system-prompt textarea:focus { border-color: var(--av-sys-color-focus-default); box-shadow: var(--av-sys-focus-ring-default); }
+.personal-system-prompt-actions { display: flex; justify-content: flex-end; }
+.personal-system-prompt:not(:last-child)::after { background: var(--av-sys-color-border-subtle); bottom: 0; content: ''; height: .5px; left: 14px; position: absolute; right: 14px; }
 .terminal-network-actions {
   align-items: center;
   border-top: 1px solid var(--av-sys-color-border-subtle);
@@ -2434,34 +2516,6 @@ pre {
   padding: 11px 14px;
 }
 .terminal-network-actions > span { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: var(--av-cmp-control-font-size); gap: 6px; }
-.terminal-network-failure-outcomes {
-  background: var(--av-sys-color-danger-wash);
-  border-top: 1px solid var(--av-sys-color-danger-edge);
-  color: var(--av-sys-color-danger-soft);
-  font-size: var(--av-cmp-control-font-size);
-  line-height: 1.5;
-  padding: 10px 14px;
-}
-.terminal-network-failure-outcomes strong { color: var(--av-sys-color-danger-strong); }
-.terminal-network-failure-outcomes ul { margin: 4px 0 0; padding-left: 18px; }
-.terminal-network-confirmation {
-  align-items: flex-start;
-  border-bottom: 0;
-  border-top: 1px solid var(--av-sys-color-border-default);
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-}
-.terminal-network-confirmation > span { grid-column: 2; }
-.terminal-network-confirmation details { margin-top: 8px; }
-.terminal-network-confirmation details > ul { list-style: none; margin: 3px 0 8px; padding: 0; }
-.terminal-network-confirmation details code { overflow-wrap: anywhere; }
-.terminal-network-confirmation-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  grid-column: 2;
-  margin-top: 8px;
-}
 
 /* Digest — day chips, the time list, and the save bar. The cards reuse
    .settings-list-card so the pane keeps the same surface as every other
@@ -2860,7 +2914,6 @@ pre {
 }
 
 .settings-connection-toolbar { align-items: center; display: flex; justify-content: space-between; margin-bottom: 12px; }
-.settings-connection-toolbar > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 
 .settings-section-copy { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin: 0 0 14px; }
 .provider-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
@@ -2914,14 +2967,8 @@ pre {
 
 .settings-connection-tables { display: grid; gap: 18px; }
 .settings-connection-group { min-width: 0; }
-.settings-connection-group-heading {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  margin: 0 2px 7px;
-}
+.settings-connection-group-heading { margin: 0 2px 7px; }
 .settings-connection-group-heading h3 { font-size: var(--av-cmp-control-font-size); margin: 0; }
-.settings-connection-group-heading > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .settings-connection-table-frame { overflow-x: auto; }
 .settings-connection-table { border-collapse: collapse; min-width: 540px; width: 100%; }
 .settings-connection-table th {
@@ -2945,7 +2992,22 @@ pre {
   padding: 8px 10px;
   vertical-align: middle;
 }
-.settings-connection-name { align-items: center; display: flex; gap: 9px; }
+.settings-connection-row { cursor: pointer; }
+.settings-connection-row:hover td { background: var(--av-sys-color-state-hover); }
+.settings-connection-name {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 9px;
+  padding: 0;
+  text-align: left;
+}
+.settings-connection-name:focus-visible { border-radius: 4px; box-shadow: var(--av-sys-focus-ring-default); outline: none; }
+.settings-connection-chevron { color: var(--av-sys-color-text-muted); vertical-align: middle; }
 /* Between the status dot and the name, at the row's own text colour, and sized
    through the row that owns it — a bare class here ties with `.connector-mark`
    and loses on order. The gap above spaces it from both without a rule of its
@@ -2957,17 +3019,13 @@ pre {
 .settings-connection-empty-row td { height: auto; padding: 0; }
 .settings-connection-empty-row .empty-state { min-height: 94px; }
 .settings-icon-tooltip-trigger { display: inline-flex; }
-.settings-connection-tooltip { max-width: 280px; text-align: center; }
-.settings-github-pane,
-.settings-custom-mcp-pane { max-width: 760px; }
-.settings-github-connection,
-.settings-custom-mcp-connection { margin-bottom: 18px; max-width: 360px; }
+.settings-connection-tooltip { text-align: center; }
+.settings-connection-page { max-width: 760px; }
+.settings-connection-facet-heading { margin-top: 28px; }
 .settings-github-policy { margin-bottom: 22px; }
 .settings-github-policy .settings-preference-row > select,
 .settings-github-repository-row > select,
-.settings-github-connection > select,
-.settings-custom-mcp-pane .settings-preference-row > select,
-.settings-custom-mcp-connection > select {
+.settings-connection-page .settings-preference-row > select {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-ref-color-line-4);
   border-radius: var(--av-cmp-control-radius);
@@ -3051,7 +3109,8 @@ pre {
 .invite-form label { display: grid; gap: 5px; }
 .invite-form label > span { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
 .invite-form input,
-.invite-form select {
+.invite-form select,
+.inline-editable-input {
   background: var(--av-sys-color-surface-sunken);
   border: 1px solid var(--av-ref-color-line-3);
   border-radius: var(--av-cmp-control-radius);
@@ -3062,7 +3121,9 @@ pre {
   width: 100%;
 }
 .invite-form input:focus,
-.invite-form select:focus { border-color: var(--av-sys-color-focus-default); }
+.invite-form select:focus,
+.inline-editable-input:focus { border-color: var(--av-sys-color-focus-default); }
+.inline-editable-input[aria-invalid="true"] { border-color: var(--av-sys-color-danger-soft); }
 .invite-form .button { height: 34px; }
 .invite-link-result {
   align-items: center;
@@ -3114,11 +3175,45 @@ pre {
   .invite-form { grid-template-columns: 1fr 120px; }
   .invite-form .button { grid-column: 1 / -1; }
   .settings-connection-table { min-width: 450px; }
-  .settings-github-policy .settings-preference-row,
-  .settings-custom-mcp-pane .settings-preference-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .settings-connection-page .settings-preference-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .settings-github-repository-heading,
   .settings-custom-mcp-tool-heading { align-items: stretch; flex-direction: column; gap: 10px; }
   .settings-github-search { flex-basis: auto; }
+}
+
+/* Phone width: the sections list is a sheet under the header, opened by the
+   menu button there, the same 640px as the shell's own phone sheet. Picking a
+   section shuts it. Only a browser tab reaches this width, inside `.app-shell`,
+   whose phone rule styles the button as the shell's own menu button. */
+@media (max-width: 640px) {
+  .settings-window { grid-template-columns: minmax(0, 1fr); position: relative; }
+  .settings-sidebar {
+    background: var(--av-cmp-sidebar-background-solid);
+    border-right: 0;
+    border-top: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+    inset: var(--settings-header-height) 0 0;
+    opacity: 0;
+    overflow-y: auto;
+    padding: 12px 12px 18px;
+    position: absolute;
+    transform: translateY(-12px);
+    transition: opacity 260ms cubic-bezier(.22, 1, .36, 1), transform 260ms cubic-bezier(.22, 1, .36, 1), visibility 0s linear 260ms;
+    visibility: hidden;
+    z-index: 3;
+  }
+  .settings-sidebar.is-mobile-open {
+    opacity: 1;
+    transform: none;
+    transition: opacity 260ms cubic-bezier(.22, 1, .36, 1), transform 260ms cubic-bezier(.22, 1, .36, 1), visibility 0s;
+    visibility: visible;
+  }
+  .settings-content-header { gap: 10px; justify-content: flex-start; padding: 11px 12px 7px; }
+  .settings-content-header h1 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .settings-menu-toggle { flex: none; }
+}
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+  .settings-sidebar,
+  .settings-sidebar.is-mobile-open { transition: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3198,12 +3293,13 @@ pre {
 .member-action-row:hover { background-image: var(--hover-layer); }
 .member-picker-row > input { opacity: 0; position: absolute; }
 .member-picker-row > span:not(.avatar):not(.member-checkbox):not(.resource-picker-icon),
-.member-action-row > span:not(.avatar) { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.member-action-row > span:not(.avatar):not(.badge) { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
 .member-picker-row strong,
 .member-action-list strong { font-size: var(--av-cmp-control-font-size); font-weight: 500; }
 .member-picker-row small,
 .member-action-list small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
-.member-action-row > .icon-button { flex: 0 0 auto; }
+.member-action-row > .icon-button,
+.member-action-row > .badge { flex: 0 0 auto; }
 .member-checkbox { border: 1px solid var(--av-ref-color-line-5); border-radius: var(--av-sys-size-radius-xs); flex: 0 0 16px; height: 16px; width: 16px; }
 .member-picker-row:has(input:focus-visible) .member-checkbox { outline: 2px solid var(--av-sys-color-focus-quiet); outline-offset: 2px; }
 .member-picker-row:has(input:checked) .member-checkbox { background: var(--av-sys-color-accent-base); border-color: var(--av-sys-color-accent-base); box-shadow: inset 0 0 0 3px var(--av-ref-color-neutral-1); }
@@ -3556,6 +3652,17 @@ pre {
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Rally's avatar, as in the mention list: brand yellow on a fixed near-black disc. */
 .mention-chip-avatar-rally { background: var(--av-sys-color-brand-on); color: var(--av-sys-color-brand-base); font-size: 8px; }
+/* Someone invited who has not joined: an outline instead of a fill, and the
+   address in a quieter ink, so it reads as a person who is not here yet. Both
+   are washes of the inherited ink, which keeps them legible in a coloured
+   bubble as well as on the page. */
+.mention-chip.mention-chip-invited,
+.human-message .mention-chip.mention-chip-invited {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
+}
+.mention-chip-invited :is(.mention-chip-label, .mention-chip-avatar) { opacity: .7; }
+.mention-chip-invited .mention-chip-label { font-style: italic; }
 .mention-chip-status {
   display: none;
   flex: 0 0 auto;
@@ -3804,7 +3911,7 @@ pre {
 }
 /* The tooltip's own box supplies the ground and the shadow; this only stacks
    the source above its note, which a one-line tooltip does not need to do. */
-.citation-pill-popover { display: flex; flex-direction: column; gap: 3px; max-width: 280px; text-align: left; }
+.citation-pill-popover { display: flex; flex-direction: column; gap: 3px; text-align: left; }
 .citation-pill-source { font-weight: 600; }
 .citation-pill-note,
 .citation-pill-open { opacity: 0.72; }
@@ -4441,6 +4548,22 @@ pre {
   border-bottom-left-radius: 16px;
   border-bottom-right-radius: 16px;
 }
+/* At tablet and phone width (the 920px breakpoint where the sidebar
+   collapses) the inset is space the document cannot spare, so the viewer fills
+   the window. The site
+   pane loses its curve with it, which also squares the composited view, since
+   that reads its corner off the pane when it presents.
+   On macOS the window reaches this width too (its minimum is 720), so the
+   header now sits under the traffic lights and over the drag strip. The
+   lightbox is portaled to `body`, outside the shell that sets
+   `--window-controls-inset`, so the clearance keys on the shell's class
+   instead of reading the variable. */
+@media (max-width: 920px) {
+  .attachment-lightbox.is-document-viewer { -webkit-app-region: no-drag; border: 0; border-radius: 0; box-shadow: none; inset: 0; }
+  .resource-lightbox .site-detail-pane { border-radius: 0; }
+  body:has(.has-overlay-window-controls) .attachment-lightbox.is-document-viewer .attachment-lightbox-header,
+  body:has(.has-overlay-window-controls) .resource-lightbox .rail-header { padding-left: 82px; }
+}
 /* Menus and confirmation dialogs opened by the resource lightbox sit above it. */
 body:has(.resource-lightbox) .dialog-overlay { z-index: 1002; }
 body:has(.resource-lightbox) .dialog-content { z-index: 1003; }
@@ -4495,7 +4618,13 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .attachment-gallery-arrow,
 .attachment-gallery-caption { background: var(--av-sys-color-surface-default); border: .5px solid var(--av-sys-color-border-highlight); }
 .workstream-composer textarea { background: transparent; border: 0; display: block; min-height: 51px; outline: 0; resize: none; width: 100%; }
-.workstream-composer textarea::placeholder { color: var(--av-ref-color-neutral-8); }
+/* The placeholder names the Channel or Breakout; a long name ends in an
+   ellipsis rather than wrapping the empty field onto a second line. Chromium
+   draws that ellipsis only when the empty textarea itself also carries it and
+   does not wrap; the rules on `::placeholder` alone cut the text without one.
+   Typed text clears `:placeholder-shown` and wraps as usual. */
+.workstream-composer textarea::placeholder { color: var(--av-ref-color-neutral-8); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workstream-composer textarea:placeholder-shown { text-overflow: ellipsis; white-space: nowrap; }
 .composer-input-shell { position: relative; }
 
 /*
@@ -4646,6 +4775,14 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 [data-theme='dark'] .mention-popover { background: var(--av-sys-color-surface-default); border-color: var(--av-cmp-composer-border-color); }
 [data-theme='dark'] .mention-popover > button:is(.is-selected, :hover) { background: var(--av-cmp-row-background-selected); }
 [data-theme='dark'] .mention-popover :is(small, .mention-popover-kind) { color: var(--av-sys-color-text-muted); }
+/* An invitee's address is greyed until they join, here and wherever people are listed. */
+.mention-popover > button.is-invited strong,
+.mention-confirm-person.is-invited strong,
+.member-action-row.is-invited strong,
+.member-picker-row.is-invited strong,
+.title-menu-person.is-invited .title-menu-person-name,
+.new-channel-popover-row.is-invited .new-channel-popover-name { color: var(--av-sys-color-text-muted); font-style: italic; }
+.new-channel-popover-kind { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 12px; margin-left: auto; }
 .mention-confirm-person { align-items: center; display: flex; gap: 10px; }
 .mention-confirm-person > span { display: flex; flex-direction: column; }
 .mention-confirm-person small { color: var(--av-sys-color-text-muted); font-size: 11px; }
@@ -5244,9 +5381,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   .workspace-shell:not(.app-shell) .main-pane { margin-left: 0; }
   .workspace-shell:not(.app-shell) .sidebar { background: var(--av-cmp-sidebar-background-solid); box-shadow: var(--av-sys-elevation-shadow-drawer); transform: translateX(-100%); transition: transform 160ms ease; width: 300px; z-index: 70; }
   .workspace-shell:not(.app-shell) .sidebar.is-mobile-open { transform: translateX(0); }
-  .workspace-shell:not(.app-shell) .sidebar-scrim { background: var(--av-sys-color-scrim-default); display: block; inset: 0; position: fixed; z-index: 65; }
   .workspace-shell:not(.app-shell) .mobile-only { display: inline-flex; }
-  .mobile-sidebar-trigger { display: none; }
   .workspace-shell:not(.app-shell) .sidebar-resizer { display: none; }
   .workspace-shell { --rail-max-slot: calc(100vw - 16px); }
   .automation-composer-wrap,
@@ -5296,8 +5431,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .space-name-input { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-sys-color-border-highlight); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-default); font-size: 26px; font-weight: 700; line-height: 1.2; max-width: 100%; min-width: 180px; padding: 2px 6px; width: auto; }
 .space-dashboard-title { min-width: 0; }
 .space-dashboard-title > .inline-error { margin-top: 6px; }
-.space-dashboard-audience { align-items: center; display: flex; }
-.space-dashboard-audience .dropdown-select-trigger { color: inherit; font: inherit; justify-content: flex-start; margin: -8px 0 -8px -10px; min-width: 0; }
 .space-dashboard-header p,
 .space-dashboard-muted { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 5px 0 0; }
 .space-dashboard-blocked-channels { color: var(--av-sys-color-text-muted); font-size: 13px; list-style: disc; margin: 8px 0 0; padding-left: 18px; }
@@ -5321,7 +5454,8 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .manage-access-source .inline-error { grid-column: 1 / -1; }
 /* The read failed and there is nothing to list: the message and its retry take
    the place of the sources rather than standing over a spinner. */
-.manage-access-failed { display: grid; gap: 10px; justify-items: start; }
+.manage-access-failed,
+.scope-sharing-guests-failed { display: grid; gap: 10px; justify-items: start; }
 
 @media (max-width: 560px) {
   .dialog-content { min-width: 0; width: calc(100vw - 24px); }
@@ -6759,8 +6893,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
    `border-bottom: 0` — so a header left with it blinks a rule off at the swap;
    the width is zeroed rather than the shorthand so the colour stays a token's
    to name. Released here rather than dropping the shared class, which is also
-   where the padding comes from. The new-chat launcher restates its own border
-   for the recipient bar, at a specificity that still wins. */
+   where the padding comes from. */
 .workstream-launch-screen > .launch-header {
   border-bottom-width: 0;
   min-height: 0;
@@ -6967,209 +7100,290 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   white-space: nowrap;
 }
 
-/* The new work stream screen follows GrokBot's recipient-first composition
-   surface. The chips stay deliberately dense: each participant reads as one
-   charcoal pill, with the caret beginning immediately after the final selected
-   person. */
-.new-chat-screen:not(.is-launching) > .launch-header {
-  border-bottom: .5px solid var(--av-cmp-sidebar-border);
-  height: 48.5px;
-  overflow: visible;
-  padding: 0;
-  position: relative;
-  z-index: 8;
+/* The setup rows above the new-Channel composer. Optical left edge: a round
+   end reads 2–3px inside its box, so the pill sits 1px and the label 2px in
+   from the composer. 9px between rows is the composer stack's own gap. */
+.new-channel-setup {
+  display: grid;
+  gap: 9px;
+  padding: 0 6px 0 1px;
 }
 
-.new-chat-recipient-bar {
+.new-channel-participants {
   align-items: center;
   display: flex;
-  gap: 6px;
-  height: 48px;
-  padding: 10px 12px 10px 12px;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 1px;
+}
+
+.new-channel-participants-label {
+  color: var(--av-sys-color-text-muted);
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* One box for both states, so the widening is the box's own width easing
+   rather than one control swapped for another. */
+.new-channel-add {
+  align-items: center;
+  border: 1px dashed var(--av-ref-color-line-5);
+  border-radius: 999px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 30px;
+  position: relative;
+  transition:
+    width 220ms cubic-bezier(.32, .72, 0, 1),
+    border-color 160ms ease,
+    background-color 160ms ease;
+  width: 30px;
+}
+
+.new-channel-add.is-searching {
+  background: var(--av-sys-color-surface-default);
+  border-color: var(--av-cmp-composer-border-color-focus);
+  border-style: solid;
+  width: 170px;
+}
+
+.new-channel-add-button {
+  align-items: center;
+  animation: new-channel-fade 160ms ease both;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  height: 100%;
+  justify-content: center;
+  padding: 0;
+  transition: color 150ms ease, background-color 150ms ease;
   width: 100%;
 }
 
-.new-chat-to-label {
+.new-channel-add-button:hover { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
+
+.new-channel-add-icon {
+  animation: new-channel-fade 160ms 60ms ease both;
   color: var(--av-sys-color-text-muted);
   flex: 0 0 auto;
-  font-size: 14px;
-  font-weight: 420;
-  line-height: 20px;
+  margin-left: 10px;
 }
 
-.new-chat-recipient-input-shell {
-  align-items: center;
-  display: flex;
+.new-channel-add > input {
+  animation: new-channel-fade 160ms 60ms ease both;
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-default);
   flex: 1;
-  gap: 5px;
+  font-size: 13px;
+  line-height: 18px;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  outline: 0;
+  padding: 0 10px 0 6px;
 }
 
-.new-chat-recipient-input-shell::-webkit-scrollbar { display: none; }
+.new-channel-roster-anchor {
+  display: flex;
+  min-width: 0;
+  position: relative;
+}
 
-.new-chat-recipient-chip {
+.new-channel-roster {
   align-items: center;
   background: var(--av-sys-color-surface-elevated-hover);
+  border: 0;
   border-radius: 999px;
   color: var(--av-sys-color-text-default);
   display: inline-flex;
-  flex: 0 0 auto;
-  font-size: 14px;
-  font-weight: 400;
-  gap: 6px;
-  height: 29px;
-  line-height: 20px;
-  padding: 0 7px 0 4px;
+  font-size: 13px;
+  font-weight: 500;
+  gap: 7px;
+  height: 30px;
+  line-height: 18px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 12px 0 5px;
+  transition: background-color 150ms ease;
 }
 
-.new-chat-recipient-chip .avatar-small {
-  border-color: transparent;
-  height: 23px;
-  width: 23px;
+button.new-channel-roster:hover,
+button.new-channel-roster[aria-expanded='true'] { background-image: var(--hover-layer); }
+.new-channel-roster:has(> .new-channel-roster-chevron) { padding-right: 10px; }
+[data-theme='dark'] .new-channel-roster { background: var(--av-sys-color-surface-subtle); }
+
+.new-channel-roster .avatar-stack { flex: 0 0 auto; }
+.new-channel-roster .avatar-stack-item { animation: new-channel-arrive 220ms cubic-bezier(.32, .72, 0, 1) both; }
+.new-channel-roster > .avatar-small { height: 20px; width: 20px; }
+
+.new-channel-roster-names {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.new-chat-recipient-chip > button {
+.new-channel-roster-chevron { color: var(--av-sys-color-text-muted); flex: 0 0 auto; }
+
+/* Both lists open upward; `fitAbove` in new-channel-participants.tsx caps
+   each at the room above it, which depends on the draft's height. */
+.new-channel-popover {
+  animation: new-channel-pop 180ms cubic-bezier(.32, .72, 0, 1) both;
+  background: var(--av-sys-color-surface-default);
+  border: .5px solid var(--av-cmp-composer-border-color);
+  border-radius: 14px;
+  bottom: calc(100% + 8px);
+  box-shadow: var(--av-sys-elevation-shadow-md);
+  display: grid;
+  gap: 2px;
+  left: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  position: absolute;
+  transform-origin: bottom left;
+  width: 260px;
+  z-index: 30;
+  /* One column the popover's width, so a long address ellipsizes rather than
+     widening the track and pushing a row's controls out of view. */
+  grid-template-columns: minmax(0, 1fr);
+}
+
+[data-theme='dark'] .new-channel-popover { background: var(--av-sys-color-surface-elevated); }
+
+.new-channel-popover-row {
   align-items: center;
   background: transparent;
   border: 0;
-  color: var(--av-sys-color-text-muted);
-  display: flex;
-  height: 19px;
-  justify-content: center;
-  margin-left: 1px;
-  padding: 0;
-  width: 16px;
-}
-
-.new-chat-recipient-chip > button:hover { color: var(--av-sys-color-text-default); }
-
-[data-theme='dark'] .new-chat-recipient-chip {
-  background: var(--av-sys-color-surface-subtle);
+  border-radius: 10px;
   color: var(--av-sys-color-text-default);
+  display: flex;
+  font-size: 14px;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 10px;
+  text-align: left;
+  transition: background-color 120ms ease;
+  width: 100%;
 }
 
-[data-theme='dark'] .new-chat-recipient-chip > button { color: var(--av-sys-color-text-muted); }
-[data-theme='dark'] .new-chat-recipient-chip > button:hover { color: var(--av-sys-color-text-default); }
+button.new-channel-popover-row.is-selected,
+button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-selected); }
 
-.new-chat-recipient-input-shell > input {
+.new-channel-popover-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-channel-popover-remove {
+  align-items: center;
   background: transparent;
   border: 0;
-  color: var(--av-sys-color-text-default);
-  flex: 1 0 132px;
-  font-size: 14px;
-  font-weight: 420;
-  line-height: 20px;
-  min-width: 132px;
-  outline: 0;
+  border-radius: 6px;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  height: 22px;
+  justify-content: center;
   padding: 0;
+  transition: color 120ms ease, background-color 120ms ease;
+  width: 22px;
 }
 
-.new-chat-recipient-input-shell > input::placeholder { color: var(--av-sys-color-text-muted); }
+.new-channel-popover-remove:hover { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 
-/* The creator's chip, and every chip in a personal Space, has no remove
-   control; the padding the control would have taken is given back. */
-.new-chat-recipient-chip:not(:has(> button)) { padding-right: 10px; }
-
-/* Stands where the search field would be when the Space owns the roster. */
-.new-chat-recipient-note {
+.new-channel-popover-empty {
   color: var(--av-sys-color-text-muted);
-  flex: 1 0 auto;
+  font-size: 13px;
+  line-height: 18px;
+  margin: 0;
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.new-channel-placement {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.new-channel-placement-divider { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 16px; opacity: .6; }
+
+.new-channel-name {
+  background: var(--av-sys-color-surface-sunken);
+  border: 1px solid var(--av-cmp-composer-border-color);
+  border-radius: 9px;
+  color: var(--av-sys-color-text-default);
+  flex: 1;
   font-size: 14px;
-  font-weight: 420;
-  line-height: 20px;
-  padding-left: 4px;
+  height: 32px;
+  min-width: 0;
+  outline: 0;
+  padding: 0 12px;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.new-channel-name::placeholder { color: var(--av-sys-color-text-muted); }
+.new-channel-name:focus { background: var(--av-sys-color-surface-default); border-color: var(--av-cmp-composer-border-color-focus); }
+
+/* The shared Space picker, drawn as a pill inline with the name. */
+.dropdown-select-trigger-pill {
+  background: var(--av-sys-color-surface-elevated-hover);
+  border: 0;
+  border-radius: 16px;
+  flex: 0 1 auto;
+  font-size: 13px;
+  gap: 6px;
+  height: 32px;
+  line-height: 16px; /* whole pixels: 16.25px rounded the name 1px high */
+  max-width: 45%;
+  min-width: 0;
+  padding: 0 10px 0 12px;
+  transition: background-color 150ms ease;
+  white-space: nowrap;
+}
+
+.dropdown-select-trigger-pill > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Optical: the chevron's ink is its point, 1px above the name's centre. */
+.dropdown-select-trigger-pill .dropdown-select-chevron { transform: translateY(1px); }
+.dropdown-select-trigger-pill[data-state='open'] { background-image: var(--hover-layer); }
+[data-theme='dark'] .dropdown-select-trigger-pill { background: var(--av-sys-color-surface-subtle); }
+
+.dropdown-select-content-pill {
+  animation: new-channel-pop 180ms cubic-bezier(.32, .72, 0, 1) both;
+  border-radius: 14px;
+  min-width: max(200px, var(--radix-select-trigger-width));
+  transform-origin: var(--radix-select-content-transform-origin);
 }
 
 .new-chat-close {
   align-items: center;
   background: transparent;
   border: 0;
+  border-radius: 8px;
   color: var(--av-sys-color-text-muted);
   display: flex;
-  border-radius: 50%;
-  flex: 0 0 20px;
-  height: 20px;
+  height: 32px;
   justify-content: center;
   padding: 0;
-}
-
-.new-chat-close:hover { color: var(--av-sys-color-text-default); }
-
-.new-chat-recipient-results {
-  background: var(--av-sys-color-surface-default);
-  border: .5px solid var(--av-cmp-composer-border-color);
-  border-radius: 14px;
-  box-shadow: var(--av-sys-elevation-shadow-md);
-  left: 32px;
-  max-height: min(330px, calc(100vh - 150px));
-  overflow-y: auto;
-  padding: 6px;
   position: absolute;
-  top: 38px;
-  width: min(560px, calc(100% - 52px));
-  z-index: 20;
+  right: 14px;
+  top: 14px;
+  transition: color 150ms ease, background-color 150ms ease;
+  width: 32px;
+  z-index: 5;
 }
 
-[data-theme='dark'] .new-chat-recipient-results {
-  background: var(--av-sys-color-surface-elevated);
-  border-color: var(--av-cmp-composer-border-color);
-}
+.new-chat-close:hover { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 
-.new-chat-recipient-results > button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  gap: 8px;
-  min-height: 36px;
-  padding: 6px 8px;
-  text-align: left;
-  width: 100%;
-}
-
-.new-chat-recipient-results:has(> .new-chat-recipient-empty) {
-  align-items: center;
-  display: grid;
-  min-height: 59px;
-}
-
-.new-chat-recipient-results > button.is-selected,
-.new-chat-recipient-results > button:hover { background: var(--av-cmp-row-background-selected); }
-[data-theme='dark'] .new-chat-recipient-results > button.is-selected,
-[data-theme='dark'] .new-chat-recipient-results > button:hover { background: var(--av-cmp-row-background-selected); }
-
-.new-chat-recipient-results .avatar-small { height: 24px; width: 24px; }
-.new-chat-recipient-copy { display: flex; flex: 1; min-width: 0; }
-.new-chat-recipient-copy strong { font-size: 14px; font-weight: 420; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.new-chat-recipient-shortcut { display: flex; gap: 2px; margin-left: auto; }
-.new-chat-recipient-shortcut kbd {
-  align-items: center;
-  background: var(--av-cmp-row-background-selected);
-  border: 0;
-  border-radius: 4px;
-  color: var(--av-sys-color-text-muted);
-  display: inline-flex;
-  font-family: inherit;
-  font-size: 10px;
-  height: 19px;
-  justify-content: center;
-  min-width: 19px;
-  padding: 0 4px;
-}
-[data-theme='dark'] .new-chat-recipient-shortcut kbd { background: var(--av-sys-color-surface-subtle); color: var(--av-sys-color-text-muted); }
-.new-chat-recipient-empty {
-  color: var(--av-sys-color-text-muted);
-  font-size: 13px;
-  font-weight: 400;
-  line-height: 18px;
-  margin: 0;
-  padding: 0 13px;
-  text-align: center;
-}
+@keyframes new-channel-fade { from { opacity: 0; } }
+@keyframes new-channel-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+@keyframes new-channel-arrive { from { opacity: 0; transform: scale(.6); } }
 
 /* While composing, the dock spans the body and dock rows and centres in them;
    launching drops it back into the dock row. Not animated, and the padding is
@@ -7181,15 +7395,15 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   padding: 0 16px var(--composer-dock-gap);
 }
 
-/* Centred, the field has only half the pane above it, and the mention and
-   command lists open upward: in a short window a full list ran under the
-   Participants bar. The screen is a size container so the lists can cap
-   themselves at the room they have. Both are positioned against the composer,
-   so `50%` is half its height whatever the draft's length, and with the dock
-   centred under the bar the room above a list is half the screen less half the
-   composer, half the bar, half the dock's bottom padding, the list's own offset
-   and a gap — 48px at most, for the command list. The 280px is each list's own
-   ceiling, restated because `min()` is the only way to keep it. */
+/* Centred, the field has only about half the pane above it, and the mention and
+   command lists open upward, so in a short window a full list would run off the
+   top. The screen is a size container so the lists can cap themselves at the
+   room they have. Both are positioned against the composer, so `50%` is half its
+   height whatever the draft's length. The setup rows above the composer push it
+   below the centre line, which only adds room, so the cap stays safe: half the
+   screen less half the composer, half the dock's bottom padding, the list's own
+   offset and a gap. The 280px is each list's own ceiling, restated because
+   `min()` is the only way to keep it. */
 .new-chat-screen:not(.is-launching) {
   container-type: size;
 }
@@ -7261,7 +7475,9 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .rally-search-result-excerpt, .rally-search-result-source { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .rally-search-result-source { color: var(--av-sys-color-text-subtle); }
 .rally-search-result-excerpt strong { font-weight: 650; }
+.rally-search-options { display: flex; flex-direction: column; flex-shrink: 0; gap: 2px; }
 .rally-search-sentinel { flex-shrink: 0; height: 1px; }
+.rally-search-pending { flex-shrink: 0; padding: 8px; color: var(--av-sys-color-text-subtle); font-size: 13px; }
 .rally-search-footer { flex-shrink: 0; border-top: 1px solid var(--av-sys-color-border-default); display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 12px; color: var(--av-sys-color-text-subtle); font-size: 13px; }
 .rally-search-state { position: absolute; top: 126px; left: 16px; right: 16px; color: var(--av-sys-color-text-subtle); font-size: 13px; text-align: center; pointer-events: none; }
 
@@ -7275,6 +7491,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .sidekicks-library-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 40px; }
 .sidekicks-library-heading h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -.5px; }
 .sidekicks-library-heading p { margin: 8px 0 0; font-size: 15px; color: var(--av-sys-color-text-muted); }
+.sidekicks-library-actions { align-items: center; display: flex; flex-shrink: 0; gap: 12px; }
 .sidekicks-library-heading .button { border-radius: var(--av-sys-size-radius-pill); text-decoration: none; flex-shrink: 0; padding: 10px 18px; }
 .sidekicks-library-controls .sidebar-search { height: auto; min-height: 44px; width: 100%; margin: 0; border-radius: var(--av-sys-size-radius-pill); padding: 12px 16px; }
 .sidekick-filters { display: flex; gap: 8px; }
@@ -7324,7 +7541,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .sidekick-section-list { list-style: none; margin: 0; padding: 0; }
 .sidekick-recommendation { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: 50%; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 24px; height: 24px; justify-content: center; margin-right: 8px; }
 .sidekick-recommendation:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
-.sidekick-recommendation-tooltip { max-width: 280px; white-space: normal; }
+.sidekick-recommendation-tooltip { white-space: normal; }
 .sidekick-picker-search { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 8px; padding: 10px 12px; width: 100%; }
 .sidekick-picker-list { display: grid; gap: 8px; list-style: none; margin: 12px 0 0; padding: 0; }
 .sidekick-picker-list .button { align-items: flex-start; display: flex; flex-direction: column; gap: 4px; text-align: left; white-space: normal; width: 100%; }
@@ -7354,6 +7571,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
 
 .settings-account-profile { display: grid; gap: 12px; }
+.settings-support-note { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 0; padding: 0 8px; }
 .settings-account-profile .settings-profile-card { border-radius: 0; }
 .settings-account-avatar { width: 38px; height: 38px; font-size: 13px; }
 .settings-account-profile .settings-preference-row { font-size: 13px; grid-template-columns: minmax(100px, 1fr) minmax(0, 280px); }
@@ -7361,6 +7579,36 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .settings-account-profile .personal-colors { justify-content: flex-end; gap: 10px; padding: 5px; }
 .settings-account-profile .personal-colors button { width: 22px; height: 22px; display: grid; place-items: center; }
 .settings-account-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; color: var(--av-sys-color-text-muted); }
+/* Phone width: a row's label sits over its control rather than beside it, so
+   neither is squeezed to a word per line. After the account rows above so it
+   outranks their two-column template. */
+@media (max-width: 640px) {
+  .workspace-settings-screen .settings-preference-row { align-items: stretch; gap: 8px; grid-template-columns: minmax(0, 1fr); }
+  /* A control keeps its own width and starts under its label; a meter spans the row. */
+  .workspace-settings-screen .settings-preference-row > :not(.settings-row-copy) { justify-self: start; }
+  .workspace-settings-screen .settings-row-value { align-items: flex-start; text-align: left; }
+  /* The borderless picker is pushed right for the two-column row; here its
+     text lines up with the label above it. */
+  .workspace-settings-screen .settings-preference-row .dropdown-select-trigger-secondary { justify-content: flex-start; min-width: 0; padding-left: 0; padding-right: 10px; }
+  /* The connection tables fit the phone instead of scrolling sideways: the
+     fixed columns narrow and the name wraps, so an empty table's message is
+     never cut off. */
+  .workspace-settings-screen .settings-connection-table { min-width: 0; }
+  .workspace-settings-screen .settings-connection-table th,
+  .workspace-settings-screen .settings-connection-table td { padding-inline: 6px; }
+  .workspace-settings-screen .settings-connection-table th:first-child,
+  .workspace-settings-screen .settings-connection-table td:first-child { padding-left: 12px; }
+  .workspace-settings-screen .settings-connection-table th:nth-child(2) { width: 88px; }
+  .workspace-settings-screen .settings-connection-table th:nth-child(3) { width: 48px; }
+  .workspace-settings-screen .settings-connection-table th:last-child { width: 30px; }
+  .workspace-settings-screen .settings-connection-empty-row td { padding: 0; }
+  .workspace-settings-screen .settings-connection-copy strong { overflow-wrap: anywhere; }
+  .workspace-settings-screen .settings-connection-table .badge { border-radius: 9px; max-width: 100%; white-space: normal; }
+  .workspace-settings-screen .settings-preference-row > .usage-quota-value { justify-self: stretch; text-align: left; width: auto; }
+  .workspace-settings-screen .settings-account-profile input { width: 100%; }
+  .workspace-settings-screen .settings-account-profile .personal-colors,
+  .workspace-settings-screen .settings-account-actions { justify-content: flex-start; }
+}
 
 .attachment-media-close { position: absolute; right: 22px; top: 23px; z-index: 3; }
 .attachment-gallery-footer { align-items: center; bottom: 24px; display: flex; flex-direction: column; gap: 14px; left: 24px; position: absolute; right: 24px; }
@@ -7524,6 +7772,13 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   padding: 0 14px 0 calc(18px + var(--window-controls-inset));
 }
 .sidebar-top-actions { align-items: center; display: flex; gap: 8px; margin-left: auto; }
+/* With no window controls painted over the bar (the browser, or Electron off
+   macOS), nothing holds its start, so the actions lead it, flush with the Space pills below. The
+   phone bar keeps them opposite its menu button. */
+@media (min-width: 641px) {
+  .workspace-shell:not(.has-overlay-window-controls) .sidebar-top-bar { padding-left: 14px; }
+  .workspace-shell:not(.has-overlay-window-controls) .sidebar-top-actions { margin-left: 0; }
+}
 .sidebar-top-actions > .icon-button,
 .sidebar-top-action {
   align-items: center;
@@ -7539,6 +7794,10 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 }
 .sidebar-top-actions > .icon-button:hover:not(:disabled),
 .sidebar-top-action:hover:not(:disabled) { background: var(--av-sys-color-surface-raised-hover); }
+/* Import on the web host: shown so people learn it exists, but `aria-disabled`
+   rather than `disabled` so its tooltip still opens on hover and focus. */
+.sidebar-top-actions > .icon-button[aria-disabled='true'] { cursor: not-allowed; opacity: 0.48; }
+.sidebar-top-actions > .icon-button[aria-disabled='true']:hover { background: var(--av-sys-color-surface-raised); }
 /* The one action asking to be taken: a fixed blue fill, the same in both themes. */
 .sidebar-top-actions > .sidebar-top-update {
   background: var(--av-sys-color-project-blue);
@@ -7553,7 +7812,52 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   color: var(--av-sys-color-palette-ink-light);
 }
 
+/* The attention count: the sidebar's unread red with white digits, in the
+   same 32px circle as its siblings. */
+.sidebar-top-actions > .attention-trigger.has-attention {
+  background: var(--av-sys-color-workstream-news);
+  box-shadow: var(--av-cmp-composer-shadow);
+  color: var(--av-sys-color-palette-ink-light);
+}
+.sidebar-top-actions > .attention-trigger.has-attention:hover:not(:disabled),
+.sidebar-top-actions > .attention-trigger.has-attention:focus-visible {
+  background: var(--hover-layer), var(--av-sys-color-workstream-news);
+  color: var(--av-sys-color-palette-ink-light);
+}
+.attention-count { font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 650; line-height: 1; }
+.attention-count.is-capped { font-size: 10.5px; letter-spacing: -0.02em; }
+.attention-menu { max-height: min(480px, calc(100vh - 80px)); max-width: min(360px, calc(100vw - 20px)); overflow-y: auto; width: 340px; }
+.attention-menu-item { gap: 10px; min-height: 44px; }
+.attention-menu-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.attention-menu-title,
+.attention-menu-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attention-menu-title { color: var(--av-sys-color-text-default); font-weight: 560; }
+.attention-menu-detail { color: var(--av-sys-color-text-muted); font-size: 12px; }
+.attention-menu-meta { align-items: center; display: flex; flex: 0 0 auto; gap: 8px; }
+.attention-menu-time { color: var(--av-sys-color-text-muted); font-size: 12px; }
+/* Unread is the sidebar Channel row's red here too, not the generic green. */
+.attention-menu .status-unread .status-dot { background: var(--av-sys-color-workstream-news); }
+.attention-menu-empty { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); padding: 10px; }
+.attention-menu-request { align-items: center; border-radius: var(--av-cmp-control-radius); display: flex; gap: 4px; min-height: 44px; padding: 0 6px 0 0; }
+/* One fill for the whole row, its buttons included, whichever part the
+   pointer or the keyboard is on. */
+.attention-menu-request:hover,
+.attention-menu-request:has([data-highlighted]) { background-image: var(--hover-layer); }
+.attention-menu-request-open { align-items: center; align-self: stretch; cursor: pointer; display: flex; flex: 1; gap: 10px; min-width: 0; outline: 0; padding: 6px 10px; }
+/* Approve and decline on an access request: the attention menu's rows and the People level's Asked to join. */
+.decision-button { align-items: center; background: transparent; border: 0; border-radius: 999px; color: var(--av-sys-color-text-subtle); cursor: pointer; display: inline-flex; flex: 0 0 auto; height: 28px; justify-content: center; outline: 0; padding: 0; width: 28px; }
+button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-focus-default); }
+.decision-button.is-approve:hover,
+.decision-button.is-approve[data-highlighted] { background: var(--av-sys-color-success-tint); color: var(--av-sys-color-success-strong); }
+.decision-button.is-decline:hover,
+.decision-button.is-decline[data-highlighted] { background: var(--av-sys-color-danger-tint); background-image: none; color: var(--av-sys-color-danger-strong); }
+.attention-menu-error { color: var(--av-sys-color-danger-base); font-size: 12px; padding: 6px 10px; }
+.access-request-dialog-subject { align-items: center; display: flex; gap: 12px; }
+.access-request-dialog-title { color: var(--av-sys-color-text-default); font-size: 15px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+
 .space-pill-strip { align-items: center; display: flex; flex: 0 0 auto; gap: 6px; min-width: 0; padding: 0 14px 10px; }
+.sidebar-top-space-slot { display: contents; }
+.sidebar-top-space-slot .space-pill-add { height: 32px; width: 32px; }
 .space-pill-strip-scroll {
   display: flex;
   flex: 1;
@@ -7646,12 +7950,91 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .single-sidebar .channel-row-time { color: var(--av-sys-color-text-disabled); }
 .single-sidebar .sidebar-footer-line { margin-inline: 16px; width: auto; }
 /* Rows above the footer line. Padded as `.sidebar-scroll` pads a row,
-   compact included, so they line up with the list above. */
-.sidebar-footer-items { display: flex; flex: none; flex-direction: column; gap: 4px; padding: 4px 12px 0; transition: padding var(--sidebar-layout-motion); }
+   compact included, so they line up with the list above. The bottom pad
+   matches `.sidebar-footer`'s top pad, so the rows sit as far above the
+   line as the account menu sits below it. */
+.sidebar-footer-items { display: flex; flex: none; flex-direction: column; gap: 4px; padding: 4px 12px 8px; transition: padding var(--sidebar-layout-motion); }
 .resizable-sidebar.is-compact .sidebar-footer-items { padding-inline: calc((100% - 54px) / 2); }
 .single-sidebar .sidebar-footer { padding-inline: 10px; }
 .single-sidebar .account-trigger .avatar { height: 28px; width: 28px; }
 .single-sidebar .account-trigger { font-weight: 500; }
+
+/* Phone width: the sidebar is a top bar over a sheet the menu button drops in.
+   Why it is clipped rather than moved: `docs/desktop-shell.md#at-phone-width`.
+   `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx` is this 640. */
+.sidebar-menu-toggle { display: none; }
+@media (max-width: 640px) {
+  .app-shell {
+    --av-cmp-sidebar-width: 0px !important;
+    --phone-top-bar-height: 56px;
+    --phone-sheet-duration: 260ms;
+    --phone-sheet-motion: var(--phone-sheet-duration) cubic-bezier(.22, 1, .36, 1);
+  }
+  .app-shell .single-sidebar {
+    background: var(--av-cmp-sidebar-background-solid);
+    border-right: 0;
+    clip-path: inset(0 0 calc(100% - var(--phone-top-bar-height)) 0);
+    right: 0;
+    transition: clip-path var(--phone-sheet-motion);
+    width: auto;
+    z-index: 70;
+  }
+  .app-shell .single-sidebar.is-mobile-open { clip-path: inset(0); }
+  .app-shell .single-sidebar > .sidebar-top-bar {
+    border-bottom: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+    flex-basis: var(--phone-top-bar-height);
+    height: var(--phone-top-bar-height);
+    padding: 0 12px;
+  }
+  .app-shell .single-sidebar > :not(.sidebar-top-bar) {
+    opacity: 0;
+    transform: translateY(-12px);
+    transition: opacity var(--phone-sheet-motion), transform var(--phone-sheet-motion), visibility 0s linear var(--phone-sheet-duration);
+    visibility: hidden;
+  }
+  .app-shell .single-sidebar.is-mobile-open > :not(.sidebar-top-bar) {
+    opacity: 1;
+    transform: none;
+    transition: opacity var(--phone-sheet-motion), transform var(--phone-sheet-motion), visibility 0s;
+    visibility: visible;
+  }
+  .app-shell .single-sidebar > .space-pill-strip { padding-top: 12px; }
+  .app-shell .single-sidebar .sidebar-resizer { display: none; }
+  /* The same raised round fill as the actions opposite. Its glyph is a
+     menu while the sheet is shut and a close mark while it is open: on a
+     phone the open sheet covers the screen, so the button's one job is to
+     close it. The glyphs stack in one grid cell and turn into each other. */
+  .app-shell .sidebar-menu-toggle {
+    background: var(--av-sys-color-surface-raised);
+    border-radius: var(--av-sys-size-radius-pill);
+    box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong), var(--av-cmp-composer-shadow);
+    color: var(--av-sys-color-text-default);
+    display: inline-grid;
+    height: 32px;
+    place-items: center;
+    width: 32px;
+  }
+  .app-shell .sidebar-menu-toggle:hover:not(:disabled) { background: var(--av-sys-color-surface-raised-hover); }
+  .app-shell .sidebar-menu-glyph { grid-area: 1 / 1; transition: opacity 180ms ease, transform 180ms ease; }
+  .app-shell .sidebar-menu-toggle[aria-expanded="true"] .sidebar-menu-glyph.is-menu,
+  .app-shell .sidebar-menu-toggle[aria-expanded="false"] .sidebar-menu-glyph.is-close { opacity: 0; transform: rotate(90deg) scale(.6); }
+  .app-shell .main-pane { height: calc(100% - var(--phone-top-bar-height)); margin-top: var(--phone-top-bar-height); }
+  /* The right panel and its scrim are fixed to the window too, and start under the bar. */
+  .app-shell .rail-surface,
+  .app-shell .rail-scrim { top: var(--phone-top-bar-height); }
+}
+/* A window surface (Settings, Sidekicks) shown as a route in a browser tab
+   takes the whole tab, as its window would: no sidebar, and no room or phone
+   top bar left for one. See `lib/window-surface.ts`. After the phone rules
+   above so it outranks them at every width. */
+.workspace-shell.is-window-surface > .sidebar { display: none; }
+.workspace-shell.is-window-surface .main-pane { height: 100%; margin: 0; }
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+  .app-shell .single-sidebar,
+  .app-shell .single-sidebar > :not(.sidebar-top-bar),
+  .app-shell .single-sidebar.is-mobile-open > :not(.sidebar-top-bar),
+  .app-shell .sidebar-menu-glyph { transition: none; }
+}
 .sidebar-section-hint { color: var(--av-sys-color-text-disabled); flex: none; font-size: 11.5px; }
 /* The sort toggle borrows the group menu trigger's hover layer and focus
    outline, so the heading's two small controls answer the pointer alike. */
@@ -7769,8 +8152,16 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   overflow: hidden;
   transition: height 320ms cubic-bezier(.32, .72, 0, 1), width 320ms cubic-bezier(.32, .72, 0, 1);
 }
-.title-menu-view { display: flex; flex-direction: column; gap: 2px; width: 404px; }
-.title-menu-view:has(> .title-menu-scope) { width: 420px; }
+/* Each level's width, capped to what the viewport leaves once the frame's own
+   14px padding is taken off, so a phone-width window fits the menu whole. */
+.title-menu-view {
+  --title-menu-room: calc(var(--radix-dropdown-menu-content-available-width, 100vw) - 28px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: min(404px, var(--title-menu-room));
+}
+.title-menu-view:has(> .title-menu-people-search) { width: min(420px, var(--title-menu-room)); }
 /* The breadcrumb already names the level, so its section heading would say it twice. */
 .title-menu-view > .title-menu-sidekicks .workstream-context-section h2 { display: none; }
 .title-menu-view > * { animation: title-menu-enter 300ms cubic-bezier(.2, .8, .2, 1) both; }
@@ -7814,10 +8205,11 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   flex-direction: column;
   font-size: 12.5px;
   gap: 6px;
-  justify-content: center;
+  /* Icons sit on one line across the row even when a label wraps to two. */
+  justify-content: flex-start;
   min-height: 70px;
   outline: 0;
-  padding: 8px 4px;
+  padding: 14px 4px 8px;
   text-align: center;
   transition: background-color 120ms ease;
   user-select: none;
@@ -7825,6 +8217,11 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-menu-tile > svg { color: var(--av-sys-color-text-default); }
 .title-menu-tile[data-highlighted] { background: color-mix(in srgb, var(--av-sys-color-surface-sunken) 88%, var(--av-sys-color-text-disabled)); color: var(--av-sys-color-text-default); }
 .title-menu-tile[data-disabled] { opacity: .42; }
+/* Too narrow for five labels on one line each: let a label take two. */
+@media (max-width: 480px) {
+  .title-menu-tiles { gap: 6px; }
+  .title-menu-tile { line-height: 1.2; white-space: normal; }
+}
 
 /* A row that opens a level: what it is, how much of it there is, and a chevron. */
 .title-pill-menu .menu-item.title-menu-level-row { font-size: 15px; gap: 12px; min-height: 46px; padding: 0 10px; }
@@ -7832,21 +8229,8 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-menu-level-meta { color: var(--av-sys-color-text-muted); flex: none; font-size: 13.5px; }
 .title-menu-level-chevron { color: var(--av-sys-color-text-disabled); flex: none; }
 
-/* People: who can see it, a search, who is in it, who could be. */
-.title-menu-scope {
-  align-items: center;
-  background: var(--av-sys-color-surface-sunken);
-  border-radius: 12px;
-  color: var(--av-ref-color-neutral-11);
-  display: flex;
-  gap: 12px;
-  margin-bottom: 8px;
-  padding: 12px 14px;
-}
-.title-menu-scope-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.title-menu-scope-title { color: var(--av-sys-color-text-default); font-size: 14.5px; }
-.title-menu-scope-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; }
-.title-menu-view:has(> .title-menu-scope) .title-menu-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
+/* People: a search that also takes addresses, who is in it, who could be. */
+.title-menu-people-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
 .title-menu-person { align-items: center; display: flex; gap: 12px; min-height: 52px; padding: 4px 8px; }
 .title-menu-person .avatar { height: 34px; width: 34px; }
 .title-menu-person-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
@@ -7854,6 +8238,22 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-menu-person-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .title-menu-person-present { background: var(--av-sys-color-success-base); border-radius: 50%; flex: none; height: 7px; width: 7px; }
 .title-menu-person-role { color: var(--av-sys-color-text-muted); flex: none; font-size: 13.5px; }
+.title-menu-person-actions {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  height: 28px;
+  justify-content: center;
+  margin-left: -4px;
+  width: 28px;
+}
+.title-menu-person-actions:hover,
+.title-menu-person-actions[data-state="open"] { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); }
 .title-menu-add {
   background: var(--av-sys-color-surface-raised);
   border: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-strong);
@@ -7870,10 +8270,10 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .title-menu-add:hover:not(:disabled) { background: var(--av-sys-color-surface-sunken); }
 .title-menu-add:disabled { cursor: progress; opacity: .6; }
 .title-menu-error { color: var(--av-sys-color-danger-base); font-size: 12.5px; margin: 0 8px 6px; }
+.title-menu-load-failed { align-items: center; color: var(--av-sys-color-danger-base); display: flex; font-size: 12.5px; gap: 12px; justify-content: space-between; margin: 0 8px 6px; }
 
-/* More: the conversation's settings as switches, grouped, then its actions. */
-.title-menu-settings { background: var(--av-sys-color-surface-sunken); border-radius: 12px; margin-bottom: 8px; padding: 4px; }
-.title-pill-menu .menu-item.title-menu-switch-row { font-size: 14.5px; gap: 12px; min-height: 44px; padding: 0 10px; }
+/* A switch is a row like any other in More: same size, inset and gap. */
+.title-pill-menu .menu-item.title-menu-switch-row { gap: 10px; }
 .title-menu-switch {
   background: var(--av-ref-color-line-4);
   border-radius: var(--av-sys-size-radius-pill);
@@ -7981,7 +8381,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 /* ── Breakouts in the Channel ──────────────────────────────────────────────
    Chips under the message a Breakout started from, and the tick bar down the
    Channel's leading edge. */
-.breakout-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; padding-left: 14px; }
+.breakout-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 /* Under Rally's newest reply, the breakout action as a quiet line instead of
    a hover action: the likeliest place to branch, said without a button's weight. */
 .message-start-breakout-link {
@@ -8000,7 +8400,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   margin-top: 4px;
   padding: 0 12px 0 10px;
 }
-.message-start-breakout-link > span { color: var(--av-sys-color-text-disabled); }
+.message-start-breakout-link > svg { color: var(--av-sys-color-text-muted); flex: none; }
 .message-start-breakout-link:hover { background: var(--av-sys-color-state-hover); color: var(--av-sys-color-text-default); }
 .breakout-chip {
   align-items: center;
@@ -8022,6 +8422,17 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .breakout-chip-icon { color: var(--av-sys-color-text-muted); flex: none; }
 .breakout-chip-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .breakout-chip-news { color: var(--av-sys-color-workstream-news); flex: none; font-weight: 600; }
+/* A Breakout waiting on an answer, in the sidebar badge's colours. */
+.breakout-chip-badge {
+  background: var(--av-sys-color-danger-base);
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-danger-on);
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  padding: 0 7px;
+}
 .breakout-chip-open { flex: none; font-weight: 600; }
 .breakout-chip.is-open { background: var(--av-sys-color-accent-wash); box-shadow: 0 0 0 1.5px var(--av-sys-color-accent-base); color: var(--av-sys-color-accent-strong); }
 .breakout-chip.is-open .breakout-chip-icon { color: var(--av-sys-color-accent-base); }
@@ -8086,6 +8497,14 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .breakout-tick-card-news { color: var(--av-sys-color-workstream-news); font-weight: 600; }
 /* The transcript makes room for the ticks only when there are ticks. */
 .workstream-screen:has(> .breakout-tick-bar) .transcript-column { padding-left: max(var(--space-8), 48px); }
+/* Phone: the ticks would cover text (chips and the Channel menu still reach
+   Breakouts), and Rally's turns and their placeholder fill the column. Must
+   follow the rule above, which has the same weight. */
+@media (max-width: 640px) {
+  .workstream-screen > .breakout-tick-bar { display: none; }
+  .workstream-screen:has(> .breakout-tick-bar) .transcript-column { padding-left: var(--space-6); }
+  .workstream-screen :is(.agent-message, .conversation-opening-message:not(.is-human)) { max-width: 100%; }
+}
 
 /* ── Split conversation ─────────────────────────────────────────────────────
    A Channel and its open Breakout side by side, one resize handle between. A
@@ -8159,6 +8578,18 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 }
 .title-pill-menu-trigger:hover > .title-pill-menu-trigger-body { background: var(--av-sys-color-state-hover); }
 .title-pill-menu-trigger[data-state='open'] > .title-pill-menu-trigger-body { background: transparent; }
-/* A Breakout's composer names it; a long name ends in an ellipsis rather than
-   wrapping the empty field onto a second line. */
-.split-conversation-pane.is-breakout .workstream-composer textarea::placeholder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/*
+ * iOS Safari zooms the page into any focused field whose text is under 16px,
+ * and leaves it zoomed after blur. Touch screens get 16px text in every text
+ * field instead; maximum-scale=1 would also stop it but takes pinch zoom away
+ * on Android. Important because the field rules it overrides are scoped deeper
+ * than any one rule here could be. That also shrinks a larger field to 16px,
+ * so a field styled above 16px has to be added to the :not() list.
+ */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], .space-name-input),
+  textarea,
+  select,
+  .workstream-composer .composer-highlight { font-size: 16px !important; }
+}

@@ -896,7 +896,7 @@ describe("agent harness", () => {
     await client.structured({ ...structuredInput, model: "x-ai/grok-4.6" });
     await client.structured({
       ...structuredInput,
-      model: "x-ai/grok-4.6",
+      model: "openai/gpt-6.1-sol",
       reasoningEffort: "none",
     });
     await client.structured({ ...structuredInput, model: "google/gemini-3.8-flash" });
@@ -911,6 +911,40 @@ describe("agent harness", () => {
     expect(requestBodies[3]?.reasoning).toEqual({ effort: "low" });
     expect(requestBodies[4]?.reasoning).toEqual({ effort: "low" });
     expect(requestBodies[5]?.reasoning).toEqual({ effort: "high" });
+  });
+
+  it("serves a caller's reasoning none at the default on a model that refuses it", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestBodies.push(body);
+      return body.model === "openai/gpt-5.6-terra"
+        ? Response.json({ error: { message: "primary unavailable" } }, { status: 503 })
+        : Response.json({ model: "google/gemini-3.8-flash", choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }] });
+    }) as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "openai/gpt-5.6-terra",
+      fallbackModels: ["google/gemini-3.8-flash"],
+      fetch: fetcher,
+    });
+
+    await client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "reasoning_none_fallback",
+      jsonSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false },
+      parse: (value: unknown) => value as { ok: boolean },
+      reasoningEffort: "none",
+    });
+
+    // The primary may be retried before the route falls back; every attempt
+    // on it keeps the caller's `none`.
+    const attempts = requestBodies.map((body) => [body.model, body.reasoning]);
+    expect(new Set(attempts.map((attempt) => JSON.stringify(attempt)))).toEqual(new Set([
+      JSON.stringify(["openai/gpt-5.6-terra", { effort: "none" }]),
+      JSON.stringify(["google/gemini-3.8-flash", { effort: "low" }]),
+    ]));
+    expect(attempts.at(-1)).toEqual(["google/gemini-3.8-flash", { effort: "low" }]);
   });
 
   it("keeps the intended model in structured fallback trace metadata", async () => {
@@ -4076,6 +4110,48 @@ describe("agent harness", () => {
     expect(requestBodies[2]?.messages.map((message) => message.role)).toEqual(["system", "user"]);
     expect(JSON.stringify(persist.mock.calls[0]?.[0])).not.toContain("# Repository instructions");
     expect(render.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("keeps the principal's own system section out of the compaction summary but on every model turn", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { tool_calls: [toolDelta(0, "provider-read", "read_once")] }, finish_reason: "tool_calls" }],
+        usage: { prompt_tokens: 81, completion_tokens: 1 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "The record was read; return the result." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 82, completion_tokens: 8 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 24, completion_tokens: 2 },
+      }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const principal = "<personal_system_prompt>\nAnswer in French.\n</personal_system_prompt>";
+    const persist = vi.fn();
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      principalSystemSection: principal,
+      corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
+      compaction: { contextWindowTokensByModel: { "test/model": 100 }, persist },
+    });
+
+    expect(outcome.status).toBe("completed");
+    // The summary becomes the loop's shared checkpoint, so the summariser must
+    // never read one member's private section; the turns around it still do.
+    expect(String(requestBodies[0]?.messages[0]?.content)).toContain(principal);
+    expect(JSON.stringify(requestBodies[1]?.messages)).not.toContain("Answer in French.");
+    expect(requestBodies[1]?.messages[0]).toMatchObject({ role: "system" });
+    expect(String(requestBodies[2]?.messages[0]?.content)).toContain(principal);
+    expect(JSON.stringify(persist.mock.calls[0]?.[0])).not.toContain("Answer in French.");
   });
 
   it("fails the compaction when the host names a position that is not a user message", async () => {

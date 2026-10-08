@@ -100,7 +100,8 @@ async function establishWorkspace(): Promise<void> {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
       workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -369,11 +370,11 @@ async function openChannelObject(workstreamId: WorkstreamId): Promise<void> {
   });
 }
 
-async function reserve(name: string, scope: "personal" | "workspace" = "workspace"): Promise<SpaceId> {
+async function reserve(name: string): Promise<SpaceId> {
   const result = await workspace().reserveSpace({
     workspaceId: WORKSPACE_ID,
     userId: OWNER,
-    space: { name, iconKey: "briefcase", colorKey: "blue", scope },
+    space: { name, iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
   });
   if (!result.ok) throw new Error(`reserveSpace refused: ${result.code}`);
   return asSpaceId(result.space.id);

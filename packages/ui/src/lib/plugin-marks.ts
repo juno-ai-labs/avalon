@@ -1,10 +1,12 @@
 import Apple from '@thesvg/react/apple';
 import Canva from './brand-marks/canva';
+import Cloudflare from '@thesvg/react/cloudflare';
 import Github from '@thesvg/react/github';
 import Google from '@thesvg/react/google';
 import GoogleDrive from '@thesvg/react/google-drive';
 import Granola from '@thesvg/react/granola';
 import Linear from '@thesvg/react/linear';
+import ModelContextProtocol from '@thesvg/react/model-context-protocol';
 import Notion from '@thesvg/react/notion';
 import Slack from '@thesvg/react/slack';
 import X from '@thesvg/react/x';
@@ -47,13 +49,18 @@ export type PluginBrandMarkComponent =
   | { readonly Mark: ComponentType<{ className?: string; variant?: 'mono' }>; readonly mono: true }
   | { readonly Mark: ComponentType<{ className?: string }>; readonly mono: false };
 
-/** The brands Rally connects to, or links out to, that have a mark of their own. */
+/**
+ * The brands Rally connects to, or links out to, that have a mark of their own.
+ * `model-context-protocol` is the protocol's mark rather than a company's: it
+ * is what a custom MCP server wears when its name spells out no company here.
+ */
 export const PLUGIN_BRAND_MARKS: Record<
-  'apple' | 'ashby' | 'canva' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'notion' | 'slack' | 'x',
+  'apple' | 'ashby' | 'canva' | 'cloudflare' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'model-context-protocol' | 'notion' | 'slack' | 'x',
   PluginBrandMarkComponent
 > = {
   apple: { Mark: Apple, mono: true },
   canva: { Mark: Canva, mono: true },
+  cloudflare: { Mark: Cloudflare, mono: true },
   ashby: { Mark: Ashby, mono: true },
   fireflies: { Mark: Fireflies, mono: true },
   github: { Mark: Github, mono: true },
@@ -61,6 +68,7 @@ export const PLUGIN_BRAND_MARKS: Record<
   'google-drive': { Mark: GoogleDrive, mono: true },
   granola: { Mark: Granola, mono: false },
   linear: { Mark: Linear, mono: true },
+  'model-context-protocol': { Mark: ModelContextProtocol, mono: true },
   notion: { Mark: Notion, mono: true },
   slack: { Mark: Slack, mono: false },
   x: { Mark: X, mono: true },
@@ -92,6 +100,8 @@ export function isPluginBrandMark(icon: string): icon is PluginBrandMark {
  *
  * Null is not a failure. A webhook is not a company and has no mark to wear, and
  * a connector added before this mapping learns about it draws the generic plug.
+ * A custom MCP server is never null: one whose name spells out no company here
+ * wears the protocol's own mark.
  */
 export function connectorBrandMark(
   connectorType: string,
@@ -108,6 +118,25 @@ export function connectorBrandMark(
     case 'notion': return 'notion';
     case 'slack': return 'slack';
     case 'x': return 'x';
+    case 'custom_mcp': return (displayName ? markNamedIn(displayName) : null) ?? 'model-context-protocol';
     default: return null;
   }
+}
+
+/**
+ * The company a custom MCP server's own name spells out, as whole words.
+ *
+ * A custom server has no connector type of its own to key on, and the list
+ * Settings draws from carries only the name its creator gave it — "Cloudflare
+ * API", "Linear (staging)". Whole words, longest first, so "Google Drive" is
+ * Drive and "Ex" or "Next" never reads as X. `x` and `apple` are left out: one
+ * letter is no evidence, and nobody connects an Apple MCP server. The protocol's
+ * own mark is the fallback, not a name to match.
+ */
+const namedMarks = (Object.keys(PLUGIN_BRAND_MARKS) as PluginBrandMark[])
+  .filter((mark) => mark !== 'x' && mark !== 'apple' && mark !== 'model-context-protocol')
+  .sort((a, b) => b.length - a.length);
+function markNamedIn(displayName: string): PluginBrandMark | null {
+  const words = ` ${displayName.toLowerCase().split(/[^a-z0-9]+/u).join(' ')} `;
+  return namedMarks.find((mark) => words.includes(` ${mark.replace('-', ' ')} `)) ?? null;
 }

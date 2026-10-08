@@ -1,8 +1,8 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
@@ -10,11 +10,13 @@ import { optimisticOpeningTranscript } from '../lib/launched-conversation';
 import { optimisticMentionRendering } from '../lib/transcript';
 import type { MentionIdentity } from '../lib/api';
 import { holdCreationTraceUntilSendReady, startPerfTrace, type PerfTrace } from '../lib/perf-trace';
-import { mentionOptionId, useMentionNavigation } from '../lib/use-mention-navigation';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
+import { useSpaceChoices } from '../lib/space-choices';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, isInvitee, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
+import { logError } from '../../common/logger';
 import { uuidV7 } from '../lib/telemetry';
 import { addPendingWorkstream, confirmPendingWorkstream, discardPendingWorkstream } from '../lib/workstreams-cache';
 import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail } from '../lib/types';
@@ -22,7 +24,8 @@ import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { type ComposerConversation, WorkstreamComposer } from '../components/workstream-composer';
-import { Avatar, EmptyState, LoadingState, TitleSkeleton } from '../components/primitives';
+import { NewChannelParticipants } from '../components/new-channel-participants';
+import { DropdownSelect, EmptyState, LoadingState, TitleSkeleton } from '../components/primitives';
 import { MessageBlock } from '../components/workstream-blocks';
 
 interface CreateWorkstreamInput {
@@ -33,6 +36,8 @@ interface CreateWorkstreamInput {
   openingMessage: string;
   mentions: MentionIdentity[];
   participantIds: string[];
+  /** Invitees picked or mentioned, shared the Channel by address once it exists. */
+  invitedEmails: string[];
   /**
    * The submit instant the launch surface has been counting from. Seeded onto
    * the created run so the work timer does not jump at the navigation; the
@@ -131,8 +136,8 @@ function launchedWorkstreamDetail(
 /**
  * The launcher, mounted afresh for every opening.
  *
- * Every navigation here is a new Channel: the sidebar's dialog names it and its
- * Space. React keeps one instance across a change of `:spaceId`, and across a
+ * Every navigation here is a new Channel, started in the Space the route names.
+ * React keeps one instance across a change of `:spaceId`, and across a
  * second opening of the Space already on screen, so without this key the
  * people picked for one Channel were carried into the next — into a different
  * Space's Channel, even — and the composer's autofocus never ran again. The
@@ -144,18 +149,24 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
 }
 
 function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.JSX.Element {
-  const owningSpaceId = useParams<{ spaceId: string }>().spaceId!;
+  const routeSpaceId = useParams<{ spaceId: string }>().spaceId!;
+  // The route opens the launcher on a Space; the Space picker above the
+  // composer can move it to another before the Channel exists. Held here rather
+  // than in the route, because a navigation remounts the launcher and would
+  // drop the people and name already chosen.
+  const [pickedSpaceId, setPickedSpaceId] = useState(routeSpaceId);
+  const [channelNameInput, setChannelNameInput] = useState('');
+  const channelName = channelNameInput.trim();
   const { api } = useAppSession();
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const recipientInputRef = useRef<HTMLInputElement>(null);
   const workspaceDraftKey = newWorkstreamDraftKey(workspace.region, workspace.id);
-  const draftKey = `${workspaceDraftKey}:space:${owningSpaceId}`;
+  // Keyed by the Space the launcher opened on, not the one picked since, so
+  // changing the picker never swaps the words in the composer for another draft.
+  const draftKey = `${workspaceDraftKey}:space:${routeSpaceId}`;
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
-  const [recipientQuery, setRecipientQuery] = useState('');
-  const [recipientPickerOpen, setRecipientPickerOpen] = useState(false);
   // Not kept in the draft cache: the draft outlives the session, and a model
   // pinned last week is not a choice anyone would expect to still be in force.
   const [modelOverride, setModelOverride] = useState<AgentModelOverride | null>(null);
@@ -181,37 +192,31 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     enabled: Boolean(api),
     staleTime: 60_000,
   });
+  // People invited to the Organization who have not joined yet: pickable
+  // beside members, and shared the Channel by address once it exists.
+  const invitees = useWorkspaceInvitees(api, workspace.currentUser.accessClass !== 'guest');
+  const visibleInvitees = invitees.data ?? NO_INVITEES;
+  const emailMentions = useMemo(
+    () => emailMentionDirectory(members.data ?? [], visibleInvitees),
+    [members.data, visibleInvitees],
+  );
   const { active: spaces } = useSpaceDirectories();
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
-  const recipientCandidates = useMemo(() => {
-    const normalized = recipientQuery.trim().toLocaleLowerCase();
-    return (members.data ?? [])
-      .filter((member) => (
-        member.id !== workspace.currentUser.id
-        && (member.status ?? 'active') === 'active'
-        && !selectedIds.has(member.id)
-      ))
-      .filter((member) => !normalized || `${member.name} ${member.email}`.toLocaleLowerCase().includes(normalized));
-  }, [members.data, recipientQuery, selectedIds, workspace.currentUser.id]);
+  const recipientCandidates = useMemo(() => [
+    ...(members.data ?? []).filter((member) => (
+      member.id !== workspace.currentUser.id
+      && (member.status ?? 'active') === 'active'
+      && !selectedIds.has(member.id)
+    )),
+    ...visibleInvitees.map((invitee) => inviteeAsMember(invitee.email)).filter((member) => !selectedIds.has(member.id)),
+  ], [members.data, selectedIds, visibleInvitees, workspace.currentUser.id]);
   const selectRecipient = useCallback((member: WorkspaceMember): void => {
     setSelectedMembers((current) => current.some((candidate) => candidate.id === member.id)
       ? current
       : [...current, member]);
-    setRecipientQuery('');
-    setRecipientPickerOpen(true);
-    requestAnimationFrame(() => recipientInputRef.current?.focus());
   }, []);
-  const recipientNavigation = useMentionNavigation(
-    recipientPickerOpen ? recipientCandidates.map((member) => member.id) : [],
-    (index) => {
-      const member = recipientCandidates[index];
-      if (member) selectRecipient(member);
-    },
-  );
   const removeRecipient = useCallback((memberId: string): void => {
     setSelectedMembers((current) => current.filter((member) => member.id !== memberId));
-    setRecipientPickerOpen(true);
-    requestAnimationFrame(() => recipientInputRef.current?.focus());
   }, []);
   const returnTo = typeof location.state === 'object'
       && location.state !== null
@@ -219,12 +224,6 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
       && typeof location.state.returnTo === 'string'
       ? location.state.returnTo
       : null;
-  const channelName = typeof location.state === 'object'
-      && location.state !== null
-      && 'channelName' in location.state
-      && typeof location.state.channelName === 'string'
-      ? location.state.channelName.trim()
-      : '';
   const canCloseNewChat = Boolean(returnTo && returnTo !== location.pathname);
   const closeNewChat = useCallback((): void => {
     if (returnTo && returnTo !== location.pathname) {
@@ -232,21 +231,18 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
       return;
     }
   }, [location.pathname, returnTo, navigate]);
-  const owningSpace = spaces.data?.items.find((space) => space.id === owningSpaceId);
-  // A personal Space decides who is in its Channels, so the bar shows the
-  // Space's own roster and offers no way to change it.
-  const participantsManagedBySpace = owningSpace?.scope === 'personal';
-  const personalSpaceParticipantIds = useMemo(() => new Set(
-    owningSpace?.scope === 'personal'
-      ? owningSpace.participants.map((participant) => participant.userId as string)
-      : [],
-  ), [owningSpace]);
-  useEffect(() => {
-    if (owningSpace?.scope !== 'personal') return;
-    setSelectedMembers((members.data ?? []).filter((member) => (
-      member.id !== workspace.currentUser.id && personalSpaceParticipantIds.has(member.id)
-    )));
-  }, [members.data, owningSpace?.scope, personalSpaceParticipantIds, workspace.currentUser.id]);
+  // The picked Space can leave the directory (archived from the sidebar) while
+  // this screen is open; the launcher then falls back to the route's Space
+  // rather than to "Space not found".
+  const pickedSpace = spaces.data?.items.find((space) => space.id === pickedSpaceId);
+  const owningSpace = pickedSpace ?? spaces.data?.items.find((space) => space.id === routeSpaceId);
+  const owningSpaceId = owningSpace?.id ?? pickedSpaceId;
+  // The Spaces a Channel can be started in, as every Space picker lists them.
+  // A Space reached only through a shared Channel is not one; the route's own
+  // Space stays listed so the picker never shows a value it has no row for.
+  const spaceOptions = useSpaceChoices(spaces.data?.items ?? [])
+    .filter((space) => space.reach !== 'through_channel' || space.id === owningSpaceId)
+    .map((space) => ({ label: space.name, value: space.id }));
   // Opened on the keystroke that starts a work stream and closed once the
   // route change is requested. The surface is optimistic — the work stream is
   // already on screen — so what this spans is the round trip behind it. Held in
@@ -297,6 +293,28 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     },
     onSuccess: (created, input) => {
       confirmPendingWorkstream(queryClient, input.workstreamId, created.workstream);
+      // Shared once the Channel exists, and not awaited: the Channel opens on
+      // the create alone, and the address is in its People as Invited when this
+      // lands. A failure leaves them out of that list, which is where the
+      // creator looks for them.
+      if (input.invitedEmails.length > 0) {
+        void Promise.resolve().then(() => api!.createScopeInvitations({
+          operationId: uuidV7(),
+          parentId: created.workstream.id,
+          emails: input.invitedEmails,
+          targets: [{
+            kind: 'conversation',
+            workspaceId: asWorkspaceId(workspace.id),
+            parentId: asWorkstreamId(created.workstream.id),
+            substreamId: asSubstreamId('0'),
+          }],
+          completeWorkstream: false,
+          expiresAt: null,
+        }))
+          // A People level opened while this was in flight read an empty list.
+          .then(() => queryClient.invalidateQueries({ queryKey: ['scope-invitations', created.workstream.id] }))
+          .catch((error: unknown) => logError('rally', `could not share the new channel with ${input.invitedEmails.join(', ')}`, error));
+      }
       const selectedParticipants = (members.data ?? [])
         .filter((member) => input.participantIds.includes(member.id))
         .map((member) => ({ ...member, role: 'explicit' }));
@@ -347,6 +365,8 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     openingMessage: string,
     mentions: MentionIdentity[],
     confirmedParticipantUserIds: string[] = [],
+    _deliveryMode?: unknown,
+    mentionedInvitees: string[] = [],
   ): Promise<void> => {
     // The composer keeps accepting Enter while it shows the create in flight,
     // and a second submit would start a second Channel. Throwing hands the new
@@ -365,10 +385,14 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     // Somebody named in the opening message is somebody this Channel is for, so
     // a mention adds them as surely as the Participants bar does.
     const participantIds = [...new Set([
-      ...selectedMembers.map((member) => member.id),
+      ...selectedMembers.filter((member) => !isInvitee(member)).map((member) => member.id),
       ...mentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []),
       ...confirmedParticipantUserIds,
     ])].filter((id) => id !== workspace.currentUser.id);
+    const invitedEmails = [...new Set([
+      ...selectedMembers.filter(isInvitee).map((member) => member.email),
+      ...mentionedInvitees,
+    ])].sort();
     const createdAt = new Date().toISOString();
     const attachments = readyAttachments.map((attachment) => ({
       id: attachment.resource!.id,
@@ -385,13 +409,13 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     // The sidebar lists the Channel on the same keystroke, under the id the
     // server will create it with, so its row there is already the real one
     // and the server's answer only fills it in. Placed in exactly the Space
-    // the request names; the directory supplies only the audience.
+    // the request names, and Organization-wide, as the route creates it.
     const workstreamId = uuidV7();
     addPendingWorkstream(queryClient, {
       id: workstreamId,
       ...(channelName ? { title: channelName } : {}),
       spaceIds: [owningSpaceId],
-      scope: owningSpace?.scope === 'personal' ? 'personal' : 'workspace',
+      scope: 'workspace',
       harnessStatus: 'running',
       createdAt,
     });
@@ -403,6 +427,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
       openingMessage,
       mentions,
       participantIds,
+      invitedEmails,
       workstreamId,
       startedAt: createdAt,
     });
@@ -410,16 +435,16 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
 
   /**
    * The Channel the composer is writing into, before it exists: the people in
-   * the Participants bar, the Space's scope — which decides whether mentioning
-   * somebody outside them asks first — and no run to steer or stop.
+   * the Participants bar, Organization-wide as every new Channel is born, and
+   * no run to steer or stop.
    */
   const pendingChannel: ComposerConversation = {
-    scope: owningSpace?.scope === 'personal' ? 'personal' : 'workspace',
+    scope: 'workspace',
     harnessStatus: 'completed',
     stopRequested: false,
     participants: [
       { ...workspace.currentUser, role: 'creator' },
-      ...selectedMembers.map((member) => ({ ...member, role: 'explicit' })),
+      ...selectedMembers.filter((member) => !isInvitee(member)).map((member) => ({ ...member, role: 'explicit' })),
     ],
   };
 
@@ -456,85 +481,16 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
        an approximation of it. The composer is never unmounted between them: it
        moves from the middle of the pane to the dock, and remounting it would
        break the hand-off into two separate objects. */
+    <EmailMentionContext.Provider value={emailMentions}>
     <div className={clsx(
       'workstream-launch-screen new-chat-screen',
       launching && 'workstream-screen is-launching',
     )}>
       {!launching && <div className="screen-drag-strip window-drag" />}
+      {!launching && canCloseNewChat && <button aria-label="Close new channel" className="new-chat-close window-no-drag" onClick={closeNewChat} type="button">
+        <X aria-hidden="true" size={16} strokeWidth={1.7} />
+      </button>}
       <header className="launch-header workstream-header window-drag">
-        {!launching && (
-          <div className="new-chat-recipient-bar window-no-drag">
-            <span className="new-chat-to-label" id="new-channel-participants-label">Participants:</span>
-            <div
-              aria-labelledby="new-channel-participants-label"
-              className="new-chat-recipient-input-shell"
-              role="group"
-            >
-              {/* The creator is always in the Channel, so their chip has no
-                  remove control. */}
-              <span className="new-chat-recipient-chip">
-                <Avatar member={workspace.currentUser} size="small" />
-                <span>{workspace.currentUser.name}</span>
-              </span>
-              {selectedMembers.map((member) => (
-                <span className="new-chat-recipient-chip" key={member.id}>
-                  <Avatar member={member} size="small" />
-                  <span>{member.name}</span>
-                  {!participantsManagedBySpace && <button
-                    aria-label={`Remove ${member.name}`}
-                    onClick={() => removeRecipient(member.id)}
-                    type="button"
-                  >
-                    <X aria-hidden="true" size={13} strokeWidth={1.7} />
-                  </button>}
-                </span>
-              ))}
-              {participantsManagedBySpace ? (
-                <span className="new-chat-recipient-note">Managed by the space</span>
-              ) : <input
-                aria-activedescendant={recipientNavigation.activeOptionId}
-                aria-controls="new-chat-recipient-listbox"
-                aria-expanded={recipientPickerOpen}
-                aria-label="Search people"
-                autoComplete="off"
-                onChange={(event) => {
-                  setRecipientQuery(event.currentTarget.value);
-                  setRecipientPickerOpen(true);
-                }}
-                onFocus={() => setRecipientPickerOpen(true)}
-                onKeyDown={(event) => {
-                  if (event.metaKey && /^Digit[1-9]$/u.test(event.code)) {
-                    const member = recipientCandidates[Number(event.code.slice(-1)) - 1];
-                    if (member) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      selectRecipient(member);
-                    }
-                    return;
-                  }
-                  if (recipientNavigation.handleKeyDown(event)) return;
-                  if (event.key === 'Backspace' && recipientQuery.length === 0 && selectedMembers.length > 0) {
-                    event.preventDefault();
-                    removeRecipient(selectedMembers[selectedMembers.length - 1]!.id);
-                    return;
-                  }
-                  if (event.key !== 'Escape') return;
-                  event.preventDefault();
-                  if (recipientPickerOpen) setRecipientPickerOpen(false);
-                  else closeNewChat();
-                }}
-                placeholder="Add people"
-                ref={recipientInputRef}
-                role="combobox"
-                type="text"
-                value={recipientQuery}
-              />}
-            </div>
-            {canCloseNewChat && <button aria-label="Close new channel" className="new-chat-close" onClick={closeNewChat} type="button">
-              <X aria-hidden="true" size={16} strokeWidth={1.7} />
-            </button>}
-          </div>
-        )}
         {launching && (
           <div className="workstream-header-left window-no-drag">
             <div className="workstream-title-block">
@@ -542,46 +498,6 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
                 <h1>{channelName || <TitleSkeleton className="title-skeleton-header" />}</h1>
               </div>
             </div>
-          </div>
-        )}
-        {!launching && !participantsManagedBySpace && recipientPickerOpen && (
-          <div
-            aria-label="People"
-            className="new-chat-recipient-results window-no-drag"
-            id="new-chat-recipient-listbox"
-            role="listbox"
-          >
-            {members.isLoading ? (
-              <p className="new-chat-recipient-empty">Loading people…</p>
-            ) : recipientCandidates.length > 0 ? recipientCandidates.map((member, index) => (
-              <button
-                aria-label={`${member.name} — ${member.email}`}
-                aria-selected={index === recipientNavigation.activeIndex}
-                className={index === recipientNavigation.activeIndex ? 'is-selected' : undefined}
-                id={mentionOptionId(member.id)}
-                key={member.id}
-                onClick={() => selectRecipient(member)}
-                onMouseDown={(event) => event.preventDefault()}
-                onMouseMove={() => recipientNavigation.setActiveIndex(index)}
-                ref={index === recipientNavigation.activeIndex ? recipientNavigation.activeOptionRef : undefined}
-                role="option"
-                type="button"
-              >
-                <Avatar member={member} size="small" />
-                <span className="new-chat-recipient-copy">
-                  <strong>{member.name}</strong>
-                </span>
-                {index < 9 && (
-                  <span aria-hidden="true" className="new-chat-recipient-shortcut">
-                    <kbd>⌘</kbd><kbd>{index + 1}</kbd>
-                  </span>
-                )}
-              </button>
-            )) : (
-              <p className="new-chat-recipient-empty">
-                {recipientQuery.trim() ? 'No matching people' : 'Everyone available is selected'}
-              </p>
-            )}
           </div>
         )}
       </header>
@@ -614,11 +530,43 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
 
       <section className="composer-dock launch-dock" aria-labelledby="new-workstream-heading">
         <h2 className="sr-only" id="new-workstream-heading">Start a new channel</h2>
-        <div
-          className="composer-stack"
-          onFocusCapture={() => setRecipientPickerOpen(false)}
-          onPointerDown={() => setRecipientPickerOpen(false)}
-        >
+        <div className="composer-stack">
+          {/* Who the Channel is for, and where and under what name it lives:
+              set beside the composer that starts it, and gone with the
+              resting state once it does. */}
+          {!launching && <div className="new-channel-setup">
+            <NewChannelParticipants
+              candidates={recipientCandidates}
+              creator={workspace.currentUser}
+              loading={members.isLoading}
+              onAdd={selectRecipient}
+              onRemove={removeRecipient}
+              selected={selectedMembers}
+            />
+            <div className="new-channel-placement">
+              <DropdownSelect
+                ariaLabel="Space"
+                onValueChange={setPickedSpaceId}
+                options={spaceOptions}
+                side="top"
+                value={owningSpaceId}
+                variant="pill"
+              />
+              <span aria-hidden="true" className="new-channel-placement-divider">/</span>
+              <input
+                aria-label="Name of channel"
+                className="new-channel-name"
+                maxLength={180}
+                onChange={(event) => setChannelNameInput(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') closeNewChat();
+                }}
+                placeholder="Name this channel"
+                type="text"
+                value={channelNameInput}
+              />
+            </div>
+          </div>}
           {/* The composer every conversation writes with. */}
           <WorkstreamComposer
             api={api ?? undefined}
@@ -630,6 +578,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
             members={members.data ?? []}
+            invitees={visibleInvitees}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
             onAttach={attachmentDraft.addFiles}
             onDraftChange={() => setTooLong(false)}
@@ -653,5 +602,6 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
 
       <AttachmentLightbox preview={attachmentPreview} onClose={() => setAttachmentPreview(null)} />
     </div>
+    </EmailMentionContext.Provider>
   );
 }

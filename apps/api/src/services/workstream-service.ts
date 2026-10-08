@@ -7,7 +7,7 @@ import { publishWorkspaceSync } from "./workspace-realtime-service";
 import type { SidekickAttachment, SidekickRecommendationOptions } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
-import { HarnessFailureCodeSchema, asAutomationId, asUserId, asHarnessRunId, asWorkspaceId, asWorkstreamId, asSubstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
+import { HarnessFailureCodeSchema, asUserId, asHarnessRunId, asWorkspaceId, asWorkstreamId, asSubstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
 import type {
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
@@ -23,7 +23,7 @@ import type {
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { conversationObjectName } from "../durable-objects/substream-agent";
-import { automationDOName, substreamLoopId, workspaceDOName } from "../durable-objects/names";
+import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
 import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError } from "../lib/api-error";
 import { publishAccessRevocation } from "./access-revocation";
@@ -52,7 +52,8 @@ import {
   wakeupExecutionPrincipal,
   type WorkstreamWakeupRow,
 } from "./workstream-wakeup-service";
-import { ChannelAccessService, publishChannelNarrowing, spaceAccessError } from "./channel-access-service";
+import { ChannelAccessService, publishChannelNarrowing } from "./channel-access-service";
+import { hostedParentStub } from "./conversation-parent-client";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
 import { rpcResultBody } from "../durable-objects/rpc-result";
@@ -676,27 +677,32 @@ export class WorkstreamService {
       workspaceId:this.auth.workspaceId,region:this.auth.region,role:this.auth.role,
       ...(this.auth.principal ? { principal:this.auth.principal } : {}),
     }, ...(removeId ? { removeId } : {}) });
-    const items = await this.conversationSidekickSummaries(id,substreamId,ids);
+    const items = await this.conversationSidekickSummaries(id,substreamId,{ automationIds:ids });
     await conversation.client(id,false,substreamId);
     if (removeId) await publishWorkspaceSync(this.env,this.auth.workspaceId,["automations"]);
     return { items };
   }
 
-  private async conversationSidekickSummaries(id: string, substreamId: string, ids: readonly string[]): Promise<SidekickAttachment[]> {
-    if (ids.length === 0) return [];
+  /**
+   * Rail metadata for the Sidekicks a conversation's audience may see. One
+   * Organization call answers every Sidekick at once, by id or by the Channel
+   * that recommends or owns them, after one read of who the audience is.
+   */
+  private async conversationSidekickSummaries(id: string, substreamId: string,
+    selection: { automationIds?: readonly string[]; channelId?: string; onlyScope?: "workspace" }): Promise<SidekickAttachment[]> {
+    if (selection.channelId === undefined && (selection.automationIds?.length ?? 0) === 0) return [];
     const port = createIdentityObjectPort(this.env,this.auth.workspaceId,id,undefined,substreamId);
-    const [identity,participants] = await Promise.all([port.identity(),port.participants()]);
+    const [identity,participants,workspace] = await Promise.all([port.identity(),port.participants(),
+      hostedParentStub(this.env,this.auth.workspaceId)]);
     if (!identity) throw new ApiError(404,"workstream_not_found","Conversation not found");
-    const items = await Promise.all([...new Set(ids)].map(async (automationId) => {
-      const sidekick = await durableObjectStubForWorkspace(this.env,this.env.AUTOMATION_DOS,this.auth.workspaceId,
-        automationDOName(this.env.AVALON_REGION,this.auth.workspaceId,asAutomationId(automationId)));
-      return sidekick.readSkillSummary({ workspaceId:this.auth.workspaceId,automationId,
-        principalUserId:this.auth.userId,conversationParentId:id,
-        audienceScope:identity.scope === "workspace" ? "workspace" : "personal",
-        audienceUserIds:participants.map((person) => asUserId(person.user_id)),
-      });
-    }));
-    return items.filter((item) => item !== null);
+    return workspace.sidekickReadSkillSummaries({ workspaceId:asWorkspaceId(this.auth.workspaceId),
+      ...(selection.automationIds ? { automationIds:[...selection.automationIds] } : {}),
+      ...(selection.channelId ? { channelId:selection.channelId } : {}),
+      ...(selection.onlyScope ? { onlyScope:selection.onlyScope } : {}),
+      principalUserId:asUserId(this.auth.userId),conversationParentId:id,
+      audienceScope:identity.scope === "workspace" ? "workspace" : "personal",
+      audienceUserIds:participants.map((person) => asUserId(person.user_id)),
+    });
   }
 
   async recommendedSidekicks(id: string, substreamId = "0"): Promise<{ items: SidekickAttachment[] }> {
@@ -705,34 +711,26 @@ export class WorkstreamService {
     if (parent.kind !== "workstream") {
       throw new ApiError(422,"sidekick_attachment_parent_kind_unsupported","Sidekick recommendations belong to workstreams");
     }
-    const room = await durableObjectStubForWorkspace(this.env,this.env.WORKSPACE_DOS,this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
-    const workspace = await durableObjectStubForWorkspace(this.env,this.env.WORKSPACE_DOS,this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION,this.auth.workspaceId));
-    const [recommended,owned] = await Promise.all([
-      room.recommendedSidekickIds({ workspaceId:this.auth.workspaceId,parentId:id }),
-      workspace.automationIdsOwnedByWorkstream({ workspaceId:this.auth.workspaceId,workstreamId:id }),
-    ]);
-    const items = await this.conversationSidekickSummaries(id,substreamId,[...recommended,...owned.automationIds]);
+    const items = await this.conversationSidekickSummaries(id,substreamId,{ channelId:id });
     await conversation.client(id,false,substreamId);
     return { items };
   }
 
   /** Call after exact-conversation admission; these IDs do not themselves grant access. */
-  private async conversationSidekickIds(id: string, substreamId: string, explicit?: readonly string[]) {
-    const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId));
-    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
-    const child = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
-      conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, id, asSubstreamId(substreamId)));
+  private async conversationSidekickIds(id: string, substreamId: string) {
+    const [workspace, child] = await Promise.all([
+      hostedParentStub(this.env, this.auth.workspaceId),
+      durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
+        conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, id, asSubstreamId(substreamId))),
+    ]);
     const [recommended, owned, loaded] = await Promise.all([
-      explicit ?? room.recommendedSidekickIds({ workspaceId: this.auth.workspaceId, parentId: id }),
+      workspace.recommendedSidekickIds({ workspaceId: this.auth.workspaceId, parentId: id }),
       workspace.automationIdsOwnedByWorkstream({ workspaceId: this.auth.workspaceId, workstreamId: id }),
       child.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id }),
     ]);
     return conversationSidekickCandidateIds([...recommended, ...owned.automationIds], loaded);
   }
+
 
   /** One capability/catalog decision for browser controls and person-authorized tools. */
   async sidekickRecommendationOptions(id: string, substreamId = "0"): Promise<SidekickRecommendationOptions> {
@@ -743,9 +741,13 @@ export class WorkstreamService {
     }
     const relationship = await readWorkspaceRelationship(this.env.DB, this.auth.workspaceId, this.auth.userId);
     if (relationship?.status !== "active") throw new ApiError(403, "workspace_membership_required", "Workspace access is required");
-    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
-    const explicit = new Set(await room.recommendedSidekickIds({ workspaceId: this.auth.workspaceId, parentId: id }));
+    const room = await hostedParentStub(this.env, this.auth.workspaceId);
+    // Both reads are of this Channel's own rows; neither waits on the other.
+    const [recommended, management] = await Promise.all([
+      room.recommendedSidekickIds({ workspaceId: this.auth.workspaceId, parentId: id }),
+      room.readManagementAccess({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId }),
+    ]);
+    const explicit = new Set(recommended);
     let sources: SidekickAttachment[];
     if (relationship.accessClass === "member") {
       sources = (await new AutomationService(this.env, this.auth).listSidekicks()).items
@@ -753,18 +755,15 @@ export class WorkstreamService {
         .map((item) => ({ id: item.id, name: item.name, description: item.description,
           available: item.status === "active" && item.loadable }));
     } else {
-      const candidates = await this.conversationSidekickSummaries(id, substreamId,
-        [...await this.conversationSidekickIds(id, substreamId, [...explicit])]);
-      const eligible = await Promise.all(candidates.map(async (item) => {
-        const source = await durableObjectStubForWorkspace(this.env, this.env.AUTOMATION_DOS, this.auth.workspaceId,
-          automationDOName(this.env.AVALON_REGION, this.auth.workspaceId, asAutomationId(item.id)));
-        const facts = await source.readAuthorizationFacts({ workspaceId: this.auth.workspaceId, parentId: item.id,
-          userId: this.auth.userId, substreamIds: [] });
-        return facts.exists && facts.scope === "workspace" ? item : null;
-      }));
-      sources = eligible.filter((item) => item !== null);
+      // A guest is offered only Organization Sidekicks already in reach of
+      // this conversation: the Channel's own and the ones it has loaded.
+      const child = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
+        conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, id, asSubstreamId(substreamId)));
+      sources = await this.conversationSidekickSummaries(id, substreamId, {
+        automationIds: await child.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id }),
+        channelId: id, onlyScope: "workspace",
+      });
     }
-    const management = await room.readManagementAccess({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId });
     await conversation.client(id, false, substreamId);
     const current = await readWorkspaceRelationship(this.env.DB, this.auth.workspaceId, this.auth.userId);
     if (current?.status !== "active" || current.incarnation !== relationship.incarnation || current.accessClass !== relationship.accessClass) {
@@ -780,8 +779,7 @@ export class WorkstreamService {
   ): Promise<{ items: SidekickAttachment[] }> {
     const visibleSubstreamId = backgroundExecution ? "0" : substreamId;
     await new ConversationService(this.env, this.auth).writableClient(id, visibleSubstreamId);
-    const room = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
+    const room = await hostedParentStub(this.env, this.auth.workspaceId);
     // Management access is checked once, by `room.setSidekickRecommendation`
     // below, in the same call that writes the recommendation. Asking the room
     // first as well cost a second round trip for the same answer.
@@ -809,17 +807,19 @@ export class WorkstreamService {
           throw new ApiError(403, "sidekick_attachment_forbidden", "Choose a Sidekick already available in this conversation");
         }
       }
-      const source = await durableObjectStubForWorkspace(this.env, this.env.AUTOMATION_DOS, this.auth.workspaceId,
-        automationDOName(this.env.AVALON_REGION, this.auth.workspaceId, asAutomationId(sidekickId)));
-      // Recommendation needs workspace-source eligibility, not permission to
-      // read its separate authoring conversation or run history.
-      const sidekick = await source.readAuthorizationFacts({ workspaceId: this.auth.workspaceId, parentId: sidekickId, userId: this.auth.userId, substreamIds: [] });
-      if (!sidekick.exists) throw new ApiError(404, "sidekick_not_found", "Sidekick not found");
-      if (sidekick.scope !== "workspace") throw new ApiError(422, "sidekick_attachment_scope_invalid", "Choose a workspace Sidekick");
     }
+    // The write checks the Sidekick too: it must exist and belong to the
+    // Organization. Recommendation needs that eligibility, not permission to
+    // read its authoring conversation or run history.
     try {
       await room.setSidekickRecommendation({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId, sidekickId, attached });
     } catch (error) {
+      if (error instanceof Error && error.message === "sidekick_not_found") {
+        throw new ApiError(404, "sidekick_not_found", "Sidekick not found");
+      }
+      if (error instanceof Error && error.message === "sidekick_attachment_scope_invalid") {
+        throw new ApiError(422, "sidekick_attachment_scope_invalid", "Choose a workspace Sidekick");
+      }
       if (error instanceof Error && error.message === "sidekick_attachment_participant_required") {
         throw new ApiError(403, "sidekick_attachment_forbidden", "Workstream management access is required");
       }
@@ -845,62 +845,26 @@ export class WorkstreamService {
 
 
   /**
-   * Change the Channel, recording an audience change as the Channel's *own*.
-   *
-   * A scope change goes through here rather than straight to the object client
-   * because `workstream_metadata.scope` stops being able to answer "what is
-   * this Channel's audience on its own account" the moment a Space widens it.
-   * Recording first and restoring on a refused update keeps the record from
-   * claiming an audience the Channel never took.
-   *
-   * The refusal it can raise replaces the Project one: a Channel that is
-   * Organization-wide through a Space cannot be made private, because the
-   * effective audience would stay Organization-wide and the record would then
-   * disagree with the Channel.
-   *
-   * A narrowing seats first, for the reason a retraction does. A personal
-   * Space applied while the Channel was Organization-wide seated nobody, so
-   * the readers it supplies exist only as its roster; narrowing without
-   * seating them revokes access a Space that has not changed still provides.
+   * Change the Channel. Its scope is its own to widen or narrow: a Space grants
+   * no reader, so nothing else has to agree.
    */
   async update(id: string, input: UpdateWorkstreamInput) {
     const client = await this.authoritativeClient(id);
     if (input.scope === undefined) return client.update(input);
-    // The conversation is asked before the Channel parent `WorkspaceDO` hosts
-    // is addressed at all.
-    // It is the object that knows which parent kind this id belongs to, and a
-    // Space's hidden main conversation refuses a Channel product request by
-    // name; reaching the Channel authority first would address a Space id as
-    // a Channel and record a direct scope on it. The title
-    // is what the refusals below need anyway.
-    const access = new ChannelAccessService(this.env, this.auth);
-    const title = await access.channelTitle(id);
-    if (input.scope === "personal") await access.narrowDirectScope(id);
-    const recorded = await access.recordDirectScope(id, input.scope);
-    if (!recorded.ok) throw spaceAccessError(recorded.code, title);
-    let result;
-    try {
-      result = await client.update(input);
-    } catch (error) {
-      await access.restoreDirectScope(id, recorded.previousScope, recorded.previousObserved);
-      throw error;
-    }
+    // Read before the write: whether this narrows is a question about the
+    // audience the Channel actually had, which only the conversation knows.
+    const before = await client.get();
+    const result = await client.update(input);
     // The room closes its own sockets for somebody it was told about, and a
     // narrowing tells it about nobody: the readers it drops are every member
     // who is not a participant. So the write publishes it, in the same
-    // request, exactly as `removeParticipant` does — and only once the
+    // request, exactly as `removeParticipant` does, and only once the
     // canonical update took, because until then nothing has narrowed.
     //
-    // Named rather than thrown, and rather than gated. The Space paths that
-    // narrow have a `space_intents` row behind them and can fail the step so
-    // the alarm republishes it; this one has nothing durable to retry from, and
-    // it did not before either — narrowing a Channel to personal published no
-    // revocation at all until this branch existed, so a send that does not
-    // leave is exactly the pre-existing gap rather than a regression this
-    // introduced. Building a durable gate for it is a change of its own, and it
-    // is recorded as an open gap in `docs/access-revocation.md` and
-    // `docs/spaces.md` rather than half-built here.
-    if (input.scope === "personal" && recorded.previousScope === "workspace"
+    // Named rather than thrown: there is nothing durable to retry from, and a
+    // send that does not leave is the open gap recorded in
+    // `docs/access-revocation.md` rather than something half-built here.
+    if (input.scope === "personal" && before.scope === "workspace"
       && !await publishChannelNarrowing(this.env, asWorkspaceId(this.auth.workspaceId), id)) {
       logWarn(this.env, "channel_narrowing_publish_unannounced", {
         workstream_id: id,
@@ -928,17 +892,9 @@ export class WorkstreamService {
     });
   }
 
-  /**
-   * Add a reader on the Channel's own account.
-   *
-   * The note is what makes the add *direct*: whichever Space seated this person
-   * first, the Channel has taken responsibility for them now, and a Space
-   * leaving must not take them with it.
-   */
+  /** Add a reader on the Channel's own account; no Space withdraws one. */
   async addParticipant(id: string, userId: string) {
-    const participant = await (await this.authoritativeClient(id)).addParticipant(userId);
-    await new ChannelAccessService(this.env, this.auth).noteDirectReader(id, userId);
-    return participant;
+    return (await this.authoritativeClient(id)).addParticipant(userId);
   }
 
   /**
@@ -946,9 +902,8 @@ export class WorkstreamService {
    *
    * The `projectEffect` flag this used to take is gone with the rule it
    * selected: a Project owned its member work streams' audiences and had to
-   * exempt its own fan-out from them. A Space does not own a Channel's
-   * audience, it supplies one source of it, so a removal here is simply the
-   * direct source losing a reader.
+   * exempt its own fan-out from them. A Space supplies no reader, so a removal
+   * here is simply the Channel losing one.
    */
   async removeParticipant(id: string, userId: string): Promise<void> {
     const accessLost = await new ChannelAccessService(this.env, this.auth)
@@ -979,8 +934,9 @@ export class WorkstreamService {
     id: string,
     elicitationId: string,
     input: AnswerElicitationInput,
+    slackOrigin?: SlackOriginContext,
   ) {
-    return (await this.authoritativeClient(id)).answerElicitation(elicitationId, input);
+    return (await this.authoritativeClient(id)).answerElicitation(elicitationId, input, slackOrigin);
   }
 
   async workstreamControlSocketTicket(id: string) {

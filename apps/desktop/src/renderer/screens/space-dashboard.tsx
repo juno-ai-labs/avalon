@@ -41,6 +41,7 @@ import { useSpaceDirectories, useSpacesReady } from '../lib/use-space-directorie
 import { useCachedWorkstreams } from '../lib/use-workstreams-query';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
+import { inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
 
 /**
  * Where a refusal is shown, one slot per surface that can produce one.
@@ -54,8 +55,7 @@ type FailureSlot =
   | 'restore'
   | 'name'
   | 'archive'
-  | 'participants'
-  | 'audience';
+  | 'participants';
 
 /**
  * A Space's own screen: what it is, who it is for, and what is in it.
@@ -95,7 +95,7 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   } | null>(null);
   const [participantsOpen, setParticipantsOpen] = useState(false);
   const [editParticipants, setEditParticipants] = useState<Set<string>>(new Set());
-  const [pendingScope, setPendingScope] = useState<'personal' | 'workspace' | null>(null);
+  const [editInvitees, setEditInvitees] = useState<Set<string>>(new Set());
   // A Space has no socket of its own: what it paints is the Organization's
   // directory, and the directory the local cache seeded is what is showing
   // until the workspace socket's first subscribe answer replaces it.
@@ -105,6 +105,17 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
     enabled: Boolean(api) && !guest,
+  });
+  // People invited to the Organization who have not joined, and the ones this
+  // Space lists by address. Read beside the summary rather than on it: the
+  // summary is strict, so shipped clients would drop a snapshot carrying them.
+  const organizationInviteeQuery = useWorkspaceInvitees(api, !guest);
+  const organizationInvitees = organizationInviteeQuery.data ?? NO_INVITEES;
+  const spaceInvitees = useQuery({
+    queryKey: ['space-invitees', spaceId],
+    queryFn: ({ signal }) => api!.getSpaceInvitees(spaceId!, signal),
+    enabled: Boolean(api) && Boolean(spaceId) && !guest,
+    retry: false,
   });
   // The Space's membership is paginated: General holds every Channel in the
   // Organization, so it is the one Space read that cannot ride the socket.
@@ -247,6 +258,10 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
   const conversations = (channelPages.data?.pages ?? []).flatMap((page) => page.items);
   const participantIds = new Set(space.participants.map((participant) => participant.userId as string));
   const spaceMembers = (workspaceMembers.data ?? []).filter((member) => participantIds.has(member.id));
+  // An address whose invitation has since been accepted, revoked or has
+  // expired is not shown: the first is a participant now, the others are no one.
+  const pendingAddresses = new Set(organizationInvitees.map((invitee) => invitee.email));
+  const listedInvitees = (spaceInvitees.data ?? []).filter((email) => pendingAddresses.has(email));
   return (
     <div className="space-dashboard-frame">
       <ConnectingCardSlot>
@@ -285,16 +300,6 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
               'The space could not be restored.',
             )}><RotateCcw aria-hidden="true" size={15} /> Restore space</Button>}
           appearance={space}
-          {...(isGeneral || !writable ? {} : {
-            audience: {
-              scope: space.scope,
-              onChange: (scope: 'personal' | 'workspace') => {
-                if (scope === space.scope) return;
-                report('audience', null);
-                setPendingScope(scope);
-              },
-            },
-          })}
           editable={editable}
           key={space.id}
           name={space.name}
@@ -308,10 +313,14 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
           )}
           {...(isGeneral || reachedThroughChannel ? {} : {
             participants: {
-              members: spaceMembers,
+              members: [...spaceMembers, ...listedInvitees.map(inviteeAsMember)],
               onManage: () => {
                 report('participants', null);
                 setEditParticipants(new Set(participantIds));
+                setEditInvitees(new Set(spaceInvitees.data ?? []));
+                void spaceInvitees.refetch().then((read) => {
+                  if (read.data) setEditInvitees(new Set(read.data));
+                });
                 setParticipantsOpen(true);
               },
             },
@@ -442,14 +451,25 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
         <Modal
           description="Choose the organization members who participate in this space."
           footer={<><Button disabled={saving} onClick={() => setParticipantsOpen(false)}>Cancel</Button><Button className="button-primary" disabled={saving || editParticipants.size === 0} onClick={() => {
-            // Only on success: this roster has a refusal of its own now — a
-            // personal Space cannot be narrowed to a list its own editor is
-            // not on — and the sentence for it is drawn inside this dialog.
+            // Only on success: a refusal's sentence is drawn inside this dialog.
             void save(
               'participants',
-              () => api!.updateSpaceAudience(space.id, { scope: space.scope, participantUserIds: [...editParticipants] }),
+              () => api!.updateSpaceAudience(space.id, {
+                scope: 'workspace',
+                participantUserIds: [...editParticipants],
+                // Only once the stored set is known: the list is the whole
+                // set, so sending one built without it would drop the rest.
+                // Addresses no longer pending are dropped as the set is saved.
+                ...(spaceInvitees.data && organizationInviteeQuery.data
+                  ? { inviteeEmails: [...editInvitees].filter((email) => pendingAddresses.has(email)) }
+                  : {}),
+              }),
               'Space participants could not be saved.',
-            ).then((saved) => { if (saved) setParticipantsOpen(false); });
+            ).then((saved) => {
+              if (!saved) return;
+              setParticipantsOpen(false);
+              void spaceInvitees.refetch();
+            });
           }}>Save</Button></>}
           onOpenChange={(open) => { if (!saving) setParticipantsOpen(open); }}
           open={participantsOpen}
@@ -481,31 +501,32 @@ export function SpaceDashboardScreen({ workspace }: { workspace: Workspace }): R
                 </label>
               );
             })}
+            {/* Invited to the Organization and not joined: listed by address,
+                and a participant once they accept. Same removal rule. */}
+            {spaceInvitees.data && organizationInvitees.map(({ email }) => {
+              const mayRemove = isAdministrator || !listedInvitees.includes(email);
+              return (
+                <label className="member-picker-row is-invited" key={email}>
+                  <input
+                    checked={editInvitees.has(email)}
+                    disabled={editInvitees.has(email) && !mayRemove}
+                    onChange={() => setEditInvitees((current) => {
+                      const next = new Set(current);
+                      if (next.has(email)) next.delete(email); else next.add(email);
+                      return next;
+                    })}
+                    type="checkbox"
+                  />
+                  <Avatar member={inviteeAsMember(email)} size="medium" />
+                  <span><strong>{email}</strong><small>Invited</small></span>
+                  <span aria-hidden="true" className="member-checkbox" />
+                </label>
+              );
+            })}
           </div>
           {failures.participants && <InlineError>{failures.participants}</InlineError>}
         </Modal>
 
-        <Modal
-          footer={<><Button disabled={saving} onClick={() => setPendingScope(null)}>Cancel</Button><Button className="button-primary" disabled={saving} onClick={() => {
-            if (pendingScope === null) return;
-            void save(
-              'audience',
-              () => api!.updateSpaceAudience(space.id, {
-                scope: pendingScope,
-                participantUserIds: [...participantIds],
-              }),
-              'The space audience could not be changed.',
-            ).then(() => setPendingScope(null));
-          }}>Continue</Button></>}
-          onOpenChange={(open) => { if (!open && !saving) setPendingScope(null); }}
-          open={pendingScope !== null}
-          title="Change who can see this space?"
-        >
-          <p>{pendingScope === 'workspace'
-            ? 'Everyone in the organization will be able to see this space and every channel in it. Current participants stay participants.'
-            : 'Only this space’s participants will be able to see it. Channels stay public if another source still says so.'}</p>
-          {failures.audience && <InlineError>{failures.audience}</InlineError>}
-        </Modal>
 
       </div>
     </div>

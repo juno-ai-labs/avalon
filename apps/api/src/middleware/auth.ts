@@ -13,6 +13,7 @@ import { ApiError } from "../lib/api-error";
 import { requestDeferral } from "../lib/defer";
 import { logWarn } from "../observability/logger";
 import { verifyAccessToken } from "../services/auth-service";
+import { recordSupportAction } from "../services/support-access";
 
 type Context = Parameters<MiddlewareHandler<HonoAppEnv>>[0];
 
@@ -131,7 +132,8 @@ export const requireAuth: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
     throw new ApiError(403, "workspace_setup_required", "Choose or join a workspace to continue");
   }
   c.set("auth", auth);
-  requestDeferral(c)(touchLastSeen(c.env, auth.workspaceId, auth.userId));
+  // Staff acting as somebody is not that somebody being around.
+  if (!auth.impersonatorUserId) requestDeferral(c)(touchLastSeen(c.env, auth.workspaceId, auth.userId));
   await next();
 };
 
@@ -159,7 +161,7 @@ export const requireWorkspaceAuth: MiddlewareHandler<HonoAppEnv> = async (c,next
     accessClass: auth.accessClass ?? "member",
     validatedAt: Date.now(),
   });
-  requestDeferral(c)(touchLastSeen(c.env,auth.workspaceId,auth.userId));
+  if (!auth.impersonatorUserId) requestDeferral(c)(touchLastSeen(c.env,auth.workspaceId,auth.userId));
   await next();
 };
 
@@ -177,6 +179,42 @@ export function getAuth(c: Context): AuthContext {
   }
   return auth as AuthContext;
 }
+
+/**
+ * Record every write a support session makes over HTTP (`docs/impersonation.md`),
+ * after the response and off the request's critical path. Mounted at the root:
+ * the auth context is set by whichever sub-app authenticated the request, and
+ * reads (GET, HEAD, OPTIONS) are not recorded.
+ */
+export const auditSupportWrites: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
+  await next();
+  const auth = c.get("auth");
+  if (!auth?.impersonatorUserId || !auth.workspaceId || ["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return;
+  requestDeferral(c)(recordSupportAction(c.env, {
+    workspaceId: auth.workspaceId,
+    impersonatorUserId: auth.impersonatorUserId,
+    representedUserId: auth.userId,
+    sessionId: auth.sessionId,
+    action: "support_session.request",
+    metadata: { method: c.req.method, path: c.req.path, status: c.res.status },
+  }));
+};
+
+/**
+ * Refuse a support session (`docs/impersonation.md`) at a door that mints
+ * another credential or binds a device to the person. A support session is
+ * the person's own authority inside one Organization for as long as its grant
+ * lasts; exchanging it for an ordinary session, opening another Organization,
+ * or registering for the person's notifications would outlive or exceed that.
+ */
+export const refuseSupportSession: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
+  const auth = c.get("auth") ?? await timedAuthenticate(c);
+  c.set("auth", auth);
+  if (auth.impersonatorUserId) {
+    throw new ApiError(403, "support_session_not_allowed", "This is not available while signed in through Rally access");
+  }
+  await next();
+};
 
 export function requireWorkspaceAdmin(c: Context): void {
   const auth = getAuth(c);

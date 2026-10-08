@@ -1,4 +1,5 @@
 import { MemberPresentationContext } from '../lib/member-presentation';
+import { EmailMentionContext, emailMentionDirectory } from '../lib/workspace-invitees';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest, MessageExportResult } from '../../common/message-export';
@@ -727,6 +728,37 @@ describe('MessageBlock markdown', () => {
     expect(chips[0]?.querySelector('.mention-chip-avatar-rally')).toHaveAttribute('aria-hidden', 'true');
     expect(screen.getByText('@Rally', { selector: 'code' })).toBeInTheDocument();
     expect(screen.getByText(/email@Rally\.dev/u)).toBeInTheDocument();
+  });
+
+  it("draws a typed @address as an invited chip, then as the person once they join", () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-email-mention',
+      text: 'hi @dana@example.com, and @stranger@example.com and `@dana@example.com` and @[dana@example.com](mailto:dana@example.com)',
+    };
+    const invited = emailMentionDirectory([], [{ email: 'dana@example.com', invitedAt: '2026-07-31T20:00:00.000Z' }]);
+
+    const { rerender } = render(
+      <EmailMentionContext.Provider value={invited}><MessageBlock {...actions} message={message} /></EmailMentionContext.Provider>,
+    );
+
+    const chip = document.querySelector('.mention-chip-invited');
+    expect(chip?.querySelector('.mention-chip-label')?.textContent).toBe('dana@example.com');
+    expect(document.querySelectorAll('.mention-chip')).toHaveLength(1);
+    // An address nobody here holds is the text that was written; code stays literal.
+    expect(screen.getByText(/@stranger@example\.com/u)).toBeInTheDocument();
+    expect(screen.getByText('@dana@example.com', { selector: 'code' })).toBeInTheDocument();
+    // A link written out is a link, not a mention.
+    expect(screen.getByRole('link', { name: 'dana@example.com' })).toHaveAttribute('href', 'mailto:dana@example.com');
+
+    const dana = { id: '00000000-0000-7000-8000-000000000051', name: 'Dana Diaz', email: 'dana@example.com', timezone: 'UTC' };
+    rerender(
+      <EmailMentionContext.Provider value={emailMentionDirectory([dana], [])}><MessageBlock {...actions} message={message} /></EmailMentionContext.Provider>,
+    );
+
+    const joined = screen.getByText('Dana Diaz').closest('.mention-chip');
+    expect(joined).toHaveAttribute('data-person-id', dana.id);
+    expect(joined).not.toHaveClass('mention-chip-invited');
   });
 
   it("leaves an agent's @Rally as text", () => {
@@ -1929,7 +1961,7 @@ describe('MessageBlock action tooltips', () => {
     const row = container.querySelector('.agent-message-actions');
     const controls = [...row!.querySelectorAll('button')];
     expect(controls.map((control) => control.textContent?.trim()))
-      .toEqual(['Copy', 'Speak', 'Image', 'PDF', '↳ New breakout']);
+      .toEqual(['Copy', 'Speak', 'Image', 'PDF', 'New breakout']);
 
     for (const control of controls) {
       const sentence = control.getAttribute('aria-label');
@@ -2741,14 +2773,14 @@ describe('MessageBlock breakout cutoff', () => {
     // The visible words are inside the accessible name, so voice control can
     // reach the control by what it says.
     expect(control).toHaveAccessibleName(expect.stringContaining('New breakout'));
-    expect(control.textContent?.trim()).toBe('↳ New breakout');
+    expect(control.textContent?.trim()).toBe('New breakout');
     const row = container.querySelector('.agent-message-actions');
     expect(row).toContainElement(control);
     expect(container.querySelector('header')).not.toContainElement(control);
     // Last, after the exports: the row reads copy, keep, then branch. Speak
     // needs a playback provider this render does not mount.
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['Copy', 'Image', 'PDF', '↳ New breakout']);
+      .toEqual(['Copy', 'Image', 'PDF', 'New breakout']);
 
     fireEvent.click(control);
 
@@ -2818,7 +2850,7 @@ describe('MessageBlock breakout cutoff', () => {
     const row = container.querySelector('.agent-message-actions');
     expect(row).not.toBeNull();
     expect([...row!.querySelectorAll('button')].map((button) => button.textContent?.trim()))
-      .toEqual(['↳ New breakout']);
+      .toEqual(['New breakout']);
 
     fireEvent.click(screen.getByRole('button', { name: 'New breakout from this message' }));
 

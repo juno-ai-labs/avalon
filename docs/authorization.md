@@ -172,50 +172,15 @@ operations remain member-gated.
 
 ### Space-derived access
 
-A Channel's readers are the union of one **direct** source — its own scope and
-its own participants — and every **Space** source that currently reaches it. A
-source can only widen: `workspace` anywhere makes the audience
-Organization-wide, and otherwise the readers are the union of every source's
-participants. `apps/api/src/lib/channel-audience.ts` is the only seam allowed to
-derive that union, and the parent's `parent_direct_audience`,
-`parent_space_sources` and `parent_space_readers` rows in `WorkspaceDO` are the
-only record of which source supplied whom
-([hosted conversation parents](hosted-conversation-parents.md)).
+[A Space grants no reader](spaces.md#every-space-is-organization-wide), and the
+code that once applied a Space's audience to its Channels is gone
+([`space-access-sources.md`](space-access-sources.md)). What is left of
+Space-derived access is the readers a Space seated before WorkspaceDO migration
+94. Their grants still carry `parent_grants.source_kind = 'space'` and stay out
+of the shared scope-grant directory, and ordinary removal revokes one like any
+other grant. Direct provenance still wins: a
+direct add of such a reader promotes the grant to `direct` and publishes it.
 
-None of it admits anybody. `resolveScopedAccess` over the grant ledger, or the
-main conversation's scope and participant rows on a Channel that has never been
-shared, remains the whole decision. The provenance answers the question those
-cannot — *why* somebody may read — and therefore what has to be withdrawn when
-one Space stops reaching the Channel and what must not be. Every application
-and every withdrawal goes through the Channel's canonical scope and participant
-operations, so the retained-content containment preflight and its triggers stay
-the one fence and a Channel under grant authority writes a grant exactly as a
-direct share does.
-
-The provenance is committed **after** the audience it describes, not before:
-applying a source returns a plan, and the confirmation that follows the
-canonical operations is what records the source and the readers it seated. A
-source written first would survive a caller that never got to seat anybody and
-would then account for access nobody has. The order is therefore plan, apply,
-confirm — and a Channel that narrows must seat what a surviving source supplies
-*before* it narrows, whether the narrowing comes from a Space leaving or from
-the Channel's own scope going private.
-
-What a Space-derived grant does *not* do is enter the shared scope-grant
-directory. `scope_grants.source_kind` records it, and `ScopeGrantStorage`
-suppresses the directory writer for those rows. The directory is discovery, not
-admission: a Space-derived reader finds the Channel through the Organization's
-Space directory, and a directory row per reader per Channel would make
-General — which holds every Channel in the Organization — publish one row per
-member per Channel into a single flat candidate index.
-
-Direct provenance is sticky and wins in both directions, decided at the
-authority rather than by which mutation arrived last: a Space cannot claim a row
-the Channel already held directly, and a Space withdrawing from one leaves it
-active. So a grant the Channel also holds directly stays published and stays
-active when the Space leaves, whichever way the two writes race.
-
-The composition runs the other way too, and that direction grants nothing.
 **Being able to read a Channel discloses the mark and name of every Space it is
 placed in** — the Organization's fact about where the Channel lives, so a
 sidebar can draw it there — whether or not the reader is one of those Spaces'
@@ -229,11 +194,12 @@ what it withholds.
 ### Invitation admission
 
 [Scoped invitations](scope-invitations.md) use the same current grant policy for
-every target at creation and acceptance. A verified mailbox match is necessary
-but insufficient: the sharer's membership incarnation and sharing authority must
-remain valid, the recipient relationship must be active, and local invitation
-revocation must not have won. Acceptance and target grant operations commit in
-one `WorkspaceDO` transaction. Replays return the receipt without reapplying grants.
+every target at creation and when a share is claimed, which happens when its
+address signs in. A verified mailbox match is necessary but insufficient: the
+sharer's membership incarnation and sharing authority must remain valid, the
+recipient relationship must be active, and local invitation revocation must not
+have won. The claim and its target grant operations commit in one `WorkspaceDO`
+transaction. A claimed share is never claimed again, so nothing reapplies grants.
 
 ### Evidence and read lifetime
 
@@ -298,8 +264,7 @@ the Channel's `parent_children` rows are in the same database, so
 `enqueueAuthorizationDiscovery` registers them (the same reconcile
 `registerAuthorizationChildren` runs) in the caller's transaction and queues
 only the per-conversation jobs. The Queue still carries conversation jobs,
-which read a `SubstreamAgent`; Sidekick parents, whose children are in
-`AutomationDO`; and a Channel whose legacy import is still pending, since
+which read a `SubstreamAgent`; and a Channel whose legacy import is still pending, since
 serving it needs the async import. The Worker's parent branch in
 `projectAuthorization` stays for those and for jobs queued before this change.
 
@@ -348,14 +313,11 @@ not a switch controlling which authorization implementation serves the request.
   coverage is complete would silently omit private-child-only resources.
 - Queue writes and resource changes share durable local intent. A crashed
   dispatcher can retry without reconstructing permissions from an old payload.
-- A Space's own visibility is discovery, in both directions. A Space source
-  admits a reader to a Channel; a readable Channel discloses its Space's mark
-  and name. Neither admits anything else — the second confers no read on the
-  Space's other Channels and no write on the Space at all.
-- A Space supplies one source of a Channel's audience; it never owns it. A
-  reader the direct source or another Space still supplies survives a Space's
-  departure, and the scope narrows only when nothing remaining is
-  Organization-wide.
+- A Space's own visibility is discovery only. A readable Channel discloses its
+  Space's mark and name, which confers no read on the Space's other Channels and
+  no write on the Space.
+- [A Space grants no reader](spaces.md#every-space-is-organization-wide). A
+  Channel's audience is its own scope and participants.
 - The scope-grant directory is complete for direct grants and deliberately
   incomplete for Space-derived ones. Anything that treats an absent directory
   row as absent access is wrong; the candidate index narrows a search, and the
@@ -517,7 +479,8 @@ WorkspaceDO to Queue to Worker and back for `resolveHostedParent`,
 into the object that enqueued it. The registration now runs in the enqueueing
 transaction and only per-conversation jobs are queued. Conversation jobs keep
 the Queue because they read a `SubstreamAgent`, and Sidekick parents because
-their children are in `AutomationDO`. A Channel whose legacy import is pending
+their children are `sidekick_children` rows, which the in-place path does not
+read. A Channel whose legacy import is pending
 keeps the Queue too: importing it needs an await, which a transaction cannot
 hold. The Worker's parent branch is kept for those and for messages already
 queued at deploy.

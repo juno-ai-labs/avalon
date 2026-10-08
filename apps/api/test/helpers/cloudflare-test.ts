@@ -51,7 +51,6 @@ type CloudflareBinding =
   | DurableObjectNamespace
   | Env["SUBSTREAM_AGENTS"]
   | Env["WORKSPACE_DOS"]
-  | Env["AUTOMATION_DOS"]
   | Env["CRASH_SYMBOLICATOR"]
   | Env["ARTIFACT_HOSTS"]
   | DurableObjectState

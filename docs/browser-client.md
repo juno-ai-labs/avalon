@@ -3,8 +3,8 @@
 The browser client provides email and Google sign-in, then mounts the desktop
 shell for everyone: Organization members and guests shared into some of its
 conversations, as described in [The shell](#the-shell). A guest gets no setup or
-onboarding. Sign-in, invitation acceptance and canonical conversation links
-activate the workspace and mount the shell. Local API and
+onboarding. Sign-in, which also claims anything shared with the person's
+address, and canonical conversation links activate the workspace and mount the shell. Local API and
 Chrome journeys cover guest entry, feed, upload/reload, multiple workstreams,
 promotion and membership removal. Production mail delivery and deployed stateful
 artifact serving remain release checks; see the guest-sharing completion audit.
@@ -14,14 +14,16 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | Path | Responsibility |
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
-| `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, Google sign-in, invitation acceptance, session restore and workspace list. |
-| `apps/browser/src/invitation.ts` | Tokenized and addressed invitation fragments, and exact canonical scope destinations. |
+| `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, Google sign-in, session restore and workspace list. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/shell.tsx` | The signed-in application's one lazy boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
 | `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications and opens their links on this origin. |
+| `apps/browser/public/manifest.webmanifest`, `icon-*.png`, `apple-touch-icon.png` | The install manifest and icons that let the host be added to an iOS Home Screen or installed as an app window. |
+| `apps/desktop/src/renderer/lib/home-screen.ts` | On iPhone and iPad, whether the host runs as a Home Screen app or in a Safari tab. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
 | `apps/desktop/src/renderer/lib/api.ts` | Existing product API client, shared by native bearer and browser cookie sessions. |
 | `apps/desktop/src/renderer/lib/collaboration-session.tsx` | Collaboration-only identity/API context, optional setup capabilities, and `useShellCapabilities`: which host is drawing and whether the reader is a guest. |
+| `apps/desktop/src/renderer/lib/window-surface.ts` | The surfaces the Mac app opens in their own window (Settings, Sidekicks), which a browser tab shows as full-tab routes, and how each closes. |
 | `apps/desktop/src/renderer/components/mac-download-link.tsx` | The Mac app download row, the sidebar's footer item when the host is a browser tab. |
 | `packages/contracts/src/browser-session.ts` | Shared credential-free session and email exchange schemas. |
 | `apps/browser/wrangler.jsonc` | Assets and the explicit Global API service binding. |
@@ -61,9 +63,8 @@ response directly and never accepts a socket or handles a frame.
 The [regional browser adapter](browser-sessions.md) owns authentication and
 Origin validation; the host has no signing key or identity database.
 
-The site’s workspace-invitation `/invite` link and this host’s scoped `/invite` link
-are separate entry points with different proof formats. Scoped invitation email
-links use `BROWSER_APP_ORIGIN`; workspace invitations retain the existing site flow.
+Scoped invitation emails link to the shared conversation's own address under
+`BROWSER_APP_ORIGIN`; workspace invitations retain the existing site flow.
 
 An email request carries a client operation ID. A failed issuance can retry that
 ID; choosing another email or requesting another code starts a new operation.
@@ -73,38 +74,24 @@ the proof in document memory until the person clicks Continue. Merely opening a
 link never redeems it. Reloading after removing the fragment requires reopening
 the email link or requesting another one; no proof is written to local storage.
 
-An invitation fragment is validated and removed from history, with the secret
-kept only in document memory. Current links are one opaque token and nothing
-else, so the whole fragment is that token; a fragment spelling out parameters is
-the addressed format that predates it, and only that one names a region. A token
-is opened against the deployment serving the page, which is the only one this
-host forwards to and the only one holding the row it reads.
-
-Before any session exists the client posts the token to the unauthenticated
-`/invitation` browser route and fills the invited address into the email field,
-which the recipient can still change. The link no longer says who it was sent
-to, and telling someone to "sign in with the address that received this" while
-showing an empty box is asking them to guess which of their mailboxes it was.
-Holding the link is the same authority acceptance checks, and the reply carries
-that one mailbox — never the workspace or work stream behind it. A link that
-cannot be opened, or an invitation since revoked or expired, fills nothing and
-says the invitation is unavailable. The entry tells the recipient to use the
-invited mailbox. If a magic link signs in a different tab, focusing the
-invitation tab restores the new cookie session without losing its invitation.
-Explicit acceptance posts the same token to the identity-only sharing endpoint,
-which resolves it into an address server-side; server authority still
-checks the verified recipient, invitation and current sharer. Failure retains
-the invitation for retry or switching accounts. Success activates the workspace
-its accepted targets name — the first thing the recipient's own link could tell
-them — and opens the exact canonical destination immediately for a single
-accepted scope; invitations with several scopes show their destination links. A
-child-only destination points directly to that child, not through Main. No GET
-or focus event accepts.
+A shared conversation has no entry of its own. Its emailed link is the ordinary
+addressed Channel path, so it opens like any canonical link: signed out, the
+entry asks the person to sign in with the address the link was sent to; signed
+in, it opens the Organization and the conversation. Signing in is what claims
+the share ([scoped invitations](scope-invitations.md#claiming)), on the server,
+before the session is described, so there is no acceptance screen, button or
+request after it. An old `/invite#…` link from before this is a plain sign-in
+page: the client drops the fragment from history. The server indexed those
+older shares itself, so signing in claims them like any other.
 
 For an unaddressed entry, the client lists the user's regional workspaces and can sign
-out through the ordinary browser-session logout. Workspace roots mount the shell,
-and canonical Space, Channel, and Breakout links activate the addressed
-workspace and open in it. A guest sees no setup or onboarding view.
+out through the ordinary browser-session logout. Once the list is on screen it
+reads `GET /browser/workspaces/attention` and gives each row with new activity a
+count badge ([multiple workspaces](multiple-workspaces.md#the-account-menus-directory)). Workspace roots mount the shell,
+and canonical Space, Channel, Breakout and Sidekick links activate the addressed
+workspace and open in it. A copied link reaches here from the site's handoff
+page, whose **Continue in browser** keeps the path and swaps the host
+([`workstream-links.md`](workstream-links.md#the-handoff-page)). A guest sees no setup or onboarding view.
 
 Returning focus refreshes both the root session and the selected workspace
 relationship, even when the user ID is unchanged. The feed stays mounted while
@@ -149,7 +136,10 @@ whose Main is theirs (`mainReachable`).
 
 ### Google sign-in
 
-The entry offers **Continue with Google** under the email form.
+The signed-out entry leads with **Continue with Google** as the primary button,
+with **Continue with email** under it. Choosing email swaps both buttons for the
+email form, whose **Other sign-in options** link swaps them back. An invitation
+page opens straight on the email form.
 `POST /browser/google/start` stores a `browser_identity` OAuth state with a
 return path on the browser host and sets an HttpOnly session cookie
 `<cookie>-google-<state>` holding the same state. The callback checks that
@@ -158,8 +148,9 @@ uses, registers a browser session, sets the cookie and redirects to the return
 path. A failure returns with `#google_error=<code>`, which the signed-out screen
 shows until the person starts an email sign-in. Four choices shape it:
 
-- **Hidden on invitation pages.** The invitation credential lives only in the
-  page's memory, so leaving for Google would lose it.
+- **Offered on every signed-out page,** including a shared conversation's link:
+  the share belongs to the address, so a Google sign-in with it claims the share
+  like any other sign-in, and returns to the page it started on.
 - **The callback is on the browser host.** Google returns to
   `/regional/<region>/browser/google/callback`, which the Worker forwards like
   any `/browser/*` request. Only a response on that host can set its host-only
@@ -185,6 +176,8 @@ with Docs and Sheets. A connection is offered only when every capability it asks
 for is listed (`browserCanConnect`). Every other connector, in Settings, account
 onboarding and a conversation's connection card, is shown with its buttons
 disabled and "Download the Mac app to connect this." linking to the Mac build.
+On a phone or tablet (`MAC_APP_DOWNLOADABLE` false) it reads "Connect this from
+the Mac app." with no link, since the build cannot run there.
 The list is presentation only; the connection routes do not read it.
 
 A cookie session's `RallyApi` starts with `?handoff=browser`. The API stores
@@ -213,8 +206,14 @@ and `WorkspaceApp`: the workspace socket provider, the sidebar, the Channel feed
 Breakouts, the details rail and the Settings route. The value carries
 `host: "browser"`. Account onboarding is identity-scoped, so it goes through the
 `_` workspace of the cookie adapter. Anything only the Mac app can do (accepting
-a workspace invitation from the desktop flow, creating a workspace, desktop
-sign-in) rejects with "Available in the Mac app." In Settings, Application shows
+a workspace invitation from the desktop flow, desktop sign-in) rejects with
+"Available in the Mac app." Creating an organization is the entry's, not the
+shell's; see below. A browser tab cannot keep a window of its own, so the
+surfaces the Mac app opens in one, Settings and Sidekicks (the library and each
+Sidekick's screen), are routes of the main window here (`#/settings`,
+`#/sidekicks`). `lib/window-surface.ts` lists them; on such a route the shell
+takes the whole tab and hides the sidebar, which stays mounted so closing the
+surface returns to the workspace without reloading it. In Settings, Application shows
 Appearance and names the Mac app for the rest, and Notifications offers
 "In this browser". The sidebar always shows **Download the Mac app** above the
 account menu, as a footer item ([`desktop-shell.md`](desktop-shell.md#the-sidebar)).
@@ -232,7 +231,7 @@ authorizes every call. `GET /workspace` answers guests too, with
 else; the rest of `/workspace` stays member-only.
 
 The desktop shell routes by hash. Before its router mounts, the shell rewrites a
-canonical Channel or Space link, or an invitation's addressed Channel path, into
+canonical Channel, Space or Sidekick link, or an addressed Channel path such as an invitation email's, into
 the workspace path plus the hash the desktop's own deep links set
 (`shellLocation`). Losing access or a 401 asks the entry to re-read the server
 session, which unmounts the shell when the session is gone. The shell keeps
@@ -246,13 +245,31 @@ checks; the adapter adds no permission of its own. The rest of `onboarding`
 stays out: creating, activating or joining a workspace there answers with a
 bearer session, and a browser holds only its HttpOnly cookie.
 
+### Creating an organization
+
+When the signed-in entry has nothing to list, it offers **Create an
+organization**, which shows `CreateOrganizationCard`: the Mac app's organization
+step, shared with `RegionOnboarding`, with the same name rules, UUIDv7 operation
+id and `workspace_create_requested` intent. The entry posts the name and
+operation id to `POST /browser/workspace/create` on Global. That route runs the
+Mac app's `PlatformOnboardingService.createWorkspace`, revokes the bearer session
+it returns without reading it into a response, and answers only
+`{ region, workspaceId }`. The entry then opens it in the same document: it
+replaces the address with `/app/workspaces/<region>/<id>` (replaced, not
+pushed, since nothing in the entry answers Back), makes that the destination
+a later restore reopens, and opens it through `/workspace/select` like any
+other organization. The shell runs the creator's setup journey there: "This
+is you in Rally", then inviting teammates.
+Any account can create one, whatever it signed in with; see
+[multiple workspaces](multiple-workspaces.md#authority-and-data-flow) for how a
+deployment links the account.
+
 A member can turn on Web Push for this browser, delivered as described in
 [push-notifications.md](push-notifications.md#web-push-for-browser-members).
 
 ### Other deployments
 
-Sign-in goes to Global, which holds the identity; an invitation's sign-in stays
-in the deployment that issued it. On Global the workspace list covers every
+Sign-in goes to Global, which holds the identity. On Global the workspace list covers every
 deployment, and opening a workspace in another one activates it through Global,
 which sets that deployment's own cookie. The browser host forwards only the
 target deployment's cookies, and sign-out reaches every deployment. The PRD's
@@ -319,8 +336,10 @@ The conversation header opens the shared email invitation panel. It accepts
 multiple email addresses separated by whitespace, commas, or semicolons, and
 sends through the existing scoped invitation API with operation identity retained
 on retry. The selected conversation is the only target: Main uses conversation
-`0`, never a workstream grant, so other substreams gain no access. The panel has
-no access picker, invitation list, direct-share management, or related reads.
+`0`, never a workstream grant, so other substreams gain no access. Below the form
+it lists who that conversation was shared with and has not signed in yet, as
+Guest rows the sharer can remove. It has no access picker or direct-share
+management.
 The server remains responsible for sharing authorization. No setup or onboarding
 capability is required.
 
@@ -365,6 +384,10 @@ Its screens draw the desktop's sign-in card and the shared `RallyMark`,
 `Button`, `ConnectorMark` and `InlineError`. A sign-in or picker change belongs
 in `@rally/ui`'s `app.css` so both hosts move together; the browser's
 `styles.css` keeps only what a web page adds.
+Every wait from page load to the shell draws `BrowserBoot`. A signed-in link
+never falls through to the signed-in card while its organization opens, since
+that card's organization list is empty for a link and reads as "no access"; nor,
+when the link names another deployment, to the spent code's card.
 Collaboration code loads after authentication through one explicit lazy boundary;
 this is the browser-only exception to static imports. The browser declares its
 desktop dependency because it consumes the existing collaboration implementation;
@@ -376,6 +399,23 @@ The host serves the push service worker at `/sw.js` from the root, with
 allows `worker-src 'self'` so the shell can register it. The worker
 caches nothing and answers no requests.
 
+The host can also be added to an iOS Home Screen, or installed as an app window
+in Chromium. The shell links `/manifest.webmanifest` (`display: standalone`,
+start and scope `/`) and `/apple-touch-icon.png`; the Worker serves those and
+the manifest's icons from the root, by name, beside `/assets/`. The icons are
+the Mac app icon, which is full-bleed with its mark inside the maskable safe
+zone, so one 512 px file serves as both the plain and the maskable icon.
+
+On iOS this is what makes notifications possible: Safari offers Web Push only to
+a Home Screen app, so in a Safari tab Settings reports `home-screen` and tells
+the member how to add Rally instead of saying the browser cannot. Safari also
+keeps a Home Screen app's cookies apart from its tabs, so the app signs in on
+its own, and a magic link from email opens in Safari and signs in Safari, not
+the app. In the Home Screen app the code screen therefore asks only for the
+code. `home-screen.ts` tells the cases apart with `navigator.standalone`, which
+only iOS Safari defines, rather than the user agent. An installed Chromium app
+shares its browser profile's cookies, so it keeps the email link.
+
 Forwarded HTTP responses retain their streaming bodies but add document sandbox
 CSP and `nosniff`: an uploaded HTML or SVG navigated on the cookie origin must
 never execute as the application. Socket upgrades remain untouched. The shell
@@ -383,8 +423,9 @@ allows HTTPS remote images for existing avatars and Markdown images. Socket
 routing still relies on the existing ticket and source-object admission; there
 is no separate browser permission model or arbitrary forwarding destination.
 
-The mobile navigation uses the existing Radix dialog primitive for focus trapping,
-Escape and outside dismissal, including landing and archived states. Archive and
+At phone width the shared sidebar becomes a top bar with a menu button that
+drops the navigation in as a sheet
+([`desktop-shell.md`](desktop-shell.md#at-phone-width)). Archive and
 guest promotion use the shared confirmation modal. Sharing fixes its target to
 the clicked conversation and shows only email input and submission feedback.
 
@@ -435,7 +476,7 @@ succeed; the browser shell can be available before API sign-in is enabled.
 
 Manual browser deployment from the repository root is
 `pnpm exec dotenv -e .env.local -- pnpm --filter @rally/browser run deploy`. After the first deployment, verify in
-Chrome that a real invitation arrives, email sign-in and acceptance work, and the
+Chrome that a real invitation arrives, email sign-in opens the conversation, and the
 shared conversation can send messages and receive realtime updates. The workflow's
 public route checks compare the served shell with the built HTML, including its
 hashed assets; they do not prove mailbox delivery or authenticated collaboration.
@@ -487,7 +528,11 @@ member tab runs the desktop's feed swarm over native sockets.
 Production routing/configuration, external mailbox delivery and deployed stateful
 artifact serving remain release checks. Signing in over an existing cookie does
 not revoke the earlier session, so anything bound to it, such as a Web Push
-device, stays live until that session ends.
+device, stays live until that session ends. The Home Screen app supports iOS
+18 and later, so a Safari tab on an iOS too old for Home Screen Web Push (before
+16.4) is still shown the Home Screen hint. It works only
+online: nothing is cached for it, and invitation and Channel links from email
+open in Safari, not in the app.
 
 ## Testing
 
@@ -504,9 +549,10 @@ Earlier entry verification used an Electron Chromium window with mocked API
 responses to inspect desktop/mobile layouts, submit OTP, and confirm magic links
 do not redeem before a click. That predated removal of SSR. The static SPA and
 shared-site action were subsequently inspected in headed Google Chrome; the
-fixture-backed journeys verify client rendering and request shape. Invitation checks cover
-restoration after another tab signs in, explicit acceptance, refusal/retry,
-workspace activation and exact child destination links. That verifies presentation
+fixture-backed journeys verify client rendering and request shape. Shared-link
+checks cover a conversation link opening straight into the shell after an email
+sign-in with no acceptance request, and an old token link reading as a plain
+sign-in page. That verifies presentation
 and client request shape, not an end-to-end invitation or email delivery.
 
 The shared renderer suite's `browser-entry.test.tsx` uses a real BroadcastChannel
@@ -546,6 +592,161 @@ and substream right-click menus open the same sharing dialog for their own row.
 Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
+
+### 2026-10-07: Add Rally to the iOS Home Screen
+
+**What changed:** The host serves a web app manifest and icons. On iOS,
+Settings tells a Safari tab how to add Rally, and the Home Screen app's code
+screen drops the email link.
+
+**Why:** Safari delivers Web Push only to Home Screen apps, and the host had no
+manifest, so an iPhone member could not get notifications at all.
+
+**Considered and rejected:** An offline cache in the service worker. The shell
+HTML is private and `no-store`, and the app is not useful without its sockets.
+
+**Consequences:** A root file a browser fetches by name has to be added to
+`INSTALL_FILES` in the Worker, or it returns 404.
+
+### 2026-10-07: Settings and Sidekicks take the whole tab
+
+**What changed:** Settings and Sidekicks, which the Mac app opens in their own
+windows, are routes of the main window in a browser tab, listed in
+`lib/window-surface.ts`. On those routes the shell hides the sidebar and gives
+the surface the whole tab. Sidekicks used to open in a second, named tab; it now
+opens at `#/sidekicks` in the same one, and its library gains a close button.
+
+**Why:** Settings drew in a pane beside the sidebar, which read as a channel
+rather than as its own place. Sidekicks opened a tab of its own, which a person
+then had to find and close.
+
+**Considered and rejected:** Mounting these routes outside the shell. Leaving
+would then remount the sidebar and reconnect the workspace socket; hiding it
+keeps the return instant.
+
+**Consequences:** A surface added to the list gets both behaviors. The sidebar
+stays mounted, and its socket open, while a surface is on screen. A tab left
+open on the former Sidekicks tab's `?surface=sidekicks` address drops that query
+when the shell loads.
+
+Shipped in [#1154](https://github.com/juno-ai-labs/avalon/pull/1154).
+
+### 2026-10-07: A created organization opens in place
+
+**What changed:** After `POST /browser/workspace/create` the entry no longer
+calls `location.assign`. It replaces the address with the organization's
+path, records it as the destination the restore path reopens (a ref, where
+the restore used to read only the address the page loaded with), and sets
+the destination, so the existing effect selects the organization and mounts
+the shell.
+
+**Why:** The navigation downloaded and booted the page again, restored the
+session it already held, and only then made the one request the new
+organization needed: `/workspace/select` on Global.
+
+**Considered and rejected:** `history.pushState`, so Back would return to the
+empty list. Nothing in the entry answers `popstate`, so Back would change the
+address and leave the organization on screen.
+
+**Consequences:** The created organization is reached without a history
+entry, so Back leaves Rally rather than returning to the empty list. A focus
+or a session change while it is open reselects it, as for a page loaded at
+its address, rather than reading the organization list. The list read before
+the creation is dropped, so a select that fails shows its error rather than an
+empty list with Create on it again.
+
+Shipped in #1142.
+
+### 2026-10-06 — Create an organization from the browser
+
+**What changed:** The signed-in entry's empty state offers **Create an
+organization**. It shows the Mac app's organization step, extracted as
+`CreateOrganizationCard`, and creates through the new cookie route
+`POST /browser/workspace/create`. The route reuses the Mac app's create path on
+Global, revokes the bearer session that path issues, and returns only where to
+open the organization.
+
+**Why:** A person who signs in on the web with nothing shared reached a dead
+end: the only way to start an organization was the Mac app. Product asked for
+setup to start in the browser, following the Mac app's process.
+
+**Considered and rejected:** Forwarding `onboarding/workspace` through the
+cookie adapter. It answers with a bearer session, which browser JavaScript must
+never hold. A browser-only bridge method that registers a cookie in the target
+deployment, as activation does, was more machinery than needed while
+organizations are created on Global: the browser's existing Global cookie can
+select the new organization.
+
+The browser also records the account introduction as seen instead of showing
+it, since the landing page that sent the person here already introduced Rally.
+
+**Consequences:** Creation runs only on Global; another deployment answers 409
+`global_identity_required`. The bearer the create path mints is revoked at once,
+so it costs one session row. The button shows only on the empty state; someone
+with organizations listed has no way to create another here yet.
+
+PR: [#1129](https://github.com/juno-ai-labs/avalon/pull/1129).
+
+### 2026-10-06 — A shared link opens the conversation after sign-in, with no Accept screen
+
+**What changed:** The entry no longer has an invitation page. Its `/invite`
+handling, the mailbox prefill from `/browser/invitation`, the Accept invitation
+button and the accepted-destination list are gone, along with
+`apps/browser/src/invitation.ts`. An invitation email links to the conversation's
+addressed path, which signs in and opens like any canonical link; Continue with
+Google is offered there too. An old `/invite#…` link is a plain sign-in page.
+
+**Why:** The server now claims a share when its address signs in
+([scoped invitations](scope-invitations.md)), so the screen between sign-in and
+the conversation had nothing left to do.
+
+**Considered and rejected:** Keeping the old token in page memory and posting it
+after sign-in so shares made before claiming still reach their recipient. The
+server indexes those shares itself instead, so the browser carries no protocol.
+
+**Consequences:** The sign-in form no longer fills in the invited address; the
+email names it, and the page says to use the address the link was sent to. The
+organization list shows a loading line until it has loaded, so a fresh sign-in
+never says nothing was shared before the server answers.
+
+PR: [#1120](https://github.com/juno-ai-labs/avalon/pull/1120).
+
+### 2026-10-06 — Lead sign-in with Google
+
+**What changed:** The signed-out entry shows **Continue with Google** as the
+primary button and **Continue with email** under it, instead of the email form
+with Google below. Choosing email reveals the form in place; **Other sign-in
+options** returns to the two buttons. Invitation pages still open on the email
+form, since Google stays hidden there.
+
+**Why:** Product asked for Google as the main path into the browser client,
+with email kept as a second choice that does not crowd the first screen. The
+Mac and iPhone apps already sign in with Google only, so leading with it puts
+the browser on the same path. Any reasoning beyond that request was not
+recorded.
+
+**Considered and rejected:** Keeping the email form visible under a primary
+Google button. It leaves the first screen as crowded as before and still reads
+as two equal paths.
+
+**Consequences:** The choice is page state only, and it resets once a session
+exists, so every later signed-out screen in the tab starts from Google again. A
+returned Google failure stays on screen through the switch to email and clears
+when an email sign-in starts, as before. Invitation pages skip the choice and
+open on the email form, because Google stays hidden there.
+
+Shipped in #1125.
+
+### 2026-10-06 — A signed-in link opens behind the boot screen
+
+**What changed:** Until a linked organization opens, the entry shows
+`BrowserBoot`. Before, it showed the signed-in card, with an empty organization
+list, or for a link to another deployment the spent code's "Check your email"
+card.
+
+**Why:** Both read as a failure (no access, or a code to enter again) during an
+ordinary wait. Whatever is added between sign-in and the shell has to keep
+this: the organization's open is a wait, not a state of the card.
 
 ### 2026-10-03 — Guests get the desktop shell too
 

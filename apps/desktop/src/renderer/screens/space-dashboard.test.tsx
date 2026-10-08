@@ -16,6 +16,8 @@ import type { SpaceConversationSummary, Workspace } from '../lib/types';
 const api = vi.hoisted(() => ({
   archiveSpace: vi.fn(),
   getWorkspaceMembers: vi.fn(),
+  getWorkspaceInvitees: vi.fn(),
+  getSpaceInvitees: vi.fn(),
   listResources: vi.fn(),
   listSpaceChannels: vi.fn(),
   restoreSpace: vi.fn(),
@@ -160,6 +162,8 @@ describe('the Space dashboard', () => {
     removedDataHooks.cachedWorkstreams = [];
     workspaceSocket.current = null;
     api.getWorkspaceMembers.mockResolvedValue([member]);
+    api.getWorkspaceInvitees.mockResolvedValue([]);
+    api.getSpaceInvitees.mockResolvedValue([]);
     api.listSpaceChannels.mockResolvedValue({ items: [], nextCursor: null });
     api.updateSpacePresentation.mockImplementation(async (_id: string, input: { name: string; iconKey: string; colorKey: string }) => makeSpace({ ...input, revision: 2 }));
     api.updateSpaceAudience.mockImplementation(async (_id: string, input: { scope: 'personal' | 'workspace' }) => makeSpace({ scope: input.scope, revision: 2 }));
@@ -572,23 +576,40 @@ describe('the Space dashboard', () => {
     expect(screen.getAllByText(sentence)).toHaveLength(1);
   });
 
-  it('changes the audience through the confirmation', async () => {
+  // Every Space is Organization-wide, so there is no audience to choose.
+  it('offers no audience choice on an ordinary space', async () => {
     renderSpace();
 
-    fireEvent.click(screen.getByRole('combobox', { name: 'Space audience' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Everyone in the organization' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('button', { name: 'Manage participants' })).toBeVisible();
+    expect(screen.queryByRole('combobox', { name: 'Space audience' })).not.toBeInTheDocument();
+  });
+
+  it('lists Organization invitees by address and saves them with the participants', async () => {
+    api.getWorkspaceInvitees.mockResolvedValue([
+      { email: 'dana@example.com', invitedAt: '2026-10-01T00:00:00.000Z' },
+      { email: 'eli@example.com', invitedAt: '2026-10-01T00:00:00.000Z' },
+    ]);
+    // A listed address whose invitation is no longer pending is not shown.
+    api.getSpaceInvitees.mockResolvedValue(['dana@example.com', 'gone@example.com']);
+    renderSpace();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage participants' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Space participants' });
+    const dana = await within(dialog).findByRole('checkbox', { name: /dana@example\.com/u });
+    expect(dana).toBeChecked();
+    expect(within(dialog).queryByText('gone@example.com')).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: /eli@example\.com/u }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(api.updateSpaceAudience).toHaveBeenCalledWith(hiring.id, {
       scope: 'workspace',
       participantUserIds: [member.id],
+      inviteeEmails: ['dana@example.com', 'eli@example.com'],
     }));
   });
 
   // The sentence for a refused roster is drawn inside this dialog, so a dialog
   // that closes on the refusal closes over the only place it would be read.
-  // The refusal this is about is new: a personal Space cannot be narrowed to a
-  // participant list its own editor is not on.
   it('keeps the participants dialog open on a refusal, with the sentence in it', async () => {
     api.getWorkspaceMembers.mockResolvedValue([member, {
       id: '00000000-0000-7000-8000-000000000003',
@@ -597,9 +618,9 @@ describe('the Space dashboard', () => {
       timezone: 'America/Los_Angeles',
     }]);
     api.updateSpaceAudience.mockRejectedValueOnce(new ApiError(
-      'Making “Hiring” private without you in it would leave you unable to change it back',
-      409,
-      'space_audience_self_excluded',
+      'Your access to “Hiring” does not allow this',
+      403,
+      'space_access_denied',
     ));
     renderSpace();
 
@@ -610,9 +631,7 @@ describe('the Space dashboard', () => {
     fireEvent.click(checkboxes[0]!);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
 
-    expect(await within(dialog).findByText(
-      'You can’t make a space private without yourself in it. Add yourself back to keep access.',
-    )).toBeVisible();
+    expect(await within(dialog).findByText('Your access to that space doesn’t allow this.')).toBeVisible();
     expect(screen.getByRole('dialog', { name: 'Space participants' })).toBeVisible();
   });
 
@@ -625,7 +644,6 @@ describe('the Space dashboard', () => {
 
     expect(await screen.findByText(/Connecting to/u)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Archive space' })).toBeDisabled();
-    expect(screen.getByRole('combobox', { name: 'Space audience' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Change icon and color for Hiring' })).not.toBeInTheDocument();
   });
 

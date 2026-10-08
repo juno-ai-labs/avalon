@@ -29,6 +29,30 @@ it("serves the push service worker from the root and lets the shell register it"
   expect(shell.headers.get("content-security-policy")).toContain("frame-src https://*.rallyusercontent.com;");
 });
 
+it("serves the install manifest the shell links, and every icon its manifest names", async () => {
+  const shell = await (await exports.default.fetch("https://browser.example.test/")).text();
+  const linked = (rel: string) => new RegExp(`<link rel="${rel}"[^>]*href="([^"]+)"`, "u").exec(shell)?.[1];
+  const manifestPath = linked("manifest");
+  expect(manifestPath).toBeDefined();
+  const manifestResponse = await exports.default.fetch(`https://browser.example.test${manifestPath}`);
+  expect(manifestResponse.status).toBe(200);
+  const manifest = await manifestResponse.json() as { icons: { src: string }[] };
+  const icons = [...manifest.icons.map((icon) => icon.src), linked("apple-touch-icon")];
+  expect(icons).toHaveLength(4);
+  for (const path of icons) {
+    const icon = await exports.default.fetch(`https://browser.example.test${path}`);
+    expect(icon.status).toBe(200);
+    expect(icon.headers.get("content-type")).toBe("image/png");
+    await icon.arrayBuffer();
+  }
+});
+
+it("serves the favicon the shell links from the root", async () => {
+  const favicon = await exports.default.fetch("https://browser.example.test/favicon.svg");
+  expect(favicon.status).toBe(200);
+  expect(favicon.headers.get("content-type")).toContain("image/svg+xml");
+});
+
 it("serves the shell for the page a connector authorization returns to, and nothing beside it", async () => {
   const complete = await exports.default.fetch("https://browser.example.test/connections/complete?status=connected&provider=google");
   expect(complete.status).toBe(200);

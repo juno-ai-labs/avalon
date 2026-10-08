@@ -46,6 +46,16 @@ describe('desktop deep-link intent grammar', () => {
     expect(parseDesktopDeepLinkIntent(raw)).toBeNull();
   });
 
+  it('opens an access request from the menu bar, and nothing else under that host', () => {
+    expect(parseDesktopDeepLinkIntent(`rallywithai://access-requests/${RESOURCE_ID}`))
+      .toEqual({ kind: 'access-request', requestId: RESOURCE_ID, target: null });
+    expect(parseDesktopDeepLinkIntent(`rallywithai://workspace/enterprise/${WORKSPACE_ID}/access-requests/${RESOURCE_ID}`))
+      .toMatchObject({ kind: 'access-request', requestId: RESOURCE_ID, target: { region: 'enterprise', workspaceId: WORKSPACE_ID } });
+    expect(parseDesktopDeepLinkIntent('rallywithai://access-requests/not-an-id')).toBeNull();
+    expect(parseDesktopDeepLinkIntent(`rallywithai://access-requests/${RESOURCE_ID}/approve`)).toBeNull();
+    expect(parseDesktopDeepLinkIntent(`rallywithai://access-requests/${RESOURCE_ID}?decision=approve`)).toBeNull();
+  });
+
   it('keeps legacy unaddressed identity and connector callbacks during rollout', () => {
     expect(parseDesktopDeepLinkIntent(
       `avalon://auth/complete?ticket=${ATTEMPT_ID}&region=global&attempt=${ATTEMPT_ID}`,

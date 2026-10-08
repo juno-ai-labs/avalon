@@ -7,3 +7,5 @@
 .cta-arrow{position:absolute;left:calc(100% + 6px);top:2px;color:var(--paper)}
 .cta-note{margin:12px 0 0;color:var(--soft);font-size:var(--small)}
 .hero .intro{max-width:52rem}
+/* As on the home page, a touch-only device gets only the web app. */
+@media (hover:none) and (pointer:coarse){.cta.hero-download{display:none}}

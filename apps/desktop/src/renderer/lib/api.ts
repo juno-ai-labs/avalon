@@ -1,10 +1,12 @@
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
 import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
-import { SessionImportRunSchema, type SessionImportPreview } from "@rally/contracts";
+import { MemberPreferencesSchema, PersonalSystemPromptSchema, SessionImportRunSchema, type MemberPreferences, type SessionImportPreview } from "@rally/contracts";
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
+import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, type ConversationAccessDecisionResult, type ConversationAccessPreview } from "@rally/contracts";
+import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
@@ -32,6 +34,9 @@ import {
   WorkspaceMemberSchema as WireWorkspaceMemberSchema,
   WorkspaceInvitationPreviewSchema as WireWorkspaceInvitationPreviewSchema,
   WorkspaceInvitationSchema as WireWorkspaceInvitationSchema,
+  WorkspaceInviteeSchema,
+  SpaceInviteesSchema,
+  type WorkspaceInvitee,
   WorkspaceSchema as WireWorkspaceSchema,
   TerminalWorkspaceSettingsSchema as WireTerminalWorkspaceSettingsSchema,
   TerminalNetworkPolicyPreviewSchema as WireTerminalNetworkPolicyPreviewSchema,
@@ -95,13 +100,15 @@ import {
   type SubstreamPreparationPreview,
 } from '@rally/contracts/substream-creation';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
-import { OrganizationUsageSchema, type OrganizationUsage } from '@rally/contracts/usage';
+import { OrganizationUsageSchema, type OrganizationUsage, type PlanId } from '@rally/contracts/usage';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { isCookieSession, type CookieClientSession } from '@rally/contracts/client-session';
 import { logDebug } from '../../common/logger';
-import { requestSocketTicket } from './socket-ticket-request';
+import { isSocketTicketRequestTimeoutError, requestSocketTicket } from './socket-ticket-request';
+import { fetchWithNetworkRecovery, networkRecoveryGeneration, reportNetworkTicket, waitForNetworkRecovery } from './network-recovery';
+import type { NetworkTicketObservation } from '../../common/network-recovery';
 import { normalizeElicitation } from './elicitation';
 import { resolveMentionPayload } from './mention-draft';
 import { newRequestId } from './perf-trace';
@@ -232,6 +239,7 @@ const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSche
 const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ complete: z.boolean().optional() });
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
+const wireInviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
 const wireExecutionPrincipalClaimSchema = AutomationExecutionPrincipalClaimSchema;
 const wireWorkstreamAutomationPageSchema = z.object({
@@ -585,6 +593,7 @@ export function redactQuery(path: string): string {
 }
 
 export class RallyApi {
+  private readonly networkTickets = new WeakMap<SocketTicket, NetworkTicketObservation>();
   private readonly pendingRunKeys = new Map<string, string>();
   private readonly faviconRequests = new Map<string, Promise<Blob | null>>();
 
@@ -646,6 +655,8 @@ export class RallyApi {
   }
 
   private async send(path: string, init: RequestInit, accessToken: string | null): Promise<Response> {
+    const recovery = waitForNetworkRecovery(init.signal ?? undefined);
+    if (recovery) await recovery;
     const headers = new Headers(init.headers);
     if (!headers.has('Accept')) headers.set('Accept', 'application/json');
     // On every request rather than on the two that check it: the header says
@@ -657,7 +668,7 @@ export class RallyApi {
     const cookie = isCookieSession(this.session);
     if (cookie) headers.delete('Authorization');
     try {
-      return await fetch(`${this.baseUrl}${path}`, { ...init, headers, ...(cookie ? { credentials: 'same-origin' as const } : {}) });
+      return await fetchWithNetworkRecovery(`${this.baseUrl}${path}`, { ...init, headers, ...(cookie ? { credentials: 'same-origin' as const } : {}) });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       throw networkApiError('Rally could not reach the selected regional service.', error);
@@ -857,6 +868,33 @@ export class RallyApi {
     };
   }
 
+  async getMyPreferences(signal?: AbortSignal): Promise<MemberPreferences> {
+    return this.request('/workspace/me/preferences', { schema: MemberPreferencesSchema, signal });
+  }
+
+  async updateMyPreferences(preferences: MemberPreferences): Promise<MemberPreferences> {
+    return this.request('/workspace/me/preferences', {
+      method: 'PUT',
+      body: preferences,
+      schema: MemberPreferencesSchema,
+    });
+  }
+
+  /** Text the agent reads in its system prompt on every turn this person starts. */
+  async getMyPersonalSystemPrompt(signal?: AbortSignal): Promise<string> {
+    const result = await this.request('/workspace/me/system-prompt', { schema: PersonalSystemPromptSchema, signal });
+    return result.personalSystemPrompt;
+  }
+
+  async updateMyPersonalSystemPrompt(personalSystemPrompt: string): Promise<string> {
+    const result = await this.request('/workspace/me/system-prompt', {
+      method: 'PUT',
+      body: { personalSystemPrompt },
+      schema: PersonalSystemPromptSchema,
+    });
+    return result.personalSystemPrompt;
+  }
+
   async updateMyTimezone(timezone: string): Promise<WorkspaceMember> {
     const user = await this.request('/workspace/me', {
       method: 'PATCH',
@@ -869,9 +907,26 @@ export class RallyApi {
     return mapUser(user);
   }
 
-  async updateWorkspaceTimezone(timezone: string): Promise<Workspace> {
-    await this.request('/workspace', { method: 'PATCH', body: { timezone }, schema: WireWorkspaceSchema });
-    return this.getWorkspace();
+  /**
+   * Saves only the fields given; the server keeps the rest. Answers with the
+   * profile the PATCH returned rather than a second read, so a committed
+   * change is never reported as failed by a read that followed it.
+   */
+  updateWorkspace(input: { name?: string; timezone?: string }): Promise<{ name: string; timezone: string }> {
+    return this.request('/workspace', { method: 'PATCH', body: input, schema: WireWorkspaceSchema });
+  }
+
+  /** Rally access for this Organization (`docs/impersonation.md`). */
+  async getSupportAccess(): Promise<SupportAccess> {
+    return this.request('/workspace/support-access', { schema: SupportAccessSchema });
+  }
+
+  async grantSupportAccess(): Promise<SupportAccess> {
+    return this.request('/workspace/support-access', { method: 'PUT', schema: SupportAccessSchema });
+  }
+
+  async revokeSupportAccess(): Promise<SupportAccess> {
+    return this.request('/workspace/support-access', { method: 'DELETE', schema: SupportAccessSchema });
   }
 
   async getTerminalWorkspaceSettings(signal?: AbortSignal): Promise<TerminalWorkspaceSettings> {
@@ -923,6 +978,11 @@ export class RallyApi {
     return this.request('/workspace/usage', { schema: OrganizationUsageSchema, signal });
   }
 
+  /** Administrators only. Answers with the meter as it reads under the new plan. */
+  async setWorkspacePlan(plan: PlanId): Promise<OrganizationUsage> {
+    return this.request('/workspace/plan', { method: 'PUT', body: { plan }, schema: OrganizationUsageSchema });
+  }
+
   async getWorkspaceMembers(signal?: AbortSignal): Promise<WorkspaceMember[]> {
     const page = await this.request('/workspace/members', { schema: wireMemberPageSchema, signal });
     return page.items.map((member) => ({
@@ -961,6 +1021,12 @@ export class RallyApi {
       schema: WireWorkspaceInvitationPreviewSchema,
       signal,
     });
+  }
+
+  /** Addresses invited to the Organization and not yet joined, as any member may see them. */
+  async getWorkspaceInvitees(signal?: AbortSignal): Promise<WorkspaceInvitee[]> {
+    const page = await this.request('/workspace/invitees', { schema: wireInviteePageSchema, signal });
+    return page.items;
   }
 
   async getWorkspaceInvitations(signal?: AbortSignal): Promise<WorkspaceInvitation[]> {
@@ -1026,6 +1092,17 @@ export class RallyApi {
     return this.request(`/workspaces/${encodeURIComponent(workspaceId)}/membership?expectedOutcome=${expectedOutcome}`, {
       method: 'DELETE', schema: WorkspaceDepartureSchema,
     });
+  }
+
+  /**
+   * Take somebody else out of a workspace. The settings roster calls this
+   * "Suspend": the person loses access at once and can be invited back later.
+   */
+  async removeWorkspaceMember(workspaceId: string, userId: string): Promise<void> {
+    await this.requestVoid(
+      `/workspaces/${encodeURIComponent(workspaceId)}/membership/member/${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    );
   }
 
   async createWorkspace(name: string): Promise<void> {
@@ -1302,9 +1379,15 @@ export class RallyApi {
    * proves nothing — the server parses this body against the branded schema,
    * which is the check that counts.
    */
+  /** The Organization invitees a Space lists by address, to whoever may edit it. */
+  async getSpaceInvitees(id: string, signal?: AbortSignal): Promise<string[]> {
+    const page = await this.request(`/spaces/${encodeURIComponent(id)}/invitees`, { schema: SpaceInviteesSchema, signal });
+    return page.items.map((item) => item.email);
+  }
+
   updateSpaceAudience(
     id: string,
-    input: { scope: SpaceScope; participantUserIds: string[] },
+    input: { scope: SpaceScope; participantUserIds: string[]; inviteeEmails?: string[] },
   ): Promise<SpaceSummary> {
     return this.request(`/spaces/${encodeURIComponent(id)}/audience`, {
       method: 'PATCH',
@@ -2073,6 +2156,29 @@ export class RallyApi {
     });
   }
 
+  /** Name, mark and whether this person can open it: asked only once the socket refuses. */
+  async conversationAccessPreview(parentId: string, substreamId: string): Promise<ConversationAccessPreview> {
+    return this.request(`${this.substreamPath(parentId, substreamId)}/access-preview`, {
+      schema: ConversationAccessPreviewSchema,
+    });
+  }
+
+  /** Emails the creator a one-click approval. */
+  async requestConversationAccess(parentId: string, substreamId: string): Promise<void> {
+    await this.request(`${this.substreamPath(parentId, substreamId)}/access-requests`, {
+      method: 'POST',
+      schema: ConversationAccessRequestResultSchema,
+    });
+  }
+
+  /** The approver settles a request: from the attention menu, or the menu bar's modal. */
+  async decideConversationAccess(requestId: string, decision: 'approve' | 'decline'): Promise<ConversationAccessDecisionResult> {
+    return this.request(`/conversations/access-requests/${encodeURIComponent(requestId)}/${decision}`, {
+      method: 'POST',
+      schema: ConversationAccessDecisionResultSchema,
+    });
+  }
+
   /** The child's title converges over its feed and parent control sockets. */
   async renameSubstream(parentId: string, substreamId: string, title: string): Promise<void> {
     await this.requestVoid(this.substreamPath(parentId, substreamId), {
@@ -2174,23 +2280,48 @@ export class RallyApi {
     if (speculative) queryParams.set('speculative', 'true');
     const encodedQuery = queryParams.toString();
     const query = encodedQuery === '' ? '' : `?${encodedQuery}`;
-    return requestSocketTicket(
-      (attemptSignal) => this.request(
-        `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
-        { schema: this.socketSchema, signal: attemptSignal, ...(requestId ? { requestId } : {}) },
-      ),
-      { ownerSignal: signal, timeoutMs },
+    return this.socketTicketRequest(
+      `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
+      { signal, timeoutMs, requestId },
     );
   }
 
   getWorkspaceSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
-    return requestSocketTicket(
-      (attemptSignal) => this.request('/workspace/socket', {
-        schema: this.socketSchema,
-        signal: attemptSignal,
-      }),
-      { ownerSignal: signal },
-    );
+    return this.socketTicketRequest('/workspace/socket', { signal });
+  }
+
+  /** A live snapshot/sync, rather than a 101 or a ticket, proves recovery. */
+  confirmSocketTicket(ticket: SocketTicket): void {
+    const observation = this.networkTickets.get(ticket);
+    if (!observation) return;
+    this.networkTickets.delete(ticket);
+    reportNetworkTicket({ ...observation, outcome: 'live' });
+  }
+
+  private async socketTicketRequest(path: string, options: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    requestId?: string;
+  }): Promise<SocketTicket> {
+    const recovery = waitForNetworkRecovery(options.signal);
+    if (recovery) await recovery;
+    const observation: NetworkTicketObservation = {
+      generation: networkRecoveryGeneration(), target: path.split('?')[0]!, outcome: 'accepted',
+    };
+    try {
+      const ticket = await requestSocketTicket(
+        (signal) => this.request(path, { schema: this.socketSchema, signal,
+          ...(options.requestId ? { requestId: options.requestId } : {}) }),
+        { ownerSignal: options.signal, timeoutMs: options.timeoutMs },
+      );
+      this.networkTickets.set(ticket, observation);
+      reportNetworkTicket(observation);
+      return ticket;
+    } catch (error) {
+      reportNetworkTicket({ ...observation,
+        outcome: isSocketTicketRequestTimeoutError(error) && navigator.onLine !== false ? 'timeout' : 'failed' });
+      throw error;
+    }
   }
 
   async getTranscriptionSocketTicket(signal?: AbortSignal): Promise<SocketTicket> {
@@ -2527,16 +2658,21 @@ export class RallyApi {
     });
   }
 
+  async observeSignupView(flowId: string): Promise<void> {
+    await this.requestVoid('/auth/signup/view', { method: 'POST', body: { flowId } });
+  }
+
   async beginGoogleLogin(
     region: Region,
     callbackUri: string,
-    input: { workspaceName?: string; invitationToken?: string; authAttempt: DesktopAuthAttempt },
+    input: { workspaceName?: string; invitationToken?: string; authAttempt: DesktopAuthAttempt; signupFlowId?: string },
   ): Promise<string> {
     const result = await this.request('/auth/google/start', {
       method: 'POST',
       body: {
         region,
         returnUri: callbackUri,
+        ...(input.signupFlowId ? { signupFlowId: input.signupFlowId } : {}),
         desktopAttemptId: input.authAttempt.attemptId,
         desktopCodeChallenge: input.authAttempt.codeChallenge,
         ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),

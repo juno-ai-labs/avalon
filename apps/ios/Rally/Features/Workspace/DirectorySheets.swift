@@ -110,6 +110,22 @@ struct InspectorSheet: View {
                                 isLoading: false
                             ) {}
                         }
+                        // Invited to the Organization and not joined: shared by
+                        // address, so they are in the channel when they sign in.
+                        ForEach(model.invitees, id: \.self) { email in
+                            Button {
+                                Task { await model.inviteToConversation(email: email) }
+                            } label: {
+                                VStack(alignment: .leading) {
+                                    Text(email)
+                                        .italic()
+                                        .foregroundStyle(colors.textSecondary)
+                                    Text("Invited")
+                                        .font(RallyType.caption())
+                                        .foregroundStyle(colors.textSecondary)
+                                }
+                            }
+                        }
                     }
                 } else {
                     ContentUnavailableView("Open a channel", systemImage: "info.circle", description: Text("Details, people, and resources show up here."))

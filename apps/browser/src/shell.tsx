@@ -3,7 +3,9 @@ import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
-import { BrowserWorkspacesSchema } from '@rally/contracts/browser-session';
+import { BrowserSessionSchema, BrowserWorkspacesSchema } from '@rally/contracts/browser-session';
+import { SupportPeopleSchema, SupportWorkspacesSchema } from '@rally/contracts';
+import { z } from 'zod';
 import { IDENTITY_REGION, type Region } from '@rally/contracts/regions';
 import { WorkspaceApp } from '../../desktop/src/renderer/App';
 import { AccountOnboardingGate } from '../../desktop/src/renderer/screens/guided-onboarding';
@@ -16,9 +18,10 @@ import { clearWorkspaceLocalCache } from '../../desktop/src/renderer/lib/local-c
 import { desktopBridge } from '../../desktop/src/renderer/lib/platform';
 import { reconcileWebPush } from '../../desktop/src/renderer/lib/web-push';
 import { createQueryClient } from '../../desktop/src/renderer/lib/query-client';
+import { useWindowActivationTracking } from '../../desktop/src/renderer/lib/window-activation';
 import { NEW_SIDEKICK_TARGET } from '../../desktop/src/common/sidekicks';
 import { shellLocation } from './session';
-import { browserRequest } from './transport';
+import { BrowserApiError, browserRequest } from './transport';
 
 const MAC_APP_ONLY = 'Available in the Mac app.';
 
@@ -58,7 +61,9 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
   const updateAccountOnboarding = useCallback((input: UpdateAccountOnboarding) => identityApi.updateAccountOnboarding(input), [identityApi]);
   // A notification subscription from an earlier sign-in delivers nothing until
   // this session registers it. Settings re-checks and shows any failure.
-  useEffect(() => { void reconcileWebPush(api).catch(() => undefined); }, [api]);
+  // A support session never registers this browser for the person's
+  // notifications (`docs/impersonation.md`); the API refuses it as well.
+  useEffect(() => { if (!session.impersonator) void reconcileWebPush(api).catch(() => undefined); }, [api, session.impersonator]);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [resourceAuthorizationAttempts, setResourceAuthorizationAttempts] = useState<Readonly<Record<string, PendingConnectorOAuth>>>({});
   const setResourceAuthorizationAttempt = useCallback((key: string, attempt: PendingConnectorOAuth | null) => {
@@ -91,6 +96,9 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     setWorkspaceName: () => undefined,
     editWorkspaceSetup: () => undefined,
     pendingInvitation: null,
+    // Only the macOS menu bar opens a request this way.
+    pendingAccessRequestId: null,
+    clearPendingAccessRequest: () => undefined,
     pendingConnectorOAuth,
     setPendingConnectorOAuth,
     updateCurrentUserName: () => { void queryClient.invalidateQueries({ queryKey: ['workspace'] }); },
@@ -120,6 +128,36 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     // re-reads the server session and unmounts this shell if it is gone.
     signOutIfCredentialCleared: revalidate,
     surrenderActiveWorkspace: revalidate,
+    // Rally access over this browser's cookie (`docs/impersonation.md`): the
+    // support session takes the Organization's slot in this browser, and the
+    // page reloads into it, as switching Organization does here.
+    // A 403 here is the staff refusal, which is final; anything else throws so it is retried.
+    listSupportWorkspaces: async () => {
+      try {
+        return (await browserRequest(IDENTITY_REGION, '/support/workspaces', SupportWorkspacesSchema)).workspaces;
+      } catch (error) {
+        if (error instanceof BrowserApiError && error.status === 403) return null;
+        throw error;
+      }
+    },
+    listSupportPeople: async (workspaceId) =>
+      (await browserRequest(IDENTITY_REGION, `/support/workspaces/${encodeURIComponent(workspaceId)}/people`, SupportPeopleSchema)).people,
+    // Drafts are keyed by Organization and conversation, not person, and the
+    // reload below skips the shell's account-change cleanup, so the
+    // Organization's drafts go on the way in and on the way out.
+    startSupportSession: async (target, userId) => {
+      await browserRequest(target.region, '/support/session', BrowserSessionSchema, { workspaceId: target.workspaceId, userId });
+      await clearWorkspaceDrafts(target.region, target.workspaceId);
+      location.assign(`/app/workspaces/${target.region}/${target.workspaceId}`);
+    },
+    endSupportSession: async () => {
+      if (session.workspace) {
+        await browserRequest(session.workspace.region, '/support/end', z.undefined(), { workspaceId: session.workspace.id });
+        await clearWorkspaceDrafts(session.workspace.region, session.workspace.id);
+        await clearWorkspaceLocalCache(session.user.id, session.workspace.region, session.workspace.id);
+      }
+      location.assign('/');
+    },
     clearDeepLinkError: () => undefined,
   }), [api, getAccountOnboarding, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
   const createSidekick = useCallback(() => desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET), []);
@@ -141,11 +179,23 @@ export default function BrowserShell(props: {
   onRevalidate: () => void;
 }): React.JSX.Element {
   const [queryClient] = useState(() => createQueryClient());
+  // The desktop's `App` installs this and the browser mounts below it, so the
+  // tips and previews that ask it get the same answers here. See
+  // `lib/window-activation.ts`.
+  useWindowActivationTracking();
   // The desktop shell routes by hash. Rewrite a canonical link into that form
   // once, before its router first reads the location.
   useState(() => {
     const next = shellLocation(location.pathname, location.hash);
     if (next) history.replaceState(history.state, '', next);
+    // A tab opened as the former Sidekicks tab carries `?surface=sidekicks`,
+    // which would mount the Sidekicks window and never let its close button
+    // leave. Sidekicks is a route of this tab now (`window-surface.ts`).
+    const url = new URL(location.href);
+    if (url.searchParams.has('surface')) {
+      url.searchParams.delete('surface');
+      history.replaceState(history.state, '', url);
+    }
   });
   return <QueryClientProvider client={queryClient}>
     <Tooltip.Provider><BrowserSession {...props} /></Tooltip.Provider>

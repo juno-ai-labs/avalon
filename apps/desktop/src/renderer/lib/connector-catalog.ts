@@ -1,7 +1,7 @@
-import { ConnectorConnectionCardCatalog, type OnboardingConnectorId } from '@rally/contracts';
+import { ConnectorConnectionCardCatalog } from '@rally/contracts';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
-import { ServerCog, Webhook } from 'lucide-react';
+import { Webhook } from 'lucide-react';
 export const CANVA_CONNECTION_DISCLOSURE = 'Connecting lets Rally read and change your Canva designs, folders, assets and brand kit. Canva receives a brief description of each requested operation. Watches are off until you enable them.';
 export const PERSONAL_CONNECT_LABEL = 'Connect for me';
 
@@ -119,7 +119,7 @@ export const connectorProviders = [
     provider: 'custom_mcp' as const,
     name: 'Custom MCP server',
     description: 'Any Model Context Protocol server, connected by URL.',
-    icon: ServerCog,
+    mark: 'model-context-protocol' as const,
     scopes: ['you', 'workspace'] as const,
     capabilities: [],
   },
@@ -145,14 +145,6 @@ export const connectorProviders = [
 
 export type ConnectorProviderCatalogEntry = (typeof connectorProviders)[number];
 
-/**
- * Every tile the picker draws is a selection the journey schema accepts. A tile
- * it refuses fails this line at compile time, naming the id — see that schema for
- * why the check exists.
- */
-type UnselectablePickerId = Exclude<ConnectorProviderCatalogEntry['id'], OnboardingConnectorId>;
-const everyPickerIdIsSelectable: UnselectablePickerId extends never ? true : UnselectablePickerId = true;
-void everyPickerIdIsSelectable;
 export type OAuthConnectorProviderCatalogEntry = Exclude<
   ConnectorProviderCatalogEntry,
   { provider: 'custom_mcp' | 'generic_webhook' | 'x' }

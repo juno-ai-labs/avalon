@@ -95,8 +95,12 @@ function observePointerPosition(event: PointerEvent): void {
   awaitingInput = false;
 }
 
-function observeDeliberateInput(): void {
+/** Whether the last deliberate input was a pointer press rather than a key. */
+let lastInputWasPointer = false;
+
+function observeDeliberateInput(event: Event): void {
   awaitingInput = false;
+  lastInputWasPointer = event.type === 'pointerdown';
 }
 
 /**
@@ -147,6 +151,7 @@ export function installWindowActivationTracking(): () => void {
     // a surface that asks anyway.
     awaitingInput = false;
     activationPointerPosition = null;
+    lastInputWasPointer = false;
   };
 }
 
@@ -166,6 +171,19 @@ export function useWindowActivationTracking(): void {
  */
 export function hasUserInputSinceWindowActivation(): boolean {
   return !awaitingInput;
+}
+
+/**
+ * Whether a focus arriving now can be read as the keyboard's: true unless the
+ * last key or pointer press was a pointer press.
+ *
+ * Ask this before opening a tip on focus. On a phone the only focus that is not
+ * a tap's is the focus code moves, and a tip opened by it answers nothing the
+ * person asked; on a narrow screen it also has nowhere to go. Uninstalled, the
+ * answer is yes, as with the guard above.
+ */
+export function focusFollowsKeyboard(): boolean {
+  return !lastInputWasPointer;
 }
 
 /**

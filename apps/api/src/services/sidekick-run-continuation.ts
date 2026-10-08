@@ -1,5 +1,4 @@
 import {
-  asAutomationId,
   asWorkspaceId,
   ExternalActorSchema,
   type WorkstreamWorkflowInput,
@@ -12,16 +11,15 @@ import {
   type SidekickRunContinuation,
   type SidekickRunContinuationRefusalCode,
 } from "../durable-objects/automation-do-protocol";
-import { automationDOName } from "../durable-objects/names";
 import type { Env } from "../env";
-import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { hostedParentStub } from "./conversation-parent-client";
 
 /**
  * Input to a Sidekick run child continues that run.
  *
  * A run child is an ordinary conversation with parent kind `automation` and
  * the run id as its substream. Its first activation is the Sidekick's own
- * (`SidekickDO.provisionRun`), which carries the run's context in
+ * (`provisionSidekickRun`), which carries the run's context in
  * `automationRun`; every later one starts from input somebody sent, and asks
  * the Sidekick here whether that input may continue the run and with what.
  * `docs/automation-lifecycle.md` owns the mechanism.
@@ -33,13 +31,8 @@ export async function continueSidekickRun(
   input: { region: Region; workspaceId: string; automationId: string; runId: string },
 ): Promise<SidekickRunContinuation> {
   const workspaceId = asWorkspaceId(input.workspaceId);
-  const sidekick = await durableObjectStubForWorkspace(
-    env,
-    env.AUTOMATION_DOS,
-    workspaceId,
-    automationDOName(input.region, workspaceId, asAutomationId(input.automationId)),
-  );
-  return SidekickRunContinuationSchema.parse(await sidekick.continueRun({
+  const workspace = await hostedParentStub(env, workspaceId);
+  return SidekickRunContinuationSchema.parse(await workspace.sidekickContinueRun({
     workspaceId,
     automationId: input.automationId,
     runId: input.runId,

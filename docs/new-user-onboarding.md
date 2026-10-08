@@ -18,30 +18,27 @@ ships directly for newly created accounts, with no feature flag.
 | `apps/api/src/services/onboarding-journey-service.ts` | Membership, eligibility and completion checks. |
 | `apps/api/src/routes/onboarding.ts`, `workspace.ts` | Identity and workspace API boundaries. |
 | `apps/desktop/src/renderer/lib/account-profile-editor.ts` | Account-scoped immediate drafts and serial revision-checked autosave. |
-| `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Introduction, connector setup, invitations and personal setup. |
-| `apps/desktop/src/renderer/lib/connector-catalog.ts` | The tiles the picker offers, and the compile-time check that each is saveable. |
+| `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Introduction, personal setup and invitations. |
 | `apps/desktop/src/renderer/components/personal-avatar.tsx`, `lib/onboarding-motion.ts`, `styles/onboarding.css` | Appearance and reference-derived motion. |
 
 ## How it works
 
-The three introduction screens appear before sign-in. After authentication,
+The three introduction screens appear before sign-in. The browser never shows
+them: its visitors come from the landing page, so it records the introduction
+as seen. After authentication,
 completion is saved on the account before workspace activation; eligible accounts
 arriving through a signed-in handoff still receive the introduction.
 Existing [workspace discovery and invitation acceptance](multiple-workspaces.md)
-choose the regional workspace. Its creator starts at connectors; invited or
-existing members start at personal setup. Optional connector and invitation
-steps can be skipped. OAuth uses the existing connector authorization and
-workspace-addressed callback machinery. The actions read **Connect for me** and
-**Connect for workspace**, matching Settings. Ashby and Granola workspace setup
-opens Settings → Connections for the API key and event configuration; their
-personal connections continue through browser authorization.
+choose the regional workspace. Everyone starts at personal setup. Connecting
+tools is not a journey step; it lives in Settings → Connections. The invitation
+step can be skipped.
 
 WorkspaceDO migration 34 adds `onboarding_journeys`, keyed by regional user ID.
 This migration includes the persisted scoped connector selection. Deploy the identity migration
 and API before releasing the desktop client; existing accounts are exempted by
 the identity migration, with no feature flag.
-The journey owns setup stage and revision. Creators proceed through connectors,
-personal appearance, then invitations; members finish after personal appearance.
+The journey owns setup stage and revision. Creators proceed through personal
+appearance, then invitations; members finish after personal appearance.
 Finishing saves `complete` and then leaves for the first work stream through
 `useOpenFirstWorkstream` — the composer only when the workspace is empty, as a
 creator's is. No workstream or
@@ -57,15 +54,23 @@ editable. Onboarding has no teammate discovery API.
 - Appearance is identity-owned; storing it only in a renderer would make devices
   disagree and prevent other members from seeing it.
 - Existing accounts have explicit eligibility false; absence of a journey never
-  forces them through a new flow.
+  forces them through a new flow. Email sign-in also starts an account
+  ineligible, since most arrive as guests. Once an organization is created, the
+  account becomes eligible if it is a member of no other organization here and
+  holds no active binding to another deployment (a local guest relationship does
+  not count), so a browser creator gets the creator journey a new Mac account
+  gets. A failed create changes nothing. Eligibility is set beside the
+  binding's activation once the region has committed, and a retry of the same
+  create sets it again, so a write that failed the first time is repaired.
 - The workspace object owns progress. Generic SQL cannot address its typed-only
   onboarding table.
 - Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt.
 - The visible email list and invitation action authorize sending through the existing workspace service.
-- The connectors the picker offers and the connectors the journey accepts are one
-  set, derived from the connection-card catalog rather than listed twice. Reads of a
-  stored selection drop ids the catalog no longer has, so retiring a connector cannot
-  make an existing journey unreadable; writes still have to name ids that exist.
+- `connectors` stays in the stage enum, the table's check and the contract, and
+  `connectorIds` stays on the journey, because rows written before the step was
+  retired hold them. Reading a journey stored at `connectors` moves it to
+  `profile`, and no transition leads back. Reads of a stored selection drop ids
+  the catalog no longer has, so an old row stays readable.
 
 ## Boundary
 
@@ -95,13 +100,8 @@ lookup is pending, nested conversation-admission providers keep warmed feeds
 speculative and message sending disabled. Completion releases admission without
 reconnecting; an unfinished result replaces the workspace without first marking
 its conversations opened.
-Background refetch failures keep cached onboarding state. OAuth is retryable or skippable and callbacks return to
-the onboarding flow that opened them.
-
-Connector choices retain both provider and access scope, using `workspace:` and
-`you:` prefixes. Refetches do not erase unsaved choices. Unsent invitation inputs
-remain in the renderer; successful connections and invitations remain on the
-server. Global account saves return independently of regional discovery and sync
+Background refetch failures keep cached onboarding state. Unsent invitation
+inputs remain in the renderer; successful invitations remain on the server. Global account saves return independently of regional discovery and sync
 notifications. Subsequent identity discovery reconciles regional projections;
 equal projections do not emit repeated invalidations.
 
@@ -109,10 +109,9 @@ equal projections do not emit repeated invalidations.
 
 Run API Node tests `account-onboarding.test.ts`,
 `platform-onboarding.test.ts`, and `workspace-do-schema.test.ts`, plus workerd
-`test-workers/onboarding-journey.test.ts`, whose retired-connector case covers the
-tolerant read. The desktop journey itself is covered by
-`src/renderer/screens/guided-onboarding.test.tsx`, including that every connector
-the picker offers on both pages saves. Account tests apply the actual regional
+`test-workers/onboarding-journey.test.ts`, whose retired-connector and
+retired-stage cases cover reading old rows. The desktop journey itself is
+covered by `src/renderer/screens/guided-onboarding.test.tsx`. Account tests apply the actual regional
 migrations; journey tests apply the actual WorkspaceDO migrations in workerd.
 The write-loss and profile-update mutation checks demonstrate those integration
 tests fail when persistence is broken. Desktop session-gate and app-session suites
@@ -120,7 +119,31 @@ cover existing authentication and activation behavior.
 
 Visual verification uses the isolated local Electron window. The reference
 inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-reference.md).
-Real external OAuth requires configured provider credentials; onboarding no longer starts an agent run.
+Onboarding no longer starts an agent run or a connector authorization.
+
+### 2026-10-07 — Connecting tools leaves the setup journey
+
+**What changed:** The two connector pages are gone from the journey on the Mac
+and in the browser. Every journey starts at personal setup; a creator then
+invites teammates. The store moves a journey it finds at `connectors` to
+`profile`, and no transition leads to `connectors` any more. The connector
+picker's compile-time check against the journey's connector ids, and the
+`onboarding` source on a pending connector authorization, went with it. The
+browser also stopped showing the introduction screens and records them as seen.
+
+**Why:** Product asked to remove connecting tools as an onboarding step on both
+apps. Connections stay in Settings → Connections.
+
+**Considered and rejected:** Dropping `connectors` from the stage enum and
+`connectorIds` from the contract. Stored journeys hold both, and the read path
+parses them; removing them would make those journeys unreadable.
+
+**Consequences:** A journey stored mid-connectors resumes at personal setup,
+with one revision added, so a client holding its old revision gets a conflict
+and refetches. The connector enum and stored selections remain only to read old
+rows.
+
+PR: [#1129](https://github.com/juno-ai-labs/avalon/pull/1129).
 
 ### 2026-09-17 — Derive the selectable connector ids from the connection-card catalog
 

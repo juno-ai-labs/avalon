@@ -28,7 +28,8 @@ let leaveReported = false;
 let keepaliveWanted = false;
 let capabilityRefreshed = false;
 
-function apiBaseUrl(): string {
+/** The Global API, or the local one when the site itself is served locally. */
+export function apiBaseUrl(): string {
   return location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://127.0.0.1:8787'
     : 'https://api.rallywith.ai';
@@ -47,7 +48,7 @@ function uuidV7(milliseconds = Date.now()): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function storageRead(storage: Storage, key: string): string | null {
+export function storageRead(storage: Storage, key: string): string | null {
   try {
     return storage.getItem(key);
   } catch {
@@ -55,7 +56,7 @@ function storageRead(storage: Storage, key: string): string | null {
   }
 }
 
-function storageWrite(storage: Storage, key: string, value: string): void {
+export function storageWrite(storage: Storage, key: string, value: string): void {
   try {
     storage.setItem(key, value);
   } catch {
@@ -284,7 +285,7 @@ function reportSiteAction(link: SiteActionLink): void {
   if (page !== 'landing' && page !== 'download' && page !== 'support') return;
   // A click is often the visitor's last act on the page, so it gets the same
   // best-effort keepalive as a page leave.
-  report('site_action_selected', { page, ...link }, true);
+  report('site_action_selected', { page, pathname: normalizedPathname(), ...link }, true);
 }
 
 /**
@@ -294,6 +295,7 @@ function reportSiteAction(link: SiteActionLink): void {
  */
 export const SITE_ACTION_LINKS = {
   'download-header': { action: 'download', placement: 'header' },
+  'sign-in-header': { action: 'primary_cta', placement: 'header' },
   'download-hero': { action: 'download', placement: 'hero' },
   'web-app-hero': { action: 'secondary_cta', placement: 'hero' },
   'download-pricing-start': { action: 'download', placement: 'pricing', plan: 'start' },
@@ -311,9 +313,22 @@ export function siteActionForLink(id: string | undefined): SiteActionLink | null
 
 function initializeSiteActions(): void {
   const selected = (event: MouseEvent): void => {
-    const link = (event.target as Element | null)?.closest?.<HTMLElement>('[data-site-action]');
-    const action = siteActionForLink(link?.dataset['siteAction']);
-    if (action) reportSiteAction(action);
+    const link = (event.target as Element | null)?.closest?.<HTMLAnchorElement>('a[data-site-action]');
+    const id = link?.dataset['siteAction'];
+    const action = siteActionForLink(id);
+    if (!action || !link) return;
+    let flowId: string | undefined;
+    if (id === 'web-app-hero' || id === 'sign-in-header') {
+      flowId = uuidV7();
+      const destination = new URL(link.href);
+      destination.searchParams.set('signupFlowId', flowId);
+      link.href = destination.href;
+      // Default navigation reads the updated href after dispatch. Restore the
+      // clean link afterwards so copied links never share an attempt.
+      destination.searchParams.delete('signupFlowId');
+      setTimeout(() => { link.href = destination.href; }, 0);
+    }
+    reportSiteAction({ ...action, ...(flowId ? { flowId } : {}) });
   };
   document.addEventListener('click', selected, { capture: true });
   // A middle-click opens a link without firing `click`.

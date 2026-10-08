@@ -30,12 +30,12 @@ test("rejects direct Durable Object namespace routing operations", () => {
 
 test("rejects computed, optional, aliased, and typed namespace routing", () => {
   assert.equal(lint(`env.WORKSPACE_DOS["get"]?.(id)`).length, 1);
-  assert.equal(lint(`const namespace = env.AUTOMATION_DOS; namespace.idFromName(name)`).length, 1);
+  assert.equal(lint(`const namespace = env.ARTIFACT_HOSTS; namespace.idFromName(name)`).length, 1);
   assert.equal(lint(`const namespace: DurableObjectNamespace = binding; namespace.get(id)`).length, 1);
-  assert.equal(lint(`const { getByName: resolve } = env.AUTOMATION_DOS; resolve(name)`).length, 1);
+  assert.equal(lint(`const { getByName: resolve } = env.ARTIFACT_HOSTS; resolve(name)`).length, 1);
   assert.equal(lint(`const { SUBSTREAM_AGENTS: agents } = env; agents.get(id)`).length, 1);
   assert.equal(lint(`function route(namespace: DurableObjectNamespace) { namespace.get(id); }`).length, 1);
-  assert.equal(lint(`({ AUTOMATION_DOS }) => AUTOMATION_DOS.idFromName(name)`).length, 1);
+  assert.equal(lint(`({ ARTIFACT_HOSTS }) => ARTIFACT_HOSTS.idFromName(name)`).length, 1);
 });
 
 test("rejects a namespace returned from a direct jurisdiction call", () => {

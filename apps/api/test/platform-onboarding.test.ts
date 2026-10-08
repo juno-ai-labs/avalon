@@ -21,6 +21,7 @@ import {
   type RegionalCreateInput,
   type RegionalDeclineInput,
   type RegionalDiscovery,
+  type RegionalAttention,
   type RegionalIdentityBridgeBinding,
   type RegionalIdentityBridgeRpcBinding,
   type BrowserRegistration,
@@ -55,7 +56,7 @@ const auth: IdentityAuthContext = {
 const identity: PlatformIdentity = {
   accountOnboarding: { eligible: false, introduced: true, presentation: null, revision: 0 },
   platformUserId,
-  googleSubject: "google-subject-1",
+  loginIdentities: [{ provider: "google", subject: "google-subject-1" }],
   email: "member@example.com",
   name: "Member",
   avatarUrl: null,
@@ -127,7 +128,7 @@ class IdentityDatabase {
           if (record.sql.includes("FROM users WHERE id = ?") && record.sql.includes("google_subject")) {
             return {
               id: platformUserId,
-              google_subject: identity.googleSubject,
+              google_subject: identity.loginIdentities[0]!.subject,
               email: identity.email,
               name: identity.name,
               avatar_url: null,
@@ -308,10 +309,15 @@ class FakeRegionalGateway implements RegionalIdentityBridgeBinding {
   async discover(): Promise<RegionalDiscovery> {
     return structuredClone(this.discovery);
   }
+
+  async attention(): Promise<RegionalAttention> {
+    return { attention: [], failed: [] };
+  }
 }
 
 class FakeRawRegionalBridge implements RegionalIdentityBridgeRpcBinding {
   readonly discover = vi.fn<(identity: PlatformIdentity) => Promise<RegionalRpcResult<RegionalDiscovery>>>();
+  readonly attention = vi.fn<(identity: PlatformIdentity) => Promise<RegionalRpcResult<RegionalAttention>>>();
   readonly activate = vi.fn<(input: RegionalActivateInput) => Promise<RegionalRpcResult<Session>>>();
   readonly activateBrowser = vi.fn<(input: RegionalActivateInput) => Promise<RegionalRpcResult<BrowserRegistration>>>();
   readonly create = vi.fn<(input: RegionalCreateInput) => Promise<RegionalRpcResult<Session>>>();
@@ -788,6 +794,10 @@ describe("single-platform regional onboarding", () => {
       workspaceId: createdWorkspaceId,
     }));
     expect(subject.bindings.rows.filter((row) => row.workspace_id === createdWorkspaceId)).toHaveLength(1);
+    // The replay settles the creator's eligibility again, so one whose first
+    // attempt failed after the binding activated is not left ineligible.
+    expect(subject.database.statements.filter((statement) =>
+      statement.sql.startsWith("UPDATE users SET onboarding_eligible = 1"))).toHaveLength(2);
   });
 
   it("rejects reusing a client operation for different create input", async () => {

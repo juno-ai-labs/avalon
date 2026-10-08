@@ -1,5 +1,4 @@
 import {
-  asAutomationId,
   asSubstreamId,
   asWorkspaceId,
   type WorkspaceId,
@@ -9,7 +8,6 @@ import type { ConversationParentKind } from "@rally/contracts/conversation-paren
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import {
-  automationDOName,
   conversationObjectName,
   workspaceDOName,
 } from "../durable-objects/names";
@@ -141,16 +139,10 @@ export async function retireWorkspaceGraph(
   for (const node of progress.nodes) {
     if (node.retired) continue;
     try {
-      // The recorded graph stores ids as text; the branded constructors are the
-      // boundary that turns them back into the kind each namespace expects. A
-      // Channel's and a Space's parent is hosted by this workspace's own
-      // object, which is already closed and answers only the retirement read;
-      // a Sidekick's parent is still its own object and is closed like a child.
-      const hosted = node.parentKind !== "automation";
-      const parent = hosted
-        ? workspace
-        : await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, input.workspaceId,
-          automationDOName(region, input.workspaceId, asAutomationId(node.parentId)));
+      // Every parent, a Channel's, a Space's and a Sidekick's, is hosted by
+      // this workspace's own object, which is already closed and answers only
+      // the retirement read.
+      const parent = workspace;
 
       // Asked before the parent is closed, so its children go first. The read
       // is permitted on a retired parent as well: a pass that died between
@@ -194,12 +186,6 @@ export async function retireWorkspaceGraph(
         receipt.retiredChildren += 1;
       }
 
-      if (!hosted) {
-        const automation = await durableObjectStubForWorkspace(env, env.AUTOMATION_DOS, input.workspaceId,
-          automationDOName(region, input.workspaceId, asAutomationId(node.parentId)));
-        const parentReceipt = await automation.retireObject(tombstone);
-        receipt.retainedOutbox += parentReceipt.retainedOutbox;
-      }
       receipt.retiredParents += 1;
       // Written only after the parent and all of its children confirmed. A
       // throw anywhere above leaves the node unreceipted and the walk resumable.

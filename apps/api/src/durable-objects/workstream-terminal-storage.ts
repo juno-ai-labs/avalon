@@ -1226,7 +1226,8 @@ export class WorkstreamTerminalStorage {
 
   /** Stop the sandbox for a network-policy transition, fenced on the provider id. */
   settlePolicyTransition(input: {
-    lifecycleState: TerminalLifecycleState;
+    /** Null leaves the state as it is: the transition did not move the sandbox. */
+    lifecycleState: TerminalLifecycleState | null;
     failureCode: string | null;
     clearSandboxId: boolean;
     /**
@@ -1246,7 +1247,7 @@ export class WorkstreamTerminalStorage {
   }): void {
     this.sql.exec(
       `UPDATE terminal_workspace
-          SET lifecycle_state = ?,
+          SET lifecycle_state = COALESCE(?, lifecycle_state),
               failure_code = ?,
               sandbox_id = CASE WHEN ? = 1 THEN NULL ELSE sandbox_id END,
               applied_network_revision =

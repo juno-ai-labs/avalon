@@ -34,7 +34,7 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   // A tab has no status item. The preference reads as on so the desktop and the
   // browser agree about what the stored default is, and unavailable so the
   // toggle is offered nowhere it cannot work.
-  pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", menuBarEnabled: true,
+  pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
   menuBarAvailable: false,
   menuBarPresent: false,
   // A tab is not a login item either. Both read as unavailable so neither
@@ -205,8 +205,6 @@ async function browserOnboardingSession(
   return installBrowserSession(raw, browserGlobalApiBaseUrl());
 }
 
-let browserSidekicksWindow: Window | null = null;
-
 const browserBridge: RallyDesktopBridge = {
   async getRuntimeConfig() {
     return {
@@ -277,6 +275,9 @@ const browserBridge: RallyDesktopBridge = {
   },
   async setPushNotificationsEnabled() { return this.getApplicationSettings(); },
   async openNotificationSettings() {},
+  async setDockBadgeCount() {
+    // A browser tab has no dock icon.
+  },
   async setMenuBarEnabled() {
     throw new Error('The menu bar item is available only in the Rally desktop app.');
   },
@@ -462,6 +463,20 @@ const browserBridge: RallyDesktopBridge = {
       ? browserSession
       : null;
   },
+  // Rally access runs through the Mac app's main process or the browser
+  // app's cookie routes; this development stand-in offers none.
+  async listSupportWorkspaces() {
+    return null;
+  },
+  async listSupportPeople() {
+    return [];
+  },
+  async startSupportSession() {
+    throw new Error('Rally access is not available here.');
+  },
+  async endSupportSession() {
+    return browserSession;
+  },
   async activateWorkspace({ region, workspaceId }) {
     return browserOnboardingSession(
       '/onboarding/workspace/activate',
@@ -519,6 +534,9 @@ const browserBridge: RallyDesktopBridge = {
     return null;
   },
   onBrowserImportContextChanged() {
+    return () => undefined;
+  },
+  onOrganizationListRefreshRequested() {
     return () => undefined;
   },
   async completeBrowserImport() {},
@@ -613,22 +631,10 @@ const browserBridge: RallyDesktopBridge = {
     }
     return opened.length > 1;
   },
+  // A tab cannot keep a second window, so Sidekicks is a route of this one,
+  // as Settings is. See `window-surface.ts`.
   async openSidekicks(requested) {
-    const target = new URL(window.location.href);
-    target.searchParams.set('surface', 'sidekicks');
-    target.hash = requested ? `/sidekicks/${encodeURIComponent(requested)}` : '/sidekicks';
-    if (browserSidekicksWindow && !browserSidekicksWindow.closed) {
-      browserSidekicksWindow.location.href = target.toString();
-      browserSidekicksWindow.focus();
-      return;
-    }
-    // Open a same-origin blank window, sever its opener before navigating, and
-    // retain our reference: noopener would discard the named-window reuse.
-    browserSidekicksWindow = window.open('about:blank', 'rally-sidekicks');
-    if (browserSidekicksWindow) {
-      browserSidekicksWindow.opener = null;
-      browserSidekicksWindow.location.href = target.toString();
-    }
+    window.location.hash = requested ? `#/sidekicks/${encodeURIComponent(requested)}` : '#/sidekicks';
   },
   async openSettings(section) {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';

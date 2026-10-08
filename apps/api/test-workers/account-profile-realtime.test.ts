@@ -22,14 +22,15 @@ it('streams committed profile changes to another member even when enterprise dis
     env.DB.prepare(`INSERT INTO workstream_authority_control VALUES (1, 'durable_object_open', 1, 1, 1)`),
     env.DB.prepare(`CREATE TABLE users (id TEXT PRIMARY KEY, google_subject TEXT, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT, updated_at TEXT, platform_user_id TEXT, onboarding_eligible INTEGER, onboarding_introduced INTEGER, onboarding_revision INTEGER, presentation_json TEXT)`),
     env.DB.prepare(`INSERT INTO users VALUES (?, 'subject', 'alex@example.com', 'Alex Morgan', NULL, 'UTC', '2026-09-08T00:00:00.000Z', '2026-09-08T00:00:00.000Z', ?, 0, 1, 0, NULL)`).bind(userId, userId),
+    env.DB.prepare(`CREATE TABLE user_login_identities (provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL, verified_at TEXT NOT NULL, PRIMARY KEY (provider, subject))`),
     env.DB.prepare(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, region TEXT, placement_affinity TEXT, analytics_workspace_id TEXT, abandoned_at TEXT)`),
     env.DB.prepare(`INSERT INTO workspaces VALUES (?, 'global', 'wnam', NULL, NULL)`).bind(workspaceId),
     env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member', workspace_id TEXT, user_id TEXT, role TEXT, status TEXT, last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1)`),
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id,user_id,role,status,last_seen_at) VALUES (?, ?, 'owner', 'active', NULL), (?, ?, 'member', 'active', NULL)`).bind(workspaceId, userId, workspaceId, peerId),
     env.DB.prepare(`INSERT INTO workspaces VALUES ('abandoned', 'global', 'invalid', NULL, '2026-09-08'), ('foreign', 'enterprise', 'invalid', NULL, NULL)`),
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id,user_id,role,status,last_seen_at) VALUES ('abandoned', ?, 'owner', 'active', NULL), ('foreign', ?, 'owner', 'active', NULL)`).bind(userId, userId),
-    env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member', id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT, region TEXT, revoked_at TEXT, expires_at TEXT)`),
-    env.DB.prepare(`INSERT INTO sessions VALUES ('existing-member','peer-session', ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(peerId, workspaceId),
+    env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member', id TEXT PRIMARY KEY, user_id TEXT, workspace_id TEXT, region TEXT, revoked_at TEXT, expires_at TEXT, impersonator_user_id TEXT)`),
+    env.DB.prepare(`INSERT INTO sessions VALUES ('existing-member','peer-session', ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z', NULL)`).bind(peerId, workspaceId),
   ]);
   const stub = env.WORKSPACE_DOS.getByName(workspaceDOName('global', workspaceId));
   await stub.initializeWorkspace(workspaceId, 'wnam');

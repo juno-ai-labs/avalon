@@ -5,6 +5,7 @@ import {
   SpaceChannelPageSchema,
   SpaceDefaultKindSchema,
   SpaceIdSchema,
+  SpaceInviteesSchema,
   SpaceSummarySchema,
   UpdateSpaceAudienceRequestSchema,
   UpdateSpacePresentationRequestSchema,
@@ -15,6 +16,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 
 import type { HonoAppEnv } from "../env";
+import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { SpaceService } from "../services/space-service";
@@ -43,7 +45,11 @@ export const spaceRoutes = new Hono<HonoAppEnv>();
 
 spaceRoutes.post("/", zValidator("json", CreateSpaceRequestSchema), async (c) =>
   c.json(SpaceSummarySchema.parse(
-    await new SpaceService(c.env, getAuth(c)).create(c.req.valid("json")),
+    await new SpaceService(c.env, getAuth(c)).create(
+      c.req.valid("json"),
+      undefined,
+      requestDeferral(c),
+    ),
   ), 201),
 );
 
@@ -89,6 +95,15 @@ spaceRoutes.patch(
       c.req.valid("json"),
     ),
   )),
+);
+
+/** The Organization invitees a Space lists; see `SpaceInviteesSchema` for why this is not on the summary. */
+spaceRoutes.get(
+  "/:id/invitees",
+  zValidator("param", idParam),
+  async (c) => c.json(SpaceInviteesSchema.parse({
+    items: (await new SpaceService(c.env, getAuth(c)).invitees(c.req.valid("param").id)).map((email) => ({ email })),
+  })),
 );
 
 spaceRoutes.post(

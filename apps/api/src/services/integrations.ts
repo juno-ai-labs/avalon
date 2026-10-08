@@ -5,7 +5,7 @@ import { runtimeDeferral } from "../lib/defer";
 import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
-import { conversationParentStub } from "./conversation-parent-client";
+import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
@@ -39,6 +39,7 @@ import {
   memberSafeHarnessFailureMessage,
   renderScheduledDigestBriefMessage,
   renderScheduledWakeupMessage,
+  renderPersonalSystemPrompt,
   renderWorkstreamSystemPrompt,
   renderCompactionCheckpointContent,
   rememberAutomationPeopleSearchResult,
@@ -129,7 +130,7 @@ import {
   type ResolvedConnectorAdapter,
 } from "@rally/connectors";
 import { z } from "zod";
-import { automationDOName, conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { AutomationService, createAutomation } from "./automation-service";
 import { WorkstreamService } from "./workstream-service";
 import { ResourceService } from "./resource-service";
@@ -153,6 +154,8 @@ import {
   executionPrincipalKey,
   loadWorkstreamResourceInventoryFingerprint,
   loadVisibleWorkstreamResourceInventory,
+  ownInventoryRevision,
+  type ConversationResourceLinks,
   WorkstreamResourceInventoryChangedError,
 } from "./workstream-resource-visibility";
 import {
@@ -251,12 +254,11 @@ import { renderSubstreamInitialContext } from "./substream-initial-context";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
-import { createResourceObjectPort } from "../runtime/resource-port";
+import { createConversationResourceLinks } from "../runtime/resource-port";
 import { createWorkstreamArtifactDataTools } from "./workstream-artifact-data-tools";
 import { createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
-import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import { createIdentityObjectPort } from "../runtime/identity-port";
@@ -1023,7 +1025,7 @@ type TranscriptMessageLister = (
 async function loadWorkstreamContextCompaction(
   database: D1Database,
   transcript: Pick<TranscriptObjectPort, "compactionCheckpoint">,
-  attachments: ResourceObjectPort,
+  attachments: ConversationResourceLinks,
   workspaceId: string,
   workstreamId: string,
   principal: ExecutionPrincipal,
@@ -1998,22 +2000,14 @@ function createAvalonAutomationsPlugin(
             input.parentId, input.backgroundAgent ? "0" : input.substreamId ?? "0")
           : null;
         const actor = { userId: asUserId(authorUserId), participantOfOwningWorkstream: input.parentKind === "automation" || options?.canManage === true };
-        const ids: string[] = [];
-        if (input.parentKind === "automation") {
-          ids.push(authoredAutomationId);
-        } else if (options?.canManage) {
-          const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
-            workspaceDOName(env.AVALON_REGION, workspaceId));
-          const owned = await workspace.automationIdsOwnedByWorkstream({ workspaceId, workstreamId: input.parentId });
-          ids.push(...owned.automationIds);
-        }
-        const sidekicks = await Promise.all(ids.map(async (automationId) => {
-          const detail = AutomationDetailSchema.parse(await (await durableObjectStubForWorkspace(
-            env,
-            env.AUTOMATION_DOS,
-            workspaceId,
-            automationDOName(env.AVALON_REGION, workspaceId, asAutomationId(automationId)),
-          )).readDetail({ workspaceId, automationId: asAutomationId(automationId), actor }));
+        // One Organization call for every Sidekick this conversation edits:
+        // its own, or each one the Channel owns when the person may manage it.
+        const selection = input.parentKind === "automation" ? { automationIds: [authoredAutomationId] }
+          : options?.canManage ? { channelOwnedBy: input.parentId } : null;
+        const details = selection === null ? [] : await (await hostedParentStub(env, workspaceId))
+          .sidekickReadDetails({ workspaceId, actor, ...selection });
+        const sidekicks = details.map((read: unknown) => {
+          const detail = AutomationDetailSchema.parse(read);
           return {
             sidekickId: detail.id,
             canEdit: true,
@@ -2030,7 +2024,7 @@ function createAvalonAutomationsPlugin(
               ? { ...detail.currentDefinition, definitionVersion: 2, triggers: [...detail.currentDefinition.triggers, { type: "inbound_email" }] }
               : detail.currentDefinition,
           };
-        }));
+        });
         if (input.parentKind !== "workstream") return { sidekicks };
         return { sidekicks, workspaceSidekicks: (options?.items ?? []).map((item) => ({
           sidekickId: item.id, name: item.name, description: item.description, available: item.available,
@@ -2076,12 +2070,7 @@ function createAvalonAutomationsPlugin(
             automationId: authoredAutomationId,
           });
         }
-        const automation = await durableObjectStubForWorkspace(
-          env,
-          env.AUTOMATION_DOS,
-          asWorkspaceId(input.workspaceId),
-          automationDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId), targetId),
-        );
+        const workspace = await hostedParentStub(env, input.workspaceId);
         const membership = await env.DB.prepare(
           `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
         ).bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" }>();
@@ -2091,7 +2080,7 @@ function createAvalonAutomationsPlugin(
           workspaceId: asWorkspaceId(input.workspaceId), region: input.region,
           role: membership.role, analyticsWorkspaceId: null,
         }).actorRequest(targetId);
-        const submitted = await automation.saveDefinition({
+        const submitted = await workspace.sidekickSaveDefinition({
           workspaceId: asWorkspaceId(input.workspaceId),
           automationId: targetId,
           draft: { ...draft, definitionVersion: 2 },
@@ -2542,6 +2531,8 @@ export async function runWorkstreamHarness(
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
       contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>>;
+      /** This conversation's copy of a member's personal system prompt; empty for none. */
+      personalSystemPrompt?(userId: string): string;
       readSidekickSkills(): SidekickSkillSnapshot | null;
       assignSidekickSkillNames(sources: SidekickSkillSnapshot["sources"]): Map<string, string>;
       attachedSidekickIds(): string[];
@@ -2783,6 +2774,7 @@ export async function runWorkstreamHarness(
       memoryRecallRequired: false,
     })
     : loadRunPromptContext(env, input, attemptLease, workstream, runDefinitionPreparation));
+  const personalSystemPrompt = profile ? "" : personalSystemPromptFor(input, runtime?.persistentLoop?.personalSystemPrompt);
   const toolsPreparation = new Preparation(() => profile
     ? Promise.resolve(profileHarnessTools(profile.plugins(input,
       localWorkstreamAuthority(env, input.workspaceId, input.parentId, "desktopAction"))))
@@ -2806,7 +2798,7 @@ export async function runWorkstreamHarness(
     ? await loadWorkstreamContextCompaction(
         env.DB,
         orderedTranscript,
-        createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+        createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
         input.workspaceId,
         input.parentId,
         input.executionPrincipal,
@@ -3383,6 +3375,8 @@ export async function runWorkstreamHarness(
           : input.executionPrincipal.workspaceId,
       },
       systemPrompt: promptContext.systemPrompt,
+      // Its own field so compaction can keep it out of the shared summary.
+      ...(personalSystemPrompt ? { principalSystemSection: personalSystemPrompt } : {}),
       // A persistent loop bootstraps from canonical transcript history once.
       // Activation-only wrappers cross the separately fenced durable boundary
       // below; a resumed execution must never replace the Bind head with a
@@ -3434,11 +3428,8 @@ export async function runWorkstreamHarness(
           if (!preparedCompactionVisibilityFingerprint) {
             throw new Error("compaction_resource_visibility_changed");
           }
-          const revision = Number.parseInt(
-            preparedCompactionVisibilityFingerprint.replace(/^inventory:/u, ""),
-            10,
-          );
-          if (!Number.isSafeInteger(revision) || revision < 0) {
+          const revision = ownInventoryRevision(preparedCompactionVisibilityFingerprint);
+          if (revision === null) {
             throw new Error("invalid_resource_inventory_revision");
           }
           const compaction = {
@@ -3486,7 +3477,7 @@ export async function runWorkstreamHarness(
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             preparedCompactionVisibilityFingerprint = await loadWorkstreamResourceInventoryFingerprint(
-              createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+              createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
             );
           },
           renderAppendix: async () => {
@@ -3499,7 +3490,7 @@ export async function runWorkstreamHarness(
             try {
               current = await loadVisibleWorkstreamResourceInventory(
                 env.DB,
-                createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+                createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
                 {
                   workspaceId: input.workspaceId,
                   workstreamId: input.parentId,
@@ -4709,6 +4700,39 @@ async function loadConnectorTriggerContext(
 }
 
 /**
+ * The rendered personal system prompt of the member whose own turn this is, or
+ * the empty string.
+ *
+ * Only a run a person started for themselves carries it, so the reason is an
+ * allowlist of their own acts: a message, an answer, or a retry, in Rally or
+ * from a linked Slack account. Every other reason runs as a user without that
+ * user acting (a digest, a wake-up an earlier run scheduled, a connector
+ * trigger, an inbound email), and a Sidekick run (`run_as_user_id`) or a
+ * background agent inherits a principal it was not given by a message. The
+ * text is the conversation's own copy; see docs/personal-system-prompt.md.
+ */
+const PERSONAL_SYSTEM_PROMPT_REASONS = new Set([
+  "opening_message",
+  "human_message",
+  "elicitation_answer",
+  "manual_retry",
+  // The member's own message, resumed after they authorized a resource for it.
+  "resource_authorization",
+  "slack_workspace_opening_message",
+  "slack_workspace_message",
+  "slack_workspace_elicitation_answer",
+]);
+
+function personalSystemPromptFor(
+  input: WorkstreamWorkflowInput,
+  read: ((userId: string) => string) | undefined,
+): string {
+  if (!read || input.executionPrincipal.type !== "user" || !PERSONAL_SYSTEM_PROMPT_REASONS.has(input.reason)
+    || input.automationRun || input.backgroundAgent || input.parentKind === "automation") return "";
+  return renderPersonalSystemPrompt(read(input.executionPrincipal.userId));
+}
+
+/**
  * The destinations Avalon itself copies this automation's result to.
  *
  * The run has to be told, or it does the delivery a second time: an automation
@@ -5302,7 +5326,7 @@ async function loadAuthorizedAttachmentReplay(
 // deliberately execution-scoped: connection changes are not cached across runs.
 async function loadHarnessInventory(env: Env, input: WorkstreamWorkflowInput) {
   return Promise.all([
-    createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0").attachedResourceIds(),
+    createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0").attachedResourceIds(),
     env.DB.prepare(
       `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
        ORDER BY created_at ASC`,
@@ -6490,21 +6514,22 @@ async function readRunAuthority(
   // the automation still wants it done. Pausing or deleting marks the run row,
   // and a run that outlived its consent must stop issuing provider writes
   // rather than finish on stale consent.
+  //
+  // `pending` is live too. Provisioning starts the loop and only then reports
+  // the run running, so the loop's first check can land between the two; only
+  // provisioning starts a run's loop, and a pause or delete moves even a
+  // pending run to `stopped`.
   const run = input.automationRun;
   startedAt = Date.now();
-  const live = await (await durableObjectStubForWorkspace(
-    env,
-    env.AUTOMATION_DOS,
-    asWorkspaceId(input.workspaceId),
-    automationDOName(input.region, asWorkspaceId(input.workspaceId), asAutomationId(run.automationId)),
-  )).readRunState({
+  const live = await (await hostedParentStub(env, input.workspaceId)).sidekickReadRunState({
     workspaceId: asWorkspaceId(input.workspaceId),
     automationId: run.automationId,
     runId: run.runId,
   });
   recordOptionalTiming(onTiming, "automation", startedAt);
   if (!live || live.lifecycle !== "active"
-    || (live.state !== "running" && live.state !== "needs_input" && !continuedAfterFinish(input, live))) {
+    || (live.state !== "pending" && live.state !== "running" && live.state !== "needs_input"
+      && !continuedAfterFinish(input, live))) {
     throw new ConnectorError("unauthorized", "This automation run is no longer running");
   }
   const snapshot: RunAuthoritySnapshot = {
@@ -6554,13 +6579,8 @@ async function readAutomationRunDefinition(
 ): Promise<AutomationRunDefinitionV1> {
   const run = input.automationRun;
   if (!run) throw new Error("sidekick_run_reference_missing");
-  const automation = await durableObjectStubForWorkspace(
-    env,
-    env.AUTOMATION_DOS,
-    asWorkspaceId(input.workspaceId),
-    automationDOName(input.region, asWorkspaceId(input.workspaceId), asAutomationId(run.automationId)),
-  );
-  return AutomationRunDefinitionV1Schema.parse(await automation.readRunDefinition({
+  const workspace = await hostedParentStub(env, input.workspaceId);
+  return AutomationRunDefinitionV1Schema.parse(await workspace.sidekickReadRunDefinition({
     workspaceId: asWorkspaceId(input.workspaceId),
     automationId: run.automationId,
     runId: run.runId,
@@ -8017,7 +8037,14 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             halt: "needs_input" as const,
           };
         }
-        await publishWorkstreamEvent(env, input.workspaceId, input.parentId, { type: "elicitation_created", elicitation });
+        // Announced in the room of the conversation that asked, not Main's.
+        await publishWorkstreamEvent(
+          env,
+          input.workspaceId,
+          input.parentId,
+          { type: "elicitation_created", elicitation },
+          input.substreamId ?? "0",
+        );
         emitProductUsageTelemetry(env, {
           workspaceId: input.workspaceId,
           ...(input.executionPrincipal.type === 'user'
@@ -8711,6 +8738,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  personalSystemPromptFor,
   executeAuthorizedConnectorTool,
   assertFrozenConnectionAuthorized,
   prePaginationTool,

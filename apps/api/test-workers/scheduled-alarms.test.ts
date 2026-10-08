@@ -324,6 +324,33 @@ describe("the shared Durable Object alarm list", () => {
     });
   });
 
+  it("cancels by key prefix only in the kinds named, matching the prefix as text", async () => {
+    const stub = await initializedWorkspace();
+
+    const remaining = await runInDurableObject(stub, (_instance: WorkspaceDO, state) => {
+      const store = new ScheduledAlarmStore(state.storage.sql);
+      const now = Date.now();
+      const dueAt = now + 60_000;
+      // `_` and `%` are `LIKE` wildcards; as text they match only themselves.
+      for (const key of ["abc:1", "abc:2", "a_c:1", "a%:1", "abcd:1"]) {
+        store.schedule({ kind: "automation_schedule", key, dueAt }, now);
+      }
+      store.schedule({ kind: "automation_run", key: "abc:3", dueAt }, now);
+      store.schedule({ kind: "schedule", key: "abc:4", dueAt }, now);
+
+      // Each wildcard prefix first, while the keys a `LIKE` would also match
+      // are still there.
+      expect(store.cancelByKeyPrefix(["automation_schedule"], "a_c:")).toBe(1);
+      expect(store.cancelByKeyPrefix(["automation_schedule"], "a%:")).toBe(1);
+      expect(store.cancelByKeyPrefix(["automation_schedule", "automation_run"], "abc:")).toBe(3);
+      return store.list().map((alarm) => `${alarm.kind}/${alarm.key}`).sort();
+    });
+
+    // A longer key sharing the prefix's letters, and the same prefix in a kind
+    // not named, stay.
+    expect(remaining).toEqual(["automation_schedule/abcd:1", "schedule/abc:4"]);
+  });
+
   it("keeps an earlier future deadline while parking already-due work for recovery", async () => {
     const stub = await initializedWorkspace();
 

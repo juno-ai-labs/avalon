@@ -499,6 +499,8 @@ export interface SlackExternalRoom {
   archived: boolean;
   /** A product title for the room, never Slack's synthetic group-DM name. */
   displayName: string;
+  /** Shared with another Slack organization through Slack Connect, or invited to be. */
+  externallyShared: boolean;
 }
 
 /**
@@ -519,6 +521,8 @@ export function slackExternalRoom(channel: {
   is_private?: boolean | undefined;
   is_archived?: boolean | undefined;
   is_non_threadable?: boolean | undefined;
+  is_ext_shared?: boolean | undefined;
+  is_pending_ext_shared?: boolean | undefined;
 }): SlackExternalRoom {
   const direct = channel.is_im === true;
   const mpim = channel.is_mpim === true;
@@ -532,6 +536,7 @@ export function slackExternalRoom(channel: {
     threadable: channel.is_non_threadable !== true,
     archived: channel.is_archived === true,
     displayName,
+    externallyShared: channel.is_ext_shared === true || channel.is_pending_ext_shared === true,
   };
 }
 

@@ -60,6 +60,7 @@ import {
 } from "./helpers/demo-workspace-fixture";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
+import { useSidekickRunProvisionConsumer } from "./helpers/sidekick";
 
 // The boundary nothing seeded may reach. A request that arrives here is an
 // escape from the seam, refused so the run fails rather than pretending.
@@ -67,6 +68,7 @@ const provider = useOpenRouterDouble(() => ({
   httpError: { status: 503, body: { error: { message: "a seeded run reached the provider" } } },
 }));
 useSelectedModel();
+useSidekickRunProvisionConsumer();
 
 beforeEach(async () => {
   await reset();
@@ -110,18 +112,15 @@ describe("seeding a pack", () => {
     expect(await service.create(input, id)).toMatchObject({ id, channelCount: 1 });
   });
 
-  it("refuses changed creation attributes and inaccessible existing identities", async () => {
+  it("refuses changed creation attributes under an existing identity", async () => {
     const seed = await openDemoTestSession();
     const service = new SpaceService(demoSeedEnv(), seed.auth.get(DEMO_PRIYA_ID)!);
-    const input = { name: "Private planning", iconKey: "handshake", colorKey: "blue", scope: "personal" } as const;
-    const id = await demoSeedSpaceId(DEMO_OPERATION_ID, "private-space");
+    const input = { name: "Planning", iconKey: "handshake", colorKey: "blue", scope: "workspace" } as const;
+    const id = await demoSeedSpaceId(DEMO_OPERATION_ID, "planning-space");
     await service.create(input, id);
-    for (const change of [{ name: "Renamed" }, { scope: "workspace" as const },
-      { iconKey: "briefcase" as const }, { colorKey: "green" as const }]) {
+    for (const change of [{ name: "Renamed" }, { iconKey: "briefcase" as const }, { colorKey: "green" as const }]) {
       await expect(service.create({ ...input, ...change }, id)).rejects.toMatchObject({ code: "space_revision_conflict" });
     }
-    const stranger = new SpaceService(demoSeedEnv(), seed.auth.get(DEMO_MARCUS_ID)!);
-    await expect(stranger.create(input, id)).rejects.toMatchObject({ code: "space_not_found" });
     expect(await service.summary(id)).toMatchObject(input);
   });
 

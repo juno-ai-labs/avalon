@@ -1,0 +1,4 @@
+/* Inter and Inter Tight (OFL, see OFL-inter*.txt) stand in for the app's system UI font and the site's heavy wordmark type; Geist Mono is the app's mono. */
+@font-face { font-family: 'Inter Tight'; src: url(inter-tight.woff2) format('woff2'); font-weight: 100 900; }
+@font-face { font-family: 'Inter'; src: url(inter.woff2) format('woff2'); font-weight: 100 900; }
+@font-face { font-family: 'Geist Mono'; src: url(geist-mono.woff2) format('woff2'); font-weight: 100 900; }

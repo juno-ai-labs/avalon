@@ -315,7 +315,6 @@ export const WorkspaceSlackSessionSchema = deferredZodSchema(() => z.strictObjec
   reaction_message_ts: z.string().nullable(),
   /** Only what Rally placed itself, so a transition never takes a member's. */
   reaction_current: z.string().nullable(),
-  reaction_cursor: z.number().int().nonnegative(),
   /**
    * False for a room Slack marks `is_non_threadable`, read from the source the
    * session was opened with: delivery posts top-level there.
@@ -425,7 +424,9 @@ export const WorkspaceSlackSessionStreamRequestSchema = deferredZodSchema(() => 
 }));
 
 /**
- * Settle the status reaction, conditional on the emoji this transition removed.
+ * Settle the status reaction, conditional on the anchor it acted on and the
+ * emoji this transition removed. The anchor is in the predicate because a
+ * follow-up moves the slot, usually with the same emoji.
  *
  * The compare-and-set spans a Slack API call — the caller reads what is placed,
  * asks Slack to swap it, then records the result — so it cannot be one
@@ -444,9 +445,10 @@ export const WorkspaceSlackSessionStreamRequestSchema = deferredZodSchema(() => 
 export const WorkspaceSlackSessionReactionRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
+  channelId: z.string().min(1),
+  messageTs: z.string().min(1),
   expected: z.string().nullable(),
   reaction: z.string().nullable(),
-  cursor: z.number().int().nonnegative().optional(),
   at: TimestampSchema,
 }));
 
@@ -458,9 +460,7 @@ export const WorkspaceSlackSessionReactionResultSchema = deferredZodSchema(() =>
 /**
  * Move the status reaction onto the message that made the newest prompt.
  *
- * A follow-up in an existing thread restarts the rotation rather than resuming
- * the previous run's position, so the cursor resets to 0 here. Unconditional,
- * unlike {@link WorkspaceSlackSessionReactionRequestSchema}: this is the run
+ * Unconditional, unlike {@link WorkspaceSlackSessionReactionRequestSchema}: this is the run
  * declaring where its status now lives, not a transition racing another.
  */
 export const WorkspaceSlackSessionReactionAnchorRequestSchema = deferredZodSchema(() => z.strictObject({

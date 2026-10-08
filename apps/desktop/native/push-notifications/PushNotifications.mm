@@ -54,11 +54,14 @@ static napi_value Start(napi_env env, napi_callback_info info) {
   UNUserNotificationCenter.currentNotificationCenter.delegate = delegate;
   napi_get_undefined(env, &result); return result;
 }
+// `badge` is the per-app "Badge application icon" switch, separate from
+// alerts: the dock badge shows only while it is on.
 static void ReadPermission(void) {
   [UNUserNotificationCenter.currentNotificationCenter getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
     NSString *value = settings.authorizationStatus == UNAuthorizationStatusDenied ? @"denied"
       : settings.authorizationStatus == UNAuthorizationStatusNotDetermined ? @"not_determined" : @"enabled";
-    Emit(@{ @"permission": value });
+    NSString *badge = settings.badgeSetting == UNNotificationSettingEnabled ? @"enabled" : @"disabled";
+    Emit(@{ @"permission": value, @"badge": badge });
   }];
 }
 static napi_value Permission(napi_env env, napi_callback_info info) {
@@ -66,7 +69,7 @@ static napi_value Permission(napi_env env, napi_callback_info info) {
   napi_get_cb_info(env, info, &count, args, nullptr, nullptr);
   napi_get_value_bool(env, args[0], &request);
   if (request) {
-    [UNUserNotificationCenter.currentNotificationCenter requestAuthorizationWithOptions:UNAuthorizationOptionAlert | UNAuthorizationOptionSound completionHandler:^(BOOL, NSError *) { ReadPermission(); }];
+    [UNUserNotificationCenter.currentNotificationCenter requestAuthorizationWithOptions:UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge completionHandler:^(BOOL, NSError *) { ReadPermission(); }];
   } else ReadPermission();
   napi_get_undefined(env, &result); return result;
 }

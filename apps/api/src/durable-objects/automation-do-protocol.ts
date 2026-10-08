@@ -16,7 +16,7 @@ import {
 import { z } from "zod";
 
 /**
- * What the Worker and the Queue consumer say to an `AutomationDO`.
+ * What the Worker and the Queue consumer say to a hosted Sidekick.
  *
  * Every request names the automation and its workspace; the object asserts
  * them against its own row before anything else. Membership is the Worker's
@@ -269,3 +269,39 @@ export const SidekickSkillReadRequestSchema = z.strictObject({
   existingExecution: z.boolean().optional(),
 });
 export type SidekickSkillReadRequest = z.infer<typeof SidekickSkillReadRequestSchema>;
+
+/**
+ * Several Sidekicks' skill reads in one call: by id, by the Channel that
+ * recommends or owns them, every active loadable one in the Organization
+ * (`allLoadable`, what a run offers as skills), or any mix. `onlyScope` keeps
+ * only Sidekicks of that scope, for a caller that may offer only Organization
+ * ones.
+ */
+export const SidekickBatchSkillReadRequestSchema = SidekickSkillReadRequestSchema.omit({ automationId: true }).extend({
+  automationIds: z.array(IdSchema).optional(),
+  channelId: IdSchema.optional(),
+  allLoadable: z.boolean().optional(),
+  onlyScope: z.enum(["personal", "workspace", "workstream"]).optional(),
+}).strict();
+export type SidekickBatchSkillReadRequest = z.infer<typeof SidekickBatchSkillReadRequestSchema>;
+
+/** Several Sidekicks' details in one call: by id, every one a Channel owns, or both. */
+export const SidekickBatchDetailRequestSchema = AutomationActorRequestSchema.omit({ automationId: true }).extend({
+  automationIds: z.array(IdSchema).optional(),
+  channelOwnedBy: IdSchema.optional(),
+}).strict();
+export type SidekickBatchDetailRequest = z.infer<typeof SidekickBatchDetailRequestSchema>;
+
+/**
+ * The activity-Queue message that starts a hosted Sidekick's run. Its consumer
+ * reads what to provision from `WorkspaceDO`, opens the run's conversation,
+ * starts its loop, and reports back; see `HostedSidekick.startRun`.
+ */
+export const SidekickRunProvisionQueueMessageSchema = z.strictObject({
+  kind: z.literal("sidekick_run_provision"),
+  region: z.string().min(1),
+  workspaceId: WorkspaceIdSchema,
+  automationId: IdSchema,
+  runId: IdSchema,
+});
+export type SidekickRunProvisionQueueMessage = z.infer<typeof SidekickRunProvisionQueueMessageSchema>;

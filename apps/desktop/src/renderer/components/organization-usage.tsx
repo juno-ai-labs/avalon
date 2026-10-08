@@ -1,31 +1,42 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { PLAN_IDS, PlanIdSchema } from '@rally/contracts/usage';
 import { useEffect, useRef } from 'react';
 import { settings } from '../settings/registry';
-import { SettingLabel } from '../settings/setting-label';
+import { SettingCopy, SettingLabel } from '../settings/setting-label';
 import {
   formatMicrousd,
   usageAsOfLabel,
   usageMenuLabel,
   usagePeriodLabel,
   usagePlanLabel,
+  usagePlanPriceLabel,
   usageRemainingLabel,
   usageResetLabel,
   usageTone,
   useOrganizationUsage,
+  useSetOrganizationPlan,
+  type OrganizationPlanApi,
   type OrganizationUsageApi,
   type UsageReading,
 } from '../lib/organization-usage';
-import { Badge, Button, Meter, Tip } from './primitives';
+import { Badge, Button, DropdownSelect, Meter, Tip } from './primitives';
 
 const METER_LABEL = 'Weekly quota left';
+const PLAN_OPTIONS = PLAN_IDS.map((plan) => ({
+  value: plan,
+  label: usagePlanLabel(plan),
+  description: usagePlanPriceLabel(plan),
+}));
 export const NOT_BILLED_EXPLANATION = "Rally isn't charging for usage beyond your plan yet.";
 
 /**
  * Settings → Organization → Usage. Every member sees it, whatever their role:
- * the quota is shared, so everyone spending it should be able to see it.
+ * the quota is shared, so everyone spending it should be able to see it. Only
+ * an administrator can change the plan; everyone else sees the picker locked.
  */
-export function UsageSettingsSection({ api, openRequest = 0, organizationName }: {
-  api: OrganizationUsageApi | null;
+export function UsageSettingsSection({ api, canChangePlan, openRequest = 0, organizationName }: {
+  api: OrganizationPlanApi | null;
+  canChangePlan: boolean;
   /**
    * Counts the requests to open this section's pane. Mounting already fetches;
    * a change after that is the pane being asked for again in a window that
@@ -45,11 +56,17 @@ export function UsageSettingsSection({ api, openRequest = 0, organizationName }:
       <div className="settings-pane-heading"><h2><SettingLabel setting={settings.usage} /></h2></div>
       <div className="settings-list-card">
         {state.status === 'ready' ? (
-          <UsageReadingRows offline={state.offline} organizationName={organizationName} reading={state.reading} />
+          <UsageReadingRows
+            api={api}
+            canChangePlan={canChangePlan}
+            offline={state.offline}
+            organizationName={organizationName}
+            reading={state.reading}
+          />
         ) : state.status === 'loading' ? (
-          <div className="usage-summary">
-            <Meter label={METER_LABEL} value={null} />
-            <p className="usage-remaining" role="status">Checking usage…</p>
+          <div className="settings-preference-row">
+            <SettingCopy setting={settings.quota} description={<span role="status">Checking usage…</span>} />
+            <span className="usage-quota-value"><Meter label={METER_LABEL} value={null} /></span>
           </div>
         ) : (
           <div className="settings-preference-row">
@@ -62,22 +79,47 @@ export function UsageSettingsSection({ api, openRequest = 0, organizationName }:
   );
 }
 
-function UsageReadingRows({ offline, organizationName, reading }: {
+function UsageReadingRows({ api, canChangePlan, offline, organizationName, reading }: {
+  api: OrganizationPlanApi | null;
+  canChangePlan: boolean;
   offline: boolean;
   organizationName: string;
   reading: UsageReading;
 }): React.JSX.Element {
   const { usage, fetchedAt } = reading;
+  const setPlan = useSetOrganizationPlan(api);
   return <>
-    <div className="usage-summary">
-      <strong className="usage-plan">{usagePlanLabel(usage)}</strong>
-      <Meter label={METER_LABEL} tone={usageTone(usage)} value={usage.quotaRemainingPercent} />
-      <p className="usage-remaining">
-        <span>{usageRemainingLabel(usage.quotaRemainingPercent)}</span>
-        {offline && <span className="usage-as-of">{usageAsOfLabel(fetchedAt)}</span>}
-      </p>
-      <small>{usageResetLabel(usage.weekResetsAt)}</small>
-      <small>Shared by everyone in {organizationName}.</small>
+    <label className="settings-preference-row">
+      <SettingCopy
+        setting={settings.plan}
+        description={setPlan.error
+          ? <span className="usage-plan-error" role="alert">The plan could not be changed. {setPlan.error.message}</span>
+          : undefined}
+      />
+      <DropdownSelect
+        ariaLabel="Plan"
+        disabled={!canChangePlan || !api || offline || setPlan.isPending}
+        onValueChange={(value) => {
+          const plan = PlanIdSchema.parse(value);
+          if (plan !== usage.plan) setPlan.mutate(plan);
+        }}
+        options={PLAN_OPTIONS}
+        value={setPlan.isPending ? setPlan.variables ?? usage.plan : usage.plan}
+        variant="secondary"
+      />
+    </label>
+    <div className="settings-preference-row">
+      <SettingCopy
+        setting={settings.quota}
+        description={`${usageResetLabel(usage.weekResetsAt)}. Shared by everyone in ${organizationName}.`}
+      />
+      <span className="usage-quota-value">
+        <Meter label={METER_LABEL} tone={usageTone(usage)} value={usage.quotaRemainingPercent} />
+        <small>
+          {usageRemainingLabel(usage.quotaRemainingPercent)}
+          {offline && <span className="usage-as-of"> {usageAsOfLabel(fetchedAt)}</span>}
+        </small>
+      </span>
     </div>
     {usage.overage.amountMicrousd > 0 && (
       <div className="settings-preference-row usage-overage">
@@ -109,7 +151,7 @@ export function OrganizationUsageMenuItem({ api, onSelect }: {
   const state = useOrganizationUsage(api);
   if (state.status !== 'ready') return null;
   const { usage } = state.reading;
-  const line = usageMenuLabel(usage.quotaRemainingPercent);
+  const line = usageMenuLabel(usage);
   return (
     <DropdownMenu.Item aria-label={`Usage, ${line}`} className="menu-item workspace-usage-item" onSelect={onSelect}>
       <Meter label={METER_LABEL} size="thin" tone={usageTone(usage)} value={usage.quotaRemainingPercent} />

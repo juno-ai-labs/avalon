@@ -1,5 +1,6 @@
 import { classifyAttachmentKind, type AttachmentKind, type ExecutionPrincipal } from "@rally/contracts";
 import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
+import type { ResourceLinkRow } from "../durable-objects/workstream-resource-storage";
 import { BOUND_PARAMETER_ID_CHUNK } from "../durable-objects/bound-parameters";
 import { listedResourceVisibilitySql } from "./resource-listing";
 
@@ -81,13 +82,103 @@ export class WorkstreamResourceInventoryChangedError extends Error {
 const RESOURCE_LOOKUP_BATCH = BOUND_PARAMETER_ID_CHUNK;
 
 /**
+ * The links one conversation's runs see, and the fingerprint that changes
+ * whenever they do.
+ *
+ * A Channel's Main conversation sees its own links. A Breakout sees its own and
+ * every link its Channel's Main holds, because a Breakout has full access to
+ * what its parent has attached: the handoff summary it opens on names the
+ * Channel's documents, and a run that could not read them answered
+ * `resource_not_found` for a document anybody in the Channel could open.
+ */
+export interface ConversationResourceLinks {
+  links(input: { resourceIds?: readonly string[] }): Promise<{
+    links: ResourceLinkRow[];
+    /** The linked ids that ride on a message of the conversation holding the link. */
+    onMessages: ReadonlySet<string>;
+  }>;
+  /** The linked ids alone, for a reader that needs nothing else. */
+  attachedResourceIds(): Promise<string[]>;
+  inventoryFingerprint(): Promise<string>;
+}
+
+/**
+ * Build {@link ConversationResourceLinks} over the conversation's own object
+ * and, lazily, its Channel's Main.
+ *
+ * Whether to inherit is the object's answer (`inheritsChannelLinks`), not the
+ * caller's, because most readers hold only the port for "the conversation
+ * this run executes in". The Channel is asked only once that answer is yes, so
+ * a Channel's own runs pay nothing. Where both hold a link, the conversation's
+ * own wins: its relationship and watch state are the ones a reader acts on.
+ */
+export function conversationResourceLinks(
+  own: ResourceObjectPort,
+  channel: () => ResourceObjectPort,
+): ConversationResourceLinks {
+  let inherits: Promise<boolean> | null = null;
+  let channelPort: ResourceObjectPort | null = null;
+  const inheritsChannel = () => (inherits ??= own.inheritsChannelLinks());
+  const parent = () => (channelPort ??= channel());
+  return {
+    async links(selection) {
+      const [ownLinks, inheriting] = await Promise.all([own.attachedLinks(selection), inheritsChannel()]);
+      const ownIds = new Set(ownLinks.map((link) => link.resource_id));
+      // A point lookup (what read_resource makes) already knows the ids, so the
+      // Channel answers both questions in one round trip rather than two.
+      const [channelAll, channelNamedOnMessages] = inheriting
+        ? await Promise.all([
+          parent().attachedLinks(selection),
+          selection.resourceIds ? parent().resourceIdsOnMessages({ resourceIds: selection.resourceIds }) : null,
+        ])
+        : [[], []];
+      const channelLinks = channelAll.filter((link) => !ownIds.has(link.resource_id));
+      const [ownOnMessages, channelOnMessages] = await Promise.all([
+        ownLinks.length > 0 ? own.resourceIdsOnMessages({ resourceIds: [...ownIds] }) : [],
+        channelNamedOnMessages ?? (channelLinks.length > 0
+          ? parent().resourceIdsOnMessages({ resourceIds: channelLinks.map((link) => link.resource_id) })
+          : []),
+      ]);
+      const channelIds = new Set(channelLinks.map((link) => link.resource_id));
+      return {
+        links: [...ownLinks, ...channelLinks],
+        onMessages: new Set([...ownOnMessages, ...channelOnMessages.filter((id) => channelIds.has(id))]),
+      };
+    },
+    async attachedResourceIds() {
+      const [ownIds, inheriting] = await Promise.all([own.attachedResourceIds(), inheritsChannel()]);
+      return inheriting ? [...new Set([...ownIds, ...await parent().attachedResourceIds()])] : ownIds;
+    },
+    async inventoryFingerprint() {
+      const [revision, inheriting] = await Promise.all([own.inventoryRevision(), inheritsChannel()]);
+      // `inventory:<own>` is what a compaction checkpoint fences on, so the
+      // own revision stays first; `ownInventoryRevision` reads it back.
+      return inheriting
+        ? `inventory:${revision}/${await parent().inventoryRevision()}`
+        : `inventory:${revision}`;
+    },
+  };
+}
+
+/**
+ * The conversation's own revision from a fingerprint, which is the one its
+ * object can fence a compaction commit on. Null for anything malformed.
+ */
+export function ownInventoryRevision(fingerprint: string): number | null {
+  const match = /^inventory:(\d+)(?:\/\d+)?$/u.exec(fingerprint);
+  const revision = match ? Number(match[1]) : Number.NaN;
+  return Number.isSafeInteger(revision) ? revision : null;
+}
+
+/**
  * Resolve the cross-authority resource projection without a cross-database
  * join. Link and watch state comes from the conversation that owns it
- * (`SubstreamAgent`); the workspace-owned resource and note authorization come from WorkspaceDO.
+ * (`SubstreamAgent`), and for a Breakout from its Channel's Main as well; the
+ * workspace-owned resource and note authorization come from WorkspaceDO.
  */
 async function loadVisibleRows(
   database: D1Database,
-  attachments: ResourceObjectPort,
+  attachments: ConversationResourceLinks,
   input: {
     workspaceId: string;
     workstreamId: string;
@@ -95,18 +186,15 @@ async function loadVisibleRows(
     resourceIds?: readonly string[];
   },
 ): Promise<VisibleWorkstreamResourceRow[]> {
-  // The link half, from the object that owns it. The retired statement asked
+  // The link half, from the objects that own it. The retired statement asked
   // whether each resource also rides on a transcript message as a correlated
   // `EXISTS` per row, across two compatibility views over two tables in this
   // *same* object — so it is one more read of the object's own rows rather than
   // a subquery repeated per attachment.
-  const local = await attachments.attachedLinks(
+  const { links: local, onMessages } = await attachments.links(
     input.resourceIds ? { resourceIds: input.resourceIds } : {},
   );
   if (local.length === 0) return [];
-  const onMessages = new Set(await attachments.resourceIdsOnMessages({
-    resourceIds: local.map((link) => link.resource_id),
-  }));
   // Naming ids is a point lookup and answers for an unlisted resource; naming
   // none enumerates, and enumerating advertises. `docs/agent-attachments.md`.
   const listed = input.resourceIds === undefined
@@ -174,19 +262,19 @@ export const ATTACHMENT_KIND_SQL = `CASE
 END`;
 
 export async function loadWorkstreamResourceInventoryFingerprint(
-  attachments: ResourceObjectPort,
+  attachments: ConversationResourceLinks,
 ): Promise<string> {
   // The retired statement's `LEFT JOIN … COALESCE(revision.revision, 0)` did
   // one thing the object does not need: it answered 0 for a work stream whose
   // revision row had never been written. `inventoryRevision` answers 0 for the
   // same case, and the join it replaces existed only because a routed reader
   // had to reach the row through the work stream it belongs to.
-  return `inventory:${await attachments.inventoryRevision()}`;
+  return attachments.inventoryFingerprint();
 }
 
 export async function loadVisibleWorkstreamResourcesByIds(
   database: D1Database,
-  attachments: ResourceObjectPort,
+  attachments: ConversationResourceLinks,
   input: {
     workspaceId: string;
     workstreamId: string;
@@ -202,7 +290,7 @@ export async function loadVisibleWorkstreamResourcesByIds(
 
 export async function loadVisibleWorkstreamResourcePage(
   database: D1Database,
-  attachments: ResourceObjectPort,
+  attachments: ConversationResourceLinks,
   input: {
     workspaceId: string;
     workstreamId: string;
@@ -239,7 +327,7 @@ export async function loadVisibleWorkstreamResourcePage(
 
 export async function loadVisibleWorkstreamResourceInventory(
   database: D1Database,
-  attachments: ResourceObjectPort,
+  attachments: ConversationResourceLinks,
   input: {
     workspaceId: string;
     workstreamId: string;

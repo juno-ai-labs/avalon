@@ -1,7 +1,7 @@
 import type { BrowserSession } from "@rally/contracts/browser-session";
 import type { CookieClientSession } from "@rally/contracts/client-session";
 import { ConfiguredRegionSchema } from "@rally/contracts/regions";
-import { parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
+import { parseSidekickLinkPathTarget, parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
 
 /** Adapt server metadata to the shared collaboration view without fake tokens. */
 export function cookieClientSession(region: string, session: BrowserSession): CookieClientSession {
@@ -16,12 +16,14 @@ export function cookieClientSession(region: string, session: BrowserSession): Co
     workspace: session.workspace ? { id: session.workspace.id, name: session.workspace.name,
       region: session.workspace.region, role: session.workspace.role, timezone: session.workspace.timezone,
       ...(session.workspace.accessClass ? { accessClass: session.workspace.accessClass } : {}) } : null,
+    ...(session.impersonator ? { impersonator: { id: session.impersonator.id, name: session.impersonator.name,
+      email: session.impersonator.email, ...(session.impersonator.avatarUrl ? { avatarUrl: session.impersonator.avatarUrl } : {}) } } : {}),
   };
 }
 
 /**
  * Where the shell lands for a path the browser was opened on. The desktop
- * shell routes by hash, so a canonical Channel or Space link, or an invitation's
+ * shell routes by hash, so a canonical Channel, Space or Sidekick link, or an invitation's
  * addressed Channel path, becomes the workspace path plus the hash the
  * desktop's own deep links set. Returns null when the path needs no rewrite.
  */
@@ -35,6 +37,8 @@ export function shellLocation(pathname: string, hash: string): string | null {
   }
   const space = parseSpaceLinkPathTarget(pathname);
   if (space) return `/app/workspaces/${space.region}/${space.workspaceId}#/spaces/${space.spaceId}`;
+  const sidekick = parseSidekickLinkPathTarget(pathname);
+  if (sidekick) return `/app/workspaces/${sidekick.region}/${sidekick.workspaceId}#/automations/${sidekick.sidekickId}`;
   const workspace = /^\/app\/workspaces\/[^/]+\/[^/]+\/?$/u.test(pathname);
   return workspace && !hash ? `${pathname.replace(/\/$/u, "")}#/` : null;
 }

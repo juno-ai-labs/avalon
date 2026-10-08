@@ -18,6 +18,7 @@ attempt at the opposite that the changelog records.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, the create mutation, and `launchedWorkstreamDetail` — the one place a launched work stream's cached detail is built. |
+| `apps/desktop/src/renderer/components/new-channel-participants.tsx` | The Participants row above the composer: the **+** that widens into the people search, and the pill that opens the list a person is removed from. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The pending-row rule on the shared list: `addPendingWorkstream`, `confirmPendingWorkstream`, `discardPendingWorkstream`, `keepPendingWorkstreams` (applied by every write that replaces the list), and `releasePendingWorkstreams`, the one path that may remove a pending row. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | `optimisticOpeningTranscript`, the one place either launcher's optimistic turn is built, and the detail a launched substream is seeded with. |
 | `packages/ui/src/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. Shared with the substream launcher, which renders the same three rows inside a work stream's own column ([`substream-creation.md`](substream-creation.md)). |
@@ -41,17 +42,19 @@ the response.
 The component renders one tree in both states, a three-row grid of header, body,
 and composer dock:
 
-- **Not launching** — the header is the **Participants** bar, the body row is
-  empty, and the dock carries only the composer. The dock spans the body and
-  dock rows and centres itself in them, so the composer sits in the middle of
-  the pane below the bar. The mention and command lists, which open upward,
+- **Not launching** — the header is collapsed, the body row is empty, and the
+  dock carries the Channel's setup above the composer: the **Participants**
+  row (`NewChannelParticipants`), then the Space picker and the Channel name.
+  The dock spans the body and dock rows and centres itself in them, so the
+  composer sits in the middle of the pane with its setup directly above it.
+  The mention and command lists, which open upward,
   cap their height at the room left above it, so a short window scrolls them
   rather than running them under the bar. The retired Welcome back dashboard,
   attention list, and suggested-work shelf no longer sit between opening Rally
   and starting a work stream.
 - **Launching** — the root additionally carries `workstream-screen`, the header
   is 44px around the Channel name (or a title skeleton), and the body holds a
-  transcript. The Participants bar leaves with the resting state. 44px because that is the row the conversation this
+  transcript. The setup rows leave with the resting state. 44px because that is the row the conversation this
   becomes actually uses: `.grokbot-workstream-header`, which every conversation
   renders, takes the screen's header track down from the base 55px. The header
   takes that height on the frame the class lands rather than growing into it;
@@ -67,24 +70,52 @@ those things: it is the same message capsule at the same width on both sides of
 the hand-off, per
 [`conversation-surfaces.md`](conversation-surfaces.md).
 
-The sidebar's plus first collects the required Space and Channel name in the
-standard creation dialog, then opens the launcher at
-`/spaces/:spaceId/workstreams/new` without creating a Channel. That is the only
-route to the launcher: there is no Space-less one, because every Channel is
-started from a Space. The launcher starts with focus in the opening-message text
-input. The Channel name travels with that route and is committed only when the
-opening message is sent; participants are chosen in the header's
-**Participants** bar before that request. The creator's own chip leads the bar
-and has no remove control. In a personal Space the bar shows the Space's roster
-read-only and says it is managed by the Space. `NewWorkstreamScreen` remounts
-the whole launcher for every navigation that opens it, because React would
-otherwise keep one instance across a change of Space or a second opening of the
-same one: the people picked for one Channel were sent with the next, and the
-composer's autofocus did not run again. Each opening therefore starts with
-nobody picked and focus in the message box, never in the Participants bar. The
+The sidebar's **New channel** opens the launcher at
+`/spaces/:spaceId/workstreams/new` at once, on the Space the sidebar is filtered
+to, or on General (listed as **All**) when it is not. There is no dialog first:
+the Space and the name are set on the screen itself, and nothing is created until
+the opening message is sent. That is the only route to the launcher: there is no
+Space-less one, because every Channel is started from a Space. A Space with no
+Channel to open lands here too (`emptySpaceRoute` in `lib/workstream-landing.ts`):
+an empty Organization opens it on General, as does a last-viewed Space that has
+emptied since, a pill picked for a Space with no
+Channels opens it on that Space, as does a newly created Space and a Channel
+moved out of the last placement in its Space. A reader who cannot start Channels
+gets the Space's dashboard instead.
+
+The setup above the composer is three controls:
+
+- **Participants.** The creator's avatar leads one pill summing up who is in
+  the Channel; the pill opens the full list, which is where a person is taken
+  back out, and the creator has no remove control. The dashed **+** widens in
+  place into the search field, its results opening upward. A Space's
+  participants are its listed members, not who is in its Channels, so the row
+  never starts from them.
+- **Space.** The shared `DropdownSelect`, in its `pill` variant and opening
+  upward, listing the Spaces a Channel can be started in through
+  `useSpaceChoices`. Changing it is local state rather than a navigation, because
+  a navigation remounts the launcher and would drop the people and name already
+  chosen. The draft key stays the route's Space, so the words in the composer
+  never swap for another Space's draft. If the picked Space is archived while
+  the screen is open, the launcher falls back to the route's Space.
+- **Name.** Optional; a Channel sent without one is titled by the server, as
+  before.
+
+Every change of state on the screen moves rather than jumps: the **+** box
+eases its width into the search field, the lists rise into place, and a person
+added arrives in the avatar stack. `prefers-reduced-motion` is cut by the
+global kill-switch.
+
+The launcher starts with focus in the opening-message text input.
+`NewWorkstreamScreen` remounts the whole launcher for every navigation that
+opens it, because React would otherwise keep one instance across a change of
+Space or a second opening of the same one: the people picked for one Channel
+were sent with the next, and the composer's autofocus did not run again. Each
+opening therefore starts with nobody picked and focus in the message box. The
 unsent draft and its attachments are cached by Space, so the remount loses
-nothing typed, and the key stays stable throughout the launch hand-off. The sidebar lists existing work streams without
-a placeholder row for the unsent draft.
+nothing typed, and the key stays stable throughout the launch hand-off. The
+sidebar lists existing work streams without a placeholder row for the unsent
+draft.
 
 ### What moves
 
@@ -110,11 +141,10 @@ The composer is `WorkstreamComposer`, the one a Channel's own feed uses, so
 the opening message gets the same `@` list (Rally and the Organization's
 members), slash commands and draft handling as every message after it. It is
 handed a `ComposerConversation` standing for the Channel about to exist: the
-Participants bar's people, the Space's scope, and no run. Mentioning a person
+Participants bar's people, Organization-wide, and no run. Mentioning a person
 seats them in the Channel: `submit` unions the mentioned people into the
 request's `participantIds`, because a name that only reached the text would
-arrive with nobody attached to it. In a personal Space the composer first asks
-**Add participant?** for anybody outside the bar, as it does in a feed. The
+arrive with nobody attached to it. The
 composer clears the draft on submit and restores it if `submit` rejects, so the
 too-long refusal and a failed create both throw rather than return.
 
@@ -229,10 +259,8 @@ was already deferred before this module existed.
 `reserveChannelInSpaces`, after the address reservation and before the D1
 anchor. In one SQLite transaction it resolves General when the request named no
 Space, writes each membership `active`, stages the defaults each Space hands a
-new member, reserves the main conversation with its provisional directory row,
-and records which Space supplied which reader on the Channel's own authority
-(`applySpaceAccessSource` with `commitWithPlan`, called inside the object rather
-than over RPC). It answers with the Spaces it read, and the
+new member, and reserves the main conversation with its provisional directory
+row. It answers with the Spaces it read, and the
 coordinator derives the opening audience from them with the same
 `resolveSpaceWorkstreamStart` the object used for the directory row's scope.
 A creation started from a provider thread passes `externalBinding`, and the
@@ -285,27 +313,16 @@ true. `POST /workstreams` carries `spaceIds`, defaulted to empty, and **empty
 means General** — `SpaceService.ensureGeneral` makes the Organization's General
 Space if this is the first thing that ever needed it.
 
-**A Channel created without a named Space is therefore born Organization-wide**,
-whatever scope the caller asked for: General is Organization-wide, its source
-unions into the birth audience, and a source only ever widens. That is true of
-a connector ingress that resolved a personal scope,
-of session import, of `createFromOpportunity`, and of the demo seeder — which
-refuses a pack room declared `personal` by name rather than seeding it
-Organization-wide ([`demo-workspaces.md`](demo-workspaces.md)). A Channel that
-is meant to stay personal has to be born in a personal Space that names it.
-
-The audience the Channel opens with is derived from those Spaces rather than
-taken from the request. `resolveSpaceWorkstreamStart` runs the same
-`effectiveChannelAudience` algebra the rest of the Space module uses over the
-named Spaces plus the caller's own request: if any of them is Organization-wide
-the Channel opens `workspace` and the requested participants are kept as
-participants; otherwise it opens personal over the union of the Spaces' rosters
-and the caller's. A requested participant who is in none of the named Spaces'
-rosters is seated directly in the Channel; that descendant access exposes only
-the containing Spaces' presentation metadata through associative reach and does
-not make them a Space participant. The Spaces' `defaultResourceIds` are unioned with the
-caller's origin resources, so a Channel started in a Space begins with what that
-Space hands down.
+**A Channel is born with the scope its caller asked for**, whichever Spaces it
+is born in: every Space is Organization-wide and grants no reader
+([`spaces.md`](spaces.md#every-space-is-organization-wide)). `POST /workstreams`
+asks for `workspace`, so a Channel somebody starts in Rally is public. An
+internal caller that names nothing gets the fail-closed `personal`, and one that
+names `personal` (a private Slack room, session import, a suggestion shown to
+one person, a digest) gets a private Channel even in General.
+`resolveSpaceWorkstreamStart` keeps the requested scope and participants and
+unions the Spaces' `defaultResourceIds` with the caller's origin resources, so a
+Channel started in a Space begins with what that Space hands down.
 
 **The memberships, the reservation and the provenance commit together.** The
 order between them used to be load-bearing: reserving the main conversation
@@ -423,18 +440,18 @@ than whichever rejection landed first.
   placement transaction writes the directory row that carries the address; see
   [The Space a Channel is born in](#the-space-a-channel-is-born-in).
 - **A Channel's Organization-side birth is one transaction.** Memberships,
-  Space defaults, the parent reservation with its provisional directory row, and
-  the Space sources commit in `reserveChannelInSpaces` or not at all; creation
+  Space defaults, and the parent reservation with its provisional directory row
+  commit in `reserveChannelInSpaces` or not at all; creation
   never stages a `joining` row or an `add` intent.
-- **A create that names no audience writes a private work stream.** `POST
-  /workstreams` carries no scope — a request on the wire cannot claim one — so
-  the creator is seated beside whoever they named, those active participant rows
-  are the room's complete reader authority, and the scope reaches the
-  object as an argument rather than a hardcoded `'workspace'`. A create path
-  added later inherits that: omitting the scope is a decision for private, and
-  only a caller that *knows* the audience is wider — an ingress reading a public
-  channel — says `workspace`. See
-  [`data-model.md`](data-model.md#2026-08-21--a-work-stream-is-born-private).
+- **A create that names no audience writes a private work stream.** The scope
+  reaches the object as an argument rather than a hardcoded `'workspace'`, and
+  an internal create path that omits it gets `personal`. The request body
+  carries no scope; `POST /workstreams` itself passes `workspace`, because [a
+  Space grants no reader](spaces.md#every-space-is-organization-wide) and a
+  Channel a person starts in Rally is public. A create receipt the previous
+  Worker hashed as `personal` is replayed by that `workspace` retry, never the
+  other way round. An ingress reading a Slack room passes the room's privacy.
+  See [`data-model.md`](data-model.md#2026-08-21--a-work-stream-is-born-private).
 - **Whether the people named are told is the caller's to say, not the object's.**
   `POST /workstreams` passes `notifyParticipants`, because its
   `participantUserIds` is people somebody picked in "Add people"; each of them
@@ -608,6 +625,59 @@ see
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-07 — The Channel is set up beside its composer, and empty Spaces open on it
+
+**What changed:** The sidebar's creation dialog for a Channel is gone. **New
+channel** opens the launcher straight away, and the Participants row, the Space
+picker and the name field sit directly above the composer instead of in a
+header bar and a dialog. A Space with no Channel to open now lands on this
+screen rather than on its dashboard: the empty Organization's landing, a pill
+picked for an empty Space (including from the new-Channel screen of another
+Space), a newly created Space, and a Channel moved out of the last placement in
+its Space. Picking a pill that has Channels while on the new-Channel screen of
+another Space opens that Space's first Channel, as it does from a Channel.
+
+**Why:** Asked for directly, from mockups that put every setup choice next to
+the message that commits it. The dialog split one act across two surfaces, and
+a Space with nothing in it showed settings when the only useful next step was
+starting a Channel.
+
+**Considered and rejected:** Holding the picked Space in the route. Every
+navigation remounts the launcher (2026-09-24's reason still holds), so a change
+of Space would drop the people and name already chosen. Keeping the dialog for
+the Space and name and moving only the Participants row. The 2026-09-24 entry
+rejected routing fallbacks to General's launcher as "a composer nobody asked
+for"; product now asks for exactly that.
+
+**Consequences:** The name is optional again, where the dialog required it; the
+server titles an unnamed Channel. A future control on this screen should join
+the setup rows above the composer, not the header, which is collapsed until
+launch. The people list and the participant list open upward and measure the
+room above them when they open (`fitAbove`), because the centred setup moves
+with the draft's height; the Space list is Radix's and flips on its own.
+
+Pull request: [#1130](https://github.com/juno-ai-labs/avalon/pull/1130).
+
+### 2026-10-06 — A Channel is born with the scope it asked for
+
+**What changed:** `resolveSpaceWorkstreamStart` no longer derives a Channel's
+birth audience from its Spaces, and `POST /workstreams` asks for `workspace`
+itself. The launcher no longer prefills or locks the Participants bar from a
+personal Space.
+
+**Why:** Every Space is Organization-wide and grants no reader
+([`spaces.md`](spaces.md)). Without that, General would have made every new
+Channel public again, and a private Channel could not be born anywhere.
+
+**Considered and rejected:** Defaulting an unnamed scope to `workspace` in the
+coordinator. It would quietly make public any internal create that forgot to
+name an audience; the route that means public now says so.
+
+**Consequences:** A new creation path names its scope; nothing widens a
+Channel after birth on its behalf.
+
+Pull request: [#1119](https://github.com/juno-ai-labs/avalon/pull/1119).
 
 ### 2026-10-01 — A pending row stays pending until its create answers
 

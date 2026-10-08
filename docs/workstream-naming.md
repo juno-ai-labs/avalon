@@ -389,10 +389,10 @@ ordinary work-stream update and belongs to the object's product service.
   as `automatic`; the second leaves an `automatic` row for the next run. The work
   stream keeps the id-derived glyph, which is what an unnamed one shows anyway.
 - **The model answers with an icon that is not in the catalog.** The name still
-  lands and the icon is dropped. The request advertises the catalog as an enum
-  under `strict: true`, so a provider that honours it cannot produce this; the
-  leniency is for the one that does not, and for a key renamed out from under a
-  request already in flight.
+  lands and the icon is dropped. The request sends the icon as a plain string,
+  because Gemini refuses the catalog as a 253-value enum, so this is the path
+  for any answer the prompt did not hold to the catalog, as well as for a key
+  renamed out from under a request already in flight.
 - **A key the *object* does not know, or a stored appearance it cannot read.**
   Same outcome, enforced a second time and for a harder reason: `rename` parses
   both without throwing, because the title write and the `title_status` advance
@@ -491,6 +491,31 @@ ordinary work-stream update and belongs to the object's product service.
   file's hard-coded date asserts nothing.
 
 ## Changelog
+
+### 2026-10-05 — The icon is a plain string, and fallbacks may reason
+
+**What changed:** The naming request sends `icon` as a required plain string
+instead of an enum of the catalog. A model the harness registry marks
+`reasoningRequired` (Grok 4.6, Gemini 3.7 Flash, Gemini 3.8 Flash) is sent its
+default effort when naming asks for `none`; Terra and every other model still
+get `none`.
+
+**Why:** Every Gemini model tested refused the request: 2.5 Flash Lite and 3.8
+Flash with "too much branching for serving" (the enum), and 3.7 Flash, 3.8
+Flash and Grok 4.6 with "Reasoning is mandatory for this endpoint". One effort
+covers the whole fallback route, so the fallbacks production routes to could
+never serve a naming call.
+
+**Considered and rejected:** An enum only for models that accept it, which
+needs a per-model capability for one call. Dropping `none` for every model,
+which would turn thinking on for Terra on a call the creator watches.
+
+**Consequences:** The catalog is held by the prompt alone, so an off-catalog
+answer, which the enum used to make impossible on a strict provider, now lands
+as no icon. A model added to a fallback route that refuses `none` needs
+`reasoningRequired` in `model-inference-defaults.ts`.
+
+Pull request: [#1099](https://github.com/juno-ai-labs/avalon/pull/1099).
 
 ### 2026-10-02 — Imports get an icon from their history
 

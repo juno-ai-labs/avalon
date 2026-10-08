@@ -8,8 +8,8 @@ or identifies the loop. The loop is not a participant, separate persona,
 terminal, or general code-execution environment.
 
 A Sidekick is drafted in a conversation of its own, and every run of it is a
-conversation of its own, both `SubstreamAgent`s under the Sidekick's
-`SidekickDO`; there is no second host. The drafting tools are the loadable
+conversation of its own, both `SubstreamAgent`s under the Sidekick, which is
+hosted in its Organization's `WorkspaceDO`; there is no second host. The drafting tools are the loadable
 `rally:sidekicks` plugin (`rally_sidekicks` to the model), available in a work
 stream and in a Sidekick's chat alike and withheld from a run, and a run's loop
 reads its definition from the parent by revision at start. See
@@ -744,10 +744,15 @@ send no reasoning control and therefore retain the provider default. Omission
 accepts the registry setting when present; an explicit task/run effort,
 including structured inference's `none`, overrides it. Model flags may carry
 `reasoningEffort` (`low`, `medium`, or `high`) for the entire route, taking
-precedence over the registry but below explicit task settings. `x-ai/grok-4.6` and
-`google/gemini-3.8-flash`, and `openai/gpt-6.1-sol` currently default to `low` everywhere: routed
-work-stream turns and direct structured or streaming OpenRouter calls all
-resolve the setting after the actual primary or fallback model is selected.
+precedence over the registry but below explicit task settings. `x-ai/grok-4.6`,
+`google/gemini-3.7-flash`, `google/gemini-3.8-flash` and `openai/gpt-6.1-sol`
+currently default to `low` everywhere: routed work-stream turns and direct
+structured or streaming OpenRouter calls all resolve the setting
+(`reasoningEffortFor`) after the actual primary or fallback model is selected.
+The registry marks Grok 4.6 and both Gemini Flash models `reasoningRequired`,
+because their providers refuse `none` ("Reasoning is mandatory for this
+endpoint"); a task's `none` is served at that model's default there, so a
+fallback can still answer a call whose primary runs without reasoning.
 Tool-bearing Chat Completions requests also opt in to parallel tool calls on
 both OpenRouter and Azure; requests with no tools omit the field.
 

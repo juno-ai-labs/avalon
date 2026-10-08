@@ -1,5 +1,5 @@
 import "../../../tests/isolated-region";
-import type { UsageEvent } from "@rally/contracts/usage";
+import type { OrganizationUsage, UsageEvent } from "@rally/contracts/usage";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { consumeUsageQueue } from "../src/queues/usage-consumer";
@@ -10,7 +10,7 @@ import type { HonoAppEnv } from "../src/env";
 import { requireAuth } from "../src/middleware/auth";
 import { errorHandler } from "../src/middleware/errors";
 import { workspaceRoutes } from "../src/routes/workspace";
-import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, migratedUsageSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const OWNER = "01900000-0000-7000-8000-000000000001";
@@ -210,6 +210,62 @@ describe("GET /workspace/usage", () => {
     expect(member.status).toBe(200);
     await expect(member.json()).resolves.toMatchObject({ plan: "starter", quotaRemainingPercent: 70, overage: { amountMicrousd: 0, billed: false } });
     expect((await read(OUTSIDER)).status).toBe(401);
+  });
+});
+
+describe("PUT /workspace/plan", () => {
+  it("lets an administrator change the plan, answers and sends members the re-priced meter, and refuses a member", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-10-03T00:00:00.000Z") });
+    const { database, usage, env } = seed();
+    const ADMIN = "01900000-0000-7000-8000-000000000004";
+    const MEMBER = "01900000-0000-7000-8000-000000000002";
+    for (const [id, role] of [[ADMIN, "admin"], [MEMBER, "member"]] as const) {
+      database.prepare(
+        `INSERT INTO users(id, google_subject, email, name, created_at, updated_at) VALUES (?, ?, ?, 'Someone', ?, ?)`,
+      ).run(id, `google-${id}`, `${role}@example.test`, CREATED, CREATED);
+      database.prepare(
+        `INSERT INTO workspace_members(workspace_id, user_id, role, status, joined_at) VALUES (?, ?, ?, 'active', ?)`,
+      ).run(WORKSPACE, id, role, CREATED);
+    }
+    await applyUsageBatch(env, [event("inf:big", { costMicrousd: 70_000_000 })], RECEIVED);
+    const app = new Hono<HonoAppEnv>();
+    app.use("*", requireAuth);
+    app.route("/workspace", workspaceRoutes);
+    app.onError(errorHandler);
+    // The Node suite runs no Durable Object; this one records what the route
+    // asked WorkspaceDO to send to every connected member.
+    const published: OrganizationUsage[] = [];
+    const workspaceObjects: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get: () => ({ publishUsage: async (meter: OrganizationUsage) => { published.push(meter); return 1; } }),
+      jurisdiction: (): Env["WORKSPACE_DOS"] => workspaceObjects,
+    });
+    const routeEnv = createTestEnv({
+      ...env, APP_ENV: "development", RALLY_DEV_AUTH: "true", WORKSPACE_DOS: workspaceObjects,
+    });
+    const choose = (userId: string, plan: string) => app.request("/workspace/plan", {
+      method: "PUT",
+      headers: { "content-type": "application/json", "x-rally-dev-user-id": userId, "x-rally-dev-workspace-id": WORKSPACE },
+      body: JSON.stringify({ plan }),
+    }, routeEnv);
+
+    const refused = await choose(MEMBER, "growth");
+    expect(refused.status).toBe(403);
+    await expect(refused.json()).resolves.toMatchObject({ error: { code: "workspace_admin_required" } });
+    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE)).toEqual({ plan: "starter" });
+    expect(published).toEqual([]);
+
+    const changed = await choose(ADMIN, "growth");
+    expect(changed.status).toBe(200);
+    await expect(changed.json()).resolves.toMatchObject({ plan: "growth", quotaRemainingPercent: 44, overage: { amountMicrousd: 0 } });
+    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE)).toEqual({ plan: "growth" });
+    expect(usage.prepare(`SELECT plan, previous_plan FROM usage_plan_changes WHERE workspace_id = ?`).all(WORKSPACE))
+      .toEqual([{ plan: "growth", previous_plan: "starter" }]);
+    await vi.waitFor(() => expect(published).toMatchObject([
+      { plan: "growth", quotaRemainingPercent: 44, overage: { amountMicrousd: 0, billed: false } },
+    ]));
+
+    expect((await choose(ADMIN, "enterprise")).status).toBe(400);
   });
 });
 

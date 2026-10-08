@@ -3,10 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  UNREAD_ACTIVITY_DESCRIPTION,
-  WorkspaceAccountMenu,
-} from './workspace-account-menu';
+import { WorkspaceAccountMenu } from './workspace-account-menu';
 import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER } from '../lib/app-session';
 import { desktopWorkspaceIdentityKey, type DesktopUpdateStatus } from '../../common/desktop';
 import type * as PlatformModule from '../lib/platform';
@@ -37,7 +34,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     activeWorkspace: active,
     attention: {
       [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
-        waitingForYou: 3, waitingReason: 'mentioned', hasUnreadActivity: true, unreadAndNeedsInputCount: 3,
+        waitingForYou: 3, waitingReason: 'mentioned', hasUnreadActivity: true, readerAttentionCount: 3,
       },
     },
     currentUser,
@@ -151,36 +148,48 @@ describe('organization account menu', () => {
     const menu = screen.getByRole('menu');
     expect(within(menu).getByText('Organizations')).toBeVisible();
     expect(within(menu).getByRole('menuitem', { name: /Global Studio.*global.*Current/u })).toBeVisible();
-    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*enterprise.*3 mentions waiting for you/u });
-    // One dot for any activity, never a count.
-    expect(europe.querySelector('.workspace-activity-dot')).toHaveAccessibleName('3 mentions waiting for you');
-    expect(europe).not.toHaveTextContent('3');
+    const europe = within(menu).getByRole('menuitem', {
+      name: 'Europe Studio, enterprise, 3 conversations with new activity, 3 mentions waiting for you',
+    });
+    expect(europe).toHaveTextContent(/^EEurope Studioenterprise3$/u);
 
     fireEvent.click(europe);
     expect(props.onSwitchWorkspace).toHaveBeenCalledWith(enterprise);
   });
 
-  it('explains the activity dot on hover', async () => {
+  it('explains the activity count on hover', async () => {
     renderMenu();
     openMenu();
-    const waiting = screen.getByLabelText('3 mentions waiting for you');
-    fireEvent.pointerMove(waiting);
+    fireEvent.pointerMove(screen.getByText('3'));
     expect(await screen.findByRole('tooltip')).toHaveTextContent('3 mentions waiting for you');
-    fireEvent.pointerLeave(waiting);
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  });
+
+  it('counts unread activity when nothing waits on the person, and shows nothing at zero', async () => {
+    renderMenu({
+      attention: {
+        [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
+          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true, readerAttentionCount: 120,
+        },
+      },
+    });
+    openMenu();
+    const europe = screen.getByRole('menuitem', { name: 'Europe Studio, enterprise, 120 conversations with new activity' });
+    expect(europe).toHaveTextContent(/99\+$/u);
+    fireEvent.pointerMove(within(europe).getByText('99+'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('120 conversations with new activity');
+    cleanup();
 
     renderMenu({
       attention: {
         [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
-          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true, unreadAndNeedsInputCount: 1,
+          // Only an agent waiting on input: no conversation to count.
+          waitingForYou: 1, waitingReason: 'needs_input', hasUnreadActivity: false, readerAttentionCount: 0,
         },
       },
     });
-    const triggers = screen.getAllByRole('button', { name: /Ada/u });
-    fireEvent.pointerDown(triggers[triggers.length - 1]!, { button: 0, ctrlKey: false });
-    const dot = (await screen.findAllByLabelText('Unread activity')).at(-1)!;
-    fireEvent.pointerMove(dot);
-    await waitFor(() => expect(screen.getAllByRole('tooltip').at(-1)).toHaveTextContent(UNREAD_ACTIVITY_DESCRIPTION));
+    expect(screen.getByRole('button', { name: /Ada/u })).not.toHaveAccessibleName(/another organization/u);
+    openMenu();
+    expect(screen.getByRole('menuitem', { name: 'Europe Studio, enterprise' })).toHaveTextContent(/^EEurope Studioenterprise$/u);
   });
 
   it('closes once a switch has taken and stays open while it has not', async () => {
@@ -201,7 +210,7 @@ describe('organization account menu', () => {
     renderMenu({
       attention: {
         [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
-          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true, unreadAndNeedsInputCount: 1,
+          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true, readerAttentionCount: 1,
         },
       },
     });
@@ -234,7 +243,7 @@ describe('organization account menu', () => {
     // so the sentence is read off the row rather than matched as one text node.
     expect(screen.getByText(/Counts last updated/u).closest('.workspace-counts-stale'))
       .toHaveTextContent('Counts last updated 7 minutes ago');
-    expect(screen.getByLabelText('3 mentions waiting for you')).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: /Europe Studio.*3 conversations with new activity/u })).toHaveTextContent(/3$/u);
   });
 
   it('keeps the legacy one-organization anatomy while the flag is off', () => {
@@ -499,11 +508,21 @@ describe('organization account menu', () => {
   });
 
   it.each([true, false])('shows the active organization\'s usage with organizations enabled=%s', async (enabled) => {
-    renderMenu({ enabled, activeUsage: <span>72% left this week</span> });
+    renderMenu({ enabled, activeUsage: <span>72% left till Thu 9:00 AM</span> });
     openMenu();
     const menu = await screen.findByRole('menu');
-    expect(within(menu).getAllByText('72% left this week')).toHaveLength(1);
-    // Under the active row when the list is shown; on its own when it is not.
+    expect(within(menu).getAllByText('72% left till Thu 9:00 AM')).toHaveLength(1);
     expect(within(menu).queryByText('Organizations') !== null).toBe(enabled);
+  });
+
+  it('puts the usage row right under Settings, ahead of the Organizations list', async () => {
+    renderMenu({ enabled: true, presentation: 'grok', activeUsage: <span>72% left till Thu 9:00 AM</span> });
+    openMenu();
+    const menu = await screen.findByRole('menu');
+    const settingsRow = within(menu).getByRole('menuitem', { name: 'Settings' });
+    const usage = within(menu).getByText('72% left till Thu 9:00 AM');
+    const organizations = within(menu).getByText('Organizations');
+    expect(settingsRow.nextElementSibling).toBe(usage);
+    expect(usage.compareDocumentPosition(organizations) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

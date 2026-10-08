@@ -1,6 +1,8 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import {
+  conversationResourceLinks,
   loadVisibleWorkstreamResourceInventory,
+  type ConversationResourceLinks,
   type VisibleWorkstreamResourceRow,
 } from "../src/services/workstream-resource-visibility";
 import {
@@ -17,6 +19,7 @@ import {
 } from "./helpers/cloudflare-test";
 import {
   seedWorkstreamObjectRoot,
+  testConversationResourceLinks,
   testResourcePort,
   testTranscriptPort,
   testWorkstreamObjectStore,
@@ -129,7 +132,8 @@ afterEach(() => {
 function objectStore(): {
   store: DatabaseSync;
   transcript: TranscriptObjectPort;
-  attachments: ResourceObjectPort;
+  attachments: ConversationResourceLinks;
+  port: ResourceObjectPort;
 } {
   const store = testWorkstreamObjectStore();
   openObjectStores.push(store);
@@ -144,7 +148,12 @@ function objectStore(): {
      VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
              'member_message', '{}', 0, 'test/model', 1, 1)`,
   ).run(CHECKPOINT_RUN);
-  return { store, transcript: testTranscriptPort(store), attachments: testResourcePort(store) };
+  return {
+    store,
+    transcript: testTranscriptPort(store),
+    attachments: testConversationResourceLinks(store),
+    port: testResourcePort(store),
+  };
 }
 
 /** Put the object's resource-inventory revision where a fence will accept it. */
@@ -366,7 +375,7 @@ describe("work-stream compaction resource inventory", () => {
   });
 
   it("rejects a visibility change between inventory preparation and appendix rendering", async () => {
-    const { store, attachments } = objectStore();
+    const { store, port } = objectStore();
     const database = createTestD1Database({
       prepare() {
         return createTestD1PreparedStatement({
@@ -383,14 +392,14 @@ describe("work-stream compaction resource inventory", () => {
     setInventoryRevision(store, 1);
     let reads = 0;
     const shifting: ResourceObjectPort = {
-      ...attachments,
+      ...port,
       inventoryRevision: async () => {
         reads += 1;
-        return reads === 1 ? attachments.inventoryRevision() : 2;
+        return reads === 1 ? port.inventoryRevision() : 2;
       },
     };
 
-    await expect(loadVisibleWorkstreamResourceInventory(database, shifting, {
+    await expect(loadVisibleWorkstreamResourceInventory(database, conversationResourceLinks(shifting, () => shifting), {
       workspaceId: "1629dee4-8cc4-4531-81f9-b2be8614e062",
       workstreamId: WORKSTREAM,
       principal: { type: "user", userId: asUserId("4b2a1529-867b-4d69-8685-b1722ccd0149") },
