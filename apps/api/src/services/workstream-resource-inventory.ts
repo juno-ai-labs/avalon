@@ -3,7 +3,7 @@ import {
   classifyAttachmentKind,
   type ExecutionPrincipal,
 } from "@rally/contracts";
-import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
+import type { ConversationResourceLinks } from "./workstream-resource-visibility";
 import {
   loadVisibleWorkstreamResourceInventory,
   type VisibleWorkstreamResourceInventory,
@@ -62,7 +62,7 @@ export function renderWorkstreamResourceInventoryAggregate(input: {
 
 export async function renderAuthorizedWorkstreamResourceInventory(
   database: D1Database,
-  attachments: ResourceObjectPort,
+  attachments: ConversationResourceLinks,
   input: {
     workspaceId: string;
     workstreamId: string;

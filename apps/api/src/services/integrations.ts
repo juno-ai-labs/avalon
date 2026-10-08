@@ -154,6 +154,8 @@ import {
   executionPrincipalKey,
   loadWorkstreamResourceInventoryFingerprint,
   loadVisibleWorkstreamResourceInventory,
+  ownInventoryRevision,
+  type ConversationResourceLinks,
   WorkstreamResourceInventoryChangedError,
 } from "./workstream-resource-visibility";
 import {
@@ -252,12 +254,11 @@ import { renderSubstreamInitialContext } from "./substream-initial-context";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
-import { createResourceObjectPort } from "../runtime/resource-port";
+import { createConversationResourceLinks } from "../runtime/resource-port";
 import { createWorkstreamArtifactDataTools } from "./workstream-artifact-data-tools";
 import { createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
-import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import { createIdentityObjectPort } from "../runtime/identity-port";
@@ -1024,7 +1025,7 @@ type TranscriptMessageLister = (
 async function loadWorkstreamContextCompaction(
   database: D1Database,
   transcript: Pick<TranscriptObjectPort, "compactionCheckpoint">,
-  attachments: ResourceObjectPort,
+  attachments: ConversationResourceLinks,
   workspaceId: string,
   workstreamId: string,
   principal: ExecutionPrincipal,
@@ -2797,7 +2798,7 @@ export async function runWorkstreamHarness(
     ? await loadWorkstreamContextCompaction(
         env.DB,
         orderedTranscript,
-        createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+        createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
         input.workspaceId,
         input.parentId,
         input.executionPrincipal,
@@ -3427,11 +3428,8 @@ export async function runWorkstreamHarness(
           if (!preparedCompactionVisibilityFingerprint) {
             throw new Error("compaction_resource_visibility_changed");
           }
-          const revision = Number.parseInt(
-            preparedCompactionVisibilityFingerprint.replace(/^inventory:/u, ""),
-            10,
-          );
-          if (!Number.isSafeInteger(revision) || revision < 0) {
+          const revision = ownInventoryRevision(preparedCompactionVisibilityFingerprint);
+          if (revision === null) {
             throw new Error("invalid_resource_inventory_revision");
           }
           const compaction = {
@@ -3479,7 +3477,7 @@ export async function runWorkstreamHarness(
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             preparedCompactionVisibilityFingerprint = await loadWorkstreamResourceInventoryFingerprint(
-              createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+              createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
             );
           },
           renderAppendix: async () => {
@@ -3492,7 +3490,7 @@ export async function runWorkstreamHarness(
             try {
               current = await loadVisibleWorkstreamResourceInventory(
                 env.DB,
-                createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+                createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
                 {
                   workspaceId: input.workspaceId,
                   workstreamId: input.parentId,
@@ -5328,7 +5326,7 @@ async function loadAuthorizedAttachmentReplay(
 // deliberately execution-scoped: connection changes are not cached across runs.
 async function loadHarnessInventory(env: Env, input: WorkstreamWorkflowInput) {
   return Promise.all([
-    createResourceObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0").attachedResourceIds(),
+    createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0").attachedResourceIds(),
     env.DB.prepare(
       `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
        ORDER BY created_at ASC`,
