@@ -243,6 +243,20 @@ with Rally's avatar, using the composer highlight's boundaries. It emits spans
 through `hName` nodes, not a link, so there is no scheme for message text to
 forge, and code and link labels stay as written.
 
+The same pass draws a typed `@address`. That is how a message names somebody
+invited to the Organization who has no account yet
+([scope invitations](scope-invitations.md#invitees-in-the-people-pickers)), so
+the address is the whole mention. GFM autolinks a bare address, so the pass
+reads two shapes: `@address` in one text node, and an `@` closing a text node
+followed by the `mailto:` link GFM made of the address. Both become a span
+carrying `data-email-mention`, whose text is the address as written. The `span`
+override resolves it against `EmailMentionContext`, which the Channel and
+new-Channel screens fill from the roster and the invitees: a member who holds
+the address draws as their person chip, an invitee as `.mention-chip-invited`
+(an outline and muted ink rather than a fill), and anybody else as the text.
+Resolving at render rather than at parse is what turns the chip into the
+person's name once they join, with nothing rewritten in the stored message.
+
 ### Web links and favicons
 
 `remark-gfm` owns autolinking as well as tables and footnotes. A naked
@@ -911,6 +925,22 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-10-08 — A person's typed `@address` draws as a chip
+
+**Changed:** `remarkRallyMentions` also turns `@address` into a span the `span`
+override resolves against `EmailMentionContext`: the member who holds the
+address, an invitee drawn muted, or the text as written.
+
+**Why:** An invitee has no user, so their mention cannot be a `person://`
+link, and a plain `@katherine@…` read as an address rather than a tag. The
+address resolves at render so the chip becomes the person once they join.
+
+**Considered and rejected:** An `invitee://` link through the `a` override.
+It would widen `urlTransform`, the one gate that keeps a model-chosen
+destination out of the DOM, for a mention that needs no destination. The
+`mailto:` GFM makes of an address after an `@` is no longer drawn as a link in
+a person's message, which is the price.
 
 ### 2026-10-05 — A person's typed `@Rally` draws as a chip
 

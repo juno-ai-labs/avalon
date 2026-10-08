@@ -7227,6 +7227,9 @@ button.new-channel-roster[aria-expanded='true'] { background-image: var(--hover-
   transform-origin: bottom left;
   width: 260px;
   z-index: 30;
+  /* One column the popover's width, so a long address ellipsizes rather than
+     widening the track and pushing a row's controls out of view. */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 [data-theme='dark'] .new-channel-popover { background: var(--av-sys-color-surface-elevated); }

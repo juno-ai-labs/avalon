@@ -33,6 +33,8 @@ conversation owner.
 | `apps/api/src/durable-objects/scope-invitation-service.ts` | Current sharing authority, relationship admission, grant activation on claim, and email delivery. |
 | `apps/api/src/durable-objects/scope-invitation-storage.ts` | Operation receipts, share state, encrypted delivery and claim binding. |
 | `apps/api/src/durable-objects/hosted-parent.ts` | Addressed RPCs and delivery alarm execution. |
+| `apps/api/src/services/workspace-service.ts` (`listInvitees`), `GET /workspace/invitees` | Pending Organization invitations as every member may see them: address and date, for the people pickers. |
+| `apps/desktop/src/renderer/lib/workspace-invitees.ts` | The invitee query, the member-shaped invitee (`status: 'invited'`), and the directory the `@address` chip resolves against. |
 
 ## How it works
 
@@ -284,6 +286,38 @@ infer current access from an old operation receipt. Removing a direct child
 grant leaves Main, parent and sibling grants intact. Inherited access can remain,
 and the panel states that distinction. Existing last-participant rules apply.
 
+### Invitees in the people pickers
+
+Somebody invited to the Organization has no user until they sign in, so they
+cannot be a participant or a person mention. They can be shared a conversation
+by address, which is this module, and that is how the pickers bring them in.
+`GET /workspace/invitees` lists the addresses with a pending Organization
+invitation to any member (a guest is refused, as for the roster), leaving out
+an address that already has a membership. The desktop reads it under
+`['workspace-members', 'invitees']`, so the roster's `member_directory`
+publication, which an invitation, acceptance and revocation each send, refreshes it.
+
+Three surfaces offer invitees after the members, labelled **Invited** with the
+address in muted ink; the `@` list also labels everyone else **Member** or
+**Guest** in place of the old **Person**:
+
+- **The composer's `@` list.** An invitee's mention is the typed `@address`;
+  no identity rides with it. On send the composer hands the host the invitees
+  the text names, and the host shares the conversation with them before the
+  message goes. A personal Channel asks first, in the dialog that already asks
+  about members from outside.
+- **The People level of the title menu.** Suggested lists invitees with an
+  Add that shares by address, as typing the address and pressing Enter does.
+- **The new-Channel Participants row.** An invitee is held as a member-shaped
+  entry (`status: 'invited'`, id `invitee:<address>`), kept out of
+  `participantIds`, and shared the Channel once the create answers. That share
+  is not awaited, so the Channel opens on the create alone; a failure is logged
+  and shows as the address missing from the Channel's People.
+
+When the invitee signs in, the claim makes them a guest of the Channel, and
+accepting the Organization invitation makes them a member, which keeps the
+grant.
+
 ## Invariants
 
 - A share is held by the verified address it names and nothing else. A forwarded
@@ -302,6 +336,9 @@ and the panel states that distinction. Existing last-participant rules apply.
   so a share that could not be claimed yet (migration, sharer state, a failure
   mid-transaction) is retried on the next sign-in.
 - Claiming never fails a sign-in.
+- An invitee's stand-in id (`invitee:<address>`) never reaches the server. It
+  carries `status: 'invited'`, and every surface that sends ids already keeps a
+  membership that is not active out of what it sends.
 - The preview reads the offered conversation and no other. Main is previewed
   only where Main is what is offered.
 - Nothing rendered into the email can fail the invitation. A name, a title or a
@@ -387,6 +424,27 @@ handoff against real Main and child agents, including refusal to transfer for a
 nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
+
+### 2026-10-08 — Offer pending Organization invitees wherever people are picked
+
+**What changed.** `GET /workspace/invitees` lists pending Organization
+invitations to members. The `@` list, the People level and the new-Channel
+Participants row offer those addresses as **Invited**, and picking or
+mentioning one shares the conversation with the address. The `@` list labels
+people **Member**, **Guest** or **Invited** instead of **Person**.
+
+**Why.** A teammate invited during onboarding could not be tagged in a Channel
+until they accepted, so the inviter added them a second time at the Channel by
+address. That second step is exactly a share by address, so the pickers now do
+it for them.
+
+**Considered and rejected.** Creating a placeholder user and an `invited`
+membership at invitation time, so an invitee had a real id to mention and add.
+`users.email` is unique and every sign-in path creates its user by inserting,
+so a placeholder would collide with the invitee's own sign-in and need identity
+linking by address across three creation paths. Reusing the share keeps
+identity untouched, at the cost of a mention that carries no identity and an
+extra email from the share.
 
 ### 2026-10-06 — Claim shares at sign-in; drop the acceptance step and the link token
 
