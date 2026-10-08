@@ -299,22 +299,22 @@ describe('Usage in the Organization menu', () => {
     return onSelect;
   }
 
-  it('shows a thin meter and how much is left this week, and opens Settings when chosen', async () => {
+  it('shows a thin meter and how much is left till the week resets, and opens Settings when chosen', async () => {
     const onSelect = renderMenuItem(apiAnswering(usage(72)));
 
-    const item = await screen.findByRole('menuitem', { name: 'Quota, 72% left this week' });
+    const item = await screen.findByRole('menuitem', { name: 'Quota, 72% left till Thu 9:00 AM' });
     expect(within(item).getByText('Quota')).toBeVisible();
-    expect(within(item).getByText('72% left this week')).toBeVisible();
+    expect(within(item).getByText('72% left till Thu 9:00 AM')).toBeVisible();
     expect(within(item).getByRole('meter', { name: 'Weekly quota left' })).toHaveClass('meter-thin');
 
     fireEvent.click(item);
     expect(onSelect).toHaveBeenCalledOnce();
   });
 
-  it('says the quota is used at 0%', async () => {
+  it('says 0% is left when the quota is used', async () => {
     renderMenuItem(apiAnswering(usage(0, 5_000_000)));
 
-    expect(await screen.findByText('Quota used this week')).toBeVisible();
+    expect(await screen.findByText('0% left till Thu 9:00 AM')).toBeVisible();
     expect(screen.queryByText('Not billed')).not.toBeInTheDocument();
   });
 
@@ -330,11 +330,11 @@ describe('Usage in the Organization menu', () => {
     await usageCacheSlice.write(SCOPE, 'usage', { usage: usage(55), fetchedAt: '2026-10-03T14:14:00.000Z' });
     let fail: (error: Error) => void = () => undefined;
     renderMenuItem({ getWorkspaceUsage: () => new Promise((_, reject) => { fail = reject; }) });
-    expect(await screen.findByText('55% left this week')).toBeVisible();
+    expect(await screen.findByText('55% left till Thu 9:00 AM')).toBeVisible();
 
     fail(new Error('Service unavailable'));
 
-    await waitFor(() => expect(screen.queryByText('55% left this week')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('55% left till Thu 9:00 AM')).not.toBeInTheDocument());
     expect(screen.queryAllByRole('menuitem')).toHaveLength(1);
   });
 });
