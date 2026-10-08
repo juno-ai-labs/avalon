@@ -64,9 +64,8 @@ shows where a release would put it, and the pinned rows after it move down to
 make room. A release pins the Channel into that slot.
 
 On a touch screen the drag starts with the same long press that opens a row's
-menu. A row drag cancels the menu's pending long press, or closes the menu if
-it already opened, and the channel list's own menu ignores a long press that
-lands on a row.
+menu. A row drag closes that menu and keeps it shut until the next press, and
+the channel list's own menu ignores a long press that lands on a row.
 
 All's order lives in `workspace_pinned_order` (WorkspaceDO migration 87) and
 reaches clients as `pinnedOrder` on the sidebar payload and the Space snapshot.
@@ -462,9 +461,10 @@ placements, so the migration intentionally clears all existing pins.
 
 ### 2026-10-08 — A touch drag no longer opens the row menus over itself
 
-**What changed:** Starting a row drag sends the row a `pointercancel` and, if
-the row's menu is already open, an Escape. The channel list's empty-space menu
-now skips its long-press timer when the press lands on a row, link or button.
+**What changed:** A row's menu and the channel list's empty-space menu are
+now controlled. A row's menu closes when the row is dragged and refuses to open
+until the next press; the list's menu refuses to open for a press that began on
+a row, link or button.
 
 **Why:** In Safari on iPhone a long press on a channel lifted it into a drag
 and also opened two menus: the row's own and the list's "Start New Channel".
@@ -477,14 +477,15 @@ the Pinned placeholder never appeared.
 
 **Considered and rejected:** Turning the drag off on touch screens and leaving
 Pin in the menu as the touch path. It removes a gesture iPad users expect.
-Remounting the menu to close it was rejected because the menu's trigger is the
-drag source, and remounting it mid-drag ends the drag.
+Calling `preventDefault` on the list's touch `pointerdown`, which makes Radix
+skip its timer: it cancels every tap on a row too, and WebKit ties a tap's
+`click` and gestures to that event. Sending a synthetic `pointercancel` and
+Escape to the uncontrolled menus worked in tests but leaned on Radix
+internals.
 
-**Consequences:** The synthetic `pointercancel` and Escape are the only hooks
-Radix's uncontrolled context menu offers; keep them unless the menus become
-controlled. The row's own `onPointerCancel` runs too, which only closes the
-hover preview a drag closes anyway. Not yet confirmed on a device: iOS's
-timing of the drag start against the 700ms timer was inferred from a
+**Consequences:** Both menus own their `open` state now; anything else that
+opens or closes them has to go through it. Not yet confirmed on a device:
+iOS's timing of the drag start against the 700ms timer was inferred from a
 screenshot.
 
 Shipped in juno-ai-labs/avalon#1169, a follow-up to juno-ai-labs/avalon#1166.
