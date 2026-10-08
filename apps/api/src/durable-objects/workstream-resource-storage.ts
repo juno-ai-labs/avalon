@@ -12,8 +12,9 @@
  *
  * `resource_inventory_revision` is a single row that every path changing the
  * authorized inventory advances. It is not bookkeeping: the compaction
- * checkpoint's visibility fingerprint is `inventory:<revision>`, so a change
- * that failed to bump it would let a stale checkpoint keep matching.
+ * checkpoint's visibility fingerprint starts `inventory:<revision>` (a
+ * Breakout's adds its Channel's after a slash), so a change that failed to bump
+ * it would let a stale checkpoint keep matching.
  */
 
 import { boundParameterChunks } from "./bound-parameters";
@@ -159,5 +160,23 @@ export class WorkstreamResourceStorage {
     return Number(first(this.sql.exec<{ revision: number } & Record<string, SqlStorageValue>>(
       `SELECT revision FROM resource_inventory_revision WHERE id = 1`,
     ))?.revision ?? 0);
+  }
+
+  /**
+   * Whether this conversation is a Breakout, whose runs also see every
+   * resource its Channel's Main conversation has attached.
+   *
+   * Asked of the object rather than of the caller because most readers hold
+   * only the port for "the conversation this run executes in", not its
+   * address. A Sidekick's run child is a substream too, of an automation
+   * parent, and inherits nothing.
+   */
+  inheritsChannelLinks(): boolean {
+    return first(this.sql.exec<{ inherits: number } & Record<string, SqlStorageValue>>(
+      `SELECT workstream.parent_kind = 'workstream'
+              AND COALESCE(identity.external_substream_id, '0') <> '0' AS inherits
+         FROM workstream LEFT JOIN substream_agent_identity AS identity ON identity.id = 1
+        WHERE workstream.id = 1`,
+    ))?.inherits === 1;
   }
 }
