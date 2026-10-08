@@ -464,6 +464,8 @@ throws there; the Node adapter was the one breaking the shape it claims.
 host, so the watcher and `WorkspaceSocketConnection.send` need no guard of
 their own.
 
+Shipped in #1177.
+
 ### 2026-10-07 — Access requests in Needs attention
 
 **What changed:** Requests to join the reader's Channels and Breakouts head
