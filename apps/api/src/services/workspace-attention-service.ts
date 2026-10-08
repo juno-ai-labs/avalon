@@ -9,7 +9,7 @@ import type { Region } from "@rally/contracts/regions";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
-import { diagnosticErrorCode } from "../observability/logger";
+import { settledFailureCode } from "../lib/settled-failure-code";
 import {
   durableObjectStubForWorkspace,
   workspacePlacementAffinity,
@@ -73,7 +73,7 @@ export async function membershipAttention(
     failed: settled.flatMap((result, index) => result.status === "rejected"
       ? [{
           workspaceId: members[index]!.id,
-          code: diagnosticErrorCode(result.reason, "workspace_attention_failed"),
+          code: settledFailureCode(result.reason, "workspace_attention"),
         }]
       : []),
   };

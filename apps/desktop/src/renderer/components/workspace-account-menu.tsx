@@ -163,8 +163,11 @@ export function WorkspaceAccountMenu({
     const value = attention[desktopWorkspaceIdentityKey(workspace.region, workspace.id)];
     return value ? [value] : [];
   }) : [];
-  const backgroundHasAttention = backgroundAttention.some((value) => value.readerAttentionCount > 0);
-  const backgroundAttentionDescription = backgroundAttention.some((value) => value.waitingForYou > 0)
+  // Only Organizations whose row shows a count, so the trigger's dot, its name
+  // and the rows agree.
+  const counted = backgroundAttention.filter((value) => value.readerAttentionCount > 0);
+  const backgroundHasAttention = counted.length > 0;
+  const backgroundAttentionDescription = counted.some((value) => value.waitingForYou > 0)
     ? 'attention in another organization'
     : backgroundHasAttention ? 'unread activity in another organization' : null;
   const multipleRegions = new Set(workspaces.map((workspace) => workspace.region)).size > 1;

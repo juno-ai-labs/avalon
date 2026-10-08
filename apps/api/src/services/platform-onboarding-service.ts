@@ -20,7 +20,6 @@ import {
   type Workspace,
 } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
-import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
@@ -54,6 +53,7 @@ import {
 import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
 import { claimScopeInvitations } from "./scope-invitation-claims";
 import { membershipAttention } from "./workspace-attention-service";
+import { settledFailureCode } from "../lib/settled-failure-code";
 import {
   PreferenceProjectionSchema,
   applyRegionalPreferenceProjection,
@@ -379,7 +379,12 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
    * browser that holds no workspace credential to ask each one itself.
    */
   async attention(rawIdentity: PlatformIdentity): Promise<RegionalAttention> {
-    const user = await this.ensureRegionalUser(platformIdentitySchema.parse(rawIdentity));
+    // A read, so it never writes: `discover`, which the list ran first, is what
+    // links or refreshes the regional user. Not linked yet means no membership here.
+    const identity = platformIdentitySchema.parse(rawIdentity);
+    const user = await this.env.DB.prepare("SELECT id FROM users WHERE platform_user_id = ?")
+      .bind(identity.platformUserId).first<{ id: string }>();
+    if (!user) return { attention: [], failed: [] };
     const workspaces = await new AuthService(this.env).listRegionalWorkspaces(user.id);
     return membershipAttention(this.env, user.id, workspaces);
   }
@@ -1301,13 +1306,13 @@ export class PlatformOnboardingService {
     return {
       workspaces: settled.flatMap((result) => result.status === "fulfilled" ? result.value.workspaces : []),
       failed: settled.flatMap((result, index) => result.status === "rejected"
-        ? [{ region: regions[index]!, code: result.reason instanceof ApiError ? result.reason.code : codeShaped(result.reason instanceof Error ? result.reason.name : "unknown") }]
+        ? [{ region: regions[index]!, code: settledFailureCode(result.reason, "regional_discovery") }]
         : []),
     };
   }
 
   /** Attention in every other deployment, beside `otherDeploymentWorkspaces`; one down deployment hides only its own. */
-  async otherDeploymentAttention(): Promise<{ attention: RegionalAttention["attention"]; failed: Array<{ region: Region; code: string }> }> {
+  async otherDeploymentAttention(): Promise<{ attention: RegionalAttention["attention"]; failed: Array<{ region: Region; workspaceId?: string; code: string }> }> {
     const identity = await this.loadPlatformIdentity();
     if (identity.loginIdentities.length === 0) return { attention: [], failed: [] };
     const regions = configuredRegions.filter((region) => region !== this.env.AVALON_REGION);
@@ -1315,8 +1320,8 @@ export class PlatformOnboardingService {
     return {
       attention: settled.flatMap((result) => result.status === "fulfilled" ? result.value.attention : []),
       failed: settled.flatMap((result, index) => result.status === "rejected"
-        ? [{ region: regions[index]!, code: diagnosticErrorCode(result.reason, "regional_attention_failed") }]
-        : result.value.failed.map((item) => ({ region: regions[index]!, code: item.code }))),
+        ? [{ region: regions[index]!, code: settledFailureCode(result.reason, "regional_attention") }]
+        : result.value.failed.map((item) => ({ region: regions[index]!, workspaceId: item.workspaceId, code: item.code }))),
     };
   }
 

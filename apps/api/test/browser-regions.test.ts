@@ -119,6 +119,17 @@ it("reads another deployment's attention from Global under that deployment's own
     .toEqual([["enterprise", enterpriseWorkspaceId, 3]]);
 });
 
+it("reads attention without linking a person another deployment has not linked yet", async () => {
+  const strangerId = "00000000-0000-7000-8000-00000000a002";
+  globalDb.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at, platform_user_id)
+    VALUES (?, 'google-stranger', 'stranger@example.test', 'Stranger', ?, ?, ?)`).run(strangerId, at, at, strangerId);
+  const registration = await new BrowserSessionService(global()).register(await new AuthService(global()).createIdentitySession(strangerId));
+  const response = await request("workspaces/attention", `__Host-rally-browser-global=${registration.credential}`);
+  expect(BrowserWorkspaceAttentionSchema.parse(await response.json()).attention).toEqual([]);
+  // Linking is discovery's job; a badge read writes nothing.
+  expect(enterpriseDb.prepare("SELECT COUNT(*) AS count FROM users").get()).toEqual({ count: 1 });
+});
+
 it("refuses a workspace the identity is not a member of, and mints nothing there", async () => {
   const cookie = await signedIn();
   const refused = await request("workspace/activate", cookie, { region: "enterprise", workspaceId: strangerWorkspaceId });
