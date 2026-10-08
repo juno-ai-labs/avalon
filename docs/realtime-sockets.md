@@ -504,6 +504,10 @@ filter over `watchWorkspaceSocket` in the same module, the transport alone,
 which the desktop's main process also uses to hold the Channel directory behind
 the menu bar ([`menu-bar.md`](menu-bar.md)).
 
+After a plan change, WorkspaceDO sends `workspace_usage`, the new usage meter,
+to every member socket, outside the waterline and never replayed.
+[`usage-metering.md`](usage-metering.md) owns it.
+
 With `channelsBySpace`, that page is empty and the directory comes from the
 Space walk above.
 

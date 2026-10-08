@@ -8,7 +8,7 @@ import {
 } from '@rally/contracts';
 import type { SpaceDirectory } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { onlineManager, QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, render, screen } from '@testing-library/react';
 import { StrictMode, useEffect, type JSX, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +20,7 @@ import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
+import { organizationUsageQueryKey, usageCacheSlice, useOrganizationUsage, type OrganizationUsageApi } from './organization-usage';
 import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 import { WORKSPACE_SOCKET_OPEN_TIMEOUT_MS } from '@rally/contracts/workspace-reach-watch';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
@@ -176,6 +177,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  // A test that fires the window's `offline` event leaves React Query's
+  // global online state offline, and every later query would pause.
+  onlineManager.setOnline(true);
   reportTelemetryProductIntent.mockClear();
   applicationFocus.foregrounded = false;
   applicationFocus.listeners.clear();
@@ -2701,6 +2705,96 @@ describe('the organization socket over the local cache', () => {
       expect(row?.workstreams.map((item) => item.title)).toEqual(['Live row']);
     }, { timeout: LOCAL_CACHE_WRITE_COALESCE_MS + 2_000 });
   });
+  it('reads the meter again on every subscribe answer, and writes one pushed after a plan change into the read and the disk', async () => {
+    await clearAllLocalCache();
+    const queryClient = new QueryClient();
+    const usageKey = organizationUsageQueryKey(scope);
+    const starter = {
+      plan: 'starter',
+      quotaRemainingPercent: 10,
+      weekResetsAt: '2026-10-08T09:00:00.000Z',
+      overage: { amountMicrousd: 0, periodStart: '2026-10-01T09:00:00.000Z', periodEndsAt: '2026-11-01T09:00:00.000Z', billed: false },
+    } as const;
+    const growth = { ...starter, plan: 'growth', quotaRemainingPercent: 64 } as const;
+    queryClient.setQueryData(usageKey, { usage: starter, fetchedAt: '2026-10-03T00:00:00.000Z' });
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <LocalCacheScopeProvider scope={scope}>
+          <WorkspaceSocketProvider region="global"
+            api={{ getWorkspaceSocketTicket }}
+            workspaceId="00000000-0000-7000-8000-000000000001"
+          >
+            <div />
+          </WorkspaceSocketProvider>
+        </LocalCacheScopeProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    // A plan change made while this socket was away is not replayed.
+    act(() => socket.message(syncPayload([])));
+    expect(queryClient.getQueryState(usageKey)?.isInvalidated).toBe(true);
+
+    act(() => socket.message({ type: 'workspace_usage', occurredAt: '2026-10-03T00:01:00.000Z', usage: growth }));
+    expect(queryClient.getQueryData(usageKey)).toMatchObject({ usage: growth });
+    await vi.waitFor(async () => {
+      expect(await usageCacheSlice.read(scope, 'usage')).toMatchObject({ usage: growth });
+    }, { timeout: LOCAL_CACHE_WRITE_COALESCE_MS + 2_000 });
+  });
+  it('keeps a pushed meter over a read that was already in flight when it arrived', async () => {
+    await clearAllLocalCache();
+    const queryClient = new QueryClient();
+    const meter = (plan: 'starter' | 'growth', quotaRemainingPercent: number) => ({
+      plan,
+      quotaRemainingPercent,
+      weekResetsAt: '2026-10-08T09:00:00.000Z',
+      overage: { amountMicrousd: 0, periodStart: '2026-10-01T09:00:00.000Z', periodEndsAt: '2026-11-01T09:00:00.000Z', billed: false },
+    } as const);
+    let answerOldRead: (usage: ReturnType<typeof meter>) => void = () => undefined;
+    const getWorkspaceUsage = vi.fn(() => new Promise<ReturnType<typeof meter>>((resolve) => { answerOldRead = resolve; }));
+    const usageApi: OrganizationUsageApi = { getWorkspaceUsage };
+    function Meter(): JSX.Element {
+      const usage = useOrganizationUsage(usageApi);
+      return <div>{usage.status === 'ready' ? `plan:${usage.reading.usage.plan}` : usage.status}</div>;
+    }
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <LocalCacheScopeProvider scope={scope}>
+          <WorkspaceSocketProvider region="global"
+            api={{ getWorkspaceSocketTicket }}
+            workspaceId="00000000-0000-7000-8000-000000000001"
+          >
+            <Meter />
+          </WorkspaceSocketProvider>
+        </LocalCacheScopeProvider>
+      </QueryClientProvider>,
+    );
+    await vi.waitFor(() => expect(getWorkspaceUsage).toHaveBeenCalledTimes(1));
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    act(() => socket.message({ type: 'workspace_usage', occurredAt: '2026-10-03T00:01:00.000Z', usage: meter('growth', 64) }));
+    // The read started before the change answers with the plan it saw.
+    await act(async () => { answerOldRead(meter('starter', 10)); await flushPromises(); });
+
+    expect(await screen.findByText('plan:growth')).toBeInTheDocument();
+    expect(queryClient.getQueryData(organizationUsageQueryKey(scope))).toMatchObject({ usage: { plan: 'growth' } });
+    await new Promise((resolve) => setTimeout(resolve, LOCAL_CACHE_WRITE_COALESCE_MS + 100));
+    expect(await usageCacheSlice.read(scope, 'usage')).toMatchObject({ usage: { plan: 'growth' } });
+  });
 });
 
 describe('the organization-sync relay between windows', () => {
@@ -2778,6 +2872,16 @@ describe('the organization-sync relay between windows', () => {
       waterline: 2,
       items: [],
     }));
+    act(() => socket.message({
+      type: 'workspace_usage',
+      occurredAt: '2026-08-17T20:00:04.000Z',
+      usage: {
+        plan: 'growth',
+        quotaRemainingPercent: 64,
+        weekResetsAt: '2026-08-20T20:00:00.000Z',
+        overage: { amountMicrousd: 0, periodStart: '2026-08-01T20:00:00.000Z', periodEndsAt: '2026-09-01T20:00:00.000Z', billed: false },
+      },
+    }));
     await flushPromises();
 
     // `initial` is relayed whole: it names every topic because this socket
@@ -2786,11 +2890,16 @@ describe('the organization-sync relay between windows', () => {
     expect(syncRelay.published).toEqual([
       { type: 'state', region, workspaceId, state: 'connecting' },
       { type: 'state', region, workspaceId, state: 'connected' },
+      // A meter push made while the socket was away is not replayed, so the
+      // Settings window reads its own again on every subscribe answer.
+      { type: 'topics', region, workspaceId, waterline: 8, topics: ['usage'] },
       { type: 'topics', region, workspaceId, waterline: 8, topics: [...WORKSPACE_SYNC_TOPICS] },
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['member_directory'] },
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['feature_flags'] },
       // The Sidekicks window reads what the list push refetches, not the list.
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['automations'] },
+      // The meter travels by value on the socket and by name on the relay.
+      { type: 'topics', region, workspaceId, waterline: 9, topics: ['usage'] },
     ]);
   });
 
@@ -2827,8 +2936,10 @@ describe('the organization-sync relay between windows', () => {
     const queryClient = new QueryClient();
     const readMembers = vi.fn(async () => ['member']);
     const readFlags = vi.fn(async () => ClientFeatureFlagsSchema.parse({}));
+    const readUsage = vi.fn(async () => 'usage');
     const getWorkspaceSocketTicket = vi.fn(ticket);
     function Reads(): JSX.Element {
+      useQuery({ queryKey: ['workspace-usage', null], queryFn: readUsage, staleTime: 30_000, networkMode: 'always' });
       const members = useQuery({
         queryKey: ['workspace-members'], queryFn: readMembers, staleTime: 30_000, networkMode: 'always',
       });
@@ -2864,6 +2975,12 @@ describe('the organization-sync relay between windows', () => {
     // A flag change is a topic like any other: this window reads its own.
     relayToConsumer({ type: 'topics', region, workspaceId, waterline: 12, topics: ['feature_flags'] });
     await vi.waitFor(() => expect(readFlags).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+
+    // A plan change: this window has no socket, so it reads its own meter.
+    expect(readUsage).toHaveBeenCalledTimes(1);
+    relayToConsumer({ type: 'topics', region, workspaceId, waterline: 12, topics: ['usage'] });
+    await vi.waitFor(() => expect(readUsage).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+    expect(await screen.findByText('connected:12')).toBeInTheDocument();
 
     // News about another Organization is not this window's — including the
     // same UUID in another region.

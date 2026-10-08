@@ -29,6 +29,7 @@ import {
   safeParseSocketEvent,
 } from "@rally/contracts";
 import type { TelemetryEventProperties } from '@rally/contracts/telemetry';
+import { WorkspaceUsageEventSchema } from '@rally/contracts/usage';
 import {
   WORKSPACE_SOCKET_HEARTBEAT_MS,
   WORKSPACE_SOCKET_OPEN_TIMEOUT_MS,
@@ -52,6 +53,7 @@ import { applyChannelViewerState } from './channel-viewer-state';
 import { applyChannelRails, hasRailWaterline, holdsChannelRail, nextChannelRailRequest, settleUnanswered } from './channel-rails';
 import { retainConversationParents } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
+import { applyPushedOrganizationUsage, organizationUsageQueryKey } from './organization-usage';
 import { desktopBridge } from './platform';
 import {
   SPACES_QUERY_KEY,
@@ -86,6 +88,7 @@ import {
   sameWorkspaceSyncIdentity,
   type WorkspaceSyncConnectionState,
   type WorkspaceSyncPublication,
+  type WorkspaceSyncRelayTopic,
   type WorkspaceSyncSourceSnapshot,
 } from '../../common/workspace-sync-relay';
 import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
@@ -482,7 +485,7 @@ export function WorkspaceSocketProvider({
     };
     reportPresenceRef.current = sendPresence;
     const bridge = desktopBridge();
-    const publishTopics = (topics: WorkspaceSyncTopic[], waterline: number): void => {
+    const publishTopics = (topics: WorkspaceSyncRelayTopic[], waterline: number): void => {
       if (relay === 'publish') publishToMain({ type: 'topics', region, workspaceId, waterline, topics });
     };
     const initialApplicationFocusObservation = applicationFocusObservation;
@@ -1010,6 +1013,11 @@ export function WorkspaceSocketProvider({
             const directoryNeedsReconciling = sync.data.sidebar
               ? applyConnectedSidebar(sync.data.sidebar)
               : false;
+            // A plan-change push is not replayed: an open meter reads again.
+            if (sync.data.sidebar) {
+              void queryClient.invalidateQueries({ queryKey: organizationUsageQueryKey(localCacheScope) });
+              publishTopics(['usage'], Math.max(lastWaterline, sync.data.waterline));
+            }
             if (sync.data.sidebar && !firstSidebarApplied) {
               firstSidebarApplied = true;
               reportHandshake(diagnosticAttemptId, 'sync_applied');
@@ -1209,6 +1217,13 @@ export function WorkspaceSocketProvider({
             queryClient.setQueryData(accessRequestsQueryKey(workspaceId), accessRequests.data.requests);
             return;
           }
+          const usage = safeParseSocketEvent(WorkspaceUsageEventSchema, decoded);
+          if (usage.success) {
+            // A plan change moved the Organization's quota and overage.
+            applyPushedOrganizationUsage(queryClient, localCacheScope, usage.data.usage);
+            publishTopics(['usage'], lastWaterline);
+            return;
+          }
           const reachChanged = safeParseSocketEvent(WorkspaceReachChangedEventSchema, decoded);
           if (reachChanged.success) {
             // This person joined or left a Channel or Breakout. A member's
@@ -1280,6 +1295,7 @@ export function WorkspaceSocketProvider({
               ['space_conversations_changed', 'space conversations nudge', spaceConversations],
               ['workspace_reach_changed', 'reach change', reachChanged],
               ['workspace_access_requests', 'access requests', accessRequests],
+              ['workspace_usage', 'usage', usage],
             ],
           );
         });
@@ -1518,10 +1534,14 @@ export function WorkspaceSocketProvider({
         return;
       }
       if (!sameWorkspaceSyncIdentity(event, { region, workspaceId })) return;
-      setTopicWaterlines((current) => withTopicWaterline(current, event.topics, event.waterline));
+      const topics = event.topics.filter((topic): topic is WorkspaceSyncTopic => topic !== 'usage');
+      setTopicWaterlines((current) => withTopicWaterline(current, topics, event.waterline));
+      if (topics.length < event.topics.length) {
+        void queryClient.invalidateQueries({ queryKey: organizationUsageQueryKey(localCacheScope) });
+      }
       // The directory is socket-owned and a consumer holds none; asking its
       // query to refetch would ask a socket this window does not have.
-      for (const topic of event.topics) {
+      for (const topic of topics) {
         if (topic !== 'workstream_directory') invalidateTopic(queryClient, topic);
       }
     });
@@ -1535,7 +1555,7 @@ export function WorkspaceSocketProvider({
       stopped = true;
       stop();
     };
-  }, [queryClient, region, relay, workspaceId]);
+  }, [localCacheScope, queryClient, region, relay, workspaceId]);
 
   const listWorkstreams = useCallback<WorkspaceSocketContextValue['listWorkstreams']>(
     (input) => listWorkstreamsRef.current(input),

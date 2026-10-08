@@ -1,3 +1,4 @@
+import { asWorkspaceId } from "@rally/contracts";
 import {
   deriveOrganizationUsage,
   ORGANIZATION_PAYS,
@@ -13,9 +14,11 @@ import {
   type UsageEvent,
 } from "@rally/contracts/usage";
 import { describeZodIssues, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
 import type { WorkDeferral } from "../lib/defer";
-import { logStructuredEvent } from "../observability/logger";
+import { durableObjectStubForWorkspace, workspacePlacementAffinity } from "../lib/durable-object-namespace";
+import { diagnosticErrorCode, logStructuredEvent, logWarn } from "../observability/logger";
 
 /**
  * Usage quota metering: the only producer, the only ledger writer and the only
@@ -267,6 +270,43 @@ export async function setWorkspacePlan(
   await env.DB.prepare(`UPDATE workspaces SET plan = ?, updated_at = ? WHERE id = ?`)
     .bind(plan, at, workspaceId).run();
   return true;
+}
+
+/**
+ * Send the meter, as it reads now, to every member connected to the
+ * Organization, after a plan change moved its quota and overage. Read here
+ * rather than handed in, and stamped with when the read started, so that after
+ * two quick changes WorkspaceDO can drop whichever push read the earlier plan,
+ * in whatever order the two arrive.
+ *
+ * Post-commit and best effort: the plan has changed, so a failed push is
+ * logged and not reported as a failed change. A window that missed it shows
+ * the old meter until it next reads one, which every meter surface does when
+ * it opens and the desktop does on reconnect.
+ */
+export async function publishOrganizationUsage(
+  env: Env,
+  workspaceId: string,
+): Promise<void> {
+  try {
+    const readAtMs = Date.now();
+    const usage = await readOrganizationUsage(env, workspaceId, readAtMs);
+    if (!usage) return;
+    const placementAffinity = await workspacePlacementAffinity(env, workspaceId);
+    const workspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      workspaceId,
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+      placementAffinity,
+    );
+    await workspace.publishUsage(usage, new Date(readAtMs).toISOString(), workspaceId, placementAffinity);
+  } catch (error) {
+    logWarn(env, "usage_publish_failed", {
+      workspace_id: workspaceId,
+      error_code: diagnosticErrorCode(error, "usage_publish_failed"),
+    });
+  }
 }
 
 /**

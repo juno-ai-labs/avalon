@@ -1,4 +1,4 @@
-import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { onlineManager, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { LOW_QUOTA_PERCENT, OrganizationUsageSchema, PLANS, type OrganizationUsage, type PlanId } from '@rally/contracts/usage';
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { RallyApi } from './api';
@@ -8,10 +8,13 @@ import { useLocalCacheScope } from './local-cache-scope';
 /**
  * The Organization's usage meter as this device last read it.
  *
- * `GET /workspace/usage` is a plain REST read with no socket behind it: a figure
- * that may lag by minutes gains nothing from a push. So the reader fetches when
- * a surface that shows it opens, the Usage section of Settings or the
+ * `GET /workspace/usage` is a plain REST read: a figure that may lag by minutes
+ * gains nothing from a push as usage accrues. So the reader fetches when a
+ * surface that shows it opens, the Usage section of Settings or the
  * Organization menu, and paints the last answer this device saw while it waits.
+ * A plan change is the exception: it moves the quota at once, so the API sends
+ * the new meter on the workspace socket (`workspace_usage`) to every member,
+ * and `applyPushedOrganizationUsage` writes it in.
  * `docs/local-cache.md` owns the `usage` slice; the usage quota PRD
  * (`docs/PRDs/2026-10-03_usage-quota-metering/prd.md`) owns what each state says.
  */
@@ -55,6 +58,25 @@ export function organizationUsageQueryKey(scope: string | null): readonly ['work
   return ['workspace-usage', scope] as const;
 }
 
+/**
+ * Write a meter the workspace socket pushed after a plan change into the read
+ * and the cache, so an open meter repaints with no request and a closed one
+ * opens on it. A read already in flight is cancelled first: it may have seen
+ * the old plan, and landing after the push would revert it.
+ */
+export function applyPushedOrganizationUsage(
+  queryClient: QueryClient,
+  scope: string | null,
+  usage: OrganizationUsage,
+): void {
+  const key = organizationUsageQueryKey(scope);
+  const epoch = localCacheEpoch();
+  const reading = { usage, fetchedAt: new Date().toISOString() };
+  void queryClient.cancelQueries({ queryKey: key });
+  queryClient.setQueryData(key, reading);
+  if (scope) void usageCacheSlice.write(scope, USAGE_KEY, reading, USAGE_KEY, epoch);
+}
+
 export type OrganizationUsageState =
   | { status: 'loading' }
   | { status: 'error' }
@@ -85,7 +107,7 @@ export function useOrganizationUsage(api: OrganizationUsageApi | null): Organiza
       return reading;
     },
     enabled: Boolean(api),
-    // Opening the surface is the refresh: there is no push and no polling.
+    // Opening the surface is the refresh; only a plan change is pushed.
     refetchOnMount: 'always',
   });
 
