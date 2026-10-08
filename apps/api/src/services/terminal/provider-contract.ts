@@ -1,3 +1,4 @@
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import type {
   TerminalProviderRequestMeasurement,
   TerminalUtilityOperation,
@@ -169,6 +170,32 @@ export class TerminalProviderNotFoundError extends Error {
     super(message);
     this.name = "TerminalProviderNotFoundError";
   }
+}
+
+/**
+ * A provider failure after the RPC hop. `code` is what `terminalProviderErrorCode`
+ * read from the original error; the message is the provider's own text.
+ */
+export class TerminalProviderError extends Error {
+  constructor(message: string, readonly code: string) {
+    super(message);
+    this.name = "TerminalProviderError";
+  }
+}
+
+/**
+ * A provider failure as a code: the error's class, the HTTP status and the
+ * provider's machine-readable code where it gave one. Never the message, which
+ * is the provider's text and may carry identifiers.
+ */
+export function terminalProviderErrorCode(error: unknown): string {
+  if (error instanceof TerminalProviderError) return error.code;
+  if (!(error instanceof Error)) return "non_error_thrown";
+  const value = error as { statusCode?: unknown; code?: unknown };
+  const parts = [error.name];
+  if (typeof value.statusCode === "number") parts.push(String(value.statusCode));
+  if (typeof value.code === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(value.code)) parts.push(value.code);
+  return codeShaped(parts.join(":"));
 }
 
 export function isTerminalProviderNotFound(error: unknown): boolean {

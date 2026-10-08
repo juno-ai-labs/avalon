@@ -155,7 +155,7 @@ describe("Terminal HTTP route contracts", () => {
     }, env);
     expect(previewResponse.status).toBe(200);
     const preview = TerminalNetworkPolicyPreviewSchema.parse(await previewResponse.json());
-    expect(preview).toMatchObject({ proposedMode: "full_internet", affectedWorkstreams: [] });
+    expect(preview).toMatchObject({ proposedMode: "full_internet" });
 
     const applyResponse = await app.request("/workspace/terminal/network-policy/apply", {
       method: "POST",

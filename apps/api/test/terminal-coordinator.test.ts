@@ -526,6 +526,29 @@ describe("Terminal sandbox coordinator", () => {
     expect(provider.createSandbox).toHaveBeenCalledOnce();
   });
 
+  it("does not stamp a changed network policy Daytona did not apply", async () => {
+    const { objectStore, env, provider, clock, advance } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    workstreamObjectRun(
+      objectStore,
+      "UPDATE terminal_workspace SET applied_network_revision = 0 WHERE id = 1",
+    );
+    // Daytona accepts the write and keeps the sandbox on unrestricted egress.
+    vi.mocked(provider.getSandbox).mockResolvedValue({
+      id: "sandbox-1", name: "sandbox-1", state: "running", domainAllowList: [],
+    });
+    advance(20);
+
+    await expect(coordinator.acquire(context()))
+      .rejects.toMatchObject({ code: "network_policy_unverified" });
+    expect(provider.updateNetworkPolicy).toHaveBeenCalled();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT applied_network_revision FROM terminal_workspace WHERE id = 1",
+    )).toEqual({ applied_network_revision: 0 });
+  });
+
   it.each([400, 404])("keeps a restored sandbox unavailable until file readiness succeeds after HTTP %s", async (status) => {
     const { objectStore, env, provider, clock } = fixture();
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
