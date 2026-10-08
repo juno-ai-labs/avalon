@@ -31,7 +31,7 @@ import {
   useDeepLinkWorkstreamNavigation,
 } from '../lib/deep-link-navigation';
 import { formatDateTime, formatSidebarActivityTime, groupActivityItems, nextRecencyBoundary, recencyGroupBatchFilter, type RecencyGroup, workstreamMarkerStatus, workstreamRecencyAt } from '../lib/format';
-import { layoutRowAt } from '../lib/list-motion';
+import { layoutInsertIndex, layoutRowAt } from '../lib/list-motion';
 import { committedOrder, moveWithin } from '../lib/personal-order';
 import { compareAlphabeticalName } from '@rally/ui/lib/alphabetical';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
@@ -451,6 +451,32 @@ function PendingWorkstreamRow({ workstream }: { workstream: WorkstreamSummary })
         className="workstream-row is-pending"
       >
         <NavigationRowContent appearance={workstream.appearance} id={workstream.id} naming={naming} title={workstream.title} />
+      </SidebarRow>
+    </div>
+  );
+}
+
+/**
+ * The slot Pinned holds open for a Channel dragged in from below: a faded copy
+ * of that Channel's row, drawn the way the row being reordered inside the
+ * section is drawn, so arriving and rearranging look the same. Hidden from
+ * assistive technology and from the sidebar's row lookups — it carries no
+ * `data-workstream-id` — since the Channel is not pinned yet.
+ */
+function PinnedDropGhost({ spaceSubtitle, workstream }: {
+  spaceSubtitle?: string | undefined;
+  workstream: WorkstreamSummary;
+}): React.JSX.Element {
+  return (
+    <div aria-hidden="true" className="sidebar-context-target is-dragging pinned-drop-ghost">
+      <SidebarRow as="div" className="workstream-row channel-row">
+        <ChannelRowContent
+          appearance={workstream.appearance}
+          id={workstream.id}
+          subtitle={spaceSubtitle}
+          time={<RelativeTime format={formatSidebarActivityTime} value={workstream.lastActivityAt} />}
+          title={workstream.title}
+        />
       </SidebarRow>
     </div>
   );
@@ -1340,6 +1366,10 @@ export function Sidebar({
   const [dragOrder, setDragOrder] = useState<{ spaceId: string; itemIds: string[] } | null>(null);
   const pinnedDrag = useRef<{ dropped: boolean; workstreamId: string } | null>(null);
   const [pinDropWorkstreamId, setPinDropWorkstreamId] = useState<string | null>(null);
+  // Where an unpinned Channel dragged over Pinned would land, and, once
+  // released, that Channel until its pin comes back.
+  const [pinDropIndex, setPinDropIndex] = useState<number | null>(null);
+  const [pinArrival, setPinArrival] = useState<{ index: number; scope: string | null; workstream: WorkstreamSummary } | null>(null);
   const motionMoveIntent = useRef<{ id: string; pinned: boolean } | null>(null);
   const [archiveWorkstreamTarget, setArchiveWorkstreamTarget] = useState<WorkstreamSummary | null>(null);
   const [archivingWorkstream, setArchivingWorkstream] = useState(false);
@@ -1431,6 +1461,15 @@ export function Sidebar({
       .filter((workstream) => workstream.pinPosition === null)
       .sort(compareChannels(channelSort, heldOpen.heldId))
   ), [channelSort, heldOpen.heldId, visibleWorkstreams]);
+  let pinGhost: { index: number; workstream: WorkstreamSummary } | null = null;
+  if (pinArrival !== null) {
+    // Only in the list it was dropped into, and gone once the real row is pinned.
+    const arrived = pinnedWorkstreams.some((pinned) => pinned.id === pinArrival.workstream.id);
+    if (pinArrival.scope === selectedSpaceId && !arrived) pinGhost = pinArrival;
+  } else if (pinDropIndex !== null && pinDropWorkstreamId !== null) {
+    const workstream = unpinnedWorkstreams.find((candidate) => candidate.id === pinDropWorkstreamId);
+    if (workstream) pinGhost = { index: pinDropIndex, workstream };
+  }
   const displayedWorkstreams = useMemo(
     () => [...pinnedWorkstreams, ...unpinnedWorkstreams],
     [pinnedWorkstreams, unpinnedWorkstreams],
@@ -1754,13 +1793,13 @@ export function Sidebar({
     workstream: WorkstreamSummary,
     pinned: boolean,
     filter: string | null = selectedSpaceId,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const targets = channelPinTargets(workstream, pinned, {
       activeSpaceIds: new Set(placementSpaces.map((space) => space.id)),
       generalSpaceId,
       selectedSpaceId: filter,
     });
-    if (targets.length === 0) return;
+    if (targets.length === 0) return false;
     const motionIntent = { id: workstream.id, pinned };
     motionMoveIntent.current = motionIntent;
     setPinPendingWorkstreamId(workstream.id);
@@ -1788,12 +1827,14 @@ export function Sidebar({
           origin: workstream.systemKind ? 'system' : 'ad_hoc',
           pinned,
         });
-      } else if (motionMoveIntent.current === motionIntent) {
-        motionMoveIntent.current = null;
+        return true;
       }
+      if (motionMoveIntent.current === motionIntent) motionMoveIntent.current = null;
+      return false;
     } catch {
       if (motionMoveIntent.current === motionIntent) motionMoveIntent.current = null;
       setMenuFailure(pinned ? 'pin' : 'unpin');
+      return false;
     } finally {
       setPinPendingWorkstreamId((current) => current === workstream.id ? null : current);
     }
@@ -1848,6 +1889,37 @@ export function Sidebar({
       // first response snap the list back to an order the second has already
       // moved past — visibly, and for as long as the second request takes.
       setDragOrder((current) => current === preview ? null : current);
+    }
+  };
+
+  // A pin, then a reorder into the slot. A Space's run appends a new pin, so an
+  // end drop there needs no reorder; All's saved order keeps an unpinned
+  // Channel's old slot, so under All it does.
+  const pinAt = async (workstream: WorkstreamSummary, index: number): Promise<void> => {
+    const spaceId = pinOrderSpaceId;
+    const visible = pinnedWorkstreams.map((pinned) => pinned.id);
+    const stored = storedPinnedWorkstreams.map((pinned) => pinned.id);
+    // Search only shows some pins; the new one goes before the visible row it
+    // was dropped above, wherever that row sits among the hidden ones.
+    const anchor = visible[index];
+    const at = anchor === undefined ? stored.length : stored.indexOf(anchor);
+    const saves = spaceId !== null && at >= 0 && (anchor !== undefined || spaceId === ALL_PINNED);
+    const preview = !saves || spaceId === null ? null : {
+      spaceId,
+      itemIds: [...visible.slice(0, index), workstream.id, ...visible.slice(index)],
+    };
+    setPinArrival({ index, scope: selectedSpaceId, workstream });
+    if (preview !== null) setDragOrder(preview);
+    try {
+      if (!await togglePin(workstream, true) || preview === null) return;
+      const completeOrder = [...stored.slice(0, at), workstream.id, ...stored.slice(at)];
+      if (preview.spaceId === ALL_PINNED) await onReorderAllPinned?.(completeOrder);
+      else await onReorderPinnedWorkstreams(preview.spaceId, completeOrder);
+    } catch {
+      setMenuFailure('reorder_pinned');
+    } finally {
+      setPinArrival((current) => current?.workstream.id === workstream.id ? null : current);
+      if (preview !== null) setDragOrder((current) => current === preview ? null : current);
     }
   };
 
@@ -1960,7 +2032,10 @@ export function Sidebar({
       {...(drag && !spacesReadOnly ? { drag } : {})}
       pinPending={pinPendingWorkstreamId === workstream.id}
       canDragToPinned={spacesReady}
-      onPinDragEnd={(target) => setPinDropWorkstreamId((current) => current === target.id ? null : current)}
+      onPinDragEnd={(target) => {
+        setPinDropWorkstreamId((current) => current === target.id ? null : current);
+        setPinDropIndex(null);
+      }}
       onPinDragStart={(target) => setPinDropWorkstreamId(target.id)}
       motionMove={motionMoveIntent.current?.id === workstream.id
         && motionMoveIntent.current.pinned === (workstream.pinPosition !== null)}
@@ -2307,6 +2382,17 @@ export function Sidebar({
               onDragOver={spacesReadOnly ? undefined : (event) => {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
+                if (pinnedDrag.current || pinDropWorkstreamId === null || pinArrival !== null) return;
+                // A list with no order to save can only take a new pin at the end.
+                setPinDropIndex(pinOrderSpaceId === null ? pinnedWorkstreams.length : layoutInsertIndex(
+                  event.currentTarget.querySelectorAll('.sidebar-list > [data-workstream-id]'),
+                  event.clientY,
+                ));
+              }}
+              onDragLeave={spacesReadOnly ? undefined : (event) => {
+                // Crossing from the section into one of its own rows is not
+                // leaving it, and closing the slot there would flicker it.
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPinDropIndex(null);
               }}
               onDrop={spacesReadOnly ? undefined : (event) => {
                 event.preventDefault();
@@ -2317,7 +2403,8 @@ export function Sidebar({
                   const unpinned = unpinnedWorkstreams.find((workstream) => workstream.id === draggedId);
                   if (unpinned) {
                     setPinDropWorkstreamId(null);
-                    void togglePin(unpinned, true);
+                    setPinDropIndex(null);
+                    void pinAt(unpinned, pinDropIndex ?? pinnedWorkstreams.length);
                   }
                 }
               }}
@@ -2340,7 +2427,7 @@ export function Sidebar({
                 Hold Alt and press the up or down arrow to move a pinned channel.
               </p>}
               <SidebarList>
-                {pinnedWorkstreams.length === 0 && (
+                {pinnedWorkstreams.length === 0 && pinGhost === null && (
                   <div
                     className={clsx('pinned-empty-drop-surface', pinDropWorkstreamId !== null && 'is-armed')}
                   >
@@ -2348,7 +2435,11 @@ export function Sidebar({
                     <span>Move a channel here to pin it</span>
                   </div>
                 )}
-                {pinnedWorkstreams.map((pinned, index) => (
+                {pinnedWorkstreams.map((pinned, index) => <Fragment key={pinned.id}>
+                  {pinGhost?.index === index && <PinnedDropGhost
+                    spaceSubtitle={spaceSubtitleFor(pinGhost.workstream)}
+                    workstream={pinGhost.workstream}
+                  />}
                   <WorkstreamRow
                     {...workstreamRowActions}
                     debugEnabled={debugEnabled}
@@ -2366,7 +2457,11 @@ export function Sidebar({
                     workspace={workspace}
                     workstream={pinned}
                   />
-                ))}
+                </Fragment>)}
+                {pinGhost !== null && pinGhost.index >= pinnedWorkstreams.length && <PinnedDropGhost
+                  spaceSubtitle={spaceSubtitleFor(pinGhost.workstream)}
+                  workstream={pinGhost.workstream}
+                />}
               </SidebarList>
               <SidebarHorizontalLine className="pinned-section-line" />
             </section>
