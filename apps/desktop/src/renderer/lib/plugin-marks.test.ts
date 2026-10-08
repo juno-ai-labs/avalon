@@ -34,14 +34,15 @@ describe('connectorBrandMark', () => {
     }
   });
 
-  it('reads a custom MCP server\'s company from the words of its name', () => {
+  it('reads a custom MCP server\'s company from the words of its name, else draws the protocol mark', () => {
     expect(connectorBrandMark('custom_mcp', 'Cloudflare API')).toBe('cloudflare');
     expect(connectorBrandMark('custom_mcp', 'Cloudflare Observability')).toBe('cloudflare');
     expect(connectorBrandMark('custom_mcp', 'Google Drive (team)')).toBe('google-drive');
     expect(connectorBrandMark('custom_mcp', 'linear-staging')).toBe('linear');
-    expect(connectorBrandMark('custom_mcp', 'Next X tools')).toBeNull();
-    expect(connectorBrandMark('custom_mcp', 'Internal search')).toBeNull();
-    expect(connectorBrandMark('custom_mcp')).toBeNull();
+    expect(connectorBrandMark('custom_mcp', 'Next X tools')).toBe('model-context-protocol');
+    expect(connectorBrandMark('custom_mcp', 'Internal search')).toBe('model-context-protocol');
+    expect(connectorBrandMark('custom_mcp')).toBe('model-context-protocol');
+    expect(connectorBrandMark('custom_mcp', 'Model Context Protocol')).toBe('model-context-protocol');
   });
 
   it('leaves a webhook and an unknown connector without one', () => {

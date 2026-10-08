@@ -152,7 +152,7 @@ additional authority.
   separate from the static model-facing `displayName`, descriptions, aliases,
   and system messages. Automation catalogs also retain the static model name.
   Transcript activities carry `connectorType` independently so a custom server
-  named Slack keeps a plug icon and a connection-specific row.
+  named Slack keeps the Model Context Protocol mark and a connection-specific row.
 
 ## Boundary
 

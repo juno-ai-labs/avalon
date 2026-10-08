@@ -116,10 +116,10 @@ describe('pluginGroup', () => {
 
   it('keeps a custom MCP named Slack separate from Slack and another same-named server', () => {
     const custom = pluginGroup('connection:custom', 'Slack', 'custom_mcp');
-    expect(custom).toMatchObject({ key: 'custom_mcp:connection:custom', name: 'Slack', icon: 'plug', activeVerb: 'Using Slack' });
+    expect(custom).toMatchObject({ key: 'custom_mcp:connection:custom', name: 'Slack', icon: 'model-context-protocol', activeVerb: 'Using Slack' });
     expect(custom?.key).not.toBe(pluginGroup('connection:slack', 'Slack', 'slack')?.key);
     expect(custom?.key).not.toBe(pluginGroup('connection:other', 'Slack', 'custom_mcp')?.key);
-    expect(pluginGroup('connection:github', 'GitHub internal MCP', 'custom_mcp')?.icon).toBe('plug');
+    expect(pluginGroup('connection:github', 'GitHub internal MCP', 'custom_mcp')?.icon).toBe('model-context-protocol');
   });
 
   it('keys a connector on its name so two connections to one service share a row', () => {
