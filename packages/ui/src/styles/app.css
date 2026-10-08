@@ -2124,6 +2124,8 @@ pre {
   grid-template-columns: 198px minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
+  /* The phone sheet starts under the header, so both read this. */
+  --settings-header-height: 58px;
 }
 
 .settings-sidebar {
@@ -2253,7 +2255,7 @@ pre {
   border-bottom: 1px solid transparent;
   display: flex;
   justify-content: space-between;
-  min-height: 58px;
+  min-height: var(--settings-header-height);
   padding: 11px 22px 7px 28px;
   position: relative;
   z-index: 2;
@@ -3165,6 +3167,41 @@ pre {
   .settings-github-repository-heading,
   .settings-custom-mcp-tool-heading { align-items: stretch; flex-direction: column; gap: 10px; }
   .settings-github-search { flex-basis: auto; }
+}
+
+/* Phone width: the sections list is a sheet under the header, opened by the
+   menu button there, the same 640px as the shell's own phone sheet. Picking a
+   section shuts it. Only a browser tab reaches this width, inside `.app-shell`,
+   whose phone rule styles the button as the shell's own menu button. */
+@media (max-width: 640px) {
+  .settings-window { grid-template-columns: minmax(0, 1fr); position: relative; }
+  .settings-sidebar {
+    background: var(--av-cmp-sidebar-background-solid);
+    border-right: 0;
+    border-top: var(--av-sys-size-border-hairline) solid var(--av-cmp-sidebar-border);
+    inset: var(--settings-header-height) 0 0;
+    opacity: 0;
+    overflow-y: auto;
+    padding: 12px 12px 18px;
+    position: absolute;
+    transform: translateY(-12px);
+    transition: opacity 260ms cubic-bezier(.22, 1, .36, 1), transform 260ms cubic-bezier(.22, 1, .36, 1), visibility 0s linear 260ms;
+    visibility: hidden;
+    z-index: 3;
+  }
+  .settings-sidebar.is-mobile-open {
+    opacity: 1;
+    transform: none;
+    transition: opacity 260ms cubic-bezier(.22, 1, .36, 1), transform 260ms cubic-bezier(.22, 1, .36, 1), visibility 0s;
+    visibility: visible;
+  }
+  .settings-content-header { gap: 10px; justify-content: flex-start; padding: 11px 12px 7px; }
+  .settings-content-header h1 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .settings-menu-toggle { flex: none; }
+}
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+  .settings-sidebar,
+  .settings-sidebar.is-mobile-open { transition: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -7530,6 +7567,36 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .settings-account-profile .personal-colors { justify-content: flex-end; gap: 10px; padding: 5px; }
 .settings-account-profile .personal-colors button { width: 22px; height: 22px; display: grid; place-items: center; }
 .settings-account-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; color: var(--av-sys-color-text-muted); }
+/* Phone width: a row's label sits over its control rather than beside it, so
+   neither is squeezed to a word per line. After the account rows above so it
+   outranks their two-column template. */
+@media (max-width: 640px) {
+  .workspace-settings-screen .settings-preference-row { align-items: stretch; gap: 8px; grid-template-columns: minmax(0, 1fr); }
+  /* A control keeps its own width and starts under its label; a meter spans the row. */
+  .workspace-settings-screen .settings-preference-row > :not(.settings-row-copy) { justify-self: start; }
+  .workspace-settings-screen .settings-row-value { align-items: flex-start; text-align: left; }
+  /* The borderless picker is pushed right for the two-column row; here its
+     text lines up with the label above it. */
+  .workspace-settings-screen .settings-preference-row .dropdown-select-trigger-secondary { justify-content: flex-start; min-width: 0; padding-left: 0; padding-right: 10px; }
+  /* The connection tables fit the phone instead of scrolling sideways: the
+     fixed columns narrow and the name wraps, so an empty table's message is
+     never cut off. */
+  .workspace-settings-screen .settings-connection-table { min-width: 0; }
+  .workspace-settings-screen .settings-connection-table th,
+  .workspace-settings-screen .settings-connection-table td { padding-inline: 6px; }
+  .workspace-settings-screen .settings-connection-table th:first-child,
+  .workspace-settings-screen .settings-connection-table td:first-child { padding-left: 12px; }
+  .workspace-settings-screen .settings-connection-table th:nth-child(2) { width: 88px; }
+  .workspace-settings-screen .settings-connection-table th:nth-child(3) { width: 48px; }
+  .workspace-settings-screen .settings-connection-table th:last-child { width: 30px; }
+  .workspace-settings-screen .settings-connection-empty-row td { padding: 0; }
+  .workspace-settings-screen .settings-connection-copy strong { overflow-wrap: anywhere; }
+  .workspace-settings-screen .settings-connection-table .badge { border-radius: 9px; max-width: 100%; white-space: normal; }
+  .workspace-settings-screen .settings-preference-row > .usage-quota-value { justify-self: stretch; text-align: left; width: auto; }
+  .workspace-settings-screen .settings-account-profile input { width: 100%; }
+  .workspace-settings-screen .settings-account-profile .personal-colors,
+  .workspace-settings-screen .settings-account-actions { justify-content: flex-start; }
+}
 
 .attachment-media-close { position: absolute; right: 22px; top: 23px; z-index: 3; }
 .attachment-gallery-footer { align-items: center; bottom: 24px; display: flex; flex-direction: column; gap: 14px; left: 24px; position: absolute; right: 24px; }
