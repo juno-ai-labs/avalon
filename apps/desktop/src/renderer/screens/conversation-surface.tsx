@@ -1703,7 +1703,14 @@ export function ConversationSurface({
   );
   // After the virtualizer and the follow: an older range prepended above the
   // reader keeps the row they were reading where it was, in the same commit.
-  useVirtualScrollAnchor(transcriptVirtualizer, transcriptRef, scrollTranscriptTo);
+  // The layout key covers what sits above the feed: the history status row and
+  // the origin card, which change when the oldest range arrives or fails.
+  useVirtualScrollAnchor(
+    transcriptVirtualizer,
+    transcriptRef,
+    scrollTranscriptTo,
+    `${olderTranscriptRange === null}:${olderMessagesError !== undefined}`,
+  );
 
   useEffect(() => {
     if (!feedLive) requestedSearch.current = null;
