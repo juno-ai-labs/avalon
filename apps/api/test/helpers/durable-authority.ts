@@ -1493,7 +1493,6 @@ export function testHarnessRunPortFactory(database: DatabaseSync): (
   return () => port;
 }
 
-/** The same port as a factory, for a caller that takes one. */
 /**
  * One conversation's resource links over its object database, as every
  * visibility read takes them. `channel` is the Channel's Main object, asked
@@ -1509,6 +1508,7 @@ export function testConversationResourceLinks(
   });
 }
 
+/** The same port as a factory, for a caller that takes one. */
 export function testResourcePortFactory(database: DatabaseSync): (
   workspaceId: string,
   workstreamId: string,

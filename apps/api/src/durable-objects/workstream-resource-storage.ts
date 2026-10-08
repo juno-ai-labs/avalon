@@ -168,13 +168,15 @@ export class WorkstreamResourceStorage {
    *
    * Asked of the object rather than of the caller because most readers hold
    * only the port for "the conversation this run executes in", not its
-   * address. A Sidekick's run child is a substream too, of an automation
-   * parent, and inherits nothing.
+   * address. Two other kinds of substream inherit nothing: a Sidekick's run
+   * child (an automation parent), and a `start_agent` worker, which has a
+   * `background_agent` row and sees only the attachments it was handed.
    */
   inheritsChannelLinks(): boolean {
     return first(this.sql.exec<{ inherits: number } & Record<string, SqlStorageValue>>(
       `SELECT workstream.parent_kind = 'workstream'
-              AND COALESCE(identity.external_substream_id, '0') <> '0' AS inherits
+              AND COALESCE(identity.external_substream_id, '0') <> '0'
+              AND NOT EXISTS (SELECT 1 FROM background_agent) AS inherits
          FROM workstream LEFT JOIN substream_agent_identity AS identity ON identity.id = 1
         WHERE workstream.id = 1`,
     ))?.inherits === 1;
