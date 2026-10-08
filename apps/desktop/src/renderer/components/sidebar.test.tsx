@@ -1440,6 +1440,67 @@ describe('Sidebar channel markers', () => {
     });
   });
 
+  describe('on a touch screen', () => {
+    // Radix opens a context menu on a touch press held this long.
+    const LONG_PRESS_MS = 700;
+    beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+    afterEach(() => vi.useRealTimers());
+
+    function renderList(): void {
+      const hiring = space();
+      render(
+        <MemoryRouter>
+          <Tooltip.Provider>
+            <Sidebar {...defaultActions} onSignOut={vi.fn()} spaces={[general(), hiring]} workspace={workspace}
+              workstreams={[placedIn(workstream('touch-row', 'Quarterly planning', 'completed'), hiring.id)]} />
+          </Tooltip.Provider>
+        </MemoryRouter>,
+      );
+      selectSpace('Hiring');
+    }
+    const row = (): HTMLElement => screen.getByRole('link', { name: /Quarterly planning/u });
+    const rowWrapper = (): HTMLElement => row().closest<HTMLElement>('.sidebar-context-target')!;
+    const holdPress = (target: Element): void => {
+      fireEvent.pointerDown(target, { pointerType: 'touch' });
+      act(() => { vi.advanceTimersByTime(LONG_PRESS_MS); });
+    };
+    const transfer = { dropEffect: 'move', effectAllowed: '', setData: () => undefined };
+
+    it('opens only a row\'s own menu on a long press of the row, and the list\'s on empty space', () => {
+      renderList();
+
+      holdPress(row());
+      expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+      expect(screen.queryByRole('menuitem', { name: 'Start New Channel' })).toBeNull();
+      fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Rename' }), { key: 'Escape' });
+
+      holdPress(screen.getByRole('navigation', { name: 'Channels' }));
+      expect(screen.getByRole('menuitem', { name: 'Start New Channel' })).toBeInTheDocument();
+    });
+
+    it('opens no menu when the press lifts the row into a drag', () => {
+      renderList();
+
+      fireEvent.pointerDown(row(), { pointerType: 'touch' });
+      fireEvent.dragStart(rowWrapper(), { dataTransfer: transfer });
+      act(() => { vi.advanceTimersByTime(LONG_PRESS_MS); });
+
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
+
+    it('closes the row\'s menu when a drag starts after it opened', () => {
+      renderList();
+      // Found first: the open menu hides the rest of the page from role queries.
+      const wrapper = rowWrapper();
+
+      holdPress(row());
+      expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+      fireEvent.dragStart(wrapper, { dataTransfer: transfer });
+
+      expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
+    });
+  });
+
   it('shows the current and other existing placements as checked choices', async () => {
     const hiring = space();
     const launch = space('00000000-0000-7000-8000-0000000000f5', 'Launch');
