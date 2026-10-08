@@ -226,7 +226,10 @@ Each Breakout row the Channel receives carries `originTurnId` and
   above the Breakout's first message, never above a window with earlier pages.
 - **Chips:** `MessageFeed` draws a chip row after the last row of each origin
   turn. A chip shows the title, "N new" when there is news, and "Open" with an
-  accent ring when it is the open Breakout.
+  accent ring when it is the open Breakout. While the Breakout's run waits on
+  a question (`harnessStatus` `needs_input`), a red **Needs input** badge takes
+  the place of the news, and the tick and its card say the same. The open
+  Breakout reads its own detail for this, the rest their directory rows.
 - **Tick bar:** down Main's leading edge, one tick per Breakout, in origin-turn
   order for turns that are loaded and by creation time after them. Colour says
   news and length says open, at the design's sizes: a quiet tick is 11×2 grey,
@@ -334,6 +337,28 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-08 — A Breakout waiting on a question is badged in Main
+
+**What changed:** A Breakout whose run is paused on a question shows a red
+**Needs input** badge on its chip, and its tick's card says "Needs input". The
+badge outranks an unread count and clears when the question is answered.
+
+**Why:** A new user answered a Breakout's question only by finding it in the
+Breakout; Main showed the same "New" it shows for any reply. They asked for a
+blocked Breakout to look blocked from Main. Before the fix in
+[#1164](https://github.com/juno-ai-labs/avalon/pull/1164), Main showed the
+question itself, which it could not answer.
+
+**Considered and rejected:** Showing the question in Main again, routed to the
+Breakout. Main would then repeat every Breakout's questions to people who may
+not be members of a private one, which is the leak #1164 closed.
+
+**Consequences:** The badge reads `harnessStatus` the parent already projects
+to each Breakout's members, so a guest outside a private Breakout never sees
+it, and there is no new field or server change. A row built from the
+shared-parent navigation alone carries only `needsAttention`, so it shows
+"New" rather than the badge until its live directory entry arrives.
 
 ### 2026-10-07 — Switching Spaces keeps the phone sheet open
 
