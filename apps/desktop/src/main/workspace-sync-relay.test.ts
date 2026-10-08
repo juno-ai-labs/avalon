@@ -17,17 +17,19 @@ describe('WorkspaceSyncRelay', () => {
     expect(relay().relay.snapshot()).toEqual({ revision: 0, source: null });
   });
 
-  it('attaches the publisher on its state and relays its news, every topic the contract names', () => {
+  it('attaches the publisher on its state and relays its news, every topic the contract names and the usage meter', () => {
     const { relay: subject, delivered } = relay();
     subject.publish({ type: 'state', region, workspaceId, state: 'connecting' });
     subject.publish({ type: 'state', region, workspaceId, state: 'connected' });
     // Unchanged: not an event, and not a new revision.
     subject.publish({ type: 'state', region, workspaceId, state: 'connected' });
     subject.publish({ type: 'topics', region, workspaceId, waterline: 4, topics: [...WORKSPACE_SYNC_TOPICS] });
+    subject.publish({ type: 'topics', region, workspaceId, waterline: 4, topics: ['usage'] });
     expect(delivered).toEqual([
       { type: 'source', revision: 1, source: { region, workspaceId, state: 'connecting' } },
       { type: 'source', revision: 2, source: { region, workspaceId, state: 'connected' } },
       { type: 'topics', region, workspaceId, waterline: 4, topics: [...WORKSPACE_SYNC_TOPICS] },
+      { type: 'topics', region, workspaceId, waterline: 4, topics: ['usage'] },
     ]);
     expect(subject.snapshot()).toEqual({ revision: 2, source: { region, workspaceId, state: 'connected' } });
   });

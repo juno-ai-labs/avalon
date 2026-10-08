@@ -112,6 +112,14 @@ export const OrganizationUsageSchema = z.object({
 });
 export type OrganizationUsage = z.infer<typeof OrganizationUsageSchema>;
 
+/** Sent on the workspace socket after a plan change; see docs/usage-metering.md. */
+export const WorkspaceUsageEventSchema = z.strictObject({
+  type: z.literal("workspace_usage"),
+  occurredAt: z.string().datetime(),
+  usage: OrganizationUsageSchema,
+});
+export type WorkspaceUsageEvent = z.infer<typeof WorkspaceUsageEventSchema>;
+
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** The start of the 7-day quota week containing `at`, anchored to creation. */
