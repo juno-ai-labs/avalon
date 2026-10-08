@@ -305,8 +305,8 @@ describe('Usage in the Organization menu', () => {
   it('shows a thin meter and how much is left till the week resets, and opens Settings when chosen', async () => {
     const onSelect = renderMenuItem(apiAnswering(usage(72)));
 
-    const item = await screen.findByRole('menuitem', { name: 'Quota, 72% left till Thu 9:00 AM' });
-    expect(within(item).getByText('Quota')).toBeVisible();
+    const item = await screen.findByRole('menuitem', { name: 'Usage, 72% left till Thu 9:00 AM' });
+    expect(within(item).queryByText('Quota')).not.toBeInTheDocument();
     expect(within(item).getByText('72% left till Thu 9:00 AM')).toBeVisible();
     expect(within(item).getByRole('meter', { name: 'Weekly quota left' })).toHaveClass('meter-thin');
 
@@ -314,10 +314,16 @@ describe('Usage in the Organization menu', () => {
     expect(onSelect).toHaveBeenCalledOnce();
   });
 
-  it('says 0% is left when the quota is used', async () => {
+  it('says overage is enabled once the quota runs low', async () => {
+    renderMenuItem(apiAnswering(usage(19)));
+
+    expect(await screen.findByText('19% left till Thu 9:00 AM, overage enabled')).toBeVisible();
+  });
+
+  it('says overage is enabled at 0%', async () => {
     renderMenuItem(apiAnswering(usage(0, 5_000_000)));
 
-    expect(await screen.findByText('0% left till Thu 9:00 AM')).toBeVisible();
+    expect(await screen.findByText('0% left till Thu 9:00 AM, overage enabled')).toBeVisible();
     expect(screen.queryByText('Not billed')).not.toBeInTheDocument();
   });
 

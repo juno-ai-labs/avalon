@@ -1861,7 +1861,6 @@ pre {
    above, which it has to override at the same specificity. */
 .menu-content .workspace-usage-item.menu-item { align-items: stretch; flex-direction: column; gap: 5px; min-height: 0; padding: 6px 10px 8px; }
 .workspace-usage-item small { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-font-size-meta); }
-.workspace-usage-title { color: var(--av-sys-color-text-default); }
 
 .account-menu-item-with-value.menu-item { grid-template-columns: 18px minmax(0, 1fr) auto 14px; }
 .account-menu-item.menu-item[data-highlighted] { background-image: var(--hover-layer); }
