@@ -1315,7 +1315,7 @@ export class PlatformOnboardingService {
     return {
       attention: settled.flatMap((result) => result.status === "fulfilled" ? result.value.attention : []),
       failed: settled.flatMap((result, index) => result.status === "rejected"
-        ? [{ region: regions[index]!, code: result.reason instanceof ApiError ? result.reason.code : codeShaped(result.reason instanceof Error ? result.reason.name : "unknown") }]
+        ? [{ region: regions[index]!, code: diagnosticErrorCode(result.reason, "regional_attention_failed") }]
         : result.value.failed.map((item) => ({ region: regions[index]!, code: item.code }))),
     };
   }
