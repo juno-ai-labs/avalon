@@ -20,7 +20,7 @@ are in
 | --- | --- |
 | `packages/contracts/src/usage.ts` | The single source for plans, the 18 metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
 | `apps/api/src/services/usage-metering.ts` | `emitUsage` and `emitInferenceUsage` (the only producers), `applyUsageBatch` (the only D1 ledger writer), `readOrganizationUsage` (the only reader), `setWorkspacePlan`, `publishOrganizationUsage`, `pruneUsageEvents` and `USAGE_EVENTS_D1_RETENTION_DAYS`. |
-| `apps/api/src/durable-objects/workspace-do.ts` (`publishUsage`) | Sends the meter after a plan change to every subscribed workspace socket as `workspace_usage` (`WorkspaceUsageEventSchema`). |
+| `apps/api/src/durable-objects/workspace-do.ts` (`publishUsage`) | Sends the meter after a plan change to every subscribed member socket as `workspace_usage` (`WorkspaceUsageEventSchema`), never a guest's, and drops a meter read before the last one sent. |
 | `apps/api/src/queues/usage-consumer.ts` | The `avalon-<region>-usage` consumer: validates, rejects misrouted messages, applies the batch to D1, then sends it to the usage lakehouse, logs `usage_batch_applied`. `usageLakehouseRecord` shapes the R2 row. |
 | `apps/api/src/routes/workspace.ts` | `GET /workspace/usage`, for every member role, and `PUT /workspace/plan`, for administrators (`WorkspaceService.setPlan`). |
 | `apps/api/src/routes/workspace-operations.ts` | `POST /internal/workspaces/:id/plan`, the operator route Ace calls. |
@@ -28,7 +28,7 @@ are in
 | `packages/db/usage-migrations/` | `usage_events`, `usage_rollups` and `usage_plan_changes`, in `USAGE_DB` (`avalon-<region>-usage`). Applied by `pnpm --filter @rally/api db:usage:migrate` (local, part of `db:migrate`) and `db:usage:migrate:remote` (deploy). |
 | `config/usage-lakehouse.json`, `config/usage-lakehouse-stream-schema.json` | The usage lakehouse: the `USAGE_LAKEHOUSE` Pipeline into the Iceberg table `avalon.usage_events` in R2, provisioned by `scripts/ensure-cloudflare-inference-lakehouse.mjs` like the other lakehouses. |
 | `apps/ace/src/client/workspaces.tsx` | The plan control on Ace's workspaces tab. |
-| `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, `useSetOrganizationPlan`, `applyPushedOrganizationUsage`, the `usage` local-cache slice, and the formatters. `lib/workspace-socket.tsx` applies the push and marks the meter stale on every subscribe answer. |
+| `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, `useSetOrganizationPlan`, `applyPushedOrganizationUsage`, the `usage` local-cache slice, and the formatters. `lib/workspace-socket.tsx` applies the push, marks the meter stale on every subscribe answer, and relays both to the Settings window as `usage`. |
 | `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage with its plan picker, and the account menu's meter (a full row right under Settings). |
 | `packages/ui/src/components/primitives.tsx` (`Meter`) | The shared meter primitive and its `cmp.meter.*` tokens. |
 
@@ -123,10 +123,13 @@ the cache.
 After the response, both routes call `publishOrganizationUsage`, which reads
 the meter again and has WorkspaceDO send it to every connected member as a
 `workspace_usage` socket event; each desktop writes it into its read and its
-cache. It reads at send time rather than reusing the route's answer, so after
-two quick changes a late push still carries the later plan. The push is best
-effort and not replayed: a failure logs `usage_publish_failed`, and a desktop
-marks its meter stale on every subscribe answer, so a reconnect reads it again.
+cache, and the main window relays it to the Settings window, which reads its
+own. Guests are not sent it: the read route refuses them. The push carries
+when its read started, and WorkspaceDO drops one read before the last it
+sent, so after two quick changes the earlier plan cannot arrive last and win.
+The push is best effort and not replayed: a failure logs
+`usage_publish_failed`, and a desktop marks its meter stale on every subscribe
+answer, so a reconnect reads it again.
 [`realtime-sockets.md`](realtime-sockets.md) has why it is an event of its own
 rather than a sync topic.
 
@@ -168,12 +171,17 @@ therefore keep the plan they had, even for an event that arrives late.
   retention (at most 14 days); a shorter window would let a redelivery find its
   row gone and count it twice. Guard: `test/usage-metering.test.ts` ("deletes
   rows received before the 90-day window…").
-- **A plan change reaches every connected member without a request.** The
-  push carries the meter, not a nudge, since it is the same for everyone.
-  Guard: `test/usage-metering.test.ts` and `test/workspace-operations.test.ts`
+- **A plan change reaches every connected member without a request, and no
+  guest.** The push carries the meter, not a nudge, since it is the same for
+  every member; a guest cannot read it over REST either. Guard:
+  `test/usage-metering.test.ts` and `test/workspace-operations.test.ts`
   (each route publishes the re-priced meter),
   `test-workers/durable-object-runtime.test.ts` ("sends the meter after a plan
-  change…") and the desktop's `lib/workspace-socket.test.tsx`.
+  change to every member socket…") and the desktop's
+  `lib/workspace-socket.test.tsx`.
+- **The last plan wins whatever order the pushes arrive in.** WorkspaceDO
+  drops a meter read before the last one it sent. Guard: the same
+  `test-workers` test.
 - **A new rollup row's quota comes from `usage_plan_changes` at insert time,
   never from the batch's earlier read of `DB`.** D1 runs one transaction at a
   time, so a plan change either commits first and the insert reads it, or
@@ -251,9 +259,11 @@ desktop meter is owned by the settings screens and
 - `apps/api/test/workspace-operations.test.ts`: the plan route, its
   credential, its refusals, the current week's re-pricing, and the push.
 - `apps/api/test-workers/durable-object-runtime.test.ts`: WorkspaceDO sends
-  `workspace_usage` to every subscribed socket.
+  `workspace_usage` to every member socket, skips a guest's, and drops a
+  stale meter.
 - `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`: the push lands in
-  the read and the `usage` slice, and a subscribe answer marks the meter stale.
+  the read and the `usage` slice, a subscribe answer marks the meter stale,
+  and both are relayed to the Settings window, which reads again.
 - `test/agent-inference-logging.test.ts` and
   `test/structured-inference-deferral.test.ts`: what the emitters send.
 - `packages/agent-harness/src/embedding-cost.test.ts`: the bring-your-own-key
@@ -294,9 +304,10 @@ workspace.
 
 **What changed:** After either plan route answers, `publishOrganizationUsage`
 reads the meter under the new plan and WorkspaceDO sends it to every
-subscribed socket as `workspace_usage`. The desktop writes it into the meter's
-read and the `usage` slice, and marks the meter stale on every subscribe
-answer. The quota and overage arithmetic is unchanged: `setWorkspacePlan`
+subscribed member socket as `workspace_usage`, never to a guest, dropping a
+meter read before the last one sent. The desktop writes it into the meter's
+read and the `usage` slice, marks the meter stale on every subscribe answer,
+and relays both to the Settings window as `usage`. The quota and overage arithmetic is unchanged: `setWorkspacePlan`
 already re-priced the current week, and overage is still derived on read.
 
 **Why:** Only the window that made the change saw the new quota. Every other
@@ -307,9 +318,9 @@ used" for the rest of the team.
 **Considered and rejected:** A `usage` sync topic that tells each desktop to
 read again. The topic enum is closed, so older desktops would reject the
 subscribe answer, and a nudge costs every member a request for a value that is
-the same for all of them and that the server had just read. Sending the
-route's own answer: a late push from the first of two quick changes would then
-undo the second, so the push reads at send time. Putting the push on the
+the same for all of them and that the server had just read. Reading at send
+time alone to order two quick changes: the first push can still arrive last,
+so each carries when its read started and WorkspaceDO keeps the newest. Putting the push on the
 waterline and replaying it: the meter changes as usage accrues too, so a
 replayed value would be stale, and a reread on subscribe is cheaper and
 current.

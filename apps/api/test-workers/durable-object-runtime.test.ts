@@ -2044,34 +2044,52 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
-  it("sends the meter after a plan change to every subscribed socket", async () => {
+  it("sends the meter after a plan change to every member socket, never a guest's, and drops one read before the last sent", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
     ));
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // Opened first and marked while it is the only socket, so the mark is on
+    // this one.
+    const guest = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060e");
+    await runInDurableObject(stub, (_instance, state) => {
+      const [socket] = state.getWebSockets();
+      socket!.serializeAttachment({ ...(socket!.deserializeAttachment() as object), accessClass: "guest" });
+    });
     const first = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060c");
-    const second = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060d", SESSION_ID);
-    const usage = {
-      plan: "growth",
-      quotaRemainingPercent: 44,
+    const second = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060d");
+    const usage = (plan: "starter" | "growth", quotaRemainingPercent: number) => ({
+      plan,
+      quotaRemainingPercent,
       weekResetsAt: "2026-10-08T09:00:00.000Z",
       overage: {
         amountMicrousd: 0,
         periodStart: "2026-10-01T09:00:00.000Z",
         periodEndsAt: "2026-11-01T09:00:00.000Z",
-        billed: false,
+        billed: false as const,
       },
-    } as const;
+    });
+    const guestHeard: unknown[] = [];
+    guest.addEventListener("message", (event) => {
+      const decoded = JSON.parse(String(event.data)) as { type?: string };
+      if (decoded.type === "workspace_usage") guestHeard.push(decoded);
+    });
     try {
       const delivered = [nextMessageOfType(first, "workspace_usage"), nextMessageOfType(second, "workspace_usage")];
-      await expect(stub.publishUsage(usage, WORKSPACE_ID, "wnam")).resolves.toBe(2);
+      await expect(stub.publishUsage(usage("growth", 44), "2026-10-03T00:00:02.000Z", WORKSPACE_ID, "wnam"))
+        .resolves.toBe(2);
       for (const message of await Promise.all(delivered)) {
-        expect(message).toMatchObject({ type: "workspace_usage", usage });
+        expect(message).toMatchObject({ type: "workspace_usage", usage: usage("growth", 44) });
       }
+      // The push for an earlier change, arriving last, would put Starter back.
+      await expect(stub.publishUsage(usage("starter", 0), "2026-10-03T00:00:01.000Z", WORKSPACE_ID, "wnam"))
+        .resolves.toBe(0);
+      expect(guestHeard).toEqual([]);
     } finally {
       first.close(1000, "test complete");
       second.close(1000, "test complete");
+      guest.close(1000, "test complete");
     }
   });
 
