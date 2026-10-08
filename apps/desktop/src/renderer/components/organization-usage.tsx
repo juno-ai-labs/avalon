@@ -151,10 +151,9 @@ export function OrganizationUsageMenuItem({ api, onSelect }: {
   const state = useOrganizationUsage(api);
   if (state.status !== 'ready') return null;
   const { usage } = state.reading;
-  const line = usageMenuLabel(usage.quotaRemainingPercent, usage.weekResetsAt);
+  const line = usageMenuLabel(usage);
   return (
-    <DropdownMenu.Item aria-label={`Quota, ${line}`} className="menu-item workspace-usage-item" onSelect={onSelect}>
-      <span className="workspace-usage-title">Quota</span>
+    <DropdownMenu.Item aria-label={`Usage, ${line}`} className="menu-item workspace-usage-item" onSelect={onSelect}>
       <Meter label={METER_LABEL} size="thin" tone={usageTone(usage)} value={usage.quotaRemainingPercent} />
       <small>{line}</small>
     </DropdownMenu.Item>
