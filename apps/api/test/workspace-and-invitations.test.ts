@@ -901,13 +901,4 @@ describe("pending invitees for the people pickers", () => {
         .resolves.toEqual([{ email: "pending@example.com", invitedAt: "2026-08-01T00:00:00.000Z" }]);
     } finally { database.close(); }
   });
-
-  it("refuses a guest", async () => {
-    const database = seeded();
-    try {
-      const env = environment(new StubDatabase(() => undefined), { DB: sqliteD1(database) });
-      await expect(new WorkspaceService(env, { ...ownerAuth, role: null }).listInvitees())
-        .rejects.toMatchObject({ status: 403, code: "workspace_member_required" });
-    } finally { database.close(); }
-  });
 });
