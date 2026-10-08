@@ -8,7 +8,7 @@ import {
 } from '@rally/contracts';
 import type { SpaceDirectory } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { onlineManager, QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, render, screen } from '@testing-library/react';
 import { StrictMode, useEffect, type JSX, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,7 +20,7 @@ import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
-import { organizationUsageQueryKey, usageCacheSlice } from './organization-usage';
+import { organizationUsageQueryKey, usageCacheSlice, useOrganizationUsage, type OrganizationUsageApi } from './organization-usage';
 import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 import { WORKSPACE_SOCKET_OPEN_TIMEOUT_MS } from '@rally/contracts/workspace-reach-watch';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
@@ -177,6 +177,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  // A test that fires the window's `offline` event leaves React Query's
+  // global online state offline, and every later query would pause.
+  onlineManager.setOnline(true);
   reportTelemetryProductIntent.mockClear();
   applicationFocus.foregrounded = false;
   applicationFocus.listeners.clear();
@@ -2744,6 +2747,53 @@ describe('the organization socket over the local cache', () => {
     await vi.waitFor(async () => {
       expect(await usageCacheSlice.read(scope, 'usage')).toMatchObject({ usage: growth });
     }, { timeout: LOCAL_CACHE_WRITE_COALESCE_MS + 2_000 });
+  });
+  it('keeps a pushed meter over a read that was already in flight when it arrived', async () => {
+    await clearAllLocalCache();
+    const queryClient = new QueryClient();
+    const meter = (plan: 'starter' | 'growth', quotaRemainingPercent: number) => ({
+      plan,
+      quotaRemainingPercent,
+      weekResetsAt: '2026-10-08T09:00:00.000Z',
+      overage: { amountMicrousd: 0, periodStart: '2026-10-01T09:00:00.000Z', periodEndsAt: '2026-11-01T09:00:00.000Z', billed: false },
+    } as const);
+    let answerOldRead: (usage: ReturnType<typeof meter>) => void = () => undefined;
+    const getWorkspaceUsage = vi.fn(() => new Promise<ReturnType<typeof meter>>((resolve) => { answerOldRead = resolve; }));
+    const usageApi: OrganizationUsageApi = { getWorkspaceUsage };
+    function Meter(): JSX.Element {
+      const usage = useOrganizationUsage(usageApi);
+      return <div>{usage.status === 'ready' ? `plan:${usage.reading.usage.plan}` : usage.status}</div>;
+    }
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <LocalCacheScopeProvider scope={scope}>
+          <WorkspaceSocketProvider region="global"
+            api={{ getWorkspaceSocketTicket }}
+            workspaceId="00000000-0000-7000-8000-000000000001"
+          >
+            <Meter />
+          </WorkspaceSocketProvider>
+        </LocalCacheScopeProvider>
+      </QueryClientProvider>,
+    );
+    await vi.waitFor(() => expect(getWorkspaceUsage).toHaveBeenCalledTimes(1));
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    act(() => socket.message({ type: 'workspace_usage', occurredAt: '2026-10-03T00:01:00.000Z', usage: meter('growth', 64) }));
+    // The read started before the change answers with the plan it saw.
+    await act(async () => { answerOldRead(meter('starter', 10)); await flushPromises(); });
+
+    expect(await screen.findByText('plan:growth')).toBeInTheDocument();
+    expect(queryClient.getQueryData(organizationUsageQueryKey(scope))).toMatchObject({ usage: { plan: 'growth' } });
+    await new Promise((resolve) => setTimeout(resolve, LOCAL_CACHE_WRITE_COALESCE_MS + 100));
+    expect(await usageCacheSlice.read(scope, 'usage')).toMatchObject({ usage: { plan: 'growth' } });
   });
 });
 

@@ -120,18 +120,14 @@ the error and choosing again finishes it. The Settings route answers with the
 meter under the new plan, which the picker writes straight into the read and
 the cache.
 
-After the response, both routes call `publishOrganizationUsage`, which reads
-the meter again and has WorkspaceDO send it to every connected member as a
-`workspace_usage` socket event; each desktop writes it into its read and its
-cache, and the main window relays it to the Settings window, which reads its
-own. Guests are not sent it: the read route refuses them. The push carries
-when its read started, and WorkspaceDO drops one read before the last it
-sent, so after two quick changes the earlier plan cannot arrive last and win.
-The push is best effort and not replayed: a failure logs
-`usage_publish_failed`, and a desktop marks its meter stale on every subscribe
-answer, so a reconnect reads it again.
-[`realtime-sockets.md`](realtime-sockets.md) has why it is an event of its own
-rather than a sync topic.
+After the response, both routes call `publishOrganizationUsage`. It reads
+the meter, stamped with when the read started, and WorkspaceDO sends it to
+every member socket (not a guest's) as `workspace_usage`, dropping a meter
+read before the last one it sent. The desktop writes it into its read and its
+cache, cancelling a read in flight, and the main window relays it to the
+Settings window as the relay-only name `usage`. The push is not replayed: the
+desktop marks the meter stale on every subscribe answer and relays `usage`
+then too.
 
 A new rollup row's quota is computed inside the consumer's insert from
 `usage_plan_changes`: the latest change before the row's week ended, else the
@@ -172,8 +168,7 @@ therefore keep the plan they had, even for an event that arrives late.
   row gone and count it twice. Guard: `test/usage-metering.test.ts` ("deletes
   rows received before the 90-day window…").
 - **A plan change reaches every connected member without a request, and no
-  guest.** The push carries the meter, not a nudge, since it is the same for
-  every member; a guest cannot read it over REST either. Guard:
+  guest.** Guard:
   `test/usage-metering.test.ts` and `test/workspace-operations.test.ts`
   (each route publishes the re-priced meter),
   `test-workers/durable-object-runtime.test.ts` ("sends the meter after a plan
@@ -307,8 +302,9 @@ reads the meter under the new plan and WorkspaceDO sends it to every
 subscribed member socket as `workspace_usage`, never to a guest, dropping a
 meter read before the last one sent. The desktop writes it into the meter's
 read and the `usage` slice, marks the meter stale on every subscribe answer,
-and relays both to the Settings window as `usage`. The quota and overage arithmetic is unchanged: `setWorkspacePlan`
-already re-priced the current week, and overage is still derived on read.
+and relays both to the Settings window as `usage`. The quota and overage
+arithmetic is unchanged: `setWorkspacePlan` already re-priced the current
+week, and overage is still derived on read.
 
 **Why:** Only the window that made the change saw the new quota. Every other
 member, and every other window of the same person, kept the old meter until
@@ -320,16 +316,21 @@ read again. The topic enum is closed, so older desktops would reject the
 subscribe answer, and a nudge costs every member a request for a value that is
 the same for all of them and that the server had just read. Reading at send
 time alone to order two quick changes: the first push can still arrive last,
-so each carries when its read started and WorkspaceDO keeps the newest. Putting the push on the
+so each carries when its read started and WorkspaceDO keeps the newest.
+Carrying the value as a sync topic on the Electron relay: that enum is the
+server's, so the relay gained its own name, `usage`. Putting the push on the
 waterline and replaying it: the meter changes as usage accrues too, so a
 replayed value would be stale, and a reread on subscribe is cheaper and
 current.
 
 **Consequences:** The push is best effort and post-commit; it never fails or
-delays the change. Only the plan change pushes; accrued usage still lags by
+delays the change. Guests are never sent it, since the read route refuses
+them. Only the plan change pushes; accrued usage still lags by
 the consumer's batch window and is read when a meter opens. When checkout
 lands, a plan change made by the payment flow has to call
 `publishOrganizationUsage` too.
+
+Shipped in #1173.
 
 ### 2026-10-07 — Administrators choose the plan in Settings
 
