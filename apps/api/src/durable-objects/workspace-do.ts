@@ -4960,6 +4960,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * signals that survive one.
    */
   private lastSocketEventAt: number | null = null;
+  /** When the newest meter `publishUsage` sent was read. */
+  private lastUsageReadAtMs: number | null = null;
   /**
    * `WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS`, held per instance so a runtime
    * test can shorten it and drive the real accept and alarm paths.
@@ -7756,12 +7758,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * Send the Organization's meter, as it reads after a plan change, to every
-   * subscribed socket. The meter is the same for every member, so the caller
-   * reads it once and this object only fans it out. Not on the waterline: a
-   * socket that was away rereads the meter when it subscribes again.
+   * subscribed member socket. The meter is the same for every member, so the
+   * caller reads it once and this object only fans it out. Not on the
+   * waterline: a socket that was away rereads the meter when it subscribes
+   * again.
+   *
+   * `readAt` is when the caller started reading the meter. Two quick changes
+   * each publish, and the first can arrive last; a meter read before the last
+   * one sent is dropped, so a late push cannot put back the earlier plan. The
+   * mark lives in memory: after an eviction the next push is sent whatever
+   * its time, which is right, because nothing older is still in flight for
+   * long.
    */
   async publishUsage(
     usage: OrganizationUsage,
+    readAt: string,
     workspaceId: string,
     placementAffinity: WorkspacePlacementAffinity,
   ): Promise<number> {
@@ -7769,18 +7780,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.ensureIdentity(workspaceId, placementAffinity);
     // Parsed here, not thrown raw: a `ZodError` reaches the RPC caller as a
     // bare `Error` with nothing in it (`docs/naming-a-schema-failure.md`).
-    const event = WorkspaceUsageEventSchema.safeParse({
-      type: "workspace_usage",
-      occurredAt: new Date().toISOString(),
-      usage,
-    });
+    const event = WorkspaceUsageEventSchema.safeParse({ type: "workspace_usage", occurredAt: readAt, usage });
     if (!event.success) {
       throw new Error(zodDiagnosticCode(event.error, "workspace_usage") ?? "workspace_usage_invalid");
     }
+    const readAtMs = Date.parse(event.data.occurredAt);
+    if (this.lastUsageReadAtMs !== null && readAtMs < this.lastUsageReadAtMs) return 0;
+    this.lastUsageReadAtMs = readAtMs;
     const payload = JSON.stringify(event.data);
     let sent = 0;
     for (const socket of this.state.getWebSockets()) {
-      if (!readAttachment(socket)?.subscribed) continue;
+      const attachment = readAttachment(socket);
+      // A guest is not a member: `GET /workspace/usage` refuses them, so the
+      // plan and overage are not theirs to be sent either.
+      if (!attachment?.subscribed || viewerOf(attachment).accessClass === "guest") continue;
       try {
         socket.send(payload);
         sent += 1;

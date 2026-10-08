@@ -2822,6 +2822,16 @@ describe('the organization-sync relay between windows', () => {
       waterline: 2,
       items: [],
     }));
+    act(() => socket.message({
+      type: 'workspace_usage',
+      occurredAt: '2026-08-17T20:00:04.000Z',
+      usage: {
+        plan: 'growth',
+        quotaRemainingPercent: 64,
+        weekResetsAt: '2026-08-20T20:00:00.000Z',
+        overage: { amountMicrousd: 0, periodStart: '2026-08-01T20:00:00.000Z', periodEndsAt: '2026-09-01T20:00:00.000Z', billed: false },
+      },
+    }));
     await flushPromises();
 
     // `initial` is relayed whole: it names every topic because this socket
@@ -2830,11 +2840,16 @@ describe('the organization-sync relay between windows', () => {
     expect(syncRelay.published).toEqual([
       { type: 'state', region, workspaceId, state: 'connecting' },
       { type: 'state', region, workspaceId, state: 'connected' },
+      // A meter push made while the socket was away is not replayed, so the
+      // Settings window reads its own again on every subscribe answer.
+      { type: 'topics', region, workspaceId, waterline: 8, topics: ['usage'] },
       { type: 'topics', region, workspaceId, waterline: 8, topics: [...WORKSPACE_SYNC_TOPICS] },
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['member_directory'] },
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['feature_flags'] },
       // The Sidekicks window reads what the list push refetches, not the list.
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['automations'] },
+      // The meter travels by value on the socket and by name on the relay.
+      { type: 'topics', region, workspaceId, waterline: 9, topics: ['usage'] },
     ]);
   });
 
@@ -2871,8 +2886,10 @@ describe('the organization-sync relay between windows', () => {
     const queryClient = new QueryClient();
     const readMembers = vi.fn(async () => ['member']);
     const readFlags = vi.fn(async () => ClientFeatureFlagsSchema.parse({}));
+    const readUsage = vi.fn(async () => 'usage');
     const getWorkspaceSocketTicket = vi.fn(ticket);
     function Reads(): JSX.Element {
+      useQuery({ queryKey: ['workspace-usage', null], queryFn: readUsage, staleTime: 30_000, networkMode: 'always' });
       const members = useQuery({
         queryKey: ['workspace-members'], queryFn: readMembers, staleTime: 30_000, networkMode: 'always',
       });
@@ -2908,6 +2925,12 @@ describe('the organization-sync relay between windows', () => {
     // A flag change is a topic like any other: this window reads its own.
     relayToConsumer({ type: 'topics', region, workspaceId, waterline: 12, topics: ['feature_flags'] });
     await vi.waitFor(() => expect(readFlags).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+
+    // A plan change: this window has no socket, so it reads its own meter.
+    expect(readUsage).toHaveBeenCalledTimes(1);
+    relayToConsumer({ type: 'topics', region, workspaceId, waterline: 12, topics: ['usage'] });
+    await vi.waitFor(() => expect(readUsage).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+    expect(await screen.findByText('connected:12')).toBeInTheDocument();
 
     // News about another Organization is not this window's — including the
     // same UUID in another region.
