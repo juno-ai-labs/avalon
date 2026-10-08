@@ -112,14 +112,7 @@ export const OrganizationUsageSchema = z.object({
 });
 export type OrganizationUsage = z.infer<typeof OrganizationUsageSchema>;
 
-/**
- * The meter as it reads after a plan change, sent on the workspace socket to
- * every member connected to the Organization. The meter is the same for every
- * member, so the value itself travels rather than a nudge to read it. Outside
- * the waterline and never replayed: a desktop rereads the meter on reconnect
- * instead. Not a `workspace_sync` topic, because that enum is closed and older
- * desktops would reject the subscribe answer; they ignore an unknown `type`.
- */
+/** Sent on the workspace socket after a plan change; see docs/usage-metering.md. */
 export const WorkspaceUsageEventSchema = z.strictObject({
   type: z.literal("workspace_usage"),
   occurredAt: z.string().datetime(),

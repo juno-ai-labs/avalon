@@ -134,7 +134,7 @@ import {
   type UpdateOnboardingJourney,
 } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
-import { WorkspaceUsageEventSchema, type OrganizationUsage } from "@rally/contracts/usage";
+import type { OrganizationUsage, WorkspaceUsageEvent } from "@rally/contracts/usage";
 import { WorkspaceAccessRequestsEventSchema } from "@rally/contracts";
 import {
   AccessRequestRefSchema, AccessRequestSubjectRequestSchema, AccessRequestSubjectSchema, CONVERSATION_ACCESS_REQUESTS_MIGRATION,
@@ -7778,16 +7778,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): Promise<number> {
     await this.initialized;
     this.ensureIdentity(workspaceId, placementAffinity);
-    // Parsed here, not thrown raw: a `ZodError` reaches the RPC caller as a
-    // bare `Error` with nothing in it (`docs/naming-a-schema-failure.md`).
-    const event = WorkspaceUsageEventSchema.safeParse({ type: "workspace_usage", occurredAt: readAt, usage });
-    if (!event.success) {
-      throw new Error(zodDiagnosticCode(event.error, "workspace_usage") ?? "workspace_usage_invalid");
-    }
-    const readAtMs = Date.parse(event.data.occurredAt);
+    const readAtMs = Date.parse(readAt);
     if (this.lastUsageReadAtMs !== null && readAtMs < this.lastUsageReadAtMs) return 0;
     this.lastUsageReadAtMs = readAtMs;
-    const payload = JSON.stringify(event.data);
+    // The meter is our own reader's, one hop away; the desktop parses it.
+    const payload = JSON.stringify({ type: "workspace_usage", occurredAt: readAt, usage } satisfies WorkspaceUsageEvent);
     let sent = 0;
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);

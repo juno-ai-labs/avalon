@@ -187,12 +187,10 @@ main's, the preload inbox's, the consumer's — compares both.
   values themselves never cross, and the consumer refetches its own. A
   `workspace_sidebar_list` push of the `automations` list is published as the
   `automations` topic, the refetch that push amounts to for a window that does
-  not hold the list. A `workspace_usage` push, the meter after a plan change,
-  is published as `usage`, and so is every subscribe answer, since that push
-  is not replayed. `usage` is a relay-only name rather than a sync topic: the
-  topic enum is the server's and closed, and the name carries no waterline of
-  its own. Nothing else crosses: no sidebar, rows, presence, directory pages
-  or meter values.
+  not hold the list. A `workspace_usage` push, and every subscribe answer, is
+  published as `usage`, a relay-only name
+  ([`usage-metering.md`](usage-metering.md)). Nothing else crosses: no
+  sidebar, rows, presence, directory pages or meter values.
 - **Detach on unmount, unless replaced.** The provider's cleanup publishes
   `detach` on a microtask, and only if no other publisher has mounted in the
   renderer since. An Organization switch — and StrictMode — unmounts a
