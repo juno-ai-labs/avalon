@@ -310,7 +310,10 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
           }],
           completeWorkstream: false,
           expiresAt: null,
-        })).catch((error: unknown) => logError('rally', `could not share the new channel with ${input.invitedEmails.join(', ')}`, error));
+        }))
+          // A People level opened while this was in flight read an empty list.
+          .then(() => queryClient.invalidateQueries({ queryKey: ['scope-invitations', created.workstream.id] }))
+          .catch((error: unknown) => logError('rally', `could not share the new channel with ${input.invitedEmails.join(', ')}`, error));
       }
       const selectedParticipants = (members.data ?? [])
         .filter((member) => input.participantIds.includes(member.id))

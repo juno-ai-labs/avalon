@@ -42,6 +42,8 @@ interface MentionCandidate {
   member?: WorkspaceMember;
 }
 
+const NO_SHARED: readonly string[] = [];
+
 /** Only a message that names an invitee says so, so every other send keeps its arity. */
 function invitedArgument(emails: string[]): [] | [string[]] {
   return emails.length > 0 ? [emails] : [];
@@ -89,6 +91,12 @@ interface WorkstreamComposerProps {
    * the conversation with them.
    */
   invitees?: readonly WorkspaceInvitee[];
+  /**
+   * Invitees this conversation is already shared with. They are mentioned like
+   * any other, but neither confirmed nor handed to the host again: a second
+   * share would be a second email.
+   */
+  sharedInviteeEmails?: readonly string[];
   /**
    * The model control, passed straight to the composer that draws it. Both
    * conversations this composer serves want one: a substream being started
@@ -162,6 +170,7 @@ export function WorkstreamComposer({
   substreamId = '0',
   members,
   invitees = NO_INVITEES,
+  sharedInviteeEmails = NO_SHARED,
   model,
   fileInputRef,
   sending,
@@ -386,7 +395,7 @@ export function WorkstreamComposer({
       if (participantIds.has(member.id)) return false;
       return resolvedPersonIds.has(member.id);
     });
-    const invitedEmails = mentionedInvitees(trimmed, invitees);
+    const invitedEmails = mentionedInvitees(trimmed, invitees).filter((email) => !sharedInviteeEmails.includes(email));
     if (workstream.scope === 'personal' && (nonparticipants.length > 0 || invitedEmails.length > 0)) {
       setPendingConfirmation({
         text: trimmed,

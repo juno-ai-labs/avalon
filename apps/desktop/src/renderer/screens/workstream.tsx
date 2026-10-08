@@ -531,7 +531,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
           }],
           completeWorkstream: false,
           expiresAt: null,
-        })).catch((error: unknown) => logError('rally', `could not share the new breakout with ${opening.invitedEmails.join(', ')}`, error));
+        }))
+          .then(() => queryClient.invalidateQueries({ queryKey: ['scope-invitations', attempt.parentId, created.substreamId] }))
+          .catch((error: unknown) => logError('rally', `could not share the new breakout with ${opening.invitedEmails.join(', ')}`, error));
       }
       const current = creationRef.current === attempt;
       if (!current) trace.end({ outcome: 'superseded' });

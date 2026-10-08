@@ -193,6 +193,26 @@ describe('a title pill menu with levels', () => {
     await vi.waitFor(() => expect(onInvite).toHaveBeenCalledExactlyOnceWith(['dana@example.test']));
   });
 
+  it('adds nobody on Enter while a name matches a member and an invitee', async () => {
+    const onAdd = vi.fn(() => Promise.resolve());
+    const onInvite = vi.fn(() => Promise.resolve());
+    const daniel = { id: 'user-2', name: 'Daniel', email: 'daniel@example.test', timezone: 'UTC' };
+    renderChannelPill({ people: {
+      candidates: [member, daniel], onAdd, adding: false, currentUserId: member.id,
+      invitees: ['dana@example.test'], invites: { pending: [], onInvite },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
+
+    fireEvent.change(search, { target: { value: 'dan' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter email addresses separated by spaces, commas or semicolons.');
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(onInvite).not.toHaveBeenCalled();
+  });
+
   it('invites the one invitee a name narrows to on Enter', async () => {
     const onInvite = vi.fn(() => Promise.resolve());
     renderChannelPill({ people: {
