@@ -3,7 +3,9 @@ import { boundsWithoutConversationDetails, clampWindowBounds, readMainWindowStat
 import { EmbeddedBrowser, isEmbeddedBrowserWebContents } from './embedded-browser';
 import { EmbeddedBrowserBoundsSchema, EmbeddedBrowserCommandSchema, type EmbeddedBrowserCommand } from '../common/embedded-browser';
 import { BrowserImportContextSchema, BrowserImportedWorkstreamIdSchema, BrowserImportProgressSchema, type BrowserImportContext, type BrowserImportProgress } from '../common/browser-import';
-import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
+import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
+import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
+import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
 import type { ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
@@ -14,6 +16,12 @@ import {
   ProductAnalyticsPreferenceSchema,
   RegionSchema,
   SessionSchema,
+  SocketTicketSchema,
+  StartSupportSessionRequestSchema,
+  SupportPeopleSchema,
+  SupportWorkspacesSchema,
+  type SupportPerson,
+  type SupportWorkspace,
   WorkspaceOnboardingStateSchema,
   WorkspaceAttentionSchema,
   WorkspaceDepartureSchema,
@@ -29,6 +37,7 @@ import {
   DESKTOP_DEEP_LINK_PROTOCOLS,
 } from '@rally/contracts/desktop-deep-link';
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { APNS_TOPICS } from '@rally/contracts/push-notifications';
 import type { Region } from "@rally/contracts/regions";
 import { regions } from "@rally/contracts/regions";
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
@@ -112,6 +121,7 @@ import {
 import { accountReconnectRequiredFailure } from '../common/workspace-activation-error';
 import {
   definitivelyInvalidatesStoredCredential,
+  RallyApiResponseError,
   readJsonBody,
   refreshFailureIsTerminal,
   responseError,
@@ -175,12 +185,12 @@ import {
   allowsTrustedAudioCapture,
 } from './media-permission';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
-import { MenuBarContentStore } from './menu-bar-content';
+import { menuBarContentFromDirectory } from './menu-bar-content';
 import {
-  MENU_BAR_PINNED_LIMIT,
-  MENU_BAR_RECENT_LIMIT,
+  MENU_BAR_SECTION_LIMIT,
   supportsSectionHeaders,
 } from './menu-bar-menu';
+import { ChannelDirectoryWatch } from './channel-directory-watch';
 import { MenuBarOpenObserver } from './menu-bar-open-observer';
 import {
   isMessageExportUrl,
@@ -208,8 +218,12 @@ import { DesktopPushNotifications } from "./push-notifications";
 import {
   RealtimeSocketBroker,
   createNodeRealtimeSocketFactory,
+  reachSocketFromRealtimeClient,
 } from './realtime-socket-broker';
 import { registerRealtimeSocketIpc } from './realtime-socket-ipc';
+import { NetworkRecovery } from './network-recovery';
+import { registerNetworkRecoveryIpc } from './network-recovery-ipc';
+import { NETWORK_RECOVERY_IPC } from '../common/network-recovery';
 import {
   decryptSessionValue,
   encryptSessionValue,
@@ -238,6 +252,7 @@ import { registerWorkspaceSyncRelayIpc } from './workspace-sync-relay-ipc';
 import {
   activeStoredCredential,
   activeStoredCredentialIsGuest,
+  storedCredentialIsSupport,
   activeStoredWorkspaceCredential,
   mergeStoredSession,
   parseStoredAuthSet,
@@ -335,9 +350,6 @@ const DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS = 15_000;
 /** Short, because the drop-down is already open — or about to be — while this
  * runs, and a menu that updates a minute later has updated for nobody. */
 const MENU_BAR_REQUEST_TIMEOUT_MS = 8_000;
-/** How long the menu's cached content is served before the pointer arriving at
- * the status item asks for it again. */
-const MENU_BAR_CONTENT_MAX_AGE_MS = 15_000;
 
 const telemetryScreens = new Set<DesktopTelemetryScreen>([
   'onboarding_welcome', 'onboarding_region', 'onboarding_workspace',
@@ -636,6 +648,7 @@ let nativeCrashGenerationActive = false;
 let nativeCrashGenerationInvalidated = false;
 let telemetryFlushTimer: ReturnType<typeof setInterval> | null = null;
 let telemetryAccountBinding: string | null = null;
+let telemetryHasAuthenticated = false;
 let telemetryLinkInFlight: Promise<void> | null = null;
 let telemetryLinkedCapability: string | null = null;
 let telemetryLaunchId: string | null = null;
@@ -858,6 +871,14 @@ function publicSession(value: WireSession): DesktopSession {
           timezone: value.workspace.timezone,
         }
       : null,
+    ...(value.impersonator ? {
+      impersonator: {
+        id: value.impersonator.id,
+        email: value.impersonator.email,
+        name: value.impersonator.name,
+        ...(value.impersonator.avatarUrl ? { avatarUrl: value.impersonator.avatarUrl } : {}),
+      },
+    } : {}),
   };
 }
 
@@ -907,16 +928,11 @@ function broadcastSessionChanged(value: WireSession | null): void {
   if (exposed) developerSettingsFlagController.observeSession(flagSessionIdentity(exposed.user.id, exposed.apiBaseUrl));
   else developerSettingsFlagController.stop();
   // The menu bar item outlives every window, so it has to be told about a
-  // sign-out directly. Leaving the previous account's work-stream titles in the
-  // menu would keep them readable to whoever signs in next.
-  //
-  // Only the sign-out half is unconditional. This also fires on every token
-  // renewal, so fetching without a status item to fill would be recurring API
-  // traffic — and a cache of work-stream titles in memory — on every Windows and
-  // Linux install and on any Mac with the preference off. `clear()` stays
-  // ungated so a cache from a session where the item *was* on cannot outlive it.
-  if (!exposed) menuBarContentStore.clear();
-  else if (menuBarItemIsLive()) void menuBarContentStore.refresh();
+  // sign-out directly. Leaving the previous account's Channel titles in the
+  // menu would keep them readable to whoever signs in next, so a sign-out
+  // drops them here, synchronously, before the queued sync below runs.
+  if (!exposed) channelDirectoryWatch.stop();
+  syncMenuBarDirectory();
   menuBarController.refresh();
 
   // A sign-in is the first moment a settings window would be worth having, and
@@ -942,6 +958,7 @@ function broadcastSessionChanged(value: WireSession | null): void {
     void telemetrySpool.purgeNonessential();
     void rotateTelemetryEpochsAfterAccountChange();
   }
+  if (nextBinding) telemetryHasAuthenticated = true;
   telemetryAccountBinding = nextBinding;
   if (exposed?.workspace) {
     const nextRoute = exposed.workspace.region;
@@ -1286,14 +1303,87 @@ const developerSettingsFlagController = new DeveloperSettingsFlagController({
   },
 });
 
-const menuBarContentStore = new MenuBarContentStore({
-  requestJson: rallyApiRequest,
+/**
+ * Dials the main process's own workspace socket for the menu bar, through the
+ * same Node broker route as the feed sockets. No frame ceiling: the subscribe
+ * answer is the whole sidebar, and the renderer's socket has none either.
+ */
+const menuBarSocketFactory = createNodeRealtimeSocketFactory(
+  (url) => electronSession.defaultSession.resolveProxy(url),
+  undefined,
+  0,
+);
+
+function logMenuBarSocketDiagnostic(diagnostic: ReachWatchDiagnostic): void {
+  if (diagnostic.code === 'ticket_failed' || diagnostic.code === 'open_failed') {
+    logWarn('rally', `menu bar workspace socket ${diagnostic.code}`, diagnostic.error);
+  } else {
+    logWarn('rally', `menu bar workspace socket ${diagnostic.code}: ${diagnostic.closeCode}`);
+  }
+}
+
+/**
+ * The Channel rows behind the menu bar, held over a workspace socket of the
+ * main process's own so the count beside the status item is the sidebar's
+ * count whether or not a window exists. See `docs/menu-bar.md`.
+ */
+const channelDirectoryWatch = new ChannelDirectoryWatch({
+  socket: (handlers) => watchWorkspaceSocket({
+    ticket: async () => SocketTicketSchema.parse(await rallyApiRequest('/workspace/socket')),
+    open: (url, ticket) => reachSocketFromRealtimeClient(menuBarSocketFactory(url, socketTicketProtocols(ticket))),
+    ...handlers,
+    onDiagnostic: (diagnostic) => {
+      logMenuBarSocketDiagnostic(diagnostic);
+      // The server ended this session's access, or the session itself, and
+      // the socket will not redial. Forget the rows rather than keep showing
+      // titles and a count this account may no longer see; the next session
+      // change finds the watch stopped and opens it again.
+      if (diagnostic.code === 'stopped') channelDirectoryWatch.stop();
+    },
+  }),
   onChange: () => menuBarController.refresh(),
-  // From storage rather than `inMemorySession`, which a login launch has not
-  // set when the status item first asks.
-  available: async () => !activeStoredCredentialIsGuest(await loadStoredAuthSet(), await loadStoredProfileSet()),
+  requestId: uuidV7,
   logWarning: (message, error) => logWarn('rally', message, error),
 });
+
+/** Which account and Organization the socket serves; a token renewal keeps it. */
+let menuBarDirectoryIdentity: string | null = null;
+/** A guest is signed in but refused the Channel list: nothing will load, so the menu must not say it is loading. */
+let menuBarDirectoryUnavailable = false;
+let menuBarDirectorySync: Promise<void> = Promise.resolve();
+
+/**
+ * Opens, keeps or closes the menu bar's socket to match the stored session.
+ *
+ * Called on every session change (token renewals included), when the
+ * preference moves, and at launch. Read from storage rather than
+ * `inMemorySession`, which a login launch has not set when the status item
+ * first needs content. Serialized, so two quick changes cannot open two
+ * sockets. A guest is refused the Channel list, so it gets no socket; a
+ * preference that is off, or a platform with no menu bar, gets none either.
+ */
+function syncMenuBarDirectory(): void {
+  menuBarDirectorySync = menuBarDirectorySync.then(async () => {
+    const authSet = await loadStoredAuthSet();
+    const active = authSet ? activeStoredCredential(authSet) : null;
+    const guest = activeStoredCredentialIsGuest(authSet, await loadStoredProfileSet());
+    const live = active !== null && active.binding.workspaceId !== null && menuBarItemIsLive() && !guest;
+    if (menuBarDirectoryUnavailable !== guest) {
+      menuBarDirectoryUnavailable = guest;
+      menuBarController.refresh();
+    }
+    const identity = live
+      ? `${active.binding.userId}:${active.binding.region}:${active.binding.workspaceId}`
+      : null;
+    const runningAsIdentified = (identity !== null) === channelDirectoryWatch.running();
+    if (identity === menuBarDirectoryIdentity && runningAsIdentified) return;
+    menuBarDirectoryIdentity = identity;
+    channelDirectoryWatch.stop();
+    if (identity !== null) channelDirectoryWatch.start();
+  }).catch((error: unknown) => {
+    logWarn('rally', 'could not open the menu bar workspace socket', error);
+  });
+}
 
 const launchAtLoginController = new LaunchAtLoginController({
   supported: process.platform === 'darwin',
@@ -1345,16 +1435,26 @@ const menuBarController = new MenuBarController({
   supported: process.platform === 'darwin',
   appName: app.name,
   createTray: createMenuBarTray,
-  content: () => menuBarContentStore.content(),
+  content: () => {
+    const snapshot = channelDirectoryWatch.snapshot();
+    return menuBarContentFromDirectory(menuBarDirectoryUnavailable ? { ...snapshot, complete: true } : snapshot);
+  },
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
   signedIn: () => Boolean(inMemoryAuthSet),
   sectionHeaders: supportsSectionHeaders(process.getSystemVersion()),
   actions: {
     selected: (action) => { void telemetryReporter?.menuBarActionSelected(action); },
-    openWorkstream: (workstreamId) => {
+    openConversation: (workstreamId, substreamId) => {
       activateFromMenuBar();
-      emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'menu_bar');
+      emitDeepLink(
+        `${customProtocol}://workstreams/${workstreamId}${substreamId === null ? '' : `/substreams/${substreamId}`}`,
+        'menu_bar',
+      );
+    },
+    openAccessRequest: (requestId) => {
+      activateFromMenuBar();
+      emitDeepLink(`${customProtocol}://access-requests/${requestId}`, 'menu_bar');
     },
     openRally: openMainWindowFromMenuBar,
     quit: () => app.quit(),
@@ -1366,7 +1466,12 @@ const menuBarController = new MenuBarController({
 });
 
 const desktopPush = new DesktopPushNotifications({
-  credentials: async () => (await loadStoredAuthSet())?.workspaces ?? [],
+  // A support session is somebody else's; their notifications are not this device's.
+  credentials: async () => {
+    const auth = await loadStoredAuthSet();
+    const profiles = await loadStoredProfileSet();
+    return (auth?.workspaces ?? []).filter((credential) => !storedCredentialIsSupport(profiles, credential));
+  },
   request: async (credential, path, init = {}) => {
     const ask = (auth: StoredAuth) => net.fetch(`${apiBaseForAuth(auth)}${path}`, {
       ...init, headers: { ...init.headers, Authorization: `Bearer ${auth.accessToken}` },
@@ -1389,6 +1494,13 @@ const desktopPush = new DesktopPushNotifications({
   changed: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
   warn: () => logWarn('rally', 'Push notifications could not register on this Mac'),
 });
+
+/**
+ * The active Organization's attention count, as the main window last sent it.
+ * An APNs alert from another Organization can replace the dock badge while
+ * Rally is in the background; focusing Rally puts this one back.
+ */
+let dockBadgeCount: number | null = null;
 
 // Install the response delegate before ready so a notification cold launch is retained.
 desktopPush.installNativeBridge();
@@ -1504,6 +1616,8 @@ async function rallyApiRequest(
     headers: {
       Accept: 'application/json',
       Authorization: `Bearer ${accessToken}`,
+      // The socket ticket route admits only a client that names its contract.
+      [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION),
       ...(init ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(init ? { body: JSON.stringify(init.body) } : {}),
@@ -1839,6 +1953,8 @@ function configuredApiBase(region: RallyRegion): string {
 function runtimeConfig(): RuntimeConfig {
   const packaged = app.isPackaged;
   return {
+    ...(!telemetryHasAuthenticated && telemetryIdentity?.firstSignupFlowId
+      ? { firstSignupFlowId: telemetryIdentity.firstSignupFlowId } : {}),
     appVersion: app.getVersion(),
     isPackaged: packaged,
     platform: process.platform,
@@ -1875,6 +1991,7 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
   const launchState = await beginTelemetryLaunch(userDataDirectory(), telemetryLaunchId, new Date());
   const identityState = await readTelemetryIdentityState(userDataDirectory());
   telemetryIdentity = identityState.identity;
+  telemetryHasAuthenticated = launchAuth !== null;
   telemetryAccountBinding = launchAuth
     ? flagSessionIdentity(launchAuth.binding.userId, apiBaseForAuth(launchAuth))
     : null;
@@ -2040,6 +2157,9 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
     }
   } catch (error) {
     logWarn('rally', 'could not record the application version transition', error);
+  }
+  if (identityState.created && !launchAuth && telemetryIdentity.firstSignupFlowId) {
+    await telemetryReporter.freshInstallOpened(telemetryIdentity.firstSignupFlowId);
   }
   await telemetryReporter.applicationLifecycle('launch_started');
   await telemetryReporter.desktopSession('started', telemetryContinuouslyEligible);
@@ -2247,9 +2367,11 @@ async function requireOnboardingIdentitySession(): Promise<WireSession> {
 
 async function onboardingIdentityRequest(
   request: (identity: WireSession) => Promise<Response>,
+  /** The identity the caller already loaded, so the request does not read it twice. */
+  loaded?: WireSession,
 ): Promise<{ identity: WireSession; response: Response }> {
   return requestWithOnboardingIdentity({
-    load: requireOnboardingIdentitySession,
+    load: loaded ? async () => loaded : requireOnboardingIdentitySession,
     refresh: async (identity) => {
       const auth = await loadStoredAuthSet();
       const account = auth?.account;
@@ -2563,7 +2685,7 @@ async function requestOnboardingSession(
       },
       body: JSON.stringify(body),
     },
-  ));
+  ), identity);
   const response = requested.response;
   if (!response.ok) throw await responseError(response);
   const parsed = SessionSchema.safeParse(await response.json());
@@ -2591,8 +2713,11 @@ async function requestOnboardingSession(
       throw new Error('The signed-in Rally account changed during organization setup');
     }
     const activate = selectionIntent === workspaceSelectionIntent;
+    const displaced = await displacedSupportCredentialUnlocked(session);
     inMemoryAuthSet = await writeSplitSessionFiles(session, { activate });
+    if (displaced) revokeInBackground(displaced);
     if (activate) {
+      await dropBackgroundSupportCredentialsUnlocked();
       inMemorySession = session;
       broadcastSessionChanged(session);
       return publicSession(session);
@@ -2600,6 +2725,167 @@ async function requestOnboardingSession(
     const current = await loadStoredSession() ?? await loadStoredIdentitySession();
     if (!current) throw new Error('Rally was signed out while organization setup was running');
     return publicSession(current);
+  });
+}
+
+/**
+ * Rally staff support access (`docs/impersonation.md`). Every call goes to
+ * Global with the account's identity credential, which is what the API checks
+ * staff membership against; the support session itself is stored and used
+ * like any other Organization credential, marked by its profile's
+ * `impersonator`.
+ */
+async function supportIdentityGet<T>(path: string, schema: ZodType<T>): Promise<T> {
+  const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+    `${configuredApiBase('global')}${path}`,
+    { method: 'GET', headers: { Accept: 'application/json', Authorization: `Bearer ${credential.accessToken}` } },
+  ));
+  if (!response.ok) throw await responseError(response);
+  const parsed = schema.safeParse(await response.json());
+  if (!parsed.success) throw new Error(`Rally returned an invalid Rally access response (${describeZodIssues(parsed.error)})`);
+  return parsed.data;
+}
+
+/** `null` when the account is not Rally staff, which is final; anything else throws so it is retried. */
+async function listSupportWorkspaces(): Promise<SupportWorkspace[] | null> {
+  try {
+    return (await supportIdentityGet('/auth/support/workspaces', SupportWorkspacesSchema)).workspaces;
+  } catch (error) {
+    if (error instanceof RallyApiResponseError && error.code === 'support_access_staff_required') return null;
+    throw error;
+  }
+}
+
+async function listSupportPeople(input: unknown): Promise<SupportPerson[]> {
+  const workspaceId = IdSchema.safeParse(input);
+  if (!workspaceId.success) throw new Error('Invalid organization');
+  return (await supportIdentityGet(`/auth/support/workspaces/${workspaceId.data}/people`, SupportPeopleSchema)).people;
+}
+
+async function startSupportSession(input: unknown): Promise<DesktopSession> {
+  const request = StartSupportSessionRequestSchema.safeParse(input);
+  if (!request.success) throw new Error('Invalid Rally access request');
+  const expectedLifecycleEpoch = sessionLifecycleEpoch;
+  const selectionIntent = ++workspaceSelectionIntent;
+  const identity = await requireOnboardingIdentitySession();
+  const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+    `${configuredApiBase('global')}/auth/support/session`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${credential.accessToken}`,
+      },
+      body: JSON.stringify(request.data),
+    },
+  ), identity);
+  if (!response.ok) throw await responseError(response);
+  const parsed = SessionSchema.safeParse(await response.json());
+  if (!parsed.success) throw new Error(`Rally returned an invalid support session (${describeZodIssues(parsed.error)})`);
+  if (!parsed.data.workspace || !parsed.data.impersonator) {
+    throw new Error(`Rally returned a support session without its ${parsed.data.workspace ? 'impersonator' : 'workspace'}`);
+  }
+  const apiBaseUrl = validatedApiBase(parsed.data.apiBaseUrl);
+  if (
+    parsed.data.workspace.id !== request.data.workspaceId
+    || parsed.data.user.id !== request.data.userId
+    || parsed.data.impersonator.id !== identity.user.id
+    || apiBaseUrl !== runtimeConfig().api[parsed.data.workspace.region]
+  ) {
+    throw new Error('Rally returned a support session for the wrong person or organization');
+  }
+  const session = { ...parsed.data, apiBaseUrl };
+  return withSessionMutation(async () => {
+    if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
+      throw new Error('Rally was signed out while Rally access was starting');
+    }
+    const currentAuth = await loadStoredAuthSet();
+    if (!currentAuth?.account || currentAuth.account.binding.userId !== identity.user.id) {
+      throw new Error('The signed-in Rally account changed while Rally access was starting');
+    }
+    const activate = selectionIntent === workspaceSelectionIntent;
+    const displaced = await displacedSupportCredentialUnlocked(session);
+    inMemoryAuthSet = await writeSplitSessionFiles(session, { activate });
+    // A support session for another person in the same Organization takes its
+    // slot; the one it replaces is ended on the server rather than orphaned.
+    if (displaced) revokeInBackground(displaced);
+    await dropBackgroundSupportCredentialsUnlocked();
+    if (!activate) {
+      const current = await loadStoredSession() ?? await loadStoredIdentitySession();
+      if (!current) throw new Error('Rally was signed out while Rally access was starting');
+      return publicSession(current);
+    }
+    inMemorySession = session;
+    broadcastSessionChanged(session);
+    return publicSession(session);
+  });
+}
+
+/**
+ * End the active support session: revoke it on the server, forget it here, and
+ * return to the Organization this device used before it, the way leaving one
+ * does. A no-op when the active credential is the account's own.
+ */
+async function endSupportSession(): Promise<DesktopSession | null> {
+  return withSessionMutation(async () => {
+    const auth = await loadStoredAuthSet();
+    const active = auth ? activeStoredCredential(auth) : null;
+    if (active && storedCredentialIsSupport(await loadStoredProfileSet(), active)) {
+      revokeInBackground(active);
+      await removeStoredCredentialUnlocked(active);
+    }
+    return inMemorySession ? publicSession(inMemorySession) : null;
+  });
+}
+
+/**
+ * A support session lasts only while it is in front of the person. Selecting
+ * any other Organization ends whichever support session was open, so none is
+ * left behind to be refreshed, listed or asked for attention in the
+ * background. Caller holds the session mutation lock.
+ */
+async function dropBackgroundSupportCredentialsUnlocked(): Promise<void> {
+  const auth = await loadStoredAuthSet();
+  const profiles = await loadStoredProfileSet();
+  if (!auth || !profiles) return;
+  const active = activeStoredCredential(auth);
+  const dropped = auth.workspaces.filter((credential) => (
+    credential !== active && storedCredentialIsSupport(profiles, credential)
+  ));
+  if (dropped.length === 0) return;
+  let nextAuth = auth;
+  let nextProfiles = profiles;
+  for (const credential of dropped) {
+    revokeInBackground(credential);
+    ({ auth: nextAuth, profiles: nextProfiles } = removeStoredWorkspace(
+      nextAuth, nextProfiles, credential.binding.workspaceId!, credential.binding.region,
+    ));
+  }
+  await writeStoredAuthFile(userDataDirectory(), encryptStoredSessionValue(JSON.stringify(nextAuth)));
+  await writeStoredProfileFile(userDataDirectory(), encryptStoredSessionValue(JSON.stringify(nextProfiles)));
+  inMemoryAuthSet = nextAuth;
+  inMemoryProfileSet = nextProfiles;
+}
+
+/**
+ * The support credential `session` is about to replace in its Organization's
+ * slot, if one is stored there. Writing the new session overwrites it, so the
+ * caller revokes it afterwards. Caller holds the session mutation lock.
+ */
+async function displacedSupportCredentialUnlocked(session: WireSession): Promise<StoredAuth | null> {
+  if (!session.workspace) return null;
+  const auth = await loadStoredAuthSet();
+  const current = auth ? storedWorkspaceCredential(auth, session.workspace.id, session.workspace.region) : null;
+  if (!current || current.refreshToken === session.refreshToken) return null;
+  return storedCredentialIsSupport(await loadStoredProfileSet(), current) ? current : null;
+}
+
+function revokeInBackground(credential: StoredAuth): void {
+  void revokeStoredCredentials({
+    version: 2, account: null, workspaces: [credential], activeWorkspace: null, workspaceRecency: [],
+  }).then((failures) => {
+    if (failures.length > 0) logWarn('rally', 'A support session could not be revoked on the server', failures[0]);
   });
 }
 
@@ -3422,6 +3708,18 @@ function assertMainWindowIpcSender(event: IpcMainInvokeEvent, operation: string)
 }
 
 function registerIpc(): void {
+  const networkRecovery = new NetworkRecovery({
+    closeConnections: () => electronSession.defaultSession.closeAllConnections(),
+    publish: (state) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+          window.webContents.send(NETWORK_RECOVERY_IPC.changed, state);
+        }
+      }
+    },
+    record: (diagnostic) => nativePerformanceLog.writeNetworkRecovery(diagnostic),
+  });
+  registerNetworkRecoveryIpc({ ipc: ipcMain, assertSender: assertTrustedIpcSender, recovery: networkRecovery });
   registerRealtimeSocketIpc({
     apiBaseUrls: Object.values(runtimeConfig().api),
     assertSender: (event) => {
@@ -3495,9 +3793,16 @@ function registerIpc(): void {
     await desktopPush.set(enabled);
     return desktopApplicationSettings();
   });
+  ipcMain.handle('dock-badge:set', (event, count: unknown) => {
+    assertTrustedIpcSender(event);
+    if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) throw new Error('Invalid dock badge count');
+    dockBadgeCount = count;
+    if (process.platform === 'darwin') app.setBadgeCount(count);
+  });
   ipcMain.handle('application-settings:open-notifications', async (event) => {
     assertTrustedIpcSender(event);
-    await shell.openExternal('x-apple.systempreferences:com.apple.Notifications-Settings.extension');
+    // `id` opens Rally's own entry rather than the list of apps.
+    await shell.openExternal(`x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=${APNS_TOPICS.macos}`);
   });
   ipcMain.handle('update:get-status', (event) => {
     assertTrustedIpcSender(event);
@@ -3541,7 +3846,7 @@ function registerIpc(): void {
     );
     // Nothing was fetched while the item was off, so an item just switched on
     // would open empty until the pointer next crossed it.
-    if (menuBarItemIsLive() && inMemoryAuthSet) void menuBarContentStore.refresh();
+    syncMenuBarDirectory();
     // `state()` for the same reason as the Developer preference above: reading
     // Lockdown mode's full settings can run the keystore fallback, and adding
     // or removing a status item must never cost anyone their session.
@@ -3710,6 +4015,22 @@ function registerIpc(): void {
   ipcMain.handle('workspace:surrender-active', (event) => {
     assertTrustedIpcSender(event);
     return surrenderActiveWorkspace();
+  });
+  ipcMain.handle('support:list-workspaces', (event) => {
+    assertTrustedIpcSender(event);
+    return listSupportWorkspaces();
+  });
+  ipcMain.handle('support:list-people', (event, workspaceId: unknown) => {
+    assertTrustedIpcSender(event);
+    return listSupportPeople(workspaceId);
+  });
+  ipcMain.handle('support:start', (event, input: unknown) => {
+    assertTrustedIpcSender(event);
+    return startSupportSession(input);
+  });
+  ipcMain.handle('support:end', (event) => {
+    assertTrustedIpcSender(event);
+    return endSupportSession();
   });
   ipcMain.handle('onboarding:activate-workspace', (event, input: unknown) => {
     assertTrustedIpcSender(event);
@@ -4171,32 +4492,18 @@ function createMenuBarTray(): MenuBarTray {
   const tray = new Tray(icon);
   tray.setToolTip(app.name);
   tray.setIgnoreDoubleClickEvents(true);
-  // The drop-down opens from cache, so freshness is bought on the way in: the
-  // pointer reaching the item is roughly a menu's worth of time before it is
-  // read. `refreshIfStale` is what keeps a pointer crossing the menu bar from
-  // becoming a request.
-  const prepareMenu = (): void => {
-    // Before the fetch, and unconditionally: the headings are a function of the
-    // clock as well as the content, so they can be wrong with nothing to
-    // re-fetch — and a refresh that fails publishes nothing to rebuild from.
-    // The controller's own guard makes this a no-op unless a boundary passed.
-    menuBarController.refreshIfHeadingsExpired();
-    // Signed out there is nothing to ask for, and every attempt would log a
-    // warning. The menu already says so, and a sign-in refreshes on its own.
-    if (!inMemoryAuthSet) return;
-    void menuBarContentStore.refreshIfStale(MENU_BAR_CONTENT_MAX_AGE_MS);
-  };
+  // The drop-down opens from what the main process's workspace socket already
+  // holds, so a click costs no request: freshness arrives as socket pushes.
   const openObserver = new MenuBarOpenObserver(() => {
-    const content = menuBarContentStore.content();
+    const content = menuBarContentFromDirectory(channelDirectoryWatch.snapshot());
     void telemetryReporter?.menuBarOpened({
       signedIn: Boolean(inMemoryAuthSet),
-      recentCount: Math.min(content.recents.length, MENU_BAR_RECENT_LIMIT),
-      pinnedCount: Math.min(content.pinned.length, MENU_BAR_PINNED_LIMIT),
+      recentCount: Math.min(content.recents.length, MENU_BAR_SECTION_LIMIT),
+      pinnedCount: 0,
+      attentionCount: content.attention.length,
     });
   });
-  tray.on('mouse-enter', prepareMenu);
   tray.on('click', () => {
-    prepareMenu();
     // Both this and `menu-will-show` observe the open. Which of the two macOS
     // raises for a status item's own menu is not something this repository can
     // check — there is no menu bar in the sandbox — and reporting nothing is
@@ -4210,6 +4517,7 @@ function createMenuBarTray(): MenuBarTray {
       menu.on('menu-will-close', () => openObserver.closed());
       tray.setContextMenu(menu);
     },
+    setTitle: (title) => tray.setTitle(title),
     destroy: () => tray.destroy(),
   };
 }
@@ -4782,6 +5090,10 @@ function installApplicationMenu(): void {
       },
       checkForUpdates: () => autoUpdateController?.checkForUpdates(),
       installDownloadedUpdate: () => autoUpdateController?.installDownloadedUpdate(),
+      // Only the main window has the account menu that lists Organizations.
+      refreshOrganizationList: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('organizations:refresh-requested');
+      },
     },
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -5140,7 +5452,7 @@ if (!singleInstanceLock) {
     } catch (error) {
       logWarn('rally', 'could not add Rally to the menu bar', error);
     }
-    if (launchAuth && menuBarItemIsLive()) void menuBarContentStore.refresh();
+    if (launchAuth) syncMenuBarDirectory();
     // Hidden only into somewhere. The menu bar item is what a login launch
     // leaves a person, and it is off whenever they turned it off and absent
     // whenever creating it failed — either way, opening no window would start
@@ -5164,7 +5476,10 @@ if (!singleInstanceLock) {
 
     if (initialDeepLink) emitDeepLink(initialDeepLink);
 
-    app.on('browser-window-focus', () => desktopPush.refreshPermission());
+    app.on('browser-window-focus', () => {
+      desktopPush.refreshPermission();
+      if (process.platform === 'darwin' && dockBadgeCount !== null) app.setBadgeCount(dockBadgeCount);
+    });
 
     app.on('activate', () => {
       applicationOpenObserver.activated();

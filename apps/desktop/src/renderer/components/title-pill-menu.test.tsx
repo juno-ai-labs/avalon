@@ -1,3 +1,4 @@
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ChannelMenu } from '@rally/ui/components/conversation-menus';
@@ -6,7 +7,7 @@ import { TitlePill } from '@rally/ui/components/title-pill';
 const member = { id: 'user-1', name: 'Adam', email: 'adam@example.test', timezone: 'UTC' };
 
 function renderChannelPill(overrides: Partial<React.ComponentProps<typeof ChannelMenu>> = {}): void {
-  render(<TitlePill level={{
+  render(<Tooltip.Provider><TitlePill level={{
     key: 'channel:c1',
     icon: null,
     title: 'Launch',
@@ -20,7 +21,7 @@ function renderChannelPill(overrides: Partial<React.ComponentProps<typeof Channe
       workstream={{ id: 'c1', title: 'Launch', scope: 'personal', participants: [member], resources: [] }}
       {...overrides}
     />,
-  }} />);
+  }} /></Tooltip.Provider>);
 }
 
 function openMenu(): void {
@@ -107,7 +108,7 @@ describe('a title pill menu with levels', () => {
   });
 
   it('adds someone from the People level, with only people not already in it suggested', async () => {
-    const onAdd = vi.fn();
+    const onAdd = vi.fn(() => Promise.resolve());
     const newcomer = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
     renderChannelPill({ people: { candidates: [member, newcomer], onAdd, adding: false, currentUserId: member.id } });
     openMenu();
@@ -120,9 +121,264 @@ describe('a title pill menu with levels', () => {
     expect(onAdd).toHaveBeenCalledWith(newcomer);
   });
 
+  it('lists people who asked to join above Suggested, answered in place and not suggested again', async () => {
+    const onDecide = vi.fn();
+    const asker = { id: 'user-3', name: 'Samantha Lee', email: 'sam@example.test', timezone: 'UTC' };
+    const other = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
+    renderChannelPill({ people: {
+      candidates: [member, asker, other], onAdd: vi.fn(() => Promise.resolve()), adding: false, currentUserId: member.id,
+      requests: { items: [{ id: 'r1', userId: asker.id, name: asker.name }], onDecide },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+
+    const headings = [...document.querySelectorAll('.title-menu-section-heading')].map((node) => node.textContent);
+    expect(headings).toEqual(['Asked to join', 'Suggested']);
+    expect(screen.getByText('sam@example.test')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add Samantha Lee' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add Jordan' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve Samantha Lee' }));
+    expect(onDecide).toHaveBeenCalledWith('r1', 'approve');
+    fireEvent.click(screen.getByRole('button', { name: 'Decline Samantha Lee' }));
+    expect(onDecide).toHaveBeenLastCalledWith('r1', 'decline');
+  });
+
+  it('shows no Asked to join section when nobody asked', async () => {
+    renderChannelPill({ people: {
+      candidates: [member], onAdd: vi.fn(() => Promise.resolve()), adding: false, currentUserId: member.id,
+      requests: { items: [], onDecide: vi.fn() },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    expect(await screen.findByText('You')).toBeInTheDocument();
+    expect(screen.queryByText('Asked to join')).not.toBeInTheDocument();
+  });
+
+  it('invites new addresses as guests on Enter, adds people already in the organization, and stays open', async () => {
+    const onAdd = vi.fn(() => Promise.resolve());
+    const onInvite = vi.fn(() => Promise.resolve());
+    const newcomer = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
+    renderChannelPill({ people: {
+      candidates: [member, newcomer], onAdd, adding: false, currentUserId: member.id,
+      invites: { pending: ['waiting@example.test'], onInvite },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
+
+    fireEvent.change(search, { target: { value: 'New@Guest.test, jordan@example.test;adam@example.test waiting@example.test other@guest.test' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(onAdd).toHaveBeenCalledExactlyOnceWith(newcomer);
+    await vi.waitFor(() => expect(onInvite).toHaveBeenCalledExactlyOnceWith(['new@guest.test', 'other@guest.test']));
+    await vi.waitFor(() => expect(search).toHaveValue(''));
+    expect(screen.getByRole('button', { name: 'Channel menu: Launch, People' })).toBeInTheDocument();
+  });
+
+  it('suggests people invited to the organization who have not joined, and invites one here with Add', async () => {
+    const onInvite = vi.fn(() => Promise.resolve());
+    renderChannelPill({ people: {
+      candidates: [member], onAdd: vi.fn(() => Promise.resolve()), adding: false, currentUserId: member.id,
+      invitees: ['dana@example.test', 'waiting@example.test'],
+      invites: { pending: ['waiting@example.test'], onInvite },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+
+    // Already invited here is listed among the people, not suggested again.
+    expect(screen.queryByRole('button', { name: 'Add waiting@example.test' })).not.toBeInTheDocument();
+    expect(screen.getByText('Invited', { selector: '.title-menu-person-detail' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add dana@example.test' }));
+
+    await vi.waitFor(() => expect(onInvite).toHaveBeenCalledExactlyOnceWith(['dana@example.test']));
+  });
+
+  it('adds nobody on Enter while a name matches a member and an invitee', async () => {
+    const onAdd = vi.fn(() => Promise.resolve());
+    const onInvite = vi.fn(() => Promise.resolve());
+    const daniel = { id: 'user-2', name: 'Daniel', email: 'daniel@example.test', timezone: 'UTC' };
+    renderChannelPill({ people: {
+      candidates: [member, daniel], onAdd, adding: false, currentUserId: member.id,
+      invitees: ['dana@example.test'], invites: { pending: [], onInvite },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
+
+    fireEvent.change(search, { target: { value: 'dan' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter email addresses separated by spaces, commas or semicolons.');
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(onInvite).not.toHaveBeenCalled();
+  });
+
+  it('invites the one invitee a name narrows to on Enter', async () => {
+    const onInvite = vi.fn(() => Promise.resolve());
+    renderChannelPill({ people: {
+      candidates: [member], onAdd: vi.fn(() => Promise.resolve()), adding: false, currentUserId: member.id,
+      invitees: ['dana@example.test'], invites: { pending: [], onInvite },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
+
+    fireEvent.change(search, { target: { value: 'dana' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    await vi.waitFor(() => expect(onInvite).toHaveBeenCalledExactlyOnceWith(['dana@example.test']));
+  });
+
+  it('keeps the typed addresses when the invite fails, and names text that is not an address', async () => {
+    const onInvite = vi.fn(() => Promise.reject(new Error('refused')));
+    renderChannelPill({ people: { candidates: [], onAdd: vi.fn(() => Promise.resolve()), adding: false, invites: { pending: [], onInvite } } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
+
+    fireEvent.change(search, { target: { value: 'nobody' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter email addresses separated by spaces, commas or semicolons.');
+
+    fireEvent.change(search, { target: { value: 'guest@example.test' } });
+    expect(screen.getByText('Press Enter to invite them as a guest.')).toBeInTheDocument();
+    fireEvent.keyDown(search, { key: 'Enter' });
+    await vi.waitFor(() => expect(onInvite).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(search).toHaveValue('guest@example.test'));
+  });
+
+  it('adds one at a time and keeps only what failed in the box', async () => {
+    let releaseFirst: () => void = () => {};
+    const jordan = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
+    const sam = { id: 'user-3', name: 'Sam', email: 'sam@example.test', timezone: 'UTC' };
+    const onAdd = vi.fn((member: { id: string }) => member.id === jordan.id
+      ? new Promise<void>((resolve) => { releaseFirst = resolve; })
+      : Promise.reject(new Error('refused')));
+    const onInvite = vi.fn(() => Promise.resolve());
+    renderChannelPill({ people: {
+      candidates: [member, jordan, sam], onAdd, adding: false, currentUserId: member.id,
+      invites: { pending: [], onInvite },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
+
+    fireEvent.change(search, { target: { value: 'jordan@example.test sam@example.test guest@example.test' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+    // The second add waits for the first, and a second Enter does not start another run.
+    fireEvent.keyDown(search, { key: 'Enter' });
+    expect(onAdd).toHaveBeenCalledExactlyOnceWith(jordan);
+    releaseFirst();
+
+    await vi.waitFor(() => expect(search).toHaveValue('sam@example.test'));
+    expect(onAdd).toHaveBeenLastCalledWith(sam);
+    expect(onInvite).toHaveBeenCalledExactlyOnceWith(['guest@example.test']);
+  });
+
+  it('does not submit the Enter that finishes an input method composition', async () => {
+    const onAdd = vi.fn(() => Promise.resolve());
+    const jordan = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
+    renderChannelPill({ people: { candidates: [member, jordan], onAdd, adding: false } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
+
+    fireEvent.change(search, { target: { value: 'jor' } });
+    fireEvent.keyDown(search, { key: 'Enter', isComposing: true });
+    expect(onAdd).not.toHaveBeenCalled();
+    fireEvent.keyDown(search, { key: 'Enter' });
+    expect(onAdd).toHaveBeenCalledWith(jordan);
+  });
+
+  it('holds new addresses until invitations load, and offers a retry when they fail', async () => {
+    const onInvite = vi.fn(() => Promise.resolve());
+    const onRetryLoad = vi.fn();
+    renderChannelPill({ people: {
+      candidates: [], onAdd: vi.fn(() => Promise.resolve()), adding: false,
+      invites: { pending: undefined, loadFailed: true, onRetryLoad, onInvite },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
+
+    fireEvent.change(search, { target: { value: 'guest@example.test' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+    expect(onInvite).not.toHaveBeenCalled();
+    expect(screen.getByText('Invitations couldn’t be loaded. Try again.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(onRetryLoad).toHaveBeenCalledOnce();
+  });
+
+  it('does not invite an organization member whose account is not active', async () => {
+    const onInvite = vi.fn(() => Promise.resolve());
+    const former = { id: 'user-4', name: 'Former', email: 'former@example.test', timezone: 'UTC', status: 'suspended' as const };
+    renderChannelPill({ people: {
+      candidates: [member, former], onAdd: vi.fn(() => Promise.resolve()), adding: false,
+      invites: { pending: [], onInvite },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
+
+    fireEvent.change(search, { target: { value: 'former@example.test' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+    expect(onInvite).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('former@example.test has an organization account that isn’t active.');
+  });
+
+  it('lists invitations still waiting among the people, and cancels one from its dots menu', async () => {
+    const onRevoke = vi.fn();
+    const onLoad = vi.fn();
+    renderChannelPill({ people: {
+      candidates: [], onAdd: vi.fn(() => Promise.resolve()), adding: false, currentUserId: member.id,
+      invites: { pending: ['waiting@example.test'], onInvite: vi.fn(), onRevoke, onLoad },
+    } });
+    openMenu();
+    expect(onLoad).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+
+    expect(await screen.findByText('waiting@example.test')).toBeInTheDocument();
+    expect(screen.getByText('Joins when they sign in')).toBeInTheDocument();
+    expect(onLoad).toHaveBeenCalled();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'waiting@example.test actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Cancel invite' }));
+    expect(onRevoke).toHaveBeenCalledWith('waiting@example.test');
+  });
+
+  it('offers to remove someone else, and to leave for the reader, from each person’s dots menu', async () => {
+    const onRemove = vi.fn();
+    const colleague = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
+    renderChannelPill({
+      people: { candidates: [], onAdd: vi.fn(() => Promise.resolve()), onRemove, adding: false, currentUserId: member.id },
+      workstream: { id: 'c1', title: 'Launch', scope: 'personal', participants: [member, colleague], resources: [] },
+    });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Jordan actions' }), { button: 0, ctrlKey: false });
+    const remove = await screen.findByRole('menuitem', { name: 'Remove from channel' });
+    expect(remove).toHaveClass('menu-item-danger');
+    fireEvent.click(remove);
+    expect(onRemove).toHaveBeenCalledWith(colleague);
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Leave the channel' }));
+    expect(onRemove).toHaveBeenLastCalledWith(member);
+  });
+
+  it('does not let the last participant leave', async () => {
+    const onRemove = vi.fn();
+    renderChannelPill({ people: { candidates: [], onAdd: vi.fn(() => Promise.resolve()), onRemove, adding: false, currentUserId: member.id } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Adam actions' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: 'Leave the channel' })).toHaveAttribute('data-disabled');
+  });
+
   it('keeps keyboard focus in the menu across levels, and returns it to the row it left', async () => {
     const newcomer = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
-    renderChannelPill({ people: { candidates: [member, newcomer], onAdd: vi.fn(), adding: false, currentUserId: member.id } });
+    renderChannelPill({ people: { candidates: [member, newcomer], onAdd: vi.fn(() => Promise.resolve()), adding: false, currentUserId: member.id } });
     openMenu();
     const peopleRow = await screen.findByRole('menuitem', { name: /^People/u });
     peopleRow.focus();

@@ -20,6 +20,8 @@ const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUID
 export const WorkspaceAttentionRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
+  /** Decides which conversations `readerAttentionCount` may count, as the sidebar's listing does. */
+  accessClass: z.enum(["member", "guest"]).optional(),
 }));
 
 export const WorkspaceAttentionResultSchema = deferredZodSchema(() => WorkspaceAttentionSchema.strict());
@@ -233,6 +235,21 @@ export const WorkspaceDirectoryLookupResultSchema = deferredZodSchema(() => z.st
   items: z.array(WorkspaceDirectoryInternalItemSchema).max(250),
 }));
 
+/**
+ * The one resource a shared link names, for the public handoff page's heading.
+ * A Breakout names its Channel too, because breakouts are keyed by both.
+ */
+export const WorkspaceLinkTitleRequestSchema = deferredZodSchema(() => z.strictObject({
+  workspaceId: IdSchema,
+  target: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("channel"), workstreamId: IdSchema }),
+    z.strictObject({ kind: z.literal("breakout"), workstreamId: IdSchema, substreamId: IdSchema }),
+    z.strictObject({ kind: z.literal("space"), spaceId: IdSchema }),
+    z.strictObject({ kind: z.literal("sidekick"), sidekickId: IdSchema }),
+  ]),
+}));
+export type WorkspaceLinkTitleRequest = z.infer<typeof WorkspaceLinkTitleRequestSchema>;
+
 export const WorkspaceDirectoryAudienceSchema = deferredZodSchema(() => z.discriminatedUnion("scope", [
   z.strictObject({ scope: z.literal("workspace") }),
   z.strictObject({ scope: z.literal("user"), userId: IdSchema }),
@@ -349,32 +366,6 @@ export const WorkspaceDirectoryApplyRequestSchema = deferredZodSchema(() => z.st
   }
 }));
 
-/**
- * An automation's own sidebar row, published by its object through the same
- * Queue leg a work stream's aggregate takes.
- */
-export const WorkspaceAutomationDirectoryApplyRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  envelope: ParentEffectEnvelopeSchema,
-}).superRefine((request, context) => {
-  if (request.envelope.workspaceId !== request.workspaceId) {
-    context.addIssue({
-      code: "custom",
-      path: ["envelope", "workspaceId"],
-      message: "Automation directory effects must target their owning workspace",
-    });
-  }
-  if (request.envelope.parentKind !== "automation"
-    || request.envelope.effect.kind !== "directory_automation"
-    || request.envelope.effect.automationId !== request.envelope.parentId) {
-    context.addIssue({
-      code: "custom",
-      path: ["envelope", "effect", "kind"],
-      message: "Only an automation's own directory effect may use this handoff",
-    });
-  }
-}));
-
 export const WorkspaceDirectoryApplyResultSchema = deferredZodSchema(() => z.strictObject({
   accepted: z.array(z.strictObject({
     messageId: z.string().min(1).max(500),
@@ -448,7 +439,6 @@ export type WorkspaceDirectoryScheduleTargetsResult = z.infer<typeof WorkspaceDi
 export type WorkspaceDirectoryResourceAccessRequest = z.infer<typeof WorkspaceDirectoryResourceAccessRequestSchema>;
 export type WorkspaceDirectoryResourceAccessResult = z.infer<typeof WorkspaceDirectoryResourceAccessResultSchema>;
 export type WorkspaceDirectoryApplyRequest = z.infer<typeof WorkspaceDirectoryApplyRequestSchema>;
-export type WorkspaceAutomationDirectoryApplyRequest = z.infer<typeof WorkspaceAutomationDirectoryApplyRequestSchema>;
 export type WorkspaceDirectoryApplyResult = z.infer<typeof WorkspaceDirectoryApplyResultSchema>;
 export type WorkspaceRegionalEffectApplyRequest = z.infer<typeof WorkspaceRegionalEffectApplyRequestSchema>;
 export type WorkspaceRegionalEffectApplyResult = z.infer<typeof WorkspaceRegionalEffectApplyResultSchema>;

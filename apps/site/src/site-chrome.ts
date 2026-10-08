@@ -4,6 +4,7 @@
  * `vite.config.ts` swaps in the markup, so the list of rivals and Trust Center
  * pages lives in one place instead of in every page that shows it. Node only.
  */
+import { readFileSync } from 'node:fs';
 import { loadBlogPosts, type BlogPost } from './blog-pages';
 import { escapeHtml as escape, loadComparisons, type Comparison } from './comparison-pages';
 
@@ -31,7 +32,11 @@ const DOWNLOAD = 'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg';
 export function renderSiteNav(): string {
   return '<nav aria-label="Primary"><a class="header-link" href="/#features">Features</a><a class="header-link" href="/#pricing">Pricing</a>'
     + '<a class="header-link" href="/#compare">Compare</a>'
-    + `<a class="button button-small" data-site-action="download-header" href="${DOWNLOAD}" download>Download for Mac</a></nav>`;
+    + `<a class="button button-small header-download" data-site-action="download-header" href="${DOWNLOAD}" download>Download for Mac</a>`
+    // Shown instead of the download on touch-only devices, which cannot run the Mac app (landing.css).
+    // The web app signs in and signs up through one door, so the label rolls between the two.
+    + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai" aria-label="Sign in to Rally or sign up for Rally">'
+    + '<span class="header-sign-in-wheel" aria-hidden="true"><span>Sign in to Rally</span><span>Sign up for Rally</span></span></a></nav>';
 }
 
 const footerColumn = (id: string, title: string, links: readonly string[]): string =>
@@ -119,8 +124,19 @@ ${trustPages.map(({ href, name }) => `- [${name}](${ORIGIN}${href})`).join('\n')
 `;
 }
 
+/**
+ * Everything on the home page below the hero. The home page and its variants,
+ * such as `/start-fast/`, differ only in their hero, so they share one copy of
+ * the sections rather than drifting apart. Read on each render so the dev
+ * server serves the current file.
+ */
+function renderLandingSections(): string {
+  return renderSiteChrome(readFileSync(new URL('./landing-sections.html', import.meta.url), 'utf8'));
+}
+
 const markers: Record<string, () => string> = {
   'site-nav': renderSiteNav,
+  'landing-sections': renderLandingSections,
   'site-footer': renderSiteFooter,
   'comparison-table': renderComparisonTable,
 };

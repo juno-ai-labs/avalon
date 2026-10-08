@@ -1,10 +1,10 @@
 # Durable Object migration tracking
 
-Rally runs three migrated Durable Object classes across two regional Workers,
-`SubstreamAgent`, `WorkspaceDO`, and `SidekickDO`, and each object applies its
-own SQLite migration history in its constructor. The legacy `WorkstreamDO` and
-`SpaceDO` were tracked here too until both classes were deleted; Channel and
-Space parents now live in `WorkspaceDO`
+Rally runs two migrated Durable Object classes across two regional Workers,
+`SubstreamAgent` and `WorkspaceDO`, and each object applies its own SQLite
+migration history in its constructor. The legacy `WorkstreamDO`, `SpaceDO` and
+`SidekickDO` were tracked here too until each class was deleted; Channel, Space
+and Sidekick parents now live in `WorkspaceDO`
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). Nothing in
 Cloudflare's account model can answer the question that follows from that:
 **which objects are on which schema version, and which of them are broken?** A
@@ -28,23 +28,14 @@ live object of it is sent one queue message that wakes it. The rest of this
 document is in two halves — what the tracker observes, and what it can make
 happen.
 
-## Sidekick class rename
+## Deleted classes
 
-The renamed owner reports class `SidekickDO` while retaining component
-`automation_do`, so the component schema head and object-ID history remain the
-same. The tracker recognizes both `AutomationDO` and `SidekickDO`. Deploy that
-reader compatibility before the regional API rename. API dispatch accepts either
-name and translates a queued `AutomationDO` command to `SidekickDO` before the
-owner's strict class guard. Namespace inventory and newer reports update each
-existing object row; historical reports retain their original class name. Once
-observed as SidekickDO, current object and component labels cannot be reverted
-by a legacy report, even when a sweep preceded the first report.
-
-The third release removes only the old Worker entrypoint export. Keep report
-acceptance and command translation until legacy queued messages and retained
-inventory no longer require them; removing those adapters during the rename
-would defeat their compatibility purpose. The source import shim can be removed
-when its internal callers have migrated independently of the deployed binding.
+A class leaves `REPORTING_CLASSES`, the consumer's dispatcher map and its head
+table in the change that deletes it. The consumer still acknowledges a queued
+command that names a deleted class (`WorkstreamDO`, `SpaceDO`, `SidekickDO`,
+and `AutomationDO`, `SidekickDO`'s earlier name) rather than retrying it, since
+no binding can ever apply it. Tracker rows already recorded for a deleted class
+keep their last labels; new sweeps and commands name only live classes.
 
 ## Where the code lives
 
@@ -70,7 +61,7 @@ when its internal callers have migrated independently of the deployed binding.
 
 ### The report
 
-`withMigrationReport` wraps the migration call in each of the three Durable Object
+`withMigrationReport` wraps the migration call in each of the two Durable Object
 constructors. It reads the object's version from the runner's own
 `_sql_schema_migrations` ledger before and after the call, so it works
 identically at the sites that call the runner directly and at
@@ -124,7 +115,7 @@ Tracker dedupe does not make an unchanged migration wake invisible to
 operations. Every `withMigrationReport` call is nested in
 `durable_object.schema_migrate` and emits a
 `durable_object_schema_migration` Workers Log row, whether or not the outcome is
-new enough to enqueue. The three migratable classes also route their complete
+new enough to enqueue. The two migratable classes also route their complete
 constructor input gate through `durable_object.initialize`, with a matching
 `durable_object_initialization` row. These are latency diagnostics, not fleet
 state: they stay in regional Worker traces/logs and never update the registry.
@@ -807,6 +798,25 @@ a few tens of registry writes, not a few hundred.
 The run cap of 5,000 is not a capacity estimate; it is a guard on the blast
 radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
+
+### 2026-10-06 — SidekickDO leaves the tracked fleet
+
+**What changed:** `SidekickDO` and `AutomationDO` were removed from
+`REPORTING_CLASSES`, the migration-command dispatcher map and its head table.
+The consumer acknowledges a queued command for either name as a deleted class.
+The registry's guard that kept a `SidekickDO` label from reverting to
+`AutomationDO` is gone: no live object reports either name.
+
+**Why:** Every Sidekick now lives in its Organization's `WorkspaceDO`, and the
+class was deleted with Wrangler tag `v13`
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). Keeping
+the class listed would park every one of its objects in `unreported`.
+
+**Considered and rejected:** Keeping the rename guard for late reports. A report
+can only come from a live object, and the class has none.
+
+**Consequences:** Historical rows may still name either class. Deleting the
+namespace is irreversible; rollback cannot restore its objects.
 
 ### 2026-09-21 — Hash drift warns without becoming fleet failure
 

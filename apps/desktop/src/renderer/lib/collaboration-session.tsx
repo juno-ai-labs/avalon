@@ -5,7 +5,7 @@ import type { Region } from '@rally/contracts/regions';
 import type { RallyApi } from './api';
 
 export interface PendingConnectorOAuth {
-  source?: 'onboarding' | 'conversation' | 'resource';
+  source?: 'conversation' | 'resource';
   connectorId?: string;
   scope?: 'personal' | 'workspace';
   attemptId: string;

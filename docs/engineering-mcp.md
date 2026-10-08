@@ -18,8 +18,8 @@ available to Rally users by virtue of product membership.
 - `apps/api/src/durable-objects/internally-inspectable-durable-object.ts` owns
   the shared raw-SQL Durable Object RPC.
 - `apps/api/src/durable-objects/scheduled-alarms.ts` makes every scheduled
-  authority inherit that RPC. WorkspaceDO, SubstreamAgent, and SidekickDO have
-  the capability that way.
+  authority inherit that RPC. WorkspaceDO and SubstreamAgent have the
+  capability that way.
 - `apps/api/src/durable-objects/artifact-host-do.ts` inherits the same base
   directly. It is not a scheduled authority, so it names the inspectable base in
   its own declaration rather than picking it up from the scheduler. This MCP
@@ -55,7 +55,6 @@ The regional bridge uses D1 only for identity and routing:
 | `list_artifacts` | Regional workspace identity at the open authority generation | `artifact_registry` in WorkspaceDO |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the open workspace authority generation | WorkspaceDO SQLite |
 | `run_substream_sql` | Resolve the active work-stream route and child membership (the Organization's hosted parent, or a Sidekick's own registry), select one region, then revalidate | SubstreamAgent SQLite |
-| `run_sidekick_sql` | Resolve the regional workspace identity and `automation_directory` membership, select one region, then revalidate | SidekickDO SQLite |
 | `run_artifact_sql` | Resolve the regional workspace identity and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
@@ -63,24 +62,16 @@ IDs are not redundant: all three are part of the Durable Object's stable name.
 `list_substreams` returns the complete tuple so an MCP client can pass it to the
 SQL tool without reconstructing identity. A Sidekick's conversations are
 reached the same way, with the Sidekick's ID as the work-stream ID: its Main
-through its route, and a run conversation through the Sidekick's own
-`conversation_children`, consulted only after its `automation_directory` row
-proves the Sidekick exists. `run_sidekick_sql` takes a workspace ID
-for the same reason, and `list_sidekicks` returns the pair.
+through its route, and a run conversation through the Sidekick's
+`sidekick_children` in the Organization object. `list_sidekicks` returns the
+workspace and Sidekick IDs together.
 
 A Sidekick's ID is an `AutomationId`: the product renamed the concept, not the
-identifier, and the object is still named `<region>:<workspace>:automation:<id>`.
-The tools are fenced on the workspace rather than on that ID's own route,
-because a Sidekick and a work stream share one parent-ID namespace in
-`workstream_authority_routes` — a Sidekick's conversation is registered there
-under the Sidekick's ID — so an active route cannot tell the two apart. Naming a
-SidekickDO from a work-stream ID would create an object that never existed. The
-`automation_directory` row is what distinguishes them, and it is also why a
-Sidekick created since its last directory projection is refused: refusing an
-object that exists is recoverable, materializing one that does not is not.
+identifier. A Sidekick and a work stream share one parent-ID namespace in
+`workstream_authority_routes`, since a Sidekick's conversation is registered
+there under the Sidekick's ID, so an active route cannot tell the two apart.
 
-`run_artifact_sql` takes a workspace ID for a sharper version of the same
-reason. ArtifactHostDO's name — `<region>:artifact:<uuid>` — carries no
+`run_artifact_sql` takes a workspace ID because ArtifactHostDO's name — `<region>:artifact:<uuid>` — carries no
 workspace segment at all, so nothing in the name says which workspace may reach
 it and every UUID in the account is a valid object name. `artifact_registry`,
 which lives in WorkspaceDO beside the resource authority rather than in D1, is
@@ -141,10 +132,9 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
 - Main substream `0` needs no directory row: route activation happens only after
   creation or import initializes that object. Child substreams still require a
   directory membership row before their stub is obtained, and so does every
-  Sidekick and every artifact.
+  artifact.
 - **A tool never materializes an object that does not exist, with one stated
-  exception.** A Sidekick's object is created before anything records it, so a
-  directory row implies it. An artifact's registry row is written *before*
+  exception.** An artifact's registry row is written *before*
   `pointArtifactAtVersion` initializes its supervisor, so between those two
   calls — and permanently if the second never returns — `run_artifact_sql`
   against that artifact creates an empty supervisor. Closing it needs a
@@ -184,10 +174,10 @@ inspection and repair are the product requirement. Product code must continue
 to use typed domain RPCs and must never depend on this surface.
 
 A Sidekick has two inspectable halves and they are reached by different tools.
-`run_sidekick_sql` opens SidekickDO itself — its definition revisions,
-schedules, and run history. Its *conversations* are `SubstreamAgent`s, reached
-with the substream tools under the Sidekick's ID as the parent, exactly as a
-work stream's are.
+Its definition revisions, schedules and run history are the Organization's
+`sidekick_*` tables, read with `run_workspace_sql` filtered by `sidekick_id`.
+Its *conversations* are `SubstreamAgent`s, reached with the substream tools
+under the Sidekick's ID as the parent, exactly as a work stream's are.
 
 Channel and Space parent state lives in WorkspaceDO, in the `parent_*` tables
 keyed by `parent_id`
@@ -204,10 +194,7 @@ or writes it.
 A stateful artifact's facet database is outside this MCP for the reason above:
 its contents are reachable only through the product's admitted read path.
 
-`SlackReactionTicker` is the one remaining object holding SQLite that no tool
-reaches. It is neither a scheduled authority nor migratable through the shared
-base, so routing it is a change to its class rather than a tool registration,
-and nobody has asked. `MigrationProbeDO` holds no product state by design.
+`MigrationProbeDO` holds no product state by design.
 
 The Worker does not retain query history, cache results, copy databases, or
 provide a D1 fallback. It also does not turn Access identity into Rally product
@@ -238,11 +225,9 @@ It proves bound writes, reads, SQLite metadata, and BLOB serialization.
 workspace is inventoried as active, resolves at the open generation, and
 and executes against its initialized WorkspaceDO from regional identity alone.
 
-`apps/api/test-workers/engineering-sidekick-inspection.test.ts` drives the
-bridge's Sidekick tools against a Sidekick created through the real path, and
-proves the fence in the direction that matters: a work stream holding an active
-route but no directory row is refused, and the statement it carried leaves no
-trace in the object that ID would have named.
+`apps/api/test-workers/engineering-sidekick-inspection.test.ts` lists a
+Sidekick created through the real path and reaches its run conversation only
+through the Sidekick's own registry.
 
 `apps/api/test-workers/engineering-artifact-inspection.test.ts` does the same
 for an artifact published through `registerArtifact` and `recordPublish`, and
@@ -308,6 +293,36 @@ Model routes support optional `routing.reasoningEffort` (`low`, `medium`, or
 `high`) through `list_model_flags` and `update_model_flag`. Omission restores
 each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
+
+### 2026-10-06 — The Sidekick tools go with `SidekickDO`
+
+**What changed:** `run_sidekick_sql` and `retry_sidekick_import` are removed,
+with the bridge's `runSidekickSql`, `retrySidekickImport` and `resolveSidekick`
+and their contract types. A Sidekick's run conversations are found only in the
+Organization's `sidekick_children`.
+
+**Why:** `SidekickDO` is deleted and every Sidekick's rows are in its
+Organization object, so `run_workspace_sql` reaches all of them. The tools
+existed only for the legacy object and its import.
+
+**Consequences:** No tool opens a Sidekick by its own ID any more. A future
+per-Sidekick tool reads the Organization object filtered by `sidekick_id`.
+
+### 2026-10-05 — Retry a stuck Sidekick import
+
+**What changed:** `retry_sidekick_import` calls a new bridge method and
+`WorkspaceDO.retrySidekickImport`, fenced like `run_sidekick_sql`, and returns
+the Sidekick's `sidekick_imports` state and last code. A Sidekick's run
+conversations are found in the Organization's `sidekick_children` first.
+
+**Why:** Sidekicks move from `SidekickDO` into `WorkspaceDO` the way Channels
+did, and the legacy object freezes before the import commits, so a refused
+export needs a repair and a re-run that SQL cannot express. The
+2026-09-25 entry's reasoning for `retry_parent_import` applies unchanged.
+
+**Consequences:** `run_sidekick_sql` now reads a frozen copy for an imported
+Sidekick; `run_workspace_sql` is the live source. Both Sidekick tools are
+deleted with the legacy class.
 
 ### 2026-10-02 — Read and change managed flags through Ace
 

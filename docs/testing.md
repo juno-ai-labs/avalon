@@ -42,9 +42,9 @@ once and passes on a rerun.
 `pnpm test` runs every package's `test` script recursively, and `@rally/api`'s
 runs the Node suite *and then* the workerd suite — so a green `pnpm test`
 includes workerd. CI splits them across `api-tests-workers-1-of-n` through
-`api-tests-workers-4-of-n`; each runs the package-owned workers command with a
+`api-tests-workers-8-of-n`; each runs the package-owned workers command with a
 Vitest shard, and the container and release suites are their own matrix jobs.
-`deploy-api.yml` must use those same four workers shards rather than appending
+`deploy-api.yml` must use those same eight workers shards rather than appending
 unsharded `test:workers` onto a Node lane: that dumps the whole suite into one
 Miniflare, which is more `reset()` interleave than PR CI ever sees, and it is
 how a green pull request has already failed deploy verify on the same SHA.
@@ -130,7 +130,9 @@ against the checked-in migrations rather than against a stub:
 - `test/helpers/sqlite-d1.ts` — `migratedSqliteDatabase()` applies every
   `packages/db/migrations/*.sql` to a fresh in-memory `node:sqlite` database, and
   `sqliteD1()` presents it through the `D1Database` surface the services use.
-  Sixty-odd API test files already work this way.
+  Sixty-odd API test files already work this way. Its `run` answers a
+  statement's rows as D1's does, so a read placed inside a batch is read off
+  the batch's results in a test exactly as in production.
 - `test/helpers/sql-storage.ts` — `createTestSqlStorage()` presents a
   `node:sqlite` database through the object-local `SqlStorage` surface, and turns
   foreign keys on because `node:sqlite` defaults them off while workerd enforces
@@ -1014,8 +1016,7 @@ has. Assert the property that replaced it, and put the reason in the test.
 
 ## What the objects' RPC surface has, and has not
 
-Every public `async` method on `WorkspaceDO`, `SubstreamAgent`, and
-`AutomationDO` is an interface some Worker calls across a stub. Coverage counts are mechanical,
+Every public `async` method on `WorkspaceDO` and `SubstreamAgent` is an interface some Worker calls across a stub. Coverage counts are mechanical,
 so re-derive them rather than trusting a checked-in number after a change:
 
 ```bash
@@ -1034,7 +1035,6 @@ The remaining methods without a workerd RPC exercise are:
 | --- | --- |
 | `WorkspaceDO` | `activityEventSource`, `applyWorkstreamRegionalEffect`, `dueWorkstreamDirectory`, `existingOpportunities`, `getOpportunity`, `latestActivityEventCursor`, `notificationDirectoryState`, `opportunityWindow`, `resourceAccess`, `workstreamScheduleTargets` |
 | `SubstreamAgent` | `publishEvent` |
-| `AutomationDO` | Re-derive with the grep above: `AutomationDO` is new. |
 
 **Uncovered here does not mean untested** — several have Node suites over their
 storage class, which is the right rung for what the SQL decides. It means

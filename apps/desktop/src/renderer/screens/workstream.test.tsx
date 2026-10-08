@@ -17,7 +17,6 @@ import {
   highestVisibleAttentionSequence,
   initialTranscriptAnchorIndex,
   manualElicitationResponse,
-  preservedPrependScrollTop,
   RunFailureNotice,
   orderedTranscriptOwnsRunTiming,
   WorkstreamErrorState,
@@ -29,7 +28,7 @@ import {
   railChildrenWithAttention,
   workspaceMemberFromSession,
 } from './workstream';
-import { conversationActivityRow, conversationShowsStoppingRow, NO_STOP_ACKNOWLEDGEMENT, nextStopAcknowledgement, refusalMessage } from './conversation-surface';
+import { conversationActivityRow, conversationShowsStoppingRow, NO_STOP_ACKNOWLEDGEMENT, nextStopAcknowledgement, refusalMessage, RemoveParticipantDialog } from './conversation-surface';
 import { JumpToLatestButton } from '../components/conversation-follow';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
@@ -71,14 +70,6 @@ describe('a resource history follows swaps the rail did not make', () => {
   it('is a stable key while nothing is inspected', () => {
     expect(resourceVersionsQueryKey(null, null)).toEqual(resourceVersionsQueryKey(null, null));
   });
-});
-
-describe('transcript cursor pagination', () => {
-  it('preserves the visible anchor when an older page is prepended', () => {
-    expect(preservedPrependScrollTop(120, 2_000, 2_840)).toBe(960);
-    expect(preservedPrependScrollTop(120, 2_000, 1_900)).toBe(120);
-  });
-
 });
 
 describe('channel route handoff', () => {
@@ -159,6 +150,18 @@ describe('Channel rail attention from projected conversations', () => {
     })?.[0]?.needsAttention).toBe(true);
     expect(railChildrenWithAttention([{ substreamId: 'selected', needsAttention: true }], 'selected', detail)?.[0]?.needsAttention)
       .toBe(false);
+  });
+});
+
+describe('Channel rail questions from projected conversations', () => {
+  it('flags a Breakout waiting on an answer, preferring the open detail over its row', () => {
+    const rows = railChildrenWithAttention([
+      { substreamId: 'asking', harnessStatus: 'needs_input' as const },
+      { substreamId: 'answered', harnessStatus: 'needs_input' as const },
+      { substreamId: 'quiet', harnessStatus: 'completed' as const },
+      { substreamId: 'guest', needsAttention: true },
+    ], 'answered', { ...headerWorkstream, harnessStatus: 'running' });
+    expect(rows?.map((row) => row.needsInput)).toEqual([true, false, false, false]);
   });
 });
 
@@ -657,6 +660,45 @@ describe('RunFailureNotice', () => {
   });
 });
 
+describe('RemoveParticipantDialog', () => {
+  const jordan = { id: 'member-2', name: 'Jordan', email: 'jordan@example.com', timezone: 'UTC' };
+
+  it('names who is being removed and removes only on Continue', () => {
+    const onContinue = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <RemoveParticipantDialog member={jordan} noun="breakout" onCancel={onCancel} onContinue={onContinue} pending={false} self={false} />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Remove Jordan from the breakout?' })).toBeTruthy();
+    expect(screen.getByText('Jordan will be taken off this breakout. They keep access only if it’s public.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onCancel).toHaveBeenCalled();
+    expect(onContinue).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(onContinue).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the reader whether to leave when they chose themselves, and shows a refusal in place', () => {
+    render(
+      <Tooltip.Provider>
+        <RemoveParticipantDialog failure="You are the last participant." member={jordan} noun="channel" onCancel={vi.fn()} onContinue={vi.fn()} pending={false} self />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Leave the channel?' })).toBeTruthy();
+    expect(screen.getByText('You will be taken off this channel. You keep access only if it’s public or a space you’re in includes it.')).toBeTruthy();
+    expect(screen.getByText('You are the last participant.')).toBeTruthy();
+  });
+
+  it('is closed while nobody is chosen', () => {
+    render(<RemoveParticipantDialog member={undefined} noun="channel" onCancel={vi.fn()} onContinue={vi.fn()} pending={false} self={false} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
 describe('AddParticipantDialog', () => {
   const member = (id: string, name: string, status?: 'active' | 'invited' | 'suspended') => ({
     id,
@@ -664,6 +706,30 @@ describe('AddParticipantDialog', () => {
     email: `${name.toLowerCase()}@example.com`,
     timezone: 'UTC',
     ...(status ? { status } : {}),
+  });
+
+  it('offers Organization invitees after the members and shares by address when one is added', () => {
+    const onInvite = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <AddParticipantDialog
+          current={[]}
+          invitees={['dana@example.com']}
+          members={[member('member-1', 'Adam', 'active')]}
+          onAdd={vi.fn()}
+          onInvite={onInvite}
+          onRemove={vi.fn()}
+          onOpenChange={vi.fn()}
+          open
+          pending={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const invitee = screen.getByRole('button', { name: 'Add dana@example.com to main conversation' });
+    expect(invitee).toHaveTextContent('Invited');
+    fireEvent.click(invitee);
+    expect(onInvite).toHaveBeenCalledWith('dana@example.com');
   });
 
   it('shows why an add was refused instead of leaving the dialog looking idle', () => {
@@ -707,6 +773,28 @@ describe('AddParticipantDialog', () => {
 
     expect(screen.getByText('This substream is archived. Restore it before changing who is in it.')).toBeTruthy();
     expect(screen.queryByText('That participant couldn’t be added.')).toBeNull();
+  });
+
+  it('labels a guest participant as a Guest, and nobody else', () => {
+    const guest = { ...member('guest-1', 'Gale', 'active'), accessClass: 'guest' as const };
+    const teammate = member('member-1', 'Adam', 'active');
+    render(
+      <Tooltip.Provider>
+        <AddParticipantDialog
+          current={[guest, teammate]}
+          members={[guest, teammate]}
+          onAdd={vi.fn()}
+          onRemove={vi.fn()}
+          onOpenChange={vi.fn()}
+          open
+          pending={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const rows = screen.getAllByText(/@example\.com/u).map((email) => email.closest('.member-action-row')!);
+    expect(rows.find((row) => row.textContent?.includes('Gale'))?.textContent).toContain('Guest');
+    expect(rows.find((row) => row.textContent?.includes('Adam'))?.textContent).not.toContain('Guest');
   });
 
   it('keeps the generic sentence for a failure the server did not word', () => {

@@ -20,15 +20,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationDetail, type AutomationScope } from "@rally/contracts";
 
-import { automationDOName, workspaceDOName } from "../src/durable-objects/names";
-import type { SidekickDO } from "../src/durable-objects/sidekick-do";
+import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 import { AutomationService, createAutomation } from "../src/services/automation-service";
 import { searchAudienceGroup, searchAudienceGroupIds } from "../src/services/search-audience";
-import { deliverParentEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub } from "./helpers/hosted-parent";
+import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
+import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+import { writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -53,10 +53,15 @@ function workspaceStub() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-function automationStub(automationId: string) {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(
-    automationDOName("global", WORKSPACE_ID, asAutomationId(automationId)),
-  ));
+/** A Sidekick's directory row, which is its definition row too: no copy is published. */
+async function directoryRow(automationId: string) {
+  return runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
+    automation_id: string; author_user_id: string; lifecycle: string; scope: string;
+    owning_workstream_id: string | null; appearance_json: string | null; run_as_user_id: string | null;
+  }>(
+    `SELECT automation_id, author_user_id, lifecycle, scope, owning_workstream_id, appearance_json, run_as_user_id
+       FROM automation_directory WHERE automation_id = ?`, automationId,
+  ).one());
 }
 
 async function seedRegionalDatabase(): Promise<void> {
@@ -113,7 +118,7 @@ async function seedRoom(): Promise<void> {
   });
 }
 
-/** `create`, then the one leg between the automation and the workspace. */
+/** `create`, which writes the Sidekick's directory row in the Organization object. */
 async function createAndPublish(scope: AutomationScope): Promise<string> {
   const automationId = nextAutomationId();
   const created = await createAutomation(TEST_ENV, {
@@ -124,15 +129,12 @@ async function createAndPublish(scope: AutomationScope): Promise<string> {
     automationId,
   });
   expect(created.created).toBe(true);
-  const delivered = await deliverParentEffects(TEST_ENV, automationStub(automationId));
-  expect(delivered.map((envelope) => envelope.effect.kind)).toEqual(["directory_automation"]);
-  expect(delivered[0]?.effect).toMatchObject({
-    kind: "directory_automation",
-    automationId,
-    authorUserId: AUTHOR_ID,
+  expect(await directoryRow(automationId)).toMatchObject({
+    automation_id: automationId,
+    author_user_id: AUTHOR_ID,
     lifecycle: "draft",
     scope,
-    owningWorkstreamId: scope === "workstream" ? ROOM_ID : null,
+    owning_workstream_id: scope === "workstream" ? ROOM_ID : null,
   });
   return automationId;
 }
@@ -197,6 +199,52 @@ describe("automation directory", () => {
     expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID })).items.map((item) => item.id)).toEqual([shared]);
   });
 
+  it("lists a Channel's Sidekick to the Channel's participants, not only its author, and not to anyone else", async () => {
+    // Somebody else's Sidekick in the room, so the room's participant sees
+    // it only through the Channel's own participant rows.
+    const automationId = nextAutomationId();
+    await writeSidekickDirectoryRow(env, {
+      automationId, workspaceId: WORKSPACE_ID, authorUserId: "00000000-0000-7000-8000-00000000ad2f",
+      lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID, title: "Release notes", description: "",
+    });
+
+    expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+      .items.map((item) => item.id)).toEqual([automationId]);
+    expect((await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID }))
+      .items).toEqual([]);
+  });
+
+  it("reads the Sidekicks asked for and the ones a Channel recommends in one call, asked-for first and each once", async () => {
+    // Created in this order, so their ids sort A < B < C < D: an order by id
+    // is not the order asked for.
+    const [a, b, c, d] = [nextAutomationId(), nextAutomationId(), nextAutomationId(), nextAutomationId()];
+    for (const [automationId, title] of [[a, "A"], [b, "B"], [c, "C"], [d, "D"]] as const) {
+      await writeSidekickDirectoryRow(env, {
+        automationId, workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
+        lifecycle: "active", scope: "workspace", owningWorkstreamId: null, title, description: "",
+      });
+    }
+    // The Channel recommends B first, then A, which is also asked for and
+    // keeps its asked-for place. B's place among the recommendations ties
+    // with C's among the asked-for, so only the tiers order them.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      // Hosted rows, as a Sidekick's own writes leave them.
+      state.storage.sql.exec(`UPDATE automation_directory SET region = 'global'`);
+      for (const [sidekickId, attachedAt] of [[b, 1], [a, 2]] as const) {
+        state.storage.sql.exec(
+          `INSERT INTO parent_sidekicks(parent_id, sidekick_id, attached_at) VALUES (?, ?, ?)`, ROOM_ID, sidekickId, attachedAt,
+        );
+      }
+    });
+
+    const summaries = await workspaceStub().sidekickReadSkillSummaries({
+      workspaceId: WORKSPACE_ID, automationIds: [d, c, a], channelId: ROOM_ID,
+      principalUserId: AUTHOR_ID, conversationParentId: ROOM_ID, audienceScope: "workspace", audienceUserIds: [AUTHOR_ID],
+    });
+
+    expect(summaries.map((summary) => summary.name)).toEqual(["D", "C", "A", "B"]);
+  });
+
   it("lists an authenticated member's library without the object re-reading their membership", async () => {
     const personal = await createAndPublish("personal");
     const shared = await createAndPublish("workspace");
@@ -219,7 +267,7 @@ describe("automation directory", () => {
       });
     });
     const library = (userId: typeof AUTHOR_ID) => new AutomationService(TEST_ENV, {
-      sessionId: SESSION_ID, userId, workspaceId: WORKSPACE_ID, region: "global", role: "member",
+      sessionId: SESSION_ID, userId, workspaceId: WORKSPACE_ID, region: "global", role: "member", accessClass: "member",
     }).listSidekicks();
 
     // Who sees what is unchanged: the author sees all three, a member only the workspace one.
@@ -255,22 +303,18 @@ describe("automation directory", () => {
     // `AutomationDetail` to `never`, and `never` is assignable to it, so the
     // type is restored at the call site rather than the call being moved
     // inside the object to dodge it.
-    const afterColour: AutomationDetail = await automationStub(automationId).setAppearance({
+    const afterColour: AutomationDetail = await workspaceStub().sidekickSetAppearance({
       workspaceId: WORKSPACE_ID, automationId, actor: author, appearance: { color: "purple" },
     });
     // The unset field stays null rather than being filled in with the derived
     // value: what the id derives is a fallback, not a choice somebody made.
     expect(afterColour.appearance).toEqual({ icon: null, color: "purple" });
-    const afterIcon: AutomationDetail = await automationStub(automationId).setAppearance({
+    const afterIcon: AutomationDetail = await workspaceStub().sidekickSetAppearance({
       workspaceId: WORKSPACE_ID, automationId, actor: author, appearance: { icon: "rocket" },
     });
     expect(afterIcon.appearance).toEqual({ icon: "rocket", color: "purple" });
 
-    const delivered = await deliverParentEffects(TEST_ENV, automationStub(automationId));
-    expect(delivered.at(-1)?.effect).toMatchObject({
-      kind: "directory_automation",
-      appearance: { icon: "rocket", color: "purple" },
-    });
+    expect(JSON.parse((await directoryRow(automationId)).appearance_json ?? "null")).toEqual({ icon: "rocket", color: "purple" });
     const listed = await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID });
     expect(listed.items.map((item) => item.appearance)).toEqual([{ icon: "rocket", color: "purple" }]);
     const library = await workspaceStub().listSidekickDirectory({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID });
@@ -283,13 +327,13 @@ describe("automation directory", () => {
     // a rejection over the stub is reported a second time as unhandled and
     // fails the run even when the assertion held. The two success paths in the
     // test above go through the stub, so the RPC boundary is covered.
-    await expect(runInDurableObject(automationStub(automationId), (instance: SidekickDO) => instance.setAppearance({
+    await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickSetAppearance({
       workspaceId: WORKSPACE_ID,
       automationId,
       actor: { userId: MEMBER_ID, actorRole: "member", participantOfOwningWorkstream: false },
       appearance: { color: "purple" },
     }))).rejects.toMatchObject({ code: "sidekick_forbidden", status: 403 });
-    const detail: AutomationDetail = await automationStub(automationId).readDetail({
+    const detail: AutomationDetail = await workspaceStub().sidekickReadDetail({
       workspaceId: WORKSPACE_ID,
       automationId,
       actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },
@@ -303,14 +347,23 @@ describe("automation directory", () => {
     const audience = (userId: string) => workspaceStub().readSearchAudience({ workspaceId: WORKSPACE_ID, userId });
     // The member is not in the owning room, so only running the Sidekick lets them search it.
     expect(await audience(MEMBER_ID)).not.toContain(group);
-    const claim = await automationStub(automationId).claimExecutionPrincipal({
+    // Taking it over is for whoever may manage the room; a grant on the room
+    // makes the member one, the way sharing a Channel does.
+    await withHostedParent(workspaceStub(), ROOM_ID, (parent) => {
+      const grants = (parent as unknown as { scopeGrants(address: { workspaceId: string; parentId: string }): ScopeGrantStorage })
+        .scopeGrants({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID });
+      expect(grants.mutate({ operationId: crypto.randomUUID(), actorUserId: AUTHOR_ID, userId: MEMBER_ID,
+        target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID }, active: true, expectedRevision: 0 },
+      "existing-member")).toMatchObject({ status: "committed" });
+    });
+    expect(await audience(MEMBER_ID)).not.toContain(group);
+    const claim = await workspaceStub().sidekickClaimExecutionPrincipal({
       workspaceId: WORKSPACE_ID,
       automationId,
-      actor: { userId: MEMBER_ID, actorRole: "member", participantOfOwningWorkstream: true },
+      actor: { userId: MEMBER_ID, actorRole: "member", participantOfOwningWorkstream: false },
     });
     expect(claim.changed).toBe(true);
-    const delivered = await deliverParentEffects(TEST_ENV, automationStub(automationId));
-    expect(delivered.at(-1)?.effect).toMatchObject({ kind: "directory_automation", runAsUserId: MEMBER_ID });
+    expect((await directoryRow(automationId)).run_as_user_id).toBe(MEMBER_ID);
     expect(await audience(MEMBER_ID)).toContain(group);
   });
 

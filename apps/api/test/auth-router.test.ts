@@ -71,7 +71,7 @@ describe("authentication in the complete application router", () => {
   // Activation of a guest relationship is proved across deployments in browser-regions.test.ts.
   it("offers a guest relationship to desktop discovery as a guest", async () => {
     const service = new RegionalOnboardingService(env());
-    const identity = { platformUserId: userId, googleSubject: "google-subject",
+    const identity = { platformUserId: userId, loginIdentities: [{ provider: "google", subject: "google-subject" }],
       email: "member@example.com", name: "Member", avatarUrl: null,
       timezone: "UTC", createdAt: at };
     expect((await service.discover(identity)).workspaces.map((workspace) => workspace.id)).toContain(workspaceId);

@@ -33,7 +33,6 @@ import {
 
 import { latestMigrationVersion, type ForcedMigrationOutcome } from "../durable-objects/migration-reporting";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workspace-do";
-import { AUTOMATION_DO_SCHEMA_MIGRATIONS } from "../durable-objects/automation-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-object-schema";
 import type { Env } from "../env";
 import { durableObjectStubById } from "../lib/durable-object-namespace";
@@ -68,11 +67,6 @@ export function migrationCommandDispatchers(env: Env): Record<
       durableObjectStubById(env, env.SUBSTREAM_AGENTS, objectId).forceMigration(command),
     WorkspaceDO: (objectId, command) =>
       durableObjectStubById(env, env.WORKSPACE_DOS, objectId).forceMigration(command),
-    // Commands already queued under the old class retain the same namespace.
-    AutomationDO: (objectId, command) =>
-      durableObjectStubById(env, env.AUTOMATION_DOS, objectId).forceMigration({ ...command, className: "SidekickDO" }),
-    SidekickDO: (objectId, command) =>
-      durableObjectStubById(env, env.AUTOMATION_DOS, objectId).forceMigration(command),
   };
 }
 
@@ -82,7 +76,7 @@ export function migrationCommandDispatchers(env: Env): Record<
  * retried into the dead-letter queue this platform reads as its signal for
  * stuck migrations.
  */
-const DELETED_MIGRATION_CLASSES: ReadonlySet<string> = new Set(["WorkstreamDO", "SpaceDO"]);
+const DELETED_MIGRATION_CLASSES: ReadonlySet<string> = new Set(["WorkstreamDO", "SpaceDO", "SidekickDO", "AutomationDO"]);
 
 /**
  * The highest schema version *this deployment* ships for each class.
@@ -95,8 +89,6 @@ const DELETED_MIGRATION_CLASSES: ReadonlySet<string> = new Set(["WorkstreamDO", 
 export const MIGRATION_COMMAND_HEADS: Readonly<Record<string, number>> = {
   SubstreamAgent: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
   WorkspaceDO: latestMigrationVersion(WORKSPACE_DO_SCHEMA_MIGRATIONS),
-  AutomationDO: latestMigrationVersion(AUTOMATION_DO_SCHEMA_MIGRATIONS),
-  SidekickDO: latestMigrationVersion(AUTOMATION_DO_SCHEMA_MIGRATIONS),
 };
 
 /**

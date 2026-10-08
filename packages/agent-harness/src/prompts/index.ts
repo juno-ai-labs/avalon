@@ -4,6 +4,7 @@ export * from "./compaction";
 export * from "./document-generation";
 export * from "./response-formatting";
 export * from "./types";
+export * from "./personal";
 export * from "./workstream";
 export * from "./workstream-description";
 export * from "./icon-catalog";

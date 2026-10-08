@@ -14,6 +14,7 @@ import {
   createNodeRealtimeSocketFactory,
   directSocketServername,
   proxyUrlsFromElectronResolution,
+  reachSocketFromRealtimeClient,
   realtimeSocketTargetAllowed,
   type RealtimeSocketClient,
   type RealtimeSocketFactory,
@@ -192,6 +193,15 @@ describe('proxyUrlsFromElectronResolution', () => {
     expect(first.terminate).toHaveBeenCalledOnce();
   });
 
+  it('dials with the frame ceiling a factory was given, so the menu bar socket takes the whole sidebar', async () => {
+    const attempts = vi.fn().mockReturnValue(new FakeSocket());
+    const factory = createNodeRealtimeSocketFactory(async () => 'DIRECT', attempts, 0);
+    factory(openInput().url, openInput().protocols);
+    await Promise.resolve();
+
+    expect(attempts.mock.calls[0]?.[0]).toMatchObject({ proxyUrl: '', maxPayload: 0 });
+  });
+
   it('closes immediately when the renderer cancels while PAC resolution is pending', async () => {
     let resolveProxy!: (resolution: string) => void;
     const attempts = vi.fn();
@@ -253,6 +263,43 @@ describe('proxyUrlsFromElectronResolution', () => {
         }));
       }
     }
+  });
+});
+
+describe('reachSocketFromRealtimeClient', () => {
+  async function openedReachSocket() {
+    const attempt = new FakeSocket();
+    const client = createNodeRealtimeSocketFactory(async () => 'DIRECT', () => attempt)(
+      openInput().url,
+      openInput().protocols,
+    );
+    await Promise.resolve();
+    attempt.readyState = WebSocket.OPEN;
+    attempt.emitOpen();
+    return { attempt, socket: reachSocketFromRealtimeClient(client) };
+  }
+
+  it('drops a send and an arriving frame once the socket is closing, as a browser WebSocket does', async () => {
+    const { attempt, socket } = await openedReachSocket();
+    const messages: unknown[] = [];
+    socket.addEventListener('message', (event) => messages.push(event.data));
+    socket.send('ping');
+    attempt.emitMessage('pong');
+
+    socket.close();
+    expect(() => socket.send('ping')).not.toThrow();
+    attempt.emitMessage('late pong');
+
+    expect(attempt.send.mock.calls).toEqual([['ping']]);
+    expect(messages).toEqual(['pong']);
+  });
+
+  it('drops a send after the socket closed', async () => {
+    const { attempt, socket } = await openedReachSocket();
+    attempt.emitClose(1_006, '');
+
+    expect(() => socket.send('ping')).not.toThrow();
+    expect(attempt.send).not.toHaveBeenCalled();
   });
 });
 

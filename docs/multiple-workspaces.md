@@ -24,6 +24,12 @@ A stale request returns a conflict and refreshes the roster. Promotion retains
 identity and session bindings; the durable relationship delivery invalidates
 participant/directory views without closing valid conversations.
 
+A Rally access support session ([`impersonation.md`](impersonation.md#support-access))
+is stored in the same set as the Organization's credential, marked by an
+`impersonator` on its cached profile. It is not one of the account's
+Organizations: the directory, push registration and background reads skip it,
+and selecting any other Organization drops it.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -31,13 +37,15 @@ participant/directory views without closing valid conversations.
 | `packages/db/migrations/0098_multiple_workspaces.sql` | Plural Global route bindings, regional abandonment, and the replay journal for setup operations. |
 | `apps/api/src/services/platform-onboarding-service.ts` | Cross-region discovery, activation, create/accept coordination, and operation replay. |
 | `apps/api/src/services/workspace-service.ts` | Ordinary self-leave, sole-owner refusal, and atomic final-member abandonment. |
-| `apps/api/src/services/workspace-attention-service.ts`, `durable-objects/workspace-do.ts` | The regional attention read and WorkspaceDO projection. |
+| `apps/api/src/services/workspace-attention-service.ts`, `durable-objects/workspace-do.ts` | The regional attention read, `membershipAttention` over a person's memberships, and WorkspaceDO projection. |
+| `apps/api/src/routes/browser.ts` (`/workspaces/attention`), `apps/browser/src/entry.tsx` | The browser organization list's activity counts, across deployments. |
 | `apps/desktop/src/main/stored-auth.ts`, `index.ts` | Versioned credential/profile sets, device-local recency, exact-credential refresh and removal, activation races, and complete sign-out. |
 | `apps/desktop/src/main/workspace-selection.ts`, `workspace-activation.ts` | The local claim that answers a link to the active workspace, and the platform activation every other addressed link takes. |
 | `apps/desktop/src/main/credential-refresh.ts` | One rotation per refresh token: every path that renews a stored credential shares an in-flight refresh of the same token. |
 | `apps/desktop/src/main/workspace-directory.ts` | The account menu's directory: the stored set merged with discovery, and the reconciliation that retires a membership a complete discovery no longer lists. |
 | `apps/desktop/src/renderer/components/workspace-account-menu.tsx`, `app-shell.tsx` | Flagged switcher, invitations, attention states, switching presentation, and creation in the legacy component variant. |
 | `apps/desktop/src/renderer/lib/draft-keys.ts`, `draft-cache.ts`, `app-session.tsx` | Workspace-scoped composer drafts and exact cleanup when one membership ends. |
+| `apps/desktop/src/renderer/lib/app-session.tsx` (`applyActivatedSession`), `account-onboarding-query.ts` | Landing a switch or a creation: the pending mark, the route reset, and what crosses the cache reset. |
 
 ## How it works
 
@@ -59,8 +67,17 @@ retained, but an intent generation prevents the late response from taking over
 the window.
 
 Regional user IDs are regional identifiers, not account identifiers: the same
-Google account may have different user UUIDs in configured deployments. The verified
-email in the Global identity session links discovery to the regional account.
+account may have different user UUIDs in configured deployments. Global sends a
+deployment the account's platform user ID and every sign-in method it has
+verified, as `loginIdentities` of provider and subject (`google` and its
+subject, `email` and its address). The deployment finds its user by platform ID,
+or else by any of those methods (and, for a user this bridge made before it
+recorded them, by `users.google_subject`), and records the methods it was sent.
+A method already held by a different regional user is a 409
+`regional_identity_conflict`, and an account with no method at all is refused a
+new regional user with `login_identity_required`. A new provider, such as Apple
+or GitHub, needs only its sign-in code: neither the bridge nor the table names
+the providers.
 An older version-1 workspace-only envelope can be reconnected in place after one
 Google exchange, preserving its selected workspace rather than forcing setup.
 
@@ -113,26 +130,49 @@ revocation.
 
 ### The account menu's directory
 
-A background row's trailing indicator is one green dot, shown when the
-WorkspaceDO attention read reports any activity — work streams waiting on the
-person or merely something new since they last looked — and nothing
-otherwise. The detail the read carries (how many are waiting and the
-strongest reason among them, in the order WorkspaceDO ranks them) is kept
-for the dot's tooltip and the row's accessible name rather than drawn as a
-count.
+A background row's trailing indicator is a count badge, the sidebar's unread
+red with white digits (`ActivityCountBadge` in `@rally/ui`), showing the
+attention read's `readerAttentionCount`: the conversations unread, unseen or
+mentioning the person. It is the same number as that Organization's attention
+menu and dock badge, it reads 99+ past two digits, and a zero shows nothing.
+An agent waiting on input (`needs_input`) with nothing unread counts zero, as in
+the attention menu.
+When some of those conversations are waiting on the person, the strongest
+reason, in the order WorkspaceDO ranks them, is the badge's tooltip and part of
+the row's accessible name. The browser's organization list shows the same
+badge, read through `GET /browser/workspaces/attention` (below).
 
 ### Switching
 
 Choosing a workspace is a dissolve, not a cut. While the new credential is
 minted the current panes dim in place and the menu row shows its spinner; the
 menu stays open so a failure lands under the row the person chose, and closes
-itself once the switch took. `activateWorkspace` fetches the new workspace's
-record with the new credential before the old workspace is torn down and
-seeds it into the cleared cache the moment the session changes, so the shell
-never shows a bare "Opening workspace…" between the two; the same panes then
-fade back up over the unchanged backdrop showing the new workspace. The
-feature flags ride across the same way, stamped stale, so the account menu
-keeps its shape until the new workspace's own answer arrives.
+itself once the switch took. The new shell draws its first frame from the
+session itself, which already describes the workspace (`workspaceFromSession`
+is its placeholder for `GET /workspace`), so the switch lands the moment main
+answers; the record is fetched before the old workspace is torn down only for
+a session too incomplete to describe it, so the shell never shows a bare
+"Opening workspace…" between the two. The same panes then fade back up over
+the unchanged backdrop showing the new workspace. The feature flags ride
+across the cache reset, stamped stale, so the account menu keeps its shape
+and its directory read starts on the first frame rather than after the new
+workspace's flags answer; the account's onboarding state, read at identity
+scope, rides across with them so the setup journey's read starts on the
+first frame too. A creation carries it only when it already says eligible: a
+first organization can make an ineligible account eligible, never the
+reverse, and a stale `false` would admit the creator past their journey.
+
+Creating a workspace lands through the same path (`applyActivatedSession`).
+Main announces the new session the moment it is persisted, before the create
+call returns; the renderer holds that announcement while its own creation is
+in flight, as a switch does, so the old shell is not torn down early on the
+previous workspace's route with an empty cache. A creation does not know its
+workspace's id until main answers, so it holds any workspace in the region it
+asked for, though a renewal of the workspace on screen passes; main's answer
+is its active session, and a creation that fails applies the last broadcast it
+held instead. The account
+menu's create action does not refetch the directory afterwards: the landing
+remounts the shell, and the new one reads discovery itself.
 
 A switch that changed the workspace always lands on the new work-stream page.
 A work stream open in the previous workspace must never be looked up in the
@@ -183,12 +223,23 @@ The renderer mounts one WorkspaceDO socket for the active workspace. Background
 workspaces get no sockets and expose no items across the boundary. Their stored
 credential may call `GET /workspace/attention`, which returns an addressed
 count, its highest-priority reason, an unread-activity boolean, and
-`unreadAndNeedsInputCount` (unread or participant-needs-input streams; Apple
-push uses that number as `aps.badge`). Focus and account-menu opening refresh
-the projection. The fixed periodic cadence and any
+`readerAttentionCount` (the sidebar attention menu's count; Apple push uses it
+as `aps.badge`). Focus and account-menu opening refresh the projection. The fixed periodic cadence and any
 device workspace cap remain `LIMIT UNSET`; do not invent either number. There is
 currently no periodic refresh: focus and menu opening are the only refresh
 triggers until the team chooses a cadence.
+
+The browser holds no workspace credential before it opens an Organization, so
+its organization list reads attention through its identity cookie instead:
+`GET /browser/workspaces/attention` answers for every membership the list
+holds. Global reads its own WorkspaceDOs and asks each other deployment over
+the identity bridge's `attention`, which looks up the person's regional id by
+platform id and writes nothing: linking is `discover`'s job, and the list ran
+it first. A person not linked there yet has no membership there to count. Guest relationships are skipped, as on the Mac. One
+workspace or deployment that fails is left out and logged as
+`browser_workspace_attention_failed`, naming the region, the workspace and a
+code that carries a schema rejection's field; the rest still answer. The list is read
+first and the counts after it, so the list never waits on a Durable Object.
 
 ### Workspace-addressed handoffs
 
@@ -275,7 +326,7 @@ delete, the API returns `409` instead of applying a newly destructive outcome.
 All admission and refresh paths join `abandoned_at IS NULL`, and the ordinary
 access-revocation producer closes every socket the membership held.
 
-An automation's runs are conversations under its `AutomationDO`, and their
+An automation's runs are conversations under its Sidekick, and their
 loops re-check the execution principal's membership before every provider
 write; a run whose principal lost the workspace stops there. The automation
 object itself reads no workspace lifecycle before its alarms fire, so a
@@ -333,6 +384,11 @@ Composer dictation remains tied to its composer lifecycle.
   device that opened either while it was reachable reconciles its stored
   credential away on the next complete answer; that is the withholding working
   as designed, not a lost membership.
+- The active workspace's row on the account menu takes its name from
+  `GET /workspace`, not from discovery. Discovery is rerun by no sync topic,
+  while the `workspace_profile` topic refreshes that read when an
+  administrator renames the Organization, so dropping the overlay in
+  `app-shell.tsx` would leave the old name showing until the next discovery.
 - This device rotates one refresh token at most once at a time.
 - Leaving one workspace cannot delete another workspace's credential, profile,
   query state, or draft.
@@ -340,6 +396,9 @@ Composer dictation remains tied to its composer lifecycle.
   it is not deletion.
 - Defensive polling cadence and device-count limits stay open until the team
   chooses their values.
+- Nothing reads a Global operation's `status`. That is what lets its
+  completion run beside the binding's activation; a reader of it would have to
+  order the two again.
 
 ## Boundary
 
@@ -368,6 +427,9 @@ never acquire a product WebSocket.
   The desktop keeps that ID across identity refresh and transport retries.
 - Queue publication after membership transition is best effort, as documented in
   `access-revocation.md`; authorization fences still refuse every reconnect.
+- A regional profile refresh reports `regional_identity_conflict` only for a
+  uniqueness refusal (another regional user holds the verified email). Any
+  other database failure keeps its own error.
 
 ## Data model
 
@@ -401,6 +463,107 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-10-08: Organization rows show an activity count, on the Mac and in the browser
+
+**What changed:** The account menu's background rows show
+`readerAttentionCount` as a red count badge instead of the green dot, and show
+nothing at zero. The browser's organization list shows the same badge, through
+a new identity-cookie route, `GET /browser/workspaces/attention`, backed by a
+new identity-bridge method, `attention`. Both reuse one per-workspace read,
+`membershipAttention`, which the existing `GET /workspace/attention` shares.
+
+**Why:** A product request: the person choosing an Organization wanted to see
+how much is waiting in each, on the iPhone's web sign-in list as well as the
+Mac. This reverses the 2026-09-02 decision to replace the count with a dot,
+which held that the count needed a legend. The answer here is one number in
+one colour, the same number as the attention menu and the dock badge, so it
+means the same thing wherever it appears.
+
+**Considered and rejected:** Adding attention to `/browser/workspaces` itself.
+That makes the list wait on one Durable Object read per Organization, in every
+deployment, before it paints; a second read lets the list paint first. Minting
+a workspace credential per Organization in the browser so it could call
+`/workspace/attention`: a browser keeps only its active organization's session
+by design.
+
+**Consequences:** The account trigger's dot now marks a background
+Organization with a non-zero count, so trigger and rows agree. The web
+shell's own account menu still shows no background counts: the browser
+platform refuses attention for any Organization but the active one, and
+moving it onto the new route is a separate change.
+
+
+### 2026-10-07: Creating an organization takes fewer round trips, and lands like a switch
+
+**What changed:** `finishWorkspaceSetup` marks its creation pending and lands
+through `applyActivatedSession`, the switch's path, which now carries the
+account onboarding state with the flags and fetches `GET /workspace` before the
+swap only when the session cannot describe the workspace. The create handler no
+longer refetches the directory, and main loads the onboarding identity once. On
+the server, Global reads the identity, its sign-in methods, a replayed
+operation and the preference in parallel, `begin` and `reserve` are each one
+batch, and activation, completion and eligibility run together after the
+region commits; the region refreshes a returning user in one batch and creates
+the Organization, its session row and General's anchor in one more
+([`spaces.md`](spaces.md) has General's half).
+
+**Why:** Creating an organization was slower than switching to one. Most of
+the server's serial round trips read rows the same request had written or
+already held, and on desktop main's early broadcast cleared the cache and
+remounted the shell on the previous workspace's route before the create call
+returned, after which the directory and the setup journey each waited on
+another read.
+
+**Considered and rejected:** Prefetching the workspace socket ticket with the
+session. With no blocking read left before the swap the head start is one
+React commit, and tickets are minted per dial with a sixty-second life.
+
+**Consequences:** A creation's pending mark matches by region and holds any
+other workspace's broadcast there; a renewal of the workspace on screen passes,
+and a creation that fails applies the last one it held. A session that
+describes its workspace lands without `GET /workspace` in hand. The preference
+is read before the reservation, since a read failing after it would leave a
+pending binding nothing releases.
+
+Shipped in #1142.
+
+### 2026-10-06 — A deployment links a person by any sign-in method
+
+**What changed:** The platform identity carries `loginIdentities`, every verified
+provider and subject from Global's `user_login_identities`, instead of one
+`googleSubject`. `RegionalOnboardingService` resolves a regional user by
+platform ID, then by any of those methods, and records them on the user.
+Migration 0120 replaces the table's fixed `google`/`email` provider list with a
+check on the provider name's shape. `otherDeploymentWorkspaces` now asks other
+deployments for any account with a sign-in method, not only a Google one.
+`createWorkspace` also marks an account eligible for the creator's setup journey
+when it is a member of no organization yet, and the ambiguous-action 503 now
+logs the cause it replaced. Organization slugs take the random tail of the
+UUIDv7 id rather than its timestamp head.
+
+**Why:** Creating an organization from the browser failed for an email-only
+account: the schema required a Google subject, though on Global the user is
+already linked by platform ID. Product asked for the identity to take any
+provider now, with Apple and GitHub next. The slug change fixes a collision
+found while testing: two organizations of the same name created within about
+a minute shared a slug, and the second create failed as an unconfirmed 503.
+
+**Considered and rejected:** Making `googleSubject` nullable and confining an
+email-only identity to Global. It unblocked the browser but left the bridge
+keyed on one provider, which the next provider would have had to undo.
+
+**Consequences:** Linking by email trusts that Global verified the mailbox, as
+it does for the email login identity itself. A deployment keeps only the email
+addresses Global currently sends, as Global does, so a changed mailbox cannot
+block its next owner. Email-only accounts, mostly guests, now get the same
+discovery Google accounts already had: the browser's list asks each other
+deployment in parallel, and each creates a regional user for the account on
+first contact. With Global the only deployment this costs nothing today. Every regional user the bridge
+touches gains login identity rows. A new provider's name must fit the shape
+migration 0120 checks and the API's `loginIdentitySchema`.
+
+PR: [#1129](https://github.com/juno-ai-labs/avalon/pull/1129).
 
 ### 2026-10-05 — A terminal account failure ends the desktop session
 

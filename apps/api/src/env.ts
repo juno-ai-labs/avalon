@@ -32,7 +32,6 @@ import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container"
 import type { ArtifactHostDO } from "./durable-objects/artifact-host-do";
 import type { SubstreamAgent } from "./durable-objects/substream-agent";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
-import type { SidekickDO } from "./durable-objects/sidekick-do";
 import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 import type { DocumentProcessingRpcBinding } from './services/document-processing-contract';
@@ -75,10 +74,8 @@ export interface Env {
   // both. Either way they fall back to the model variables below.
   FLAGS?: Flagship;
   SUBSTREAM_AGENTS: DurableObjectNamespace<SubstreamAgent>;
-  AUTOMATION_DOS: DurableObjectNamespace<SidekickDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
-  SLACK_REACTION_TICKERS: DurableObjectNamespace;
   /** One supervisor per live web artifact, named by the artifact's own id. */
   ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
   /**
@@ -319,6 +316,11 @@ export interface IdentityAuthContext {
    * correlation value and the objects verify the member it acts as against
    * current membership (`docs/spaces.md`).
    *
+   * A Channel access request's approver has no login session either: their
+   * one-click email approval, and the check that they can still open what
+   * they are asked about, act as them after the Worker re-reads their active
+   * membership (`conversation-access-request-service.ts`).
+   *
    * A consumed resource-authorization callback also has no login session. The
    * Worker verifies its sealed provider state, connection, and membership,
    * then the room re-checks membership under `"resource_authorization"`.
@@ -328,6 +330,14 @@ export interface IdentityAuthContext {
    * claim a non-session path from outside.
    */
   principal?: "connector" | "demo_seed" | "impersonation" | "resource_authorization";
+  /**
+   * Set on a support session: the Rally staff member actually acting as
+   * `userId`, read from `sessions.impersonator_user_id` with the same query that
+   * authenticated the request. Authority stays `userId`'s; this names who to
+   * hold accountable and is what a route consults to refuse an action a support
+   * session may not take (`docs/impersonation.md`).
+   */
+  impersonatorUserId?: UserId;
   /**
    * The analytics surrogates this person and workspace are known by in PostHog
    * — `users.analytics_person_id` and `workspaces.analytics_workspace_id`.
@@ -436,10 +446,8 @@ const EnvContractSchema = z.object({
   TERMINAL_PROVIDER: binding<TerminalProviderRpcBinding>().optional(),
   TELEMETRY_DELIVERY: binding<TelemetryDeliveryRpcBinding>().optional(),
   SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
-  AUTOMATION_DOS: binding<DurableObjectNamespace<SidekickDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
-  SLACK_REACTION_TICKERS: binding<DurableObjectNamespace>(),
   ARTIFACT_HOSTS: binding<DurableObjectNamespace<ArtifactHostDO>>(),
   ARTIFACT_LOADER: binding<WorkerLoader>().optional(),
   ACTIVITY_QUEUE: binding<Queue>(),

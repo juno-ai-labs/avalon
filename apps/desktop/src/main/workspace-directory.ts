@@ -50,7 +50,8 @@ export function storedWorkspaceSummaries(
   if (!auth || !profiles) return [];
   const rows = profiles.workspaces.flatMap((profile): DesktopWorkspaceSummary[] => {
     const workspace = profile.workspace;
-    if (!workspace || !storedWorkspaceCredential(auth, workspace.id, workspace.region)) return [];
+    // A support session is somebody else's membership, not one of this account's.
+    if (!workspace || profile.impersonator || !storedWorkspaceCredential(auth, workspace.id, workspace.region)) return [];
     return [{
       id: workspace.id,
       name: workspace.name,

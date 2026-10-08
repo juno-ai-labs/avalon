@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
-import { isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
+import { handoffAppTarget, handoffDevice, handoffHeading, isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
 import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
@@ -23,6 +23,31 @@ describe('public Rally site', () => {
     expect(isIosDevice('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', 'iPhone', 5)).toBe(true);
     expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 5)).toBe(true);
     expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 0)).toBe(false);
+  });
+  it('quotes the linked name in the handoff heading and cuts it past 40 characters', () => {
+    expect(handoffHeading('Q3 launch plan')).toBe('Opening “Q3 launch plan” in Rally');
+    expect(handoffHeading('x'.repeat(40))).toBe(`Opening “${'x'.repeat(40)}” in Rally`);
+    expect(handoffHeading(`${'x'.repeat(39)} tail`)).toBe(`Opening “${'x'.repeat(39)}…” in Rally`);
+  });
+  it('names which Rally app a shared link can open on each device', () => {
+    expect(handoffDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 0)).toBe('mac');
+    expect(handoffDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 5)).toBe('ios');
+    expect(handoffDevice('Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32', 0)).toBe('other');
+    expect(handoffDevice('Mozilla/5.0 (Linux; Android 14; Pixel 8)', 'Linux armv8l', 5)).toBe('other');
+  });
+  it('leaves a shared link to the web app where no Rally app can open it', () => {
+    const workspace = { region: 'global', workspaceId: '00000000-0000-7000-8000-0000000000a1' };
+    const workstream = { ...workspace, spaceId: '00000000-0000-7000-8000-0000000000a9', workstreamId: '00000000-0000-7000-8000-0000000000b1' };
+    const space = { ...workspace, spaceId: '00000000-0000-7000-8000-0000000000a9' };
+    const none = { workstream: null, space: null, sidekick: null };
+    expect(handoffAppTarget('other', { ...none, workstream })).toBeNull();
+    expect(handoffAppTarget('ios', { ...none, space })).toBeNull();
+    expect(handoffAppTarget('ios', { ...none, workstream })).toEqual({
+      app: 'ios',
+      href: 'rallywithai://handoff/workspaces/global/00000000-0000-7000-8000-0000000000a1/workstreams/00000000-0000-7000-8000-0000000000b1',
+    });
+    expect(handoffAppTarget('mac', { ...none, space })?.app).toBe('mac');
+    expect(handoffAppTarget('mac', { ...none, space })?.href.startsWith('rallywithai://workspace/global/')).toBe(true);
   });
   it('hands canonical Channel paths to iPhone builds through their legacy addressed reader', () => {
     expect(legacyIosWorkstreamHandoff({
@@ -129,15 +154,16 @@ describe('public Rally site', () => {
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete/?ticket=${ticket}&region=global&attempt=${attempt}`))).toBeNull();
   });
   it('tags every tracked landing link with a known id, one per installer link', () => {
-    // The home page and its variants, such as /start-fast/, share one set of ids.
-    const page = ['index.html', 'start-fast/index.html'].map((path) => renderSiteChrome(readProjectFile(path))).join('');
-    const ids = [...page.matchAll(/data-site-action="([^"]+)"/gu)].map(([, id]) => id);
+    const ids = (page: string) => [...page.matchAll(/data-site-action="([^"]+)"/gu)].map(([, id]) => id);
+    const home = renderSiteChrome(readProjectFile('index.html'));
+    const variant = renderSiteChrome(readProjectFile('start-fast/index.html'));
     // A misspelled id is ignored at runtime, which would silently stop counting that link.
-    for (const id of ids) expect(siteActionForLink(id), id).not.toBeNull();
-    // A tag removed in a redesign is just as silent: every tracked link must still be on the page.
-    for (const id of Object.keys(SITE_ACTION_LINKS)) expect(ids, id).toContain(id);
+    for (const id of [...ids(home), ...ids(variant)]) expect(siteActionForLink(id), id).not.toBeNull();
+    // A tag removed in a redesign is just as silent: every tracked link must still be on the home page.
+    // Checked against the home page alone, so a variant can't hide a tag the home page lost.
+    for (const id of Object.keys(SITE_ACTION_LINKS)) expect(ids(home), id).toContain(id);
     // Each installer link carries its own id, so the dashboard can tell them apart.
-    for (const link of page.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
+    for (const link of `${home}${variant}`.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
       expect(link).toMatch(/data-site-action="download-[a-z-]+"/u);
     }
   });
@@ -206,12 +232,15 @@ describe('public Rally site', () => {
     expect(renderLlmsTxt()).toContain('- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with other humans\n');
   });
 
-  it('lists the section links and the download button in the shared header, without Blog', () => {
+  it('lists the section links, the download button and the mobile sign-in in the shared header, without Blog', () => {
     const nav = renderSiteChrome('<!-- rally:site-nav -->');
-    expect([...nav.matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/gu)].map(([, href, label]) => `${label} ${href}`)).toEqual([
+    const links = [...nav.matchAll(/<a [^>]*href="([^"]+)"([^>]*)>(.*?)<\/a>/gu)];
+    expect(links.map(([, href, attrs, body]) => `${/aria-label="([^"]+)"/u.exec(attrs ?? '')?.[1] ?? body} ${href}`)).toEqual([
       'Features /#features', 'Pricing /#pricing', 'Compare /#compare',
       'Download for Mac https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg',
+      'Sign in to Rally or sign up for Rally https://app.rallywith.ai',
     ]);
+    expect(nav).toContain('<span>Sign in to Rally</span><span>Sign up for Rally</span>');
   });
 
   it('renders a blog post from a dated Markdown file and refuses a bad name or front matter', () => {

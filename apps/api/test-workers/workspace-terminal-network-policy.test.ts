@@ -59,7 +59,6 @@ async function preview(input: {
     proposedMode: "full_internet",
     proposedDomains: [],
     effectiveDomains: [],
-    affectedWorkstreamIds: [],
     at: AT,
   });
 }

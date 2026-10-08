@@ -10,6 +10,9 @@
  * Breakout's own SubstreamAgent appends a post. The model-driven path (a real
  * run calling `conversation_post`) is in `automation-post-result.test.ts`; the
  * tools' argument and failure shapes are in `test/conversation-tools.test.ts`.
+ * A Breakout's full access to its Channel (its Main's messages through these
+ * tools, and its Main's resource links) is here too, because this suite makes
+ * real Channels and Breakouts.
  */
 
 import { env } from "cloudflare:workers";
@@ -27,8 +30,8 @@ import {
   type SubstreamId,
 } from "@rally/contracts";
 
-import type { AutomationDO } from "../src/durable-objects/automation-do";
-import { automationDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import { createConversationResourceLinks } from "../src/runtime/resource-port";
 import type { AuthContext, Env } from "../src/env";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
 import { AuthorizationService } from "../src/services/authorization-service";
@@ -38,9 +41,10 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { deliverChildEffects, deliverEffectsToWorkspace, deliverParentEffects } from "./helpers/conversation-effects";
+import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { withHostedParent } from "./helpers/hosted-parent";
+import { applySidekick, sidekickWorkspace } from "./helpers/sidekick";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -49,6 +53,10 @@ const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000c0a11");
 const COLLEAGUE_ID = asUserId("00000000-0000-7000-8000-0000000c0a12");
 const SESSION_ID = "00000000-0000-7000-8000-0000000c0a13";
 const GUEST_ID = asUserId("00000000-0000-7000-8000-0000000c0a14");
+/** A member of the Organization who is in no Channel this suite makes. */
+const OUTSIDER_ID = asUserId("00000000-0000-7000-8000-0000000c0a15");
+const CHANNEL_RESOURCE_ID = "00000000-0000-7000-8000-0000000c0ae1";
+const BREAKOUT_RESOURCE_ID = "00000000-0000-7000-8000-0000000c0ae2";
 const NOW = "2026-09-27T10:00:00.000Z";
 const TEST_ENV: Env = env;
 
@@ -85,9 +93,6 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-function automation(): DurableObjectStub<AutomationDO> {
-  return env.AUTOMATION_DOS.get(env.AUTOMATION_DOS.idFromName(automationDOName("global", WORKSPACE_ID, AUTOMATION_ID)));
-}
 
 function conversation(parentId: string, substreamId: SubstreamId | "0" = "0") {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
@@ -194,11 +199,10 @@ async function seedSidekick(home: SubstreamId | "0"): Promise<void> {
     owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId: AUTOMATION_ID,
   });
   const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
-  await automation().submitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
-  await runInDurableObject(automation(), (instance: AutomationDO) => instance.apply({
+  await workspace().sidekickSubmitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
+  await applySidekick(TEST_ENV, {
     ...addressed, actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true },
-  }));
-  await deliverParentEffects(TEST_ENV, automation());
+  });
 }
 
 const sidekickScope = () => ({ kind: "sidekick" as const, automationId: AUTOMATION_ID });
@@ -246,7 +250,7 @@ describe("a Sidekick's home conversation", () => {
     const breakout = await seedBreakout("Weekly call");
     await seedSidekick(breakout);
 
-    expect((await automation().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID,
+    expect((await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID,
       userId: COLLEAGUE_ID })).authorized).toBe(false);
     const authorization = new AuthorizationService(TEST_ENV);
     expect(await authorization.checkMany({ workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID, delegation: null },
@@ -264,6 +268,48 @@ describe("a Sidekick's home conversation", () => {
       .rejects.toMatchObject({ code: "sidekick_owning_workstream_forbidden" });
   });
 
+  it("sends an archived Channel's row only once its Sidekicks are paused, with their list in the same turn", async () => {
+    await seedSidekick("0");
+    const response = await workspace().fetch("https://workspace.test/socket", { headers: {
+      Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-placement-affinity": "wnam",
+      "x-rally-user-id": AUTHOR_ID, "x-rally-session-id": SESSION_ID,
+      "x-rally-socket-ticket-id": crypto.randomUUID(),
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
+    } });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    const frames: Array<Record<string, unknown>> = [];
+    socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
+    try {
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync")).toBe(true);
+      frames.length = 0;
+
+      expect((await post(conversation(ROOM_ID), "/internal/product", {
+        operation: "update", auth: AUTH, input: { archived: true },
+      })).status).toBe(200);
+      await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
+
+      // The archived Channel's row, then the automations list the archive's
+      // pauses moved, sent together with nothing between them.
+      const archivedRow = () => frames.findIndex((frame) => frame.type === "workspace_workstream_state"
+        && frame.workstreamId === ROOM_ID && frame.workstream === null);
+      await expect.poll(archivedRow).toBeGreaterThanOrEqual(0);
+      const list = frames[archivedRow() + 1];
+      expect(list).toMatchObject({ type: "workspace_sidebar_list", list: "automations" });
+      // The row went out after the pause committed, so a rail it prompts the
+      // client to read already shows the Sidekick paused.
+      expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ paused_by: string | null }>(
+        `SELECT paused_by FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
+      ).one())).toEqual({ paused_by: "room_archive" });
+      // No earlier automations list told the client before its Channel did.
+      expect(frames.slice(0, archivedRow()).filter((frame) => frame.list === "automations")).toEqual([]);
+    } finally {
+      socket.close();
+    }
+  });
+
   it("pauses the Sidekick when its home Breakout is archived", async () => {
     const breakout = await seedBreakout("Weekly call");
     await seedSidekick(breakout);
@@ -273,9 +319,9 @@ describe("a Sidekick's home conversation", () => {
     });
     await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, breakout));
 
-    const row = await runInDurableObject(automation(), (_instance, state) =>
+    const row = await runInDurableObject(sidekickWorkspace(TEST_ENV, WORKSPACE_ID), (_instance, state) =>
       state.storage.sql.exec<{ lifecycle: string; paused_by: string | null; owning_room_archived_at: number | null }>(
-        `SELECT lifecycle, paused_by, owning_room_archived_at FROM automation WHERE id = 1`,
+        `SELECT lifecycle, paused_by, owning_room_archived_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
       ).one());
     expect(row).toMatchObject({ lifecycle: "paused", paused_by: "room_archive" });
     expect(row.owning_room_archived_at).not.toBeNull();
@@ -397,6 +443,79 @@ describe("a conversation tool's scope", () => {
   });
 });
 
+describe("a Breakout's access to its Channel", () => {
+  /** A link in one conversation's object, as an attach writes it. */
+  async function link(target: DurableObjectStub, resourceId: string, attachedAt: number): Promise<void> {
+    await runInDurableObject(target, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workstream_resource_links
+           (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+            resource_json, attached_at, updated_at)
+         VALUES (?, NULL, 0, 'generated', '{}', ?, ?)`,
+        resourceId, attachedAt, attachedAt,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
+         ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
+        attachedAt,
+      );
+    });
+  }
+
+  it("sees every resource its Channel's Main has attached, beside its own", async () => {
+    const breakout = await seedBreakout("Weekly call");
+    await link(conversation(ROOM_ID), CHANNEL_RESOURCE_ID, 1_000);
+    await link(conversation(ROOM_ID, breakout), BREAKOUT_RESOURCE_ID, 2_000);
+
+    const seen = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, ROOM_ID, undefined, breakout);
+    expect((await seen.links({})).links.map((row) => row.resource_id))
+      .toEqual([BREAKOUT_RESOURCE_ID, CHANNEL_RESOURCE_ID]);
+    // A point lookup, which is what read_resource makes, finds the Channel's.
+    expect((await seen.links({ resourceIds: [CHANNEL_RESOURCE_ID] })).links.map((row) => row.resource_id))
+      .toEqual([CHANNEL_RESOURCE_ID]);
+    expect(await seen.inventoryFingerprint()).toBe("inventory:1/1");
+
+    // The Channel attaching something changes what the Breakout sees, so a
+    // Breakout's cursor or compaction checkpoint must not keep matching.
+    await link(conversation(ROOM_ID), "00000000-0000-7000-8000-0000000c0ae3", 3_000);
+    expect(await seen.inventoryFingerprint()).toBe("inventory:1/2");
+
+    // The Channel inherits nothing from its Breakouts.
+    const channel = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, ROOM_ID, undefined, "0");
+    expect((await channel.links({ resourceIds: [BREAKOUT_RESOURCE_ID] })).links).toEqual([]);
+    expect(await channel.inventoryFingerprint()).toBe("inventory:2");
+  });
+
+  it("admits a Breakout's member to its Channel's Main, though the Channel itself would not", async () => {
+    await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
+      workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID, accessClass: "member", role: "member", status: "active",
+      incarnation: "outsider", revision: 1,
+    } });
+    const breakout = await seedBreakout("Weekly call");
+    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: breakout, actorUserId: AUTHOR_ID, userId: OUTSIDER_ID, operationId: "add-outsider" });
+    // The parent outbox is left alone, as above: the add queued a
+    // participant_notification this suite's D1 has no tables to deliver.
+    await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, breakout));
+    expect((await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: asSubstreamId("0"), userId: OUTSIDER_ID })).authorized).toBe(false);
+
+    const scope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: breakout };
+    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID, scope }))
+      .conversations.map((entry) => entry.conversationId))
+      .toEqual([`${ROOM_ID}/${breakout}`, ROOM_ID]);
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID,
+      scope, reference: ROOM_ID })).toMatchObject({ ok: true, conversation: { conversationId: ROOM_ID } });
+
+    // The standing is the Breakout's: without it, the Channel's Main is
+    // refused like any conversation they cannot open.
+    const mainScope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: asSubstreamId("0") };
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID,
+      scope: mainScope, reference: ROOM_ID }))
+      .toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: ROOM_ID });
+  });
+});
+
 describe("a conversation post", () => {
   function postRequest(substreamId: SubstreamId, clientMessageId: string) {
     return {
@@ -486,7 +605,7 @@ describe("a guest", () => {
     const breakout = await seedBreakout("Weekly call");
     await seedSidekick(breakout);
     await seedGuest([asSubstreamId("0"), breakout]);
-    const opens = async () => (await automation().authorizeViewer({ workspaceId: WORKSPACE_ID,
+    const opens = async () => (await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID,
       parentId: AUTOMATION_ID, userId: GUEST_ID, requireGrantAuthority: true })).authorized;
 
     await grant({ kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID });

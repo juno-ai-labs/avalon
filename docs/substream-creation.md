@@ -375,7 +375,12 @@ the first model context without becoming executable historical work.
 - **Explicit child membership alone admits a child, and discovery asks the
   same question.** Parent visibility is neither required nor enough: parent
   participants cannot enumerate or open someone else's private child, and
-  adding a child member does not grant Main or sibling access.
+  adding a child member does not grant Main or sibling access. The child's
+  *agent* is different: a Breakout has full access to its Channel, so its runs
+  read Main's messages ([`conversation-tools.md`](conversation-tools.md)) and
+  Main's resources ([`agent-attachments.md`](agent-attachments.md)) whoever is
+  in the Breakout. A member who cannot open the Channel can read it through the
+  agent; that was chosen, not overlooked.
   `HostedParent.canReadConversation` is the one predicate for one conversation
   — a grant, or for an unmigrated conversation a member's legacy roster — and
   `/sharing/navigation` releases only what it admits. A guest is shared a

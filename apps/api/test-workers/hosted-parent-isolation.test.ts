@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { conversationObjectName } from "../src/durable-objects/names";
 import { hostedParentStub, insertChannelRow, readSharedWorkstream, withHostedParent } from "./helpers/hosted-parent";
-import { LINK_PAYLOADS_TABLE } from "./helpers/link-payloads-table";
+import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000e0001");
 const channelA = asWorkstreamId("00000000-0000-4000-8000-0000000e00a0");
@@ -33,7 +33,6 @@ const onlyB = asUserId("00000000-0000-4000-8000-0000000e0012");
 /** In neither until somebody shares a Channel with them. */
 const recipient = asUserId("00000000-0000-4000-8000-0000000e0013");
 const sessionId = "hosted-parent-isolation-session";
-const spaceId = "00000000-0000-4000-8000-0000000e0021";
 
 const whole = (parentId: string): ScopeGrantTarget => ({ kind: "workstream", workspaceId, parentId });
 const main = (parentId: string): ScopeGrantTarget => ({
@@ -67,7 +66,7 @@ beforeEach(async () => {
   await reset();
   const people = [shared, onlyB, recipient];
   await env.DB.batch([
-    env.DB.prepare(LINK_PAYLOADS_TABLE),
+    ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
     env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT)"),
     ...people.map((id) => env.DB.prepare(
       "INSERT INTO users VALUES (?, 'Person', 'person@example.test', NULL, 'UTC', '2026-09-25T00:00:00.000Z')",
@@ -82,8 +81,8 @@ beforeEach(async () => {
       "INSERT INTO workspace_members VALUES (?, ?, 'guest', NULL, 'active', ?, 1)",
     ).bind(workspaceId, id, id)),
     env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL, workspace_incarnation TEXT)`),
-    env.DB.prepare("INSERT INTO sessions VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z', ?)")
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL, workspace_incarnation TEXT, impersonator_user_id TEXT)`),
+    env.DB.prepare("INSERT INTO sessions VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z', ?, NULL)")
       .bind(sessionId, shared, workspaceId, shared),
   ]);
   await organization().initializeWorkspace(workspaceId, "wnam");
@@ -151,26 +150,6 @@ describe("hosted parent isolation", () => {
     // The same person may leave Channel B, where somebody else remains.
     const leaveB = await share(channelB, shared, false, await grantRevision(channelB, shared));
     expect(leaveB).toMatchObject({ status: "committed", grant: { active: false } });
-  });
-
-  it("claims a Space-seated reader as direct in Channel A without touching Channel B's attribution", async () => {
-    await runInDurableObject(organization(), (_instance, state) => {
-      for (const parentId of [channelA, channelB]) {
-        state.storage.sql.exec(`INSERT INTO parent_space_sources
-          (parent_id, space_id, scope, participants_json, space_revision, membership_generation, operation_id, applied_at, updated_at)
-          VALUES (?, ?, 'personal', json(?), 1, 1, ?, 0, 0)`, parentId, spaceId, JSON.stringify([shared]), crypto.randomUUID());
-        state.storage.sql.exec("INSERT INTO parent_space_readers (parent_id, space_id, user_id) VALUES (?, ?, ?)",
-          parentId, spaceId, shared);
-      }
-    });
-
-    expect(await organization().noteDirectReader({ workspaceId, parentId: channelA, userId: shared })).toEqual({ ok: true });
-
-    await runInDurableObject(organization(), (_instance, state) => {
-      expect(state.storage.sql.exec(
-        "SELECT parent_id, user_id FROM parent_space_readers ORDER BY parent_id",
-      ).toArray()).toEqual([{ parent_id: channelB, user_id: shared }]);
-    });
   });
 
   it("closes Channel A's control socket on a revocation for Channel A and leaves Channel B's open", async () => {

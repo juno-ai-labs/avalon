@@ -1,311 +1,110 @@
-import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { MenuBarContentStore, type MenuBarContentDependencies } from './menu-bar-content';
-import type { MenuBarContent } from './menu-bar-menu';
+import { WorkstreamPrivateChildSchema } from '@rally/contracts';
+import { describe, expect, it } from 'vitest';
+import type { DirectoryChannel } from './channel-directory-watch';
+import { menuBarContentFromDirectory } from './menu-bar-content';
 
-type RequestJsonMock = Mock<MenuBarContentDependencies['requestJson']>;
-
-interface Harness {
-  store: MenuBarContentStore;
-  requestJson: RequestJsonMock;
-  onChange: ReturnType<typeof vi.fn>;
-  logWarning: ReturnType<typeof vi.fn>;
-  advance: (milliseconds: number) => void;
-}
-
-const LAST_ACTIVITY = '2026-09-10T18:00:00.000Z';
-
-function workstreamPage(
-  titles: {
-    id: string;
-    title: string;
-    titleStatus?: string;
-    pinPosition?: number;
-    lastActivityAt?: string;
-    createdAt?: string;
-    lastAccessedAt?: string | null;
-  }[],
-): unknown {
+function channel(id: string, title: string, extra: Partial<DirectoryChannel> = {}): DirectoryChannel {
   return {
-    items: titles.map((entry) => ({
-      id: entry.id,
-      title: entry.title,
-      titleStatus: entry.titleStatus ?? 'settled',
-      pinPosition: entry.pinPosition ?? null,
-      lastActivityAt: entry.lastActivityAt ?? LAST_ACTIVITY,
-      ...(entry.createdAt === undefined ? {} : { createdAt: entry.createdAt }),
-      ...(entry.lastAccessedAt === undefined ? {} : { lastAccessedAt: entry.lastAccessedAt }),
-      // A field the menu never reads. Present so the narrow schema is shown to
-      // ignore what it does not need rather than reject it.
-      harnessStatus: 'idle',
-    })),
+    id,
+    title,
+    titleStatus: 'settled',
+    lastActivityAt: '2026-10-06T10:00:00.000Z',
+    archivedAt: null,
+    systemKind: null,
+    hasUnread: false,
+    unseen: false,
+    youAreMentioned: false,
+    ...extra,
   };
 }
 
-function entry(id: string, title: string, lastActivityAt = LAST_ACTIVITY): MenuBarContent['recents'][number] {
-  return { id, title, lastActivityAt };
-}
-
-function harness(available?: () => boolean | Promise<boolean>): Harness {
-  let now = 1_000_000;
-  const requestJson = vi.fn<MenuBarContentDependencies['requestJson']>();
-  const onChange = vi.fn();
-  const logWarning = vi.fn();
-  const store = new MenuBarContentStore({
-    requestJson,
-    onChange,
-    logWarning,
-    now: () => now,
-    ...(available ? { available } : {}),
-  });
-  return {
-    store,
-    requestJson,
-    onChange,
-    logWarning,
-    advance: (milliseconds) => {
-      now += milliseconds;
-    },
-  };
-}
-
-function respond(requestJson: RequestJsonMock, responses: Record<string, unknown>): void {
-  requestJson.mockImplementation((path: string) => {
-    const match = Object.entries(responses).find(([prefix]) => path.startsWith(prefix));
-    if (!match) return Promise.reject(new Error(`Unexpected request: ${path}`));
-    const [, response] = match;
-    return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
-  });
-}
-
-let subject: Harness;
-
-beforeEach(() => {
-  subject = harness();
+const breakout = WorkstreamPrivateChildSchema.parse({
+  substreamId: '00000000-0000-7000-8000-0000000000b1',
+  title: 'Discount call',
+  unreadCount: 2,
+  createdByUserId: '00000000-0000-7000-8000-0000000000c1',
+  createdAt: '2026-10-05T10:00:00.000Z',
+  updatedAt: '2026-10-06T08:00:00.000Z',
 });
 
 describe('menu bar content', () => {
-  it('asks for one page of ten and nothing else', async () => {
-    respond(subject.requestJson, {
-      '/workstreams': workstreamPage([
-        { id: 'a', title: 'Acme renewal' },
-        { id: 'b', title: 'Quarterly report' },
-      ]),
+  it('lists the sidebar\'s attention rows, most urgent first', () => {
+    const content = menuBarContentFromDirectory({
+      complete: true, accessRequests: [],
+      channels: [
+        channel('a', 'Unread', { hasUnread: true, lastActivityAt: '2026-10-06T12:00:00.000Z' }),
+        channel('b', 'New to you', { unseen: true, lastActivityAt: '2026-10-06T09:00:00.000Z' }),
+        channel('c', 'Caught up'),
+      ],
+      breakouts: {},
     });
 
-    await subject.store.refresh();
-
-    // One request answers both sections, and the suggestion poll is gone with
-    // the section it fed.
-    expect(subject.requestJson).toHaveBeenCalledTimes(1);
-    expect(subject.requestJson).toHaveBeenCalledWith('/workstreams?limit=10');
-    expect(subject.store.content()).toEqual<MenuBarContent>({
-      recents: [entry('a', 'Acme renewal'), entry('b', 'Quarterly report')],
-      pinned: [],
-    });
-    expect(subject.onChange).toHaveBeenCalledTimes(1);
+    expect(content.attention.map((row) => [row.title, row.reason])).toEqual([
+      ['New to you', 'unseen'],
+      ['Unread', 'unread'],
+    ]);
+    expect(content.attentionComplete).toBe(true);
   });
 
-  it('carries the recency the sidebar groups by, not merely the last message', async () => {
-    respond(subject.requestJson, {
-      '/workstreams': workstreamPage([
-        // Visited long after the last message: the menu has to group it by the
-        // visit, the way the sidebar does, or the same work stream sits under
-        // two different headings on the two surfaces.
-        {
-          id: 'visited',
-          title: 'Acme renewal',
-          lastActivityAt: '2026-09-01T09:00:00.000Z',
-          lastAccessedAt: '2026-09-10T21:55:00.000Z',
-        },
-        // Never visited: creation, rather than somebody else's message.
-        {
-          id: 'unvisited',
-          title: 'Quarterly report',
-          lastActivityAt: '2026-09-01T09:00:00.000Z',
-          createdAt: '2026-09-09T08:00:00.000Z',
-          lastAccessedAt: null,
-        },
-        // An older server that does not report visits at all.
-        { id: 'legacy', title: 'Hiring loop', lastActivityAt: '2026-09-02T07:00:00.000Z' },
-      ]),
+  it('reads a Channel\'s Breakouts only when its row counts one, as the sidebar does', () => {
+    const counted = menuBarContentFromDirectory({
+      complete: true, accessRequests: [],
+      channels: [channel('a', 'Pricing', { breakoutAttentionCount: 1 })],
+      breakouts: { a: [breakout] },
+    });
+    expect(counted.attention).toEqual([{
+      key: `a:${breakout.substreamId}`,
+      workstreamId: 'a',
+      substreamId: breakout.substreamId,
+      title: 'Discount call',
+      channelTitle: 'Pricing',
+      reason: 'unread',
+    }]);
+
+    const uncounted = menuBarContentFromDirectory({
+      complete: true, accessRequests: [],
+      channels: [channel('a', 'Pricing')],
+      breakouts: { a: [breakout] },
+    });
+    expect(uncounted.attention).toEqual([]);
+  });
+
+  it('orders Most recent by last activity, ties A to Z, with no Space filter and no archived or system rows', () => {
+    const content = menuBarContentFromDirectory({
+      complete: true, accessRequests: [],
+      channels: [
+        channel('a', 'Beta', { lastActivityAt: '2026-10-06T10:00:00.000Z' }),
+        channel('b', 'Alpha', { lastActivityAt: '2026-10-06T10:00:00.000Z' }),
+        channel('c', 'Newest', { lastActivityAt: '2026-10-06T12:00:00.000Z' }),
+        channel('d', 'Archived', { archivedAt: '2026-10-06T11:00:00.000Z', lastActivityAt: '2026-10-06T13:00:00.000Z' }),
+        channel('e', 'Digest', { systemKind: 'digest', lastActivityAt: '2026-10-06T13:00:00.000Z' }),
+      ],
+      breakouts: {},
     });
 
-    await subject.store.refresh();
-
-    expect(subject.store.content().recents).toEqual([
-      entry('visited', 'Acme renewal', '2026-09-10T21:55:00.000Z'),
-      entry('unvisited', 'Quarterly report', '2026-09-09T08:00:00.000Z'),
-      entry('legacy', 'Hiring loop', '2026-09-02T07:00:00.000Z'),
+    expect(content.recents).toEqual([
+      { id: 'c', title: 'Newest', substreamId: null },
+      { id: 'b', title: 'Alpha', substreamId: null },
+      { id: 'a', title: 'Beta', substreamId: null },
     ]);
   });
 
-  it('treats every row as recent because the menu has no selected Space', async () => {
-    respond(subject.requestJson, {
-      '/workstreams': workstreamPage([
-        { id: 'older', title: 'Quarterly report', lastActivityAt: '2026-09-09T18:00:00.000Z' },
-        // A rolling-deploy response may still carry the retired scalar. It
-        // cannot pick a Space for this surface, so it remains a recent row.
-        { id: 'legacy-pin', title: 'Board deck', pinPosition: 0, lastActivityAt: LAST_ACTIVITY },
-      ]),
+  it('names a Channel Rally is still naming rather than showing its placeholder', () => {
+    const content = menuBarContentFromDirectory({
+      complete: true, accessRequests: [],
+      channels: [channel('a', 'placeholder', { titleStatus: 'naming', hasUnread: true })],
+      breakouts: {},
     });
 
-    await subject.store.refresh();
-
-    expect(subject.store.content().recents).toEqual([
-      entry('legacy-pin', 'Board deck'),
-      entry('older', 'Quarterly report', '2026-09-09T18:00:00.000Z'),
-    ]);
-    expect(subject.store.content().pinned).toEqual([]);
+    expect(content.recents[0]?.title).toBe('Untitled channel');
+    expect(content.attention[0]?.title).toBe('Untitled channel');
   });
 
-  it('breaks equal-recency ties by Channel id like the sidebar and server', async () => {
-    respond(subject.requestJson, {
-      '/workstreams': workstreamPage([
-        { id: 'b', title: 'Bravo', lastActivityAt: LAST_ACTIVITY },
-        { id: 'a', title: 'Alpha', lastActivityAt: LAST_ACTIVITY },
-      ]),
-    });
-
-    await subject.store.refresh();
-
-    expect(subject.store.content().recents.map((entry) => entry.id)).toEqual(['a', 'b']);
-  });
-
-  it('names a channel Rally has not finished titling', async () => {
-    respond(subject.requestJson, {
-      '/workstreams': workstreamPage([{ id: 'a', title: 'placeholder', titleStatus: 'naming' }]),
-    });
-
-    await subject.store.refresh();
-
-    expect(subject.store.content().recents).toEqual([entry('a', 'Untitled channel')]);
-  });
-
-  it('keeps the last good menu when a refresh fails', async () => {
-    respond(subject.requestJson, {
-      '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]),
-    });
-    await subject.store.refresh();
-
-    subject.advance(60_000);
-    respond(subject.requestJson, { '/workstreams': new Error('offline') });
-    await subject.store.refresh();
-
-    // The recent list is what a person navigates with. A menu emptied by one
-    // bad response is worse than one that is a minute out of date.
-    expect(subject.store.content().recents).toEqual([entry('a', 'Acme renewal')]);
-    expect(subject.logWarning).toHaveBeenCalledTimes(1);
-  });
-
-  it('drops an answer that arrives after sign-out', async () => {
-    let release: () => void = () => undefined;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    subject.requestJson.mockImplementation(() => held.then(() =>
-      workstreamPage([{ id: 'a', title: 'Acme renewal' }])));
-
-    const inFlight = subject.store.refresh();
-    subject.store.clear();
-    release();
-    await inFlight;
-
-    // The whole point of clearing: the previous account's titles must not come
-    // back through a request that was already on the wire when they signed out.
-    expect(subject.store.content()).toEqual({ recents: [], pinned: [] });
-  });
-
-  it('does not hand a sign-out-era request back to the account that follows', async () => {
-    respond(subject.requestJson, {
-      '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]),
-    });
-    const abandoned = subject.store.refresh();
-    subject.store.clear();
-
-    const reissued = subject.store.refresh();
-    expect(reissued).not.toBe(abandoned);
-    await Promise.all([abandoned, reissued]);
-    expect(subject.store.content().recents).toEqual([entry('a', 'Acme renewal')]);
-  });
-
-  it('coalesces overlapping refreshes', async () => {
-    respond(subject.requestJson, {
-      '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]),
-    });
-
-    await Promise.all([subject.store.refresh(), subject.store.refresh(), subject.store.refresh()]);
-
-    expect(subject.requestJson).toHaveBeenCalledTimes(1);
-  });
-
-  it('serves the cache until it is stale', async () => {
-    respond(subject.requestJson, {
-      '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]),
-    });
-
-    await subject.store.refreshIfStale(15_000);
-    subject.advance(14_999);
-    await subject.store.refreshIfStale(15_000);
-    expect(subject.requestJson).toHaveBeenCalledTimes(1);
-
-    subject.advance(2);
-    await subject.store.refreshIfStale(15_000);
-    expect(subject.requestJson).toHaveBeenCalledTimes(2);
-  });
-
-  it('drops everything the previous account could see on sign-out', async () => {
-    respond(subject.requestJson, {
-      '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]),
-    });
-    await subject.store.refresh();
-    subject.onChange.mockClear();
-
-    subject.store.clear();
-
-    expect(subject.store.content()).toEqual({ recents: [], pinned: [] });
-    expect(subject.onChange).toHaveBeenCalledTimes(1);
-    // The staleness window is cleared with it, so the next account's menu is
-    // not held on an empty cache for another fifteen seconds.
-    await subject.store.refreshIfStale(15_000);
-    expect(subject.requestJson).toHaveBeenCalledTimes(2);
-  });
-
-  it('asks nothing at launch when the stored workspace is a guest\'s', async () => {
-    // Read from storage, so the answer is asynchronous and no session exists yet.
-    subject = harness(async () => false);
-    respond(subject.requestJson, { '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]) });
-
-    await subject.store.refresh();
-    await subject.store.refreshIfStale(0);
-
-    expect(subject.requestJson).not.toHaveBeenCalled();
-    expect(subject.store.content()).toEqual({ recents: [], pinned: [] });
-  });
-
-  it('empties the menu and asks nothing while a guest workspace is active', async () => {
-    let guest = false;
-    subject = harness(() => !guest);
-    respond(subject.requestJson, {
-      '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]),
-    });
-    await subject.store.refresh();
-
-    // Switching into a guest workspace: the member workspace's rows would open
-    // in it, and its own Channel list is refused.
-    guest = true;
-    await subject.store.refresh();
-    await subject.store.refreshIfStale(0);
-
-    expect(subject.store.content()).toEqual({ recents: [], pinned: [] });
-    expect(subject.requestJson).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects an unreadable response rather than emptying the menu', async () => {
-    respond(subject.requestJson, { '/workstreams': { items: [{ id: 'a' }] } });
-
-    await subject.store.refresh();
-
-    expect(subject.logWarning).toHaveBeenCalledTimes(1);
-    expect(subject.store.content().recents).toEqual([]);
+  it('opens the Breakout for a Channel listed only through one, and leaves it out until its list arrives', () => {
+    const withheld = channel('a', 'Pricing', { mainWithheld: true });
+    expect(menuBarContentFromDirectory({ complete: true, accessRequests: [], channels: [withheld], breakouts: { a: [breakout] } }).recents)
+      .toEqual([{ id: 'a', title: 'Pricing', substreamId: breakout.substreamId }]);
+    // Main is not this reader's, so a row with no Breakout to open would lead nowhere.
+    expect(menuBarContentFromDirectory({ complete: true, accessRequests: [], channels: [withheld], breakouts: {} }).recents).toEqual([]);
   });
 });

@@ -6,6 +6,7 @@ import {
   loadVisibleWorkstreamResourceInventory,
   loadVisibleWorkstreamResourcePage,
   loadVisibleWorkstreamResourcesByIds,
+  ownInventoryRevision,
 } from "../src/services/workstream-resource-visibility";
 import { unlistedResourceMetadata } from "../src/services/resource-listing";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
@@ -25,6 +26,7 @@ import { createTestSqlStorage } from "./helpers/sql-storage";
 import { migratedSqliteDatabase } from "./helpers/sqlite-d1";
 import {
   seedWorkstreamObjectRoot,
+  testConversationResourceLinks,
   testResourcePort,
   testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
@@ -74,7 +76,7 @@ function sqliteD1(database: DatabaseSync): D1Database {
 
 function fixture(onFinished: (close: () => void) => void): {
   database: D1Database;
-  attachments: ReturnType<typeof testResourcePort>;
+  attachments: ReturnType<typeof testConversationResourceLinks>;
 } {
   const regional = new DatabaseSync(":memory:");
   const workspace = createTestWorkspaceDO({ workspaceId: WORKSPACE, regionalDatabase: regional });
@@ -103,7 +105,7 @@ function fixture(onFinished: (close: () => void) => void): {
   link.run(PUBLISHED, Date.parse(AT), Date.parse(AT));
   link.run(BACKUP, Date.parse(AT) + 1, Date.parse(AT) + 1);
 
-  return { database: sqliteD1(workspace.objectDatabase), attachments: testResourcePort(store) };
+  return { database: sqliteD1(workspace.objectDatabase), attachments: testConversationResourceLinks(store) };
 }
 
 describe("unlisted resources", () => {
@@ -330,5 +332,64 @@ describe("the member's artifacts rail", () => {
     }, [], false);
     expect(detail.resources.map((resource) => resource.id)).toEqual([PUBLISHED]);
     expect(detail.resources[0]?.direction).toBe("artifact");
+  });
+});
+
+describe("a Breakout's resource links", () => {
+  const BREAKOUT = "00000000-0000-7000-8000-0000000000c1";
+
+  /** A conversation object holding one link each to `links`, as an attach writes them. */
+  function conversationStore(
+    onFinished: (close: () => void) => void,
+    links: Array<[resourceId: string, relationship: string, attachedAt: number]>,
+    substreamId?: string,
+  ) {
+    const store = testWorkstreamObjectStore();
+    onFinished(() => store.close());
+    seedWorkstreamObjectRoot(store, { workstreamId: WORKSTREAM, workspaceId: WORKSPACE });
+    if (substreamId) {
+      store.prepare(`INSERT INTO substream_agent_identity (id, external_substream_id, created_at, updated_at)
+        VALUES (1, ?, 1, 1) ON CONFLICT(id) DO UPDATE SET external_substream_id = excluded.external_substream_id`)
+        .run(substreamId);
+    }
+    for (const [resourceId, relationship, attachedAt] of links) {
+      store.prepare(`INSERT INTO workstream_resource_links
+          (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+        VALUES (?, NULL, 0, ?, '{}', ?, ?)`).run(resourceId, relationship, attachedAt, attachedAt);
+    }
+    return store;
+  }
+
+  it("keeps its own link where it and its Channel both hold one", async ({ onTestFinished }) => {
+    const close = (fn: () => void) => onTestFinished(fn);
+    const channel = conversationStore(close, [[PUBLISHED, "generated", 1], [BACKUP, "generated", 2]]);
+    const breakout = conversationStore(close, [[PUBLISHED, "attachment", 3]], BREAKOUT);
+
+    const { links } = await testConversationResourceLinks(breakout, channel).links({});
+    expect(links.map((row) => [row.resource_id, row.relationship_type]))
+      .toEqual([[PUBLISHED, "attachment"], [BACKUP, "generated"]]);
+  });
+
+  it("inherits only as a Breakout of a Channel", async ({ onTestFinished }) => {
+    const close = (fn: () => void) => onTestFinished(fn);
+    const inherits = (store: DatabaseSync) => testResourcePort(store).inheritsChannelLinks();
+    await expect(inherits(conversationStore(close, [], BREAKOUT))).resolves.toBe(true);
+    // A Channel's own conversation.
+    await expect(inherits(conversationStore(close, []))).resolves.toBe(false);
+    // A Sidekick's run child is a substream of an automation parent.
+    const run = conversationStore(close, [], BREAKOUT);
+    run.prepare(`UPDATE workstream SET parent_kind = 'automation' WHERE id = 1`).run();
+    await expect(inherits(run)).resolves.toBe(false);
+    // A start_agent worker is a substream of the Channel, and sees only what it was handed.
+    const worker = conversationStore(close, [], BREAKOUT);
+    worker.prepare(`INSERT INTO background_agent (id, execution_principal_json) VALUES (1, '{}')`).run();
+    await expect(inherits(worker)).resolves.toBe(false);
+  });
+
+  it("reads its own revision back from either fingerprint", () => {
+    expect(ownInventoryRevision("inventory:7")).toBe(7);
+    expect(ownInventoryRevision("inventory:7/3")).toBe(7);
+    expect(ownInventoryRevision("inventory:")).toBeNull();
+    expect(ownInventoryRevision("inventory:7/")).toBeNull();
   });
 });

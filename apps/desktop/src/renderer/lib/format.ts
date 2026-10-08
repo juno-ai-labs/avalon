@@ -101,6 +101,29 @@ export function formatSparseRelativeDate(value: string, now = new Date()): Spars
   return `${month} ${date.getFullYear()}`;
 }
 
+const sidebarWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
+const sidebarMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+/**
+ * A sidebar row's activity time: the time today, "Yesterday", a weekday within
+ * the week, then a short date. The attention menu uses it too.
+ */
+export function formatSidebarActivityTime(value: string, now = new Date()): string {
+  const date = new Date(value);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return 'Unknown time';
+
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
+  const startOfWeekWindow = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
+
+  if (timestamp >= startOfToday && timestamp < startOfTomorrow) return formatTime(value);
+  if (timestamp >= startOfYesterday && timestamp < startOfToday) return 'Yesterday';
+  if (timestamp >= startOfWeekWindow && timestamp < startOfYesterday) return sidebarWeekday.format(date);
+  return sidebarMonthDay.format(date);
+}
+
 export function formatDuration(milliseconds?: number): string | undefined {
   if (milliseconds === undefined) return undefined;
   const normalizedMilliseconds = Math.max(0, milliseconds);
@@ -114,27 +137,9 @@ export function formatDuration(milliseconds?: number): string | undefined {
 
 export { statusLabel, statusDescription, harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
 import { harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
+import { MARKER_PRECEDENCE } from '../../common/attention-items';
 
-/**
- * The one ranking, most urgent first.
- *
- * Written as an order rather than as a chain of conditionals because the
- * question it answers — which of several true things does a person see — is a
- * product decision that gets revisited, and a list can be reordered without
- * anyone having to re-derive what the old nesting meant. The three personal
- * states are deliberately not grouped together: being mentioned outranks a run
- * that is working, while merely being unread does not.
- */
-const MARKER_PRECEDENCE: readonly WorkstreamMarkerStatus[] = [
-  'unseen',
-  'mentioned',
-  'running',
-  'needs_input',
-  'unread',
-  'completed',
-  'stopped',
-  'failed',
-];
+export { markerRank, readerMarkerStatus, type ReaderMarkerStatus } from '../../common/attention-items';
 
 /**
  * The marker a work stream shows this viewer.

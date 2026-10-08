@@ -599,7 +599,7 @@ export function releaseWorkspaceSlackThreadClaim(
 const SLACK_SESSION_COLUMNS = `id, workspace_id, connection_id, slack_team_id, slack_user_id,
   slack_channel_id, slack_thread_ts, slack_stream_ts, workstream_id, last_delivery_key,
   opening_client_message_id, invocation_kind, channel_type, assigned_user_id,
-  reaction_channel_id, reaction_message_ts, reaction_current, reaction_cursor,
+  reaction_channel_id, reaction_message_ts, reaction_current,
   COALESCE(json_extract(context_json, '$.source.threadable'), 1) AS threadable`;
 
 /** A session row as SQLite returns it: `threadable` is the 0/1 the schema reads as a boolean. */
@@ -860,8 +860,8 @@ export function setWorkspaceSlackSessionStream(
 }
 
 /**
- * Record the reaction this transition placed, only if the one it removed is
- * still there.
+ * Record the reaction this transition placed, only if the slot still points at
+ * the message it acted on and the one it removed is still there.
  *
  * `IS` rather than `=` because NULL is a real state — it means Rally has
  * placed nothing — and `=` never matches it.
@@ -870,18 +870,19 @@ export function settleWorkspaceSlackSessionReaction(
   storage: DurableObjectStorage,
   request: WorkspaceSlackSessionReactionRequest,
 ): WorkspaceSlackSessionReactionResult {
-  const cursorAssignment = request.cursor === undefined ? "" : ", reaction_cursor = ?";
-  const cursorBinding = request.cursor === undefined ? [] : [request.cursor];
   const settled = storage.sql.exec<{ id: string }>(
     `UPDATE slack_agent_sessions
-        SET reaction_current = ?${cursorAssignment}, updated_at = ?
-      WHERE id = ? AND workspace_id = ? AND reaction_current IS ?
+        SET reaction_current = ?, updated_at = ?
+      WHERE id = ? AND workspace_id = ?
+        AND reaction_channel_id = ? AND reaction_message_ts = ?
+        AND reaction_current IS ?
       RETURNING id`,
     request.reaction,
-    ...cursorBinding,
     request.at,
     request.sessionId,
     request.workspaceId,
+    request.channelId,
+    request.messageTs,
     request.expected,
   ).toArray()[0];
   return WorkspaceSlackSessionReactionResultSchema.parse({
@@ -944,7 +945,7 @@ export function recordWorkspaceSlackFeedback(
   });
 }
 
-/** Re-anchor the status reaction and restart the rotation from its first emoji. */
+/** Re-anchor the status reaction on the message that made the newest prompt. */
 export function anchorWorkspaceSlackSessionReaction(
   storage: DurableObjectStorage,
   request: WorkspaceSlackSessionReactionAnchorRequest,
@@ -952,7 +953,7 @@ export function anchorWorkspaceSlackSessionReaction(
   storage.sql.exec(
     `UPDATE slack_agent_sessions
         SET reaction_channel_id = ?, reaction_message_ts = ?, reaction_current = ?,
-            reaction_cursor = 0, updated_at = ?
+            updated_at = ?
       WHERE id = ? AND workspace_id = ?`,
     request.channelId,
     request.messageTs,

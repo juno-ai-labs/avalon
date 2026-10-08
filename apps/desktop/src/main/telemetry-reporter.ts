@@ -129,6 +129,11 @@ export class TelemetryReporter {
 
   constructor(private readonly options: TelemetryReporterOptions) {}
 
+  async freshInstallOpened(flowId: string): Promise<void> {
+    await this.capture('desktop_install_opened', 'desktop-main', 'anonymous-epoch',
+      { flowId, clientPlatform: 'desktop' }, undefined, flowId);
+  }
+
   async applicationLifecycle(state: 'launch_started' | 'ready' | 'foreground' | 'background' | 'graceful_exit'): Promise<void> {
     await this.capture('application_lifecycle', 'desktop-main', 'installation', {
       state,
@@ -232,6 +237,7 @@ export class TelemetryReporter {
     signedIn: boolean;
     recentCount: number;
     pinnedCount: number;
+    attentionCount: number;
   }): Promise<void> {
     return this.captureProduct('menu_bar_opened', 'desktop-main', properties);
   }

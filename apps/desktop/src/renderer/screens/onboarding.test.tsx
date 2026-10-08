@@ -12,12 +12,14 @@ import {
 
 const api = vi.hoisted(() => ({
   beginGoogleLogin: vi.fn(),
+  observeSignupView: vi.fn(),
 }));
 const telemetry = vi.hoisted(() => ({
   operationId: '00000000-0000-7000-8000-000000000011',
   reportTelemetryProductIntent: vi.fn(),
 }));
 const bridge = vi.hoisted(() => ({
+  getRuntimeConfig: vi.fn(),
   cancelDesktopAuthAttempt: vi.fn(),
   createDesktopAuthAttempt: vi.fn(),
   openExternal: vi.fn(),
@@ -75,6 +77,8 @@ const invitation: PendingWorkspaceInvitation = {
 describe('identity-first onboarding screens', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    bridge.getRuntimeConfig.mockResolvedValue(sessionState.runtime);
+    api.observeSignupView.mockResolvedValue(undefined);
     sessionState.region = 'global';
     sessionState.workspaceName = '';
     api.beginGoogleLogin.mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
@@ -89,7 +93,10 @@ describe('identity-first onboarding screens', () => {
 
   it('uses one global identity entry and does not ask for a login region', async () => {
     sessionState.region = 'enterprise';
-    render(<SignInScreen />);
+    const view = render(<SignInScreen />);
+    await waitFor(() => expect(api.observeSignupView).toHaveBeenCalledWith(telemetry.operationId));
+    view.rerender(<SignInScreen />);
+    expect(api.observeSignupView).toHaveBeenCalledTimes(1);
 
     expect(screen.queryByRole('radio')).not.toBeInTheDocument();
     await waitFor(() => expect(sessionState.selectRegion).toHaveBeenCalledWith('global'));
@@ -98,8 +105,27 @@ describe('identity-first onboarding screens', () => {
     await waitFor(() => expect(api.beginGoogleLogin).toHaveBeenCalledWith(
       'global',
       'rallywithai://auth/complete',
-      { authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) } },
+      { authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) }, signupFlowId: telemetry.operationId },
     ));
+  });
+
+  it('carries the fresh-install flow through the sign-in screen and Google start', async () => {
+    bridge.getRuntimeConfig.mockResolvedValue({ ...sessionState.runtime, firstSignupFlowId: '01a0ee73-d366-7fb9-b5c0-3ceb3156f70a' });
+    render(<SignInScreen />);
+    await waitFor(() => expect(api.observeSignupView).toHaveBeenCalledWith('01a0ee73-d366-7fb9-b5c0-3ceb3156f70a'));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
+    await waitFor(() => expect(api.beginGoogleLogin).toHaveBeenCalledWith('global', 'rallywithai://auth/complete', {
+      authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) },
+      signupFlowId: '01a0ee73-d366-7fb9-b5c0-3ceb3156f70a',
+    }));
+  });
+
+  it('keeps signup available when first-install telemetry cannot be read', async () => {
+    bridge.getRuntimeConfig.mockRejectedValue(new Error('runtime unavailable'));
+    render(<SignInScreen />);
+    await waitFor(() => expect(api.observeSignupView).toHaveBeenCalledWith(telemetry.operationId));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
+    await waitFor(() => expect(api.beginGoogleLogin).toHaveBeenCalledWith('global', 'rallywithai://auth/complete', expect.objectContaining({ signupFlowId: telemetry.operationId })));
   });
 
   it('collects an organization name after authentication and defaults to Global', async () => {

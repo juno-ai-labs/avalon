@@ -77,23 +77,60 @@ The bot being added to a room is the invitation. `member_joined_channel` for
 the bot's own user calls `linkRoom`, which resolves the room with
 `conversations.info`, asks `admitSpaceCreation` before claiming a parent anchor,
 and calls `linkExternalRoom`. That one WorkspaceDO transaction writes the Space
-and the active room binding together. A public room makes a public Space. A
-private channel or group DM makes a private Space whose audience is the room's
-members that Rally can map, seated through the existing roster rules. A mention
+and the active room binding together. Every room's Space is Organization-wide,
+because every Space is (see [`spaces.md`](spaces.md#every-space-is-organization-wide)),
+and it seats nobody. A room's privacy belongs to the Channels its threads open:
+a public room's thread is Organization-wide, and a private channel's or group
+DM's is private to the room's members Rally can map, until the room passes the
+member-count promotion (`SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD`, 50),
+past which it is Organization-wide, as for an unlinked room.
+
+A public room whose name matches a live Organization-wide Space links to that
+Space instead of making one. Names compare ignoring case, spaces, dashes and
+underscores, so `#general` lands in "General" and `#product-launch`,
+`#product_launch` or `#productlaunch` in "Product Launch". A name made only of
+separators matches nothing. The oldest match wins when several share a name.
+`linkExternalRoom` decides the match. The ingress asks `externalRoomSpaceMatch`
+first only to learn whether to claim a D1 anchor, since a matched room needs
+none, and passes `spaceMatch`: `matched` with the matched id, or `unmatched`
+with the room's own, anchored id. The link looks again: a Space that matches
+now is joined either way, a `matched` id that no longer matches is refused
+(`space_not_found`) because it has no anchor to be created under, and the
+transaction refuses if the match, or whether its creator is still an active
+member, changed during the link's own awaits. The schema accepts
+`spaceMatch` only for an Organization-wide room that seats nobody. A match
+whose creator is no longer an active member is not offered, because a thread
+from a sender with no Rally identity opens its Channel acting as that creator;
+the room gets its own Space instead. A private room never matches; that rule
+predates every Space being Organization-wide, and its old reason (a private
+room's Space seated the room's members) no longer holds. Neither does a Slack
+Connect room (`is_ext_shared` or `is_pending_ext_shared`), which Slack reports
+as public but whose members include another organization. A matched room shared
+through Slack Connect after it linked is refused at spawn: the room binding
+records `space_matched` when it links, resolution returns it as `spaceMatched`,
+and a thread under a matched room first asks `conversations.info`; an
+externally shared room gets a `room_shared_externally` notice instead. A
+room's own Space skips that call. Only the record can say which a Space is:
+Slack renumbers a private room it shares (`channel_id_changed`), so the
+room-derived id stops matching.
+An `unmatched` link that finds a match leaves the room's anchor unused, which
+costs nothing.
+
+A mention
 in a room that has no binding runs the same step first (`fall_through` mode), so
 an app installed before this change still links rooms on first use. The Space
 id is derived from the installation and room, so a redelivered or racing
-invitation claims the same D1 anchor and reads back `existing`. A fresh link
-posts one line in the room saying what inviting Rally did.
+invitation claims the same D1 anchor and reads back `existing`. A matched
+room's racing invitations both name the matched Space, with the same effect.
+A fresh link posts one line in the room saying what inviting Rally did.
 
 A room suspended because the bot left or it was archived comes back when the
 bot is invited again or mentioned there: Slack delivers either only from a room
 the bot is in. The link step then lifts the room's suspension directly, keeping
 its Space and resolving no actor.
 
-A room linked while public holds an Organization-wide Space. If Slack has since
-made it private, a spawn there is refused with a notice rather than opening a
-Channel the whole Organization could read.
+A room Slack has made private since it linked opens private Channels from then
+on: the room, not its Space, decides each new Channel's audience.
 
 There is no pending state for a room: a Space no longer provisions anything
 asynchronously, so the binding and the Space commit or fail together.
@@ -147,7 +184,7 @@ A reply in that thread resolves to `deliver` with the run child as target. The
 ingress admits it through `externalBindingReplyAdmission` to the run child's
 `admitExternalMessage` as an external message with the Slack actor. The run
 child frames it as evidence from that sender, and a wake of a run child calls
-`SidekickDO.continueRun`. The reply runs with the run's authority, not the
+`WorkspaceDO.sidekickContinueRun`. The reply runs with the run's authority, not the
 sender's: [`connectors.md`](connectors.md#invariants) owns that rule. The reply
 gets the installation's acknowledgement reaction, or its stopped reaction when
 the Sidekick is not active and the run will not act on it yet.
@@ -223,6 +260,10 @@ Other Sidekicks whose sources match the message still receive it as a trigger.
   `connection_disconnected`, and a room's return lifts only that room's provider
   suspension; a deletion or `closed` stays. A lasting reason overwrites a
   disconnect's, or the reconnect would undo it.
+- **Several rooms can share one Space.** A matched room links into a Space
+  another room, another installation, or no room at all may already hold.
+  Every lifecycle operation keys on the room's path, never on the Space, so
+  suspending, moving or reactivating one room leaves the others alone.
 - **A Sidekick-source join links nothing.** Treating it as an invitation would
   create Spaces nobody asked for.
 - **Only WorkspaceDO's typed RPCs touch the table.** It is in the typed-RPC-only
@@ -242,7 +283,7 @@ atomicity.
 It does not deliver Rally output to Slack (the session and delivery path in
 [`slack-integration.md`](slack-integration.md) does), does not decide who may
 continue a run (the run authority check does), and does not continue a run
-(`SidekickDO.continueRun` does). The `slack_thread` origin resource on a Channel
+(`WorkspaceDO.sidekickContinueRun` does). The `slack_thread` origin resource on a Channel
 is provenance only and is never read for routing
 ([`workstream-origin-attachments.md`](workstream-origin-attachments.md)).
 
@@ -269,8 +310,9 @@ is provenance only and is never read for routing
   message is retried into the winner.
 - **`channel_id_changed` onto an occupied id.** The move is refused and logged
   `slack_room_id_changed` with `outcome: conflict`; the old bindings stay.
-- **Large private rooms.** Participants past the existing roster threshold are
-  not seated in the Space; they are seated by their own message.
+- **Large private rooms.** A private room past
+  `SLACK_CONVERSATION_WORKSPACE_SCOPE_THRESHOLD` members opens Organization-wide
+  Channels, as an unlinked room does.
 
 No new numeric limit is introduced.
 
@@ -278,12 +320,12 @@ No new numeric limit is introduced.
 
 | Suite | What it proves |
 | --- | --- |
-| `apps/api/test-workers/external-conversation-bindings.test.ts` | On real workerd: link races and redelivery, private vs public Space, removal and re-invitation, two threads in one room, pending hold and resume, failed creation releasing its claim, claim refused on a bound thread, non-threadable rooms, blocked private placement, Sidekick deletion, disconnect/reconnect against a closed binding, `channel_id_changed` move and conflict, outbound first-wins, the latest outbound in a DM, a run send bound only after its receipt commits and the alarm drains, a lost receipt and a personal send writing nothing, a bound reply landing in the run child with its external actor, a bound event claimed and not also triggering the Sidekick it answers, the Sidekick-source join (again on every accepted save, never on a stale one), a lasting suspension surviving a reconnect, a retried spawn re-entering its own Channel, and a bad outbox row parked without holding up the rest. |
+| `apps/api/test-workers/external-conversation-bindings.test.ts` | On real workerd: link races and redelivery, private vs public Space, removal and re-invitation, two threads in one room, pending hold and resume, failed creation releasing its claim, claim refused on a bound thread, non-threadable rooms, blocked private placement, Sidekick deletion, disconnect/reconnect against a closed binding, `channel_id_changed` move and conflict, outbound first-wins, the latest outbound in a DM, a run send bound only after its receipt commits and the alarm drains, a lost receipt and a personal send writing nothing, a bound reply landing in the run child with its external actor, a bound event claimed and not also triggering the Sidekick it answers, the Sidekick-source join (again on every accepted save, never on a stale one), a lasting suspension surviving a reconnect, a retried spawn re-entering its own Channel, a bad outbox row parked without holding up the rest, and name matching: what counts as the same name, private, archived and separator-only names never matching, a Space whose creator left not offered, a matched room linked into General, and a match renamed, made private or archived before the link refused. |
 | `apps/api/test-workers/external-bindings-mucker-flow.test.ts` | The whole flow on real workerd, with only OpenRouter and the Slack Web API doubled: a Sidekick run homed in a Breakout sends a Slack DM through the workspace bot and its thread binds once the outbox drains; the founder's reply arrives through `SlackAgentService` ingress and continues the finished run with its run context; the continued run's `conversation_post` with no conversation lands once in the home Breakout, marked as from Slack, without waking it, and neither a redelivered event nor a replayed receipt posts twice; a later top-level DM, after the run has finished, is not redirected and reaches no run; a later run reads the answer with `conversation_read`. |
 | `apps/api/test/external-conversation-binding-migration.test.ts` | Migration 85 carries each session's exact thread key and nothing else. |
-| `apps/api/test/slack-workspace-assignment.test.ts` ("routed by external conversation bindings", "Slack public channel membership") | The ingress: delivery to a run child with its reaction, a paused Sidekick's reaction, the DM prompt only while the run is open and again under the prompt, a plain DM keeping Agent behavior, the source join, a suspended reply creating nothing, a disconnect's suspension lifted by a delivered event, a suspended room brought back by a mention, a room turned private refused, a lost thread race retried, private and public room links and the stable Space id, the lifecycle events, non-threadable rooms and top-level delivery, and a routing notice posted once with its reason. |
+| `apps/api/test/slack-workspace-assignment.test.ts` ("routed by external conversation bindings", "Slack public channel membership") | The ingress: delivery to a run child with its reaction, a paused Sidekick's reaction, the DM prompt only while the run is open and again under the prompt, a plain DM keeping Agent behavior, the source join, a suspended reply creating nothing, a disconnect's suspension lifted by a delivered event, a suspended room brought back by a mention, a room turned private refused, a lost thread race retried, private and public room links and the stable Space id, a public room linked into its matched Space with no anchor and no creation check, private and Slack Connect rooms never asking for a match, the lifecycle events, non-threadable rooms and top-level delivery, and a routing notice posted once with its reason. |
 | `apps/api/test-workers/workspace-slack-ingress.test.ts` | `slackThreadRoutable` answered from bindings, and a thread's session moved to the connection a reconnect wrote. |
-| `packages/connectors/src/slack.test.ts` | Path and room classification, and `send_message` returning a binding only for the workspace installation. |
+| `packages/connectors/src/slack.test.ts` | Path and room classification (Slack Connect included), and `send_message` returning a binding only for the workspace installation. |
 
 The workers suite clears `external_conversation_bindings` in `beforeEach`; a
 test that seeds a Slack connection must seed `connector_connections` itself,
@@ -295,7 +337,9 @@ the object refuses the database as another workspace's.
 `external_conversation_bindings` (WorkspaceDO, migration 85): `installation_id`,
 `path_json`, `target_kind` (`space` | `conversation`), `space_id` or
 (`parent_kind`, `parent_id`, `substream_id`), `state` (`pending` | `active` |
-`suspended`), `suspended_reason`, `claim_key`, timestamps. CHECKs tie a target
+`suspended`), `suspended_reason`, `claim_key`, timestamps, and `space_matched`
+(migration 90: 1 when a room joined its Space by name, 0 for its own Space, a
+conversation, and every row from before matching existed). CHECKs tie a target
 kind to its columns, a suspended state to a reason, and a pending state to a
 claim key. A partial index on the conversation target serves suspending one
 Sidekick's bindings.
@@ -303,13 +347,78 @@ Sidekick's bindings.
 ## Security and trust model
 
 Room names, member lists, message text and actor profiles are untrusted. A
-Slack member is not a Rally member: a private Space is seated only with members
-Rally maps, and a Space is never widened to make placement succeed. A reply
+Slack member is not a Rally member: a private room's Channel is seated only
+with members Rally maps, and a Channel is never widened to make placement
+succeed. A reply
 delivered to a run child is framed to the model as evidence from its sender,
 not as a member request. Only a Sidekick's config conversation can add a Slack
 source, so a run cannot widen what the bot joins.
 
 ## Changelog
+
+### 2026-10-06 — A room's privacy belongs to its Channels, not its Space
+
+**What changed:** `linkExternalRoom` takes no scope or participants: every
+room's Space is Organization-wide and seats nobody. A thread's Channel takes the
+room's own audience through `connectorWorkstreamScope`, the same rule an
+unlinked room uses, including the 50-member promotion. The
+`room_narrower_than_space` refusal is gone.
+
+**Why:** Every Space is Organization-wide and grants no reader
+([`spaces.md`](spaces.md)), so a private room could no longer be private
+through its Space. Its Channels carry the privacy instead.
+
+**Considered and rejected:** Keeping private Spaces for private rooms as the
+one exception. It would have left two kinds of Space and a Channel whose
+privacy depended on which one it was born in.
+
+**Consequences:** The room decides each new Channel's audience at spawn; a
+change that reads it from the Space again would open private rooms to the
+Organization.
+
+Pull request: [#1119](https://github.com/juno-ai-labs/avalon/pull/1119).
+
+### 2026-10-05 — A public room joins the existing Space it is named for
+
+**What changed:** Linking a public room first looks for a live
+Organization-wide Space with the same name, ignoring case, spaces, dashes and
+underscores (`WorkspaceSpaceStorage.organizationSpaceNamed`, exposed as
+`WorkspaceDO.externalRoomSpaceMatch`), and links the room into it rather than
+creating a second Space. `linkExternalRoom` decides the match itself, so a
+Space that starts matching after the ingress asked is joined rather than
+duplicated, and one renamed, made private or archived in between is refused
+rather than bound. A Space whose creator has left is
+never matched, since that creator is who an unlinked sender's Channel is placed
+as. Slack Connect rooms never match, and a matched room later shared through
+Slack Connect opens no new Channel there; migration 90 adds `space_matched` to
+the binding so that check knows a matched room after a renumbering or a
+narrowed Space.
+
+**Why:** Inviting Rally to `#general` made a Space named "general" beside the
+Organization's "General", so the team's threads split across two Spaces with
+the same name. Slack channel names hold no capitals or spaces, and teams write
+the gap as a dash, an underscore or nothing, so a match has to ignore all three
+for `#product-launch`, `#product_launch` and `#productlaunch` to find "Product
+Launch".
+
+**Considered and rejected:** Matching only in the ingress. Its answer is a
+separate event from the link, so a Space created or edited in between would be
+duplicated or wrongly bound. Matching only in `linkExternalRoom`: the ingress
+would have to claim an anchor for every room, matched or not.
+Matching private rooms: an existing private Space's audience is not the room's,
+and adopting one would either widen it or hide the room's threads from members.
+Matching Slack Connect rooms: an outside organization could name its shared
+channel `general` and land in the Organization's General. SQLite
+`COLLATE NOCASE`: it folds ASCII only. Recording the inviter on the binding as
+the placement actor, so a matched Space's creator leaving later does not stop
+its threads: a second column the binding would need for one rare case, left
+until a room actually hits it. Telling a matched Space apart by the room-derived id
+or by the Space's scope: Slack renumbering a room breaks the first, and
+narrowing the Space breaks the second.
+
+**What a future change must respect:** a change that widens the match (other
+punctuation, accents) keeps the private-room and Slack Connect rules and asks
+for the match before the anchor is claimed.
 
 ### 2026-09-27 — Slack routing moves from session rows to bindings
 

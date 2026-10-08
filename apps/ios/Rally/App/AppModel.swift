@@ -33,6 +33,8 @@ final class AppModel {
     var opportunities: [RallyOpportunity] = []
     var sidekicks: [RallySidekick] = []
     var members: [RallyMember] = []
+    /// Addresses invited to the Organization who have not joined yet.
+    var invitees: [String] = []
     var searchHits: [RallySearchHit] = []
     var searchQuery = ""
     var searchNextCursor: String?
@@ -865,6 +867,9 @@ final class AppModel {
         if let listed = try? await client.listMembers() {
             members = listed
         }
+        if let listed = try? await client.listInvitees() {
+            invitees = listed
+        }
         if let chips = try? await client.workOpportunities() {
             opportunities = chips
         }
@@ -1373,6 +1378,16 @@ final class AppModel {
             await loadWorkspaceContent()
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t change who can see that channel."
+        }
+    }
+
+    /// Share the open conversation with someone invited who has not joined.
+    func inviteToConversation(email: String) async {
+        guard let id = currentWorkstream?.id, let workspaceId = workspaceSession?.workspace?.id else { return }
+        do {
+            try await client.shareConversation(workspaceId: workspaceId, workstreamId: id, substreamId: currentSubstreamId, email: email)
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn’t invite them to this channel."
         }
     }
 

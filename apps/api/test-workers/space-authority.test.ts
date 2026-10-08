@@ -88,7 +88,8 @@ async function establishWorkspace(): Promise<void> {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
       workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -231,6 +232,13 @@ async function openGeneral(): Promise<{ created: boolean; space: SpaceSummary }>
   return general;
 }
 
+/**
+ * One Space, reserved as every Space now is: Organization-wide.
+ *
+ * `personal` writes a *legacy* row instead — a Space made private before
+ * WorkspaceDO migration 94, which nothing can create any more — for the
+ * listing rules that still read the scope a stored row carries.
+ */
 async function reserve(
   name: string,
   scope: "personal" | "workspace" = "workspace",
@@ -239,10 +247,16 @@ async function reserve(
   const result = await workspace().reserveSpace({
     workspaceId: WORKSPACE_ID,
     userId,
-    space: { name, iconKey: "briefcase", colorKey: "blue", scope },
+    space: { name, iconKey: "briefcase", colorKey: "blue", scope: "workspace" },
   });
   if (!result.ok) throw new Error(`reserveSpace refused: ${result.code}`);
-  return asSpaceId(result.space.id);
+  const spaceId = asSpaceId(result.space.id);
+  if (scope === "personal") {
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE spaces SET scope = 'personal' WHERE space_id = ?", spaceId);
+    });
+  }
+  return spaceId;
 }
 
 /**
@@ -308,30 +322,20 @@ async function publishPersonalChannel(
   });
 }
 
-/** Put a Channel in a Space's membership (`helpers/space-membership.ts` says why not through its conversation). */
+/** Put a Channel in a Space's membership (`helpers/space-membership.ts` says why not through `addSpaceChannel`). */
 async function place(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<void> {
   await placeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId });
 }
 
-const observedChannel = {
-  readers: { scope: "workspace" as const },
-  participantUserIds: [OWNER],
-};
-
 /**
- * One member Channel's own authority, hosted by the Organization object and
- * opened the way `channel-access-sources.test.ts` opens one.
+ * One member Channel's own parent, hosted by the Organization object.
  *
- * The archive fan-out has two halves: the Space membership says which
- * Channels this Space still reaches, and each of those Channels' parents
- * withdraws the source itself. Both now live in the Organization object;
- * proving the source is gone still needs the real Channel authority, not a
- * count of membership rows.
+ * Written directly: these cases are about what a Space write does in place to
+ * a Channel whose parent this object hosts (a Sidekick default applied in the
+ * same write), not about how a Channel comes to be.
  */
 async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
   await runInDurableObject(workspace(), (_instance, state) => {
-    // Written directly, for the reason the access-sources suite writes it: this
-    // case is about the provenance rows, not about how a Channel comes to be.
     state.storage.sql.exec(
       `INSERT INTO parent_metadata
          (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
@@ -346,26 +350,6 @@ async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
       OWNER,
     );
   });
-}
-
-/** Apply and confirm one Space's source, the two calls the service makes. */
-async function seatSpaceSource(workstreamId: WorkstreamId, spaceId: SpaceId): Promise<void> {
-  const address = { workspaceId: WORKSPACE_ID, parentId: workstreamId };
-  const source = {
-    scope: "workspace" as const,
-    participantUserIds: [OWNER],
-    spaceRevision: 1,
-    membershipGeneration: 1,
-    channel: observedChannel,
-  };
-  const applied = await workspace().applySpaceAccessSource({
-    ...address, spaceId, ...source, operationId: crypto.randomUUID(),
-  });
-  if (!applied.ok) throw new Error(`applySpaceAccessSource refused: ${applied.code}`);
-  const confirmed = await workspace().confirmSpaceAccessSource({
-    ...address, spaceId, operationId: crypto.randomUUID(), seatedUserIds: [], source,
-  });
-  if (!confirmed.ok) throw new Error(`confirmSpaceAccessSource refused: ${confirmed.code}`);
 }
 
 function nextMessage(socket: WebSocket): Promise<MessageEvent> {
@@ -765,16 +749,15 @@ describe("WorkspaceDO space authority", () => {
     }));
     if (!plan.ok) throw new Error(plan.code);
 
-    // The Space's audience changes underneath the staged membership. The
-    // audience that was applied to the Channel came from the Space as it was,
-    // so settling now would publish a placement granted from an audience that
-    // no longer exists.
+    // The Space's participants change underneath the staged membership,
+    // which advances the revision the membership was staged against, so
+    // settling now would publish a placement fenced on a Space that no longer
+    // exists in that form.
     await workspace().noteSpaceAudience({
       workspaceId: WORKSPACE_ID,
       userId: OWNER,
       spaceId,
-      operationId: "00000000-0000-7000-8000-00000000cf09",
-      audience: { scope: "personal", participantUserIds: [OWNER] },
+      audience: { scope: "workspace", participantUserIds: [OWNER] },
     });
 
     expect(await withSpaceStorage(workspace(), (storage) => storage.finalizeMembership({
@@ -796,7 +779,7 @@ describe("WorkspaceDO space authority", () => {
 
     // An archived Channel keeps its membership — that row is what returns it to
     // the Space if it is unarchived — while no list renders it, so the count a
-    // screen reads and the membership a fan-out reads deliberately differ.
+    // screen reads and the membership rows deliberately differ.
     await expect(workspace().spaceSummary({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
       .resolves.toMatchObject({ ok: true, space: { channelCount: 1 } });
     // Channels rather than ids: the page is projected through the same
@@ -815,14 +798,17 @@ describe("WorkspaceDO space authority", () => {
         nextCursor: null,
       },
     });
-    await expect(workspace().listSpaceMembers({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
-      .resolves.toMatchObject({
-        ok: true,
-        members: [
-          { workstreamId: CHANNEL_A, membershipGeneration: 1 },
-          { workstreamId: CHANNEL_B, membershipGeneration: 1 },
-        ],
-      });
+    // Both memberships are active, the archived Channel's included.
+    await expect(workspace().runInspectionSql({
+      sql: `SELECT workstream_id, state, generation FROM space_channel_memberships
+              WHERE space_id = ? ORDER BY workstream_id`,
+      bindings: [spaceId],
+    })).resolves.toMatchObject({
+      rows: [
+        { workstream_id: CHANNEL_A, state: "active", generation: 1 },
+        { workstream_id: CHANNEL_B, state: "active", generation: 1 },
+      ],
+    });
     await expect(workspace().channelSpaces({
       workspaceId: WORKSPACE_ID, userId: OWNER, workstreamId: CHANNEL_A,
     })).resolves.toEqual({ spaceIds: [spaceId] });
@@ -987,12 +973,10 @@ describe("WorkspaceDO space authority", () => {
       }),
       workspace().noteSpaceAudience({
         ...asMember,
-        operationId: crypto.randomUUID(),
         audience: { scope: "workspace", participantUserIds: [MEMBER] },
       }),
-      workspace().prepareSpaceArchive({ ...asMember, operationId: crypto.randomUUID() }),
-      workspace().finalizeSpaceArchive({ ...asMember, operationId: crypto.randomUUID() }),
-      workspace().restoreSpace({ ...asMember, operationId: crypto.randomUUID() }),
+      workspace().archiveSpace(asMember),
+      workspace().restoreSpace(asMember),
       workspace().addSpaceDefault({ ...asMember, kind: "resource", targetId: RESOURCE_ID }),
       workspace().removeSpaceDefault({ ...asMember, kind: "resource", targetId: RESOURCE_ID }),
     ]);
@@ -1022,43 +1006,6 @@ describe("WorkspaceDO space authority", () => {
     });
   });
 
-  it("given a Space reached through a Channel, when that viewer asks for its members, then the page is refused", async () => {
-    const personal = await reserve("Side work", "personal");
-    await publishChannel(CHANNEL_A, null);
-    // The Channel this viewer reaches the Space through, and one they cannot
-    // see at all — which is exactly what an unfiltered membership page would
-    // hand them.
-    await publishPersonalChannel(CHANNEL_B, OWNER);
-    await place(personal, CHANNEL_A);
-    await place(personal, CHANNEL_B);
-    expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
-      .toContain(personal);
-
-    // `members` answers the Space's whole membership with no viewer predicate,
-    // because every caller is a walk over the Space that has to reach each of
-    // its Channels. So the gate is `canEdit` rather than "may I see this
-    // Space", which this change made answer yes: there is no viewer-scoped
-    // variant to fall back to, and a walk narrowed to what its caller can see
-    // would half-apply the rest of the Space in silence. `space_access_denied`
-    // rather than `space_not_found`, like every other reach refusal: they are
-    // looking at the row.
-    await expect(workspace().listSpaceMembers({
-      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: personal,
-    })).resolves.toEqual({ ok: false, code: "space_access_denied" });
-    await expect(workspace().listSpaceMembers({
-      workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: personal, reach: "reaching",
-    })).resolves.toEqual({ ok: false, code: "space_access_denied" });
-
-    // And the Space's own participant still gets both, so the refusal above is
-    // about the reach rather than about an empty Space.
-    await expect(workspace().listSpaceMembers({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal,
-    })).resolves.toMatchObject({
-      ok: true,
-      members: [{ workstreamId: CHANNEL_A }, { workstreamId: CHANNEL_B }],
-    });
-  });
-
   it("given the only Channel reaching a viewer into a Space, when their participation moves, then the Space leaves and returns without a reconnect", async () => {
     const personal = await reserve("Side work", "personal");
     // `CHANNEL_C` is this viewer's whole reach into the Space: a Channel only
@@ -1085,44 +1032,6 @@ describe("WorkspaceDO space authority", () => {
     await settleNudges(snapshots, 3);
     expect(snapshots).toEqual([[], [personal], []]);
     member.socket.close();
-  });
-
-  it("given an audience that leaves out its own caller, when the Space is narrowed, then it is refused and the Space does not move", async () => {
-    const personal = await reserve("Side work", "personal");
-
-    // `personal` admits its participants and nobody else, so this request
-    // would hand its own caller a Space they can no longer change and — with
-    // no Channel in it they can read — no longer see. Refused before the
-    // write, because the walk that follows would carry it to every member
-    // Channel and the one person who would ask for it back is the one who
-    // cannot.
-    await expect(workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      spaceId: personal,
-      operationId: crypto.randomUUID(),
-      audience: { scope: "personal", participantUserIds: [MEMBER] },
-    })).resolves.toMatchObject({ ok: false, code: "space_audience_self_excluded" });
-
-    // Nothing was written: the roster and the revision are as its own
-    // participant left them.
-    await expect(workspace().spaceSummary({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal,
-    })).resolves.toMatchObject({
-      ok: true,
-      space: { reach: "participant", scope: "personal", revision: 1, participants: [{ userId: OWNER }] },
-    });
-
-    // And the same narrowing *with* the caller on the list is the ordinary
-    // operation, so the refusal above is about the omission rather than about
-    // narrowing at all.
-    await expect(workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      spaceId: personal,
-      operationId: crypto.randomUUID(),
-      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
-    })).resolves.toMatchObject({ ok: true, space: { scope: "personal" } });
   });
 
   it("given a Space this viewer has no reach into, when its summary is read, then the row is not rendered at all", async () => {
@@ -1241,14 +1150,9 @@ describe("WorkspaceDO space authority", () => {
     expect((await spaceDirectories(MEMBER)).active.items.map((item) => item.id))
       .toEqual([personal, elsewhere]);
 
-    await workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal, operationId: crypto.randomUUID(),
-    });
-    await workspace().finalizeSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal, operationId: crypto.randomUUID(),
-    });
+    await workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: personal });
 
-    // An archive stages every membership out of `active` before it commits, so
+    // An archive takes every membership out of `active` before it commits, so
     // nobody reaches an archived Space through a Channel in it — and no
     // surface draws a Channel under an archived Space, so there would be
     // nothing for its mark and name to explain. Its own participant keeps it
@@ -1425,17 +1329,12 @@ describe("WorkspaceDO space authority", () => {
     await publishChannel(CHANNEL_A, null);
     await place(spaceId, CHANNEL_A);
 
-    await expect(workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
-    })).resolves.toMatchObject({ ok: false, code: "space_membership_final" });
+    await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
+      .resolves.toMatchObject({ ok: false, code: "space_membership_final" });
 
     await place(second, CHANNEL_A);
-    await expect(workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
-    })).resolves.toMatchObject({ ok: true });
-    await expect(workspace().finalizeSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
-    })).resolves.toMatchObject({ ok: true, space: { status: "archived" } });
+    await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
+      .resolves.toMatchObject({ ok: true, space: { status: "archived" } });
     // The archived Space leaves the active directory for the inactive one,
     // which is what the sidebar's restore control is drawn from.
     const directories = await spaceDirectories(OWNER);
@@ -1450,9 +1349,8 @@ describe("WorkspaceDO space authority", () => {
     // The Channel is live; its directory projection has not landed. Inner-joining
     // `channels` would drop it from the guard and archive the Space out from
     // under it. Fail closed: unknown is not the same as archived.
-    await expect(workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
-    })).resolves.toMatchObject({ ok: false, code: "space_membership_final" });
+    await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
+      .resolves.toMatchObject({ ok: false, code: "space_membership_final" });
   });
 
   it("given a Space whose only Channel is archived, when it is archived, then it is accepted", async () => {
@@ -1464,10 +1362,11 @@ describe("WorkspaceDO space authority", () => {
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId,
     })).resolves.toMatchObject({ ok: true, space: { channelCount: 0 } });
 
-    await expect(workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
-    })).resolves.toMatchObject({ ok: true });
+    await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
+      .resolves.toMatchObject({ ok: true, space: { status: "archived" } });
 
+    // The archived Channel's membership is held `removing` by the archive,
+    // which is what a restore puts back.
     expect(await workspace().runInspectionSql({
       sql: `SELECT state FROM space_channel_memberships
              WHERE space_id = ? AND workstream_id = ?`,
@@ -1482,75 +1381,11 @@ describe("WorkspaceDO space authority", () => {
     await place(spaceId, CHANNEL_A);
     await place(spaceId, CHANNEL_B);
 
-    await expect(workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
-    })).resolves.toMatchObject({
+    await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId })).resolves.toMatchObject({
       ok: false,
       code: "space_membership_final",
       blockedWorkstreamIds: [CHANNEL_A],
     });
-  });
-
-  it("given an archive, when the fan-out runs, then the Space's source is off every member Channel", async () => {
-    const spaceId = await reserve("Company");
-    const second = await reserve("Recruiting");
-    await publishChannel(CHANNEL_A, null);
-    await publishChannel(CHANNEL_B, null);
-    for (const workstreamId of [CHANNEL_A, CHANNEL_B]) {
-      await place(spaceId, workstreamId);
-      await place(second, workstreamId);
-      await openMemberChannel(workstreamId);
-      await seatSpaceSource(workstreamId, spaceId);
-      await seatSpaceSource(workstreamId, second);
-    }
-
-    // One operation id across both halves, which is what makes the settlement
-    // name the intent the preflight staged rather than reconstruct it from a
-    // revision the archive itself advances.
-    const operationId = crypto.randomUUID();
-    const staged = await workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId,
-    });
-    if (!staged.ok) throw new Error(staged.code);
-    expect(await workspace().runInspectionSql({
-      sql: "SELECT kind, state FROM space_intents WHERE operation_id = ?",
-      bindings: [operationId],
-    })).toMatchObject({ rows: [{ kind: "archive", state: "pending" }] });
-    // The prepare has already flipped every membership to `removing`, which is
-    // why the fan-out asks which Channels this Space still *reaches*. Asking
-    // for its active members answers nothing and leaves the retraction loop
-    // below with no Channel to run over.
-    const members = await workspace().listSpaceMembers({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, reach: "reaching",
-    });
-    if (!members.ok) throw new Error(members.code);
-    for (const { workstreamId } of members.members) {
-      const retracted = await workspace().retractSpaceAccessSource({
-        workspaceId: WORKSPACE_ID,
-        parentId: workstreamId,
-        spaceId,
-        operationId: crypto.randomUUID(),
-        channel: observedChannel,
-      });
-      if (!retracted.ok) throw new Error(retracted.code);
-    }
-    await workspace().finalizeSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId,
-    });
-
-    // Settled, so the alarm stops republishing it. Nothing else in the tree
-    // knows this id, which is the point of carrying it.
-    expect(await workspace().runInspectionSql({
-      sql: "SELECT state, receipts_json FROM space_intents WHERE operation_id = ?",
-      bindings: [operationId],
-    })).toMatchObject({ rows: [{ state: "settled", receipts_json: '["archived"]' }] });
-    for (const workstreamId of [CHANNEL_A, CHANNEL_B]) {
-      expect(await workspace().readAccessSources({
-        workspaceId: WORKSPACE_ID, parentId: workstreamId, channel: observedChannel,
-      })).toMatchObject({
-        spaces: [{ spaceId: second, scope: "workspace", participantUserIds: [OWNER] }],
-      });
-    }
   });
 
   it("given an archived Space, when it is restored, then its memberships come back", async () => {
@@ -1559,44 +1394,35 @@ describe("WorkspaceDO space authority", () => {
     await publishChannel(CHANNEL_A, null);
     await place(spaceId, CHANNEL_A);
     await place(second, CHANNEL_A);
-    await workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
-    });
-    await workspace().finalizeSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId: crypto.randomUUID(),
-    });
+    await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
+      .resolves.toMatchObject({ ok: true });
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT state FROM space_channel_memberships WHERE space_id = ? AND workstream_id = ?",
+      bindings: [spaceId, CHANNEL_A],
+    })).toMatchObject({ rows: [{ state: "removing" }] });
 
-    const operationId = crypto.randomUUID();
     await expect(workspace().restoreSpace({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, operationId,
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId,
     })).resolves.toMatchObject({ ok: true, space: { status: "active", channelCount: 1 } });
     await expect(workspace().channelSpaces({
       workspaceId: WORKSPACE_ID, userId: OWNER, workstreamId: CHANNEL_A,
     })).resolves.toEqual({ spaceIds: [spaceId, second].sort() });
-    // Staged like the other four. The memberships are back before any Channel
-    // has been asked for anything, so a request that stops here leaves the
-    // Space active with its members holding no source from it — and the intent
-    // is the only thing that would ever notice.
+    // One transaction, so nothing is left for an alarm to finish: neither the
+    // archive nor the restore stages an intent.
     expect(await workspace().runInspectionSql({
-      sql: "SELECT kind, state FROM space_intents WHERE operation_id = ?",
-      bindings: [operationId],
-    })).toMatchObject({ rows: [{ kind: "restore", state: "pending" }] });
+      sql: "SELECT state FROM space_channel_memberships WHERE space_id = ? AND workstream_id = ?",
+      bindings: [spaceId, CHANNEL_A],
+    })).toMatchObject({ rows: [{ state: "active" }] });
+    expect(await workspace().runInspectionSql({ sql: "SELECT operation_id FROM space_intents", bindings: [] }))
+      .toMatchObject({ rows: [] });
   });
 
-  it("given General, when it is archived or made personal, then both are refused", async () => {
+  it("given General, when it is archived, then it is refused", async () => {
     const general = await openGeneral();
     expect(general).toMatchObject({ created: true, space: { name: "General", systemRole: "general" } });
 
-    await expect(workspace().prepareSpaceArchive({
+    await expect(workspace().archiveSpace({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: general.space.id,
-      operationId: crypto.randomUUID(),
-    })).resolves.toMatchObject({ ok: false, code: "space_protected" });
-    await expect(workspace().noteSpaceAudience({
-      workspaceId: WORKSPACE_ID,
-      userId: OWNER,
-      spaceId: general.space.id,
-      operationId: "00000000-0000-7000-8000-00000000cf0a",
-      audience: { scope: "personal", participantUserIds: [OWNER] },
     })).resolves.toMatchObject({ ok: false, code: "space_protected" });
 
     // Idempotent: a second caller gets the same General rather than a second
@@ -1657,6 +1483,39 @@ describe("WorkspaceDO space authority", () => {
              WHERE space_id = ? AND state = 'pending' ORDER BY workstream_id`,
       bindings: [spaceId],
     })).toMatchObject({ rows: [{ workstream_id: CHANNEL_A }, { workstream_id: CHANNEL_B }] });
+  });
+
+  it("given a Space with a default, when a Channel is added through addSpaceChannel, then one call activates the membership and stages the default with no intent left", async () => {
+    const spaceId = await reserve("Company");
+    await publishChannel(CHANNEL_A, null);
+    await expect(workspace().addSpaceDefault({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, kind: "resource", targetId: RESOURCE_ID,
+    })).resolves.toMatchObject({ ok: true, targets: [] });
+
+    // The product path, as one RPC: no plan to settle, no Channel asked for
+    // an audience, and nothing staged for an alarm or a Queue resume to finish.
+    const owner = {
+      sessionId: `space-session-${OWNER}`, userId: OWNER, workspaceId: WORKSPACE_ID,
+      region: "global" as const, role: "owner" as const,
+    };
+    await expect(workspace().addSpaceChannel({ auth: owner, spaceId, workstreamId: CHANNEL_A }))
+      .resolves.toMatchObject({ ok: true, space: { id: spaceId, channelCount: 1 } });
+
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT state, generation FROM space_channel_memberships WHERE space_id = ? AND workstream_id = ?",
+      bindings: [spaceId, CHANNEL_A],
+    })).toMatchObject({ rows: [{ state: "active", generation: 1 }] });
+    expect(await workspace().runInspectionSql({
+      sql: `SELECT kind, target_id, workstream_id, membership_generation, state FROM space_default_targets
+             WHERE space_id = ?`,
+      bindings: [spaceId],
+    })).toMatchObject({
+      rows: [{
+        kind: "resource", target_id: RESOURCE_ID, workstream_id: CHANNEL_A, membership_generation: 1, state: "pending",
+      }],
+    });
+    expect(await workspace().runInspectionSql({ sql: "SELECT operation_id FROM space_intents", bindings: [] }))
+      .toMatchObject({ rows: [] });
   });
 
   it("given a Sidekick default, when hosted Channels are or become members, then each gets it in the same write", async () => {
@@ -1794,7 +1653,16 @@ describe("WorkspaceDO space authority", () => {
 
   it("given a participant added after creation, when they add and remove a Sidekick default, then the Space's recommendation follows", async () => {
     const sidekickId = "00000000-0000-7000-8000-00000000cf1c";
-    const spaceId = await reserve("Hiring", "personal");
+    const spaceId = await reserve("Hiring");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_directory
+           (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
+            owning_workstream_id, title, description, next_run_at, projected_at)
+         VALUES (?, ?, ?, 1, 'test', 'active', 'workspace', NULL, 'Shared', '', NULL, 0)`,
+        sidekickId, WORKSPACE_ID, OWNER,
+      );
+    });
     await workspace().applyMemberStatus({
       workspaceId: WORKSPACE_ID, sequence: 1, removed: false,
       relationship: { workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member", role: "member",
@@ -1806,8 +1674,7 @@ describe("WorkspaceDO space authority", () => {
       workspaceId: WORKSPACE_ID,
       userId: OWNER,
       spaceId,
-      operationId: "00000000-0000-7000-8000-00000000cf1d",
-      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+      audience: { scope: "workspace", participantUserIds: [OWNER, MEMBER] },
     });
     const rows = async () => (await workspace().runInspectionSql({
       sql: "SELECT sidekick_id FROM parent_sidekicks WHERE parent_id = ?", bindings: [spaceId],
@@ -1859,7 +1726,6 @@ describe("WorkspaceDO space authority", () => {
     };
 
     await expect(workspace().spaceDefaultTargetCurrent(target)).resolves.toBe(true);
-    await expect(workspace().spaceDefaultTargetActors(target)).resolves.toEqual([OWNER]);
 
     await workspace().removeSpaceDefault({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, kind: "resource", targetId: RESOURCE_ID,
@@ -2263,12 +2129,7 @@ describe("WorkspaceDO space authority", () => {
       order: { container: { kind: "space", id: second }, itemIds: [CHANNEL_B, CHANNEL_A] },
     });
 
-    await workspace().prepareSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second, operationId: crypto.randomUUID(),
-    });
-    await workspace().finalizeSpaceArchive({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second, operationId: crypto.randomUUID(),
-    });
+    await workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second });
 
     // Hidden while it is archived: personal ordering is part of the viewer's
     // socket state and must not name a container or item they cannot see. The
@@ -2278,7 +2139,7 @@ describe("WorkspaceDO space authority", () => {
     expect(storedItemIds(archived, "space", second)).toEqual([]);
 
     await expect(workspace().restoreSpace({
-      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second, operationId: crypto.randomUUID(),
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: second,
     })).resolves.toMatchObject({ ok: true });
 
     // And the directory comes back in the order this person put it in, rather
@@ -2381,31 +2242,72 @@ describe("WorkspaceDO space authority", () => {
     });
   });
 
-  it("given an audience change, when it is recorded, then it stages an intent the alarm can resume", async () => {
+  it("given a participant change, when it is recorded, then it stages no intent and the Space stays Organization-wide", async () => {
     const spaceId = await reserve("Company");
-    const operationId = "00000000-0000-7000-8000-00000000cf0b";
 
     await expect(workspace().noteSpaceAudience({
       workspaceId: WORKSPACE_ID,
       userId: OWNER,
       spaceId,
-      operationId,
-      audience: { scope: "personal", participantUserIds: [OWNER, MEMBER] },
+      audience: { scope: "workspace", participantUserIds: [OWNER, MEMBER] },
     })).resolves.toMatchObject({
       ok: true,
-      space: { scope: "personal", participants: [{ userId: OWNER }, { userId: MEMBER }] },
+      space: { scope: "workspace", participants: [{ userId: OWNER }, { userId: MEMBER }] },
     });
+    // A Space grants no reader, so there is nothing to carry to its Channels
+    // and nothing for the alarm to resume.
     expect(await workspace().runInspectionSql({
-      sql: "SELECT kind, state FROM space_intents WHERE operation_id = ?",
-      bindings: [operationId],
-    })).toMatchObject({ rows: [{ kind: "audience", state: "pending" }] });
+      sql: "SELECT kind FROM space_intents WHERE space_id = ?",
+      bindings: [spaceId],
+    })).toMatchObject({ rows: [] });
+  });
+});
 
-    await workspace().recordSpaceIntentReceipt({
-      workspaceId: WORKSPACE_ID, userId: OWNER, operationId, receipt: "audience_settled", settled: true,
+describe("WorkspaceDO opening a new Organization", () => {
+  const GENERAL = asSpaceId("00000000-0000-7000-8000-00000000cf1b");
+
+  it("given General's anchor, when the Organization is initialized, then General exists and its Spaces are ready in that one call", async () => {
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: OWNER, spaceId: GENERAL, authorityGeneration: 1,
+    })).resolves.toEqual({ spacesReady: true });
+
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ phase: "complete", generalSpaceId: GENERAL, ready: true });
+    expect((await spaceDirectories(OWNER)).active.items).toMatchObject([{ id: GENERAL, name: "General" }]);
+  });
+
+  it("given no anchor, when a new Organization is initialized, then it is answered not ready and nothing is created", async () => {
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam"))
+      .resolves.toEqual({ spacesReady: false });
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ phase: "pending", generalSpaceId: null, ready: false });
+  });
+
+  it("given a guest as the creator, when the Organization is initialized, then General is not opened for them", async () => {
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: GUEST, spaceId: GENERAL, authorityGeneration: 1,
+    })).resolves.toEqual({ spacesReady: false });
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ generalSpaceId: null, ready: false });
+  });
+
+  it("given a creator lookup that fails, when the Organization is initialized, then it answers not ready rather than failing", async () => {
+    // The creator's relationship is read from D1 on a fresh object; with the
+    // table gone that read throws, as a D1 outage would.
+    await env.DB.exec("DROP TABLE workspace_members");
+
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: OWNER, spaceId: GENERAL, authorityGeneration: 1,
+    })).resolves.toEqual({ spacesReady: false });
+    await expect(workspace().spaceBootstrapStatus({ workspaceId: WORKSPACE_ID }))
+      .resolves.toMatchObject({ generalSpaceId: null, ready: false });
+  });
+
+  it("given an Organization already open, when it is initialized again, then it is answered ready without an anchor", async () => {
+    await workspace().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: OWNER, spaceId: GENERAL, authorityGeneration: 1,
     });
-    expect(await workspace().runInspectionSql({
-      sql: "SELECT state, receipts_json FROM space_intents WHERE operation_id = ?",
-      bindings: [operationId],
-    })).toMatchObject({ rows: [{ state: "settled", receipts_json: '["audience_settled"]' }] });
+    await expect(workspace().initializeWorkspace(WORKSPACE_ID, "wnam"))
+      .resolves.toEqual({ spacesReady: true });
   });
 });

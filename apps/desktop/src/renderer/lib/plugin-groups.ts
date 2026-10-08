@@ -363,7 +363,7 @@ export function pluginGroup(
   }
   if (connectorType === 'custom_mcp' && pluginId) {
     const name = displayName || 'Custom MCP server';
-    return { key: `custom_mcp:${pluginId}`, name, icon: 'plug', ...usedGroupVerbs(name) };
+    return { key: `custom_mcp:${pluginId}`, name, icon: 'model-context-protocol', ...usedGroupVerbs(name) };
   }
   // Two connections to the same shipped service — a personal and a workspace Slack —
   // are one place as far as the reader is concerned, so the name is the key

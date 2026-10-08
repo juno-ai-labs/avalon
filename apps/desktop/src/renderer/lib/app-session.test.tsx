@@ -27,6 +27,7 @@ import { useDraftText } from './use-draft-text';
 import { useCollaborationSession, type ConnectorSetupCapability } from './collaboration-session';
 import { RallyApi } from './api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
+import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { readDevicePreferences } from './device-preferences';
 import {
   consumeSurfaceEntrypoint,
@@ -43,6 +44,7 @@ let observedReconnectAccount: (() => Promise<void>) | null = null;
 let observedAbandonAccountSignIn: (() => void) | null = null;
 let observedSurrenderActiveWorkspace: (() => Promise<void>) | null = null;
 let observedActivateWorkspace: AppSessionValue['activateWorkspace'] | null = null;
+let observedFinishWorkspaceSetup: AppSessionValue['finishWorkspaceSetup'] | null = null;
 let observedLeaveWorkspace: ((
   workspaceId: string,
   expectedOutcome: 'left' | 'abandoned',
@@ -77,6 +79,10 @@ const bridge = vi.hoisted(() => ({
   reselectActiveWorkspace: vi.fn(),
   showDeepLinkError: vi.fn<RallyDesktopBridge['showDeepLinkError']>(async () => undefined),
   surrenderActiveWorkspace: vi.fn(),
+  listSupportWorkspaces: vi.fn(),
+  listSupportPeople: vi.fn(),
+  startSupportSession: vi.fn(),
+  endSupportSession: vi.fn(),
   reportTelemetryProductIntent: vi.fn(),
 }) satisfies AppSessionDesktopBridge & Pick<RallyDesktopBridge, 'reportTelemetryProductIntent'>);
 const markDeepLinkWorkstreamNavigation = vi.hoisted(() => vi.fn());
@@ -133,6 +139,7 @@ function SessionProbe(): React.JSX.Element {
   observedAbandonAccountSignIn = context.abandonAccountSignIn;
   observedSurrenderActiveWorkspace = context.surrenderActiveWorkspace;
   observedActivateWorkspace = context.activateWorkspace;
+  observedFinishWorkspaceSetup = context.finishWorkspaceSetup;
   observedLeaveWorkspace = context.leaveWorkspace;
   observedPendingConnectorOAuth = context.pendingConnectorOAuth;
   observedSetPendingConnectorOAuth = context.setPendingConnectorOAuth;
@@ -198,6 +205,7 @@ function resetDesktopBridge(): void {
   observedReconnectAccount = null;
   observedSurrenderActiveWorkspace = null;
   observedActivateWorkspace = null;
+  observedFinishWorkspaceSetup = null;
   observedLeaveWorkspace = null;
   observedPendingConnectorOAuth = null;
   observedSetPendingConnectorOAuth = null;
@@ -1121,21 +1129,120 @@ describe('single-platform desktop identity routing', () => {
     getWorkspace.mockRestore();
   });
 
-  it('keeps onboarding OAuth completion in the onboarding window', async () => {
-    const workspaceId = '00000000-0000-7000-8000-000000000023';
-    bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession,
-      workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
-    bridge.reselectActiveWorkspace.mockResolvedValueOnce({ ...globalIdentitySession,
-      workspace: { id: workspaceId, name: 'Organization A', region: 'global', role: 'owner' } });
+  it('lands a created organization the way a switch lands, without waiting on a record the session already describes', async () => {
+    const created = '00000000-0000-7000-8000-000000000035';
+    window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000036';
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: '00000000-0000-7000-8000-000000000037', name: 'Organization B', region: 'global', role: 'member' },
+    });
+    const session: DesktopSession = {
+      ...globalIdentitySession,
+      accessToken: 'created-access-token-longer-than-twenty',
+      user: { ...globalIdentitySession.user, timezone: 'America/New_York' },
+      workspace: { id: created, name: 'Created Organization', region: 'global', role: 'owner', timezone: 'America/New_York' },
+    };
+    let finishCreate!: () => void;
+    // Main announces the new workspace the moment it is persisted, before the
+    // creation call has returned to this renderer.
+    bridge.createWorkspace.mockImplementation(async () => {
+      sessionListener?.(session);
+      await new Promise<void>((resolve) => { finishCreate = resolve; });
+      return session;
+    });
+    const getWorkspace = vi.spyOn(RallyApi.prototype, 'getWorkspace');
+    const client = renderProvider();
+    expect(await screen.findByText('global:Organization B')).toBeVisible();
+    const flags = { developerSettings: true, multipleWorkspacesEnabled: true };
+    client.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, flags);
+    const account = { eligible: true, introduced: true, revision: 3 };
+    client.setQueryData(accountOnboardingQueryKey(session.user.email), account);
+
+    let creation!: Promise<void>;
+    await act(async () => { creation = observedFinishWorkspaceSetup!('Created Organization', 'global'); await Promise.resolve(); });
+    await waitFor(() => expect(bridge.createWorkspace).toHaveBeenCalledTimes(1));
+    // The early announcement did not take the previous workspace down.
+    expect(screen.getByText('global:Organization B')).toBeVisible();
+    expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000036');
+    await act(async () => { finishCreate(); await creation; });
+
+    expect(await screen.findByText('global:Created Organization')).toBeVisible();
+    expect(window.location.hash).toBe('#/');
+    expect(getWorkspace).not.toHaveBeenCalled();
+    expect(client.getQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY)).toEqual(flags);
+    expect(client.getQueryState(CLIENT_FEATURE_FLAGS_QUERY_KEY)?.dataUpdatedAt).toBe(0);
+    expect(client.getQueryData(accountOnboardingQueryKey(session.user.email))).toEqual(account);
+    expect(client.getQueryState(accountOnboardingQueryKey(session.user.email))?.dataUpdatedAt).toBe(0);
+    getWorkspace.mockRestore();
+  });
+
+  it('lets a renewal of the workspace on screen through while a creation waits', async () => {
+    const current = { id: '00000000-0000-7000-8000-00000000003c', name: 'Organization B', region: 'global' as const, role: 'member' as const };
+    bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession, workspace: current });
+    let finishCreate!: (session: DesktopSession) => void;
+    bridge.createWorkspace.mockImplementationOnce(() => new Promise<DesktopSession>((resolve) => { finishCreate = resolve; }));
     renderProvider();
-    expect(await screen.findByText('global:Organization A')).toBeVisible();
-    await act(async () => observedSetPendingConnectorOAuth!({ source: 'onboarding', provider: 'slack',
-      region: 'global', workspaceId, attemptId: 'a'.repeat(43) }));
-    await dispatchDeepLink(
-      `rallywithai://workspace/global/${workspaceId}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${'a'.repeat(43)}&provider=slack`,
-    );
-    await waitFor(() => expect(screen.getByTestId('pending-connector-attempt')).toHaveTextContent('none'));
-    expect(bridge.openSettings).not.toHaveBeenCalled();
+    expect(await screen.findByText('global:Organization B')).toBeVisible();
+
+    let creation!: Promise<void>;
+    await act(async () => { creation = observedFinishWorkspaceSetup!('New Organization', 'global'); await Promise.resolve(); });
+    await waitFor(() => expect(bridge.createWorkspace).toHaveBeenCalledTimes(1));
+    // Main renews the session on screen (here, after a rename) while the
+    // creation is still waiting on a browser sign-in.
+    await act(async () => { sessionListener?.({ ...globalIdentitySession, workspace: { ...current, name: 'Organization B renamed' } }); });
+    expect(await screen.findByText('global:Organization B renamed')).toBeVisible();
+
+    await act(async () => {
+      finishCreate({ ...globalIdentitySession, workspace: { id: '00000000-0000-7000-8000-00000000003d', name: 'New Organization', region: 'global', role: 'owner' } });
+      await creation;
+    });
+    expect(await screen.findByText('global:New Organization')).toBeVisible();
+  });
+
+  it('applies a switch held during a creation that then fails', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: '00000000-0000-7000-8000-00000000003a', name: 'Organization B', region: 'global', role: 'member' },
+    });
+    const elsewhere: DesktopSession = {
+      ...globalIdentitySession,
+      workspace: { id: '00000000-0000-7000-8000-00000000003b', name: 'Organization C', region: 'global', role: 'member' },
+    };
+    // Another window switches this account to Organization C while the
+    // creation is in flight, and then the creation is refused.
+    bridge.createWorkspace.mockImplementationOnce(async () => {
+      sessionListener?.(elsewhere);
+      throw new Error('creation refused');
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Organization B')).toBeVisible();
+
+    await act(async () => {
+      await expect(observedFinishWorkspaceSetup!('Refused Organization', 'global')).rejects.toThrow('creation refused');
+    });
+
+    expect(await screen.findByText('global:Organization C')).toBeVisible();
+  });
+
+  it('does not carry an ineligible account across a creation, which can make it eligible', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: '00000000-0000-7000-8000-000000000038', name: 'Organization B', region: 'global', role: 'member' },
+    });
+    const session: DesktopSession = {
+      ...globalIdentitySession,
+      user: { ...globalIdentitySession.user, timezone: 'UTC' },
+      workspace: { id: '00000000-0000-7000-8000-000000000039', name: 'First Organization', region: 'global', role: 'owner', timezone: 'UTC' },
+    };
+    bridge.createWorkspace.mockResolvedValueOnce(session);
+    const client = renderProvider();
+    expect(await screen.findByText('global:Organization B')).toBeVisible();
+    client.setQueryData(accountOnboardingQueryKey(session.user.email), { eligible: false, introduced: true, revision: 1 });
+
+    await act(async () => { await observedFinishWorkspaceSetup!('First Organization', 'global'); });
+
+    expect(await screen.findByText('global:First Organization')).toBeVisible();
+    expect(client.getQueryData(accountOnboardingQueryKey(session.user.email))).toBeUndefined();
   });
 
   it('keeps conversation OAuth results in the feed and clears terminal failures', async () => {

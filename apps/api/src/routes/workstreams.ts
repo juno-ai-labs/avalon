@@ -251,10 +251,14 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
       new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
           ...body,
           descriptionSource: body.objective ? "authored" : "derived",
-          // The one caller whose `participantUserIds` is people somebody picked
-          // by hand, which is what makes telling them the right thing to do.
+          // A Channel somebody starts in Rally is Organization-wide. A Space
+          // no longer grants its audience, so the route says it rather than
+          // leaving the fail-closed default to make every new Channel private.
+          scope: "workspace",
         }, {
           span,
+          // The one caller whose `participantUserIds` is people somebody picked
+          // by hand, which is what makes telling them the right thing to do.
           notifyParticipants: true,
           authorityControl,
           ...(operationId ? { telemetryOperationId: operationId } : {}),
@@ -300,10 +304,8 @@ workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), zValidator("qu
   const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).unpin(c.req.valid("param").id, c.req.valid("query").spaceId);
   return c.json(PinnedWorkstreamsSchema.parse(result));
 });
-// Through the service, not the object client: an audience change has to be
-// recorded as the Channel's *own*, because once a Space has widened it the
-// stored scope is the effective audience and no longer says what the Channel
-// would be without that Space.
+// Through the service, not the object client: a narrowing has to close the
+// sockets of the members it drops, which the service publishes.
 workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateWorkstreamRequestSchema), async (c) => {
   // No authority read here: the service opens the object client itself, which
   // is the read. A second one is a D1 round trip on the front of every audience
@@ -350,25 +352,14 @@ workstreamRoutes.post("/:id/read-state/mark-unread", zValidator("param", idParam
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(WorkstreamSchema.parse(await client.markUnread()));
 });
-// Also through the service, and for the same reason: a direct add is the
-// Channel taking responsibility for this reader, so no Space's departure takes
-// them with it.
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) => {
   const participant = await new WorkstreamService(c.env, getAuth(c))
     .addParticipant(c.req.valid("param").id, c.req.valid("json").userId);
   return c.json(ParticipantSchema.parse(participant), 201);
 });
 /**
- * Every source that currently grants a reader access to this Channel.
- *
- * What **Manage access** renders: the Channel's own direct source plus one
- * entry per Space that reaches it. Listed rather than merged, because removing
- * one is only legal when the others still cover the readers it supplied, and a
- * merged audience cannot answer that.
- *
- * Gated on management access rather than on reading, which is the same rule a
- * direct audience change requires. A reader who cannot change the audience has
- * no reason to be shown the provenance behind it.
+ * Who may read this Channel, and the Spaces it is placed in: what **Manage
+ * access** renders. Gated on management access rather than on reading.
  */
 workstreamRoutes.get("/:id/access", zValidator("param", idParam), async (c) => {
   const auth = getAuth(c);

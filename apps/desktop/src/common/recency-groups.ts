@@ -1,12 +1,12 @@
+import { compareAlphabeticalTitle } from '@rally/ui/lib/alphabetical';
+
 /**
  * How Rally groups a list of things by when they last moved.
  *
- * This lives in `common/` rather than beside the sidebar because two processes
- * draw the same list: the renderer's sidebar, and the main process's menu bar
- * item, which has no renderer to ask on a launch that opens no window. One
- * reader should not be able to tell which surface they are looking at from the
- * headings, so both take the grouping from here rather than each computing a
- * near-identical set of boundaries.
+ * This lives in `common/` rather than beside the sidebar because the main
+ * process's menu bar item orders the same Channels the sidebar does, and has no
+ * renderer to ask on a launch that opens no window. It takes the Recent sort
+ * from here rather than keeping a near-identical copy.
  */
 
 /** A work stream or note, reduced to the one field grouping reads. */
@@ -59,6 +59,20 @@ export function workstreamRecencyAt(
 export function recencyTimestamp(item: RecencyItem): number {
   const timestamp = new Date(item.lastActivityAt).getTime();
   return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * The sidebar's **Recent** sort: newest last activity first, ties A to Z. The
+ * Channel's own last activity, not when this reader last opened it: the row's
+ * time shows the same value, so the order and the times down the list agree.
+ * Shared so the menu bar's Most recent section orders Channels exactly as the
+ * sidebar does under All.
+ */
+export function compareRecentChannels(
+  left: { readonly id: string; readonly title: string; readonly lastActivityAt: string },
+  right: { readonly id: string; readonly title: string; readonly lastActivityAt: string },
+): number {
+  return recencyTimestamp(right) - recencyTimestamp(left) || compareAlphabeticalTitle(left, right);
 }
 
 /** The next instant when a recency heading can change without new data. */

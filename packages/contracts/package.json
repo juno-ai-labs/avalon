@@ -26,6 +26,7 @@
     "./uuid-base58": "./src/uuid-base58.ts",
     "./url-schemas": "./src/url-schemas.ts",
     "./text": "./src/text.ts",
+    "./email-mentions": "./src/email-mentions.ts",
     "./markdown-code": "./src/markdown-code.ts",
     "./model-markdown": "./src/model-markdown.ts",
     "./citations": "./src/citations.ts",

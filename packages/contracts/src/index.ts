@@ -31,6 +31,7 @@ import {
   WireResourceRelationshipTypeSchema,
 } from "./resource-relationships";
 import { HttpsUrlSchema, httpsUrlSchema, HttpUrlSchema, httpUrlSchema, WebSocketUrlSchema } from "./url-schemas";
+import { ConversationAccessRequestItemSchema } from "./access-requests";
 import { PickableWorkstreamIconKeySchema, WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, WorkstreamIconKeySchema } from "./workstream-appearance";
 import {
   TranscriptActivitySchema,
@@ -50,10 +51,12 @@ export * from "./demo-operations";
 export * from "./demo-seed";
 export * from "./identifiers";
 export * from "./impersonation";
+export * from "./support-access";
 export * from './onboarding';
 export * from "./workspace-retirement";
 export * from "./appearance-icons";
 export * from "./workstream-appearance";
+export * from "./access-requests";
 export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
@@ -350,6 +353,17 @@ export const WorkspaceInvitationSchema = z.object({
   acceptedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
 });
+/**
+ * Someone invited to the Organization who has not accepted yet, as every
+ * member may see them: the address and when it was invited, nothing an
+ * administrator manages. They have no account here until they sign in, so the
+ * address is the only way to name them; pickers offer them beside members so
+ * a teammate can be brought into a Channel before they arrive.
+ */
+export const WorkspaceInviteeSchema = z.object({
+  email: z.string().email(),
+  invitedAt: TimestampSchema
+});
 export const WorkspaceInvitationPreviewSchema = z.object({
   workspaceId: IdSchema,
   workspaceName: z.string().min(1).max(120),
@@ -371,8 +385,10 @@ export const WorkspaceOnboardingStateSchema = z.object({
   workspaces: value.workspaces ?? (value.workspace ? [value.workspace] : []),
   invitations: value.invitations,
 }));
+/** An Organization's display name, as chosen at creation and on every rename. */
+export const WorkspaceNameSchema = z.string().trim().min(2).max(120);
 export const CreateWorkspaceRequestSchema = z.object({
-  name: z.string().trim().min(2).max(120),
+  name: WorkspaceNameSchema,
   region: ConfiguredRegionSchema
 });
 export const OnboardingRegionRequestSchema = z.object({ region: ConfiguredRegionSchema });
@@ -402,8 +418,11 @@ export const WorkspaceAttentionSchema = z.object({
   waitingForYou: z.number().int().nonnegative(),
   waitingReason: z.enum(["mentioned", "needs_input", "unseen"]).nullable(),
   hasUnreadActivity: z.boolean(),
-  /** Unread or participant `needs_input` work streams; each stream counts once. */
-  unreadAndNeedsInputCount: z.number().int().nonnegative().default(0),
+  /**
+   * Conversations (each Main and each Breakout) unread, unseen or mentioning
+   * this person: the sidebar attention menu's count, and the dock badge.
+   */
+  readerAttentionCount: z.number().int().nonnegative().default(0),
 });
 
 /**
@@ -1748,12 +1767,21 @@ export const ApiErrorSchema = z.object({
 export const CursorPageSchema = <T extends z.ZodType>(item: T) =>
   z.object({ items: z.array(item), nextCursor: z.string().nullable() });
 
+/**
+ * The Rally staff member acting as `user` in a support session
+ * (`docs/impersonation.md`). Present only on a session a staff member started
+ * from the account menu; every other session leaves it out.
+ */
+export const SessionImpersonatorSchema = UserSchema.pick({ id: true, email: true, name: true, avatarUrl: true });
+export type SessionImpersonator = z.infer<typeof SessionImpersonatorSchema>;
+
 export const SessionSchema = z.object({
   accessToken: z.string().min(20),
   refreshToken: z.string().min(20),
   expiresAt: TimestampSchema,
   user: UserSchema,
   workspace: WorkspaceSchema.nullable(),
+  impersonator: SessionImpersonatorSchema.optional(),
   apiBaseUrl: HttpUrlSchema
 });
 
@@ -1787,7 +1815,27 @@ export const ConnectorOAuthAttemptSchema = z.object({
 export const RefreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u);
 export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema });
 export const UpdateUserTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
-export const UpdateWorkspaceRequestSchema = z.object({ timezone: IanaTimezoneSchema });
+/** A member's personal system prompt for one Organization; empty means none. */
+export const PersonalSystemPromptSchema = z.strictObject({ personalSystemPrompt: z.string() });
+export type PersonalSystemPrompt = z.infer<typeof PersonalSystemPromptSchema>;
+/**
+ * A member's display preferences for one Organization. Whole on read and on
+ * write. Not strict: a client must keep reading the preferences it knows when
+ * a newer server adds one, and unknown keys are stripped rather than refused.
+ */
+export const MemberPreferencesSchema = z.object({
+  /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */
+  showAgentWork: z.boolean(),
+});
+export type MemberPreferences = z.infer<typeof MemberPreferencesSchema>;
+export const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = { showAgentWork: true };
+/** Each field is optional so one control can save its own; an empty body changes nothing and is refused. */
+export const UpdateWorkspaceRequestSchema = z.object({
+  name: WorkspaceNameSchema.optional(),
+  timezone: IanaTimezoneSchema.optional(),
+}).refine((value) => value.name !== undefined || value.timezone !== undefined, {
+  message: "Name or timezone is required.",
+});
 
 // --- Digest ---------------------------------------------------------------
 
@@ -2636,6 +2684,10 @@ export const WorkspaceSocketSyncEventSchema = z.strictObject({
   sidebar: WorkspaceSidebarSchema.optional(),
   /** Per-viewer values, present only on the private answer to subscribe. */
   featureFlags: ClientFeatureFlagsSchema.optional(),
+  /** This viewer's display preferences, beside `featureFlags` and for the same reason. */
+  viewerPreferences: MemberPreferencesSchema.optional(),
+  /** The access requests waiting on this viewer, for the same reason again. */
+  accessRequests: z.array(ConversationAccessRequestItemSchema).optional(),
 }).superRefine((event, context) => {
   if (event.topics.length === 0 && event.sidebar === undefined) {
     context.addIssue({
@@ -3375,6 +3427,16 @@ export const SlackOriginContextSchema = z.strictObject({
   messageTs: z.string().min(1).max(80).optional(),
   /** A link back to that message, built from the team, channel and timestamp. */
   permalink: httpsUrlSchema(2000).optional(),
+  /**
+   * The message this run's status reaction sits on; see "The status reaction"
+   * in docs/slack-integration.md. Only what the event itself fixes: this rides
+   * in the message's admission identity, so a value a retry could answer
+   * differently would make the retry a conflict.
+   */
+  reactionAnchor: z.strictObject({
+    channelId: z.string().min(1).max(255),
+    messageTs: z.string().min(1).max(80),
+  }).optional(),
   invocationType: z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]),
   channelType: z.enum(["public", "private", "im", "unknown"]),
   matchedAvalonUserId: IdSchema.nullable(),
@@ -3961,6 +4023,7 @@ export type User = z.infer<typeof UserSchema>;
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 export type WorkspaceMember = z.infer<typeof WorkspaceMemberSchema>;
 export type WorkspaceInvitation = z.infer<typeof WorkspaceInvitationSchema>;
+export type WorkspaceInvitee = z.infer<typeof WorkspaceInviteeSchema>;
 export type WorkspaceInvitationPreview = z.infer<typeof WorkspaceInvitationPreviewSchema>;
 export type PendingWorkspaceInvitation = z.infer<typeof PendingWorkspaceInvitationSchema>;
 export type WorkspaceOnboardingState = z.infer<typeof WorkspaceOnboardingStateSchema>;
@@ -4066,12 +4129,6 @@ export const TerminalNetworkPolicyPreviewSchema = z.strictObject({
   proposedMode: TerminalNetworkModeSchema,
   customDomains: z.array(z.string().min(1).max(253)).max(20),
   remainingCustomSlots: z.number().int().nonnegative().max(20),
-  affectedWorkstreamIds: z.array(IdSchema).max(1_000),
-  affectedWorkstreams: z.array(z.strictObject({
-    id: IdSchema,
-    title: z.string().min(1).max(500),
-  })).max(1_000),
-  warning: z.string().min(1).max(1_000),
 });
 export const ApplyTerminalNetworkPolicyRequestSchema = z.strictObject({
   mutationId: IdSchema,

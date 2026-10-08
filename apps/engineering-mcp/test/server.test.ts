@@ -42,9 +42,6 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     resolveSubstream: vi.fn<EngineeringInspectionRpcBinding["resolveSubstream"]>(
       async () => ({ found: false }),
     ),
-    resolveSidekick: vi.fn<EngineeringInspectionRpcBinding["resolveSidekick"]>(
-      async () => ({ found: false }),
-    ),
     resolveArtifact: vi.fn<EngineeringInspectionRpcBinding["resolveArtifact"]>(
       async () => ({ found: false }),
     ),
@@ -52,9 +49,6 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
       async () => ({ found: false }),
     ),
     runSubstreamSql: vi.fn<EngineeringInspectionRpcBinding["runSubstreamSql"]>(
-      async () => ({ found: false }),
-    ),
-    runSidekickSql: vi.fn<EngineeringInspectionRpcBinding["runSidekickSql"]>(
       async () => ({ found: false }),
     ),
     runArtifactSql: vi.fn<EngineeringInspectionRpcBinding["runArtifactSql"]>(
@@ -126,7 +120,6 @@ describe("Rally engineering MCP tools", () => {
       "list_artifacts",
       "run_workspace_sql",
       "run_substream_sql",
-      "run_sidekick_sql",
       "run_artifact_sql",
       "list_feature_flags",
       "update_feature_flag",
@@ -357,55 +350,6 @@ describe("Rally engineering MCP tools", () => {
     });
     expect(global.runSubstreamSql).not.toHaveBeenCalled();
     expect(enterprise.runSubstreamSql).toHaveBeenCalledTimes(1);
-  });
-
-  it("routes bound Sidekick SQL to the SidekickDO in exactly one regional authority", async () => {
-    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000eb7");
-    const sidekickId = asAutomationId("00000000-0000-7000-8000-000000000eb8");
-    const global = regionalBinding("global");
-    const enterprise = regionalBinding("enterprise");
-    vi.mocked(global.resolveSidekick).mockResolvedValue({
-      found: true,
-      value: { region: "global", workspaceId, sidekickId, authorityGeneration: 4 },
-    });
-    vi.mocked(global.runSidekickSql).mockResolvedValue({
-      found: true,
-      value: {
-        region: "global",
-        workspaceId,
-        workstreamId: null,
-        substreamId: null,
-        sidekickId,
-        result: {
-          columns: ["lifecycle"],
-          rows: [{ lifecycle: "paused" }],
-          rowsRead: 1,
-          rowsWritten: 0,
-        },
-      },
-    });
-
-    const response = await rpc(
-      testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
-      "tools/call",
-      {
-        name: "run_sidekick_sql",
-        arguments: { workspaceId, sidekickId, sql: "SELECT lifecycle FROM automation" },
-      },
-    );
-    const result = response.result as { content: Array<{ text: string }> };
-    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
-      region: "global",
-      sidekickId,
-      result: { rows: [{ lifecycle: "paused" }] },
-    });
-    expect(global.runSidekickSql).toHaveBeenCalledWith({
-      workspaceId,
-      sidekickId,
-      authorityGeneration: 4,
-      query: { sql: "SELECT lifecycle FROM automation", bindings: [] },
-    });
-    expect(enterprise.runSidekickSql).not.toHaveBeenCalled();
   });
 
   it("routes bound artifact SQL to the supervisor in exactly one regional authority", async () => {

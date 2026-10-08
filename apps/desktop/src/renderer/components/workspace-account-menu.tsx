@@ -4,7 +4,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings } from '@tabler/icons-react';
 import { desktopBridge } from '../lib/platform';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
-import type { WorkspaceAttention } from '@rally/contracts';
+import type { SupportPerson, SupportWorkspace, WorkspaceAttention } from '@rally/contracts';
 import { Check, LoaderCircle, Plus } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -14,17 +14,15 @@ import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER, type AccountAc
 import { useShellCapabilities } from '../lib/collaboration-session';
 import type { WorkspaceMember } from '../lib/types';
 import { uuidV7 } from '../lib/telemetry';
-import { Button, Modal } from './primitives';
+import { ActivityCountBadge, Button, Modal, activityCountLabel } from './primitives';
 import { RelativeTime } from './relative-time';
+import { SupportWorkspaceMenuRow } from './support-workspace-menu';
 
 export interface WorkspaceAccountMenuProps {
   activeWorkspace: DesktopWorkspaceSummary;
   /**
-   * The active Organization's usage meter: under its row when the Organizations
-   * list is shown, and on its own when it is not, so every member sees it
-   * whichever way the multiple-Organizations flag resolves. It is a slot so the
-   * menu stays presentational: the host supplies the usage read, and the slot
-   * mounts with the menu's content, so opening the menu refreshes it.
+   * The active Organization's usage meter, a full row under Settings. A slot,
+   * so the host supplies the read and opening the menu refreshes it.
    */
   activeUsage?: ReactNode;
   attention: Record<string, WorkspaceAttention | undefined>;
@@ -58,6 +56,17 @@ export interface WorkspaceAccountMenuProps {
   onSwitchWorkspace: (workspace: DesktopWorkspaceSummary) => Promise<boolean>;
   /** The GrokBot shell keeps workspace administration out of its account card. */
   presentation?: 'workspace' | 'grok';
+  /**
+   * Rally support access (`docs/impersonation.md`). `impersonator` is the
+   * staff member acting as `currentUser` on a support session; the trigger
+   * shows both, and **Sign out** becomes **End impersonation**, which
+   * `onSignOut` must then do. `supportWorkspaces` are the Organizations that
+   * granted Rally access, listed only to Rally staff.
+   */
+  impersonator?: WorkspaceMember | null;
+  supportWorkspaces?: SupportWorkspace[];
+  loadSupportPeople?: (workspaceId: string) => Promise<SupportPerson[]>;
+  onStartSupportSession?: (workspace: SupportWorkspace, person: SupportPerson) => Promise<void>;
 }
 
 /** Deployment tags disambiguate workspaces when multiple deployments are configured. */
@@ -65,26 +74,22 @@ function regionLabel(region: RallyRegion): string {
   return region;
 }
 
-/** What the dot means when nothing is waiting on this person. */
-export const UNREAD_ACTIVITY_DESCRIPTION = 'New activity since you last looked. Nothing is waiting on you.';
-
 /**
- * One green dot marks a background workspace with any activity at all; the
- * detail — how many work streams are waiting on this person and the
- * strongest reason among them, in the order WorkspaceDO ranks them — is
- * kept for the tooltip and the accessible name rather than shown as a count.
+ * A background row's count is `readerAttentionCount`: the conversations unread,
+ * unseen or mentioning this person, the same number as that Organization's
+ * attention menu and dock badge. Zero shows nothing. When some of them are
+ * waiting on this person, the strongest reason, in the order WorkspaceDO ranks
+ * them, is the badge's tooltip and part of the row's accessible name.
  */
-function attentionLabel(attention: WorkspaceAttention): string | null {
+function waitingLabel(attention: WorkspaceAttention): string | null {
   const count = attention.waitingForYou;
-  if (count > 0) {
-    const plural = count === 1 ? '' : 's';
-    return attention.waitingReason === 'mentioned'
-      ? `${count} mention${plural} waiting for you`
-      : attention.waitingReason === 'needs_input'
-        ? `${count} channel${plural} waiting for your input`
-        : `${count} new channel${plural} you have not opened`;
-  }
-  return attention.hasUnreadActivity ? 'Unread activity' : null;
+  if (count === 0) return null;
+  const plural = count === 1 ? '' : 's';
+  return attention.waitingReason === 'mentioned'
+    ? `${count} mention${plural} waiting for you`
+    : attention.waitingReason === 'needs_input'
+      ? `${count} channel${plural} waiting for your input`
+      : `${count} new channel${plural} you have not opened`;
 }
 
 function IndicatorTooltip({ children, label }: { children: React.ReactElement; label: string }): React.JSX.Element {
@@ -129,6 +134,10 @@ export function WorkspaceAccountMenu({
   onSignOut,
   onSwitchWorkspace,
   presentation = 'workspace',
+  impersonator = null,
+  supportWorkspaces = [],
+  loadSupportPeople,
+  onStartSupportSession,
 }: WorkspaceAccountMenuProps): React.JSX.Element {
   // A guest attaches the Sidekicks a conversation offers; the library is for
   // members, who author them.
@@ -154,11 +163,24 @@ export function WorkspaceAccountMenu({
     const value = attention[desktopWorkspaceIdentityKey(workspace.region, workspace.id)];
     return value ? [value] : [];
   }) : [];
-  const backgroundHasAttention = backgroundAttention.some((value) => attentionLabel(value) !== null);
-  const backgroundAttentionDescription = backgroundAttention.some((value) => value.waitingForYou > 0)
+  // Only Organizations whose row shows a count, so the trigger's dot, its name
+  // and the rows agree.
+  const counted = backgroundAttention.filter((value) => value.readerAttentionCount > 0);
+  const backgroundHasAttention = counted.length > 0;
+  const backgroundAttentionDescription = counted.some((value) => value.waitingForYou > 0)
     ? 'attention in another organization'
     : backgroundHasAttention ? 'unread activity in another organization' : null;
   const multipleRegions = new Set(workspaces.map((workspace) => workspace.region)).size > 1;
+  const supportRows = loadSupportPeople && onStartSupportSession ? supportWorkspaces.map((workspace) => (
+    <SupportWorkspaceMenuRow
+      current={impersonator && workspace.id === activeWorkspace.id && workspace.region === activeWorkspace.region
+        ? currentUser.id : null}
+      key={desktopWorkspaceIdentityKey(workspace.region, workspace.id)}
+      loadPeople={loadSupportPeople}
+      onChoose={(person) => onStartSupportSession(workspace, person).then(() => setMenuOpen(false))}
+      workspace={workspace}
+    />
+  )) : [];
 
   useEffect(() => {
     if (!promptedInvitation) return;
@@ -217,7 +239,7 @@ export function WorkspaceAccountMenu({
         open={menuOpen}
       >
         <DropdownMenu.Trigger asChild>
-          <AccountTrigger currentUser={currentUser} workspaceName={activeWorkspace.name}
+          <AccountTrigger currentUser={currentUser} workspaceName={activeWorkspace.name} impersonator={impersonator}
             description={backgroundAttentionDescription} presentation={presentation} hasAttention={backgroundHasAttention} />
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
@@ -245,9 +267,16 @@ export function WorkspaceAccountMenu({
                   <IconSettings aria-hidden="true" />
                   <span>Settings</span>
                 </DropdownMenu.Item>
+                {activeUsage}
               </>
             )}
-            {!enabled && activeUsage && <div className="workspace-usage-standalone">{activeUsage}</div>}
+            {!enabled && supportRows.length > 0 && (
+              <>
+                <DropdownMenu.Label className="menu-label workspace-menu-section">Organizations</DropdownMenu.Label>
+                {supportRows}
+                <DropdownMenu.Separator className="menu-separator" />
+              </>
+            )}
             {enabled && (
               <>
                 <DropdownMenu.Label className="menu-label workspace-menu-section">Organizations</DropdownMenu.Label>
@@ -255,10 +284,9 @@ export function WorkspaceAccountMenu({
                   const workspaceKey = desktopWorkspaceIdentityKey(workspace.region, workspace.id);
                   const active = workspace.id === activeWorkspace.id && workspace.region === activeWorkspace.region;
                   const workspaceAttention = active ? undefined : attention[workspaceKey];
-                  const attentionDescription = workspaceAttention ? attentionLabel(workspaceAttention) : null;
-                  const activityDetail = workspaceAttention && workspaceAttention.waitingForYou > 0
-                    ? attentionDescription
-                    : UNREAD_ACTIVITY_DESCRIPTION;
+                  const activityCount = workspaceAttention?.readerAttentionCount ?? 0;
+                  const activityDescription = activityCount > 0 ? activityCountLabel(activityCount) : null;
+                  const waitingDescription = activityCount > 0 && workspaceAttention ? waitingLabel(workspaceAttention) : null;
                   const switching = workspaceKey === switchingWorkspaceKey;
                   const signingIn = switching && workspaceKey === signingInWorkspaceKey;
                   const error = workspaceErrors[workspaceKey];
@@ -266,7 +294,8 @@ export function WorkspaceAccountMenu({
                     workspace.name,
                     ...(multipleRegions ? [regionLabel(workspace.region)] : []),
                     ...(active ? ['Current'] : []),
-                    ...(attentionDescription ? [attentionDescription] : []),
+                    ...(activityDescription ? [activityDescription] : []),
+                    ...(waitingDescription ? [waitingDescription] : []),
                     ...(signingIn ? [FINISH_SIGN_IN_IN_BROWSER] : []),
                     ...(error ? [error] : []),
                   ].join(', ');
@@ -305,16 +334,16 @@ export function WorkspaceAccountMenu({
                           />
                         )}
                         {active && <Check aria-label="Current" size={14} />}
-                        {!active && !switching && attentionDescription && activityDetail && (
-                          <IndicatorTooltip label={activityDetail}>
-                            <span aria-label={attentionDescription} className="workspace-activity-dot" />
+                        {!active && !switching && activityDescription && (
+                          <IndicatorTooltip label={waitingDescription ?? activityDescription}>
+                            <span className="workspace-activity-count"><ActivityCountBadge count={activityCount} /></span>
                           </IndicatorTooltip>
                         )}
                       </DropdownMenu.Item>
-                      {active && activeUsage}
                     </Fragment>
                   );
                 })}
+                {supportRows}
                 {invitations.length > 0 && (
                   <DropdownMenu.Label className="menu-label workspace-menu-section">Invitations</DropdownMenu.Label>
                 )}
@@ -356,7 +385,7 @@ export function WorkspaceAccountMenu({
                 <DropdownMenu.Separator className="menu-separator account-menu-separator" />
                 <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onSignOut}>
                   <IconLogout aria-hidden="true" />
-                  <span>Log out</span>
+                  <span>{impersonator ? 'End impersonation' : 'Log out'}</span>
                 </DropdownMenu.Item>
               </>
             )}
@@ -373,8 +402,9 @@ export function WorkspaceAccountMenu({
                 <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={onOpenSettings} type="button"><IconSettings size={14} /> Settings…</button>
                 </DropdownMenu.Item>
+                {activeUsage}
                 <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>
-                  <IconLogout size={14} /> Sign out
+                  <IconLogout size={14} /> {impersonator ? 'End impersonation' : 'Sign out'}
                 </DropdownMenu.Item>
               </>
             )}

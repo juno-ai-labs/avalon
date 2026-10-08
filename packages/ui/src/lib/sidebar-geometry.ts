@@ -2,7 +2,13 @@
 // 70px, so 88px leaves the same 18px from that edge as the first light has
 // from the leading edge. Every hierarchy rail uses this width.
 export const COLLAPSED_SIDEBAR_WIDTH = 88;
-export const MIN_SIDEBAR_WIDTH = 240;
+/**
+ * Wide enough for the top bar's five buttons beside the macOS traffic lights:
+ * 100px inset + 5 × 32px buttons + 4 × 8px gaps + 14px. The attention count
+ * stays in its 32px button (99+ past two digits). Shared by every host, web and
+ * Sideline too.
+ */
+export const MIN_SIDEBAR_WIDTH = 306;
 export const MAX_SIDEBAR_WIDTH = 400;
 export const DEFAULT_SIDEBAR_WIDTH = 280;
 /**

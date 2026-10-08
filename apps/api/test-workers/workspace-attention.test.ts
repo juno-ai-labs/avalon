@@ -111,7 +111,8 @@ beforeEach(async () => {
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (workspace_incarnation TEXT DEFAULT 'existing-member',
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL,
+      impersonator_user_id TEXT
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -129,6 +130,8 @@ beforeEach(async () => {
   ]);
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
   await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec("DELETE FROM breakout_viewers");
+    state.storage.sql.exec("DELETE FROM breakouts");
     state.storage.sql.exec("DELETE FROM channel_viewers");
     state.storage.sql.exec("DELETE FROM channels");
     state.storage.sql.exec("DELETE FROM workspace_workstream_effect_receipts");
@@ -160,7 +163,7 @@ describe("WorkspaceDO attention", () => {
         waitingForYou: 4,
         waitingReason: "mentioned",
         hasUnreadActivity: true,
-        unreadAndNeedsInputCount: 4,
+        readerAttentionCount: 3,
       });
   });
 
@@ -185,11 +188,11 @@ describe("WorkspaceDO attention", () => {
         waitingForYou: 0,
         waitingReason: null,
         hasUnreadActivity: true,
-        unreadAndNeedsInputCount: 1,
+        readerAttentionCount: 1,
       });
   });
 
-  it("counts ordinary unread and already-read needs-input streams together without treating unread as addressed", async () => {
+  it("counts unread streams but not a needs-input run the reader has already read", async () => {
     await seed({ id: "00000000-0000-7000-8000-0000000009b8", latest: 3, seen: 1 });
     await seed({ id: "00000000-0000-7000-8000-0000000009b9", state: "needs_input", latest: 2, seen: 2 });
     await seed({ id: "00000000-0000-7000-8000-0000000009ba", latest: 4, seen: 1, state: "needs_input" });
@@ -205,7 +208,62 @@ describe("WorkspaceDO attention", () => {
         waitingForYou: 2,
         waitingReason: "needs_input",
         hasUnreadActivity: true,
-        unreadAndNeedsInputCount: 3,
+        readerAttentionCount: 2,
       });
+  });
+
+  it("leaves Organization-wide conversations out of a guest's count, as a guest's sidebar does", async () => {
+    await seed({ id: "00000000-0000-7000-8000-0000000009e1", scope: "workspace", participant: false, latest: 2, seen: 0 });
+    await seed({ id: "00000000-0000-7000-8000-0000000009e2", latest: 2, seen: 0 });
+
+    await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
+      .resolves.toMatchObject({ readerAttentionCount: 2 });
+    await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "guest" }))
+      .resolves.toMatchObject({ readerAttentionCount: 1 });
+  });
+
+  it("counts each Breakout the reader may list that is unread or unseen, as the sidebar menu does", async () => {
+    const channelId = "00000000-0000-7000-8000-0000000009c1";
+    await seed({ id: channelId, latest: 2, seen: 2 });
+    const breakout = (index: number) => `00000000-0000-7000-8000-0000000009d${index}`;
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const insert = (input: {
+        id: string; latest: number; seen: number; unseen?: boolean; listable: boolean;
+        state?: string; archivedAt?: number;
+      }) => {
+        state.storage.sql.exec(
+          `INSERT INTO breakouts
+             (workstream_id, substream_id, authority_generation, waterline, source_event_id,
+              payload_hash, title, description, scope, exact_state, title_status,
+              created_by_user_id, last_activity_at, completed_at, archived_at,
+              latest_attention_ordinal, unread_tracking_start_ordinal,
+              source_created_at, source_updated_at, projected_at)
+           VALUES (?, ?, 1, 1, ?, 'fnv1a64:0000000000000000', ?, '', 'personal',
+                   ?, 'settled', NULL, 1, NULL, ?, ?, 0, 1, 1, 1)`,
+          channelId, input.id, `breakout-event-${input.id}`, input.id, input.state ?? "idle",
+          input.archivedAt ?? null, input.latest,
+        );
+        state.storage.sql.exec(
+          `INSERT INTO breakout_viewers
+             (workstream_id, substream_id, user_id, authority_generation, waterline,
+              source_event_id, payload_hash, is_participant, unread_count,
+              you_are_mentioned, unseen, listable, seen_attention_ordinal,
+              manual_unread_from_ordinal, manual_unread_generation,
+              latest_mention_attention_ordinal, projected_at)
+           VALUES (?, ?, ?, 1, 1, ?, 'fnv1a64:0000000000000000', 1, 0, 0, ?, ?, ?, NULL, 0, 0, 1)`,
+          channelId, input.id, MEMBER, `breakout-viewer-${input.id}`,
+          input.unseen ? 1 : 0, input.listable ? 1 : 0, input.seen,
+        );
+      };
+      insert({ id: breakout(1), latest: 3, seen: 1, listable: true });
+      insert({ id: breakout(2), latest: 0, seen: 0, unseen: true, listable: true });
+      // Not this reader's to list, already read, and archived: none counts.
+      insert({ id: breakout(3), latest: 3, seen: 1, listable: false });
+      insert({ id: breakout(4), latest: 2, seen: 2, listable: true, state: "needs_input" });
+      insert({ id: breakout(5), latest: 3, seen: 1, listable: true, archivedAt: 1 });
+    });
+
+    await expect(workspace().attention({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
+      .resolves.toMatchObject({ readerAttentionCount: 2 });
   });
 });

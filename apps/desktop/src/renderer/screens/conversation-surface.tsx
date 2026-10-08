@@ -1,4 +1,5 @@
-import { ScopeSharingPanel } from "../components/scope-sharing-panel";
+import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
+import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -69,12 +70,15 @@ import {
   transcriptOverlaysQueryKey,
   type TranscriptOverlay,
   upsertTranscriptOverlay,
+  withoutAgentWork,
 } from '../lib/transcript';
+import { useMemberPreferences } from '../lib/use-member-preferences';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useTranscriptHistory } from '../lib/use-transcript-history';
+import { useVirtualScrollAnchor } from '../lib/use-virtual-scroll-anchor';
 import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
@@ -105,10 +109,16 @@ import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-car
 import { ArtifactSidebar, InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
-import { Avatar, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
+import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
+import { ConversationAccessRequest } from '../components/conversation-access-request';
+import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
-import { ConnectorConnectionsProvider } from '../components/connector-mentions';
+import {
+  ConnectorConnectionsProvider,
+  connectorConnectionCardInput,
+  connectorResourceAuthorizationRequest,
+} from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { useRailExitFade } from '../components/rail-surface';
 import { EmbeddedBrowserRail } from '../components/embedded-browser-rail';
@@ -558,14 +568,23 @@ export function AddParticipantDialog({
   failure,
   failureMessage,
   members,
+  invitees = [],
   open,
   pending,
   onAdd,
+  onInvite,
   onRemove,
   onOpenChange,
   sharing,
 }: {
   sharing?: React.ReactNode;
+  /**
+   * Addresses invited to the Organization that have not joined, and not yet
+   * shared this conversation. Adding one shares it with the address; absent
+   * `onInvite`, none are offered.
+   */
+  invitees?: readonly string[];
+  onInvite?: ((email: string) => void) | undefined;
   current: WorkspaceMember[];
   privateSubstream?: boolean;
   failure?: 'add' | 'remove' | undefined;
@@ -579,6 +598,10 @@ export function AddParticipantDialog({
   onOpenChange: (open: boolean) => void;
 }): React.JSX.Element {
   const currentById = new Map(current.map((member) => [member.id, member]));
+  // A participant read from the conversation may not say how they belong to
+  // the Organization; the roster does.
+  const guestIds = new Set([...members, ...current].filter((member) => member.accessClass === 'guest').map((member) => member.id));
+  const guestBadge = (member: WorkspaceMember) => guestIds.has(member.id) ? <Badge className="role-badge">Guest</Badge> : null;
   const activeMembers = members.filter((member) => (member.status ?? 'active') === 'active');
   const activeMemberIds = new Set(activeMembers.map((member) => member.id));
   // A membership that is not active is one the work-stream endpoint refuses,
@@ -617,6 +640,7 @@ export function AddParticipantDialog({
               >
                 <Avatar member={member} size="medium" />
                 <span><strong>{member.name}</strong><small>{member.email}</small></span>
+                {guestBadge(member)}
                 {pending ? <LoaderCircle className="spin" size={15} /> : <Plus aria-hidden="true" size={15} />}
               </button>
             );
@@ -625,6 +649,7 @@ export function AddParticipantDialog({
             <div className="member-action-row" key={member.id}>
               <Avatar member={member} size="medium" />
               <span><strong>{member.name}</strong><small>{member.email}</small></span>
+              {guestBadge(member)}
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <IconButton
@@ -650,7 +675,56 @@ export function AddParticipantDialog({
             </div>
           );
         })}
+        {onInvite && invitees.map((email) => (
+          <button
+            aria-label={`Add ${email} to ${privateSubstream ? 'breakout' : 'main conversation'}`}
+            className="member-action-row is-invited"
+            disabled={pending}
+            key={email}
+            onClick={() => onInvite(email)}
+            type="button"
+          >
+            <Avatar member={inviteeAsMember(email)} size="medium" />
+            <span><strong>{email}</strong><small>Invited</small></span>
+            {pending ? <LoaderCircle className="spin" size={15} /> : <Plus aria-hidden="true" size={15} />}
+          </button>
+        ))}
       </div>
+    </Modal>
+  );
+}
+
+/**
+ * The second step of taking someone out of a conversation from its title
+ * menu: what it means, and a way back. It stays open on a refusal so the
+ * reason is read where it was asked.
+ */
+export function RemoveParticipantDialog({ failure, member, noun, onCancel, onContinue, pending, self }: {
+  failure?: string | undefined;
+  member: WorkspaceMember | undefined;
+  noun: 'channel' | 'breakout';
+  onCancel: () => void;
+  onContinue: () => void;
+  pending: boolean;
+  self: boolean;
+}): React.JSX.Element {
+  // A Space that includes the Channel keeps its members in, so leaving the
+  // Channel's own list ends access only when nothing else grants it.
+  const who = self ? 'You' : member?.name ?? 'They';
+  const keeps = self ? 'You keep' : 'They keep';
+  const viaSpace = noun === 'channel' ? ` or a space ${self ? 'you’re' : 'they’re'} in includes it` : '';
+  return (
+    <Modal
+      description={`${who} will be taken off this ${noun}. ${keeps} access only if it’s public${viaSpace}.`}
+      footer={<>
+        <Button disabled={pending} onClick={onCancel}>Cancel</Button>
+        <Button className="button-danger" disabled={pending} onClick={onContinue}>Continue</Button>
+      </>}
+      onOpenChange={(next) => { if (!next && !pending) onCancel(); }}
+      open={member !== undefined}
+      title={self ? `Leave the ${noun}?` : `Remove ${member?.name ?? 'this person'} from the ${noun}?`}
+    >
+      {failure ? <InlineError>{failure}</InlineError> : null}
     </Modal>
   );
 }
@@ -818,14 +892,6 @@ export function initialTranscriptAnchorIndex(
   return firstUnreadIndex < 0 ? null : Math.max(0, firstUnreadIndex - 1);
 }
 
-export function preservedPrependScrollTop(
-  previousScrollTop: number,
-  previousScrollHeight: number,
-  nextScrollHeight: number,
-): number {
-  return previousScrollTop + Math.max(0, nextScrollHeight - previousScrollHeight);
-}
-
 export function highestVisibleAttentionSequence(
   transcript: Message[],
   visibleIndexes: number[],
@@ -940,6 +1006,7 @@ export function RunFailureNotice({
 }
 
 /** Hoisted for identity: a `?? []` per render would re-key the citation lookup. */
+const NO_SHARED_INVITEES: readonly string[] = [];
 const NO_MEMBERS: WorkspaceMember[] = [];
 
 const NO_WORKSPACE_PRESENCE: Record<string, string[]> = {};
@@ -1144,6 +1211,12 @@ export function ConversationSurface({
   const olderRequestsRef = useRef(new Map<string, Promise<void>>());
   const [positionedConversation, setPositionedConversation] = useState<string | null>(null);
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false);
+  /** The participant the title menu asked to take out, held until the reader confirms. */
+  const [removeConfirmRequest, setRemoveConfirm] = useState<{ member: WorkspaceMember; parentId: string; target: string } | null>(null);
+  // The surface outlives a route change, so a request asked in another
+  // conversation is not this one's to confirm.
+  const removeConfirm = removeConfirmRequest?.parentId === id && removeConfirmRequest.target === substreamId ? removeConfirmRequest : null;
+  useEffect(() => { setRemoveConfirm(null); }, [id, substreamId]);
   const [participantDialogSubstreamId, setParticipantDialogSubstreamId] = useState(substreamId);
   const [resourceDialogOpen, setResourceDialogOpen] = useState(false);
   const [resourceSearch, setResourceSearch] = useState('');
@@ -1181,6 +1254,10 @@ export function ConversationSurface({
     setResourcePreview({ resourceId, returnFocus, workstreamScoped: true });
   }, []);
   const workspaceId = session?.workspace?.id ?? 'unbound';
+  // Requests to join waiting on this reader, kept by the workspace socket; the
+  // People level lists the ones for the conversation on screen.
+  const accessRequests = useAccessRequests(workspaceId);
+  const decideAccessRequest = useDecideAccessRequest(api ?? null, workspaceId);
   const workspaceRegion = session?.workspace?.region ?? 'global';
   const attachmentDraft = useFileAttachments(api, workstreamDraftKey(workspaceRegion, workspaceId, id, substreamId));
   const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
@@ -1519,6 +1596,16 @@ export function ConversationSurface({
   });
   const visibleMembers = guest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
   const visibleConnections = guest ? routedDetail?.connections : connections.data;
+  // People invited to the Organization who have not joined: offered where a
+  // member can share this Channel with them, and named in its chips.
+  const invitesInvitees = parentKind === 'workstream' && !guest
+    && Boolean(session?.workspace) && session?.workspace?.accessClass !== 'guest';
+  const invitees = useWorkspaceInvitees(api, invitesInvitees);
+  const visibleInvitees = invitesInvitees ? invitees.data ?? NO_INVITEES : NO_INVITEES;
+  const emailMentions = useMemo(
+    () => emailMentionDirectory(visibleMembers, visibleInvitees),
+    [visibleInvitees, visibleMembers],
+  );
   const availableResources = useInfiniteQuery({
     queryKey: ['resources', debouncedResourceSearch],
     queryFn: ({ pageParam, signal }) => api!.listResources({
@@ -1593,20 +1680,30 @@ export function ConversationSurface({
       || overlay.provenance.source === 'stream_event'
       || overlay.provenance.source === 'socket_event')
     .map((overlay) => overlay.message.id)), [transcriptOverlays.data]);
+  // A guest is refused the members' `/workspace` routes, so a guest keeps the
+  // defaults; the socket still answers with whatever is stored.
+  const showAgentWork = useMemberPreferences(
+    session?.workspace?.accessClass === 'guest' ? null : api,
+    workspaceId,
+  ).data.showAgentWork;
   const transcript = useMemo(
     () => {
       const feedOverlays = transcriptOverlays.data ?? [];
+      const composed = dedupeAdjacentConnectorConnectionCards(
+        composeTranscript(canonicalTranscript, feedOverlays),
+      );
       return collapseSettledWorkIntoAccordion(
         foldSettledWorkIntoMessages(
           groupThinkingMessages(
-            groupPluginToolMessages(dedupeAdjacentConnectorConnectionCards(
-              composeTranscript(canonicalTranscript, feedOverlays),
-            )),
+            groupPluginToolMessages(showAgentWork ? composed : withoutAgentWork(composed, (message) => (
+              connectorResourceAuthorizationRequest(message) !== null
+                || connectorConnectionCardInput(message) !== null
+            ))),
           ),
         ),
       );
     },
-    [canonicalTranscript, transcriptOverlays.data],
+    [canonicalTranscript, transcriptOverlays.data, showAgentWork],
   );
   // Above every early return: a hook below one runs on some renders only.
   const replyCount = useMemo(() => (
@@ -1626,6 +1723,7 @@ export function ConversationSurface({
   // transcript is a page away rather than loaded.
   const {
     atEnd: transcriptAtEnd,
+    isFollowing: isFollowingTranscript,
     onScroll: onTranscriptScroll,
     onWheel: onTranscriptWheel,
     release: releaseTranscriptFollow,
@@ -1722,9 +1820,6 @@ export function ConversationSurface({
     pendingOlderAfterReconnectRef.current = false;
     setLoadingOlder(true);
     setOlderMessagesError(undefined);
-    const scrollElement = transcriptRef.current;
-    const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
-    const previousScrollTop = scrollElement?.scrollTop ?? 0;
     const request = (async (): Promise<void> => {
       try {
         while (stillCurrent()) {
@@ -1747,15 +1842,6 @@ export function ConversationSurface({
             throw error;
           }
         }
-        if (!stillCurrent()) return;
-        window.requestAnimationFrame(() => {
-          if (!stillCurrent()) return;
-          const element = transcriptRef.current;
-          if (!element) return;
-          scrollTranscriptTo(preservedPrependScrollTop(
-            previousScrollTop, previousScrollHeight, element.scrollHeight,
-          ));
-        });
       } catch (error) {
         if (!stillCurrent()) return;
         if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
@@ -1772,7 +1858,7 @@ export function ConversationSurface({
       olderRequestsRef.current.delete(conversationAddress);
       if (activeConversationAddressRef.current === conversationAddress) setLoadingOlder(false);
     }
-  }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, scrollTranscriptTo, transcriptQueryKey]);
+  }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, transcriptQueryKey]);
   useEffect(() => {
     if (scrollToTurn === null || handledScrollNonce.current === scrollToTurn.nonce) return;
     if (revealTurn(scrollToTurn.turnId)) {
@@ -1797,6 +1883,19 @@ export function ConversationSurface({
       && !searchTurnId && olderTranscriptRange !== null,
     canLoad: feedLive && !loadingOlder && !olderMessagesError,
     loadOlder: () => { void loadOlderMessages(); },
+  });
+
+  // After the virtualizer and the follow: rows prepended above the reader keep
+  // the row they were reading where it was, in the same commit. The layout key
+  // names what is drawn above the feed, which a page with no visible rows can
+  // change without changing the feed.
+  const historyStatusShown = (olderTranscriptRange !== null && !olderMessagesError) || loadingOlder
+    || (nearHistoryEdge && !feedLive && !feedFromLocalCache);
+  const historyRetryShown = olderTranscriptRange !== null && olderMessagesError !== undefined && !loadingOlder;
+  const originShown = Boolean(origin && breakoutOrigin && !olderTranscriptRange);
+  useVirtualScrollAnchor(transcriptVirtualizer, transcriptRef, scrollTranscriptTo, {
+    enabled: () => !isFollowingTranscript(),
+    layoutKey: `${historyStatusShown}:${historyRetryShown}:${olderMessagesError ?? ''}:${otherHistoryError ?? ''}:${originShown}`,
   });
 
   const loadNewerMessages = useCallback(async (): Promise<void> => {
@@ -1965,13 +2064,47 @@ export function ConversationSurface({
     },
   });
 
+  // Guest invitations for the title menu's People level, loaded once it opens.
+  const [invitesWanted, setInvitesWanted] = useState(false);
+  // Loaded with the People level, and whenever the Organization has invitees
+  // to offer: the composer needs to know who is already shared in here.
+  const invitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId,
+    enabled: (invitesWanted || visibleInvitees.length > 0) && Boolean(api && session?.workspace) && parentKind === 'workstream' });
+  const sharedInviteeEmails = useMemo(
+    () => invitations.pending.data?.map((guest) => guest.email) ?? NO_SHARED_INVITEES,
+    [invitations.pending.data],
+  );
+  // The participant dialog's own target, which may be a breakout other than the
+  // one on screen. Same cache entry as the share panel it embeds.
+  const dialogInvitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId: participantDialogSubstreamId,
+    enabled: participantDialogOpen && invitesInvitees });
+  const dialogInvitees = useMemo(() => {
+    const shared = new Set(dialogInvitations.pending.data?.map((guest) => guest.email) ?? []);
+    return visibleInvitees.map((invitee) => invitee.email).filter((email) => !shared.has(email));
+  }, [dialogInvitations.pending.data, visibleInvitees]);
+
   const removeParticipant = useMutation({
     mutationFn: ({ member, target }: { member: WorkspaceMember; target: string }) => target === '0'
       ? api!.removeParticipant(id, member.id)
       : api!.removeSubstreamParticipant(id, target, member.id),
-    onSuccess: (_result, { member, target }) => {
+    // Read before the request, not after it. Leaving a personal Main revokes
+    // this reader's socket, and its close evicts the cached detail, usually
+    // before the DELETE answers: read in `onSuccess`, the scope was gone, the
+    // screen stayed, and the reader was left on "could not be opened".
+    onMutate: ({ target }) => {
+      const previous = queryClient.getQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target));
+      const filter = useUiStore.getState().sidebarSpaceFilter;
+      const spaceIds = previous?.spaceIds ?? [];
+      return {
+        previous,
+        // The Space the reader is looking at when the Channel is in it, and
+        // otherwise the Channel's own first Space.
+        spaceId: filter !== null && spaceIds.includes(filter) ? filter : spaceIds[0],
+      };
+    },
+    onSuccess: (_result, { member, target }, context) => {
       const targetKey = workstreamDetailQueryKey(id, target);
-      const previous = queryClient.getQueryData<WorkstreamDetail>(targetKey);
+      const previous = context?.previous;
       queryClient.setQueryData<WorkstreamDetail>(targetKey, (current) => current ? {
         ...current,
         participants: current.participants.filter((participant) => participant.id !== member.id),
@@ -1991,7 +2124,7 @@ export function ConversationSurface({
       }
       if (previous?.scope === 'personal') {
         evictCachedWorkstream(queryClient, id);
-        openFirstWorkstream([id]);
+        openFirstWorkstream([id], context?.spaceId);
       }
     },
   });
@@ -2267,6 +2400,7 @@ export function ConversationSurface({
     mentions: MentionIdentity[],
     confirmedParticipantUserIds: string[] = [],
     deliveryMode?: WorkstreamMessageDeliveryMode,
+    invitedEmails: string[] = [],
   ): Promise<void> => {
     if (!api || !routedDetail) throw new Error('This channel is not ready to receive messages.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
@@ -2309,6 +2443,23 @@ export function ConversationSurface({
       return;
     }
     const attachmentLease = await attachmentDraft.leaseReady();
+    // Shared before the message is sent, as a member mentioned from outside is
+    // added with it, and after the send holds its attachments, so nothing typed
+    // or attached meanwhile joins this message. An address already shared here
+    // is not shared again: each share is its own email.
+    const toShare = invitedEmails.filter((email) => !sharedInviteeEmails.includes(email)).sort();
+    if (toShare.length > 0) {
+      try {
+        await invitations.invite.mutateAsync(toShare);
+      } catch (error) {
+        await attachmentDraft.restoreLease(attachmentLease.leaseId);
+        pendingSendCount.current = Math.max(0, pendingSendCount.current - 1);
+        if (pendingSendCount.current === 0) setSending(false);
+        setSendError(`${toShare.join(', ')} couldn’t be invited, so the message wasn’t sent. Try again.`);
+        throw error;
+      }
+      void invitations.pending.refetch();
+    }
     const readyAttachments = attachmentLease.attachments;
     const clientId = crypto.randomUUID();
     queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) => {
@@ -2549,7 +2700,7 @@ export function ConversationSurface({
       socketConnection.state === 'reconnecting'
       || socketConnection.state === 'unavailable'
     ) {
-      return (
+      const errorState = (
         <WorkstreamErrorState
           description={socketConnection.openingError
             ?? (socketConnection.state === 'reconnecting'
@@ -2560,6 +2711,11 @@ export function ConversationSurface({
           workstreamId={id}
         />
       );
+      // A member holding a link to a Channel or Breakout they are not in sees
+      // its name and can ask to join; every other failure keeps its own screen.
+      return parentKind === 'workstream' && !guest
+        ? <ConversationAccessRequest api={api} fallback={errorState} onRetry={socketConnection.retryOpening} parentId={id} substreamId={substreamId} />
+        : errorState;
     }
     const openingLabel = `Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`;
     const openingRail = renderSidebar ? renderOpeningSidebar?.() : null;
@@ -2695,6 +2851,7 @@ export function ConversationSurface({
     ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.';
 
   return (
+    <EmailMentionContext.Provider value={emailMentions}>
     <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout" ref={layoutRef}>
       {renderSidebar?.({
@@ -2745,6 +2902,7 @@ export function ConversationSurface({
         launching={substreamLaunch.launching}
         {...(api ? { loadAttachmentContent } : {})}
         members={visibleMembers}
+        invitees={visibleInvitees}
         onCancel={substreamLaunch.onCancel}
         onCreate={substreamLaunch.onCreate}
         onOpenAttachment={setAttachmentPreview}
@@ -2770,15 +2928,63 @@ export function ConversationSurface({
         replyCount,
         people: parentKind === 'workstream' ? {
           candidates: visibleMembers,
-          onAdd: (member) => {
+          invitees: visibleInvitees.map((invitee) => invitee.email),
+          onAdd: async (member) => {
             removeParticipant.reset();
-            addParticipant.mutate({ member, target: substreamId });
+            invitations.invite.reset();
+            invitations.remove.reset();
+            await addParticipant.mutateAsync({ member, target: substreamId });
           },
           adding: addParticipant.isPending,
-          error: addParticipant.error
+          error: decideAccessRequest.error
+            ? 'That request couldn’t be answered. Try again.'
+            : addParticipant.error
             ? refusalMessage(addParticipant.error) ?? 'That person couldn’t be added.'
-            : undefined,
+            : invitations.invite.error ? 'They couldn’t be invited. Try again.'
+              : invitations.remove.error
+                // They signed in between the list loading and the click: the invite is used.
+                ? invitations.remove.error instanceof ApiError && invitations.remove.error.code === 'scope_revision_conflict'
+                  ? 'They have already joined. Remove them from the people instead.'
+                  : 'That invite couldn’t be cancelled. Try again.'
+                : undefined,
           currentUserId: session?.user.id,
+          requests: {
+            items: accessRequests
+              .filter((request) => request.parentId === id && request.substreamId === substreamId)
+              .map((request) => ({ id: request.id, userId: request.requesterUserId, name: request.requesterName })),
+            onDecide: (requestId, decision) => decideAccessRequest.mutate({ id: requestId, decision }),
+          },
+          onRemove: (member) => {
+            addParticipant.reset();
+            removeParticipant.reset();
+            setRemoveConfirm({ member, parentId: id, target: substreamId });
+          },
+          invites: api && session?.workspace ? {
+            pending: invitations.pending.data?.map((guest) => guest.email),
+            loadFailed: invitations.pending.isError,
+            onRetryLoad: () => { void invitations.pending.refetch(); },
+            onInvite: async (emails) => {
+              // A failed add earlier in the same submission stays reported.
+              invitations.remove.reset();
+              await invitations.invite.mutateAsync([...emails].sort());
+              // Someone who already had an account is claimed as they are invited, and joins the room.
+              await Promise.all([invitations.pending.refetch(), queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) })]);
+            },
+            onRevoke: (email) => {
+              const guest = invitations.pending.data?.find((candidate) => candidate.email === email);
+              if (!guest) return;
+              invitations.invite.reset();
+              addParticipant.reset();
+              invitations.remove.mutate(guest, {
+                onError: (error) => {
+                  if (error instanceof ApiError && error.code === 'scope_revision_conflict') {
+                    void queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) });
+                  }
+                },
+              });
+            },
+            onLoad: () => setInvitesWanted(true),
+          } : undefined,
         } : undefined,
         origin: origin ? {
           byline: `Started from ${origin.origin.authorType === 'agent' ? 'Rally’s' : `${origin.origin.author?.name ?? 'a'}’s`} message · ${formatDateTime(origin.origin.createdAt)}`,
@@ -2855,15 +3061,16 @@ export function ConversationSurface({
         </ConnectingCardSlot>
         <div className="transcript-column" ref={transcriptContentRef}>
           {/* Over a seed the connecting card, sticky at this same edge, is the
-              affordance: a row here would sit under it saying the same thing. */}
-          <div role="status" className={loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)
-            ? 'transcript-history-control' : undefined}>
+              affordance: a row here would sit under it saying the same thing.
+              Its space is held for as long as there is history to load, so the
+              status coming and going never moves the messages under it. */}
+          <div role="status" className={historyStatusShown ? 'transcript-history-control' : undefined}>
             {(loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)) && <>
               <LoaderCircle aria-hidden="true" className="spin" size={14} />
               <span>{feedLive ? 'Loading earlier messages…' : 'Waiting to reconnect…'}</span>
             </>}
           </div>
-          {olderTranscriptRange && olderMessagesError && !loadingOlder && (
+          {historyRetryShown && (
             <div className="transcript-history-control">
               <Button disabled={!feedLive} onClick={() => void loadOlderMessages()}>
                 <RefreshCcw aria-hidden="true" size={14} />
@@ -2878,7 +3085,7 @@ export function ConversationSurface({
               origin card is the Channel's own messages, which people did say,
               and only above the Breakout's first message, never above a
               window that still has earlier pages to load. */}
-          {origin && breakoutOrigin && !olderTranscriptRange && (
+          {originShown && origin && breakoutOrigin && (
             <BreakoutOrigin channelTitle={breakoutOrigin.channelTitle} context={origin.context} origin={origin.origin} />
           )}
           {/* Not while a run is going. A work stream opened the instant it was
@@ -2975,6 +3182,8 @@ export function ConversationSurface({
               ?? (retry.error ? 'The run couldn’t be retried.' : undefined)}
             fileInputRef={fileInputRef}
             members={visibleMembers}
+            invitees={visibleInvitees}
+            sharedInviteeEmails={sharedInviteeEmails}
             /* Locked, because a pin is written once when the conversation is
                created and nothing afterwards edits it. What it names is the
                latest run's model first and the pin only as a fallback: an
@@ -3071,9 +3280,15 @@ export function ConversationSurface({
           <ScopeSharingPanel key={participantDialogSubstreamId} api={api} workspaceId={workspaceId} parentId={id} substreamId={participantDialogSubstreamId} /> : null}
         privateSubstream={participantDialogSubstreamId !== '0'}
         current={participantDialogSubstreamId === '0' && renderSidebar ? sidebarDetail.participants : displayedDetail.participants}
-        failure={addParticipant.error ? 'add' : removeParticipant.error ? 'remove' : undefined}
-        failureMessage={refusalMessage(addParticipant.error ?? removeParticipant.error)}
+        failure={addParticipant.error || dialogInvitations.invite.error ? 'add' : removeParticipant.error ? 'remove' : undefined}
+        failureMessage={dialogInvitations.invite.error
+          ? 'They couldn’t be invited. Try again.'
+          : refusalMessage(addParticipant.error ?? removeParticipant.error)}
         members={visibleMembers}
+        invitees={dialogInvitations.pending.data ? dialogInvitees : []}
+        onInvite={invitesInvitees ? (email) => {
+          dialogInvitations.invite.mutate([email], { onSettled: () => { void dialogInvitations.pending.refetch(); } });
+        } : undefined}
         onAdd={(member) => {
           removeParticipant.reset();
           addParticipant.mutate({ member, target: participantDialogSubstreamId });
@@ -3089,11 +3304,26 @@ export function ConversationSurface({
           if (!next) {
             addParticipant.reset();
             removeParticipant.reset();
+            dialogInvitations.invite.reset();
           }
           setParticipantDialogOpen(next);
         }}
         open={participantDialogOpen}
-        pending={addParticipant.isPending || removeParticipant.isPending}
+        pending={addParticipant.isPending || removeParticipant.isPending || dialogInvitations.invite.isPending}
+      />
+      <RemoveParticipantDialog
+        failure={removeConfirm && removeParticipant.error
+          ? refusalMessage(removeParticipant.error) ?? 'That participant couldn’t be removed.'
+          : undefined}
+        noun={removeConfirm?.target === '0' ? 'channel' : 'breakout'}
+        onCancel={() => { setRemoveConfirm(null); removeParticipant.reset(); }}
+        onContinue={() => {
+          if (!removeConfirm) return;
+          removeParticipant.mutate({ member: removeConfirm.member, target: removeConfirm.target }, { onSuccess: () => setRemoveConfirm(null) });
+        }}
+        pending={removeParticipant.isPending}
+        member={removeConfirm?.member}
+        self={removeConfirm?.member.id === session?.user.id}
       />
       <AddResourceDialog
         incomplete={availableResources.data?.pages.some((page) => page.complete === false) ?? false}
@@ -3134,5 +3364,6 @@ export function ConversationSurface({
     </div>
     </div>
     </ConnectorConnectionsProvider>
+    </EmailMentionContext.Provider>
   );
 }

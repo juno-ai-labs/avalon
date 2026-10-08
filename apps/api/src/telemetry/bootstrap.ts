@@ -18,6 +18,7 @@ const CAPABILITY_LIFETIME_MS = 60 * 60 * 1_000;
 const ROUTE_DECISION_LIFETIME_MS = 5 * 60 * 1_000;
 const CONTROL_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 const ANONYMOUS_EVENT_NAMES = new Set([
+  "desktop_install_opened",
   "screen_viewed",
   "onboarding_region_selected",
   "workspace_create_requested",

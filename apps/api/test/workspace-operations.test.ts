@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceRetirementResultSchema } from "@rally/contracts";
+import type { OrganizationUsage } from "@rally/contracts/usage";
 
 import type { Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
@@ -53,8 +54,9 @@ function seedWorkspace(database: DatabaseSync, region: string): void {
  * Node suite runs no Durable Object, and what this file proves is the door —
  * the row read, the D1 fence, and the receipt the route answers with.
  */
-function emptyWorkspaceObjects(calls: string[]): Env["WORKSPACE_DOS"] {
+function emptyWorkspaceObjects(calls: string[], published: OrganizationUsage[] = []): Env["WORKSPACE_DOS"] {
   const stub = {
+    publishUsage: async (usage: OrganizationUsage) => { published.push(usage); return 1; },
     beginWorkspaceRetirement: async () => { calls.push("beginWorkspaceRetirement"); return { nodes: [] }; },
     workspaceRetirementProgress: async () => ({ remaining: 0, complete: true, nodes: [] }),
     retireObject: async () => {
@@ -70,7 +72,7 @@ function emptyWorkspaceObjects(calls: string[]): Env["WORKSPACE_DOS"] {
   return binding;
 }
 
-function fixture(options: { workspaceRegion?: string; objectCalls?: string[] } = {}): { env: Env; app: Hono<HonoAppEnv>; database: DatabaseSync; usageDatabase: DatabaseSync } {
+function fixture(options: { workspaceRegion?: string; objectCalls?: string[]; publishedUsage?: OrganizationUsage[] } = {}): { env: Env; app: Hono<HonoAppEnv>; database: DatabaseSync; usageDatabase: DatabaseSync } {
   const database = migratedSqliteDatabase();
   const usageDatabase = migratedUsageSqliteDatabase();
   databases.push(database, usageDatabase);
@@ -80,7 +82,7 @@ function fixture(options: { workspaceRegion?: string; objectCalls?: string[] } =
     AVALON_REGION: "global",
     DB: sqliteD1(database),
     USAGE_DB: sqliteD1(usageDatabase),
-    ...(options.objectCalls ? { WORKSPACE_DOS: emptyWorkspaceObjects(options.objectCalls) } : {}),
+    ...(options.objectCalls ? { WORKSPACE_DOS: emptyWorkspaceObjects(options.objectCalls, options.publishedUsage) } : {}),
     // Two secrets of one shape. A token filed in the wrong one is what the
     // isolation has to refuse: a demos principal in the telemetry map never
     // reaches this route, and a support principal in the demo map verifies
@@ -200,10 +202,11 @@ describe("the workspace plan route", () => {
     expect((await attempt(MISFILED_SUPPORT_TOKEN)).status).toBe(403);
   });
 
-  it("moves a workspace to a plan and re-prices the current week at once", async () => {
+  it("moves a workspace to a plan, re-prices the current week at once and sends members the new meter", async () => {
     // Weeks run from the workspace's creation, Tuesdays at 12:00.
     vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-09-10T00:00:00.000Z") });
-    const { env, app, database, usageDatabase } = fixture({ workspaceRegion: "global" });
+    const publishedUsage: OrganizationUsage[] = [];
+    const { env, app, database, usageDatabase } = fixture({ workspaceRegion: "global", objectCalls: [], publishedUsage });
     usageDatabase.prepare(
       `INSERT INTO usage_rollups (workspace_id, week_start, period_start, quota_microusd, organization_microusd, rally_microusd)
        VALUES (?, ?, ?, 50000000, 1000000, 0)`,
@@ -215,6 +218,8 @@ describe("the workspace plan route", () => {
     await expect(moved.json()).resolves.toEqual({ workspaceId: WORKSPACE_ID, plan: "growth" });
     expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE_ID)).toEqual({ plan: "growth" });
     expect(usageDatabase.prepare(`SELECT quota_microusd FROM usage_rollups`).all()).toEqual([{ quota_microusd: 125_000_000 }]);
+    // $1 of a $125 week; on Starter's $50 it would read 98.
+    await vi.waitFor(() => expect(publishedUsage).toMatchObject([{ plan: "growth", quotaRemainingPercent: 99 }]));
   });
 
   it("refuses a request that does not name exactly one known plan for a workspace id", async () => {

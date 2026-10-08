@@ -47,14 +47,12 @@ boundary.
 So `applyRetirementGate` replaces every callable method on the prototype chain,
 once, at module load. Prototype replacement rather than a proxy around the
 instance is what survives real workerd, which dispatches to ordinary own
-properties of a prototype. The three gated classes (`WorkspaceDO`,
-`SidekickDO`, deployed under the Cloudflare class name `AutomationDO`, and
-`SubstreamAgent`) extend `ScheduledDurableObject`, so the tombstone and its two
-entry points live there. Four gate policies are declared, one for the abstract
-`ConversationParentDurableObject` base `SidekickDO` extends and one for each
-concrete class, and each declares only its exceptions.
+properties of a prototype. The two gated classes (`WorkspaceDO` and
+`SubstreamAgent`) extend `ScheduledDurableObject`,
+so the tombstone and its two entry points live there. One gate policy is
+declared per class, and each declares only its exceptions.
 
-Channel and Space parents have no object of their own: their state is rows in
+Channel, Space and Sidekick parents have no object of their own: their state is rows in
 `WorkspaceDO` ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)),
 so the Organization's tombstone closes them. The gate does not wrap
 accessors — a getter is state, not a door — so a getter that does work is not
@@ -116,10 +114,10 @@ Retirement runs in this order, and the order is the design:
    is one rename away from tombstoning a parent without walking its children.
    That read is permitted on a retired parent: a pass that dies between
    retiring the parent and writing its receipt has to be able to ask again, or
-   the node stays unreceipted on every pass. A Channel or Space node asks
-   `WorkspaceDO.childrenForRetirement`, which is permitted on the already
-   retired Organization object, and has no parent object to retire after its
-   children; only a Sidekick node calls `retireObject` on its parent.
+   the node stays unreceipted on every pass. Every node, a Channel's, a
+   Space's or a Sidekick's, asks `WorkspaceDO.childrenForRetirement`, which is
+   permitted on the already retired Organization object, and has no parent
+   object to retire after its children.
 5. **Finish when nothing is left unreceipted.** Completion is the workspace's own
    tombstone plus the absence of NULLs in the graph table, rather than a flag
    somebody sets. The tombstone is what says the enumeration happened: reading
@@ -144,7 +142,7 @@ the access-revocation walk finds nothing beneath an object whose sockets
 retirement already closed.
 
 The effect receivers a Queue redelivers to (`receiveChildEffects`,
-`applyWorkstreamRegionalEffect`, `applyAutomationDirectory`, and
+`applyWorkstreamRegionalEffect`, and
 `applyWorkstreamDirectoryEffects`, which no production path calls any more but
 the gate still lists) are the exception and are **dropped** in the gate
 instead: their consumers parse a `strictObject` acknowledgement and would treat
@@ -253,11 +251,10 @@ a demo" without waking a retired object to ask. It is a shadow written after
 the fact, owned by [`demo-workspaces.md`](demo-workspaces.md); retirement never
 reads it, and a workspace no demo made has no row for it to touch.
 
-Two workspace-scoped Durable Object classes are **not** gated and not walked:
+One workspace-scoped Durable Object class is **not** gated and not walked:
 `ArtifactHostDO`, which serves a work stream's published artifacts to viewer
 sessions admitted by the canonical authorization service, is never tombstoned,
-and its own alarm and facet storage are untouched; and
-`SlackReactionTicker`, whose alarm is bounded and self-clearing. Gating and walking artifact hosts is the
+and its own alarm and facet storage are untouched. Gating and walking artifact hosts is the
 remaining piece of "nothing in it ever writes again", recorded under **Open
 questions**.
 
@@ -290,11 +287,9 @@ included.
 - **Stranded outbox rows are counted, not drained.** Draining means publishing
   out of a closed workspace; moving them means deciding whose they now are. The
   count is what distinguishes retained residue from work still in flight.
-- **A parent the directory names whose object never materialized** is retired
-  anyway. For a Sidekick, the call brings the object into existence holding only
-  a tombstone, which fences an id a late create would otherwise take. A Channel
-  or Space with no parent rows answers `missing`, has no children, and is
-  receipted; the Organization's tombstone already fences its id.
+- **A parent the directory names but holds no rows for** answers `missing`,
+  has no children, and is receipted; the Organization's tombstone already
+  fences its id.
 - **A failed node leaves retirement incomplete.** The walk continues to the rest
   and reports incomplete, so the next pass returns to exactly that node. The
   receipt's `failed[].error` is a stable code (`conversation_parent_identity_mismatch`,

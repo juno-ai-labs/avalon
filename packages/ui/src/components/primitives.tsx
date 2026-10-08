@@ -23,7 +23,7 @@ import { statusDescription, statusLabel, type WorkstreamMarkerStatus } from '../
 import { PLUGIN_BRAND_MARKS, type PluginBrandMark } from '../lib/plugin-marks';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useAppearance } from '../lib/theme';
-import { hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
+import { focusFollowsKeyboard, hasUserInputSinceWindowActivation, useWindowDeactivated } from '../lib/window-activation';
 import type { WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/types';
 
@@ -176,9 +176,10 @@ export function Tip({
         // caller's handler ahead of its own and skips its own on a prevented
         // event — and it is the whole intervention: the trigger keeps every
         // other behaviour, and the next real focus or movement opens the tip as
-        // it always did. See `lib/window-activation.ts`.
+        // it always did. Focus also opens only after a key; see
+        // `focusFollowsKeyboard` in `lib/window-activation.ts`.
         onFocus={(event) => {
-          if (!hasUserInputSinceWindowActivation()) event.preventDefault();
+          if (!hasUserInputSinceWindowActivation() || !focusFollowsKeyboard()) event.preventDefault();
         }}
         onPointerMove={(event) => {
           if (!hasUserInputSinceWindowActivation()) event.preventDefault();
@@ -682,11 +683,14 @@ interface DropdownSelectProps {
   onValueChange: (value: string) => void;
   options: DropdownOption[];
   value: string;
-  variant?: 'primary' | 'secondary';
+  variant?: 'primary' | 'secondary' | 'pill';
+  /** Where the list opens; it flips when there is no room. */
+  side?: 'top' | 'bottom';
 }
 
 /** Shared settings selector: bordered for primary form controls, text-only for
- * compact preference rows. Radix supplies native keyboard and screen-reader behavior. */
+ * compact preference rows, and a filled pill for a choice set inline in a row
+ * (the new-Channel Space). Radix supplies native keyboard and screen-reader behavior. */
 export function DropdownSelect({
   ariaLabel,
   disabled = false,
@@ -694,6 +698,7 @@ export function DropdownSelect({
   options,
   value,
   variant = 'primary',
+  side = 'bottom',
 }: DropdownSelectProps): React.JSX.Element {
   return (
     <Select.Root disabled={disabled} onValueChange={onValueChange} value={value}>
@@ -703,7 +708,7 @@ export function DropdownSelect({
       >
         <Select.Value />
         <Select.Icon aria-hidden="true" className="dropdown-select-chevron">
-          <ChevronDown size={15} strokeWidth={1.7} />
+          <ChevronDown size={variant === 'pill' ? 13 : 15} strokeWidth={1.7} />
         </Select.Icon>
       </Select.Trigger>
       <Select.Portal>
@@ -711,6 +716,7 @@ export function DropdownSelect({
           className={clsx('dropdown-select-content', `dropdown-select-content-${variant}`)}
           collisionPadding={10}
           position="popper"
+          side={side}
           sideOffset={6}
         >
           <Select.Viewport className="dropdown-select-viewport">
@@ -858,6 +864,17 @@ export function LoadingState({
 
 export function OpeningState({ label }: { label: string }): React.JSX.Element {
   return <LoadingState label={label} orbSize={64} orbState="connecting" />;
+}
+
+/** What an activity count says to a screen reader, which hears it in place of the badge. */
+export function activityCountLabel(count: number): string {
+  return `${count} conversation${count === 1 ? '' : 's'} with new activity`;
+}
+
+/** An Organization's activity count, or nothing at zero; the row carries `activityCountLabel`. */
+export function ActivityCountBadge({ count }: { count: number }): React.JSX.Element | null {
+  if (count <= 0) return null;
+  return <span aria-hidden="true" className="activity-count-badge">{count > 99 ? '99+' : count}</span>;
 }
 
 export function InlineError({ children }: PropsWithChildren): React.JSX.Element {

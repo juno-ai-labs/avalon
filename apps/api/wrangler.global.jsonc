@@ -45,7 +45,7 @@
     "DESKTOP_DEEP_LINK_URI": "rallywithai://auth/complete",
     "OPENROUTER_PRIMARY_MODEL": "openai/gpt-6.1-sol",
     "OPENROUTER_FALLBACK_MODELS": "google/gemini-3.8-flash",
-    "OPENROUTER_CLASSIFIER_MODEL": "google/gemini-2.5-flash-lite",
+    "OPENROUTER_CLASSIFIER_MODEL": "openai/gpt-5.6-terra",
     "OPENROUTER_STRUCTURED_MODEL": "google/gemini-2.5-flash-lite",
     "RESEND_FROM_EMAIL": "Rally <invites@rallywith.ai>",
     "RESEND_NOTIFICATION_FROM_EMAIL": "Rally <notifications@rallywith.ai>",
@@ -195,10 +195,8 @@
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
-      { "name": "AUTOMATION_DOS", "class_name": "SidekickDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" },
-      { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" },
       { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" }
     ]
   },
@@ -238,6 +236,14 @@
   // docs/hosted-conversation-parents.md), each Organization imported every
   // Channel and Space it held, and the legacy objects answered nothing but the
   // one-time export after that. Rollback cannot restore them.
+  // v13 irreversibly deletes SidekickDO and every object in its namespace.
+  // Each Sidekick moved into its Organization's WorkspaceDO, the production
+  // gate found none left to import outside retired Organizations, and the
+  // legacy objects answered nothing but the one-time export after that.
+  // Rollback cannot restore them.
+  // v14 irreversibly deletes SlackReactionTicker and every object in its
+  // namespace. The rotating working reaction it drove was removed; a run's
+  // source message now keeps its acknowledgement until the outcome replaces it.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
     { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
@@ -254,7 +260,9 @@
     { "tag": "v9", "deleted_classes": ["AutomationAgent"], "new_sqlite_classes": ["AutomationDO"] },
     { "tag": "v10", "renamed_classes": [{ "from": "AutomationDO", "to": "SidekickDO" }] },
     { "tag": "v11", "new_sqlite_classes": ["SpaceDO"] },
-    { "tag": "v12", "deleted_classes": ["WorkstreamDO", "SpaceDO"] }
+    { "tag": "v12", "deleted_classes": ["WorkstreamDO", "SpaceDO"] },
+    { "tag": "v13", "deleted_classes": ["SidekickDO"] },
+    { "tag": "v14", "deleted_classes": ["SlackReactionTicker"] }
   ],
   "queues": {
     "producers": [

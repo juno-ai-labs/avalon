@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { OnboardingJourneyStore } from '../src/durable-objects/onboarding-journey';
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from '../src/durable-objects/workspace-do';
 import { applyDurableObjectSqliteMigrations } from '../src/durable-objects/sqlite-migrations';
+import { workspaceDOName } from '../src/durable-objects/names';
+import { asWorkspaceId } from '@rally/contracts';
 
 const creator = '00000000-0000-7000-8000-000000000001';
 const member = '00000000-0000-7000-8000-000000000002';
@@ -17,23 +19,21 @@ describe('durable onboarding journey', () => {
       applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
         component: 'workspace_do', workerVersionId: 'onboarding-test', now: 1 });
       const store = new OnboardingJourneyStore(state.storage.sql);
-      const initial = store.get(creator, 'creator');
-      expect(initial.stage).toBe('connectors');
-      expect(store.get(member, 'member').stage).toBe('profile');
-      expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'complete' })).toBeNull();
-      store.update(creator, 'creator', { expectedRevision: 0, stage: 'profile', connectorIds: ['you:google-mail-calendar'] });
+      // Connecting tools is no longer a step: a creator starts at personal setup too.
       expect(store.get(creator, 'creator').stage).toBe('profile');
-      expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'people' })).toBeNull();
-      expect(store.update(creator, 'creator', { expectedRevision: 1, stage: 'complete' })).toBeNull();
+      expect(store.get(member, 'member').stage).toBe('profile');
+      expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'connectors' })).toBeNull();
+      expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'complete' })).toBeNull();
       expect(store.update(member, 'member', { expectedRevision: 0, stage: 'people' })).toBeNull();
-      store.update(creator, 'creator', { expectedRevision: 1, stage: 'people' });
-      store.update(creator, 'creator', { expectedRevision: 2, stage: 'complete' });
+      store.update(creator, 'creator', { expectedRevision: 0, stage: 'people' });
+      expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'complete' })).toBeNull();
+      store.update(creator, 'creator', { expectedRevision: 1, stage: 'complete' });
       expect(store.get(creator, 'creator')).toMatchObject({ stage: 'complete' });
       store.update(member, 'member', { expectedRevision: 0, stage: 'complete' });
     });
     await runInDurableObject(stub, (_instance, state) => {
       const resumed = new OnboardingJourneyStore(state.storage.sql);
-      expect(resumed.get(creator, 'creator')).toMatchObject({ stage: 'complete', revision: 3, connectorIds: ['you:google-mail-calendar'] });
+      expect(resumed.get(creator, 'creator')).toMatchObject({ stage: 'complete', revision: 2 });
       expect(resumed.get(member, 'member')).toMatchObject({ stage: 'complete', revision: 1 });
     });
   });
@@ -53,8 +53,22 @@ describe('durable onboarding journey', () => {
       state.storage.sql.exec('UPDATE onboarding_journeys SET connector_ids = ? WHERE user_id = ?',
         JSON.stringify(['workspace:retired-provider', 'you:google-mail-calendar']), creator);
       expect(store.get(creator, 'creator').connectorIds).toEqual(['you:google-mail-calendar']);
-      expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'profile' }))
-        .toMatchObject({ stage: 'profile', connectorIds: ['you:google-mail-calendar'] });
+      expect(store.update(creator, 'creator', { expectedRevision: 0, stage: 'people' }))
+        .toMatchObject({ stage: 'people', connectorIds: ['you:google-mail-calendar'] });
     });
+  });
+
+  it('moves a journey stored at the retired connectors step on to personal setup', async () => {
+    const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000003');
+    const stub = env.WORKSPACE_DOS.getByName(workspaceDOName('global', workspaceId));
+    await stub.initializeWorkspace(workspaceId, 'wnam');
+    // Seeding only: a row the retired step left behind, which no RPC can write any more.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("INSERT INTO onboarding_journeys(user_id, path, stage) VALUES (?, 'creator', 'connectors')", creator);
+    });
+    const journey = (update?: { expectedRevision: number; stage: 'people' }) =>
+      stub.onboardingJourney({ workspaceId, placementAffinity: 'wnam', userId: creator, path: 'creator', ...(update ? { update } : {}) });
+    expect(await journey()).toMatchObject({ stage: 'profile', revision: 1 });
+    expect(await journey({ expectedRevision: 1, stage: 'people' })).toMatchObject({ stage: 'people', revision: 2 });
   });
 });

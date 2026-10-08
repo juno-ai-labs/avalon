@@ -651,7 +651,6 @@ describe("Slack agent sessions", () => {
       slack_stream_ts: null,
       last_delivery_key: null,
       reaction_current: null,
-      reaction_cursor: 0,
     });
 
     const byThread = WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionByThread({
@@ -794,60 +793,84 @@ describe("Slack agent sessions", () => {
     });
   });
 
-  it("settles the status reaction only against the emoji the caller removed", async () => {
-    await createSession();
-    const settle = (expected: string | null, reaction: string | null, cursor?: number) =>
-      workspace().settleSlackSessionReaction({
-        workspaceId: WORKSPACE_ID,
-        sessionId: "session-1",
-        expected,
-        reaction,
-        ...(cursor === undefined ? {} : { cursor }),
-        at: at(5),
-      }).then((result) => WorkspaceSlackSessionReactionResultSchema.parse(result));
-
-    // NULL is a state, not a missing value: this transition removed nothing.
-    expect(await settle(null, "eyes", 1)).toEqual({ outcome: "settled" });
-    // The same caller retrying, or a rival that read the same empty slot,
-    // loses — the row no longer carries what it expected to remove.
-    expect(await settle(null, "hourglass")).toEqual({ outcome: "raced" });
-    expect(await settle("eyes", "hourglass")).toEqual({ outcome: "settled" });
-    const session = WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionById({
-      workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-    })).session;
-    // The losing settle wrote nothing, so the cursor is still the winner's.
-    expect(session).toMatchObject({ reaction_current: "hourglass", reaction_cursor: 1 });
-  });
-
-  it("restarts the rotation when a follow-up re-anchors the reaction", async () => {
-    await createSession();
-    await workspace().settleSlackSessionReaction({
-      workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-      expected: null,
-      reaction: "eyes",
-      cursor: 3,
-      at: at(5),
-    });
-
-    await workspace().anchorSlackSessionReaction({
+  /** Points the session's one reaction slot at a message, as admission does. */
+  function anchor(messageTs: string, reaction: string | null, atMinutes: number) {
+    return workspace().anchorSlackSessionReaction({
       workspaceId: WORKSPACE_ID,
       sessionId: "session-1",
       channelId: "C1",
-      messageTs: "9.0",
-      reaction: "eyes",
-      at: at(6),
+      messageTs,
+      reaction,
+      at: at(atMinutes),
     });
+  }
 
-    expect(WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionById({
+  function settle(messageTs: string, expected: string | null, reaction: string | null) {
+    return workspace().settleSlackSessionReaction({
       workspaceId: WORKSPACE_ID,
       sessionId: "session-1",
-    })).session).toMatchObject({
+      channelId: "C1",
+      messageTs,
+      expected,
+      reaction,
+      at: at(5),
+    }).then((result) => WorkspaceSlackSessionReactionResultSchema.parse(result));
+  }
+
+  async function reactionSlot() {
+    return WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionById({
+      workspaceId: WORKSPACE_ID,
+      sessionId: "session-1",
+    })).session;
+  }
+
+  it("settles the status reaction only against the emoji the caller removed", async () => {
+    await createSession();
+    await anchor("1.0", null, 4);
+
+    // NULL is a state, not a missing value: this transition removed nothing.
+    expect(await settle("1.0", null, "eyes")).toEqual({ outcome: "settled" });
+    // The same caller retrying, or a rival that read the same empty slot,
+    // loses — the row no longer carries what it expected to remove.
+    expect(await settle("1.0", null, "hourglass")).toEqual({ outcome: "raced" });
+    expect(await settle("1.0", "eyes", "hourglass")).toEqual({ outcome: "settled" });
+    expect(await reactionSlot()).toMatchObject({ reaction_current: "hourglass" });
+  });
+
+  it("refuses an outcome settled against the anchor a follow-up moved away from", async () => {
+    await createSession();
+    await anchor("1.0", "eyes", 4);
+    // A follow-up is admitted while the first run is live, carrying the same emoji.
+    await anchor("9.0", "eyes", 6);
+
+    // The first run's outcome, settled against its own message. The emoji
+    // matches, so only the anchor can tell the two apart.
+    expect(await settle("1.0", "eyes", "white_check_mark")).toEqual({ outcome: "raced" });
+    expect(await reactionSlot()).toMatchObject({
       reaction_channel_id: "C1",
       reaction_message_ts: "9.0",
       reaction_current: "eyes",
-      reaction_cursor: 0,
+    });
+
+    // The follow-up's own outcome still settles.
+    expect(await settle("9.0", "eyes", "white_check_mark")).toEqual({ outcome: "settled" });
+    expect(await reactionSlot()).toMatchObject({
+      reaction_message_ts: "9.0",
+      reaction_current: "white_check_mark",
+    });
+  });
+
+  it("moves the status reaction when a follow-up re-anchors it", async () => {
+    await createSession();
+    await anchor("1.0", null, 4);
+    await settle("1.0", null, "eyes");
+
+    await anchor("9.0", "eyes", 6);
+
+    expect(await reactionSlot()).toMatchObject({
+      reaction_channel_id: "C1",
+      reaction_message_ts: "9.0",
+      reaction_current: "eyes",
     });
   });
 
