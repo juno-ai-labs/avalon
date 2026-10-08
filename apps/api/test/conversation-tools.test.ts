@@ -195,6 +195,8 @@ describe("the conversations plugin", () => {
     expect(run).not.toContain("conversation_attach");
     const breakout = createConversationsPlugin(breakoutLoop(), new Ports(), expand)!.systemMessage;
     expect(breakout).not.toMatch(/conversation_post|conversation_attach/u);
+    expect(breakout).toContain("This conversation is a Breakout of a Channel. When you need more than the summary you started with, conversation_read the Channel's Main conversation; its resources are in list_resources too.");
+    expect(full).not.toContain("Breakout of a Channel");
   });
 
   it("tells a run that its final message stays in the run, and nobody else", () => {
