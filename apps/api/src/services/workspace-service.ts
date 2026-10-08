@@ -948,6 +948,34 @@ export class WorkspaceService {
     }));
   }
 
+  /**
+   * Addresses with a pending invitation, for every member to pick from. A
+   * guest is refused: a guest is not shown the Organization's roster, and an
+   * invitation names somebody on its way into it. An address that already has
+   * a membership here, a guest who was shared a Channel before accepting, is
+   * left out so it appears once, as that membership.
+   */
+  async listInvitees(): Promise<Array<{ email: string; invitedAt: string }>> {
+    if (this.auth.role === null) {
+      throw new ApiError(403, "workspace_member_required", "Only members of the organization can see who is invited");
+    }
+    const result = await this.env.DB.prepare(
+      `SELECT i.email, i.created_at
+       FROM workspace_invitations i
+       JOIN workspaces w ON w.id = i.workspace_id
+       WHERE i.workspace_id = ? AND i.accepted_at IS NULL AND i.revoked_at IS NULL
+         AND w.abandoned_at IS NULL AND i.expires_at > ?
+         AND NOT EXISTS (
+           SELECT 1 FROM workspace_members m JOIN users u ON u.id = m.user_id
+           WHERE m.workspace_id = i.workspace_id AND u.email = i.email COLLATE NOCASE
+         )
+       ORDER BY i.email COLLATE NOCASE`,
+    )
+      .bind(this.auth.workspaceId, nowIso())
+      .all<{ email: string; created_at: string }>();
+    return (result.results ?? []).map((row) => ({ email: row.email.toLowerCase(), invitedAt: String(row.created_at) }));
+  }
+
   async listInvitations(): Promise<WorkspaceInvitation[]> {
     this.requireAdmin();
     const result = await this.env.DB.prepare(

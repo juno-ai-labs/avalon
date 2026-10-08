@@ -1,4 +1,5 @@
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
+import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -1578,6 +1579,16 @@ export function ConversationSurface({
   });
   const visibleMembers = guest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
   const visibleConnections = guest ? routedDetail?.connections : connections.data;
+  // People invited to the Organization who have not joined: offered where a
+  // member can share this Channel with them, and named in its chips.
+  const invitesInvitees = parentKind === 'workstream' && !guest
+    && Boolean(session?.workspace) && session?.workspace?.accessClass !== 'guest';
+  const invitees = useWorkspaceInvitees(api, invitesInvitees);
+  const visibleInvitees = invitesInvitees ? invitees.data ?? NO_INVITEES : NO_INVITEES;
+  const emailMentions = useMemo(
+    () => emailMentionDirectory(visibleMembers, visibleInvitees),
+    [visibleInvitees, visibleMembers],
+  );
   const availableResources = useInfiniteQuery({
     queryKey: ['resources', debouncedResourceSearch],
     queryFn: ({ pageParam, signal }) => api!.listResources({
@@ -2356,6 +2367,7 @@ export function ConversationSurface({
     mentions: MentionIdentity[],
     confirmedParticipantUserIds: string[] = [],
     deliveryMode?: WorkstreamMessageDeliveryMode,
+    invitedEmails: string[] = [],
   ): Promise<void> => {
     if (!api || !routedDetail) throw new Error('This channel is not ready to receive messages.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
@@ -2376,6 +2388,18 @@ export function ConversationSurface({
     // at the end: they are about to add to it, and the answer is what they are
     // waiting for. Before the follow could be stopped at all this happened by
     // accident, because the next token re-armed it.
+    // Shared before the message is sent, as a member mentioned from outside
+    // is added with it: the address joins when its owner signs in, and a
+    // message that names them should not land before they can be let in.
+    if (invitedEmails.length > 0) {
+      try {
+        await invitations.invite.mutateAsync([...invitedEmails].sort());
+      } catch (error) {
+        setSendError(`${invitedEmails.join(', ')} couldn’t be invited, so the message wasn’t sent. Try again.`);
+        throw error;
+      }
+      void queryClient.invalidateQueries({ queryKey: ['scope-invitations', id, substreamId] });
+    }
     scrollTranscriptToEnd();
     pendingSendCount.current += 1;
     setSending(true);
@@ -2789,6 +2813,7 @@ export function ConversationSurface({
     ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.';
 
   return (
+    <EmailMentionContext.Provider value={emailMentions}>
     <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout" ref={layoutRef}>
       {renderSidebar?.({
@@ -2864,6 +2889,7 @@ export function ConversationSurface({
         replyCount,
         people: parentKind === 'workstream' ? {
           candidates: visibleMembers,
+          invitees: visibleInvitees.map((invitee) => invitee.email),
           onAdd: async (member) => {
             removeParticipant.reset();
             invitations.invite.reset();
@@ -3116,6 +3142,7 @@ export function ConversationSurface({
               ?? (retry.error ? 'The run couldn’t be retried.' : undefined)}
             fileInputRef={fileInputRef}
             members={visibleMembers}
+            invitees={visibleInvitees}
             /* Locked, because a pin is written once when the conversation is
                created and nothing afterwards edits it. What it names is the
                latest run's model first and the pin only as a fallback: an
@@ -3289,5 +3316,6 @@ export function ConversationSurface({
     </div>
     </div>
     </ConnectorConnectionsProvider>
+    </EmailMentionContext.Provider>
   );
 }

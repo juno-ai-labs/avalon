@@ -13,6 +13,8 @@ const api = vi.hoisted(() => ({
   createWorkstream: vi.fn(),
   deleteDraftResource: vi.fn(),
   getWorkspaceMembers: vi.fn(),
+  getWorkspaceInvitees: vi.fn(),
+  createScopeInvitations: vi.fn(),
   getWorkOpportunities: vi.fn(),
   recordWorkOpportunityImpressions: vi.fn(),
   dismissWorkOpportunity: vi.fn(),
@@ -69,7 +71,7 @@ function announceApplicationSettings(settings: typeof applicationSettings.curren
 const currentUser = { id: '00000000-0000-7000-8000-000000000001', name: 'Adam Juhasz', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
 const teammate = { id: '00000000-0000-7000-8000-000000000002', name: 'Samantha Lee', email: 'samantha@example.com', timezone: 'America/Los_Angeles' };
 const workspace: Workspace = {
-  id: 'workspace-1',
+  id: '00000000-0000-7000-8000-0000000000a1',
   name: 'Rally Studio',
   region: 'global',
   timezone: 'America/Los_Angeles',
@@ -225,6 +227,8 @@ describe('New channel home', () => {
       disconnect(): void {}
     });
     api.getWorkspaceMembers.mockResolvedValue([currentUser, teammate]);
+    api.getWorkspaceInvitees.mockResolvedValue([]);
+    api.createScopeInvitations.mockResolvedValue({ status: 'created' });
     const directoryPage = {
       items: [
         workstream('waiting', 'Board decision', 'needs_input'),
@@ -477,6 +481,28 @@ describe('New channel home', () => {
           endOffset: 66,
         }],
       }] }] }] }));
+  });
+
+  it('offers an invitee in Participants, seats only members, and shares the created Channel with the invitee', async () => {
+    api.getWorkspaceInvitees.mockResolvedValue([{ email: 'dana@example.com', invitedAt: '2026-07-31T20:00:00.000Z' }]);
+    const channelId = '00000000-0000-7000-8000-0000000000c1';
+    api.createWorkstream.mockResolvedValue({ ...createdWorkstream, workstream: { ...createdWorkstream.workstream, id: channelId } });
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    await waitFor(() => expect(api.getWorkspaceInvitees).toHaveBeenCalled());
+
+    const search = openPeopleSearch();
+    fireEvent.change(search, { target: { value: 'dana' } });
+    fireEvent.click(await screen.findByRole('option', { name: 'dana@example.com — Invited' }));
+    fireEvent.change(composer, { target: { value: 'kick off' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({ participantIds: [] })));
+    await waitFor(() => expect(api.createScopeInvitations).toHaveBeenCalledWith(expect.objectContaining({
+      parentId: channelId,
+      emails: ['dana@example.com'],
+      targets: [{ kind: 'conversation', workspaceId: workspace.id, parentId: channelId, substreamId: '0' }],
+    })));
   });
 
   it('offers slash commands, which the launcher used to lack', async () => {

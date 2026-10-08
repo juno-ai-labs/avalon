@@ -353,6 +353,17 @@ export const WorkspaceInvitationSchema = z.object({
   acceptedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
 });
+/**
+ * Someone invited to the Organization who has not accepted yet, as every
+ * member may see them: the address and when it was invited, nothing an
+ * administrator manages. They have no account here until they sign in, so the
+ * address is the only way to name them; pickers offer them beside members so
+ * a teammate can be brought into a Channel before they arrive.
+ */
+export const WorkspaceInviteeSchema = z.object({
+  email: z.string().email(),
+  invitedAt: TimestampSchema
+});
 export const WorkspaceInvitationPreviewSchema = z.object({
   workspaceId: IdSchema,
   workspaceName: z.string().min(1).max(120),
@@ -4012,6 +4023,7 @@ export type User = z.infer<typeof UserSchema>;
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 export type WorkspaceMember = z.infer<typeof WorkspaceMemberSchema>;
 export type WorkspaceInvitation = z.infer<typeof WorkspaceInvitationSchema>;
+export type WorkspaceInvitee = z.infer<typeof WorkspaceInviteeSchema>;
 export type WorkspaceInvitationPreview = z.infer<typeof WorkspaceInvitationPreviewSchema>;
 export type PendingWorkspaceInvitation = z.infer<typeof PendingWorkspaceInvitationSchema>;
 export type WorkspaceOnboardingState = z.infer<typeof WorkspaceOnboardingStateSchema>;
