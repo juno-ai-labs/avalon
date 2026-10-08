@@ -360,6 +360,8 @@ own detail, which is newer than its row. A row built from the
 shared-parent navigation alone carries only `needsAttention`, so it shows
 "New" rather than the badge until its live directory entry arrives.
 
+Shipped in [#1171](https://github.com/juno-ai-labs/avalon/pull/1171).
+
 ### 2026-10-07 — Switching Spaces keeps the phone sheet open
 
 **What changed:** At phone width, a pill that leaves the open Channel for its
