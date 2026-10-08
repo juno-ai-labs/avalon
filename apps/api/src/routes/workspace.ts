@@ -30,6 +30,7 @@ import {
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { requireCurrentClientContract } from "../lib/client-contract";
+import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth } from "../middleware/auth";
 import { SpaceService } from "../services/space-service";
 import { WorkspaceService } from "../services/workspace-service";
@@ -40,7 +41,7 @@ import { createTerminalProviderRpcClient } from "../services/terminal/provider-r
 import { TerminalSettingsService } from "../services/terminal/settings";
 import { issueWorkspaceSocketTicket } from "../services/socket-service";
 import { OrganizationUsageSchema, WorkspacePlanChangeSchema } from "@rally/contracts/usage";
-import { readOrganizationUsage } from "../services/usage-metering";
+import { publishOrganizationUsage, readOrganizationUsage } from "../services/usage-metering";
 import { ApiError } from "../lib/api-error";
 
 const invitationParam = z.object({ id: IdSchema });
@@ -108,11 +109,14 @@ workspaceRoutes.get("/usage", async (c) => {
   return c.json(OrganizationUsageSchema.parse(usage));
 });
 // An administrator choosing the Organization's plan. Answers with the meter as
-// it reads under the new plan, so the picker repaints without a second read.
-workspaceRoutes.put("/plan", zValidator("json", WorkspacePlanChangeSchema), async (c) =>
-  c.json(OrganizationUsageSchema.parse(
-    await new WorkspaceService(c.env, getAuth(c)).setPlan(c.req.valid("json").plan))),
-);
+// it reads under the new plan, so the picker repaints without a second read,
+// and pushes the same meter to every other member after the response.
+workspaceRoutes.put("/plan", zValidator("json", WorkspacePlanChangeSchema), async (c) => {
+  const auth = getAuth(c);
+  const usage = await new WorkspaceService(c.env, auth).setPlan(c.req.valid("json").plan);
+  requestDeferral(c)(publishOrganizationUsage(c.env, auth.workspaceId));
+  return c.json(OrganizationUsageSchema.parse(usage));
+});
 workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), async (c) =>
   c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).updateWorkspace(c.req.valid("json")))),
 );

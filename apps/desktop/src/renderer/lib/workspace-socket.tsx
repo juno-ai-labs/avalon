@@ -29,6 +29,7 @@ import {
   safeParseSocketEvent,
 } from "@rally/contracts";
 import type { TelemetryEventProperties } from '@rally/contracts/telemetry';
+import { WorkspaceUsageEventSchema } from '@rally/contracts/usage';
 import {
   WORKSPACE_SOCKET_HEARTBEAT_MS,
   WORKSPACE_SOCKET_OPEN_TIMEOUT_MS,
@@ -52,6 +53,7 @@ import { applyChannelViewerState } from './channel-viewer-state';
 import { applyChannelRails, hasRailWaterline, holdsChannelRail, nextChannelRailRequest, settleUnanswered } from './channel-rails';
 import { retainConversationParents } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
+import { applyPushedOrganizationUsage } from './organization-usage';
 import { desktopBridge } from './platform';
 import {
   SPACES_QUERY_KEY,
@@ -1010,6 +1012,11 @@ export function WorkspaceSocketProvider({
             const directoryNeedsReconciling = sync.data.sidebar
               ? applyConnectedSidebar(sync.data.sidebar)
               : false;
+            // A plan change pushed while this socket was away is not
+            // replayed, so an open meter reads again on every answer to
+            // `subscribe`. A closed one is only marked stale, and reads when
+            // it opens anyway.
+            if (sync.data.sidebar) void queryClient.invalidateQueries({ queryKey: ['workspace-usage'] });
             if (sync.data.sidebar && !firstSidebarApplied) {
               firstSidebarApplied = true;
               reportHandshake(diagnosticAttemptId, 'sync_applied');
@@ -1209,6 +1216,12 @@ export function WorkspaceSocketProvider({
             queryClient.setQueryData(accessRequestsQueryKey(workspaceId), accessRequests.data.requests);
             return;
           }
+          const usage = safeParseSocketEvent(WorkspaceUsageEventSchema, decoded);
+          if (usage.success) {
+            // A plan change moved the Organization's quota and overage.
+            applyPushedOrganizationUsage(queryClient, localCacheScope, usage.data.usage);
+            return;
+          }
           const reachChanged = safeParseSocketEvent(WorkspaceReachChangedEventSchema, decoded);
           if (reachChanged.success) {
             // This person joined or left a Channel or Breakout. A member's
@@ -1280,6 +1293,7 @@ export function WorkspaceSocketProvider({
               ['space_conversations_changed', 'space conversations nudge', spaceConversations],
               ['workspace_reach_changed', 'reach change', reachChanged],
               ['workspace_access_requests', 'access requests', accessRequests],
+              ['workspace_usage', 'usage', usage],
             ],
           );
         });

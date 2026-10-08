@@ -134,6 +134,7 @@ import {
   type UpdateOnboardingJourney,
 } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { WorkspaceUsageEventSchema, type OrganizationUsage } from "@rally/contracts/usage";
 import { WorkspaceAccessRequestsEventSchema } from "@rally/contracts";
 import {
   AccessRequestRefSchema, AccessRequestSubjectRequestSchema, AccessRequestSubjectSchema, CONVERSATION_ACCESS_REQUESTS_MIGRATION,
@@ -7751,6 +7752,43 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         ? new Set([connection.owner_user_id]) : null;
     }
     return audienceUserIds === undefined ? null : new Set(audienceUserIds);
+  }
+
+  /**
+   * Send the Organization's meter, as it reads after a plan change, to every
+   * subscribed socket. The meter is the same for every member, so the caller
+   * reads it once and this object only fans it out. Not on the waterline: a
+   * socket that was away rereads the meter when it subscribes again.
+   */
+  async publishUsage(
+    usage: OrganizationUsage,
+    workspaceId: string,
+    placementAffinity: WorkspacePlacementAffinity,
+  ): Promise<number> {
+    await this.initialized;
+    this.ensureIdentity(workspaceId, placementAffinity);
+    // Parsed here, not thrown raw: a `ZodError` reaches the RPC caller as a
+    // bare `Error` with nothing in it (`docs/naming-a-schema-failure.md`).
+    const event = WorkspaceUsageEventSchema.safeParse({
+      type: "workspace_usage",
+      occurredAt: new Date().toISOString(),
+      usage,
+    });
+    if (!event.success) {
+      throw new Error(zodDiagnosticCode(event.error, "workspace_usage") ?? "workspace_usage_invalid");
+    }
+    const payload = JSON.stringify(event.data);
+    let sent = 0;
+    for (const socket of this.state.getWebSockets()) {
+      if (!readAttachment(socket)?.subscribed) continue;
+      try {
+        socket.send(payload);
+        sent += 1;
+      } catch {
+        // Hibernation owns cleanup; a reconnect rereads the meter.
+      }
+    }
+    return sent;
   }
 
   /**
