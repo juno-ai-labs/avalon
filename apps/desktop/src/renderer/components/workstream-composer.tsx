@@ -49,7 +49,7 @@ function invitedArgument(emails: string[]): [] | [string[]] {
 
 /** The right-hand word on a mention row: what kind of someone this is. */
 function mentionKindLabel(candidate: MentionCandidate): string {
-  if (candidate.kind === 'rally') return 'Bot';
+  if (candidate.kind === 'rally') return 'AI';
   if (candidate.kind === 'invitee') return 'Invited';
   return candidate.member?.accessClass === 'guest' ? 'Guest' : 'Member';
 }
