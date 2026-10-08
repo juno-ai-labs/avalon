@@ -142,7 +142,7 @@ describe('transcript messages', () => {
     const messages = orderedTranscriptMessages(snapshot, 'workstream-one');
     const grouped = groupPluginToolMessages(messages).filter((message) => message.pluginActivity);
     expect(grouped).toHaveLength(3);
-    expect(grouped.map((message) => message.pluginActivity?.icon)).toEqual(['plug', 'plug', 'slack']);
+    expect(grouped.map((message) => message.pluginActivity?.icon)).toEqual(['model-context-protocol', 'model-context-protocol', 'slack']);
     const live = createToolEventMessage({ ...base, id: 'live', toolEvent: {
       id: 'live', name: 'search', status: 'started', pluginId: 'plugin_custom_mcp',
       plugin: { pluginId: 'plugin_custom_mcp', canonicalId: 'connection:custom', connectorType: 'custom_mcp', displayName: 'Slack', icon: 'plug' },

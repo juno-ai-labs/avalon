@@ -246,7 +246,8 @@ would silently drop the row.
 
 Custom MCP activity carries its host-authored `connectorType` independently
 of the configured label. It groups by canonical connection id and always draws
-a plug, even when the configured name matches a shipped provider. Live tool
+the Model Context Protocol mark, even when the configured name matches a shipped
+provider. Live tool
 metadata carries the same canonical id and type; older transcripts omit the
 new fields and retain their previous presentation.
 
@@ -778,6 +779,24 @@ stack cannot run a real turn, so the way to get a multi-plugin transcript on
 screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
+
+### 2026-10-08 — Custom MCP servers wear the Model Context Protocol mark
+
+**What changed:** A custom MCP server's activity row draws
+`@thesvg/react/model-context-protocol` instead of the generic plug, and Settings
+(the provider card, the sidebar entry, the installed row) and mention chips draw
+it in place of Lucide's `ServerCog` or nothing. `connectorBrandMark` returns it
+for any `custom_mcp` whose name spells out no company in the table.
+
+**Why:** The plug read as "an unknown connector", which a configured MCP server
+is not: it is a known kind of connection whose company Rally cannot vouch for.
+The protocol's mark says that on every surface without claiming a brand.
+
+**Consequences:** The transcript still never infers a company from a custom
+server's name, per the 2026-09-11 entry: a server named Slack draws the protocol
+mark there, while Settings keeps matching whole words in the name it shows.
+The generic plug now only covers a shipped connector the mapping has not
+learned yet.
 
 ### 2026-09-25 — The agent message that opens a conversation is shown
 
