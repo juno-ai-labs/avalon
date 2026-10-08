@@ -792,11 +792,19 @@ for any `custom_mcp` whose name spells out no company in the table.
 is not: it is a known kind of connection whose company Rally cannot vouch for.
 The protocol's mark says that on every surface without claiming a brand.
 
+**Considered and rejected:** Keeping the plug in the feed and `ServerCog` in
+Settings left one kind of connection with two unrelated icons, neither of which
+said what it was. Drawing the protocol mark everywhere, including over a
+company mark the server's name spells out in Settings, was not taken: that name
+matching was a deliberate earlier choice and the request did not ask to undo it.
+
 **Consequences:** The transcript still never infers a company from a custom
 server's name, per the 2026-09-11 entry: a server named Slack draws the protocol
 mark there, while Settings keeps matching whole words in the name it shows.
 The generic plug now only covers a shipped connector the mapping has not
 learned yet.
+
+Shipped in #1167.
 
 ### 2026-09-25 — The agent message that opens a conversation is shown
 
