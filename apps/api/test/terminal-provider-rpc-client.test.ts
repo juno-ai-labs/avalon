@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTerminalProviderRpcClient } from "../src/services/terminal/provider-rpc-client";
 import { withTerminalProviderRpcAbort } from "../src/services/terminal/provider-rpc-cancellation";
-import { isTerminalProviderNotFound } from "../src/services/terminal/provider-contract";
+import { isTerminalProviderNotFound, TerminalProviderError } from "../src/services/terminal/provider-contract";
 import {
   requireTerminalProviderRpcCallback,
   terminalProviderRpcCall,
@@ -219,6 +219,25 @@ describe("Terminal provider RPC client", () => {
 
     const error = await provider.readFile("missing", "/workspace/file").catch((caught) => caught);
     expect(isTerminalProviderNotFound(error)).toBe(true);
+  });
+
+  it("carries a provider failure's class, status and code across the hop, not its message", async () => {
+    class DaytonaConflictError extends Error {
+      constructor(message: string, readonly statusCode: number, readonly code: string) {
+        super(message);
+        this.name = "DaytonaConflictError";
+      }
+    }
+    const transported = structuredClone(await terminalProviderRpcCall<void>(
+      async () => { throw new DaytonaConflictError("Sandbox sbx-7f3a is archived", 409, "SANDBOX_STATE_INVALID"); },
+    ));
+    const provider = createTerminalProviderRpcClient(rpcBinding({
+      stopSandbox: vi.fn<TerminalProviderRpcSession["stopSandbox"]>(async () => transported),
+    }), configuration);
+
+    const error = await provider.stopSandbox("sbx-7f3a").catch((caught) => caught);
+    expect(error).toBeInstanceOf(TerminalProviderError);
+    expect(error.code).toBe("DaytonaConflictError:409:SANDBOX_STATE_INVALID");
   });
 
   it("preserves TerminalToolError identity from submission callbacks", async () => {

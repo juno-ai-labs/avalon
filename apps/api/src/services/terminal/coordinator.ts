@@ -1259,6 +1259,17 @@ export class TerminalSandboxCoordinator {
       const running = observation ? observation.state === "running" : row.lifecycleState === "running";
       if (running) await this.provider.stopSandbox(row.sandboxId);
       await this.provider.updateNetworkPolicy(row.sandboxId, domains.length ? domains : null);
+      // Read back before stamping the revision: a policy change that failed for
+      // this sandbox leaves it to this path, and a write Daytona accepted but did
+      // not apply would otherwise resume it on the old egress, no longer stale.
+      const applied = (await this.provider.getSandbox(row.sandboxId)).domainAllowList.slice().sort();
+      if (applied.join("\n") !== [...domains].sort().join("\n")) {
+        throw new TerminalToolError(
+          "network_policy_unverified",
+          "Daytona did not confirm the organization's network policy on this sandbox, so Rally left it stopped.",
+          { reason: "Retry the same tool; Rally applies the policy again before it starts the sandbox." },
+        );
+      }
     }
     await this.terminal(context).setAppliedNetworkRevision({ networkRevision: revision, now });
     return {

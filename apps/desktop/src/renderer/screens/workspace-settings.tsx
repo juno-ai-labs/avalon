@@ -34,7 +34,6 @@ import {
   UserRound,
   Users,
   Webhook,
-  Wifi,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -75,7 +74,6 @@ import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useEscapeClosesWindow } from '../lib/window-escape';
 import type {
   GitHubRepositoryAccessSettings,
-  TerminalNetworkPolicyPreview,
   TerminalWorkspaceSettings,
   Workspace,
   WorkspaceInvitation,
@@ -620,7 +618,7 @@ export function WorkspaceSettingsScreen({
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
   const [terminalMode, setTerminalMode] = useState<'trusted_only' | 'full_internet'>('trusted_only');
   const [terminalDomains, setTerminalDomains] = useState('');
-  const [terminalPreview, setTerminalPreview] = useState<TerminalNetworkPolicyPreview | null>(null);
+  const [terminalConfirmOpen, setTerminalConfirmOpen] = useState(false);
   const terminalPolicyDirty = useRef(false);
   const [applicationSettings, setApplicationSettings] = useState<DesktopApplicationSettings | null>(null);
   // Full settings arrive through two independent Electron channels: live
@@ -785,10 +783,10 @@ export function WorkspaceSettingsScreen({
     staleTime: 10_000,
   });
   useEffect(() => {
-    if (!terminalSettings.data || terminalPreview || terminalPolicyDirty.current) return;
+    if (!terminalSettings.data || terminalPolicyDirty.current) return;
     setTerminalMode(terminalSettings.data.mode);
     setTerminalDomains(terminalSettings.data.customDomains.join('\n'));
-  }, [terminalPreview, terminalSettings.data]);
+  }, [terminalSettings.data]);
   const terminalCustomDomains = () => [...new Set(
     terminalDomains.split(/[\s,]+/u).map((domain) => domain.trim().toLowerCase().replace(/\.$/u, '')).filter(Boolean),
   )].sort();
@@ -796,52 +794,31 @@ export function WorkspaceSettingsScreen({
     terminalMode !== terminalSettings.data.mode
     || terminalCustomDomains().join('\n') !== [...terminalSettings.data.customDomains].sort().join('\n')
   ));
-  const terminalDraftRemainingSlots = terminalPreview?.remainingCustomSlots
-    ?? (!terminalPolicyChanged ? terminalSettings.data?.remainingCustomSlots : null);
-  const [terminalPolicyFailure, setTerminalPolicyFailure] = useState<Array<{
-    workstreamId: string;
-    title: string;
-    outcome: 'stopped' | 'deleted' | 'quarantined';
-  }>>([]);
-  const previewTerminalPolicy = useMutation({
-    mutationFn: () => api!.previewTerminalNetworkPolicy({
-      expectedRevision: terminalSettings.data!.revision,
-      mode: terminalMode,
-      customDomains: terminalCustomDomains(),
-    }),
-    onSuccess: (preview) => {
-      setTerminalPolicyFailure([]);
-      setTerminalPreview(preview);
+  const terminalDraftRemainingSlots = !terminalPolicyChanged ? terminalSettings.data?.remainingCustomSlots : null;
+  // The server still takes a preview then an apply, fenced by the preview's
+  // mutation ID. The admin confirms once in the modal, so both run back to back.
+  const saveTerminalPolicy = useMutation({
+    mutationFn: async () => {
+      const preview = await api!.previewTerminalNetworkPolicy({
+        expectedRevision: terminalSettings.data!.revision,
+        mode: terminalMode,
+        customDomains: terminalCustomDomains(),
+      });
+      return api!.applyTerminalNetworkPolicy({
+        mutationId: preview.mutationId,
+        expectedRevision: preview.expectedRevision,
+        confirmed: true,
+      });
     },
-    onError: async () => {
-      setTerminalPreview(null);
-      await queryClient.invalidateQueries({ queryKey: ['terminal-workspace-settings'] });
-    },
-  });
-  const applyTerminalPolicy = useMutation({
-    mutationFn: () => api!.applyTerminalNetworkPolicy({
-      mutationId: terminalPreview!.mutationId,
-      expectedRevision: terminalPreview!.expectedRevision,
-      confirmed: true,
-    }),
     onSuccess: (settings: TerminalWorkspaceSettings) => {
       queryClient.setQueryData(['terminal-workspace-settings'], settings);
       terminalPolicyDirty.current = false;
       setTerminalMode(settings.mode);
       setTerminalDomains(settings.customDomains.join('\n'));
-      setTerminalPolicyFailure([]);
-      setTerminalPreview(null);
+      setTerminalConfirmOpen(false);
     },
-    onError: async (error) => {
-      const outcomes = error instanceof ApiError
-        && typeof error.details === 'object'
-        && error.details !== null
-        && 'sandboxOutcomes' in error.details
-        && Array.isArray((error.details as { sandboxOutcomes?: unknown }).sandboxOutcomes)
-        ? (error.details as { sandboxOutcomes: Array<{ workstreamId: string; title: string; outcome: 'stopped' | 'deleted' | 'quarantined' }> }).sandboxOutcomes
-        : [];
-      setTerminalPolicyFailure(outcomes);
-      setTerminalPreview(null);
+    onError: async () => {
+      setTerminalConfirmOpen(false);
       await queryClient.invalidateQueries({ queryKey: ['terminal-workspace-settings'] });
     },
   });
@@ -1811,14 +1788,14 @@ export function WorkspaceSettingsScreen({
                         <span><strong>Terminal unavailable</strong><small>{terminalSettings.data.availability === 'emergency_disabled' ? 'Temporarily disabled by the regional safety switch.' : 'Cloud computer not enabled.'}</small></span>
                       </div>
                     )}
-                    <fieldset className="terminal-network-modes" disabled={!isAdmin || terminalSettings.data.availability !== 'supported' || previewTerminalPolicy.isPending || applyTerminalPolicy.isPending}>
+                    <fieldset className="terminal-network-modes" disabled={!isAdmin || terminalSettings.data.availability !== 'supported' || saveTerminalPolicy.isPending}>
                       <legend>Outbound access</legend>
                       <label>
-                        <input checked={terminalMode === 'trusted_only'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('trusted_only'); setTerminalPreview(null); }} type="radio" />
+                        <input checked={terminalMode === 'trusted_only'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('trusted_only'); }} type="radio" />
                         <span><strong><SettingLabel setting={settings.trustedNetwork} /></strong><small>{settings.trustedNetwork.description}</small></span>
                       </label>
                       <label>
-                        <input checked={terminalMode === 'full_internet'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('full_internet'); setTerminalPreview(null); }} type="radio" />
+                        <input checked={terminalMode === 'full_internet'} name="terminal-network-mode" onChange={() => { terminalPolicyDirty.current = true; setTerminalMode('full_internet'); }} type="radio" />
                         <span><strong><SettingLabel setting={settings.fullNetwork} /></strong><small>{settings.fullNetwork.description}</small></span>
                       </label>
                     </fieldset>
@@ -1836,13 +1813,13 @@ export function WorkspaceSettingsScreen({
                             aria-label="Additional Terminal domains"
                             data-saved-value={terminalSettings.data.customDomains.join('\n')}
                             disabled={!isAdmin || terminalSettings.data.availability !== 'supported'}
-                            onChange={(event) => { terminalPolicyDirty.current = true; setTerminalDomains(event.target.value); setTerminalPreview(null); }}
+                            onChange={(event) => { terminalPolicyDirty.current = true; setTerminalDomains(event.target.value); }}
                             placeholder="packages.example.com&#10;*.downloads.example.com"
                             rows={3}
                             value={terminalDomains}
                           />
                           <small>{terminalDraftRemainingSlots === null
-                            ? 'Review the change to verify remaining organization-domain capacity.'
+                            ? 'Save the change to verify remaining organization-domain capacity.'
                             : `${terminalDraftRemainingSlots ?? 0} organization domain slots remain.`} Enter domains only—no schemes, ports, paths, IPs, or CIDR blocks.</small>
                         </label>
                       </div>
@@ -1850,62 +1827,31 @@ export function WorkspaceSettingsScreen({
                     <div className="terminal-network-actions">
                       <span><Badge>{terminalSettings.data.verificationState}</Badge> Revision {terminalSettings.data.revision}</span>
                       <Button
-                        disabled={!isAdmin || !terminalPolicyChanged || terminalSettings.data.availability !== 'supported' || previewTerminalPolicy.isPending || applyTerminalPolicy.isPending}
-                        onClick={() => previewTerminalPolicy.mutate()}
+                        disabled={!isAdmin || !terminalPolicyChanged || terminalSettings.data.availability !== 'supported' || saveTerminalPolicy.isPending}
+                        onClick={() => { saveTerminalPolicy.reset(); setTerminalConfirmOpen(true); }}
                       >
-                        {previewTerminalPolicy.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
-                        Review network change
+                        Save network change
                       </Button>
                     </div>
-                    {previewTerminalPolicy.error && <InlineError>{previewTerminalPolicy.error.message}</InlineError>}
-                    {applyTerminalPolicy.error && <InlineError>{applyTerminalPolicy.error.message}</InlineError>}
-                    {terminalPolicyFailure.length > 0 && (
-                      <div className="terminal-network-failure-outcomes" role="status">
-                        <strong>Sandbox outcomes</strong>
-                        <ul>{terminalPolicyFailure.map((outcome) => (
-                          <li key={outcome.workstreamId}>{outcome.title}: {outcome.outcome}</li>
-                        ))}</ul>
-                      </div>
-                    )}
-                    {terminalPreview && (
-                      <div className="terminal-network-confirmation" role="alert">
-                        <Wifi aria-hidden="true" size={18} />
-                        <span>
-                          <strong>Confirm {terminalPreview.proposedMode === 'full_internet' ? 'Full internet' : 'Trusted only'}</strong>
-                          <small>{terminalPreview.warning} {terminalPreview.affectedWorkstreamIds.length} active sandbox{terminalPreview.affectedWorkstreamIds.length === 1 ? '' : 'es'} will be stopped.</small>
-                          <details>
-                            <summary>Review exact before and after targets</summary>
-                            <strong>Before</strong>
-                            <ul>{terminalSettings.data.customDomains.length > 0
-                              ? terminalSettings.data.customDomains.map((domain) => <li key={`before:${domain}`}><code>{domain}</code></li>)
-                              : <li>None</li>}</ul>
-                            <strong>After</strong>
-                            <ul>{terminalPreview.customDomains.length > 0
-                              ? terminalPreview.customDomains.map((domain) => <li key={`after:${domain}`}><code>{domain}</code></li>)
-                              : <li>None</li>}</ul>
-                            {terminalPreview.affectedWorkstreams.length > 0 && (
-                              <><strong>Channels stopped</strong><ul>{terminalPreview.affectedWorkstreams.map((stream) => <li key={stream.id}>{stream.title}</li>)}</ul></>
-                            )}
-                          </details>
-                        </span>
-                        <div className="terminal-network-confirmation-actions">
-                          <Button onClick={() => {
-                            const contents = terminalPreview.customDomains.join('\n');
-                            const url = URL.createObjectURL(new Blob([`${contents}\n`], { type: 'text/plain' }));
-                            const anchor = document.createElement('a');
-                            anchor.href = url;
-                            anchor.download = `terminal-workspace-domains-revision-${terminalPreview.expectedRevision + 1}.txt`;
-                            anchor.click();
-                            URL.revokeObjectURL(url);
-                          }}>Download organization domains</Button>
-                          <Button disabled={applyTerminalPolicy.isPending} onClick={() => applyTerminalPolicy.mutate()}>
-                            {applyTerminalPolicy.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
-                            Confirm network change
+                    {saveTerminalPolicy.error && <InlineError>{saveTerminalPolicy.error.message}</InlineError>}
+                    <Modal
+                      footer={(
+                        <>
+                          <Button disabled={saveTerminalPolicy.isPending} onClick={() => setTerminalConfirmOpen(false)}>Cancel</Button>
+                          <Button className="button-primary" disabled={saveTerminalPolicy.isPending} onClick={() => saveTerminalPolicy.mutate()}>
+                            {saveTerminalPolicy.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+                            Continue
                           </Button>
-                          <Button disabled={applyTerminalPolicy.isPending} onClick={() => setTerminalPreview(null)}>Cancel</Button>
-                        </div>
-                      </div>
-                    )}
+                        </>
+                      )}
+                      onOpenChange={(open) => { if (!open && !saveTerminalPolicy.isPending) setTerminalConfirmOpen(false); }}
+                      open={terminalConfirmOpen}
+                      title="Change network access?"
+                    >
+                      <p className="modal-copy">
+                        Cloud computers running now may be interrupted.
+                      </p>
+                    </Modal>
                   </div>
                 )}
               </section>
