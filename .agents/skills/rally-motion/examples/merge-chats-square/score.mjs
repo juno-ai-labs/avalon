@@ -10,10 +10,10 @@ m.kick(0, .5); m.pad(0, [47, 54, 59, 62], 2.9, .03, .05, .4);
 m.pad(2.9, [46, 53, 58, 61], 2.4, .03, .3, .2); // slips down a semitone as it strains
 const ai = t => m.blip(t, nf(64), .13, 0, 32); // the generic assistant: dull, no bell
 const human = (t, pan) => { m.blip(t, nf(81), .18, pan); m.blip(t + .1, nf(76), .08, pan, 30); };
-human(1.95, .4); ai(2.35); human(2.95, -.4); ai(3.25); human(3.9, .4); ai(4.22);
+human(1.95, .4); ai(2.35); human(2.95, -.4); ai(3.2); human(3.95, .4); ai(4.27);
 human(4.45, -.4); ai(4.72); human(4.98, .4);
-// each paste: lift, fly across, land with a knock; the trips speed up
-[[1.35, .6, -1], [3.45, .45, -1], [4.05, .4, 1], [4.52, .32, -1], [4.84, .24, 1], [5.02, .2, -1]].forEach(([t, d, dir], i) => {
+// each paste: an AI answer selected, carried across, landing with a knock; the trips speed up
+[[1.35, .6, -1], [3.5, .45, -1], [4.05, .4, 1], [4.52, .32, -1], [4.84, .24, 1], [5.02, .2, -1]].forEach(([t, d, dir], i) => {
   m.tick(t, .12, dir * .6);
   m.whoosh(t + d * .2, d * .8, .22 + i * .03, .03, .45, dir * .7, -dir * .7);
   m.kick(t + d, .35 + i * .06); m.blip(t + d, nf(50), .12, -dir * .6, 18);

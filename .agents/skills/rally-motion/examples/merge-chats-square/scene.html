@@ -21,27 +21,37 @@ P.ai = { name: 'AI', color: '#5a5a5a', ink: '#fcfcfc' };
 const T = { strain0: 2.9, strain1: 5.2, meet: 5.22, meetEnd: 5.5, open: 5.48, openEnd: 5.75, end: 11.4 };
 const WB = { x: 44, y: 318, w: 482, h: 722 }, WA = { x: 554, y: 318, w: 482, h: 722 };
 const APP = { x: 60, y: 318, w: 960, h: 722 };
-const AI = (t, s) => ({ t, who: 'rally', by: 'AI', s });
+const AI = (t, s) => ({ t, who: 'rally', by: 'AI', s, highlight: t => selected(msg => msg === ai[s], t) });
+const ai = {}; // each AI answer by its text, so a drag can name what it copies
+const say = (t, s) => (ai[s] = AI(t, s));
+const pasted = (t, who, s) => ({ t, who, s: '“' + s + '”' });
+const V1 = 'Plan v1: launch Tuesday, five steps.', V2 = 'Plan v2: launch Monday.', PRICE = '$49 a month. Launch Tuesday.';
 const MSGS_B = [
-  { t: -1, who: 'bob', s: 'Draft our launch plan' }, AI(-1, 'Plan v1: launch Tuesday, five steps.'),
-  { t: 2.95, who: 'bob', s: 'Move launch to Monday.' }, AI(3.25, 'Plan v2: launch Monday.'),
-  { t: 4.45, who: 'bob', s: 'Pasted: Alice’s pricing' }, AI(4.72, 'Which pricing? I see two.'),
+  { t: -1, who: 'bob', s: 'Draft our launch plan' }, say(-1, V1),
+  { t: 2.95, who: 'bob', s: 'Move launch to Monday.' }, say(3.2, V2),
+  pasted(4.45, 'bob', PRICE), say(4.72, 'Tuesday? Your plan says Monday.'),
 ];
 const MSGS_A = [
-  { t: -1, who: 'alice', s: 'Can you price the launch?' }, AI(-1, 'Which launch? I don’t have the plan.'),
-  { t: 1.95, who: 'alice', s: 'Pasted: Bob’s plan v1' }, AI(2.35, '$49 a month. Launch Tuesday.'),
-  { t: 3.9, who: 'alice', s: 'Pasted: Bob’s plan v2' }, AI(4.22, 'Tuesday or Monday?'),
+  { t: -1, who: 'alice', s: 'Can you price the launch?' }, say(-1, 'Which launch? I don’t have the plan.'),
+  pasted(1.95, 'alice', V1), say(2.35, PRICE),
+  pasted(3.95, 'alice', V2), say(4.27, 'Tuesday or Monday?'),
   { t: 4.98, who: 'alice', s: 'Wait, which version is this?' },
 ];
-// copy-paste trips across the gap, each one faster than the last
+// copy-paste trips: select an AI answer, carry it across, paste it; each one faster
 const DRAGS = [
-  { t: 1.35, dur: .6, from: 'B', label: 'Launch plan v1' },
-  { t: 3.45, dur: .45, from: 'B', label: 'Launch plan v2' },
-  { t: 4.05, dur: .4, from: 'A', label: 'Pricing' },
-  { t: 4.52, dur: .32, from: 'B', label: 'Plan v2 (final)' },
-  { t: 4.84, dur: .24, from: 'A', label: 'Pricing v2' },
-  { t: 5.02, dur: .2, from: 'B', label: 'plan_FINAL_final' },
-];
+  { t: 1.35, dur: .6, from: 'B', copy: V1, pre: .5 },
+  { t: 3.5, dur: .45, from: 'B', copy: V2 },
+  { t: 4.05, dur: .4, from: 'A', copy: PRICE },
+  { t: 4.52, dur: .32, from: 'B', copy: V2 },
+  { t: 4.84, dur: .24, from: 'A', copy: PRICE },
+  { t: 5.02, dur: .2, from: 'B', copy: V1 },
+].map(d => ({ ...d, pre: d.pre || Math.min(.35, d.dur * .8) }));
+// how selected an AI answer is: picked up just before the drag, let go as it lands
+function selected(match, t) {
+  let h = 0;
+  DRAGS.forEach(d => { if (match(ai[d.copy])) h = Math.max(h, eo3(prog(t, d.t - d.pre * .6, d.t - d.pre * .2)) * (1 - prog(t, d.t + d.dur, d.t + d.dur + .3))); });
+  return h;
+}
 const MSGS = [
   { t: 5.85, who: 'bob', s: 'Draft our launch plan', mention: '@Rally' },
   { t: 6.3, who: 'rally', s: 'Done: launch Monday, five steps.', stream: .45 },
@@ -66,7 +76,8 @@ function knock(t, side) {
   DRAGS.forEach(d => { if ((d.from === 'B' ? 'A' : 'B') !== side) return; const x = t - d.t - d.dur; if (x > 0) k += Math.exp(-x * 14) * Math.sin(x * 70) * 9; });
   return k;
 }
-function src(d) { const w = d.from === 'B' ? WB : WA; return [w.x + 150, w.y + 470]; }
+const OFF = { A: 0, B: 0 };
+function src(d) { const w = d.from === 'B' ? WB : WA, m = ai[d.copy]; return [w.x + 170 + OFF[d.from], clamp(m._top ?? w.y + 470, w.y + 140, w.y + w.h - 160) + 66]; }
 function dst(d) { const w = d.from === 'B' ? WA : WB; return [w.x + 200, w.y + w.h - 60]; }
 function along(d, p) { p = prog(p, .2, 1); const a = src(d), b = dst(d), e = eio3(p); return [lerp(a[0], b[0], e), lerp(a[1], b[1], e) - Math.sin(Math.PI * p) * 170]; }
 
@@ -75,7 +86,8 @@ function aiWindow(ctx, t, w, side, who, msgs) {
   const dir = side === 'B' ? -1 : 1, cx = w.x + w.w / 2, by = w.y + w.h;
   const jit = s * s * 4;
   ctx.save();
-  ctx.translate((W / 2 - cx) * m + knock(t, side) * dir + Math.sin(t * 53 + dir) * jit, Math.cos(t * 47 + dir) * jit);
+  OFF[side] = (W / 2 - cx) * m + knock(t, side) * dir + Math.sin(t * 53 + dir) * jit;
+  ctx.translate(OFF[side], Math.cos(t * 47 + dir) * jit);
   ctx.translate(cx, by); ctx.rotate(dir * s * .045 * (1 - m)); ctx.translate(-cx, -by);
   ctx.globalAlpha = 1 - prog(t, T.open, T.open + .14);
   const keep = CHAT.MAXW; CHAT.MAXW = 400;
@@ -85,16 +97,18 @@ function aiWindow(ctx, t, w, side, who, msgs) {
   ctx.restore();
 }
 
+// a clip of the AI's answer, carried by the person's cursor
 function pasteCard(ctx, t, d) {
   const p = prog(t, d.t, d.t + d.dur); if (t < d.t || p >= 1) return;
   const [x, y] = along(d, p), sc = (.6 + .4 * eo3(prog(t, d.t, d.t + .1))) * (1 - .5 * eiX(prog(p, .75, 1)));
-  const f = F.ui(600, 30), w = measure(ctx, d.label, f) + 90;
-  ctx.save(); ctx.translate(x, y); ctx.scale(sc, sc); ctx.rotate((d.from === 'B' ? 1 : -1) * .08 * Math.sin(Math.PI * p));
+  const f = F.ui(500, 27), by = (d.from === 'B' ? 'Bob' : 'Alice') + '’s AI', w = Math.min(440, measure(ctx, d.copy, f)) + 44;
+  let s = d.copy; while (measure(ctx, s, f) > 440) s = s.slice(0, -2) + '…';
+  ctx.save(); ctx.translate(x, y); ctx.scale(sc, sc); ctx.rotate((d.from === 'B' ? 1 : -1) * .06 * Math.sin(Math.PI * p));
   ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 12;
-  rr(ctx, -20, -22, w, 70, 18); ctx.fillStyle = UI.raised; ctx.fill(); ctx.shadowColor = 'transparent';
+  rr(ctx, -22, -30, w, 96, 18); ctx.fillStyle = UI.raised; ctx.fill(); ctx.shadowColor = 'transparent';
   ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.2)'; ctx.stroke();
-  ctx.save(); ctx.translate(16, 13); ctx.scale(.85, .85); glyph(ctx, 'doc', UI.text); ctx.restore();
-  text(ctx, d.label, 48, 24, f, UI.text);
+  text(ctx, by, 0, 2, F.ui(500, 21), UI.muted);
+  text(ctx, s, 0, 44, f, UI.text);
   ctx.restore();
 }
 function personCursor(ctx, t, side, who) {
@@ -102,7 +116,7 @@ function personCursor(ctx, t, side, who) {
   let pos = [rest[0] + Math.sin(t * 2.1 + (side === 'B' ? 0 : 2)) * 9, rest[1] + Math.cos(t * 1.7) * 7], click = 0;
   DRAGS.filter(d => d.from === side).forEach(d => {
     const back = Math.min(.3, d.dur * .8);
-    if (t >= d.t - .18 && t < d.t) pos = kf(t, [[d.t - .18, pos], [d.t, src(d), eo3]]);
+    if (t >= d.t - d.pre && t < d.t) pos = kf(t, [[d.t - d.pre, pos], [d.t - d.pre * .4, src(d), eo3], [d.t, src(d)]]);
     else if (t >= d.t && t < d.t + d.dur) pos = along(d, prog(t, d.t, d.t + d.dur));
     else if (t >= d.t + d.dur && t < d.t + d.dur + back) pos = kf(t, [[d.t + d.dur, dst(d)], [d.t + d.dur + back, pos, eo3]]);
     click = Math.max(click, Math.exp(-Math.abs(t - d.t) * 30), Math.exp(-Math.abs(t - d.t - d.dur) * 30));
