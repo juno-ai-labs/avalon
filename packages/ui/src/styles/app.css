@@ -8354,8 +8354,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .breakout-chip-icon { color: var(--av-sys-color-text-muted); flex: none; }
 .breakout-chip-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .breakout-chip-news { color: var(--av-sys-color-workstream-news); flex: none; font-weight: 600; }
-/* A Breakout waiting on an answer: the sidebar's red badge, so a blocked
-   Breakout reads the same as a blocked Channel. */
+/* A Breakout waiting on an answer, in the sidebar badge's colours. */
 .breakout-chip-badge {
   background: var(--av-sys-color-danger-base);
   border-radius: var(--av-sys-size-radius-pill);
