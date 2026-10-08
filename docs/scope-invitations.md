@@ -304,8 +304,12 @@ Rally **AI**:
 
 - **The composer's `@` list.** An invitee's mention is the typed `@address`;
   no identity rides with it. On send the composer hands the host the invitees
-  the text names, and the host shares the conversation with them before the
-  message goes. A personal Channel asks first, in the dialog that already asks
+  the text names, read whole and Markdown-aware
+  (`@rally/contracts/email-mentions`) so code, links and a longer address
+  never match, and the host shares the conversation with them before the
+  message goes, after the send holds its attachments. An address already
+  shared here is neither asked about nor shared again, since each share is its
+  own email. A personal Channel asks first, in the dialog that already asks
   about members from outside.
 - **The People level of the title menu.** Suggested lists invitees with an
   Add that shares by address, as typing the address and pressing Enter does.

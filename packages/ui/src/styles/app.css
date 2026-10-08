@@ -4763,11 +4763,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .mention-popover > button.is-invited strong,
 .mention-confirm-person.is-invited strong,
 .member-action-row.is-invited strong,
-.member-picker-row.is-invited strong { font-style: italic; }
-.member-action-row.is-invited strong,
-.member-picker-row.is-invited strong { color: var(--av-sys-color-text-muted); }
-.mention-popover > button.is-invited strong,
-.mention-confirm-person.is-invited strong,
+.member-picker-row.is-invited strong,
 .title-menu-person.is-invited .title-menu-person-name,
 .new-channel-popover-row.is-invited .new-channel-popover-name { color: var(--av-sys-color-text-muted); font-style: italic; }
 .new-channel-popover-kind { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 12px; margin-left: auto; }

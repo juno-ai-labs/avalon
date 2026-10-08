@@ -734,7 +734,7 @@ describe('MessageBlock markdown', () => {
     const message: Message = {
       ...baseMessage,
       id: 'message-email-mention',
-      text: 'hi @dana@example.com, and @stranger@example.com and `@dana@example.com`',
+      text: 'hi @dana@example.com, and @stranger@example.com and `@dana@example.com` and @[dana@example.com](mailto:dana@example.com)',
     };
     const invited = emailMentionDirectory([], [{ email: 'dana@example.com', invitedAt: '2026-07-31T20:00:00.000Z' }]);
 
@@ -748,6 +748,8 @@ describe('MessageBlock markdown', () => {
     // An address nobody here holds is the text that was written; code stays literal.
     expect(screen.getByText(/@stranger@example\.com/u)).toBeInTheDocument();
     expect(screen.getByText('@dana@example.com', { selector: 'code' })).toBeInTheDocument();
+    // A link written out is a link, not a mention.
+    expect(screen.getByRole('link', { name: 'dana@example.com' })).toHaveAttribute('href', 'mailto:dana@example.com');
 
     const dana = { id: '00000000-0000-7000-8000-000000000051', name: 'Dana Diaz', email: 'dana@example.com', timezone: 'UTC' };
     rerender(

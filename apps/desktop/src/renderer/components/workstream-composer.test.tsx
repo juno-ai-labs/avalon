@@ -70,6 +70,7 @@ function renderComposer(
   members: WorkspaceMember[] = [creator, bob, cara],
   model?: ComposerModelControl,
   invitees?: WorkspaceInvitee[],
+  sharedInviteeEmails?: string[],
 ): ReturnType<typeof render> {
   vi.stubGlobal('ResizeObserver', class {
     observe(): void {}
@@ -84,6 +85,7 @@ function renderComposer(
         fileInputRef={createRef<HTMLInputElement>()}
         members={members}
         {...(invitees ? { invitees } : {})}
+        {...(sharedInviteeEmails ? { sharedInviteeEmails } : {})}
         {...(model ? { model } : {})}
         onAttach={onAttach}
         onOpenAttachment={() => undefined}
@@ -906,6 +908,29 @@ describe('WorkstreamComposer invitees', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('hi @dana@example.com, take a look', [], undefined, undefined, ['dana@example.com']));
+  });
+
+  it('neither asks about nor hands over an invitee this conversation is already shared with', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend, false, undefined, { ...workstream, scope: 'personal' }, [creator], undefined, [dana], ['dana@example.com']);
+    const composer = screen.getByLabelText('Message the channel');
+
+    fireEvent.change(composer, { target: { value: '@dana@example.com again' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('@dana@example.com again', [], undefined, undefined));
+    expect(screen.queryByRole('button', { name: 'Add and mention' })).not.toBeInTheDocument();
+  });
+
+  it('shares only with the address written, never one it begins with', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend, false, undefined, workstream, [creator], undefined, [dana]);
+    const composer = screen.getByLabelText('Message the channel');
+
+    fireEvent.change(composer, { target: { value: 'ask @dana@example.com.au, or `@dana@example.com`' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('ask @dana@example.com.au, or `@dana@example.com`', [], undefined, undefined));
   });
 
   it('asks before bringing an invitee into a private conversation', async () => {

@@ -248,7 +248,13 @@ invited to the Organization who has no account yet
 ([scope invitations](scope-invitations.md#invitees-in-the-people-pickers)), so
 the address is the whole mention. GFM autolinks a bare address, so the pass
 reads two shapes: `@address` in one text node, and an `@` closing a text node
-followed by the `mailto:` link GFM made of the address. Both become a span
+followed by the `mailto:` link GFM made of the address, told from an
+explicitly written `[a@b.com](mailto:a@b.com)` by its source span, since an
+explicit link is never a mention. The reading lives in
+`@rally/contracts/email-mentions`, and the composer uses the same one to decide
+whom a message shares the conversation with, so an address in code or in a link
+is neither a chip nor a share, and `@dana@example.com.au` never names
+`dana@example.com`. Both shapes become a span
 carrying `data-email-mention`, whose text is the address as written. The `span`
 override resolves it against `EmailMentionContext`, which the Channel and
 new-Channel screens fill from the roster and the invitees: a member who holds

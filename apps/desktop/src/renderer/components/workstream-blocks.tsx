@@ -74,6 +74,7 @@ import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useCopy } from '../lib/use-copy';
 import { useEmailMentionTarget } from '../lib/workspace-invitees';
+import { bareAddressAutolink, EMAIL_MENTION, EMAIL_MENTION_AT } from '@rally/contracts/email-mentions';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
@@ -465,15 +466,6 @@ function rallyMentionNode(): MarkdownRewriteNode {
 }
 
 /**
- * A typed `@address`, with the same boundaries as `@Rally`. The address is
- * how a message names somebody invited to the Organization who has no
- * account yet, so it is the whole of the mention.
- */
-const EMAIL_MENTION = /(^|[\s([{])(@([^\s@()<>[\]{},;:"']+@[^\s@()<>[\]{},;:"']+\.[a-z]{2,}))(?=[\s\p{P}]|$)/giu;
-/** An `@` that GFM's address autolink left behind, the address itself having become a `mailto:` link. */
-const EMAIL_MENTION_AT = /(^|[\s([{])@$/u;
-
-/**
  * Where an `@address` goes: a span the `span` override resolves against the
  * Organization's people when it renders, which is what lets the chip read as
  * the person's name once they join. Its text is the fallback, so an address
@@ -510,14 +502,6 @@ function typedMentionParts(value: string): MarkdownRewriteNode[] | null {
   return parts;
 }
 
-/** The address of a link GFM made from a bare address, or undefined for any other link. */
-function autolinkedAddress(node: MarkdownRewriteNode | undefined): string | undefined {
-  if (node?.type !== 'link') return undefined;
-  const url = (node as MarkdownRewriteNode & { url?: unknown }).url;
-  const label = node.children?.length === 1 && node.children[0]?.type === 'text' ? node.children[0].value : undefined;
-  return typeof url === 'string' && label !== undefined && url === `mailto:${label}` ? label : undefined;
-}
-
 /**
  * Draws a person's `@Rally` and `@address` as chips. Neither carries a stored
  * mention identity, so the text is the mention, exactly as the composer
@@ -526,7 +510,8 @@ function autolinkedAddress(node: MarkdownRewriteNode | undefined): string | unde
  * turns back into a mention.
  */
 function remarkRallyMentions() {
-  return (tree: unknown) => {
+  return (tree: unknown, file: { value?: unknown }) => {
+    const source = typeof file.value === 'string' ? file.value : String(file.value ?? '');
     const visit = (node: MarkdownRewriteNode): void => {
       if (node.type === 'link' || node.type === 'code' || node.type === 'inlineCode') return;
       const children = node.children;
@@ -540,7 +525,7 @@ function remarkRallyMentions() {
           continue;
         }
         let value = child.value;
-        const address = EMAIL_MENTION_AT.test(value) ? autolinkedAddress(children[index + 1]) : undefined;
+        const address = EMAIL_MENTION_AT.test(value) ? bareAddressAutolink(children[index + 1], source) : undefined;
         if (address !== undefined) value = value.slice(0, -1);
         const parts = typedMentionParts(value);
         if (parts) rebuilt.push(...parts);

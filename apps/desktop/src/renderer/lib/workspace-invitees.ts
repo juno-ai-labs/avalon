@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { WorkspaceInvitee } from '@rally/contracts';
+import { emailMentionAddresses } from '@rally/contracts/email-mentions';
 import type { RallyApi } from './api';
 import type { WorkspaceMember } from './types';
 
@@ -75,15 +76,11 @@ export function useEmailMentionTarget(email: string): EmailMentionTarget | undef
   return useContext(EmailMentionContext).get(email.toLowerCase());
 }
 
-const ESCAPED = /[.*+?^${}()|[\]\\]/gu;
-
 /**
- * The invitees a draft names, with the composer's mention boundaries: an
- * opening space or bracket before the `@`, and a space, punctuation, or the
- * end after the address.
+ * The invitees a draft names: the addresses it mentions, read as the renderer
+ * reads them (`emailMentionAddresses`), that are exactly a pending invitee's.
  */
 export function mentionedInvitees(text: string, invitees: readonly WorkspaceInvitee[]): string[] {
-  return invitees
-    .map((invitee) => invitee.email.toLowerCase())
-    .filter((email) => new RegExp(`(^|[\\s([{])@${email.replace(ESCAPED, '\\$&')}(?=[\\s\\p{P}]|$)`, 'iu').test(text));
+  const pending = new Set(invitees.map((invitee) => invitee.email.toLowerCase()));
+  return emailMentionAddresses(text).filter((email) => pending.has(email));
 }

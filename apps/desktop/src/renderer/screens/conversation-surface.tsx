@@ -1013,6 +1013,7 @@ export function RunFailureNotice({
 }
 
 /** Hoisted for identity: a `?? []` per render would re-key the citation lookup. */
+const NO_SHARED_INVITEES: readonly string[] = [];
 const NO_MEMBERS: WorkspaceMember[] = [];
 
 const NO_WORKSPACE_PRESENCE: Record<string, string[]> = {};
@@ -2070,8 +2071,14 @@ export function ConversationSurface({
 
   // Guest invitations for the title menu's People level, loaded once it opens.
   const [invitesWanted, setInvitesWanted] = useState(false);
+  // Loaded with the People level, and whenever the Organization has invitees
+  // to offer: the composer needs to know who is already shared in here.
   const invitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId,
-    enabled: invitesWanted && Boolean(api && session?.workspace) && parentKind === 'workstream' });
+    enabled: (invitesWanted || visibleInvitees.length > 0) && Boolean(api && session?.workspace) && parentKind === 'workstream' });
+  const sharedInviteeEmails = useMemo(
+    () => invitations.pending.data?.map((guest) => guest.email) ?? NO_SHARED_INVITEES,
+    [invitations.pending.data],
+  );
   // The participant dialog's own target, which may be a breakout other than the
   // one on screen. Same cache entry as the share panel it embeds.
   const dialogInvitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId: participantDialogSubstreamId,
@@ -2419,18 +2426,6 @@ export function ConversationSurface({
     // at the end: they are about to add to it, and the answer is what they are
     // waiting for. Before the follow could be stopped at all this happened by
     // accident, because the next token re-armed it.
-    // Shared before the message is sent, as a member mentioned from outside
-    // is added with it: the address joins when its owner signs in, and a
-    // message that names them should not land before they can be let in.
-    if (invitedEmails.length > 0) {
-      try {
-        await invitations.invite.mutateAsync([...invitedEmails].sort());
-      } catch (error) {
-        setSendError(`${invitedEmails.join(', ')} couldn’t be invited, so the message wasn’t sent. Try again.`);
-        throw error;
-      }
-      void queryClient.invalidateQueries({ queryKey: ['scope-invitations', id, substreamId] });
-    }
     scrollTranscriptToEnd();
     pendingSendCount.current += 1;
     setSending(true);
@@ -2453,6 +2448,23 @@ export function ConversationSurface({
       return;
     }
     const attachmentLease = await attachmentDraft.leaseReady();
+    // Shared before the message is sent, as a member mentioned from outside is
+    // added with it, and after the send holds its attachments, so nothing typed
+    // or attached meanwhile joins this message. An address already shared here
+    // is not shared again: each share is its own email.
+    const toShare = invitedEmails.filter((email) => !sharedInviteeEmails.includes(email)).sort();
+    if (toShare.length > 0) {
+      try {
+        await invitations.invite.mutateAsync(toShare);
+      } catch (error) {
+        await attachmentDraft.restoreLease(attachmentLease.leaseId);
+        pendingSendCount.current = Math.max(0, pendingSendCount.current - 1);
+        if (pendingSendCount.current === 0) setSending(false);
+        setSendError(`${toShare.join(', ')} couldn’t be invited, so the message wasn’t sent. Try again.`);
+        throw error;
+      }
+      void invitations.pending.refetch();
+    }
     const readyAttachments = attachmentLease.attachments;
     const clientId = crypto.randomUUID();
     queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) => {
@@ -3175,6 +3187,7 @@ export function ConversationSurface({
             fileInputRef={fileInputRef}
             members={visibleMembers}
             invitees={visibleInvitees}
+            sharedInviteeEmails={sharedInviteeEmails}
             /* Locked, because a pin is written once when the conversation is
                created and nothing afterwards edits it. What it names is the
                latest run's model first and the pin only as a fallback: an
