@@ -8,7 +8,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
-import { conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
+import { logError } from '../../common/logger';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { mainOmitted, mainReachable, useConversationDirectory } from '../lib/conversation-directory';
 
@@ -513,6 +514,25 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         },
         opening.modelOverride,
       ));
+      // Shared once the breakout exists, and not awaited: it opens on the
+      // create alone, and the address is among its People as Invited when this
+      // lands. A failure leaves them out of that list, which is where to look.
+      if (opening.invitedEmails.length > 0 && session?.workspace) {
+        const workspaceId = session.workspace.id;
+        void Promise.resolve().then(() => api.createScopeInvitations({
+          operationId: uuidV7(),
+          parentId: attempt.parentId,
+          emails: [...opening.invitedEmails].sort(),
+          targets: [{
+            kind: 'conversation',
+            workspaceId: asWorkspaceId(workspaceId),
+            parentId: asWorkstreamId(attempt.parentId),
+            substreamId: asSubstreamId(created.substreamId),
+          }],
+          completeWorkstream: false,
+          expiresAt: null,
+        })).catch((error: unknown) => logError('rally', `could not share the new breakout with ${opening.invitedEmails.join(', ')}`, error));
+      }
       const current = creationRef.current === attempt;
       if (!current) trace.end({ outcome: 'superseded' });
       else trace.annotate({ workstreamId: attempt.parentId });

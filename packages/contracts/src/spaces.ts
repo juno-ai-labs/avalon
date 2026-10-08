@@ -310,8 +310,24 @@ export const UpdateSpaceAudienceRequestSchema = z.strictObject({
    * authority decides who may be removed; this only refuses the empty set.
    */
   participantUserIds: z.array(UserIdSchema).min(1),
+  /**
+   * Addresses invited to the Organization who have not joined, listed with
+   * the participants and seated as one when they accept. The whole set, like
+   * the participants; absent leaves the stored set as it is, which is what an
+   * older client that never names any sends.
+   */
+  inviteeEmails: z.array(z.string().trim().email().transform((email) => email.toLowerCase())).optional(),
 });
 export type UpdateSpaceAudienceRequest = z.infer<typeof UpdateSpaceAudienceRequestSchema>;
+
+/**
+ * A Space's invitees, read on their own: `SpaceSummarySchema` is strict, and a
+ * field added to it would make every shipped desktop drop the Space snapshot.
+ */
+export const SpaceInviteesSchema = z.strictObject({
+  items: z.array(z.strictObject({ email: z.string().email() })),
+});
+export type SpaceInvitees = z.infer<typeof SpaceInviteesSchema>;
 
 /**
  * What a person may arrange by hand, named by the thing that contains it.

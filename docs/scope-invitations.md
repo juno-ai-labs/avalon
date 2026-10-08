@@ -297,9 +297,10 @@ an address that already has a membership. The desktop reads it under
 `['workspace-members', 'invitees']`, so the roster's `member_directory`
 publication, which an invitation, acceptance and revocation each send, refreshes it.
 
-Three surfaces offer invitees after the members, labelled **Invited** with the
-address in muted italics; the `@` list also labels everyone else **Member** or
-**Guest** in place of the old **Person**:
+Every surface that lists people to pick offers invitees after the members,
+labelled **Invited** with the address in muted italics; the `@` list also
+labels everyone else **Member** or **Guest** in place of the old **Person**, and
+Rally **AI**:
 
 - **The composer's `@` list.** An invitee's mention is the typed `@address`;
   no identity rides with it. On send the composer hands the host the invitees
@@ -313,6 +314,17 @@ address in muted italics; the `@` list also labels everyone else **Member** or
   `participantIds`, and shared the Channel once the create answers. That share
   is not awaited, so the Channel opens on the create alone; a failure is logged
   and shows as the address missing from the Channel's People.
+- **The breakout launch composer.** As the Channel composer, except the
+  breakout does not exist when the message is sent: the host shares it with the
+  named invitees once the create answers, unawaited, as the new Channel does.
+- **The Add a participant dialog.** Invitees not yet shared the target are
+  listed after the members, and adding one shares it by address, the same
+  write as the share panel the dialog embeds.
+- **A Space's participants.** Not a share: a Space grants no access, so its
+  invitees are listed by address and seated as participants when they accept
+  ([Spaces](spaces.md#participants)).
+- **iOS, the Channel details sheet.** Lists invitees under People and shares
+  the open conversation with the one tapped.
 
 When the invitee signs in, the claim makes them a guest of the Channel, and
 accepting the Organization invitation makes them a member, which keeps the
@@ -428,10 +440,13 @@ nonparticipant and reconciliation of a stale child roster.
 ### 2026-10-08 — Offer pending Organization invitees wherever people are picked
 
 **What changed.** `GET /workspace/invitees` lists pending Organization
-invitations to members. The `@` list, the People level and the new-Channel
-Participants row offer those addresses as **Invited**, and picking or
-mentioning one shares the conversation with the address. The `@` list labels
-people **Member**, **Guest** or **Invited** instead of **Person**.
+invitations to members. Every people picker (the `@` list in a Channel and in a
+breakout being started, the People level, the new-Channel Participants row, the
+Add a participant dialog, a Space's participants, and iOS's details sheet)
+offers those addresses as **Invited**. Picking or mentioning one shares the
+conversation with the address; a Space lists it until they accept. The `@` list
+labels people **Member**, **Guest** or **Invited** instead of **Person**, and
+Rally **AI** instead of **Bot**.
 
 **Why.** A teammate invited during onboarding could not be tagged in a Channel
 until they accepted, so the inviter added them a second time at the Channel by

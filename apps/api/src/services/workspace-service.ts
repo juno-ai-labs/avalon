@@ -28,7 +28,7 @@ import {
   type InvitationEmailDelivery,
 } from "./invitation-email-service";
 import { dispatchWorkspaceRelationshipChanges } from "./workspace-relationship-delivery";
-import { publishWorkspaceSync } from "./workspace-realtime-service";
+import { publishWorkspaceSync, seatSpaceInvitee } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { rebuildDigestSchedulesForTimezone } from "./digest-service";
 import { workspaceDOName } from "../durable-objects/names";
@@ -123,6 +123,28 @@ const invitationSelect = `SELECT i.id, i.workspace_id, w.name AS workspace_name,
   FROM workspace_invitations i
   JOIN workspaces w ON w.id = i.workspace_id
   JOIN users inviter ON inviter.id = i.invited_by_user_id`;
+
+/**
+ * Addresses with a pending invitation to this Organization and no membership
+ * in it yet, lower case: the people a picker may name before they join.
+ */
+export async function pendingInvitees(db: D1Database, workspaceId: string): Promise<Array<{ email: string; invitedAt: string }>> {
+  const result = await db.prepare(
+    `SELECT i.email, i.created_at
+     FROM workspace_invitations i
+     JOIN workspaces w ON w.id = i.workspace_id
+     WHERE i.workspace_id = ? AND i.accepted_at IS NULL AND i.revoked_at IS NULL
+       AND w.abandoned_at IS NULL AND i.expires_at > ?
+       AND NOT EXISTS (
+         SELECT 1 FROM workspace_members m JOIN users u ON u.id = m.user_id
+         WHERE m.workspace_id = i.workspace_id AND u.email = i.email COLLATE NOCASE
+       )
+     ORDER BY i.email COLLATE NOCASE`,
+  )
+    .bind(workspaceId, nowIso())
+    .all<{ email: string; created_at: string }>();
+  return (result.results ?? []).map((row) => ({ email: row.email.toLowerCase(), invitedAt: String(row.created_at) }));
+}
 
 function invitationStatus(row: InvitationRow): WorkspaceInvitation["status"] {
   if (row.abandoned_at) return "revoked";
@@ -255,6 +277,13 @@ export async function acceptInvitationForUser(
     try { await publishWorkspaceSync(env, invitation.workspace_id, ["member_directory"], { memberUserIds: [user.id] }); }
     catch (error) {
       logWarn(env, "search_authorization_member_push_failed", { workspace_id: invitation.workspace_id, user_id: user.id,
+        error_code: error instanceof Error ? error.message : "unknown" });
+    }
+    // Spaces that listed this address before they joined now seat them. A
+    // failure leaves them out of those Spaces, and the warning is the notice.
+    try { await seatSpaceInvitee(env, invitation.workspace_id, user.id, invitation.email); }
+    catch (error) {
+      logWarn(env, "space_invitee_seat_failed", { workspace_id: invitation.workspace_id, user_id: user.id,
         error_code: error instanceof Error ? error.message : "unknown" });
     }
     await notifyInvitationResolution(env, invitation, user, "accepted");
@@ -959,21 +988,7 @@ export class WorkspaceService {
     if (this.auth.role === null) {
       throw new ApiError(403, "workspace_member_required", "Only members of the organization can see who is invited");
     }
-    const result = await this.env.DB.prepare(
-      `SELECT i.email, i.created_at
-       FROM workspace_invitations i
-       JOIN workspaces w ON w.id = i.workspace_id
-       WHERE i.workspace_id = ? AND i.accepted_at IS NULL AND i.revoked_at IS NULL
-         AND w.abandoned_at IS NULL AND i.expires_at > ?
-         AND NOT EXISTS (
-           SELECT 1 FROM workspace_members m JOIN users u ON u.id = m.user_id
-           WHERE m.workspace_id = i.workspace_id AND u.email = i.email COLLATE NOCASE
-         )
-       ORDER BY i.email COLLATE NOCASE`,
-    )
-      .bind(this.auth.workspaceId, nowIso())
-      .all<{ email: string; created_at: string }>();
-    return (result.results ?? []).map((row) => ({ email: row.email.toLowerCase(), invitedAt: String(row.created_at) }));
+    return pendingInvitees(this.env.DB, this.auth.workspaceId);
   }
 
   async listInvitations(): Promise<WorkspaceInvitation[]> {

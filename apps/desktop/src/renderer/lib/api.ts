@@ -35,6 +35,7 @@ import {
   WorkspaceInvitationPreviewSchema as WireWorkspaceInvitationPreviewSchema,
   WorkspaceInvitationSchema as WireWorkspaceInvitationSchema,
   WorkspaceInviteeSchema,
+  SpaceInviteesSchema,
   type WorkspaceInvitee,
   WorkspaceSchema as WireWorkspaceSchema,
   TerminalWorkspaceSettingsSchema as WireTerminalWorkspaceSettingsSchema,
@@ -1378,9 +1379,15 @@ export class RallyApi {
    * proves nothing — the server parses this body against the branded schema,
    * which is the check that counts.
    */
+  /** The Organization invitees a Space lists by address, to whoever may edit it. */
+  async getSpaceInvitees(id: string, signal?: AbortSignal): Promise<string[]> {
+    const page = await this.request(`/spaces/${encodeURIComponent(id)}/invitees`, { schema: SpaceInviteesSchema, signal });
+    return page.items.map((item) => item.email);
+  }
+
   updateSpaceAudience(
     id: string,
-    input: { scope: SpaceScope; participantUserIds: string[] },
+    input: { scope: SpaceScope; participantUserIds: string[]; inviteeEmails?: string[] },
   ): Promise<SpaceSummary> {
     return this.request(`/spaces/${encodeURIComponent(id)}/audience`, {
       method: 'PATCH',

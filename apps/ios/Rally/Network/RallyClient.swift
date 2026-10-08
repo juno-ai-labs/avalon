@@ -436,6 +436,49 @@ actor RallyClient {
         )
     }
 
+    /// Addresses invited to the Organization who have not joined yet.
+    func listInvitees() async throws -> [String] {
+        struct Invitee: Decodable { var email: String }
+        struct Page: Decodable { var items: [Invitee] }
+        let page: Page = try await get(path: "/workspace/invitees", as: Page.self)
+        return page.items.map(\.email)
+    }
+
+    /// Share a conversation with an address: whoever signs in with it joins.
+    /// `expiresAt` is sent as an explicit null, which the route requires.
+    func shareConversation(workspaceId: String, workstreamId: String, substreamId: String, email: String) async throws {
+        struct Target: Encodable {
+            var kind = "conversation"
+            var workspaceId: String
+            var parentId: String
+            var substreamId: String
+        }
+        struct Body: Encodable {
+            var operationId: String
+            var parentId: String
+            var emails: [String]
+            var targets: [Target]
+            enum CodingKeys: String, CodingKey { case operationId, parentId, emails, targets, completeWorkstream, expiresAt }
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(operationId, forKey: .operationId)
+                try container.encode(parentId, forKey: .parentId)
+                try container.encode(emails, forKey: .emails)
+                try container.encode(targets, forKey: .targets)
+                try container.encode(false, forKey: .completeWorkstream)
+                try container.encodeNil(forKey: .expiresAt)
+            }
+        }
+        struct Result: Decodable { var status: String }
+        let result: Result = try await post(path: "/sharing", body: Body(
+            operationId: UUID().uuidString.lowercased(),
+            parentId: workstreamId,
+            emails: [email],
+            targets: [Target(workspaceId: workspaceId, parentId: workstreamId, substreamId: substreamId)]
+        ), as: Result.self)
+        guard result.status == "created" else { throw RallyShareError.notCreated }
+    }
+
     func addParticipant(workstreamId: String, userId: String) async throws {
         struct Body: Encodable { var userId: String }
         struct Participant: Decodable { var id: String? }
@@ -779,4 +822,10 @@ enum JSONValue: Decodable, Sendable, Equatable {
 struct UploadedResource: Decodable, Sendable {
     var id: String
     var fileName: String?
+}
+
+/// A share the server answered without creating, such as one the sharer may not make.
+enum RallyShareError: LocalizedError {
+    case notCreated
+    var errorDescription: String? { "Couldn’t invite them to this channel." }
 }
