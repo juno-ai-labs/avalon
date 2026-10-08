@@ -3,6 +3,7 @@ import { ChevronDown, Plus, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { mentionOptionId, useMentionNavigation } from '../lib/use-mention-navigation';
 import type { WorkspaceMember } from '../lib/types';
+import { isInvitee } from '../lib/workspace-invitees';
 import { Avatar, AvatarStack } from './primitives';
 
 /** A list's ceiling, and the gap kept between it and the top of the screen. */
@@ -39,7 +40,11 @@ export function NewChannelParticipants({
   onRemove,
   selected,
 }: {
-  /** The Organization's active members, the creator and the picked left out. */
+  /**
+   * The Organization's active members, then the people invited to it who have
+   * not joined (`status: 'invited'`, named by address), the creator and the
+   * picked left out.
+   */
   candidates: WorkspaceMember[];
   creator: WorkspaceMember;
   loading: boolean;
@@ -168,9 +173,9 @@ export function NewChannelParticipants({
               <p className="new-channel-popover-empty">Loading people…</p>
             ) : matches.length > 0 ? matches.map((member, index) => (
               <button
-                aria-label={`${member.name} — ${member.email}`}
+                aria-label={isInvitee(member) ? `${member.email} — Invited` : `${member.name} — ${member.email}`}
                 aria-selected={index === navigation.activeIndex}
-                className={clsx('new-channel-popover-row', index === navigation.activeIndex && 'is-selected')}
+                className={clsx('new-channel-popover-row', index === navigation.activeIndex && 'is-selected', isInvitee(member) && 'is-invited')}
                 id={mentionOptionId(member.id)}
                 key={member.id}
                 onClick={() => add(member)}
@@ -182,6 +187,7 @@ export function NewChannelParticipants({
               >
                 <Avatar member={member} size="small" />
                 <span className="new-channel-popover-name">{member.name}</span>
+                {isInvitee(member) && <span className="new-channel-popover-kind">Invited</span>}
               </button>
             )) : (
               <p className="new-channel-popover-empty">
@@ -229,9 +235,10 @@ export function NewChannelParticipants({
             role="group"
           >
             {everyone.map((member) => (
-              <div className="new-channel-popover-row" key={member.id}>
+              <div className={clsx('new-channel-popover-row', isInvitee(member) && 'is-invited')} key={member.id}>
                 <Avatar member={member} size="small" />
                 <span className="new-channel-popover-name">{member.name}</span>
+                {isInvitee(member) && <span className="new-channel-popover-kind">Invited</span>}
                 {member.id !== creator.id && (
                   <button
                     aria-label={`Remove ${member.name}`}
