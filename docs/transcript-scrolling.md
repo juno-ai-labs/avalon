@@ -133,7 +133,11 @@ So the prepend is never painted at the old position. It holds the row's
 *bottom* edge, because the row being read is usually the old first row, and
 gaining a predecessor gives it a top gap (`feedRowGap`). Content between the
 scroller's top and the list, such as the origin card that appears with the
-first message, is covered because the list's offset is read after the commit.
+first message, is covered because the list's offset is read after the commit,
+and the screen passes a `layoutKey` so a commit that changes only that content
+(a final page with no visible rows) is anchored too. If the row's key does not
+survive the commit, which happens when grouping re-keys a plugin group or work
+accordion spanning the page seam, the next row down is used.
 
 The **Loading earlier messages…** row keeps its space for as long as an older
 range exists, so the status coming and going does not move the feed either.
@@ -352,7 +356,11 @@ commit and renders the wrong window for a frame.
 first key, not only an older-range load, so a row inserted above the reader for
 any reason holds still. It reads layout only on those commits. It must be
 called after the virtualizer, so its render half runs before the feed reads the
-virtualizer's window.
+virtualizer's window. The caller passes a `layoutKey` for whatever sits above the
+list, because a page with no visible rows can change that alone. A row re-keyed
+by grouping across the page seam is skipped for the next surviving row.
+
+Shipped in [#1172](https://github.com/juno-ai-labs/avalon/pull/1172).
 
 ### 2026-09-06 — Load history from viewport position
 
