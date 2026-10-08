@@ -1,5 +1,5 @@
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
-import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
+import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -567,14 +567,23 @@ export function AddParticipantDialog({
   failure,
   failureMessage,
   members,
+  invitees = [],
   open,
   pending,
   onAdd,
+  onInvite,
   onRemove,
   onOpenChange,
   sharing,
 }: {
   sharing?: React.ReactNode;
+  /**
+   * Addresses invited to the Organization that have not joined, and not yet
+   * shared this conversation. Adding one shares it with the address; absent
+   * `onInvite`, none are offered.
+   */
+  invitees?: readonly string[];
+  onInvite?: ((email: string) => void) | undefined;
   current: WorkspaceMember[];
   privateSubstream?: boolean;
   failure?: 'add' | 'remove' | undefined;
@@ -665,6 +674,20 @@ export function AddParticipantDialog({
             </div>
           );
         })}
+        {onInvite && invitees.map((email) => (
+          <button
+            aria-label={`Add ${email} to ${privateSubstream ? 'breakout' : 'main conversation'}`}
+            className="member-action-row is-invited"
+            disabled={pending}
+            key={email}
+            onClick={() => onInvite(email)}
+            type="button"
+          >
+            <Avatar member={inviteeAsMember(email)} size="medium" />
+            <span><strong>{email}</strong><small>Invited</small></span>
+            {pending ? <LoaderCircle className="spin" size={15} /> : <Plus aria-hidden="true" size={15} />}
+          </button>
+        ))}
       </div>
     </Modal>
   );
@@ -2049,6 +2072,14 @@ export function ConversationSurface({
   const [invitesWanted, setInvitesWanted] = useState(false);
   const invitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId,
     enabled: invitesWanted && Boolean(api && session?.workspace) && parentKind === 'workstream' });
+  // The participant dialog's own target, which may be a breakout other than the
+  // one on screen. Same cache entry as the share panel it embeds.
+  const dialogInvitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId: participantDialogSubstreamId,
+    enabled: participantDialogOpen && invitesInvitees });
+  const dialogInvitees = useMemo(() => {
+    const shared = new Set(dialogInvitations.pending.data?.map((guest) => guest.email) ?? []);
+    return visibleInvitees.map((invitee) => invitee.email).filter((email) => !shared.has(email));
+  }, [dialogInvitations.pending.data, visibleInvitees]);
 
   const removeParticipant = useMutation({
     mutationFn: ({ member, target }: { member: WorkspaceMember; target: string }) => target === '0'
@@ -2864,6 +2895,7 @@ export function ConversationSurface({
         launching={substreamLaunch.launching}
         {...(api ? { loadAttachmentContent } : {})}
         members={visibleMembers}
+        invitees={visibleInvitees}
         onCancel={substreamLaunch.onCancel}
         onCreate={substreamLaunch.onCreate}
         onOpenAttachment={setAttachmentPreview}
@@ -3239,9 +3271,15 @@ export function ConversationSurface({
           <ScopeSharingPanel key={participantDialogSubstreamId} api={api} workspaceId={workspaceId} parentId={id} substreamId={participantDialogSubstreamId} /> : null}
         privateSubstream={participantDialogSubstreamId !== '0'}
         current={participantDialogSubstreamId === '0' && renderSidebar ? sidebarDetail.participants : displayedDetail.participants}
-        failure={addParticipant.error ? 'add' : removeParticipant.error ? 'remove' : undefined}
-        failureMessage={refusalMessage(addParticipant.error ?? removeParticipant.error)}
+        failure={addParticipant.error || dialogInvitations.invite.error ? 'add' : removeParticipant.error ? 'remove' : undefined}
+        failureMessage={dialogInvitations.invite.error
+          ? 'They couldn’t be invited. Try again.'
+          : refusalMessage(addParticipant.error ?? removeParticipant.error)}
         members={visibleMembers}
+        invitees={dialogInvitations.pending.data ? dialogInvitees : []}
+        onInvite={invitesInvitees ? (email) => {
+          dialogInvitations.invite.mutate([email], { onSettled: () => { void dialogInvitations.pending.refetch(); } });
+        } : undefined}
         onAdd={(member) => {
           removeParticipant.reset();
           addParticipant.mutate({ member, target: participantDialogSubstreamId });
@@ -3257,11 +3295,12 @@ export function ConversationSurface({
           if (!next) {
             addParticipant.reset();
             removeParticipant.reset();
+            dialogInvitations.invite.reset();
           }
           setParticipantDialogOpen(next);
         }}
         open={participantDialogOpen}
-        pending={addParticipant.isPending || removeParticipant.isPending}
+        pending={addParticipant.isPending || removeParticipant.isPending || dialogInvitations.invite.isPending}
       />
       <RemoveParticipantDialog
         failure={removeConfirm && removeParticipant.error
