@@ -242,6 +242,26 @@ owner's or admin's to do, and `participant_removal_denied` refuses anybody
 else. The revision still advances, so a staged membership fenced on the old one
 re-reads the Space.
 
+**Invitees.** A participant is a user id, which someone invited to the
+Organization does not have until they accept. The same write may carry
+`inviteeEmails`, the whole set of pending invitees the Space lists by address;
+absent leaves the stored set as it is, which is what an older client sends.
+`SpaceService` refuses an address with no pending Organization invitation
+(`space_invitee_not_invited`), and an invitee is taken out under the
+participant rule. They live in `space_invitees` (WorkspaceDO migration 96) and
+are read through `GET /spaces/:id/invitees`, not on the summary: the summary is
+a strict object, and every shipped desktop would drop a Space snapshot carrying
+a field it does not know. Accepting the Organization invitation calls
+`seatSpaceInvitee` with the address it was sent to, which in one transaction
+deletes that address's rows, makes the person a participant of each active
+Space that listed them, advances those revisions and publishes the snapshot.
+The membership is read from D1 there, not from the object's copy, which can
+still say guest until the relationship delivery lands. A failure is logged as
+`space_invitee_seat_failed` and leaves them out of those Spaces; an address
+listed only in an archived Space is dropped without seating. The desktop shows
+only listed addresses whose invitation is still pending, so a revoked or expired
+one disappears without a write.
+
 ### Per-person ordering
 
 The stored ordering capability was built as **one mechanism rather than
@@ -1891,6 +1911,23 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-10-08: A Space lists Organization invitees until they join
+
+**What changed:** WorkspaceDO migration 96 adds `space_invitees`. The audience
+write takes an optional `inviteeEmails`, `GET /spaces/:id/invitees` reads them,
+and accepting an Organization invitation seats the person in every Space that
+listed their address.
+
+**Why:** Every people picker now offers people invited to the Organization
+before they join, and a Space's participants editor was the one that could
+not, because a Space participant is a user id.
+
+**Considered and rejected:** A field on `SpaceSummary`, which shipped desktops
+parse strictly and would reject. A D1 table beside `workspace_invitations`,
+which would put Space membership state outside the object that owns every other
+part of it. Sharing each of the Space's Channels instead, which would grant
+access a Space never grants.
 
 ### 2026-10-07: A new Organization opens General in its one object call
 

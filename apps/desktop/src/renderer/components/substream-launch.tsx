@@ -1,4 +1,4 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type WorkspaceInvitee } from '@rally/contracts';
 import type { AgentModelOverride } from '../lib/agent-models';
 import { X } from 'lucide-react';
 import { IconCornerDownRight } from '@tabler/icons-react';
@@ -71,6 +71,8 @@ export interface SubstreamLaunchProps {
    */
   currentUser: WorkspaceMember | undefined;
   members: WorkspaceMember[];
+  /** People invited to the Organization who have not joined, offered after the members. */
+  invitees?: readonly WorkspaceInvitee[];
   /** The work stream the substream is being branched out of. */
   parent: WorkstreamDetail;
   draft: SubstreamDraft;
@@ -94,6 +96,8 @@ export interface SubstreamLaunchProps {
     text: string;
     mentions: MentionIdentity[];
     confirmedParticipantUserIds: string[];
+    /** Invitees the opening message names, whom the host shares the breakout with once it exists. */
+    invitedEmails: string[];
     attachments: MessageAttachment[];
     attachmentIds: string[];
     /**
@@ -125,6 +129,7 @@ export function SubstreamLaunchSurface({
   connecting = null,
   currentUser,
   members,
+  invitees,
   parent,
   draft,
   launching,
@@ -176,6 +181,8 @@ export function SubstreamLaunchSurface({
     text: string,
     mentions: MentionIdentity[],
     confirmedParticipantUserIds: string[] = [],
+    _deliveryMode?: unknown,
+    invitedEmails: string[] = [],
   ): Promise<void> => {
     // Before anything optimistic. A substream that cannot be created must
     // never be one that appears to open, and the person is the only one who
@@ -200,6 +207,7 @@ export function SubstreamLaunchSurface({
         text,
         mentions,
         confirmedParticipantUserIds,
+        invitedEmails,
         attachments,
         attachmentIds: attachments.map((attachment) => attachment.id),
         modelOverride,
@@ -329,6 +337,7 @@ export function SubstreamLaunchSurface({
           fileInputRef={fileInputRef}
           footerHint={sendBlocked ? 'Starting a breakout is available once Rally connects' : 'Enter to create · Shift+Enter for a new line'}
           members={members}
+          {...(invitees ? { invitees } : {})}
           model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
           onAttach={attachmentDraft.addFiles}
           onOpenAttachment={onOpenAttachment}

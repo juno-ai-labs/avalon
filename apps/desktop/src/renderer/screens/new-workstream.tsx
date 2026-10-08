@@ -1,4 +1,4 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { X } from 'lucide-react';
@@ -15,6 +15,8 @@ import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useSpaceChoices } from '../lib/space-choices';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, isInvitee, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
+import { logError } from '../../common/logger';
 import { uuidV7 } from '../lib/telemetry';
 import { addPendingWorkstream, confirmPendingWorkstream, discardPendingWorkstream } from '../lib/workstreams-cache';
 import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail } from '../lib/types';
@@ -34,6 +36,8 @@ interface CreateWorkstreamInput {
   openingMessage: string;
   mentions: MentionIdentity[];
   participantIds: string[];
+  /** Invitees picked or mentioned, shared the Channel by address once it exists. */
+  invitedEmails: string[];
   /**
    * The submit instant the launch surface has been counting from. Seeded onto
    * the created run so the work timer does not jump at the navigation; the
@@ -188,13 +192,24 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     enabled: Boolean(api),
     staleTime: 60_000,
   });
+  // People invited to the Organization who have not joined yet: pickable
+  // beside members, and shared the Channel by address once it exists.
+  const invitees = useWorkspaceInvitees(api, workspace.currentUser.accessClass !== 'guest');
+  const visibleInvitees = invitees.data ?? NO_INVITEES;
+  const emailMentions = useMemo(
+    () => emailMentionDirectory(members.data ?? [], visibleInvitees),
+    [members.data, visibleInvitees],
+  );
   const { active: spaces } = useSpaceDirectories();
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
-  const recipientCandidates = useMemo(() => (members.data ?? []).filter((member) => (
-    member.id !== workspace.currentUser.id
-    && (member.status ?? 'active') === 'active'
-    && !selectedIds.has(member.id)
-  )), [members.data, selectedIds, workspace.currentUser.id]);
+  const recipientCandidates = useMemo(() => [
+    ...(members.data ?? []).filter((member) => (
+      member.id !== workspace.currentUser.id
+      && (member.status ?? 'active') === 'active'
+      && !selectedIds.has(member.id)
+    )),
+    ...visibleInvitees.map((invitee) => inviteeAsMember(invitee.email)).filter((member) => !selectedIds.has(member.id)),
+  ], [members.data, selectedIds, visibleInvitees, workspace.currentUser.id]);
   const selectRecipient = useCallback((member: WorkspaceMember): void => {
     setSelectedMembers((current) => current.some((candidate) => candidate.id === member.id)
       ? current
@@ -278,6 +293,28 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     },
     onSuccess: (created, input) => {
       confirmPendingWorkstream(queryClient, input.workstreamId, created.workstream);
+      // Shared once the Channel exists, and not awaited: the Channel opens on
+      // the create alone, and the address is in its People as Invited when this
+      // lands. A failure leaves them out of that list, which is where the
+      // creator looks for them.
+      if (input.invitedEmails.length > 0) {
+        void Promise.resolve().then(() => api!.createScopeInvitations({
+          operationId: uuidV7(),
+          parentId: created.workstream.id,
+          emails: input.invitedEmails,
+          targets: [{
+            kind: 'conversation',
+            workspaceId: asWorkspaceId(workspace.id),
+            parentId: asWorkstreamId(created.workstream.id),
+            substreamId: asSubstreamId('0'),
+          }],
+          completeWorkstream: false,
+          expiresAt: null,
+        }))
+          // A People level opened while this was in flight read an empty list.
+          .then(() => queryClient.invalidateQueries({ queryKey: ['scope-invitations', created.workstream.id] }))
+          .catch((error: unknown) => logError('rally', `could not share the new channel with ${input.invitedEmails.join(', ')}`, error));
+      }
       const selectedParticipants = (members.data ?? [])
         .filter((member) => input.participantIds.includes(member.id))
         .map((member) => ({ ...member, role: 'explicit' }));
@@ -328,6 +365,8 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     openingMessage: string,
     mentions: MentionIdentity[],
     confirmedParticipantUserIds: string[] = [],
+    _deliveryMode?: unknown,
+    mentionedInvitees: string[] = [],
   ): Promise<void> => {
     // The composer keeps accepting Enter while it shows the create in flight,
     // and a second submit would start a second Channel. Throwing hands the new
@@ -346,10 +385,14 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     // Somebody named in the opening message is somebody this Channel is for, so
     // a mention adds them as surely as the Participants bar does.
     const participantIds = [...new Set([
-      ...selectedMembers.map((member) => member.id),
+      ...selectedMembers.filter((member) => !isInvitee(member)).map((member) => member.id),
       ...mentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []),
       ...confirmedParticipantUserIds,
     ])].filter((id) => id !== workspace.currentUser.id);
+    const invitedEmails = [...new Set([
+      ...selectedMembers.filter(isInvitee).map((member) => member.email),
+      ...mentionedInvitees,
+    ])].sort();
     const createdAt = new Date().toISOString();
     const attachments = readyAttachments.map((attachment) => ({
       id: attachment.resource!.id,
@@ -384,6 +427,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
       openingMessage,
       mentions,
       participantIds,
+      invitedEmails,
       workstreamId,
       startedAt: createdAt,
     });
@@ -400,7 +444,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
     stopRequested: false,
     participants: [
       { ...workspace.currentUser, role: 'creator' },
-      ...selectedMembers.map((member) => ({ ...member, role: 'explicit' })),
+      ...selectedMembers.filter((member) => !isInvitee(member)).map((member) => ({ ...member, role: 'explicit' })),
     ],
   };
 
@@ -437,6 +481,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
        an approximation of it. The composer is never unmounted between them: it
        moves from the middle of the pane to the dock, and remounting it would
        break the hand-off into two separate objects. */
+    <EmailMentionContext.Provider value={emailMentions}>
     <div className={clsx(
       'workstream-launch-screen new-chat-screen',
       launching && 'workstream-screen is-launching',
@@ -533,6 +578,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
             members={members.data ?? []}
+            invitees={visibleInvitees}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
             onAttach={attachmentDraft.addFiles}
             onDraftChange={() => setTooLong(false)}
@@ -556,5 +602,6 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
 
       <AttachmentLightbox preview={attachmentPreview} onClose={() => setAttachmentPreview(null)} />
     </div>
+    </EmailMentionContext.Provider>
   );
 }

@@ -652,6 +652,8 @@ import {
   WorkspaceCanonicalChannelSpaceRequestSchema,
   WorkspaceCanonicalChannelSpaceResultSchema,
   WorkspaceSpaceAudienceNoteRequestSchema,
+  WorkspaceSpaceInviteesRequestSchema,
+  WorkspaceSpaceSeatInviteeRequestSchema,
   WorkspaceSpaceBootstrapStatusSchema,
   WorkspaceSpaceChannelPageRequestSchema,
   WorkspaceSpaceChannelPageResultSchema,
@@ -700,6 +702,8 @@ import {
   type WorkspaceCanonicalChannelSpaceRequest,
   type WorkspaceCanonicalChannelSpaceResult,
   type WorkspaceSpaceAudienceNoteRequest,
+  type WorkspaceSpaceInviteesRequest,
+  type WorkspaceSpaceSeatInviteeRequest,
   type WorkspaceSpaceBootstrapStatus,
   type WorkspaceSpaceChannelPageRequest,
   type WorkspaceSpaceChannelPageResult,
@@ -740,6 +744,7 @@ import {
   WORKSPACE_SPACE_SCHEMA_STATEMENTS,
   WORKSPACE_PINNED_ORDER_MIGRATION,
   SPACE_PUBLIC_ONLY_MIGRATION,
+  SPACE_INVITEES_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
 } from "./workspace-space-storage";
@@ -4189,6 +4194,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 95,
   description: "requests to join a Channel or Breakout, addressed to an approver",
   statements: CONVERSATION_ACCESS_REQUESTS_MIGRATION,
+}, {
+  version: 96,
+  description: "Organization invitees listed in a Space until they join",
+  statements: SPACE_INVITEES_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -9292,6 +9301,40 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     this.publishSpaceSnapshot();
     return WorkspaceSpaceMutationResultSchema.parse({ ok: true, space });
+  }
+
+  /**
+   * The addresses a Space lists for people invited to the Organization, to
+   * whoever may edit it. Not on the Space summary, which shipped clients parse
+   * strictly.
+   */
+  async listSpaceInvitees(input: WorkspaceSpaceInviteesRequest): Promise<{ ok: true; emails: string[] } | { ok: false; code: SpaceErrorCode }> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceInviteesRequestSchema, input, "list_space_invitees");
+    this.assertWorkspace(request.workspaceId);
+    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
+    if (refusal) return { ok: false, code: refusal };
+    return { ok: true, emails: this.spaceStorage().invitees(request.spaceId) };
+  }
+
+  /**
+   * Seat someone who just accepted an Organization invitation in every Space
+   * that listed the address it was sent to. Server-to-server, from the
+   * acceptance, so the membership is read from D1 rather than this object's
+   * copy: the copy may still say guest, or nothing, until the relationship
+   * delivery lands.
+   */
+  async seatSpaceInvitee(input: WorkspaceSpaceSeatInviteeRequest): Promise<{ seatedSpaceIds: string[] }> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceSeatInviteeRequestSchema, input, "seat_space_invitee");
+    this.assertWorkspace(request.workspaceId);
+    const relationship = await readWorkspaceRelationship(this.env.DB, request.workspaceId, request.userId);
+    if (relationship?.status !== "active" || relationship.accessClass !== "member") return { seatedSpaceIds: [] };
+    const storage = this.spaceStorage();
+    if (!storage.ready()) return { seatedSpaceIds: [] };
+    const seatedSpaceIds = storage.seatInvitees(request.userId, request.email);
+    if (seatedSpaceIds.length > 0) this.publishSpaceSnapshot();
+    return { seatedSpaceIds };
   }
 
   /**

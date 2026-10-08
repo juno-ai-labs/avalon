@@ -3603,6 +3603,17 @@ pre {
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Rally's avatar, as in the mention list: brand yellow on a fixed near-black disc. */
 .mention-chip-avatar-rally { background: var(--av-sys-color-brand-on); color: var(--av-sys-color-brand-base); font-size: 8px; }
+/* Someone invited who has not joined: an outline instead of a fill, and the
+   address in a quieter ink, so it reads as a person who is not here yet. Both
+   are washes of the inherited ink, which keeps them legible in a coloured
+   bubble as well as on the page. */
+.mention-chip.mention-chip-invited,
+.human-message .mention-chip.mention-chip-invited {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
+}
+.mention-chip-invited :is(.mention-chip-label, .mention-chip-avatar) { opacity: .7; }
+.mention-chip-invited .mention-chip-label { font-style: italic; }
 .mention-chip-status {
   display: none;
   flex: 0 0 auto;
@@ -4715,6 +4726,14 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 [data-theme='dark'] .mention-popover { background: var(--av-sys-color-surface-default); border-color: var(--av-cmp-composer-border-color); }
 [data-theme='dark'] .mention-popover > button:is(.is-selected, :hover) { background: var(--av-cmp-row-background-selected); }
 [data-theme='dark'] .mention-popover :is(small, .mention-popover-kind) { color: var(--av-sys-color-text-muted); }
+/* An invitee's address is greyed until they join, here and wherever people are listed. */
+.mention-popover > button.is-invited strong,
+.mention-confirm-person.is-invited strong,
+.member-action-row.is-invited strong,
+.member-picker-row.is-invited strong,
+.title-menu-person.is-invited .title-menu-person-name,
+.new-channel-popover-row.is-invited .new-channel-popover-name { color: var(--av-sys-color-text-muted); font-style: italic; }
+.new-channel-popover-kind { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 12px; margin-left: auto; }
 .mention-confirm-person { align-items: center; display: flex; gap: 10px; }
 .mention-confirm-person > span { display: flex; flex-direction: column; }
 .mention-confirm-person small { color: var(--av-sys-color-text-muted); font-size: 11px; }
@@ -7178,6 +7197,9 @@ button.new-channel-roster[aria-expanded='true'] { background-image: var(--hover-
   transform-origin: bottom left;
   width: 260px;
   z-index: 30;
+  /* One column the popover's width, so a long address ellipsizes rather than
+     widening the track and pushing a row's controls out of view. */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 [data-theme='dark'] .new-channel-popover { background: var(--av-sys-color-surface-elevated); }

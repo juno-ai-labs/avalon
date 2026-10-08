@@ -418,6 +418,24 @@ export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
  * Readers first: it references the sources table. The readers a Space seated
  * stay seated as `parent_grants` rows, which are the access itself.
  */
+/**
+ * Migration 96: people invited to the Organization who have not joined,
+ * listed in a Space by address. A participant is a user id, which an invitee
+ * does not have until they accept; `seatInvitees` turns these rows into
+ * participant rows then. No foreign key to `spaces`: a Space is archived, never
+ * deleted, and a key would make a future rebuild of `spaces` cascade here.
+ * The address index is the acceptance's lookup.
+ */
+export const SPACE_INVITEES_MIGRATION: readonly string[] = [
+  `CREATE TABLE space_invitees (
+    space_id TEXT NOT NULL,
+    email TEXT NOT NULL CHECK (email = lower(email)),
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (space_id, email)
+  ) STRICT`,
+  `CREATE INDEX space_invitees_email_idx ON space_invitees(email)`,
+];
+
 export const SPACE_PUBLIC_ONLY_MIGRATION: readonly string[] = [
   `UPDATE workspace_space_state
       SET waterline = waterline + 1, updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER)
@@ -1347,8 +1365,62 @@ export class WorkspaceSpaceStorage {
           userId,
         );
       }
+      if (request.audience.inviteeEmails !== undefined) {
+        this.storage.sql.exec("DELETE FROM space_invitees WHERE space_id = ?", request.spaceId);
+        for (const email of new Set(request.audience.inviteeEmails.map((address) => address.toLowerCase()))) {
+          this.storage.sql.exec(
+            "INSERT INTO space_invitees (space_id, email, added_at) VALUES (?, ?, ?)",
+            request.spaceId,
+            email,
+            now,
+          );
+        }
+      }
       this.advanceWaterline(now);
       return this.space(request.spaceId, member(request.userId));
+    });
+  }
+
+  /** The addresses listed in one Space, waiting for their owners to join. */
+  invitees(spaceId: string): string[] {
+    return this.storage.sql.exec<{ email: string } & Record<string, SqlStorageValue>>(
+      "SELECT email FROM space_invitees WHERE space_id = ? ORDER BY email",
+      spaceId,
+    ).toArray().map((row) => row.email);
+  }
+
+  /**
+   * Seat a new member in every active Space that listed their address, and
+   * forget the address there. One transaction, so an address is never both
+   * seated and still waiting. Returns the Spaces it seated them in.
+   */
+  seatInvitees(userId: string, email: string, now = Date.now()): string[] {
+    return this.storage.transactionSync(() => {
+      const spaceIds = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+        "DELETE FROM space_invitees WHERE email = ? RETURNING space_id",
+        email.toLowerCase(),
+      ).toArray().map((row) => row.space_id);
+      const seated: string[] = [];
+      for (const spaceId of spaceIds) {
+        const space = this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+          `UPDATE spaces SET revision = revision + 1, updated_at = ?
+            WHERE space_id = ? AND archived_at IS NULL RETURNING space_id`,
+          now,
+          spaceId,
+        ).toArray()[0];
+        if (!space) continue;
+        this.storage.sql.exec(
+          `INSERT INTO space_viewers
+             (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
+           VALUES (?, ?, 1, 1, 0, '')
+           ON CONFLICT(space_id, user_id) DO UPDATE SET is_participant = 1`,
+          spaceId,
+          userId,
+        );
+        seated.push(spaceId);
+      }
+      if (seated.length > 0) this.advanceWaterline(now);
+      return seated;
     });
   }
 

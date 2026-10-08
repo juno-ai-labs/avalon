@@ -16,6 +16,8 @@ import type { SpaceConversationSummary, Workspace } from '../lib/types';
 const api = vi.hoisted(() => ({
   archiveSpace: vi.fn(),
   getWorkspaceMembers: vi.fn(),
+  getWorkspaceInvitees: vi.fn(),
+  getSpaceInvitees: vi.fn(),
   listResources: vi.fn(),
   listSpaceChannels: vi.fn(),
   restoreSpace: vi.fn(),
@@ -160,6 +162,8 @@ describe('the Space dashboard', () => {
     removedDataHooks.cachedWorkstreams = [];
     workspaceSocket.current = null;
     api.getWorkspaceMembers.mockResolvedValue([member]);
+    api.getWorkspaceInvitees.mockResolvedValue([]);
+    api.getSpaceInvitees.mockResolvedValue([]);
     api.listSpaceChannels.mockResolvedValue({ items: [], nextCursor: null });
     api.updateSpacePresentation.mockImplementation(async (_id: string, input: { name: string; iconKey: string; colorKey: string }) => makeSpace({ ...input, revision: 2 }));
     api.updateSpaceAudience.mockImplementation(async (_id: string, input: { scope: 'personal' | 'workspace' }) => makeSpace({ scope: input.scope, revision: 2 }));
@@ -578,6 +582,30 @@ describe('the Space dashboard', () => {
 
     expect(await screen.findByRole('button', { name: 'Manage participants' })).toBeVisible();
     expect(screen.queryByRole('combobox', { name: 'Space audience' })).not.toBeInTheDocument();
+  });
+
+  it('lists Organization invitees by address and saves them with the participants', async () => {
+    api.getWorkspaceInvitees.mockResolvedValue([
+      { email: 'dana@example.com', invitedAt: '2026-10-01T00:00:00.000Z' },
+      { email: 'eli@example.com', invitedAt: '2026-10-01T00:00:00.000Z' },
+    ]);
+    // A listed address whose invitation is no longer pending is not shown.
+    api.getSpaceInvitees.mockResolvedValue(['dana@example.com', 'gone@example.com']);
+    renderSpace();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage participants' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Space participants' });
+    const dana = await within(dialog).findByRole('checkbox', { name: /dana@example\.com/u });
+    expect(dana).toBeChecked();
+    expect(within(dialog).queryByText('gone@example.com')).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: /eli@example\.com/u }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(api.updateSpaceAudience).toHaveBeenCalledWith(hiring.id, {
+      scope: 'workspace',
+      participantUserIds: [member.id],
+      inviteeEmails: ['dana@example.com', 'eli@example.com'],
+    }));
   });
 
   // The sentence for a refused roster is drawn inside this dialog, so a dialog
