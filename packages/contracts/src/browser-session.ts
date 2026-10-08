@@ -9,11 +9,7 @@ import { HttpsUrlSchema } from "./url-schemas";
 export const BrowserSessionSchema = SessionSchema.pick({ user: true, workspace: true, impersonator: true, expiresAt: true });
 export type BrowserSession = z.infer<typeof BrowserSessionSchema>;
 export const BrowserWorkspacesSchema = z.object({ workspaces: z.array(WorkspaceSchema) });
-/**
- * Attention for each organization the signed-in browser is a member of, read
- * apart from the list so the list never waits on a Durable Object. Guest
- * relationships and organizations whose read failed are absent.
- */
+/** Attention for each listed membership; guests and failed reads are absent. */
 export const BrowserWorkspaceAttentionSchema = z.object({
   attention: z.array(z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema, attention: WorkspaceAttentionSchema })),
 });

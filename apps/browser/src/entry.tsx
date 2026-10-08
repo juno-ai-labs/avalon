@@ -122,8 +122,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [listed, setListed] = useState<{ region: string; workspaces: ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"] } | null>(null);
   const workspaces = listed?.workspaces ?? null;
   // Each listed organization's activity count, by region and id, with the
-  // account that read it: another account's counts are never drawn. Read after
-  // the list, so the list never waits on it; a failed read draws none.
+  // account that read it, so another account's counts are never drawn.
   const [activity, setActivity] = useState<{ userId: string; counts: ReadonlyMap<string, number> } | null>(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(true);

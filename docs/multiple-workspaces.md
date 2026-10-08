@@ -135,6 +135,8 @@ red with white digits (`ActivityCountBadge` in `@rally/ui`), showing the
 attention read's `readerAttentionCount`: the conversations unread, unseen or
 mentioning the person. It is the same number as that Organization's attention
 menu and dock badge, it reads 99+ past two digits, and a zero shows nothing.
+An agent waiting on input (`needs_input`) with nothing unread counts zero, as in
+the attention menu.
 When some of those conversations are waiting on the person, the strongest
 reason, in the order WorkspaceDO ranks them, is the badge's tooltip and part of
 the row's accessible name. The browser's organization list shows the same
@@ -486,10 +488,8 @@ a workspace credential per Organization in the browser so it could call
 by design.
 
 **Consequences:** The account trigger's dot now marks a background
-Organization with a non-zero count, so trigger and rows agree. An
-Organization where only a running agent waits on input (`needs_input`) and no
-conversation is unread shows no count, as its attention menu shows none. The
-web shell's own account menu still shows no background counts: the browser
+Organization with a non-zero count, so trigger and rows agree. The web
+shell's own account menu still shows no background counts: the browser
 platform refuses attention for any Organization but the active one, and
 moving it onto the new route is a separate change.
 
