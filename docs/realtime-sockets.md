@@ -148,6 +148,20 @@ admission is split in two.
    with it. Chromium fails a handshake whose subprotocol offer went unanswered,
    so the answer is required — and it is always the sentinel, never the ticket.
 
+### Transcript readiness after reconnect
+
+Transport `connected` means the WebSocket opened. `transcriptReady` means this
+socket installed an accepted canonical snapshot and therefore owns the fence
+used by history requests. Closing or resynchronizing clears that readiness but
+keeps the rendered transcript. History paging resumes only after the new
+snapshot replaces the cached fence; stale range calls are rejected locally.
+
+A zero-cursor subscription already delivers a snapshot. A replay-only reconnect
+keeps its low-cost replay path; if the screen needs an older/newer gap or a
+search result, it requests one canonical snapshot on that socket before paging.
+The existing in-flight snapshot slot deduplicates these requests. Sending uses
+its own room-queue readiness and does not wait for history readiness.
+
 ### Hibernation lifecycle
 
 An admitted SubstreamAgent feed also accepts correlated
@@ -993,6 +1007,24 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-10-06 — History waits for the current socket's snapshot fence
+
+**What changed:** The conversation feed exposes transcript readiness separately
+from transport state, clears it on disconnect/resync, and rejects ranges with an
+old fence locally. The surface waits for an accepted snapshot before paging and
+requests one when replay-only recovery leaves history to load.
+
+**Why:** Production showed a retained response with history stuck waiting for
+reconnection. Transport-open previously released history work before the new
+socket established its own snapshot fence, allowing an expired-fence request to
+trigger another resync. Repeating reconnect alone cannot establish that boundary.
+
+**Consequences:** Cached content can remain visible during recovery, but its
+snapshot ID cannot authorize reads on another socket. Ordinary replay and queued
+sends retain their existing paths; history readiness requires a current fence.
+The exact server reason for the observed incident was not captured.
+
 
 ### 2026-10-03 — A guest's workspace socket carries no member directory
 

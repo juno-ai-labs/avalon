@@ -213,7 +213,7 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
       createMessage: vi.fn(),
       requestSnapshot: vi.fn(),
       retryOpening: vi.fn(),
-      sendReady: true,
+      transcriptReady: true, sendReady: true,
       state: 'connected',
       workspaceSocketState: 'connected',
     });

@@ -1601,7 +1601,7 @@ export function ConversationSurface({
   });
   const socketState = socketConnection.state;
   /** The room is on the line and what is on screen is its own: ranges can be asked for against it. */
-  const feedLive = socketState === 'connected' && !feedFromLocalCache;
+  const feedLive = socketState === 'connected' && socketConnection.transcriptReady && !feedFromLocalCache;
   const loadTranscriptRange = socketConnection.loadTranscriptRange;
   const olderTranscriptRange = orderedTranscript.data
     ? adjacentTranscriptRange(orderedTranscript.data, 'older')
@@ -1609,6 +1609,13 @@ export function ConversationSurface({
   const newerTranscriptRange = orderedTranscript.data
     ? adjacentTranscriptRange(orderedTranscript.data, 'newer')
     : null;
+  useEffect(() => {
+    if (socketState === 'connected' && !socketConnection.transcriptReady
+      && (olderTranscriptRange !== null || newerTranscriptRange !== null || searchTurnId)) {
+      requestSocketSnapshot();
+    }
+  }, [socketState, socketConnection.transcriptReady, olderTranscriptRange,
+    newerTranscriptRange, searchTurnId, requestSocketSnapshot]);
   // Streaming reveal changes only presentation overlays, potentially once per
   // painted frame. Keep the canonical flatten/dedupe/sort outside that clock:
   // it changes only when the durable snapshot or author projection changes.

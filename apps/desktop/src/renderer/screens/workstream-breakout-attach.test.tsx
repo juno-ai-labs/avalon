@@ -207,7 +207,7 @@ describe('attaching a breakout artifact to its channel', () => {
       createMessage: vi.fn(),
       requestSnapshot: vi.fn(),
       retryOpening: vi.fn(),
-      sendReady: true,
+      transcriptReady: true, sendReady: true,
       state: 'connected',
       workspaceSocketState: 'connected',
     });
