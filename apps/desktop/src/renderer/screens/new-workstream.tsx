@@ -215,6 +215,18 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
       ? current
       : [...current, member]);
   }, []);
+  // An address nobody in the Organization holds is held as an invitee, and
+  // shared the Channel by address once it exists, as a picked invitee is.
+  const inviteRecipients = useCallback((emails: string[]): string | null => {
+    const inactive = emails.filter((email) => (members.data ?? []).some((member) => (
+      member.email.toLocaleLowerCase() === email && (member.status ?? 'active') !== 'active'
+    )));
+    if (inactive.length > 0) {
+      return `${inactive.join(', ')} ${inactive.length === 1 ? 'has' : 'have'} an organization account that isn’t active.`;
+    }
+    for (const email of emails) selectRecipient(inviteeAsMember(email));
+    return null;
+  }, [members.data, selectRecipient]);
   const removeRecipient = useCallback((memberId: string): void => {
     setSelectedMembers((current) => current.filter((member) => member.id !== memberId));
   }, []);
@@ -540,6 +552,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
               creator={workspace.currentUser}
               loading={members.isLoading}
               onAdd={selectRecipient}
+              onInvite={workspace.currentUser.accessClass !== 'guest' ? inviteRecipients : undefined}
               onRemove={removeRecipient}
               selected={selectedMembers}
             />
