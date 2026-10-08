@@ -37,7 +37,8 @@ and selecting any other Organization drops it.
 | `packages/db/migrations/0098_multiple_workspaces.sql` | Plural Global route bindings, regional abandonment, and the replay journal for setup operations. |
 | `apps/api/src/services/platform-onboarding-service.ts` | Cross-region discovery, activation, create/accept coordination, and operation replay. |
 | `apps/api/src/services/workspace-service.ts` | Ordinary self-leave, sole-owner refusal, and atomic final-member abandonment. |
-| `apps/api/src/services/workspace-attention-service.ts`, `durable-objects/workspace-do.ts` | The regional attention read and WorkspaceDO projection. |
+| `apps/api/src/services/workspace-attention-service.ts`, `durable-objects/workspace-do.ts` | The regional attention read, `membershipAttention` over a person's memberships, and WorkspaceDO projection. |
+| `apps/api/src/routes/browser.ts` (`/workspaces/attention`), `apps/browser/src/entry.tsx` | The browser organization list's activity counts, across deployments. |
 | `apps/desktop/src/main/stored-auth.ts`, `index.ts` | Versioned credential/profile sets, device-local recency, exact-credential refresh and removal, activation races, and complete sign-out. |
 | `apps/desktop/src/main/workspace-selection.ts`, `workspace-activation.ts` | The local claim that answers a link to the active workspace, and the platform activation every other addressed link takes. |
 | `apps/desktop/src/main/credential-refresh.ts` | One rotation per refresh token: every path that renews a stored credential shares an in-flight refresh of the same token. |
@@ -129,13 +130,15 @@ revocation.
 
 ### The account menu's directory
 
-A background row's trailing indicator is one green dot, shown when the
-WorkspaceDO attention read reports any activity — work streams waiting on the
-person or merely something new since they last looked — and nothing
-otherwise. The detail the read carries (how many are waiting and the
-strongest reason among them, in the order WorkspaceDO ranks them) is kept
-for the dot's tooltip and the row's accessible name rather than drawn as a
-count.
+A background row's trailing indicator is a count badge, the sidebar's unread
+red with white digits (`ActivityCountBadge` in `@rally/ui`), showing the
+attention read's `readerAttentionCount`: the conversations unread, unseen or
+mentioning the person. It is the same number as that Organization's attention
+menu and dock badge, it reads 99+ past two digits, and a zero shows nothing.
+When some of those conversations are waiting on the person, the strongest
+reason, in the order WorkspaceDO ranks them, is the badge's tooltip and part of
+the row's accessible name. The browser's organization list shows the same
+badge, read through `GET /browser/workspaces/attention` (below).
 
 ### Switching
 
@@ -223,6 +226,16 @@ as `aps.badge`). Focus and account-menu opening refresh the projection. The fixe
 device workspace cap remain `LIMIT UNSET`; do not invent either number. There is
 currently no periodic refresh: focus and menu opening are the only refresh
 triggers until the team chooses a cadence.
+
+The browser holds no workspace credential before it opens an Organization, so
+its organization list reads attention through its identity cookie instead:
+`GET /browser/workspaces/attention` answers for every membership the list
+holds. Global reads its own WorkspaceDOs and asks each other deployment over
+the identity bridge's `attention`, which resolves the person's regional id the
+way `discover` does. Guest relationships are skipped, as on the Mac. One
+workspace or deployment that fails is left out and logged by code as
+`browser_workspace_attention_failed`; the rest still answer. The list is read
+first and the counts after it, so the list never waits on a Durable Object.
 
 ### Workspace-addressed handoffs
 
@@ -446,6 +459,38 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-10-08: Organization rows show an activity count, on the Mac and in the browser
+
+**What changed:** The account menu's background rows show
+`readerAttentionCount` as a red count badge instead of the green dot, and show
+nothing at zero. The browser's organization list shows the same badge, through
+a new identity-cookie route, `GET /browser/workspaces/attention`, backed by a
+new identity-bridge method, `attention`. Both reuse one per-workspace read,
+`membershipAttention`, which the existing `GET /workspace/attention` shares.
+
+**Why:** A product request: the person choosing an Organization wanted to see
+how much is waiting in each, on the iPhone's web sign-in list as well as the
+Mac. This reverses the 2026-09-02 decision to replace the count with a dot,
+which held that the count needed a legend. The answer here is one number in
+one colour, the same number as the attention menu and the dock badge, so it
+means the same thing wherever it appears.
+
+**Considered and rejected:** Adding attention to `/browser/workspaces` itself.
+That makes the list wait on one Durable Object read per Organization, in every
+deployment, before it paints; a second read lets the list paint first. Minting
+a workspace credential per Organization in the browser so it could call
+`/workspace/attention`: a browser keeps only its active organization's session
+by design.
+
+**Consequences:** The account trigger's dot now marks a background
+Organization with a non-zero count, so trigger and rows agree. An
+Organization where only a running agent waits on input (`needs_input`) and no
+conversation is unread shows no count, as its attention menu shows none. The
+web shell's own account menu still shows no background counts: the browser
+platform refuses attention for any Organization but the active one, and
+moving it onto the new route is a separate change.
+
 
 ### 2026-10-07: Creating an organization takes fewer round trips, and lands like a switch
 
