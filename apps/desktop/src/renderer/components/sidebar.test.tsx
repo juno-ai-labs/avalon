@@ -3882,6 +3882,69 @@ describe('alphabetical channels inside a space', () => {
     await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(bravo, hiring.id, true));
   });
 
+  it('holds a slot open in Pinned under the pointer and pins the dropped Channel into it', async () => {
+    const charlie = placedIn(workstream('ws-charlie', 'Charlie', 'completed', '2026-07-31T09:00:00.000Z'), hiring.id);
+    const onPinWorkstream = vi.fn(async () => true);
+    const onReorderPinnedWorkstreams = vi.fn(async () => undefined);
+    renderSidebar({
+      onPinWorkstream,
+      onReorderPinnedWorkstreams,
+      workstreams: [pinned(alpha, 0), pinned(bravo, 1), charlie],
+    });
+    const section = screen.getByRole('region', { name: 'Pinned' });
+    // jsdom lays nothing out: the two pinned rows are given one 48px slot each.
+    for (const [index, id] of [alpha.id, bravo.id].entries()) {
+      const row = section.querySelector<HTMLElement>(`[data-workstream-id="${id}"]`)!;
+      row.getBoundingClientRect = () => DOMRect.fromRect({ x: 0, y: index * 48, width: 200, height: 48 });
+    }
+    const slots = (): string[] => [...section.querySelectorAll('.sidebar-list > .sidebar-context-target')]
+      .map((row) => `${row.classList.contains('pinned-drop-ghost') ? 'ghost:' : ''}${row.querySelector('.sidebar-row-title-copy')?.textContent ?? ''}`);
+    const transfer = channelTransfer();
+    const source = dragTarget(/Charlie/u);
+    // jsdom has no DragEvent, and the plain Event it falls back to drops `clientY`.
+    const dragOverAt = (clientY: number): void => {
+      const event = createEvent.dragOver(section, { dataTransfer: transfer });
+      Object.defineProperty(event, 'clientY', { value: clientY });
+      fireEvent(section, event);
+    };
+
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    // Below Alpha's middle and above Bravo's: the slot between them.
+    dragOverAt(60);
+    expect(slots()).toEqual(['Alpha', 'ghost:Charlie', 'Bravo']);
+
+    fireEvent.dragLeave(section, { dataTransfer: transfer, relatedTarget: document.body });
+    expect(slots()).toEqual(['Alpha', 'Bravo']);
+
+    dragOverAt(60);
+    fireEvent.drop(section, { dataTransfer: transfer });
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+
+    await waitFor(() => expect(onReorderPinnedWorkstreams)
+      .toHaveBeenCalledWith(hiring.id, [alpha.id, charlie.id, bravo.id]));
+    expect(onPinWorkstream).toHaveBeenCalledWith(charlie, hiring.id, true);
+    // Charlie never comes back pinned here, so the slot closes once the answer is in.
+    await waitFor(() => expect(slots()).toEqual(['Alpha', 'Bravo']));
+  });
+
+  it('leaves a dropped Channel\'s slot behind when the reader switches Space mid-pin', () => {
+    // The pin never answers, so the slot would stay open in Hiring.
+    renderSidebar({ onPinWorkstream: () => new Promise<boolean>(() => undefined), workstreams: [pinned(alpha, 0), bravo] });
+    const section = screen.getByRole('region', { name: 'Pinned' });
+    const transfer = channelTransfer();
+    const source = dragTarget(/Bravo/u);
+
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    fireEvent.dragOver(section, { dataTransfer: transfer });
+    fireEvent.drop(section, { dataTransfer: transfer });
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+    expect(document.querySelector('.pinned-drop-ghost')).toHaveTextContent('Bravo');
+
+    act(() => useUiStore.setState({ sidebarSpaceFilter: launch.id }));
+
+    expect(document.querySelector('.pinned-drop-ghost')).toBeNull();
+  });
+
   it('settles the empty Pinned drop zone when the Channel drag is cancelled', () => {
     renderSidebar({ workstreams: [alpha, bravo] });
     const transfer = channelTransfer('none');
@@ -4226,9 +4289,16 @@ describe('the sidebar Space filter', () => {
     expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
   });
 
-  it('pins a Channel dropped on the Pinned section under All', async () => {
+  it('pins a Channel dropped at the end of All\'s Pinned section there, past its old saved slot', async () => {
     const onPinWorkstream = vi.fn(async () => true);
-    renderFiltered({ onPinWorkstream, onReorderAllPinned: vi.fn(async () => undefined) });
+    const onReorderAllPinned = vi.fn(async () => undefined);
+    renderFiltered({
+      // Charlie was pinned once and unpinned; All's saved order still names it first.
+      allPinnedOrder: [charlie.id, alpha.id],
+      onPinWorkstream,
+      onReorderAllPinned,
+      workstreams: [{ ...alpha, spacePins: [{ spaceId: home.id, position: 0 }] }, bravo, charlie, delta],
+    });
     // jsdom has no DataTransfer; the row reads and writes only these.
     const data = new Map<string, string>();
     const transfer = {
@@ -4242,11 +4312,15 @@ describe('the sidebar Space filter', () => {
 
     fireEvent.dragStart(source, { dataTransfer: transfer });
     const pinnedSection = screen.getByRole('region', { name: 'Pinned' });
-    fireEvent.dragOver(pinnedSection, { dataTransfer: transfer });
+    // Below every pinned row: the end. jsdom's plain drag Event drops `clientY`.
+    const over = createEvent.dragOver(pinnedSection, { dataTransfer: transfer });
+    Object.defineProperty(over, 'clientY', { value: 1000 });
+    fireEvent(pinnedSection, over);
     fireEvent.drop(pinnedSection, { dataTransfer: transfer });
     fireEvent.dragEnd(source, { dataTransfer: transfer });
 
-    await waitFor(() => expect(onPinWorkstream).toHaveBeenCalledWith(expect.objectContaining({ id: charlie.id }), hiring.id, true));
+    await waitFor(() => expect(onReorderAllPinned).toHaveBeenCalledWith([alpha.id, charlie.id]));
+    expect(onPinWorkstream).toHaveBeenCalledWith(expect.objectContaining({ id: charlie.id }), hiring.id, true);
   });
 
   it('widens a Space filter to All when the open Channel is not in that Space', () => {
