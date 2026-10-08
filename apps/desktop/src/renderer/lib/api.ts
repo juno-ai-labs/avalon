@@ -34,6 +34,9 @@ import {
   WorkspaceMemberSchema as WireWorkspaceMemberSchema,
   WorkspaceInvitationPreviewSchema as WireWorkspaceInvitationPreviewSchema,
   WorkspaceInvitationSchema as WireWorkspaceInvitationSchema,
+  WorkspaceInviteeSchema,
+  SpaceInviteesSchema,
+  type WorkspaceInvitee,
   WorkspaceSchema as WireWorkspaceSchema,
   TerminalWorkspaceSettingsSchema as WireTerminalWorkspaceSettingsSchema,
   TerminalNetworkPolicyPreviewSchema as WireTerminalNetworkPolicyPreviewSchema,
@@ -236,6 +239,7 @@ const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSche
 const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ complete: z.boolean().optional() });
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
+const wireInviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
 const wireExecutionPrincipalClaimSchema = AutomationExecutionPrincipalClaimSchema;
 const wireWorkstreamAutomationPageSchema = z.object({
@@ -1019,6 +1023,12 @@ export class RallyApi {
     });
   }
 
+  /** Addresses invited to the Organization and not yet joined, as any member may see them. */
+  async getWorkspaceInvitees(signal?: AbortSignal): Promise<WorkspaceInvitee[]> {
+    const page = await this.request('/workspace/invitees', { schema: wireInviteePageSchema, signal });
+    return page.items;
+  }
+
   async getWorkspaceInvitations(signal?: AbortSignal): Promise<WorkspaceInvitation[]> {
     const page = await this.request('/workspace/invitations', { schema: wireInvitationPageSchema, signal });
     return page.items;
@@ -1369,9 +1379,15 @@ export class RallyApi {
    * proves nothing — the server parses this body against the branded schema,
    * which is the check that counts.
    */
+  /** The Organization invitees a Space lists by address, to whoever may edit it. */
+  async getSpaceInvitees(id: string, signal?: AbortSignal): Promise<string[]> {
+    const page = await this.request(`/spaces/${encodeURIComponent(id)}/invitees`, { schema: SpaceInviteesSchema, signal });
+    return page.items.map((item) => item.email);
+  }
+
   updateSpaceAudience(
     id: string,
-    input: { scope: SpaceScope; participantUserIds: string[] },
+    input: { scope: SpaceScope; participantUserIds: string[]; inviteeEmails?: string[] },
   ): Promise<SpaceSummary> {
     return this.request(`/spaces/${encodeURIComponent(id)}/audience`, {
       method: 'PATCH',

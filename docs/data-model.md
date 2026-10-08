@@ -517,6 +517,9 @@ SQL joins.
   Channel or Breakout, addressed to one approver, with at most one pending per
   person per conversation; see
   [`channel-access-requests.md`](channel-access-requests.md).
+  `space_invitees` (migration 96) holds the addresses of Organization invitees a
+  Space lists until they accept and are seated as participants; see
+  [`spaces.md`](spaces.md#participants).
   `space_channel_memberships` is keyed by Space and Channel with **no**
   uniqueness on the Channel, because a Channel belongs to as many Spaces as it
   was added to. `space_intents` is one row per staged cross-object operation

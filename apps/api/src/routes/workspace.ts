@@ -16,6 +16,7 @@ import {
   UpdateWorkspaceMemberRoleRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceInvitationSchema,
+  WorkspaceInviteeSchema,
   WorkspaceAttentionSchema,
   WorkspaceMemberSchema,
   WorkspaceSchema,
@@ -46,6 +47,7 @@ const invitationParam = z.object({ id: IdSchema });
 const memberParam = z.object({ userId: IdSchema });
 const MemberPageSchema = z.object({ items: z.array(WorkspaceMemberSchema) });
 const InvitationPageSchema = z.object({ items: z.array(WorkspaceInvitationSchema) });
+const InviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
 
 /**
  * The workspace socket's ticket, for members and guests alike.
@@ -214,6 +216,13 @@ workspaceRoutes.post("/members/:id/promote", zValidator("param", invitationParam
   zValidator("json", PromoteWorkspaceGuestSchema), async (c) =>
     c.json(WorkspaceRelationshipSchema.parse(await new WorkspaceService(c.env, getAuth(c))
       .promoteGuest(c.req.valid("param").id, c.req.valid("json")))),
+);
+/**
+ * Pending Organization invitations as members see them, for the people
+ * pickers; `/invitations` is the administrator's full list.
+ */
+workspaceRoutes.get("/invitees", async (c) =>
+  c.json(InviteePageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listInvitees() })),
 );
 workspaceRoutes.get("/invitations", async (c) =>
   c.json(InvitationPageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listInvitations() })),

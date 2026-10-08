@@ -10,6 +10,7 @@ import { mentionOptionCopy } from '../test/mention-option-copy';
 import { STOPPING_LABEL } from './agent-work-timing';
 import type { ComposerModelControl } from './composer-input';
 import { WorkstreamComposer } from './workstream-composer';
+import type { WorkspaceInvitee } from '@rally/contracts';
 
 // The composer shows the work stream's model only while Application →
 // Developer → Debug enabled is on, so this bridge is what turns it on and off.
@@ -68,6 +69,8 @@ function renderComposer(
   detail: WorkstreamDetail = workstream,
   members: WorkspaceMember[] = [creator, bob, cara],
   model?: ComposerModelControl,
+  invitees?: WorkspaceInvitee[],
+  sharedInviteeEmails?: string[],
 ): ReturnType<typeof render> {
   vi.stubGlobal('ResizeObserver', class {
     observe(): void {}
@@ -81,6 +84,8 @@ function renderComposer(
         attachments={[]}
         fileInputRef={createRef<HTMLInputElement>()}
         members={members}
+        {...(invitees ? { invitees } : {})}
+        {...(sharedInviteeEmails ? { sharedInviteeEmails } : {})}
         {...(model ? { model } : {})}
         onAttach={onAttach}
         onOpenAttachment={() => undefined}
@@ -597,8 +602,8 @@ describe('WorkstreamComposer mention confirmation', () => {
     // exactly this reason.
     const options = await screen.findAllByRole('option');
     expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: 'Bot', description: null, label: 'Rally' },
-      { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
+      { badge: 'AI', description: null, label: 'Rally' },
+      { badge: 'Member', description: 'adam@example.com', label: 'Adam' },
     ]);
   });
 
@@ -621,15 +626,15 @@ describe('WorkstreamComposer mention confirmation', () => {
 
     const options = await screen.findAllByRole('option');
     expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: 'Bot', description: null, label: 'Rally' },
-      { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
-      { badge: 'Person', description: 'bob@example.com · not participating', label: 'Bob Builder' },
-      { badge: 'Person', description: 'cara@example.com · not participating', label: 'Cara Chen' },
+      { badge: 'AI', description: null, label: 'Rally' },
+      { badge: 'Member', description: 'adam@example.com', label: 'Adam' },
+      { badge: 'Member', description: 'bob@example.com · not participating', label: 'Bob Builder' },
+      { badge: 'Member', description: 'cara@example.com · not participating', label: 'Cara Chen' },
     ]);
-    expect(options[0]).toHaveAccessibleName('Rally — Ask Rally to join this part of the conversation — Bot');
-    expect(options[1]).toHaveAccessibleName('Adam — adam@example.com — Person');
-    expect(options[2]).toHaveAccessibleName('Bob Builder — bob@example.com · not participating — Person');
-    expect(options[3]).toHaveAccessibleName('Cara Chen — cara@example.com · not participating — Person');
+    expect(options[0]).toHaveAccessibleName('Rally — Ask Rally to join this part of the conversation — AI');
+    expect(options[1]).toHaveAccessibleName('Adam — adam@example.com — Member');
+    expect(options[2]).toHaveAccessibleName('Bob Builder — bob@example.com · not participating — Member');
+    expect(options[3]).toHaveAccessibleName('Cara Chen — cara@example.com · not participating — Member');
     expect(screen.queryByText('Organization connection')).not.toBeInTheDocument();
 
     // The draft's highlight names what the composer can mention, so a
@@ -668,7 +673,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     const composer = screen.getByLabelText('Message the channel');
 
     fireEvent.change(composer, { target: { value: '@' } });
-    fireEvent.click(await screen.findByRole('option', { name: /Rally .* Bot/u }));
+    fireEvent.click(await screen.findByRole('option', { name: /Rally .* AI/u }));
 
     expect(composer).toHaveValue('@Rally ');
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
@@ -869,5 +874,77 @@ describe('WorkstreamComposer model control', () => {
     expect(await screen.findByRole('button', { name: /^Model:/u })).toHaveAccessibleName(
       "Model: x-ai/grok-4.3 (the latest run's) — unpinned, so the agent-model-workstream flag decides each run and a later run may differ. It cannot be set here.",
     );
+  });
+});
+
+describe('WorkstreamComposer invitees', () => {
+  const dana: WorkspaceInvitee = { email: 'dana@example.com', invitedAt: '2026-07-31T20:00:00.000Z' };
+
+  it('labels each person Member, Guest or Invited, with an invitee named by address', async () => {
+    renderComposer(undefined, false, undefined, workstream, [creator, { ...bob, accessClass: 'guest' }], undefined, [dana]);
+    const composer = screen.getByLabelText('Message the channel');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+
+    const options = await screen.findAllByRole('option');
+    expect(options.map(mentionOptionCopy)).toEqual([
+      { badge: 'AI', description: null, label: 'Rally' },
+      { badge: 'Member', description: 'adam@example.com', label: 'Adam' },
+      { badge: 'Guest', description: 'bob@example.com · not participating', label: 'Bob Builder' },
+      { badge: 'Invited', description: null, label: 'dana@example.com' },
+    ]);
+    expect(options[3]).toHaveClass('is-invited');
+  });
+
+  it('writes the address and hands the host the invitees the message names', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend, false, undefined, workstream, [creator], undefined, [dana]);
+    const composer = screen.getByLabelText('Message the channel');
+
+    fireEvent.change(composer, { target: { value: 'hi @dan' } });
+    fireEvent.click((await screen.findAllByRole('option')).find((option) => option.textContent?.includes('dana@example.com'))!);
+    await waitFor(() => expect(composer).toHaveValue('hi @dana@example.com '));
+    fireEvent.change(composer, { target: { value: 'hi @dana@example.com, take a look' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('hi @dana@example.com, take a look', [], undefined, undefined, ['dana@example.com']));
+  });
+
+  it('neither asks about nor hands over an invitee this conversation is already shared with', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend, false, undefined, { ...workstream, scope: 'personal' }, [creator], undefined, [dana], ['dana@example.com']);
+    const composer = screen.getByLabelText('Message the channel');
+
+    fireEvent.change(composer, { target: { value: '@dana@example.com again' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('@dana@example.com again', [], undefined, undefined));
+    expect(screen.queryByRole('button', { name: 'Add and mention' })).not.toBeInTheDocument();
+  });
+
+  it('shares only with the address written, never one it begins with', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend, false, undefined, workstream, [creator], undefined, [dana]);
+    const composer = screen.getByLabelText('Message the channel');
+
+    fireEvent.change(composer, { target: { value: 'ask @dana@example.com.au, or `@dana@example.com`' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('ask @dana@example.com.au, or `@dana@example.com`', [], undefined, undefined));
+  });
+
+  it('asks before bringing an invitee into a private conversation', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend, false, undefined, { ...workstream, scope: 'personal' }, [creator], undefined, [dana]);
+    const composer = screen.getByLabelText('Message the channel');
+
+    fireEvent.change(composer, { target: { value: '@dana@example.com can you look' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    expect(await screen.findByText('dana@example.com is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this channel.')).toBeInTheDocument();
+    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add and mention' }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('@dana@example.com can you look', [], [], undefined, ['dana@example.com']));
   });
 });

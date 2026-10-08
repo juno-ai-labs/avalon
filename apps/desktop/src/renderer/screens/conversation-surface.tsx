@@ -1,4 +1,5 @@
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
+import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -566,14 +567,23 @@ export function AddParticipantDialog({
   failure,
   failureMessage,
   members,
+  invitees = [],
   open,
   pending,
   onAdd,
+  onInvite,
   onRemove,
   onOpenChange,
   sharing,
 }: {
   sharing?: React.ReactNode;
+  /**
+   * Addresses invited to the Organization that have not joined, and not yet
+   * shared this conversation. Adding one shares it with the address; absent
+   * `onInvite`, none are offered.
+   */
+  invitees?: readonly string[];
+  onInvite?: ((email: string) => void) | undefined;
   current: WorkspaceMember[];
   privateSubstream?: boolean;
   failure?: 'add' | 'remove' | undefined;
@@ -664,6 +674,20 @@ export function AddParticipantDialog({
             </div>
           );
         })}
+        {onInvite && invitees.map((email) => (
+          <button
+            aria-label={`Add ${email} to ${privateSubstream ? 'breakout' : 'main conversation'}`}
+            className="member-action-row is-invited"
+            disabled={pending}
+            key={email}
+            onClick={() => onInvite(email)}
+            type="button"
+          >
+            <Avatar member={inviteeAsMember(email)} size="medium" />
+            <span><strong>{email}</strong><small>Invited</small></span>
+            {pending ? <LoaderCircle className="spin" size={15} /> : <Plus aria-hidden="true" size={15} />}
+          </button>
+        ))}
       </div>
     </Modal>
   );
@@ -989,6 +1013,7 @@ export function RunFailureNotice({
 }
 
 /** Hoisted for identity: a `?? []` per render would re-key the citation lookup. */
+const NO_SHARED_INVITEES: readonly string[] = [];
 const NO_MEMBERS: WorkspaceMember[] = [];
 
 const NO_WORKSPACE_PRESENCE: Record<string, string[]> = {};
@@ -1578,6 +1603,16 @@ export function ConversationSurface({
   });
   const visibleMembers = guest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
   const visibleConnections = guest ? routedDetail?.connections : connections.data;
+  // People invited to the Organization who have not joined: offered where a
+  // member can share this Channel with them, and named in its chips.
+  const invitesInvitees = parentKind === 'workstream' && !guest
+    && Boolean(session?.workspace) && session?.workspace?.accessClass !== 'guest';
+  const invitees = useWorkspaceInvitees(api, invitesInvitees);
+  const visibleInvitees = invitesInvitees ? invitees.data ?? NO_INVITEES : NO_INVITEES;
+  const emailMentions = useMemo(
+    () => emailMentionDirectory(visibleMembers, visibleInvitees),
+    [visibleInvitees, visibleMembers],
+  );
   const availableResources = useInfiniteQuery({
     queryKey: ['resources', debouncedResourceSearch],
     queryFn: ({ pageParam, signal }) => api!.listResources({
@@ -2036,8 +2071,22 @@ export function ConversationSurface({
 
   // Guest invitations for the title menu's People level, loaded once it opens.
   const [invitesWanted, setInvitesWanted] = useState(false);
+  // Loaded with the People level, and whenever the Organization has invitees
+  // to offer: the composer needs to know who is already shared in here.
   const invitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId,
-    enabled: invitesWanted && Boolean(api && session?.workspace) && parentKind === 'workstream' });
+    enabled: (invitesWanted || visibleInvitees.length > 0) && Boolean(api && session?.workspace) && parentKind === 'workstream' });
+  const sharedInviteeEmails = useMemo(
+    () => invitations.pending.data?.map((guest) => guest.email) ?? NO_SHARED_INVITEES,
+    [invitations.pending.data],
+  );
+  // The participant dialog's own target, which may be a breakout other than the
+  // one on screen. Same cache entry as the share panel it embeds.
+  const dialogInvitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId: participantDialogSubstreamId,
+    enabled: participantDialogOpen && invitesInvitees });
+  const dialogInvitees = useMemo(() => {
+    const shared = new Set(dialogInvitations.pending.data?.map((guest) => guest.email) ?? []);
+    return visibleInvitees.map((invitee) => invitee.email).filter((email) => !shared.has(email));
+  }, [dialogInvitations.pending.data, visibleInvitees]);
 
   const removeParticipant = useMutation({
     mutationFn: ({ member, target }: { member: WorkspaceMember; target: string }) => target === '0'
@@ -2356,6 +2405,7 @@ export function ConversationSurface({
     mentions: MentionIdentity[],
     confirmedParticipantUserIds: string[] = [],
     deliveryMode?: WorkstreamMessageDeliveryMode,
+    invitedEmails: string[] = [],
   ): Promise<void> => {
     if (!api || !routedDetail) throw new Error('This channel is not ready to receive messages.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
@@ -2398,6 +2448,23 @@ export function ConversationSurface({
       return;
     }
     const attachmentLease = await attachmentDraft.leaseReady();
+    // Shared before the message is sent, as a member mentioned from outside is
+    // added with it, and after the send holds its attachments, so nothing typed
+    // or attached meanwhile joins this message. An address already shared here
+    // is not shared again: each share is its own email.
+    const toShare = invitedEmails.filter((email) => !sharedInviteeEmails.includes(email)).sort();
+    if (toShare.length > 0) {
+      try {
+        await invitations.invite.mutateAsync(toShare);
+      } catch (error) {
+        await attachmentDraft.restoreLease(attachmentLease.leaseId);
+        pendingSendCount.current = Math.max(0, pendingSendCount.current - 1);
+        if (pendingSendCount.current === 0) setSending(false);
+        setSendError(`${toShare.join(', ')} couldn’t be invited, so the message wasn’t sent. Try again.`);
+        throw error;
+      }
+      void invitations.pending.refetch();
+    }
     const readyAttachments = attachmentLease.attachments;
     const clientId = crypto.randomUUID();
     queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) => {
@@ -2789,6 +2856,7 @@ export function ConversationSurface({
     ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.';
 
   return (
+    <EmailMentionContext.Provider value={emailMentions}>
     <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout" ref={layoutRef}>
       {renderSidebar?.({
@@ -2839,6 +2907,7 @@ export function ConversationSurface({
         launching={substreamLaunch.launching}
         {...(api ? { loadAttachmentContent } : {})}
         members={visibleMembers}
+        invitees={visibleInvitees}
         onCancel={substreamLaunch.onCancel}
         onCreate={substreamLaunch.onCreate}
         onOpenAttachment={setAttachmentPreview}
@@ -2864,6 +2933,7 @@ export function ConversationSurface({
         replyCount,
         people: parentKind === 'workstream' ? {
           candidates: visibleMembers,
+          invitees: visibleInvitees.map((invitee) => invitee.email),
           onAdd: async (member) => {
             removeParticipant.reset();
             invitations.invite.reset();
@@ -3116,6 +3186,8 @@ export function ConversationSurface({
               ?? (retry.error ? 'The run couldn’t be retried.' : undefined)}
             fileInputRef={fileInputRef}
             members={visibleMembers}
+            invitees={visibleInvitees}
+            sharedInviteeEmails={sharedInviteeEmails}
             /* Locked, because a pin is written once when the conversation is
                created and nothing afterwards edits it. What it names is the
                latest run's model first and the pin only as a fallback: an
@@ -3212,9 +3284,15 @@ export function ConversationSurface({
           <ScopeSharingPanel key={participantDialogSubstreamId} api={api} workspaceId={workspaceId} parentId={id} substreamId={participantDialogSubstreamId} /> : null}
         privateSubstream={participantDialogSubstreamId !== '0'}
         current={participantDialogSubstreamId === '0' && renderSidebar ? sidebarDetail.participants : displayedDetail.participants}
-        failure={addParticipant.error ? 'add' : removeParticipant.error ? 'remove' : undefined}
-        failureMessage={refusalMessage(addParticipant.error ?? removeParticipant.error)}
+        failure={addParticipant.error || dialogInvitations.invite.error ? 'add' : removeParticipant.error ? 'remove' : undefined}
+        failureMessage={dialogInvitations.invite.error
+          ? 'They couldn’t be invited. Try again.'
+          : refusalMessage(addParticipant.error ?? removeParticipant.error)}
         members={visibleMembers}
+        invitees={dialogInvitations.pending.data ? dialogInvitees : []}
+        onInvite={invitesInvitees ? (email) => {
+          dialogInvitations.invite.mutate([email], { onSettled: () => { void dialogInvitations.pending.refetch(); } });
+        } : undefined}
         onAdd={(member) => {
           removeParticipant.reset();
           addParticipant.mutate({ member, target: participantDialogSubstreamId });
@@ -3230,11 +3308,12 @@ export function ConversationSurface({
           if (!next) {
             addParticipant.reset();
             removeParticipant.reset();
+            dialogInvitations.invite.reset();
           }
           setParticipantDialogOpen(next);
         }}
         open={participantDialogOpen}
-        pending={addParticipant.isPending || removeParticipant.isPending}
+        pending={addParticipant.isPending || removeParticipant.isPending || dialogInvitations.invite.isPending}
       />
       <RemoveParticipantDialog
         failure={removeConfirm && removeParticipant.error
@@ -3289,5 +3368,6 @@ export function ConversationSurface({
     </div>
     </div>
     </ConnectorConnectionsProvider>
+    </EmailMentionContext.Provider>
   );
 }
