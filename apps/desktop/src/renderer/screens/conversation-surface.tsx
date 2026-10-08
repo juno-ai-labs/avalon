@@ -78,6 +78,7 @@ import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useTranscriptHistory } from '../lib/use-transcript-history';
+import { useVirtualScrollAnchor } from '../lib/use-virtual-scroll-anchor';
 import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
@@ -889,14 +890,6 @@ export function initialTranscriptAnchorIndex(
     && message.attentionSequenceNumber != null
     && message.attentionSequenceNumber >= firstUnreadSequenceNumber);
   return firstUnreadIndex < 0 ? null : Math.max(0, firstUnreadIndex - 1);
-}
-
-export function preservedPrependScrollTop(
-  previousScrollTop: number,
-  previousScrollHeight: number,
-  nextScrollHeight: number,
-): number {
-  return previousScrollTop + Math.max(0, nextScrollHeight - previousScrollHeight);
 }
 
 export function highestVisibleAttentionSequence(
@@ -1730,6 +1723,7 @@ export function ConversationSurface({
   // transcript is a page away rather than loaded.
   const {
     atEnd: transcriptAtEnd,
+    isFollowing: isFollowingTranscript,
     onScroll: onTranscriptScroll,
     onWheel: onTranscriptWheel,
     release: releaseTranscriptFollow,
@@ -1826,9 +1820,6 @@ export function ConversationSurface({
     pendingOlderAfterReconnectRef.current = false;
     setLoadingOlder(true);
     setOlderMessagesError(undefined);
-    const scrollElement = transcriptRef.current;
-    const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
-    const previousScrollTop = scrollElement?.scrollTop ?? 0;
     const request = (async (): Promise<void> => {
       try {
         while (stillCurrent()) {
@@ -1851,15 +1842,6 @@ export function ConversationSurface({
             throw error;
           }
         }
-        if (!stillCurrent()) return;
-        window.requestAnimationFrame(() => {
-          if (!stillCurrent()) return;
-          const element = transcriptRef.current;
-          if (!element) return;
-          scrollTranscriptTo(preservedPrependScrollTop(
-            previousScrollTop, previousScrollHeight, element.scrollHeight,
-          ));
-        });
       } catch (error) {
         if (!stillCurrent()) return;
         if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
@@ -1876,7 +1858,7 @@ export function ConversationSurface({
       olderRequestsRef.current.delete(conversationAddress);
       if (activeConversationAddressRef.current === conversationAddress) setLoadingOlder(false);
     }
-  }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, scrollTranscriptTo, transcriptQueryKey]);
+  }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, transcriptQueryKey]);
   useEffect(() => {
     if (scrollToTurn === null || handledScrollNonce.current === scrollToTurn.nonce) return;
     if (revealTurn(scrollToTurn.turnId)) {
@@ -1901,6 +1883,19 @@ export function ConversationSurface({
       && !searchTurnId && olderTranscriptRange !== null,
     canLoad: feedLive && !loadingOlder && !olderMessagesError,
     loadOlder: () => { void loadOlderMessages(); },
+  });
+
+  // After the virtualizer and the follow: rows prepended above the reader keep
+  // the row they were reading where it was, in the same commit. The layout key
+  // names what is drawn above the feed, which a page with no visible rows can
+  // change without changing the feed.
+  const historyStatusShown = (olderTranscriptRange !== null && !olderMessagesError) || loadingOlder
+    || (nearHistoryEdge && !feedLive && !feedFromLocalCache);
+  const historyRetryShown = olderTranscriptRange !== null && olderMessagesError !== undefined && !loadingOlder;
+  const originShown = Boolean(origin && breakoutOrigin && !olderTranscriptRange);
+  useVirtualScrollAnchor(transcriptVirtualizer, transcriptRef, scrollTranscriptTo, {
+    enabled: () => !isFollowingTranscript(),
+    layoutKey: `${historyStatusShown}:${historyRetryShown}:${olderMessagesError ?? ''}:${otherHistoryError ?? ''}:${originShown}`,
   });
 
   const loadNewerMessages = useCallback(async (): Promise<void> => {
@@ -3066,15 +3061,16 @@ export function ConversationSurface({
         </ConnectingCardSlot>
         <div className="transcript-column" ref={transcriptContentRef}>
           {/* Over a seed the connecting card, sticky at this same edge, is the
-              affordance: a row here would sit under it saying the same thing. */}
-          <div role="status" className={loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)
-            ? 'transcript-history-control' : undefined}>
+              affordance: a row here would sit under it saying the same thing.
+              Its space is held for as long as there is history to load, so the
+              status coming and going never moves the messages under it. */}
+          <div role="status" className={historyStatusShown ? 'transcript-history-control' : undefined}>
             {(loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)) && <>
               <LoaderCircle aria-hidden="true" className="spin" size={14} />
               <span>{feedLive ? 'Loading earlier messages…' : 'Waiting to reconnect…'}</span>
             </>}
           </div>
-          {olderTranscriptRange && olderMessagesError && !loadingOlder && (
+          {historyRetryShown && (
             <div className="transcript-history-control">
               <Button disabled={!feedLive} onClick={() => void loadOlderMessages()}>
                 <RefreshCcw aria-hidden="true" size={14} />
@@ -3089,7 +3085,7 @@ export function ConversationSurface({
               origin card is the Channel's own messages, which people did say,
               and only above the Breakout's first message, never above a
               window that still has earlier pages to load. */}
-          {origin && breakoutOrigin && !olderTranscriptRange && (
+          {originShown && origin && breakoutOrigin && (
             <BreakoutOrigin channelTitle={breakoutOrigin.channelTitle} context={origin.context} origin={origin.origin} />
           )}
           {/* Not while a run is going. A work stream opened the instant it was
