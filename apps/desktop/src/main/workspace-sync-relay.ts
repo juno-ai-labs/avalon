@@ -30,7 +30,7 @@ const WorkspaceSyncPublicationSchema: z.ZodType<WorkspaceSyncPublication> = z.di
     type: z.literal('topics'),
     ...identity,
     waterline: z.number().int().nonnegative(),
-    topics: z.array(WorkspaceSyncTopicSchema).min(1),
+    topics: z.array(z.union([WorkspaceSyncTopicSchema, z.literal('usage')])).min(1),
   }),
 ]);
 

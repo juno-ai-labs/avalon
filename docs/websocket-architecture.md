@@ -175,7 +175,7 @@ main's, the preload inbox's, the consumer's — compares both.
 | --- | --- | --- |
 | `state` | main window → main (`workspace-sync:publish`) | The provider's connection state. Attaches it as the source. |
 | `detach` | main window → main (`workspace-sync:publish`) | That provider unmounted with no successor. Ends the source if it is still the attached one. |
-| `topics` | main window → main → Settings and Sidekicks (`workspace-sync:relayed`) | Topic names and the waterline they moved at. |
+| `topics` | main window → main → Settings and Sidekicks (`workspace-sync:relayed`) | Topic names and the waterline they moved at. Besides the sync topics, the relay-only name `usage`. |
 | `source` | main → Settings and Sidekicks (`workspace-sync:relayed`, and the `workspace-sync:source` reply) | `{ revision, source: { region, workspaceId, state } \| null }`. |
 
 - **Publish (main window, `relay="publish"`).** The provider publishes its
@@ -187,8 +187,10 @@ main's, the preload inbox's, the consumer's — compares both.
   values themselves never cross, and the consumer refetches its own. A
   `workspace_sidebar_list` push of the `automations` list is published as the
   `automations` topic, the refetch that push amounts to for a window that does
-  not hold the list. Nothing else crosses: no sidebar, rows, presence or
-  directory pages.
+  not hold the list. A `workspace_usage` push, and every subscribe answer, is
+  published as `usage`, a relay-only name
+  ([`usage-metering.md`](usage-metering.md)). Nothing else crosses: no
+  sidebar, rows, presence, directory pages or meter values.
 - **Detach on unmount, unless replaced.** The provider's cleanup publishes
   `detach` on a microtask, and only if no other publisher has mounted in the
   renderer since. An Organization switch — and StrictMode — unmounts a
@@ -211,7 +213,7 @@ main's, the preload inbox's, the consumer's — compares both.
   relayed topics (in Settings, the connector OAuth reconcile re-runs on
   `connector_oauth_attempts` there), and invalidates exactly what a socket's
   topic would — except `workstream_directory`, which names a socket-owned list
-  neither window holds. While the source is another Organization it
+  neither window holds — and on `usage` reads its usage meter again. While the source is another Organization it
   waits, dialling nothing and reporting `connecting`: both windows follow one
   session but apply it at different moments (the window that asked for a
   switch applies it only after fetching the new Organization), so the main

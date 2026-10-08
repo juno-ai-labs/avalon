@@ -134,6 +134,7 @@ import {
   type UpdateOnboardingJourney,
 } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import type { OrganizationUsage, WorkspaceUsageEvent } from "@rally/contracts/usage";
 import { WorkspaceAccessRequestsEventSchema } from "@rally/contracts";
 import {
   AccessRequestRefSchema, AccessRequestSubjectRequestSchema, AccessRequestSubjectSchema, CONVERSATION_ACCESS_REQUESTS_MIGRATION,
@@ -4959,6 +4960,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * signals that survive one.
    */
   private lastSocketEventAt: number | null = null;
+  /** When the newest meter `publishUsage` sent was read. */
+  private lastUsageReadAtMs: number | null = null;
   /**
    * `WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS`, held per instance so a runtime
    * test can shorten it and drive the real accept and alarm paths.
@@ -7751,6 +7754,49 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         ? new Set([connection.owner_user_id]) : null;
     }
     return audienceUserIds === undefined ? null : new Set(audienceUserIds);
+  }
+
+  /**
+   * Send the Organization's meter, as it reads after a plan change, to every
+   * subscribed member socket. The meter is the same for every member, so the
+   * caller reads it once and this object only fans it out. Not on the
+   * waterline: a socket that was away rereads the meter when it subscribes
+   * again.
+   *
+   * `readAt` is when the caller started reading the meter. Two quick changes
+   * each publish, and the first can arrive last; a meter read before the last
+   * one sent is dropped, so a late push cannot put back the earlier plan. The
+   * mark lives in memory: after an eviction the next push is sent whatever
+   * its time, which is right, because nothing older is still in flight for
+   * long.
+   */
+  async publishUsage(
+    usage: OrganizationUsage,
+    readAt: string,
+    workspaceId: string,
+    placementAffinity: WorkspacePlacementAffinity,
+  ): Promise<number> {
+    await this.initialized;
+    this.ensureIdentity(workspaceId, placementAffinity);
+    const readAtMs = Date.parse(readAt);
+    if (this.lastUsageReadAtMs !== null && readAtMs < this.lastUsageReadAtMs) return 0;
+    this.lastUsageReadAtMs = readAtMs;
+    // The meter is our own reader's, one hop away; the desktop parses it.
+    const payload = JSON.stringify({ type: "workspace_usage", occurredAt: readAt, usage } satisfies WorkspaceUsageEvent);
+    let sent = 0;
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      // A guest is not a member: `GET /workspace/usage` refuses them, so the
+      // plan and overage are not theirs to be sent either.
+      if (!attachment?.subscribed || viewerOf(attachment).accessClass === "guest") continue;
+      try {
+        socket.send(payload);
+        sent += 1;
+      } catch {
+        // Hibernation owns cleanup; a reconnect rereads the meter.
+      }
+    }
+    return sent;
   }
 
   /**
