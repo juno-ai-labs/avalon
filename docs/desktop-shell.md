@@ -139,6 +139,11 @@ through its `leading` slot. Electron's window has an 860px minimum, so only
 the browser reaches this width. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx`
 repeats the CSS's 640.
 
+Settings has its own sheet at the same width: the sections list covers the
+page under the header, toggled by a menu button the shell's phone rule styles.
+It starts open unless a link named a section, and its state is local to the
+Settings screen. While open, the page behind it is `inert` and Escape shuts it.
+
 On touch screens text fields render at 16px to stop iOS focus zoom; see the
 rule at the end of `app.css`.
 
@@ -336,6 +341,27 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-08 — Settings sections are a sheet at phone width
+
+**What changed:** At 640px and narrower, Settings drops its two columns. The
+sections list is a sheet under the header, toggled by a menu button there, and
+open when Settings opens. Each row stacks its label over its control.
+
+**Why:** On a phone the 174px list left the page about 200px wide, so rows
+wrapped a word to a line and fields were cut off. Even at full width a row
+split into label and control left each side too narrow.
+
+**Considered and rejected:** Opening on the Account page with the sheet shut.
+On a phone the list is how a reader finds the page they came for, so starting
+there saves a tap; a link that names a section still opens on that page.
+
+**Consequences:** The open state lives in the Settings screen, not
+`useUiStore`, since only that screen reads it. Like the shell's sheet, the open
+sheet makes the page behind it inert and shuts on Escape, returning focus to the
+button; both apply only at phone width, where the sheet covers the page.
+
+Shipped in [#1174](https://github.com/juno-ai-labs/avalon/pull/1174).
 
 ### 2026-10-08 — A Breakout waiting on a question is badged in Main
 
