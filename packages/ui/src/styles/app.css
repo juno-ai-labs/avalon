@@ -7305,6 +7305,14 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
   text-align: center;
 }
 
+.new-channel-popover-error {
+  color: var(--av-sys-color-danger-base);
+  font-size: 13px;
+  line-height: 18px;
+  margin: 0;
+  padding: 8px 12px;
+}
+
 .new-channel-placement {
   align-items: center;
   display: flex;
