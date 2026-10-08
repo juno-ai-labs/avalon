@@ -409,15 +409,27 @@ export function createNodeRealtimeSocketFactory(
  * The WHATWG-shaped slice `watchWorkspaceSocket` dials through, over a brokered
  * Node client, so a main-process workspace socket takes the same proxy route,
  * certificate trust and Rally Origin as every feed socket.
+ *
+ * It keeps the browser's semantics once the socket starts closing: a send is
+ * dropped rather than thrown, and a frame that arrives is not delivered. The
+ * watcher's heartbeat sends from a timer, so a throw there reached Electron as
+ * an uncaught exception whenever a socket was closing when the timer fired,
+ * which after the Mac wakes from sleep is often.
  */
 export function reachSocketFromRealtimeClient(client: RealtimeSocketClient): ReachSocket {
+  const closing = (): boolean =>
+    client.readyState === WebSocket.CLOSING || client.readyState === WebSocket.CLOSED;
   return {
-    send: (data) => client.send(data),
+    send: (data) => {
+      if (!closing()) client.send(data);
+    },
     close: () => client.close(),
     addEventListener: ((type: 'open' | 'error' | 'message' | 'close', listener: (event?: unknown) => void) => {
       if (type === 'open') client.onOpen(() => listener());
       else if (type === 'error') client.onError(() => listener());
-      else if (type === 'message') client.onMessage((data) => listener({ data: messageText(data) }));
+      else if (type === 'message') client.onMessage((data) => {
+        if (!closing()) listener({ data: messageText(data) });
+      });
       else client.onClose((code) => listener({ code }));
     }) as ReachSocket['addEventListener'],
   };

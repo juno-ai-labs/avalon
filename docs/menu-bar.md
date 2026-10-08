@@ -443,6 +443,27 @@ generic Electron activation callback rather than also counting a Dock open.
 
 ## Changelog
 
+### 2026-10-08 — The menu bar socket drops sends while closing
+
+**What changed:** `reachSocketFromRealtimeClient`, the adapter the menu bar's
+workspace socket dials through, now drops a send and an arriving frame once
+its Node client is closing or closed, as a browser `WebSocket` does. It used to
+pass the send to the broker client, which throws when the socket is not open.
+
+**Why:** The watcher's heartbeat sends `ping` from a timer. After the Mac woke
+from sleep, a socket the watcher had already started closing (pong timeout or
+a socket error) could still see that timer fire, or a late `pong` re-arm it,
+before the close event arrived. The throw escaped the timer and Electron showed
+an "Uncaught Exception: Realtime socket is not open" dialog.
+
+**Considered and rejected:** Catching the send inside `watchWorkspaceSocket`.
+The renderer and lite hosts hand it a real browser `WebSocket`, which never
+throws there; the Node adapter was the one breaking the shape it claims.
+
+**Consequences:** `ReachSocket.send` on a closing socket is a no-op on every
+host, so the watcher and `WorkspaceSocketConnection.send` need no guard of
+their own.
+
 ### 2026-10-07 — Access requests in Needs attention
 
 **What changed:** Requests to join the reader's Channels and Breakouts head

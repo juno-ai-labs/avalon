@@ -14,6 +14,7 @@ import {
   createNodeRealtimeSocketFactory,
   directSocketServername,
   proxyUrlsFromElectronResolution,
+  reachSocketFromRealtimeClient,
   realtimeSocketTargetAllowed,
   type RealtimeSocketClient,
   type RealtimeSocketFactory,
@@ -262,6 +263,43 @@ describe('proxyUrlsFromElectronResolution', () => {
         }));
       }
     }
+  });
+});
+
+describe('reachSocketFromRealtimeClient', () => {
+  async function openedReachSocket() {
+    const attempt = new FakeSocket();
+    const client = createNodeRealtimeSocketFactory(async () => 'DIRECT', () => attempt)(
+      openInput().url,
+      openInput().protocols,
+    );
+    await Promise.resolve();
+    attempt.readyState = WebSocket.OPEN;
+    attempt.emitOpen();
+    return { attempt, socket: reachSocketFromRealtimeClient(client) };
+  }
+
+  it('drops a send and an arriving frame once the socket is closing, as a browser WebSocket does', async () => {
+    const { attempt, socket } = await openedReachSocket();
+    const messages: unknown[] = [];
+    socket.addEventListener('message', (event) => messages.push(event.data));
+    socket.send('ping');
+    attempt.emitMessage('pong');
+
+    socket.close();
+    expect(() => socket.send('ping')).not.toThrow();
+    attempt.emitMessage('late pong');
+
+    expect(attempt.send.mock.calls).toEqual([['ping']]);
+    expect(messages).toEqual(['pong']);
+  });
+
+  it('drops a send after the socket closed', async () => {
+    const { attempt, socket } = await openedReachSocket();
+    attempt.emitClose(1_006, '');
+
+    expect(() => socket.send('ping')).not.toThrow();
+    expect(attempt.send).not.toHaveBeenCalled();
   });
 });
 
