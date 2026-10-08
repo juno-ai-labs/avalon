@@ -183,7 +183,9 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     const remote = c.env.AVALON_REGION !== IDENTITY_REGION || configuredRegions.length < 2
       ? { attention:[],failed:[] }
       : await new PlatformOnboardingService(c.env,auth).otherDeploymentAttention();
-    const failed = [...local.failed.map((item) => `${c.env.AVALON_REGION}:${item.code}`),...remote.failed.map((item) => `${item.region}:${item.code}`)];
+    // Workspace ids are not user data; they find the one bad workspace.
+    const failed = [...local.failed.map((item) => ({ region:c.env.AVALON_REGION,...item })),...remote.failed]
+      .map((item) => [item.region,item.workspaceId,item.code].filter(Boolean).join(":"));
     if (failed.length > 0) logEvent(c,"warn","browser_workspace_attention_failed",{ failed:failed.join(",") });
     return c.json(BrowserWorkspaceAttentionSchema.parse({ attention:[...local.attention,...remote.attention] }));
   });

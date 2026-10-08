@@ -182,7 +182,8 @@ describe('organization account menu', () => {
     renderMenu({
       attention: {
         [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
-          waitingForYou: 0, waitingReason: null, hasUnreadActivity: false, readerAttentionCount: 0,
+          // Only an agent waiting on input: no conversation to count.
+          waitingForYou: 1, waitingReason: 'needs_input', hasUnreadActivity: false, readerAttentionCount: 0,
         },
       },
     });

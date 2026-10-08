@@ -118,9 +118,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [session, setSession] = useState<BrowserSession | null>(null);
   // Null until the list has loaded, so a fresh sign-in never says nothing was
   // shared before the server has answered.
-  const [workspaces, setWorkspaces] = useState<ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"] | null>(null);
-  // Where the list was read, so its counts come from the same deployment.
-  const workspacesRegion = useRef<string>(IDENTITY_REGION);
+  // With the deployment it was read from, so its counts come from the same one.
+  const [listed, setListed] = useState<{ region: string; workspaces: ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"] } | null>(null);
+  const workspaces = listed?.workspaces ?? null;
   // Each listed organization's activity count, by region and id, with the
   // account that read it: another account's counts are never drawn. Read after
   // the list, so the list never waits on it; a failed read draws none.
@@ -146,13 +146,13 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   useEffect(() => { if (session) setEmailChosen(false); }, [session]);
   useEffect(() => {
     const userId = session?.user.id;
-    if (!userId || !workspaces?.length) return;
+    if (!userId || !listed?.workspaces.length) return;
     let current = true;
-    browserRequest(workspacesRegion.current, "/workspaces/attention", BrowserWorkspaceAttentionSchema).then((result) => {
+    browserRequest(listed.region, "/workspaces/attention", BrowserWorkspaceAttentionSchema).then((result) => {
       if (current) setActivity({ userId, counts: new Map(result.attention.map((item) => [`${item.region}:${item.workspaceId}`, item.attention.readerAttentionCount])) });
     }, () => { if (current) setActivity(null); });
     return () => { current = false; };
-  }, [session?.user.id, workspaces]);
+  }, [session?.user.id, listed]);
 
   useEffect(() => {
     let active = true;
@@ -222,14 +222,13 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         setError(null);
         if (!opened) {
           const result = await browserRequest(selected, "/workspaces", BrowserWorkspacesSchema);
-          workspacesRegion.current = selected;
-          if (active && read === sessionRead.current) setWorkspaces(result.workspaces);
+          if (active && read === sessionRead.current) setListed({ region: selected, workspaces: result.workspaces });
         }
       })().catch((cause: unknown) => {
         if (!active || read !== sessionRead.current) return;
         if (cause instanceof BrowserApiError && (cause.status === 401 || cause.status === 403)) {
           void clearAllDrafts(); sessionUser.current = null;
-          setSession(null); setWorkspaceSession(null); setWorkspaces(null);
+          setSession(null); setWorkspaceSession(null); setListed(null);
           setError(cause.status === 403 ? cause.message : null);
         } else setError("Unable to restore your session. Try again.");
       }).finally(() => {
@@ -339,8 +338,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     if (!destination) {
       const listRegion = proof?.region ?? IDENTITY_REGION;
       const result = await browserRequest(listRegion, "/workspaces", BrowserWorkspacesSchema);
-      workspacesRegion.current = listRegion;
-      if (read === sessionRead.current) setWorkspaces(result.workspaces);
+      if (read === sessionRead.current) setListed({ region: listRegion, workspaces: result.workspaces });
     }
   }
   async function submit(event: FormEvent) {
@@ -379,7 +377,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     destinationRef.current = opened;
     // The list read before the creation said "none". Left in place, a select
     // that then fails would offer Create again and make a second organization.
-    setWorkspaces(null);
+    setListed(null);
     createOperation.current = null;
     setCreatePending(false);
     setCreating(false);
@@ -414,7 +412,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       signupFlow.current = uuidV7();
       rememberSignupFlow(signupFlow.current);
       signupViewed.current = false;
-      setSession(null); setWorkspaces(null); setCreating(false); setChallenge(null); setCode(""); issuance.current = null;
+      setSession(null); setListed(null); setCreating(false); setChallenge(null); setCode(""); issuance.current = null;
       sessionChannel.current?.postMessage("session-changed");
       if (unreached) setError("Signed out here, but a Rally deployment did not respond. Sign out again to finish.");
     } catch { setError("Unable to sign out. Please try again."); }
