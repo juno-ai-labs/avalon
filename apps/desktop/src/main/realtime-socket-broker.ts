@@ -410,11 +410,8 @@ export function createNodeRealtimeSocketFactory(
  * Node client, so a main-process workspace socket takes the same proxy route,
  * certificate trust and Rally Origin as every feed socket.
  *
- * It keeps the browser's semantics once the socket starts closing: a send is
- * dropped rather than thrown, and a frame that arrives is not delivered. The
- * watcher's heartbeat sends from a timer, so a throw there reached Electron as
- * an uncaught exception whenever a socket was closing when the timer fired,
- * which after the Mac wakes from sleep is often.
+ * Like a browser socket, it drops a send, and does not deliver a frame, once
+ * the socket is closing or closed.
  */
 export function reachSocketFromRealtimeClient(client: RealtimeSocketClient): ReachSocket {
   const closing = (): boolean =>
