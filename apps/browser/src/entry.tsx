@@ -4,11 +4,11 @@ import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
 import { iosStandalone } from '../../desktop/src/renderer/lib/home-screen';
 import { CreateOrganizationCard, type CreateOrganizationOperation } from '../../desktop/src/renderer/screens/create-organization';
 import { Building2, ChevronRight, KeyRound, LoaderCircle, Mail } from "lucide-react";
-import { Button, ConnectorMark, InlineError, RallyMark } from "@rally/ui/components/primitives";
+import { ActivityCountBadge, Button, ConnectorMark, InlineError, RallyMark, activityCountLabel } from "@rally/ui/components/primitives";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema, IDENTITY_REGION } from "@rally/contracts/regions";
-import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
+import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
 import { browserRequest, BrowserApiError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 
@@ -118,7 +118,12 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [session, setSession] = useState<BrowserSession | null>(null);
   // Null until the list has loaded, so a fresh sign-in never says nothing was
   // shared before the server has answered.
-  const [workspaces, setWorkspaces] = useState<ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"] | null>(null);
+  // With the deployment it was read from, so its counts come from the same one.
+  const [listed, setListed] = useState<{ region: string; workspaces: ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"] } | null>(null);
+  const workspaces = listed?.workspaces ?? null;
+  // Each listed organization's activity count, by region and id, with the
+  // account that read it, so another account's counts are never drawn.
+  const [activity, setActivity] = useState<{ userId: string; counts: ReadonlyMap<string, number> } | null>(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -138,6 +143,15 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const refreshSession = useRef<((renew: boolean) => void) | null>(null);
   // A later signed-out screen starts from the Google-first choice again.
   useEffect(() => { if (session) setEmailChosen(false); }, [session]);
+  useEffect(() => {
+    const userId = session?.user.id;
+    if (!userId || !listed?.workspaces.length) return;
+    let current = true;
+    browserRequest(listed.region, "/workspaces/attention", BrowserWorkspaceAttentionSchema).then((result) => {
+      if (current) setActivity({ userId, counts: new Map(result.attention.map((item) => [`${item.region}:${item.workspaceId}`, item.attention.readerAttentionCount])) });
+    }, () => { if (current) setActivity(null); });
+    return () => { current = false; };
+  }, [session?.user.id, listed]);
 
   useEffect(() => {
     let active = true;
@@ -207,13 +221,13 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         setError(null);
         if (!opened) {
           const result = await browserRequest(selected, "/workspaces", BrowserWorkspacesSchema);
-          if (active && read === sessionRead.current) setWorkspaces(result.workspaces);
+          if (active && read === sessionRead.current) setListed({ region: selected, workspaces: result.workspaces });
         }
       })().catch((cause: unknown) => {
         if (!active || read !== sessionRead.current) return;
         if (cause instanceof BrowserApiError && (cause.status === 401 || cause.status === 403)) {
           void clearAllDrafts(); sessionUser.current = null;
-          setSession(null); setWorkspaceSession(null); setWorkspaces(null);
+          setSession(null); setWorkspaceSession(null); setListed(null);
           setError(cause.status === 403 ? cause.message : null);
         } else setError("Unable to restore your session. Try again.");
       }).finally(() => {
@@ -321,8 +335,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     rememberSignupFlow(null);
     setSession(current);
     if (!destination) {
-      const result = await browserRequest(proof?.region ?? IDENTITY_REGION, "/workspaces", BrowserWorkspacesSchema);
-      if (read === sessionRead.current) setWorkspaces(result.workspaces);
+      const listRegion = proof?.region ?? IDENTITY_REGION;
+      const result = await browserRequest(listRegion, "/workspaces", BrowserWorkspacesSchema);
+      if (read === sessionRead.current) setListed({ region: listRegion, workspaces: result.workspaces });
     }
   }
   async function submit(event: FormEvent) {
@@ -361,7 +376,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     destinationRef.current = opened;
     // The list read before the creation said "none". Left in place, a select
     // that then fails would offer Create again and make a second organization.
-    setWorkspaces(null);
+    setListed(null);
     createOperation.current = null;
     setCreatePending(false);
     setCreating(false);
@@ -396,7 +411,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       signupFlow.current = uuidV7();
       rememberSignupFlow(signupFlow.current);
       signupViewed.current = false;
-      setSession(null); setWorkspaces(null); setCreating(false); setChallenge(null); setCode(""); issuance.current = null;
+      setSession(null); setListed(null); setCreating(false); setChallenge(null); setCode(""); issuance.current = null;
       sessionChannel.current?.postMessage("session-changed");
       if (unreached) setError("Signed out here, but a Rally deployment did not respond. Sign out again to finish.");
     } catch { setError("Unable to sign out. Please try again."); }
@@ -441,8 +456,10 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         <h1>Your organizations</h1>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
         {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the conversation…" : "Loading your organizations…"}</p>
-          : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) =>
-          <a className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ChevronRight aria-hidden="true" size={16} /></a>)}</nav>
+          : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) => {
+            const count = activity?.userId === session.user.id ? activity.counts.get(`${workspace.region}:${workspace.id}`) ?? 0 : 0;
+            return <a aria-label={count > 0 ? `${workspace.name}, ${activityCountLabel(count)}` : undefined} className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ActivityCountBadge count={count} /><ChevronRight aria-hidden="true" size={16} /></a>;
+          })}</nav>
           : <>
             <p className="entry-lead">{session.user.email} is not part of an organization, and nothing has been shared with it yet.</p>
             <p className="entry-lead">Ask a teammate to share a Channel or Breakout with you, or create a new organization.</p>
