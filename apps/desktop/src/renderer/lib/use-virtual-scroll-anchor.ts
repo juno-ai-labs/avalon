@@ -14,49 +14,23 @@ interface ScrollAnchor {
 }
 
 /**
- * Keeps the row under the reader's eye still when rows are inserted above it.
- *
- * A windowed list positions its rows from offsets, so the browser's own scroll
- * anchoring cannot see an insertion above the viewport: the rows shift and the
- * reader is thrown to whatever now sits at their old offset. This picks the
- * first row on screen before the commit that changes the list, and after it
- * puts that row's bottom edge back where it was.
- *
- * Both halves happen inside the one commit, so the insertion is never painted
- * at the old position:
- *
- * - **Render.** The pre-commit DOM is still on screen. The anchor is read from
- *   it, and the virtualizer's own `scrollOffset` is moved to the predicted
- *   position before the feed asks it which rows to render. Without that the
- *   commit would render the rows at the *old* offset, which after a prepend
- *   are the new ones, and the anchor would be unmounted for a frame.
- * - **Layout effect.** Rows rendered in this commit have been measured by now,
- *   so the exact position is recomputed and written through `scrollTo`.
- *
- * The bottom edge, not the top, because the row the reader is looking at is
- * usually the old first row, and gaining a predecessor gives it a top gap
- * (`feedRowGap`). Anchored on its top, its content would move down by that gap.
- *
- * Content between the scroller's top and the list itself — a status row, an
- * origin card that appears once the first message is loaded — is accounted for,
- * because the list's own offset is read again after the commit. A commit that
- * changes only that content, such as a final page with no visible rows, leaves
- * the list alone; the caller says so by changing `layoutKey`.
- *
- * A row whose key does not survive the commit is skipped for the next one down.
- * Grouping derives some rows' keys from their first member, so a group spanning
- * the page seam is re-keyed when its earlier members load.
+ * Keeps the row under the reader's eye still when rows are inserted above it,
+ * in the same commit, by holding that row's bottom edge. The mechanism and its
+ * reasons are in `docs/transcript-scrolling.md#holding-the-row-on-screen`.
  *
  * Call after the virtualizer, in the component that renders the list's parent,
- * so the render half runs before the list reads its window.
+ * so the render half runs before the list reads its window. Change `layoutKey`
+ * when what sits above the list changes, since that can happen without the list
+ * changing. While `enabled` returns false (the transcript is following its end)
+ * nothing is held: the two are exclusive, and the follow wins.
  */
 export function useVirtualScrollAnchor(
   virtualizer: Virtualizer<HTMLElement, Element>,
   scrollRef: RefObject<HTMLElement | null>,
   scrollTo: (top: number) => void,
-  layoutKey: unknown = null,
+  { enabled, layoutKey }: { enabled: () => boolean; layoutKey: string },
 ): void {
-  const committed = useRef<{ count: number; firstKey: Key | null; layoutKey: unknown } | null>(null);
+  const committed = useRef<{ count: number; firstKey: Key | null; layoutKey: string } | null>(null);
   const pending = useRef<ScrollAnchor | null>(null);
   const { count, getItemKey } = virtualizer.options;
   const firstKey = count > 0 ? getItemKey(0) : null;
@@ -67,8 +41,12 @@ export function useVirtualScrollAnchor(
   // nothing here.
   pending.current = null;
   const scroll = scrollRef.current;
-  const layoutChanged = previous !== null && !Object.is(previous.layoutKey, layoutKey);
-  if (scroll && previous && previous.count > 0 && count > 0
+  const layoutChanged = previous !== null && previous.layoutKey !== layoutKey;
+  // Writing `scrollOffset` during render is safe under a double render, since
+  // both passes read the same pre-commit DOM. A render React discards would
+  // leave the prediction in place until the next scroll event; nothing in this
+  // subtree suspends or transitions today.
+  if (scroll && previous && previous.count > 0 && count > 0 && enabled()
     && (previous.count !== count || previous.firstKey !== firstKey || layoutChanged)) {
     const anchor = readAnchor(virtualizer, scroll, layoutChanged);
     if (anchor) {
@@ -86,7 +64,7 @@ export function useVirtualScrollAnchor(
     const anchor = pending.current;
     pending.current = null;
     const element = scrollRef.current;
-    if (!anchor || !element) return;
+    if (!anchor || !element || !enabled()) return;
     const item = measuredItem(virtualizer, anchor.index);
     if (!item || item.key !== anchor.key) return;
     const row = anchor.element.isConnected ? anchor.element : virtualizer.elementsCache.get(anchor.key);
