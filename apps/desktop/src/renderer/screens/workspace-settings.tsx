@@ -1851,8 +1851,7 @@ export function WorkspaceSettingsScreen({
                       title="Change network access?"
                     >
                       <p className="modal-copy">
-                        Cloud computers running now may be interrupted. Their current work stops and
-                        they don’t restart on their own.
+                        Cloud computers running now may be interrupted.
                       </p>
                     </Modal>
                   </div>
