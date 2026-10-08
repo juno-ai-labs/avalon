@@ -6,11 +6,10 @@ import {
   type WorkspaceId,
 } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
-import { codeShaped } from "@rally/contracts/zod-diagnostics";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
-import { ApiError } from "../lib/api-error";
+import { diagnosticErrorCode } from "../observability/logger";
 import {
   durableObjectStubForWorkspace,
   workspacePlacementAffinity,
@@ -74,7 +73,7 @@ export async function membershipAttention(
     failed: settled.flatMap((result, index) => result.status === "rejected"
       ? [{
           workspaceId: members[index]!.id,
-          code: result.reason instanceof ApiError ? result.reason.code : codeShaped(result.reason instanceof Error ? result.reason.name : "unknown"),
+          code: diagnosticErrorCode(result.reason, "workspace_attention_failed"),
         }]
       : []),
   };

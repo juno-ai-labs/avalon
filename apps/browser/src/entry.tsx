@@ -121,9 +121,10 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [workspaces, setWorkspaces] = useState<ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"] | null>(null);
   // Where the list was read, so its counts come from the same deployment.
   const workspacesRegion = useRef<string>(IDENTITY_REGION);
-  // Each listed organization's activity count, by region and id. Read after the
-  // list, so the list never waits on it; a failed read leaves rows without one.
-  const [activity, setActivity] = useState<ReadonlyMap<string, number>>(new Map());
+  // Each listed organization's activity count, by region and id, with the
+  // account that read it: another account's counts are never drawn. Read after
+  // the list, so the list never waits on it; a failed read draws none.
+  const [activity, setActivity] = useState<{ userId: string; counts: ReadonlyMap<string, number> } | null>(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -144,13 +145,14 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   // A later signed-out screen starts from the Google-first choice again.
   useEffect(() => { if (session) setEmailChosen(false); }, [session]);
   useEffect(() => {
-    if (!workspaces?.length) { setActivity(new Map()); return; }
+    const userId = session?.user.id;
+    if (!userId || !workspaces?.length) return;
     let current = true;
     browserRequest(workspacesRegion.current, "/workspaces/attention", BrowserWorkspaceAttentionSchema).then((result) => {
-      if (current) setActivity(new Map(result.attention.map((item) => [`${item.region}:${item.workspaceId}`, item.attention.readerAttentionCount])));
-    }, () => undefined);
+      if (current) setActivity({ userId, counts: new Map(result.attention.map((item) => [`${item.region}:${item.workspaceId}`, item.attention.readerAttentionCount])) });
+    }, () => { if (current) setActivity(null); });
     return () => { current = false; };
-  }, [workspaces]);
+  }, [session?.user.id, workspaces]);
 
   useEffect(() => {
     let active = true;
@@ -458,7 +460,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
         {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the conversation…" : "Loading your organizations…"}</p>
           : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) => {
-            const count = activity.get(`${workspace.region}:${workspace.id}`) ?? 0;
+            const count = activity?.userId === session.user.id ? activity.counts.get(`${workspace.region}:${workspace.id}`) ?? 0 : 0;
             return <a aria-label={count > 0 ? `${workspace.name}, ${activityCountLabel(count)}` : undefined} className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ActivityCountBadge count={count} /><ChevronRight aria-hidden="true" size={16} /></a>;
           })}</nav>
           : <>
