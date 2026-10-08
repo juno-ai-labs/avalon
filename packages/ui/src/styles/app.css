@@ -7579,6 +7579,22 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
 .settings-account-profile .personal-colors { justify-content: flex-end; gap: 10px; padding: 5px; }
 .settings-account-profile .personal-colors button { width: 22px; height: 22px; display: grid; place-items: center; }
 .settings-account-actions { display: flex; align-items: center; gap: 10px; justify-content: flex-end; color: var(--av-sys-color-text-muted); }
+/* Phone width: a row's label sits over its control rather than beside it, so
+   neither is squeezed to a word per line. After the account rows above so it
+   outranks their two-column template. */
+@media (max-width: 640px) {
+  .workspace-settings-screen .settings-preference-row { align-items: stretch; gap: 8px; grid-template-columns: minmax(0, 1fr); }
+  /* A control keeps its own width and starts under its label; a meter spans the row. */
+  .workspace-settings-screen .settings-preference-row > :not(.settings-row-copy) { justify-self: start; }
+  .workspace-settings-screen .settings-row-value { align-items: flex-start; text-align: left; }
+  /* The borderless picker is pushed right for the two-column row; here its
+     text lines up with the label above it. */
+  .workspace-settings-screen .settings-preference-row .dropdown-select-trigger-secondary { justify-content: flex-start; min-width: 0; padding-left: 0; padding-right: 10px; }
+  .workspace-settings-screen .settings-preference-row > .usage-quota-value { justify-self: stretch; text-align: left; width: auto; }
+  .workspace-settings-screen .settings-account-profile input { width: 100%; }
+  .workspace-settings-screen .settings-account-profile .personal-colors,
+  .workspace-settings-screen .settings-account-actions { justify-content: flex-start; }
+}
 
 .attachment-media-close { position: absolute; right: 22px; top: 23px; z-index: 3; }
 .attachment-gallery-footer { align-items: center; bottom: 24px; display: flex; flex-direction: column; gap: 14px; left: 24px; position: absolute; right: 24px; }

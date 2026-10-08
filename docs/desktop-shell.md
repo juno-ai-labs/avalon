@@ -143,7 +143,10 @@ Settings has its own sheet at the same width. Its sections list covers the page
 under the header, and a menu button at the header's start, styled and animated
 like the shell's, opens and shuts it. It starts open, so Settings opens on the
 list, unless a link named a section. Picking a section or a search result shuts
-it. Above 640px CSS ignores the state and both columns show.
+it. Above 640px CSS ignores the state and both columns show. At the same width
+each settings row puts its label over its control instead of beside it. In a
+browser tab Settings is a window surface, so it takes the whole tab at every
+width with no shell sidebar or top bar around it.
 
 On touch screens text fields render at 16px to stop iOS focus zoom; see the
 rule at the end of `app.css`.
@@ -347,10 +350,11 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 **What changed:** At 640px and narrower, Settings drops its two columns. The
 sections list is a sheet under the header, toggled by a menu button there, and
-open when Settings opens.
+open when Settings opens. Each row stacks its label over its control.
 
 **Why:** On a phone the 174px list left the page about 200px wide, so rows
-wrapped a word to a line and fields were cut off.
+wrapped a word to a line and fields were cut off. Even at full width a row
+split into label and control left each side too narrow.
 
 **Considered and rejected:** Opening on the Account page with the sheet shut.
 On a phone the list is how a reader finds the page they came for, so starting
