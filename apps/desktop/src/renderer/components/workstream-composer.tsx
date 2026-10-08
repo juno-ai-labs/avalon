@@ -212,7 +212,7 @@ export function WorkstreamComposer({
   ...invitees.map((invitee) => ({
     id: `invitee:${invitee.email}`,
     label: invitee.email,
-    description: 'Hasn’t joined yet',
+    description: '',
     kind: 'invitee' as const,
   }))], [invitees, members, participantIds]);
 
@@ -458,7 +458,7 @@ export function WorkstreamComposer({
         <div className="mention-popover" id="workstream-mention-listbox" role="listbox" aria-label="Mentions">
           {visibleCandidates.map((candidate, index) => (
             <button
-              aria-label={`${candidate.label} — ${candidate.description} — ${mentionKindLabel(candidate)}`}
+              aria-label={[candidate.label, candidate.description, mentionKindLabel(candidate)].filter(Boolean).join(' — ')}
               aria-selected={index === mentionNavigation.activeIndex}
               className={clsx(index === mentionNavigation.activeIndex && 'is-selected', candidate.kind === 'invitee' && 'is-invited')}
               id={mentionOptionId(candidate.id)}
@@ -481,7 +481,7 @@ export function WorkstreamComposer({
               </span>
               <span className="mention-popover-copy">
                 <strong>{candidate.label}</strong>
-                {candidate.kind !== 'rally' && <small>{candidate.description}</small>}
+                {candidate.kind !== 'rally' && candidate.description && <small>{candidate.description}</small>}
               </span>
               <span className="mention-popover-kind">{mentionKindLabel(candidate)}</span>
             </button>

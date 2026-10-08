@@ -253,7 +253,7 @@ carrying `data-email-mention`, whose text is the address as written. The `span`
 override resolves it against `EmailMentionContext`, which the Channel and
 new-Channel screens fill from the roster and the invitees: a member who holds
 the address draws as their person chip, an invitee as `.mention-chip-invited`
-(an outline and muted ink rather than a fill), and anybody else as the text.
+(an outline and muted italic address rather than a fill), and anybody else as the text.
 Resolving at render rather than at parse is what turns the chip into the
 person's name once they join, with nothing rewritten in the stored message.
 

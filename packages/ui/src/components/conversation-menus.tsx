@@ -342,7 +342,7 @@ function PeopleView({ members, noun, people, presentUserIds }: {
         <Avatar member={{ id: email, name: email, email, timezone: 'UTC' }} size="medium" />
         <span className="title-menu-person-copy">
           <span className="title-menu-person-name">{email}</span>
-          <span className="title-menu-person-detail">Invited · hasn’t joined yet</span>
+          <span className="title-menu-person-detail">Invited</span>
         </span>
         <button
           aria-label={`Add ${email}`}

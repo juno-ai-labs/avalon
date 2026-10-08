@@ -889,7 +889,7 @@ describe('WorkstreamComposer invitees', () => {
       { badge: 'Bot', description: null, label: 'Rally' },
       { badge: 'Member', description: 'adam@example.com', label: 'Adam' },
       { badge: 'Guest', description: 'bob@example.com · not participating', label: 'Bob Builder' },
-      { badge: 'Invited', description: 'Hasn’t joined yet', label: 'dana@example.com' },
+      { badge: 'Invited', description: null, label: 'dana@example.com' },
     ]);
     expect(options[3]).toHaveClass('is-invited');
   });
