@@ -139,17 +139,10 @@ through its `leading` slot. Electron's window has an 860px minimum, so only
 the browser reaches this width. `PHONE_LAYOUT_MAX_WIDTH` in `sidebar.tsx`
 repeats the CSS's 640.
 
-Settings has its own sheet at the same width. Its sections list covers the page
-under the header, and a menu button at the header's start, styled and animated
-like the shell's, opens and shuts it. It starts open, so Settings opens on the
-list, unless a link named a section. Picking a section or a search result shuts
-it, and so does Escape, which hands focus back to the button; while it is open
-the page behind it is `inert`. Above 640px CSS ignores the state, both columns
-show, and neither applies. At the same width
-each settings row puts its label over its control instead of beside it. The
-connection tables narrow their columns to fit rather than scroll sideways. In a
-browser tab Settings is a window surface, so it takes the whole tab at every
-width with no shell sidebar or top bar around it.
+Settings has its own sheet at the same width: the sections list covers the
+page under the header, toggled by a menu button the shell's phone rule styles.
+It starts open unless a link named a section, and its state is local to the
+Settings screen. While open, the page behind it is `inert` and Escape shuts it.
 
 On touch screens text fields render at 16px to stop iOS focus zoom; see the
 rule at the end of `app.css`.
