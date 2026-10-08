@@ -1350,6 +1350,7 @@ describe('useWorkstreamSocket', () => {
       await flushPromises();
       const socket = FakeWebSocket.instances[0]!;
       act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 0, workstream: { id: workstreamId } })));
       const admission = result.current.createMessage({
         text: 'Recover this message.',
         clientId: clientMessageId,
@@ -2024,6 +2025,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 0, workstream: { id: workstreamId } })));
     act(() => result.current.requestSnapshot());
 
     expect(sentFrames(socket)).toEqual([
@@ -4025,6 +4027,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 0, workstream: { id: workstreamId } })));
     act(() => socket.message({
       type: 'harness_status_changed',
       sequence: 1,
@@ -4129,6 +4132,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 0, workstream: { id: workstreamId } })));
     act(() => socket.message({
       type: 'harness_status_changed',
       sequence: 1,
@@ -4209,6 +4213,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 0, workstream: { id: workstreamId } })));
     act(() => socket.message({
       type: 'harness_status_changed',
       sequence: 5,
@@ -4578,6 +4583,121 @@ describe('useWorkstreamSocket', () => {
     ]);
   });
 
+  it('keeps replay-only reconnects cheap and acquires a history fence on demand', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+      url: 'wss://api.rally.test/workstreams/workstream-one',
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+    })) });
+    const { result } = renderHook(() => useWorkstreamSocket(api, '00000000-0000-7000-8000-000000000091', true), {
+      wrapper: createWrapper(),
+    });
+    await flushPromises();
+    const first = FakeWebSocket.instances[0]!;
+    act(() => {
+      first.open();
+      first.message(snapshotFrame({ sequence: 1, transcript: {
+        ...emptyTranscriptSnapshot(), eventSequence: 1,
+      } }));
+      first.close();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    await flushPromises();
+    const second = FakeWebSocket.instances[1]!;
+    act(() => second.open());
+    expect(result.current.transcriptReady).toBe(false);
+    expect(sentFrames(second)).toEqual([
+      { type: 'subscribe', afterSequence: 1, publishPresence: false },
+    ]);
+    act(() => {
+      result.current.requestSnapshot();
+      result.current.requestSnapshot();
+    });
+    expect(sentFrames(second)).toEqual([
+      { type: 'subscribe', afterSequence: 1, publishPresence: false },
+      { type: 'request_snapshot' },
+    ]);
+    act(() => second.message(snapshotFrame({ sequence: 1, reason: 'reconciliation', transcript: {
+      ...emptyTranscriptSnapshot(), snapshotId: '00000000-0000-7000-8000-000000000778', eventSequence: 1,
+    } })));
+    expect(result.current.transcriptReady).toBe(true);
+  });
+
+  it.each(['history_unavailable', 'snapshot_expired', 'sequence_ahead'] as const)(
+    'waits for the new socket fence after %s before loading history', async (reason) => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      vi.stubGlobal('WebSocket', FakeWebSocket);
+      const getSocketTicket = vi.fn(async () => ({
+        url: 'wss://api.rally.test/workstreams/workstream-one',
+        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+      }));
+      const queryClient = new QueryClient();
+      const api = socketApiWith({ getSocketTicket });
+      const { result } = renderHook(
+        () => useWorkstreamSocket(api, 'workstream-one', true),
+        { wrapper: createWrapper(queryClient) },
+      );
+      await flushPromises();
+      const first = FakeWebSocket.instances[0]!;
+      act(() => {
+        first.open();
+        first.message(snapshotFrame({ sequence: 0 }));
+      });
+      expect(result.current.transcriptReady).toBe(true);
+      act(() => first.message({
+        type: 'resync_required', sequence: 0, latestSequence: 0,
+        occurredAt: '2026-07-31T20:00:00.000Z', reason,
+        activeStreams: [], activeCompaction: null,
+      }));
+      expect(result.current.transcriptReady).toBe(false);
+      await act(async () => vi.advanceTimersByTimeAsync(750));
+      await flushPromises();
+      const second = FakeWebSocket.instances[1]!;
+      act(() => second.open());
+      expect(result.current.state).toBe('connected');
+      expect(result.current.transcriptReady).toBe(false);
+      await expect(result.current.loadTranscriptRange({
+        snapshotId: '00000000-0000-7000-8000-000000000777',
+        range: { startInclusive: 1, endExclusive: 2 }, resumeAfterEventSequence: 0,
+      })).rejects.toMatchObject({ code: 'workstream_socket_unavailable' });
+      expect(sentFrames(second).map(frame => frame.type)).toEqual(['subscribe']);
+      const snapshotId = '00000000-0000-7000-8000-000000000778';
+      act(() => second.message(snapshotFrame({
+        sequence: 0, transcript: { ...emptyTranscriptSnapshot(), snapshotId },
+      })));
+      expect(result.current.transcriptReady).toBe(true);
+      await expect(result.current.loadTranscriptRange({
+        snapshotId: '00000000-0000-7000-8000-000000000777',
+        range: { startInclusive: 1, endExclusive: 2 }, resumeAfterEventSequence: 0,
+      })).rejects.toMatchObject({ code: 'transcript_snapshot_changed' });
+      const pending = result.current.loadTranscriptRange({
+        snapshotId, range: { startInclusive: 1, endExclusive: 2 }, resumeAfterEventSequence: 0,
+      });
+      expect(sentFrames(second).at(-1)).toMatchObject({
+        type: 'load_transcript_range', request: { snapshotId },
+      });
+      const command = sentFrames(second).at(-1);
+      if (command?.type !== 'load_transcript_range') throw new Error('Expected range command');
+      act(() => second.message({
+        type: 'transcript_range', sequence: 0, occurredAt: '2026-07-31T20:00:00.000Z',
+        snapshotId, requestId: command.requestId,
+        result: {
+          purpose: 'requested', requested: { startInclusive: 1, endExclusive: 2 },
+          covered: { startInclusive: 1, endExclusive: 2 },
+          turns: [transcriptTurn(1, 'Earlier message recovered')],
+          activities: [], pluginRuns: [],
+        },
+      }));
+      await pending;
+      expect(orderedTranscriptMessages(queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+        ['ordered-transcript', 'workstream-one'],
+      ), 'workstream-one').map(message => message.text)).toEqual(['Earlier message recovered']);
+    },
+  );
+
   it('releases an in-flight transcript range immediately when its socket closes', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApiWith({
@@ -4594,6 +4714,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 0 })));
     const settled = result.current.loadTranscriptRange({
       snapshotId: '00000000-0000-7000-8000-000000000777',
       range: { startInclusive: 1, endExclusive: 2 },
@@ -4622,6 +4743,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 0 })));
     socket.send.mockImplementationOnce(() => {
       throw new Error('socket entered closing state');
     });
@@ -4649,6 +4771,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 0 })));
     const settled = result.current.loadTranscriptRange({
       snapshotId: '00000000-0000-7000-8000-000000000777',
       range: { startInclusive: 1, endExclusive: 2 },
@@ -4684,6 +4807,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 0 })));
     const settled = result.current.loadTranscriptRange({
       snapshotId: '00000000-0000-7000-8000-000000000777',
       range: { startInclusive: 1, endExclusive: 2 },
@@ -4728,6 +4852,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 0 })));
     act(() => result.current.requestSnapshot());
     const settled = result.current.loadTranscriptRange({
       snapshotId: '00000000-0000-7000-8000-000000000777',
@@ -4772,6 +4897,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 0 })));
     let outcome: unknown = 'pending';
     void result.current.loadTranscriptRange({
       snapshotId: '00000000-0000-7000-8000-000000000777',

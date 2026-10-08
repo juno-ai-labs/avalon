@@ -132,6 +132,8 @@ export interface WorkstreamSocketConnection {
   /** The workstream handler can admit sends to the room-socket queue. The painted
    * telemetry milestone is reported separately after the consuming UI commits. */
   sendReady: boolean;
+  /** This socket has installed the snapshot fence used by transcript ranges. */
+  transcriptReady: boolean;
   /** Legacy telemetry field name; this now reports the message-carrying room socket. */
   workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
   activeInferenceDelays: InferenceDelayState[];
@@ -762,6 +764,7 @@ export function useWorkstreamSocket(
   const [openingError, setOpeningError] = useState<string>();
   const [openingRetryGeneration, setOpeningRetryGeneration] = useState(0);
   const [sendReady, setSendReady] = useState(false);
+  const [transcriptReady, setTranscriptReady] = useState(false);
   const [activeInferenceDelays, setActiveInferenceDelays] = useState<InferenceDelayState[]>(resumeState.activeInferenceDelays);
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
   const attempts = useRef(0);
@@ -845,6 +848,7 @@ export function useWorkstreamSocket(
 
   useEffect(() => {
     attempts.current = 0;
+    setTranscriptReady(false);
     setActiveCompaction(null);
     setActiveInferenceDelays((current) => current.length === 0 && resumeState.activeInferenceDelays.length === 0 ? current : resumeState.activeInferenceDelays);
     const updateInferenceDelays = (next: InferenceDelayState[]) => {
@@ -1010,6 +1014,7 @@ export function useWorkstreamSocket(
     let connectGeneration = 0;
     let activeTicketAbort: AbortController | null = null;
     let ticketRequestInFlight = false;
+    let socketSnapshotId: string | null = null;
     let canonicalResyncTarget: number | null = null;
     let canonicalResyncActiveStreams: readonly ActiveStreamCheckpoint[] = [];
     /**
@@ -1254,11 +1259,19 @@ export function useWorkstreamSocket(
     setSendReady(substreamId === '0' || queryClient.getQueryData(contextQueryKey) !== undefined);
 
     loadTranscriptRangeRef.current = (input): Promise<TranscriptRangeResult> => {
-      if (closedByEffect || accessRevoked || socket?.readyState !== WebSocket.OPEN) {
+      if (closedByEffect || accessRevoked || socket?.readyState !== WebSocket.OPEN
+        || socketSnapshotId === null) {
         return Promise.reject(new ApiError(
           'The channel connection is not ready to load transcript ranges.',
           409,
           'workstream_socket_unavailable',
+        ));
+      }
+      if (input.snapshotId !== socketSnapshotId) {
+        return Promise.reject(new ApiError(
+          'The transcript changed while this range was loading.',
+          409,
+          'transcript_snapshot_changed',
         ));
       }
       const requestId = uuidV7();
@@ -1407,6 +1420,8 @@ export function useWorkstreamSocket(
         return;
       }
       if (event.type === 'resync_required') {
+        socketSnapshotId = null;
+        setTranscriptReady(false);
         initialContextSnapshot = null;
         queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         pendingInputSnapshot = null;
@@ -1611,6 +1626,8 @@ export function useWorkstreamSocket(
           transcriptQueryKey,
           transcript,
         );
+        socketSnapshotId = transcript.snapshotId;
+        setTranscriptReady(true);
         const canonical = orderedTranscriptMessages(transcript, parentId);
         const snapshotOverlays = [
           ...event.transcript.pendingInputs.map((input) => pendingTranscriptInputOverlay(
@@ -2017,6 +2034,8 @@ export function useWorkstreamSocket(
         return;
       }
       clearReconnectTimer();
+      socketSnapshotId = null;
+      setTranscriptReady(false);
       ticketRequestInFlight = true;
       setState(attempts.current === 0 ? 'connecting' : 'reconnecting');
       const generation = connectGeneration += 1;
@@ -2186,13 +2205,14 @@ export function useWorkstreamSocket(
           socketTelemetry.connected(attempts.current);
           setState('connected');
           trace.mark('handshake');
-          // A reconnect needs no separate reconciliation. The cursor makes the
-          // subscription itself the reconciliation: the room replays what was
+          // The cursor makes the subscription the event reconciliation: the room replays what was
           // missed, sends a snapshot when it cannot, and asks for a resync when
           // it can prove neither. Fetching canonical state alongside it raced
           // that answer and paid two REST round trips to arrive at the same
-          // place.
-          snapshotRequestInFlight = false;
+          // place. History separately needs this socket's own snapshot fence.
+          // A zero-cursor subscription already owes us a snapshot. Replay-only
+          // reconnects acquire a new fence only when the surface needs history.
+          snapshotRequestInFlight = effectiveAfterSequence === 0;
           if (!socketTicket.subscriptionBootstrap) {
             nextSocket.send(JSON.stringify({
               type: 'subscribe',
@@ -2280,6 +2300,8 @@ export function useWorkstreamSocket(
         });
         nextSocket.addEventListener('close', (closeEvent) => {
           if (socket !== nextSocket) return;
+          socketSnapshotId = null;
+          setTranscriptReady(false);
           clearOpeningTimer();
           if (openTrace === trace) {
             trace.end({ outcome: 'closed', closeCode: closeEvent.code });
@@ -2504,6 +2526,7 @@ export function useWorkstreamSocket(
       ...(openingError ? { openingError } : {}),
       retryOpening,
       sendReady: sendReady && admissionAllowed,
+      transcriptReady: transcriptReady && state === 'connected',
       workspaceSocketState,
       activeCompaction,
       activeInferenceDelays,
@@ -2529,6 +2552,7 @@ export function useWorkstreamSocket(
       retryOpening,
       retryHarness,
       sendReady,
+      transcriptReady,
       state,
       stopHarness,
       setAppearance,

@@ -180,7 +180,7 @@ describe('the right sidebar does not follow a channel switch', () => {
       createMessage: vi.fn(),
       requestSnapshot: vi.fn(),
       retryOpening: vi.fn(),
-      sendReady: true,
+      transcriptReady: true, sendReady: true,
       state: 'connected',
       workspaceSocketState: 'connected',
     });
