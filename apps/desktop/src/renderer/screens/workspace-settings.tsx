@@ -21,6 +21,7 @@ import {
   LockKeyhole,
   LoaderCircle,
   MailPlus,
+  Menu,
   MonitorCog,
   Newspaper,
   Bell,
@@ -42,6 +43,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ButtonHTMLAttributes,
   type ReactNode,
 } from 'react';
@@ -561,13 +563,28 @@ function providerCapabilitiesForScope(
   return [...provider.capabilities];
 }
 
-function initialSettingsSection(): SettingsSection {
+/** The phone layout's `max-width` in `app.css`; the two move together. */
+const PHONE_LAYOUT_QUERY = '(max-width: 640px)';
+
+// jsdom and some Electron startup states have no `matchMedia`, so it is reached
+// optionally and reads as wide.
+function subscribePhoneLayout(onChange: () => void): () => void {
+  const query = window.matchMedia?.(PHONE_LAYOUT_QUERY);
+  query?.addEventListener('change', onChange);
+  return () => query?.removeEventListener('change', onChange);
+}
+
+function isPhoneLayout(): boolean {
+  return window.matchMedia?.(PHONE_LAYOUT_QUERY).matches ?? false;
+}
+
+function linkedSettingsSection(): SettingsSection | null {
   const nativeSection = parseDesktopSettingsSection(
     new URLSearchParams(window.location.search).get('settingsSection'),
   );
   if (nativeSection) return nativeSection;
   const hashQuery = window.location.hash.split('?', 2)[1];
-  return parseDesktopSettingsSection(new URLSearchParams(hashQuery ?? '').get('section')) ?? 'account';
+  return parseDesktopSettingsSection(new URLSearchParams(hashQuery ?? '').get('section'));
 }
 
 export function WorkspaceSettingsScreen({
@@ -600,7 +617,31 @@ export function WorkspaceSettingsScreen({
   const webhookRefreshCancelRef = useRef<HTMLButtonElement | null>(null);
   const reconnectCancelRef = useRef<HTMLButtonElement | null>(null);
   const disconnectCancelRef = useRef<HTMLButtonElement | null>(null);
-  const [requestedSection, setActiveSection] = useState<SettingsSection>(initialSettingsSection);
+  const [linkedSection] = useState(linkedSettingsSection);
+  const [requestedSection, setActiveSection] = useState<SettingsSection>(linkedSection ?? 'account');
+  // At phone width the sections list is a sheet over the page. It starts open
+  // so Settings opens on the list, unless a link named the page to show.
+  // Above 640px CSS ignores it and both columns show.
+  const [navigationOpen, setNavigationOpen] = useState(linkedSection === null);
+  const phoneLayout = useSyncExternalStore(subscribePhoneLayout, isPhoneLayout);
+  const navigationSheetOpen = phoneLayout && navigationOpen;
+  const navigationToggle = useRef<HTMLButtonElement>(null);
+  // While the sheet covers the page, the page is inert so Tab and a screen
+  // reader stay in the sheet. Escape shuts it and hands focus back to the
+  // button, as the shell's phone sheet does. It listens in the bubble phase:
+  // the search field's Escape clears the query first and stops there, and a
+  // menu or dialog open over the sheet takes the keystroke for itself.
+  useEffect(() => {
+    if (!navigationSheetOpen) return undefined;
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (document.querySelector('[role="menu"], [role="dialog"], [role="listbox"]')) return;
+      setNavigationOpen(false);
+      navigationToggle.current?.focus();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [navigationSheetOpen]);
   // Clamped while rendering, not after: a link or the hash can name a member's
   // section, and its reads would start in the frame before an effect moved on.
   const activeSection: SettingsSection = guest && !GUEST_SETTINGS_SECTIONS.has(requestedSection) ? 'account' : requestedSection;
@@ -1152,6 +1193,7 @@ export function WorkspaceSettingsScreen({
     if (result.definition.section === 'connections') setConnectionFilter('all');
     setActiveSection(result.definition.section);
     setNavigationQuery('');
+    setNavigationOpen(false);
     setSearchTarget({ ...result });
   };
   useRevealSetting(contentRef, searchTarget && activeSection === searchTarget.definition.section && searchEntries.some((entry) => entry.key === searchTarget.key)
@@ -1379,7 +1421,7 @@ export function WorkspaceSettingsScreen({
     <div className="workspace-settings-screen screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
       <div className="settings-window">
-        <aside className="settings-sidebar" onKeyDown={(event) => {
+        <aside className={navigationOpen ? 'settings-sidebar is-mobile-open' : 'settings-sidebar'} id="settings-navigation-sheet" onKeyDown={(event) => {
           if (event.nativeEvent.isComposing) return;
           if (event.key === 'Escape' && navigationQuery) {
             event.preventDefault();
@@ -1429,6 +1471,7 @@ export function WorkspaceSettingsScreen({
                         setSearchTarget(null);
                         if (item.connectionId) openConnectionPage(item.connectionId);
                         setActiveSection(item.id);
+                        setNavigationOpen(false);
                       }}
                       type="button"
                     >
@@ -1449,6 +1492,19 @@ export function WorkspaceSettingsScreen({
 
         <main className="settings-content" ref={contentRef}>
           <header className="settings-content-header window-drag">
+            {/* The phone sheet's menu button; CSS hides it above 640px. */}
+            <IconButton
+              aria-controls="settings-navigation-sheet"
+              aria-expanded={navigationOpen}
+              className="sidebar-menu-toggle settings-menu-toggle window-no-drag"
+              label={navigationOpen ? 'Close settings sections' : 'Open settings sections'}
+              onClick={() => setNavigationOpen(!navigationOpen)}
+              ref={navigationToggle}
+              showTooltip={false}
+            >
+              <Menu aria-hidden="true" className="sidebar-menu-glyph is-menu" size={18} />
+              <X aria-hidden="true" className="sidebar-menu-glyph is-close" size={18} />
+            </IconButton>
             <h1 id="settings-title">{activeSection === 'connection' && pageConnection
               ? <SettingLabel setting={connectionSetting(pageConnection, isAdmin)} instanceId={pageConnection.id} />
               : sectionTitle}</h1>
@@ -1456,7 +1512,7 @@ export function WorkspaceSettingsScreen({
               <X aria-hidden="true" size={18} />
             </button>
           </header>
-          <div className="settings-content-scroll">
+          <div className="settings-content-scroll" inert={navigationSheetOpen}>
             {activeSection === 'account' && (
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading"><h2><SettingLabel setting={settings.profile} /></h2><p>Your Rally identity and access in this workspace.</p></div>
