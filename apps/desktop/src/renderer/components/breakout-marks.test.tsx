@@ -152,7 +152,7 @@ describe('BreakoutChipRow', () => {
     />);
 
     const [rain, snow] = within(screen.getByRole('group', { name: 'Breakouts from this message' })).getAllByRole('button');
-    expect(rain).toHaveTextContent('RainNeeds input');
-    expect(snow).toHaveTextContent('SnowNeeds input· Open');
+    expect(rain).toHaveAccessibleName('Rain, Needs input');
+    expect(snow).toHaveAccessibleName('Snow, Needs input, Open');
   });
 });
