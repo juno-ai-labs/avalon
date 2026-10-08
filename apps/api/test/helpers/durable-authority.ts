@@ -49,6 +49,10 @@ import {
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./cloudflare-test";
 import { sqliteD1 } from "./sqlite-d1";
 import { createTestSqlStorage } from "./sql-storage";
+import {
+  conversationResourceLinks,
+  type ConversationResourceLinks,
+} from "../../src/services/workstream-resource-visibility";
 
 /**
  * Walk the regional cutover ledger to `durable_object_open` the way the
@@ -1487,6 +1491,21 @@ export function testHarnessRunPortFactory(database: DatabaseSync): (
 ) => HarnessRunObjectPort {
   const port = testHarnessRunPort(database);
   return () => port;
+}
+
+/**
+ * One conversation's resource links over its object database, as every
+ * visibility read takes them. `channel` is the Channel's Main object, asked
+ * only when `database` is a Breakout's.
+ */
+export function testConversationResourceLinks(
+  database: DatabaseSync,
+  channel?: DatabaseSync,
+): ConversationResourceLinks {
+  return conversationResourceLinks(testResourcePort(database), () => {
+    if (!channel) throw new Error("This conversation inherited links from a Channel the test did not provide");
+    return testResourcePort(channel);
+  });
 }
 
 /** The same port as a factory, for a caller that takes one. */

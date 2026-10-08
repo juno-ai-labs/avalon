@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { Env } from "../env";
-import { createResourceObjectPort } from "../runtime/resource-port";
+import { createConversationResourceLinks } from "../runtime/resource-port";
 import { loadVisibleWorkstreamResourcesByIds } from "./workstream-resource-visibility";
 
 interface ReceiptDependency {
@@ -128,7 +128,7 @@ export async function validateAttachmentToolReceiptReplay(
 
   const visible = await loadVisibleWorkstreamResourcesByIds(
     env.DB,
-    createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+    createConversationResourceLinks(env, input.workspaceId, input.workstreamId),
     {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,

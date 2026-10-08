@@ -41,7 +41,7 @@ import {
   type AttachmentSummaryDraft,
   type AttachmentSummaryRunner,
 } from "./attachment-summary-service";
-import { createResourceObjectPort } from "../runtime/resource-port";
+import { createConversationResourceLinks } from "../runtime/resource-port";
 import {
   executionPrincipalKey,
   loadVisibleWorkstreamResourcePage,
@@ -195,7 +195,7 @@ export function createWorkstreamAttachmentTools(
         try {
           result = await loadVisibleWorkstreamResourcePage(
             env.DB,
-            createResourceObjectPort(env, input.workspaceId, input.parentId),
+            createConversationResourceLinks(env, input.workspaceId, input.parentId),
             {
               workspaceId: input.workspaceId,
               workstreamId: input.parentId,
@@ -643,7 +643,7 @@ export async function rehydrateWorkstreamViewReceipt(
   if (!parsedInput.success || !parsedOutput.success || parsedOutput.data.returned === 0) return [];
   const visible = await loadVisibleWorkstreamResourcesByIds(
     env.DB,
-    createResourceObjectPort(env, input.workspaceId, input.parentId),
+    createConversationResourceLinks(env, input.workspaceId, input.parentId),
     {
       workspaceId: input.workspaceId,
       workstreamId: input.parentId,
@@ -978,7 +978,7 @@ async function loadScopedResourceRows(
   }
   return loadVisibleWorkstreamResourcesByIds(
     env.DB,
-    createResourceObjectPort(env, input.workspaceId, input.parentId),
+    createConversationResourceLinks(env, input.workspaceId, input.parentId),
     {
       workspaceId: input.workspaceId,
       workstreamId: input.parentId,
