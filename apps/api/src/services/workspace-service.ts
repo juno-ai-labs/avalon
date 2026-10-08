@@ -979,15 +979,12 @@ export class WorkspaceService {
 
   /**
    * Addresses with a pending invitation, for every member to pick from. A
-   * guest is refused: a guest is not shown the Organization's roster, and an
-   * invitation names somebody on its way into it. An address that already has
+   * guest never reaches this: `requireAuth` refuses a session with no role, as
+   * it does for the roster. An address that already has
    * a membership here, a guest who was shared a Channel before accepting, is
    * left out so it appears once, as that membership.
    */
   async listInvitees(): Promise<Array<{ email: string; invitedAt: string }>> {
-    if (this.auth.role === null) {
-      throw new ApiError(403, "workspace_member_required", "Only members of the organization can see who is invited");
-    }
     return pendingInvitees(this.env.DB, this.auth.workspaceId);
   }
 
