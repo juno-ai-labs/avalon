@@ -2,6 +2,7 @@ import "../../../tests/isolated-region";
 import { asUserId } from "@rally/contracts";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
+import { BrowserWorkspaceAttentionSchema } from "@rally/contracts/browser-session";
 import { createApp } from "../src/app";
 import type { Env } from "../src/env";
 import { BrowserSessionService, BrowserWorkspacesSchema } from "../src/services/browser-session-service";
@@ -26,7 +27,15 @@ let globalDb: DatabaseSync;
 let enterpriseDb: DatabaseSync;
 
 function workspaceObjects(): Env["WORKSPACE_DOS"] {
-  const stub = { initializeWorkspace: async () => undefined };
+  // Attention answers only for the person's regional id, so a read made under
+  // any other id comes back empty.
+  const stub = {
+    initializeWorkspace: async () => undefined,
+    attention: async ({ userId }: { userId: string }) => ({
+      waitingForYou: 0, waitingReason: null, hasUnreadActivity: userId === enterpriseUserId,
+      readerAttentionCount: userId === enterpriseUserId ? 3 : 0,
+    }),
+  };
   const binding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
     idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => stub,
@@ -45,6 +54,7 @@ function bridge(): RegionalIdentityBridgeRpcBinding {
   const service = () => new RegionalOnboardingService(enterprise());
   return {
     discover: (identity) => serializeRegionalRpcResult(() => service().discover(identity)),
+    attention: (identity) => serializeRegionalRpcResult(() => service().attention(identity)),
     activate: (input) => serializeRegionalRpcResult(() => service().activate(input)),
     activateBrowser: (input) => serializeRegionalRpcResult(() => service().activateBrowser(input)),
     create: (input) => serializeRegionalRpcResult(() => service().create(input)),
@@ -99,6 +109,14 @@ it("lists another deployment's workspace from Global and hands the browser that 
   expect(auth).toMatchObject({ userId: enterpriseUserId, workspaceId: enterpriseWorkspaceId, region: "enterprise" });
   // And means nothing to Global.
   await expect(new BrowserSessionService(global()).read(credential)).rejects.toMatchObject({ status: 401 });
+});
+
+it("reads another deployment's attention from Global under that deployment's own id for the person", async () => {
+  const response = await request("workspaces/attention", await signedIn());
+  expect(response.status).toBe(200);
+  const { attention } = BrowserWorkspaceAttentionSchema.parse(await response.json());
+  expect(attention.map((item) => [item.region, item.workspaceId, item.attention.readerAttentionCount]))
+    .toEqual([["enterprise", enterpriseWorkspaceId, 3]]);
 });
 
 it("refuses a workspace the identity is not a member of, and mints nothing there", async () => {

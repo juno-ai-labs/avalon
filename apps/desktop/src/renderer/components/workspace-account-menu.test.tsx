@@ -3,10 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  UNREAD_ACTIVITY_DESCRIPTION,
-  WorkspaceAccountMenu,
-} from './workspace-account-menu';
+import { WorkspaceAccountMenu } from './workspace-account-menu';
 import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER } from '../lib/app-session';
 import { desktopWorkspaceIdentityKey, type DesktopUpdateStatus } from '../../common/desktop';
 import type * as PlatformModule from '../lib/platform';
@@ -151,36 +148,47 @@ describe('organization account menu', () => {
     const menu = screen.getByRole('menu');
     expect(within(menu).getByText('Organizations')).toBeVisible();
     expect(within(menu).getByRole('menuitem', { name: /Global Studio.*global.*Current/u })).toBeVisible();
-    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*enterprise.*3 mentions waiting for you/u });
-    // One dot for any activity, never a count.
-    expect(europe.querySelector('.workspace-activity-dot')).toHaveAccessibleName('3 mentions waiting for you');
-    expect(europe).not.toHaveTextContent('3');
+    const europe = within(menu).getByRole('menuitem', {
+      name: 'Europe Studio, enterprise, 3 conversations with new activity, 3 mentions waiting for you',
+    });
+    expect(europe).toHaveTextContent(/^EEurope Studioenterprise3$/u);
 
     fireEvent.click(europe);
     expect(props.onSwitchWorkspace).toHaveBeenCalledWith(enterprise);
   });
 
-  it('explains the activity dot on hover', async () => {
+  it('explains the activity count on hover', async () => {
     renderMenu();
     openMenu();
-    const waiting = screen.getByLabelText('3 mentions waiting for you');
-    fireEvent.pointerMove(waiting);
+    fireEvent.pointerMove(screen.getByText('3'));
     expect(await screen.findByRole('tooltip')).toHaveTextContent('3 mentions waiting for you');
-    fireEvent.pointerLeave(waiting);
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  });
+
+  it('counts unread activity when nothing waits on the person, and shows nothing at zero', async () => {
+    renderMenu({
+      attention: {
+        [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
+          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true, readerAttentionCount: 120,
+        },
+      },
+    });
+    openMenu();
+    const europe = screen.getByRole('menuitem', { name: 'Europe Studio, enterprise, 120 conversations with new activity' });
+    expect(europe).toHaveTextContent(/99\+$/u);
+    fireEvent.pointerMove(within(europe).getByText('99+'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('120 conversations with new activity');
+    cleanup();
 
     renderMenu({
       attention: {
         [desktopWorkspaceIdentityKey(enterprise.region, enterprise.id)]: {
-          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true, readerAttentionCount: 1,
+          waitingForYou: 0, waitingReason: null, hasUnreadActivity: false, readerAttentionCount: 0,
         },
       },
     });
-    const triggers = screen.getAllByRole('button', { name: /Ada/u });
-    fireEvent.pointerDown(triggers[triggers.length - 1]!, { button: 0, ctrlKey: false });
-    const dot = (await screen.findAllByLabelText('Unread activity')).at(-1)!;
-    fireEvent.pointerMove(dot);
-    await waitFor(() => expect(screen.getAllByRole('tooltip').at(-1)).toHaveTextContent(UNREAD_ACTIVITY_DESCRIPTION));
+    expect(screen.getByRole('button', { name: /Ada/u })).not.toHaveAccessibleName(/another organization/u);
+    openMenu();
+    expect(screen.getByRole('menuitem', { name: 'Europe Studio, enterprise' })).toHaveTextContent(/^EEurope Studioenterprise$/u);
   });
 
   it('closes once a switch has taken and stays open while it has not', async () => {
@@ -234,7 +242,7 @@ describe('organization account menu', () => {
     // so the sentence is read off the row rather than matched as one text node.
     expect(screen.getByText(/Counts last updated/u).closest('.workspace-counts-stale'))
       .toHaveTextContent('Counts last updated 7 minutes ago');
-    expect(screen.getByLabelText('3 mentions waiting for you')).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: /Europe Studio.*3 conversations with new activity/u })).toHaveTextContent(/3$/u);
   });
 
   it('keeps the legacy one-organization anatomy while the flag is off', () => {

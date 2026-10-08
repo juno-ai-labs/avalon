@@ -866,6 +866,22 @@ export function OpeningState({ label }: { label: string }): React.JSX.Element {
   return <LoadingState label={label} orbSize={64} orbState="connecting" />;
 }
 
+/** What an activity count says to a screen reader, which hears it in place of the badge. */
+export function activityCountLabel(count: number): string {
+  return `${count} conversation${count === 1 ? '' : 's'} with new activity`;
+}
+
+/**
+ * An Organization's activity count: the sidebar's unread red with white
+ * digits, nothing when the count is zero. Past two digits it reads 99+, as the
+ * attention menu's count does. The caller names the count with
+ * `activityCountLabel` on the row it sits in.
+ */
+export function ActivityCountBadge({ count }: { count: number }): React.JSX.Element | null {
+  if (count <= 0) return null;
+  return <span aria-hidden="true" className="activity-count-badge">{count > 99 ? '99+' : count}</span>;
+}
+
 export function InlineError({ children }: PropsWithChildren): React.JSX.Element {
   return (
     <p className="inline-error" role="alert">

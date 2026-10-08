@@ -30,6 +30,12 @@ export class RegionalIdentityBridge extends WorkerEntrypoint<Env> {
     ));
   }
 
+  attention(identity: unknown) {
+    return serializeRegionalRpcResult(() => new RegionalOnboardingService(this.env).attention(
+      parseRpcInput(platformIdentitySchema, identity, "attention"),
+    ));
+  }
+
   activate(input: unknown): Promise<RegionalRpcResult<Session>> {
     return serializeRegionalRpcResult(() => new RegionalOnboardingService(this.env).activate(
       parseRpcInput(regionalActivateSchema, input, "activate"),
