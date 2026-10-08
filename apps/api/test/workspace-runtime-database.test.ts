@@ -235,6 +235,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "spaces",
   "workspace_space_state",
   "space_viewers",
+  "space_invitees", // Read and written only by the Space audience and invitee RPCs.
   "workspace_sidebar_list_state",
   "workspace_socket_ticket_receipts",
   "workspace_socket_unheard", // The first-frame watch's ledger; socket paths and the alarm only.
