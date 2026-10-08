@@ -275,8 +275,9 @@ export async function setWorkspacePlan(
 /**
  * Send the meter, as it reads now, to every member connected to the
  * Organization, after a plan change moved its quota and overage. Read here
- * rather than handed in, so a push made after two quick changes carries the
- * later one whichever request it came from.
+ * rather than handed in, and stamped with when the read started, so that after
+ * two quick changes WorkspaceDO can drop whichever push read the earlier plan,
+ * in whatever order the two arrive.
  *
  * Post-commit and best effort: the plan has changed, so a failed push is
  * logged and not reported as a failed change. A window that missed it shows
@@ -288,7 +289,8 @@ export async function publishOrganizationUsage(
   workspaceId: string,
 ): Promise<void> {
   try {
-    const usage = await readOrganizationUsage(env, workspaceId, Date.now());
+    const readAtMs = Date.now();
+    const usage = await readOrganizationUsage(env, workspaceId, readAtMs);
     if (!usage) return;
     const placementAffinity = await workspacePlacementAffinity(env, workspaceId);
     const workspace = await durableObjectStubForWorkspace(
@@ -298,7 +300,7 @@ export async function publishOrganizationUsage(
       workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
       placementAffinity,
     );
-    await workspace.publishUsage(usage, workspaceId, placementAffinity);
+    await workspace.publishUsage(usage, new Date(readAtMs).toISOString(), workspaceId, placementAffinity);
   } catch (error) {
     logWarn(env, "usage_publish_failed", {
       workspace_id: workspaceId,
