@@ -2425,8 +2425,7 @@ pre {
 .workspace-settings-screen .settings-toggle:has(input:checked) > span::after { background: var(--av-sys-color-text-on-inverse); }
 
 .terminal-network-card { display: flex; flex-direction: column; }
-.terminal-network-notice,
-.terminal-network-confirmation {
+.terminal-network-notice {
   align-items: center;
   background: var(--av-sys-color-surface-subtle);
   border-bottom: 1px solid var(--av-sys-color-border-subtle);
@@ -2435,14 +2434,10 @@ pre {
   gap: 10px;
   padding: 12px 14px;
 }
-.terminal-network-notice > svg,
-.terminal-network-confirmation > svg { color: var(--av-sys-color-text-muted); flex: none; }
-.terminal-network-notice > span,
-.terminal-network-confirmation > span { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.terminal-network-notice strong,
-.terminal-network-confirmation strong { color: var(--av-sys-color-text-default); font-size: var(--av-cmp-control-font-size); }
-.terminal-network-notice small,
-.terminal-network-confirmation small { font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin-top: 2px; }
+.terminal-network-notice > svg { color: var(--av-sys-color-text-muted); flex: none; }
+.terminal-network-notice > span { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.terminal-network-notice strong { color: var(--av-sys-color-text-default); font-size: var(--av-cmp-control-font-size); }
+.terminal-network-notice small { font-size: var(--av-cmp-control-font-size); line-height: 1.5; margin-top: 2px; }
 .terminal-network-modes { border: 0; display: grid; gap: 8px; margin: 0; padding: 14px; }
 .terminal-network-modes legend {
   color: var(--av-sys-color-text-muted);
@@ -2507,34 +2502,6 @@ pre {
   padding: 11px 14px;
 }
 .terminal-network-actions > span { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: var(--av-cmp-control-font-size); gap: 6px; }
-.terminal-network-failure-outcomes {
-  background: var(--av-sys-color-danger-wash);
-  border-top: 1px solid var(--av-sys-color-danger-edge);
-  color: var(--av-sys-color-danger-soft);
-  font-size: var(--av-cmp-control-font-size);
-  line-height: 1.5;
-  padding: 10px 14px;
-}
-.terminal-network-failure-outcomes strong { color: var(--av-sys-color-danger-strong); }
-.terminal-network-failure-outcomes ul { margin: 4px 0 0; padding-left: 18px; }
-.terminal-network-confirmation {
-  align-items: flex-start;
-  border-bottom: 0;
-  border-top: 1px solid var(--av-sys-color-border-default);
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-}
-.terminal-network-confirmation > span { grid-column: 2; }
-.terminal-network-confirmation details { margin-top: 8px; }
-.terminal-network-confirmation details > ul { list-style: none; margin: 3px 0 8px; padding: 0; }
-.terminal-network-confirmation details code { overflow-wrap: anywhere; }
-.terminal-network-confirmation-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  grid-column: 2;
-  margin-top: 8px;
-}
 
 /* Digest — day chips, the time list, and the save bar. The cards reuse
    .settings-list-card so the pane keeps the same surface as every other
