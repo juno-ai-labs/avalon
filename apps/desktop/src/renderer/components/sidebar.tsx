@@ -457,21 +457,6 @@ function PendingWorkstreamRow({ workstream }: { workstream: WorkstreamSummary })
 }
 
 /**
- * A touch drag starts with the same long press that opens a row's menu, and
- * iOS lifts the row without sending the page the move or cancel that would
- * stop Radix's long-press timer. Left alone the menu opens over the drag, and
- * a modal menu makes the rest of the page ignore the pointer, so the drag
- * finds no drop target. A drag that starts first cancels the pending press;
- * one that starts after the menu opened closes it.
- */
-function dismissTouchMenus(row: HTMLElement): void {
-  row.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerType: 'touch' }));
-  if (row.dataset.state === 'open') {
-    row.ownerDocument.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }));
-  }
-}
-
-/**
  * The slot Pinned holds open for a Channel dragged in from below: a faded copy
  * of that Channel's row, drawn the way the row being reordered inside the
  * section is drawn, so arriving and rearranging look the same. Hidden from
@@ -566,6 +551,13 @@ function WorkstreamRow({
   const hasActivityForViewer = workstreamHasActivityForViewer(workstream);
   const destination = channelDestination(workstream);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // A touch drag starts with the same long press that opens this menu, and
+  // iOS lifts the row without sending the move or cancel that would stop the
+  // menu's timer. A modal menu over a drag also leaves the page deaf to the
+  // pointer, so the drag would find no drop target: a drag closes the menu and
+  // keeps it shut until the next press.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const dragStarted = useRef(false);
   const previewOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelPreviewTimer = useCallback(() => {
@@ -683,7 +675,9 @@ function WorkstreamRow({
       workstreamId={workstream.id}
       workstreamTitle={workstream.title}
     />}
-    <ContextMenu.Root>
+    <ContextMenu.Root open={menuOpen} onOpenChange={(open) => {
+      if (!open || !dragStarted.current) setMenuOpen(open);
+    }}>
       <ContextMenu.Trigger asChild>
         <div
           className={clsx('sidebar-context-target', drag && 'is-draggable', drag?.dragging && 'is-dragging')}
@@ -738,7 +732,8 @@ function WorkstreamRow({
             : undefined}
           onDragStart={(event) => {
               closePreview();
-              dismissTouchMenus(event.currentTarget);
+              dragStarted.current = true;
+              setMenuOpen(false);
               // Chromium refuses to start a drag with an empty payload, and the
               // id is the payload every other surface would want anyway. The
               // order itself is tracked in the sidebar's own state: reading it
@@ -785,6 +780,7 @@ function WorkstreamRow({
               drag.onMove(workstream, event.key === 'ArrowUp' ? -1 : 1);
             }
             : undefined}
+          onPointerDown={() => { dragStarted.current = false; }}
           onPointerEnter={() => {
             socketWarmup.onPointerEnter();
             openPreviewFromPointer();
