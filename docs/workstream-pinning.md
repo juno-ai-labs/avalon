@@ -487,7 +487,7 @@ hover preview a drag closes anyway. Not yet confirmed on a device: iOS's
 timing of the drag start against the 700ms timer was inferred from a
 screenshot.
 
-Shipped in a follow-up to juno-ai-labs/avalon#1166.
+Shipped in juno-ai-labs/avalon#1169, a follow-up to juno-ai-labs/avalon#1166.
 
 ### 2026-10-07 — Pinned holds a slot open for a Channel dragged into it
 
