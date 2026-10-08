@@ -39,6 +39,7 @@ import { createApp } from "../src/app";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { SpaceService } from "../src/services/space-service";
+import { seatSpaceInvitee } from "../src/services/workspace-realtime-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
@@ -681,6 +682,74 @@ describe("PATCH /spaces/:id/audience", () => {
 
     expect(refused.status).toBe(400);
     expect(await spaceDirectoryRow(created.id)).toMatchObject({ scope: "workspace" });
+  });
+});
+
+describe("Organization invitees in a Space", () => {
+  const DANA = asUserId("00000000-0000-7000-8000-00000000d2e1");
+
+  /** The D1 rows an Organization invitation leaves before it is accepted. */
+  async function invite(email: string, state: "pending" | "revoked" = "pending"): Promise<void> {
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_invitations (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, email TEXT NOT NULL COLLATE NOCASE,
+        accepted_at TEXT, revoked_at TEXT, expires_at TEXT NOT NULL, created_at TEXT NOT NULL
+      )`),
+      env.DB.prepare(`INSERT INTO workspace_invitations (id, workspace_id, email, accepted_at, revoked_at, expires_at, created_at)
+        VALUES (?, ?, ?, NULL, ?, '2099-01-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')`)
+        .bind(crypto.randomUUID(), WORKSPACE_ID, email, state === "revoked" ? "2026-10-02T00:00:00.000Z" : null),
+    ]);
+  }
+
+  async function participantIds(spaceId: string): Promise<string[]> {
+    const space = (await spaceDirectories(OWNER)).active.items.find((item) => item.id === spaceId);
+    return (space?.participants ?? []).map((participant) => participant.userId).sort();
+  }
+
+  it("lists a pending invitee by address and seats them as a participant when they join", async () => {
+    await invite("dana@example.com");
+    const created = await createSpace("Hiring");
+
+    const saved = await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
+      scope: "workspace", participantUserIds: [OWNER], inviteeEmails: ["Dana@Example.com"],
+    }, "PATCH");
+    expect(saved.status).toBe(200);
+    expect(await request(`/spaces/${created.id}/invitees`, MEMBER_AUTH))
+      .toEqual({ status: 200, body: { items: [{ email: "dana@example.com" }] } });
+
+    // Accepting writes the membership, then seats them where they were listed.
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO users(id, email, name, timezone, created_at) VALUES (?, 'dana@example.com', 'Dana', 'UTC', '2026-01-01T00:00:00.000Z')")
+        .bind(DANA),
+      env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role, access_class)
+        VALUES (?, ?, 'active', 'member', 'member')`).bind(WORKSPACE_ID, DANA),
+    ]);
+    expect(await seatSpaceInvitee(routeEnv(), WORKSPACE_ID, DANA, "dana@example.com")).toEqual([created.id]);
+
+    expect(await participantIds(created.id)).toEqual([OWNER, DANA].sort());
+    expect(await request(`/spaces/${created.id}/invitees`, OWNER_AUTH))
+      .toEqual({ status: 200, body: { items: [] } });
+  });
+
+  it("refuses an address with no pending invitation, and a member taking an invitee out", async () => {
+    await invite("dana@example.com");
+    await invite("gone@example.com", "revoked");
+    const created = await createSpace("Hiring");
+
+    const unknown = await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
+      scope: "workspace", participantUserIds: [OWNER], inviteeEmails: ["gone@example.com"],
+    }, "PATCH");
+    expect(unknown).toMatchObject({ status: 422, body: { error: { code: "space_invitee_not_invited" } } });
+
+    await request(`/spaces/${created.id}/audience`, OWNER_AUTH, {
+      scope: "workspace", participantUserIds: [OWNER, MEMBER], inviteeEmails: ["dana@example.com"],
+    }, "PATCH");
+    const removal = await request(`/spaces/${created.id}/audience`, MEMBER_AUTH, {
+      scope: "workspace", participantUserIds: [OWNER, MEMBER], inviteeEmails: [],
+    }, "PATCH");
+    expect(removal).toMatchObject({ status: 403, body: { error: { code: "participant_removal_denied" } } });
+    expect(await request(`/spaces/${created.id}/invitees`, OWNER_AUTH))
+      .toEqual({ status: 200, body: { items: [{ email: "dana@example.com" }] } });
   });
 });
 

@@ -4761,7 +4761,11 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 [data-theme='dark'] .mention-popover :is(small, .mention-popover-kind) { color: var(--av-sys-color-text-muted); }
 /* An invitee's address is greyed until they join, here and wherever people are listed. */
 .mention-popover > button.is-invited strong,
-.mention-confirm-person.is-invited strong { font-style: italic; }
+.mention-confirm-person.is-invited strong,
+.member-action-row.is-invited strong,
+.member-picker-row.is-invited strong { font-style: italic; }
+.member-action-row.is-invited strong,
+.member-picker-row.is-invited strong { color: var(--av-sys-color-text-muted); }
 .mention-popover > button.is-invited strong,
 .mention-confirm-person.is-invited strong,
 .title-menu-person.is-invited .title-menu-person-name,
