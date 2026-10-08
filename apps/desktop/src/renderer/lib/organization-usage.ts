@@ -181,12 +181,15 @@ function timeOfDay(at: Date): string {
 
 /**
  * "72% left till Thu 9:00 AM", the one line under the active Organization in
- * its menu. The week resets within seven days, so the weekday names it.
+ * its menu. The week resets within seven days, so the weekday names it. A
+ * spent quota never stops work, it runs into overage, so a low meter says so
+ * rather than leaving members to ration what is left.
  */
-export function usageMenuLabel(percent: number, weekResetsAt: string): string {
-  const at = new Date(weekResetsAt);
+export function usageMenuLabel(usage: OrganizationUsage): string {
+  const at = new Date(usage.weekResetsAt);
   const day = new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(at);
-  return `${percent}% left till ${day} ${timeOfDay(at)}`;
+  const line = `${usage.quotaRemainingPercent}% left till ${day} ${timeOfDay(at)}`;
+  return usageTone(usage) === 'warning' ? `${line}, overage enabled` : line;
 }
 
 /** "Resets Thursday, October 8 at 9:00 AM", in the viewer's local time. */
