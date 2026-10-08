@@ -98,6 +98,28 @@ it('opens a workspace in another deployment through Global the first time, then 
   } finally { view.unmount(); }
 });
 
+it('counts each organization\'s activity after the list, and shows nothing for one without any', async () => {
+  const quiet = { ...workspace, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', name: 'Quiet team', accessClass: 'member', role: 'member' };
+  const busy = { ...workspace, name: 'Busy team', accessClass: 'member', role: 'member' };
+  const counts = (readerAttentionCount: number) => ({ waitingForYou: 0, waitingReason: null, hasUnreadActivity: readerAttentionCount > 0, readerAttentionCount });
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (path === '/workspaces') return Response.json({ workspaces: [busy, quiet] });
+    if (path === '/workspaces/attention') return Response.json({ attention: [
+      { region: 'global', workspaceId: busy.id, attention: counts(4) },
+      { region: 'global', workspaceId: quiet.id, attention: counts(0) },
+    ] });
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry />);
+  try {
+    const busyRow = await screen.findByRole('link', { name: 'Busy team, 4 conversations with new activity' });
+    expect(busyRow).toHaveTextContent(/^BBusy team4$/u);
+    expect(screen.getByRole('link', { name: 'Quiet team' })).toHaveTextContent(/^QQuiet team$/u);
+  } finally { view.unmount(); }
+});
+
 it('signs out of every deployment, so no other deployment keeps a session in this browser', async () => {
   const logouts: string[] = [];
   vi.stubGlobal('fetch', vi.fn(async (input: string) => {

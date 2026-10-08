@@ -4,11 +4,11 @@ import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
 import { iosStandalone } from '../../desktop/src/renderer/lib/home-screen';
 import { CreateOrganizationCard, type CreateOrganizationOperation } from '../../desktop/src/renderer/screens/create-organization';
 import { Building2, ChevronRight, KeyRound, LoaderCircle, Mail } from "lucide-react";
-import { Button, ConnectorMark, InlineError, RallyMark } from "@rally/ui/components/primitives";
+import { ActivityCountBadge, Button, ConnectorMark, InlineError, RallyMark, activityCountLabel } from "@rally/ui/components/primitives";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema, IDENTITY_REGION } from "@rally/contracts/regions";
-import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
+import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
 import { browserRequest, BrowserApiError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 
@@ -119,6 +119,11 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   // Null until the list has loaded, so a fresh sign-in never says nothing was
   // shared before the server has answered.
   const [workspaces, setWorkspaces] = useState<ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"] | null>(null);
+  // Where the list was read, so its counts come from the same deployment.
+  const workspacesRegion = useRef<string>(IDENTITY_REGION);
+  // Each listed organization's activity count, by region and id. Read after the
+  // list, so the list never waits on it; a failed read leaves rows without one.
+  const [activity, setActivity] = useState<ReadonlyMap<string, number>>(new Map());
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -138,6 +143,14 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const refreshSession = useRef<((renew: boolean) => void) | null>(null);
   // A later signed-out screen starts from the Google-first choice again.
   useEffect(() => { if (session) setEmailChosen(false); }, [session]);
+  useEffect(() => {
+    if (!workspaces?.length) { setActivity(new Map()); return; }
+    let current = true;
+    browserRequest(workspacesRegion.current, "/workspaces/attention", BrowserWorkspaceAttentionSchema).then((result) => {
+      if (current) setActivity(new Map(result.attention.map((item) => [`${item.region}:${item.workspaceId}`, item.attention.readerAttentionCount])));
+    }, () => undefined);
+    return () => { current = false; };
+  }, [workspaces]);
 
   useEffect(() => {
     let active = true;
@@ -207,6 +220,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         setError(null);
         if (!opened) {
           const result = await browserRequest(selected, "/workspaces", BrowserWorkspacesSchema);
+          workspacesRegion.current = selected;
           if (active && read === sessionRead.current) setWorkspaces(result.workspaces);
         }
       })().catch((cause: unknown) => {
@@ -321,7 +335,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     rememberSignupFlow(null);
     setSession(current);
     if (!destination) {
-      const result = await browserRequest(proof?.region ?? IDENTITY_REGION, "/workspaces", BrowserWorkspacesSchema);
+      const listRegion = proof?.region ?? IDENTITY_REGION;
+      const result = await browserRequest(listRegion, "/workspaces", BrowserWorkspacesSchema);
+      workspacesRegion.current = listRegion;
       if (read === sessionRead.current) setWorkspaces(result.workspaces);
     }
   }
@@ -441,8 +457,10 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         <h1>Your organizations</h1>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
         {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the conversation…" : "Loading your organizations…"}</p>
-          : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) =>
-          <a className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ChevronRight aria-hidden="true" size={16} /></a>)}</nav>
+          : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) => {
+            const count = activity.get(`${workspace.region}:${workspace.id}`) ?? 0;
+            return <a aria-label={count > 0 ? `${workspace.name}, ${activityCountLabel(count)}` : undefined} className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ActivityCountBadge count={count} /><ChevronRight aria-hidden="true" size={16} /></a>;
+          })}</nav>
           : <>
             <p className="entry-lead">{session.user.email} is not part of an organization, and nothing has been shared with it yet.</p>
             <p className="entry-lead">Ask a teammate to share a Channel or Breakout with you, or create a new organization.</p>
