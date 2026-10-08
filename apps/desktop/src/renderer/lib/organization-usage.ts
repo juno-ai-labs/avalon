@@ -173,15 +173,23 @@ export function usageRemainingLabel(percent: number): string {
   return percent === 0 ? 'All used' : `${percent}% left`;
 }
 
-/** The one line under the active Organization in its menu. */
-export function usageMenuLabel(percent: number): string {
-  return percent === 0 ? 'Quota used this week' : `${percent}% left this week`;
-}
-
 // Formatters are built per call rather than at module load so they follow the
 // viewer's time zone as it is now, not as it was when the module loaded.
 function timeOfDay(at: Date): string {
   return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(at);
+}
+
+/**
+ * "72% left till Thu 9:00 AM", the one line under the active Organization in
+ * its menu. The week resets within seven days, so the weekday names it. A
+ * spent quota never stops work, it runs into overage, so a low meter says so
+ * rather than leaving members to ration what is left.
+ */
+export function usageMenuLabel(usage: OrganizationUsage): string {
+  const at = new Date(usage.weekResetsAt);
+  const day = new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(at);
+  const line = `${usage.quotaRemainingPercent}% left till ${day} ${timeOfDay(at)}`;
+  return usageTone(usage) === 'warning' ? `${line}, overage enabled` : line;
 }
 
 /** "Resets Thursday, October 8 at 9:00 AM", in the viewer's local time. */
