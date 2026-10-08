@@ -284,6 +284,9 @@ describe('Usage in Settings', () => {
 });
 
 describe('Usage in the Organization menu', () => {
+  // The line names the reset in local time; pin it so the literals hold on any host.
+  beforeEach(() => { vi.stubEnv('TZ', 'UTC'); });
+
   function renderMenuItem(api: OrganizationUsageApi, onSelect = vi.fn()): ReturnType<typeof vi.fn> {
     render(wrap(
       <DropdownMenu.Root open>
