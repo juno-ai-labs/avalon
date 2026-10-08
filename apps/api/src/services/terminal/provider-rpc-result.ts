@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { isTerminalProviderNotFound } from "./provider-contract";
+import { isTerminalProviderNotFound, terminalProviderErrorCode } from "./provider-contract";
 import type {
   TerminalProviderRpcCallbackResult,
   TerminalProviderRpcCallbacks,
@@ -95,6 +95,7 @@ export async function terminalProviderRpcCall<T>(
       error: {
         kind: "provider",
         message: error instanceof Error ? error.message : "Terminal provider call failed",
+        code: terminalProviderErrorCode(error),
       },
     };
   }

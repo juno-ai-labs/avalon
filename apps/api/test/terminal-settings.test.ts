@@ -6,6 +6,7 @@ import type { AuthContext } from "../src/env";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { terminalSandboxStableName } from "../src/services/terminal/coordinator";
 import { TerminalSettingsService } from "../src/services/terminal/settings";
+import { TerminalProviderError } from "../src/services/terminal/provider-contract";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import type { DatabaseSync } from "node:sqlite";
@@ -164,10 +165,13 @@ function fixture(role: AuthContext["role"] = "owner") {
     DAYTONA_TERMINAL_SNAPSHOT: "snapshot", TERMINAL_EMERGENCY_DISABLED: "false",
   });
   let appliedDomains: string[] = [];
+  // Daytona's own state per sandbox: running until stopped, unless a test says otherwise.
+  const providerStates = new Map<string, "running" | "stopped" | "archived">();
   const provider: TerminalSandboxProvider = {
-    createSandbox: vi.fn(), getSandbox: vi.fn(async () => ({ id: "provider-1", name: "settings-sandbox", state: "stopped" as const, domainAllowList: appliedDomains })),
+    createSandbox: vi.fn(),
+    getSandbox: vi.fn(async (id: string) => ({ id, name: "settings-sandbox", state: providerStates.get(id) ?? "running", domainAllowList: appliedDomains })),
     recoverSandbox: vi.fn(async () => undefined),
-    startSandbox: vi.fn(), stopSandbox: vi.fn(async () => undefined), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(),
+    startSandbox: vi.fn(), stopSandbox: vi.fn(async (id: string) => { providerStates.set(id, "stopped"); }), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(),
     updateNetworkPolicy: vi.fn(async (_id, domains) => { appliedDomains = domains ?? []; }), configureGitHubReadAccess: vi.fn(), clearGitHubReadAccess: vi.fn(),
     readFile: vi.fn(), writeFile: vi.fn(), runUtilityCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })), runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
   };
@@ -180,6 +184,7 @@ function fixture(role: AuthContext["role"] = "owner") {
     routedStatements,
     env,
     provider,
+    providerStates,
     service: new TerminalSettingsService(env, auth, provider),
   };
 }
@@ -331,7 +336,9 @@ describe("Terminal workspace settings", () => {
     seedSandboxObject(objectStores, second, {
       state: "running", stableName: "settings-sandbox-two", providerSandboxId: "provider-2",
     });
-    vi.mocked(provider.stopSandbox).mockRejectedValueOnce(new Error("first stop failed"));
+    vi.mocked(provider.stopSandbox).mockRejectedValueOnce(
+      new TerminalProviderError("Sandbox provider-1 is in state archiving", "DaytonaConflictError:409"),
+    );
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
 
     await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
@@ -345,7 +352,7 @@ describe("Terminal workspace settings", () => {
       lifecycle_state: "running",
       sandbox_id: "provider-1",
       applied_network_revision: 1,
-      failure_code: "policy_transition:stop:Error",
+      failure_code: "policy_transition:stop:DaytonaConflictError:409",
     });
     expect(workstreamObjectGet(
       objectStores.get(second)!,
@@ -356,8 +363,9 @@ describe("Terminal workspace settings", () => {
   it("changes an archived sandbox's policy without stopping it", async () => {
     // Daytona refuses to stop an archived sandbox, and the stop failure used to
     // delete it: every idle sandbox in an organization went that way.
-    const { objectStore, provider, service } = fixture();
+    const { objectStore, provider, providerStates, service } = fixture();
     workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET lifecycle_state = 'archived' WHERE id = 1");
+    providerStates.set("provider-1", "archived");
     vi.mocked(provider.stopSandbox).mockRejectedValue(new Error("sandbox is archived"));
     const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
 
@@ -369,6 +377,18 @@ describe("Terminal workspace settings", () => {
       objectStore,
       "SELECT lifecycle_state, sandbox_id, applied_network_revision, failure_code FROM terminal_workspace WHERE id = 1",
     )).toEqual({ lifecycle_state: "archived", sandbox_id: "provider-1", applied_network_revision: 2, failure_code: null });
+  });
+
+  it("stops a sandbox Daytona reports running even when Rally's row says stopped", async () => {
+    const { objectStore, provider, service } = fixture();
+    workstreamObjectRun(objectStore, "UPDATE terminal_workspace SET lifecycle_state = 'stopped' WHERE id = 1");
+    const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
+
+    await expect(service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true }))
+      .resolves.toMatchObject({ revision: 2 });
+    expect(provider.stopSandbox).toHaveBeenCalledWith("provider-1");
+    expect(workstreamObjectGet(objectStore, "SELECT lifecycle_state, applied_network_revision FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ lifecycle_state: "stopped", applied_network_revision: 2 });
   });
 
   it("records why a side thread's policy update failed on the side thread's own row", async () => {

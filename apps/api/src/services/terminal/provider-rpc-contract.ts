@@ -38,7 +38,7 @@ export type TerminalProviderRpcResult<T> =
       error:
         | { kind: "not_found"; message: string }
         | { kind: "terminal_tool"; code: string; message: string; details?: Record<string, unknown> }
-        | { kind: "provider"; message: string };
+        | { kind: "provider"; message: string; code?: string };
     };
 
 /**
