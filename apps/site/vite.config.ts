@@ -118,6 +118,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: `${projectRoot}index.html`,
+        startFast: `${projectRoot}start-fast/index.html`,
         technology: `${projectRoot}src/technology.ts`,
         help: `${projectRoot}src/help.ts`,
         concepts: `${projectRoot}concepts/index.html`,

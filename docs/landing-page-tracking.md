@@ -47,6 +47,11 @@ its id live there, not in `index.html`. The `/compare/` pages share the header
 (`download-header` / `sign-in-header`) and the footer, and count as page class `landing` with
 their own `$pathname`; see [`landing-comparisons.md`](landing-comparisons.md).
 
+`/start-fast/` is a variant of the home page with its own hero; everything below
+the hero is shared with `/` through `apps/site/src/landing-sections.html`. It
+uses the same link ids, so compare the two by `$pathname`, which every page view
+and click now carries. It is `noindex`, so search engines never list it beside `/`.
+
 ## Don't lose on a redesign
 
 Check these on every edit to the landing page:

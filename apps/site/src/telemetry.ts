@@ -285,7 +285,7 @@ function reportSiteAction(link: SiteActionLink): void {
   if (page !== 'landing' && page !== 'download' && page !== 'support') return;
   // A click is often the visitor's last act on the page, so it gets the same
   // best-effort keepalive as a page leave.
-  report('site_action_selected', { page, ...link }, true);
+  report('site_action_selected', { page, pathname: normalizedPathname(), ...link }, true);
 }
 
 /**

@@ -46,7 +46,9 @@ supplies a value. Every installer link has its own id (`download-header`,
 `download-hero`, `download-pricing-start|grow`), which is how the landing
 dashboard tells the four identical DMG links apart. The event shares the page
 view's anonymous `distinct_id`, so its referrer and campaign come from joining
-to that visit's `$pageview` rather than being copied onto the click.
+to that visit's `$pageview` rather than being copied onto the click. The click
+does carry its own `pathname`, which Global maps to `$pathname` as it does for
+page views, so variants of one page that share link ids can be compared directly.
 A middle-click, which fires `auxclick` rather than `click`, counts too.
 
 `desktop_handoff_attempted` reports the handoff type,
@@ -167,6 +169,27 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-10-08 — Name the page on each click
+
+**What changed:** `site_action_selected` gained an optional `pathname`, the
+same bounded path page views already report, and the site now sends it on every
+click.
+
+**Why:** `/start-fast/` is a variant of the home page that reuses the home
+page's link ids, and the team wants to compare the two pages' click-through
+directly. Without the path, a download click on either page was identical.
+
+**Considered and rejected:** Joining each click to its visit's `$pageview`
+through the shared anonymous id. That works, and the earlier entry below chose
+it for referrer and campaign, but every variant comparison would need that join;
+the path is the one property a click needs to answer the question by itself.
+Giving each variant its own link ids was also rejected: every new variant would
+then grow the closed id table and the dashboard's id lists.
+
+**Consequences:** The property is optional so a tab opened before the site
+deploy still validates. As with every new property, the API reader rejects a
+batch containing it until the API deploys, so deploy the API first.
 
 ### 2026-10-07 — Connect web entry to complete signup
 
