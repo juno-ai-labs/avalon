@@ -1,10 +1,20 @@
 import type { SpaceSummary } from '@rally/contracts';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { cloneElement, useId, useMemo, useState, type MouseEvent, type ReactElement } from 'react';
+import { cloneElement, useId, useMemo, useState, type MouseEvent, type ReactElement, type SyntheticEvent } from 'react';
 
 import { useSpaceChoices } from '../lib/space-choices';
 import { Button, InlineError, Modal, Tip } from './primitives';
+
+/**
+ * A press on the list itself rather than on something in it: a link, a button,
+ * a field, or anything portalled out of the list's DOM is not empty space.
+ */
+function isEmptySpace(event: SyntheticEvent<Element>): boolean {
+  const target = event.target as Element;
+  return event.currentTarget.contains(target)
+    && !target.closest('a, button, input, textarea, [contenteditable="true"]');
+}
 
 /**
  * The one creation launcher shared by the expanded sidebar, the compact rail
@@ -125,9 +135,13 @@ export function NewWorkstreamMenu({
         // already claimed it the same way. A portalled menu or dialog opened
         // from a row still bubbles here through the React tree, so a target
         // outside the list's DOM is not its empty space either.
-        const target = event.target as Element;
-        if (!event.currentTarget.contains(target)
-          || target.closest('a, button, input, textarea, [contenteditable="true"]')) event.preventDefault();
+        if (!isEmptySpace(event)) event.preventDefault();
+      }} onPointerDown={(event) => {
+        // A touch opens the menu on a long press, which never passes through
+        // `contextmenu`, so the guard above has to be repeated here: without
+        // it a long press on a row opened this menu over the row's own.
+        // Radix skips its long-press timer for a press already claimed.
+        if (event.pointerType !== 'mouse' && !isEmptySpace(event)) event.preventDefault();
       }}>{children}</ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="menu-content new-workstream-menu" collisionPadding={8}>{items}</ContextMenu.Content>
