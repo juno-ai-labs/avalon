@@ -75,7 +75,6 @@ export const WorkspaceTerminalPolicyPreviewRequestSchema = z.strictObject({
   proposedMode: TerminalNetworkModeSchema,
   proposedDomains: z.array(z.string().min(1)),
   effectiveDomains: z.array(z.string().min(1)),
-  affectedWorkstreamIds: z.array(IdSchema),
   at: TimestampSchema,
 });
 

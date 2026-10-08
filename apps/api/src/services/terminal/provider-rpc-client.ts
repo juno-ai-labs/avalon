@@ -2,7 +2,7 @@ import type {
   TerminalProviderInstrumentation,
   TerminalSandboxProvider,
 } from "./provider-contract";
-import { TerminalProviderNotFoundError } from "./provider-contract";
+import { TerminalProviderError, TerminalProviderNotFoundError } from "./provider-contract";
 import type {
   SupportedTerminalConfiguration,
   TerminalProviderRpcBinding,
@@ -54,7 +54,7 @@ async function unwrap<T>(result: PromiseLike<TerminalProviderRpcResult<T>>): Pro
       settled.error.details,
     );
   }
-  throw new Error(settled.error.message);
+  throw new TerminalProviderError(settled.error.message, settled.error.code ?? "provider_error");
 }
 
 function disposeRpcStub(stub: unknown): void {

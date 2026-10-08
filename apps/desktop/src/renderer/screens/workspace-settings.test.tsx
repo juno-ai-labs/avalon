@@ -409,9 +409,6 @@ describe('Organization settings', () => {
     api.previewTerminalNetworkPolicy.mockResolvedValue({
       mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1,
       proposedMode: 'full_internet', customDomains: [], remainingCustomSlots: 7,
-      affectedWorkstreamIds: ['00000000-0000-7000-8000-000000000091'],
-      affectedWorkstreams: [{ id: '00000000-0000-7000-8000-000000000091', title: 'Customer export' }],
-      warning: 'Full internet lets cloud computers access any website or internet service.',
     });
     api.applyTerminalNetworkPolicy.mockResolvedValue({
       availability: 'supported', mode: 'full_internet', revision: 2, verificationState: 'verified',
@@ -657,7 +654,7 @@ describe('Organization settings', () => {
     await waitFor(() => expect(api.getTerminalWorkspaceSettings).toHaveBeenCalled());
   }, 30_000);
 
-  it('previews and confirms full Terminal internet access before applying it', async () => {
+  it('asks before applying full Terminal internet access', async () => {
     renderSettings();
     openSettingsSection('Security');
     // 10s rather than the suite's 5s `asyncUtilTimeout` (src/renderer/test/setup.ts),
@@ -677,16 +674,60 @@ describe('Organization settings', () => {
     const fullInternet = await screen.findByRole('radio', { name: /^Full internet/ }, { timeout: 10_000 });
     fireEvent.click(fullInternet);
     await waitFor(() => expect(fullInternet).toBeChecked(), { timeout: 10_000 });
-    fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save network change' }));
 
-    expect(await screen.findByText(/any website or internet service/u, undefined, { timeout: 10_000 })).toBeVisible();
-    expect(api.previewTerminalNetworkPolicy).toHaveBeenCalledWith({
-      expectedRevision: 1, mode: 'full_internet', customDomains: [],
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm network change' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Change network access?' }, { timeout: 10_000 });
+    expect(within(dialog).getByText(/may be interrupted/u)).toBeVisible();
+    expect(api.previewTerminalNetworkPolicy).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
     await waitFor(() => expect(api.applyTerminalNetworkPolicy).toHaveBeenCalledWith({
       mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1, confirmed: true,
     }), { timeout: 10_000 });
+    expect(api.previewTerminalNetworkPolicy).toHaveBeenCalledWith({
+      expectedRevision: 1, mode: 'full_internet', customDomains: [],
+    });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), { timeout: 10_000 });
+  }, 30_000);
+
+  it('changes nothing when the network change is cancelled', async () => {
+    renderSettings();
+    openSettingsSection('Security');
+    fireEvent.click(await screen.findByRole('radio', { name: /^Full internet/ }, { timeout: 10_000 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save network change' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Change network access?' }, { timeout: 10_000 });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), { timeout: 10_000 });
+    expect(api.previewTerminalNetworkPolicy).not.toHaveBeenCalled();
+    expect(api.applyTerminalNetworkPolicy).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it.each([
+    ['preview', 'The Terminal network policy changed; reload settings and preview the policy again.'],
+    ['apply', 'Daytona did not confirm the requested network policy.'],
+  ] as const)('keeps the draft and shows the error when the %s request fails', async (failing, message) => {
+    const failure = new ApiError(message, 409, 'terminal_policy_revision_conflict');
+    if (failing === 'preview') api.previewTerminalNetworkPolicy.mockRejectedValueOnce(failure);
+    else api.applyTerminalNetworkPolicy.mockRejectedValueOnce(failure);
+    renderSettings();
+    openSettingsSection('Security');
+    const fullInternet = await screen.findByRole('radio', { name: /^Full internet/ }, { timeout: 10_000 });
+    fireEvent.click(fullInternet);
+    fireEvent.click(screen.getByRole('button', { name: 'Save network change' }));
+    fireEvent.click(within(await screen.findByRole('dialog', undefined, { timeout: 10_000 })).getByRole('button', { name: 'Continue' }));
+
+    expect(await screen.findByText(message, undefined, { timeout: 10_000 })).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), { timeout: 10_000 });
+    expect(fullInternet).toBeChecked();
+    if (failing === 'preview') expect(api.applyTerminalNetworkPolicy).not.toHaveBeenCalled();
+
+    // A retry goes through with the same draft.
+    fireEvent.click(screen.getByRole('button', { name: 'Save network change' }));
+    fireEvent.click(within(await screen.findByRole('dialog', undefined, { timeout: 10_000 })).getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(api.applyTerminalNetworkPolicy).toHaveBeenLastCalledWith({
+      mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1, confirmed: true,
+    }), { timeout: 10_000 });
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
   }, 30_000);
 
   it('keeps Rally-managed Trusted-only domains out of the settings surface', async () => {
@@ -694,8 +735,6 @@ describe('Organization settings', () => {
       mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1,
       proposedMode: 'trusted_only', customDomains: ['packages.example.com'],
       remainingCustomSlots: 6,
-      affectedWorkstreamIds: [], affectedWorkstreams: [],
-      warning: 'Trusted only applies managed and organization-approved access.',
     });
     renderSettings();
     openSettingsSection('Security');
@@ -708,36 +747,14 @@ describe('Organization settings', () => {
     fireEvent.change(screen.getByLabelText('Additional Terminal domains'), {
       target: { value: 'packages.example.com' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
-    fireEvent.click(await screen.findByText('Review exact before and after targets', undefined, { timeout: 10_000 }));
-    expect(await screen.findAllByText('packages.example.com', undefined, { timeout: 10_000 })).not.toHaveLength(0);
-    expect(screen.getByRole('button', { name: 'Download organization domains' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Save network change' }));
+    fireEvent.click(within(await screen.findByRole('dialog', undefined, { timeout: 10_000 })).getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(api.previewTerminalNetworkPolicy).toHaveBeenCalledWith({
+      expectedRevision: 1, mode: 'trusted_only', customDomains: ['packages.example.com'],
+    }), { timeout: 10_000 });
     for (const managedDomain of ['github.com', 'deb.debian.org', 'pypi.org', 'registry.npmjs.org']) {
       expect(screen.queryByText(managedDomain)).not.toBeInTheDocument();
     }
-  }, 30_000);
-
-  it('reports stopped and quarantined channels after provider verification fails', async () => {
-    api.applyTerminalNetworkPolicy.mockRejectedValueOnce(new ApiError(
-      'Daytona did not confirm the requested network policy.',
-      502,
-      'terminal_policy_verification_failed',
-      {
-        sandboxOutcomes: [
-          { workstreamId: '00000000-0000-7000-8000-000000000091', title: 'Customer export', outcome: 'stopped' },
-          { workstreamId: '00000000-0000-7000-8000-000000000092', title: 'Weekly report', outcome: 'quarantined' },
-        ],
-      },
-    ));
-    renderSettings();
-    openSettingsSection('Security');
-    fireEvent.click(await screen.findByRole('radio', { name: /^Full internet/ }, { timeout: 10_000 }));
-    fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm network change' }, { timeout: 10_000 }));
-
-    expect(await screen.findByText('Sandbox outcomes', undefined, { timeout: 10_000 })).toBeVisible();
-    expect(screen.getByText('Customer export: stopped')).toBeVisible();
-    expect(screen.getByText('Weekly report: quarantined')).toBeVisible();
   }, 30_000);
 
   it('opens the exact section requested by a native settings-window URL', async () => {
