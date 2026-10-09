@@ -257,7 +257,7 @@ export function NewChannelParticipants({
                 <span className="new-channel-popover-name">{member.name}</span>
                 {isInvitee(member) && <span className="new-channel-popover-kind">Invited</span>}
               </button>
-            )) : (
+            )) : entryError ? null : (
               <p className="new-channel-popover-empty">
                 {invitesTyped
                   ? `Press Enter to invite ${tokens.length === 1 ? 'them' : 'everyone'}.`
