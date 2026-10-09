@@ -25,7 +25,12 @@ product authority, and a capture failure does not change the inference outcome.
 
 The harness assigns one `inference_request_id` to a provider call. It emits a
 `request` event before the call and an `attempt` event when that call succeeds or
-fails. Streaming requests carry the exact OpenRouter body; streaming attempts
+fails. Streaming requests carry the exact provider body: a Responses body
+(`input` items, flat `tools`) for OpenRouter, a Chat Completions body
+(`messages`) for Azure. The request row's `metadata.api` says which
+(`responses` or `chat_completions`), and `metadata.messageCount` counts `input`
+items for a Responses body, where a tool call and its output are each an item,
+so it is not comparable across the two. Streaming attempts
 carry the complete normalized content, tool calls, usage, finish reason, and
 generation ID, including OpenRouter's opt-in routing metadata when returned.
 Structured calls carry the exact request body and the provider's
