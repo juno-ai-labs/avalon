@@ -654,6 +654,13 @@ call and both show as **Invited**. A failed share is logged and shows as the
 address missing from the Channel's People, the failure mode picked invitees
 already had.
 
+How a typed address is read and sorted lives in one place,
+`@rally/ui/lib/typed-addresses`, which the People level uses too. A new
+separator or membership rule belongs there, so the two searches cannot drift.
+Typed addresses wait for the member roster, since an address sorted against a
+roster that has not loaded would invite a member, or an inactive account, as a
+stranger.
+
 Pull request: [#1181](https://github.com/juno-ai-labs/avalon/pull/1181).
 
 ### 2026-10-07 — The Channel is set up beside its composer, and empty Spaces open on it
