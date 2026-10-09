@@ -317,7 +317,9 @@ Rally **AI**:
   entry (`status: 'invited'`, id `invitee:<address>`), kept out of
   `participantIds`, and shared the Channel once the create answers. That share
   is not awaited, so the Channel opens on the create alone; a failure is logged
-  and shows as the address missing from the Channel's People.
+  and shows as the address missing from the Channel's People. An address typed
+  into the search that no member holds is held the same way, which is how
+  someone outside the Organization is invited as the Channel is started.
 - **The breakout launch composer.** As the Channel composer, except the
   breakout does not exist when the message is sent: the host shares it with the
   named invitees once the create answers, unawaited, as the new Channel does.

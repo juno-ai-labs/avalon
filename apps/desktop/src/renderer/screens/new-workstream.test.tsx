@@ -183,7 +183,7 @@ function renderSpaceScreen(
 /** Widens the Participants row's + into its search field. */
 function openPeopleSearch(): HTMLElement {
   fireEvent.click(screen.getByRole('button', { name: 'Add participant' }));
-  return screen.getByRole('combobox', { name: 'Search people' });
+  return screen.getByRole('combobox', { name: 'Add someone by name or email' });
 }
 
 /** Opens the list of everyone in the Channel, where a person is removed. */
@@ -366,7 +366,7 @@ describe('New channel home', () => {
     renderScreen();
     openPeopleSearch();
     fireEvent.click(await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' }));
-    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Search people' }), { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Add someone by name or email' }), { key: 'Escape' });
     const roster = openRoster();
     fireEvent.click(within(roster).getByRole('button', { name: 'Remove Samantha Lee' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Add participant' })).toHaveFocus());
@@ -503,6 +503,103 @@ describe('New channel home', () => {
       emails: ['dana@example.com'],
       targets: [{ kind: 'conversation', workspaceId: workspace.id, parentId: channelId, substreamId: '0' }],
     })));
+  });
+
+  it('invites a typed address nobody holds, and shares the created Channel with it', async () => {
+    const channelId = '00000000-0000-7000-8000-0000000000c2';
+    api.createWorkstream.mockResolvedValue({ ...createdWorkstream, workstream: { ...createdWorkstream.workstream, id: channelId } });
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
+
+    const search = openPeopleSearch();
+    fireEvent.change(search, { target: { value: 'Guest@Outside.example' } });
+    expect(await screen.findByText('Press Enter to invite them.')).toBeVisible();
+    fireEvent.keyDown(search, { key: 'Enter' });
+    expect(search).toHaveValue('');
+    expect(screen.getByText('Adam Juhasz, guest@outside.example')).toBeVisible();
+    fireEvent.change(composer, { target: { value: 'kick off' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({ participantIds: [] })));
+    await waitFor(() => expect(api.createScopeInvitations).toHaveBeenCalledWith(expect.objectContaining({
+      parentId: channelId,
+      emails: ['guest@outside.example'],
+    })));
+  });
+
+  it('adds the member a typed address belongs to rather than inviting it', async () => {
+    const channelId = '00000000-0000-7000-8000-0000000000c3';
+    api.createWorkstream.mockResolvedValue({ ...createdWorkstream, workstream: { ...createdWorkstream.workstream, id: channelId } });
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });
+    await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
+
+    const search = openPeopleSearch();
+    await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' });
+    fireEvent.change(search, { target: { value: 'samantha@example.com, guest@outside.example' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+    fireEvent.change(composer, { target: { value: 'kick off' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({ participantIds: [teammate.id] })));
+    await waitFor(() => expect(api.createScopeInvitations).toHaveBeenCalledWith(expect.objectContaining({
+      emails: ['guest@outside.example'],
+    })));
+  });
+
+  it('refuses a typed address whose organization account is not active', async () => {
+    api.getWorkspaceMembers.mockResolvedValue([currentUser, { ...teammate, status: 'suspended' }]);
+    renderScreen();
+    await screen.findByRole('textbox', { name: 'Opening channel message' });
+    await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
+
+    const search = openPeopleSearch();
+    fireEvent.change(search, { target: { value: 'samantha@example.com' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('samantha@example.com has an organization account that isn’t active.');
+    expect(search).toHaveValue('samantha@example.com');
+  });
+
+  it('holds a typed address until the member roster has loaded', async () => {
+    api.getWorkspaceMembers.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+
+    const search = openPeopleSearch();
+    fireEvent.change(search, { target: { value: 'samantha@example.com' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('People are still loading. Try again in a moment.');
+    expect(search).toHaveValue('samantha@example.com');
+  });
+
+  it('leaves an Enter that commits an IME composition to the input method', async () => {
+    renderScreen();
+    await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
+
+    const search = openPeopleSearch();
+    fireEvent.change(search, { target: { value: 'さとう' } });
+    expect(fireEvent.keyDown(search, { key: 'Enter', isComposing: true })).toBe(true);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('lets a guest add people by address but not invite one', async () => {
+    workspace.currentUser = { ...currentUser, accessClass: 'guest' };
+    try {
+      renderScreen();
+      await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
+
+      const search = openPeopleSearch();
+      await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' });
+      fireEvent.change(search, { target: { value: 'guest@outside.example' } });
+      fireEvent.keyDown(search, { key: 'Enter' });
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Only people in the organization can be added here.');
+      expect(search).toHaveValue('guest@outside.example');
+    } finally {
+      workspace.currentUser = currentUser;
+    }
   });
 
   it('offers slash commands, which the launcher used to lack', async () => {
@@ -664,7 +761,7 @@ describe('New channel home', () => {
     fireEvent.click(again);
 
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening channel message' })).toHaveFocus());
-    expect(screen.queryByRole('combobox', { name: 'Search people' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Add someone by name or email' })).not.toBeInTheDocument();
   });
 
   // One instance of the screen used to serve every `:spaceId`, so the people

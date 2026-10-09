@@ -7145,7 +7145,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   background: var(--av-sys-color-surface-default);
   border-color: var(--av-cmp-composer-border-color-focus);
   border-style: solid;
-  width: 170px;
+  width: 240px;
 }
 
 .new-channel-add-button {
@@ -7303,6 +7303,14 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
   margin: 0;
   padding: 10px 12px;
   text-align: center;
+}
+
+.new-channel-popover-error {
+  color: var(--av-sys-color-danger-base);
+  font-size: 13px;
+  line-height: 18px;
+  margin: 0;
+  padding: 8px 12px;
 }
 
 .new-channel-placement {
