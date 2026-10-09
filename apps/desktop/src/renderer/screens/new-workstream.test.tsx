@@ -584,6 +584,24 @@ describe('New channel home', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('lets a guest add people by address but not invite one', async () => {
+    workspace.currentUser = { ...currentUser, accessClass: 'guest' };
+    try {
+      renderScreen();
+      await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
+
+      const search = openPeopleSearch();
+      await screen.findByRole('option', { name: 'Samantha Lee — samantha@example.com' });
+      fireEvent.change(search, { target: { value: 'guest@outside.example' } });
+      fireEvent.keyDown(search, { key: 'Enter' });
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Only people in the organization can be added here.');
+      expect(search).toHaveValue('guest@outside.example');
+    } finally {
+      workspace.currentUser = currentUser;
+    }
+  });
+
   it('offers slash commands, which the launcher used to lack', async () => {
     renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });

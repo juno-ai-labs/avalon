@@ -217,21 +217,9 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
   }, []);
   // An address nobody in the Organization holds is held as an invitee, and
   // shared the Channel by address once it exists, as a picked invitee is.
-  const inviteRecipients = useCallback((emails: string[]): string | null => {
-    // Who holds an address decides whether it is added, invited or refused,
-    // so nothing is classified against a roster that has not arrived.
-    if (!members.data) {
-      return members.isError ? 'People couldn’t be loaded. Try again.' : 'People are still loading. Try again in a moment.';
-    }
-    const inactive = emails.filter((email) => members.data.some((member) => (
-      member.email.toLocaleLowerCase() === email && (member.status ?? 'active') !== 'active'
-    )));
-    if (inactive.length > 0) {
-      return `${inactive.join(', ')} ${inactive.length === 1 ? 'has' : 'have'} an organization account that isn’t active.`;
-    }
+  const inviteRecipients = useCallback((emails: string[]): void => {
     for (const email of emails) selectRecipient(inviteeAsMember(email));
-    return null;
-  }, [members.data, members.isError, selectRecipient]);
+  }, [selectRecipient]);
   const removeRecipient = useCallback((memberId: string): void => {
     setSelectedMembers((current) => current.filter((member) => member.id !== memberId));
   }, []);
@@ -556,6 +544,7 @@ function NewWorkstreamLauncher({ workspace }: { workspace: Workspace }): React.J
               candidates={recipientCandidates}
               creator={workspace.currentUser}
               loading={members.isLoading}
+              members={members.data}
               onAdd={selectRecipient}
               onInvite={workspace.currentUser.accessClass !== 'guest' ? inviteRecipients : undefined}
               onRemove={removeRecipient}

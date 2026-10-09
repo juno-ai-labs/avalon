@@ -1,4 +1,11 @@
-import { CreateScopeInvitationsSchema } from '@rally/contracts/scope-grants';
+import {
+  ADDRESS_FORMAT_MESSAGE,
+  areAddresses,
+  inactiveAccountsMessage,
+  MEMBERS_ONLY_MESSAGE,
+  resolveTypedAddresses,
+  typedTokens,
+} from '@rally/ui/lib/typed-addresses';
 import clsx from 'clsx';
 import { ChevronDown, Plus, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -11,10 +18,6 @@ import { Avatar, AvatarStack } from './primitives';
 /** A list's ceiling, and the gap kept between it and the top of the screen. */
 const POPOVER_MAX_HEIGHT = 280;
 const POPOVER_TOP_GAP = 16;
-
-/** What may separate addresses typed into the search, as the People level reads them. */
-const ADDRESS_SEPARATORS = /[\s,;]+/u;
-const EMAIL = CreateScopeInvitationsSchema.shape.emails.element;
 
 /**
  * Caps an upward list at the room above its anchor. Measured rather than
@@ -46,6 +49,7 @@ export function NewChannelParticipants({
   candidates,
   creator,
   loading,
+  members,
   onAdd,
   onInvite,
   onRemove,
@@ -59,13 +63,18 @@ export function NewChannelParticipants({
   candidates: WorkspaceMember[];
   creator: WorkspaceMember;
   loading: boolean;
+  /**
+   * The Organization's members, whatever their status, which decide what a
+   * typed address is. Undefined until they load; addresses wait for them.
+   */
+  members: readonly WorkspaceMember[] | undefined;
   onAdd: (member: WorkspaceMember) => void;
   /**
-   * Addresses typed that nobody here holds, lower case. Returns the sentence
-   * to show when the host refuses them, or `null` once they are held. Absent
-   * where the creator cannot invite, which limits the search to people.
+   * Typed addresses no member holds, lower case, for the host to hold until
+   * the Channel exists to be shared. Absent where the creator cannot invite,
+   * which limits the search to people.
    */
-  onInvite?: ((emails: string[]) => string | null) | undefined;
+  onInvite?: ((emails: string[]) => void) | undefined;
   onRemove: (memberId: string) => void;
   selected: WorkspaceMember[];
 }): React.JSX.Element {
@@ -86,8 +95,12 @@ export function NewChannelParticipants({
       ? candidates.filter((member) => `${member.name} ${member.email}`.toLocaleLowerCase().includes(normalized))
       : candidates;
   }, [candidates, query]);
-  const tokens = query.trim().toLocaleLowerCase().split(ADDRESS_SEPARATORS).filter(Boolean);
-  const typedEmails = tokens.length > 0 && tokens.every((token) => EMAIL.safeParse(token).success);
+  const tokens = typedTokens(query);
+  const typedEmails = areAddresses(tokens);
+  // Resolved once per render: the empty state reads it, and Enter acts on it.
+  const typed = typedEmails && members
+    ? resolveTypedAddresses(tokens, members, new Set(everyone.map((member) => member.email.toLocaleLowerCase())))
+    : null;
   const change = (value: string): void => {
     setQuery(value);
     setEntryError(null);
@@ -97,33 +110,26 @@ export function NewChannelParticipants({
     setQuery('');
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [onAdd]);
-  /** What typed addresses come to: who they add, and who is invited. */
-  const resolveTyped = (): { adds: WorkspaceMember[]; strangers: string[] } => {
-    const here = new Set(everyone.map((member) => member.email.toLocaleLowerCase()));
-    const byEmail = new Map(candidates.map((member) => [member.email.toLocaleLowerCase(), member] as const));
-    const adds: WorkspaceMember[] = [];
-    const strangers: string[] = [];
-    for (const email of new Set(tokens)) {
-      if (here.has(email)) continue;
-      const member = byEmail.get(email);
-      if (member) adds.push(member);
-      else strangers.push(email);
-    }
-    return { adds, strangers };
-  };
   const submitTyped = (): void => {
-    const { adds, strangers } = resolveTyped();
-    if (strangers.length > 0) {
-      const refusal = onInvite ? onInvite(strangers) : 'Only people in the organization can be added here.';
-      if (refusal) {
-        setEntryError(refusal);
-        return;
-      }
+    // Who holds an address decides whether it is added, invited or refused,
+    // so nothing is sorted against a roster that has not arrived.
+    if (!typed) {
+      setEntryError(loading ? 'People are still loading. Try again in a moment.' : 'People couldn’t be loaded. Try again.');
+      return;
     }
-    for (const member of adds) onAdd(member);
+    if (typed.inactive.length > 0) {
+      setEntryError(inactiveAccountsMessage(typed.inactive));
+      return;
+    }
+    if (typed.strangers.length > 0 && !onInvite) {
+      setEntryError(MEMBERS_ONLY_MESSAGE);
+      return;
+    }
+    for (const member of typed.adds) onAdd(member);
+    if (typed.strangers.length > 0) onInvite?.(typed.strangers);
     setQuery('');
   };
-  const invitesTyped = typedEmails && Boolean(onInvite) && resolveTyped().strangers.length > 0;
+  const invitesTyped = Boolean(onInvite) && (typed?.strangers.length ?? 0) > 0;
   const navigation = useMentionNavigation(searching ? matches.map((member) => member.id) : [], (index) => {
     const member = matches[index];
     if (member) add(member);
@@ -191,9 +197,7 @@ export function NewChannelParticipants({
               if (navigation.handleKeyDown(event)) return;
               if (event.key === 'Enter' && !composing && tokens.length > 0) {
                 event.preventDefault();
-                setEntryError(onInvite
-                  ? 'Enter email addresses separated by spaces, commas or semicolons.'
-                  : 'Only people in the organization can be added here.');
+                setEntryError(onInvite ? ADDRESS_FORMAT_MESSAGE : MEMBERS_ONLY_MESSAGE);
                 return;
               }
               if (event.key === 'Backspace' && query.length === 0 && selected.length > 0) {
