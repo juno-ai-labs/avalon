@@ -19,8 +19,12 @@ import { isAzureBoundModel } from "@rally/agent-harness";
 
 import type { SubstreamSummaryGateway } from "./substream-context-summary";
 
-/** Every chat-completions endpoint the harness can route to ends in this. */
-const CHAT_COMPLETIONS_SUFFIX = "/chat/completions";
+/**
+ * The endpoint a streamed OpenRouter turn goes to. The seed never answers an
+ * Azure turn (`demoSeedModelRoute` keeps the run off Azure), so Azure's Chat
+ * Completions path is not served here.
+ */
+const RESPONSES_SUFFIX = "/responses";
 
 /**
  * The refusal a second inference request gets. A seed has one turn, and a run
@@ -65,7 +69,7 @@ export function demoSeedModelRoute(
   return { model: unbound ?? DEMO_SEED_FALLBACK_MODEL, fallbackModels: [] };
 }
 
-const USAGE = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+const USAGE = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
 
 function sse(events: readonly Record<string, unknown>[]): Response {
   const body = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
@@ -80,34 +84,31 @@ function sse(events: readonly Record<string, unknown>[]): Response {
  */
 function elicitationCall(turn: Extract<DemoSeedTurn, { kind: "ask" }>, seed: DemoSeed) {
   return {
-    index: 0,
-    id: `demo-seed-${seed.actionId}`,
-    type: "function" as const,
-    function: {
-      name: "request_elicitation",
-      arguments: JSON.stringify({
-        prompt: turn.prompt,
-        responseType: "radio",
-        options: turn.options.map((option) => ({ value: option, label: option, description: null })),
-        minimumSelections: 1,
-        maximumSelections: 1,
-      }),
-    },
+    type: "function_call" as const,
+    id: `fc_demo-seed-${seed.actionId}`,
+    call_id: `demo-seed-${seed.actionId}`,
+    name: "request_elicitation",
+    arguments: JSON.stringify({
+      prompt: turn.prompt,
+      responseType: "radio",
+      options: turn.options.map((option) => ({ value: option, label: option, description: null })),
+      minimumSelections: 1,
+      maximumSelections: 1,
+    }),
   };
 }
 
+/** One streamed Responses turn: the output item, then the terminal response with usage. */
 function streamed(turn: DemoSeedTurn, seed: DemoSeed): Response {
   if (turn.kind === "say") {
     return sse([
-      { choices: [{ delta: { content: turn.text }, finish_reason: null }] },
-      { choices: [{ delta: {}, finish_reason: "stop" }] },
-      { usage: USAGE },
+      { type: "response.output_text.delta", output_index: 0, content_index: 0, delta: turn.text },
+      { type: "response.completed", response: { status: "completed", usage: USAGE } },
     ]);
   }
   return sse([
-    { choices: [{ delta: { tool_calls: [elicitationCall(turn, seed)] }, finish_reason: null }] },
-    { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
-    { usage: USAGE },
+    { type: "response.output_item.done", output_index: 0, item: elicitationCall(turn, seed) },
+    { type: "response.completed", response: { status: "completed", usage: USAGE } },
   ]);
 }
 
@@ -119,7 +120,7 @@ function requestUrl(input: RequestInfo | URL): URL {
  * A `fetch` the harness config accepts in place of the real one.
  *
  * Answers the run's one inference request from the seed's turn, in the
- * streamed form every run asks for, and refuses every request after it. Anything that is not a chat completion — a model catalog read, a pricing
+ * streamed form every run asks for, and refuses every request after it. Anything that is not a streamed turn — a model catalog read, a pricing
  * read — is answered emptily: nothing the client sends through this `fetch`
  * leaves the machine, and the harness already treats an unlisted model as one
  * with its documented default context window. The seam covers the client it is
@@ -136,7 +137,7 @@ export function demoSeedProviderFetch(seed: DemoSeed): typeof globalThis.fetch {
   let served = false;
   return (async (input: RequestInfo | URL): Promise<Response> => {
     const url = requestUrl(input);
-    if (!url.pathname.endsWith(CHAT_COMPLETIONS_SUFFIX)) return Response.json({ data: [] });
+    if (!url.pathname.endsWith(RESPONSES_SUFFIX)) return Response.json({ data: [] });
     if (served) {
       return Response.json(
         { error: { code: DEMO_SEED_EXHAUSTED_CODE, message: "The seeded run asked the provider a second time" } },
@@ -144,7 +145,7 @@ export function demoSeedProviderFetch(seed: DemoSeed): typeof globalThis.fetch {
       );
     }
     served = true;
-    // Streamed, always: every chat completion a run makes is streamed
+    // Streamed, always: every turn a run makes is streamed
     // (`bind-runtime.ts` sends `stream: true` on both provider branches), and
     // the one non-streaming call in the harness is the addressing classifier,
     // which a seeded message skips by construction.
