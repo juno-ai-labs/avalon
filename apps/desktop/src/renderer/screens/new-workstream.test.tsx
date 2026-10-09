@@ -562,6 +562,28 @@ describe('New channel home', () => {
     expect(search).toHaveValue('samantha@example.com');
   });
 
+  it('holds a typed address until the member roster has loaded', async () => {
+    api.getWorkspaceMembers.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+
+    const search = openPeopleSearch();
+    fireEvent.change(search, { target: { value: 'samantha@example.com' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('People are still loading. Try again in a moment.');
+    expect(search).toHaveValue('samantha@example.com');
+  });
+
+  it('leaves an Enter that commits an IME composition to the input method', async () => {
+    renderScreen();
+    await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalled());
+
+    const search = openPeopleSearch();
+    fireEvent.change(search, { target: { value: 'さとう' } });
+    expect(fireEvent.keyDown(search, { key: 'Enter', isComposing: true })).toBe(true);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('offers slash commands, which the launcher used to lack', async () => {
     renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening channel message' });

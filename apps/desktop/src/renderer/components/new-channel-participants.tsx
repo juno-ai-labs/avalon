@@ -182,13 +182,14 @@ export function NewChannelParticipants({
             onKeyDown={(event) => {
               // Addresses are read whole, before the list picks its top row:
               // an address that is someone's adds them either way.
-              if (event.key === 'Enter' && !isComposingKeyEvent(event.nativeEvent) && typedEmails) {
+              const composing = isComposingKeyEvent(event.nativeEvent);
+              if (event.key === 'Enter' && !composing && typedEmails) {
                 event.preventDefault();
                 submitTyped();
                 return;
               }
               if (navigation.handleKeyDown(event)) return;
-              if (event.key === 'Enter' && tokens.length > 0) {
+              if (event.key === 'Enter' && !composing && tokens.length > 0) {
                 event.preventDefault();
                 setEntryError(onInvite
                   ? 'Enter email addresses separated by spaces, commas or semicolons.'
