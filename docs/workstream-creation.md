@@ -654,6 +654,8 @@ call and both show as **Invited**. A failed share is logged and shows as the
 address missing from the Channel's People, the failure mode picked invitees
 already had.
 
+Pull request: [#1181](https://github.com/juno-ai-labs/avalon/pull/1181).
+
 ### 2026-10-07 — The Channel is set up beside its composer, and empty Spaces open on it
 
 **What changed:** The sidebar's creation dialog for a Channel is gone. **New
