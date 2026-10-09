@@ -1,5 +1,4 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { CreateScopeInvitationsSchema } from '@rally/contracts/scope-grants';
 import {
   IconArchive,
   IconCancel,
@@ -21,6 +20,14 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { compareAlphabeticalTitle } from '../lib/alphabetical';
+import {
+  ADDRESS_FORMAT_MESSAGE,
+  areAddresses,
+  inactiveAccountsMessage,
+  MEMBERS_ONLY_MESSAGE,
+  resolveTypedAddresses,
+  typedTokens,
+} from '../lib/typed-addresses';
 import type { SidebarPresentation, WorkspaceMember } from '../lib/types';
 import { breakoutHasActivity, type BreakoutMark } from './breakout-marks';
 import { Avatar, Tip } from './primitives';
@@ -113,10 +120,6 @@ export interface TitleMenuInvites {
   onLoad?: (() => void) | undefined;
 }
 
-/** What may separate addresses typed into the People search. */
-const ADDRESS_SEPARATORS = /[\s,;]+/u;
-const EMAIL = CreateScopeInvitationsSchema.shape.emails.element;
-
 /** One action on a person's row, behind a dots button. */
 function RowAction({ disabled, icon, label, name, onSelect }: {
   disabled?: boolean | undefined; icon: ReactNode; label: string; name: string; onSelect: () => void;
@@ -199,8 +202,8 @@ function PeopleView({ members, noun, people, presentUserIds }: {
     && (!needle || email.includes(needle))) : [];
   const suggestions = needle ? addable : addable.slice(0, PEOPLE_SUGGESTIONS);
   const suggestedInvitees = needle ? inviteeSuggestions : inviteeSuggestions.slice(0, Math.max(0, PEOPLE_SUGGESTIONS - suggestions.length));
-  const tokens = needle.split(ADDRESS_SEPARATORS).filter(Boolean);
-  const typedEmails = tokens.length > 0 && tokens.every((token) => EMAIL.safeParse(token).success);
+  const tokens = typedTokens(query);
+  const typedEmails = areAddresses(tokens);
   const change = (value: string): void => { setQuery(value); setEntryError(null); };
   /** Adds and invites in order; what failed stays in the box to retry, unless more was typed meanwhile. */
   const run = async (submitted: string, adds: readonly WorkspaceMember[], strangers: string[]): Promise<void> => {
@@ -227,7 +230,7 @@ function PeopleView({ members, noun, people, presentUserIds }: {
       const onlyInvitee = single ? suggestedInvitees[0] : undefined;
       if (only) void run(query, [only], []);
       else if (onlyInvitee) void run(query, [], [onlyInvitee]);
-      else setEntryError('Enter email addresses separated by spaces, commas or semicolons.');
+      else setEntryError(ADDRESS_FORMAT_MESSAGE);
       return;
     }
     // Who is already invited decides who is invited again, so it has to be known first.
@@ -235,24 +238,14 @@ function PeopleView({ members, noun, people, presentUserIds }: {
       setEntryError(invites.loadFailed ? 'Invitations couldn’t be loaded. Try again.' : 'Invitations are still loading. Try again in a moment.');
       return;
     }
-    const byEmail = new Map(people.candidates.flatMap((member) => member.email ? [[member.email.toLocaleLowerCase(), member] as const] : []));
     const here = new Set([...members.flatMap((member) => member.email ? [member.email.toLocaleLowerCase()] : []), ...invites?.pending ?? []]);
-    const adds: WorkspaceMember[] = [];
-    const inactive: string[] = [];
-    const strangers: string[] = [];
-    for (const email of new Set(tokens)) {
-      if (here.has(email)) continue;
-      const member = byEmail.get(email);
-      if (!member) strangers.push(email);
-      else if ((member.status ?? 'active') === 'active') adds.push(member);
-      else inactive.push(email);
-    }
+    const { adds, inactive, strangers } = resolveTypedAddresses(tokens, people.candidates, here);
     if (inactive.length > 0) {
-      setEntryError(`${inactive.join(', ')} ${inactive.length === 1 ? 'has' : 'have'} an organization account that isn’t active.`);
+      setEntryError(inactiveAccountsMessage(inactive));
       return;
     }
     if (strangers.length > 0 && !invites) {
-      setEntryError('Only people in the organization can be added here.');
+      setEntryError(MEMBERS_ONLY_MESSAGE);
       return;
     }
     void run(query, adds, strangers);
