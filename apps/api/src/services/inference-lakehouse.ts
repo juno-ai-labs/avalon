@@ -251,7 +251,12 @@ export function captureStreamingInferenceRequest(
     request: { ...request.payload },
     metadata: {
       cursor: request.cursor,
-      messageCount: request.payload.messages.length,
+      // OpenRouter turns are Responses bodies (`input` items: a tool call and
+      // its output are each an item); Azure turns are Chat Completions bodies.
+      api: "input" in request.payload ? "responses" : "chat_completions",
+      messageCount: "input" in request.payload
+        ? request.payload.input.length
+        : request.payload.messages.length,
       toolCount: request.payload.tools?.length ?? 0,
       ...(context.operationId ? { operationId: context.operationId } : {}),
       ...(context.journey ? { journey: context.journey } : {}),

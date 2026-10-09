@@ -17,16 +17,38 @@
  */
 
 import { runInDurableObject } from "cloudflare:test";
+import { providerRequestView, responsesEvents } from "@rally/agent-harness/test-support/responses-stream";
 
 import type { Env } from "../../src/env";
 
 export interface CapturedProviderRequest {
   url: string;
+  /**
+   * The body as sent, seen through `providerRequestView`: a streamed turn is a
+   * Responses body (`input`, flat `tools`) and also carries the Chat-shaped
+   * `messages` and `tools` the transcript assertions read.
+   */
   body: Record<string, unknown>;
 }
 
-/** One scripted turn: the stream's events, or a terminal provider refusal. */
+/**
+ * One scripted turn: the stream's events, or a terminal provider refusal.
+ * Events written as Chat Completions chunks (`{ choices: [...] }`) are sent as
+ * the Responses events OpenRouter streams for them; events that already carry a
+ * Responses `type` are sent as written.
+ */
 export type ScriptedProviderTurn = readonly unknown[] | "refuse";
+
+/** Streamed agent turns. */
+const RESPONSES_URL = "https://openrouter.ai/api/v1/responses";
+/** Structured, non-streamed calls, which stay on Chat Completions. */
+const CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+function asResponsesEvents(events: readonly unknown[]): unknown[] {
+  return events.every((event) => typeof (event as { type?: unknown })?.type === "string")
+    ? [...events]
+    : responsesEvents(events);
+}
 
 interface ProviderCaptureEntry {
   requests: CapturedProviderRequest[];
@@ -83,7 +105,7 @@ export async function installProviderCapture(
       if (url === "https://openrouter.ai/api/v1/models") return providerCatalog(objects);
       const entry = providerCaller(objects, request, init);
       if (!entry) return unattributedProviderResponse();
-      if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      if (url === RESPONSES_URL || url === CHAT_COMPLETIONS_URL) {
         const text = typeof init?.body === "string"
           ? init.body
           : request instanceof Request
@@ -91,7 +113,7 @@ export async function installProviderCapture(
             : "";
         entry.requests.push({
           url,
-          body: JSON.parse(text) as Record<string, unknown>,
+          body: providerRequestView(JSON.parse(text)),
         });
         return Response.json(
           { error: { code: "test_provider_rejection", message: "test provider rejection" } },
@@ -213,7 +235,7 @@ export async function installScriptedProvider(
       if (url === "https://openrouter.ai/api/v1/models") return providerCatalog(objects);
       const entry = providerCaller(objects, request, init);
       if (!entry) return unattributedProviderResponse();
-      if (url !== "https://openrouter.ai/api/v1/chat/completions") {
+      if (url !== RESPONSES_URL && url !== CHAT_COMPLETIONS_URL) {
         throw new Error(`unexpected_pipeline_provider_request:${url}`);
       }
       const text = typeof init?.body === "string"
@@ -221,7 +243,7 @@ export async function installScriptedProvider(
         : request instanceof Request
           ? await request.clone().text()
           : "";
-      const body = JSON.parse(text) as Record<string, unknown>;
+      const body = providerRequestView(JSON.parse(text));
       entry.requests.push({ url, body });
       const gate = entry.gate;
       if (gate && entry.requests.length === 1) {
@@ -249,7 +271,7 @@ export async function installScriptedProvider(
           { status: 401 },
         );
       }
-      return providerStream(events);
+      return providerStream(asResponsesEvents(events));
     }) as typeof fetch;
   });
 }

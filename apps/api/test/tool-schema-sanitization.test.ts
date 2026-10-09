@@ -15,6 +15,7 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 import { createTestConnectorRegistry } from "./helpers/connector-registry";
 import { authorsNullBranch, everyConnectorCursor } from "./helpers/connector-cursors";
 import { everyAuthoredToolSchema } from "./helpers/authored-tool-schemas";
+import { providerRequestView, providerStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 
 /**
  * Every authored tool schema, walked from the registries rather than listed by
@@ -107,10 +108,11 @@ describe("tool schema sanitization", () => {
         maxWallClockMs: 120_000, toolTimeoutMs: 30_000, maxWebResults: 1,
         fetch: async (input, init) => {
           urls.push(String(input));
-          requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
-          return new Response('data: {"choices":[{"delta":{"content":"Done."},"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\ndata: [DONE]\n\n', {
-            headers: { "content-type": "text/event-stream" },
-          });
+          requests.push(providerRequestView<typeof requests[number]>(JSON.parse(String(init?.body))));
+          return providerStreamResponse(input, [
+            { choices: [{ delta: { content: "Done." }, finish_reason: "stop" }] },
+            { choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+          ]);
         },
       },
       resolveAzureModelPricing: async () => new Map([["openai/gpt-5.6-sol", {
@@ -137,7 +139,7 @@ describe("tool schema sanitization", () => {
     expect(outcome.status, JSON.stringify(outcome)).toBe("completed");
     expect(urls).toEqual([usesAzure
       ? "https://schema-probe.openai.azure.com/openai/v1/chat/completions"
-      : "https://openrouter.ai/api/v1/chat/completions"]);
+      : "https://openrouter.ai/api/v1/responses"]);
     expect(requests).toHaveLength(1);
     // Zod's fromJSONSchema ignores maxProperties. A JSON Schema validator must
     // judge the actual payload, or a closure regression can pass unnoticed.

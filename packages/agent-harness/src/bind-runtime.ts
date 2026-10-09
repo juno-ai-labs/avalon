@@ -70,6 +70,7 @@ import {
   buildOpenRouterTracePayload,
   canonicalToolInputHash,
   modelMessageWithoutProvenance,
+  openRouterResponsesRequest,
   providerCostCents,
   type HarnessEvent,
   type HarnessFailure,
@@ -80,6 +81,7 @@ import {
   type HarnessToolContext,
   type HarnessToolPolicyIdentity,
   type HarnessToolResult,
+  type InferenceRequestPayload,
   type ModelMessageContent,
   type ModelMessageContentPart,
   type ModelToolDefinition,
@@ -2299,34 +2301,33 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 },
               )
             : undefined;
-          const payload = {
-            model: candidate.providerInvocationModel,
-            messages: requestMessages,
-            stream: true as const,
-            stream_options: { include_usage: true as const },
-            // Mirrors what the OpenRouter client actually serializes, so the
-            // recorded request is the request. Azure is priced from Rally's
-            // own rate card and takes no accounting flag.
-            ...(candidate.providerId === OPENROUTER_PROVIDER
-              ? { usage: { include: true as const } }
-              : {}),
-            ...(wireTools.length > 0
-              ? {
-                  tools: wireTools,
-                  tool_choice: "auto" as const,
-                  parallel_tool_calls: true as const,
-                }
-              : {}),
-            ...(candidate.providerId === OPENROUTER_PROVIDER && requestPlugins.length > 0
-              ? { plugins: requestPlugins }
-              : {}),
-            ...(reasoningEffort
-              ? candidate.providerId === AZURE_PROVIDER
-                ? { reasoning_effort: reasoningEffort }
-                : { reasoning: { effort: reasoningEffort } }
-              : {}),
-            ...(trace ?? {}),
-          };
+          // The recorded request is the request: each branch builds the body
+          // its client will send. OpenRouter streams the Responses API; Azure
+          // stays on Chat Completions. Azure is priced from Rally's own rate
+          // card and takes no accounting flag.
+          const payload: InferenceRequestPayload = candidate.providerId === AZURE_PROVIDER
+            ? {
+                model: candidate.providerInvocationModel,
+                messages: requestMessages,
+                stream: true as const,
+                stream_options: { include_usage: true as const },
+                ...(wireTools.length > 0
+                  ? {
+                      tools: wireTools,
+                      tool_choice: "auto" as const,
+                      parallel_tool_calls: true as const,
+                    }
+                  : {}),
+                ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+              }
+            : openRouterResponsesRequest(candidate.providerInvocationModel, {
+                messages: requestMessages,
+                ...(wireTools.length > 0 ? { tools: wireTools } : {}),
+                ...(requestPlugins.length > 0 ? { plugins: requestPlugins } : {}),
+                includeWebSearch: false,
+                reasoningEffort,
+                trace,
+              });
           startupTiming("route_preparation", routePreparationStartedAt);
           firstStartupRequestObserved = true;
           await args.input.onInferenceRequest?.({
@@ -2365,8 +2366,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                   : { streamIdleTimeoutMs: args.input.config.streamIdleTimeoutMs }),
               }).stream({
                 model: candidate.providerInvocationModel,
-                messages: payload.messages,
-                ...(payload.tools ? { tools: payload.tools } : {}),
+                messages: requestMessages,
+                ...(wireTools.length > 0 ? { tools: wireTools } : {}),
                 includeWebSearch: false,
                 reasoningEffort,
                 signal: args.signal,
@@ -2378,9 +2379,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 fallbackModels: [],
                 sameModelRetries: args.input.config.sameModelRetries ?? 0,
               }).stream({
-                messages: payload.messages,
-                ...(payload.tools ? { tools: payload.tools } : {}),
-                ...(payload.plugins ? { plugins: payload.plugins } : {}),
+                messages: requestMessages,
+                ...(wireTools.length > 0 ? { tools: wireTools } : {}),
+                ...(requestPlugins.length > 0 ? { plugins: requestPlugins } : {}),
                 includeWebSearch: false,
                 reasoningEffort,
                 trace,
