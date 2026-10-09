@@ -14,6 +14,7 @@ import type { MessageObjectPort } from "../src/durable-objects/workstream-messag
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import type { DatabaseSync } from "node:sqlite";
 import { seedWorkstreamObjectRoot, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
+import { providerRequestView, responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
@@ -197,16 +198,12 @@ function message(
 }
 
 function streamResponse(content: string): Response {
-  const chunk = JSON.stringify({
+  return responsesStreamResponse([{
     id: "generation-second-run",
     model: "google/gemini-2.5-flash-lite",
     choices: [{ delta: { content }, finish_reason: "stop" }],
     usage: { prompt_tokens: 50, completion_tokens: 4 },
-  });
-  return new Response(`data: ${chunk}\n\ndata: [DONE]\n\n`, {
-    status: 200,
-    headers: { "content-type": "text/event-stream" },
-  });
+  }]);
 }
 
 /**
@@ -1198,7 +1195,7 @@ describe("durable UI-to-model transcript projection", () => {
 
     const requestBodies: Array<{ messages: Array<Record<string, unknown>> }> = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      requestBodies.push(providerRequestView<typeof requestBodies[number]>(JSON.parse(String(init?.body))));
       return streamResponse("Continued safely");
     }) as typeof fetch;
     const outcome = await runHarness({
