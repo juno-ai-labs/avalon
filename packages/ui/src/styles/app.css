@@ -7145,7 +7145,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
   background: var(--av-sys-color-surface-default);
   border-color: var(--av-cmp-composer-border-color-focus);
   border-style: solid;
-  width: 170px;
+  width: 240px;
 }
 
 .new-channel-add-button {
