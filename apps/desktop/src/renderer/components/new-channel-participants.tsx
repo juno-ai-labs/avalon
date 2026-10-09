@@ -1,6 +1,15 @@
+import {
+  ADDRESS_FORMAT_MESSAGE,
+  areAddresses,
+  inactiveAccountsMessage,
+  MEMBERS_ONLY_MESSAGE,
+  resolveTypedAddresses,
+  typedTokens,
+} from '@rally/ui/lib/typed-addresses';
 import clsx from 'clsx';
 import { ChevronDown, Plus, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { isComposingKeyEvent } from '../lib/ime';
 import { mentionOptionId, useMentionNavigation } from '../lib/use-mention-navigation';
 import type { WorkspaceMember } from '../lib/types';
 import { isInvitee } from '../lib/workspace-invitees';
@@ -31,12 +40,18 @@ function fitAbove(element: HTMLElement | null): void {
  * upward, because the row sits directly above the composer. The pill opens the
  * full list, which is where a person is taken back out. The creator is always
  * in the Channel and has no remove control.
+ *
+ * The search also takes email addresses, as the Channel's People level does:
+ * Enter adds the person an address belongs to, and hands the rest to
+ * `onInvite`, which holds them until the Channel exists to be shared.
  */
 export function NewChannelParticipants({
   candidates,
   creator,
   loading,
+  members,
   onAdd,
+  onInvite,
   onRemove,
   selected,
 }: {
@@ -48,13 +63,25 @@ export function NewChannelParticipants({
   candidates: WorkspaceMember[];
   creator: WorkspaceMember;
   loading: boolean;
+  /**
+   * The Organization's members, whatever their status, which decide what a
+   * typed address is. Undefined until they load; addresses wait for them.
+   */
+  members: readonly WorkspaceMember[] | undefined;
   onAdd: (member: WorkspaceMember) => void;
+  /**
+   * Typed addresses no member holds, lower case, for the host to hold until
+   * the Channel exists to be shared. Absent where the creator cannot invite,
+   * which limits the search to people.
+   */
+  onInvite?: ((emails: string[]) => void) | undefined;
   onRemove: (memberId: string) => void;
   selected: WorkspaceMember[];
 }): React.JSX.Element {
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const [rosterOpen, setRosterOpen] = useState(false);
+  const [entryError, setEntryError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
   const rosterRef = useRef<HTMLDivElement>(null);
@@ -68,11 +95,41 @@ export function NewChannelParticipants({
       ? candidates.filter((member) => `${member.name} ${member.email}`.toLocaleLowerCase().includes(normalized))
       : candidates;
   }, [candidates, query]);
+  const tokens = typedTokens(query);
+  const typedEmails = areAddresses(tokens);
+  // Resolved once per render: the empty state reads it, and Enter acts on it.
+  const typed = typedEmails && members
+    ? resolveTypedAddresses(tokens, members, new Set(everyone.map((member) => member.email.toLocaleLowerCase())))
+    : null;
+  const change = (value: string): void => {
+    setQuery(value);
+    setEntryError(null);
+  };
   const add = useCallback((member: WorkspaceMember): void => {
     onAdd(member);
     setQuery('');
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [onAdd]);
+  const submitTyped = (): void => {
+    // Who holds an address decides whether it is added, invited or refused,
+    // so nothing is sorted against a roster that has not arrived.
+    if (!typed) {
+      setEntryError(loading ? 'People are still loading. Try again in a moment.' : 'People couldn’t be loaded. Try again.');
+      return;
+    }
+    if (typed.inactive.length > 0) {
+      setEntryError(inactiveAccountsMessage(typed.inactive));
+      return;
+    }
+    if (typed.strangers.length > 0 && !onInvite) {
+      setEntryError(MEMBERS_ONLY_MESSAGE);
+      return;
+    }
+    for (const member of typed.adds) onAdd(member);
+    if (typed.strangers.length > 0) onInvite?.(typed.strangers);
+    setQuery('');
+  };
+  const invitesTyped = Boolean(onInvite) && (typed?.strangers.length ?? 0) > 0;
   const navigation = useMentionNavigation(searching ? matches.map((member) => member.id) : [], (index) => {
     const member = matches[index];
     if (member) add(member);
@@ -80,6 +137,7 @@ export function NewChannelParticipants({
   const stopSearching = (refocus: boolean): void => {
     setSearching(false);
     setQuery('');
+    setEntryError(null);
     if (refocus) requestAnimationFrame(() => addRef.current?.focus());
   };
   // The roster closes on any press outside it, as every popover here does.
@@ -122,13 +180,26 @@ export function NewChannelParticipants({
             aria-activedescendant={navigation.activeOptionId}
             aria-controls="new-channel-people"
             aria-expanded
-            aria-label="Search people"
+            aria-label="Add someone by name or email"
             autoComplete="off"
             autoFocus
             onBlur={() => stopSearching(false)}
-            onChange={(event) => setQuery(event.currentTarget.value)}
+            onChange={(event) => change(event.currentTarget.value)}
             onKeyDown={(event) => {
+              // Addresses are read whole, before the list picks its top row:
+              // an address that is someone's adds them either way.
+              const composing = isComposingKeyEvent(event.nativeEvent);
+              if (event.key === 'Enter' && !composing && typedEmails) {
+                event.preventDefault();
+                submitTyped();
+                return;
+              }
               if (navigation.handleKeyDown(event)) return;
+              if (event.key === 'Enter' && !composing && tokens.length > 0) {
+                event.preventDefault();
+                setEntryError(onInvite ? ADDRESS_FORMAT_MESSAGE : MEMBERS_ONLY_MESSAGE);
+                return;
+              }
               if (event.key === 'Backspace' && query.length === 0 && selected.length > 0) {
                 event.preventDefault();
                 onRemove(selected[selected.length - 1]!.id);
@@ -139,6 +210,7 @@ export function NewChannelParticipants({
               event.stopPropagation();
               stopSearching(true);
             }}
+            placeholder="Name or email"
             ref={inputRef}
             role="combobox"
             type="text"
@@ -169,6 +241,7 @@ export function NewChannelParticipants({
             ref={peopleListRef}
             role="listbox"
           >
+            {entryError && <p className="new-channel-popover-error" role="alert">{entryError}</p>}
             {loading ? (
               <p className="new-channel-popover-empty">Loading people…</p>
             ) : matches.length > 0 ? matches.map((member, index) => (
@@ -189,9 +262,11 @@ export function NewChannelParticipants({
                 <span className="new-channel-popover-name">{member.name}</span>
                 {isInvitee(member) && <span className="new-channel-popover-kind">Invited</span>}
               </button>
-            )) : (
+            )) : entryError ? null : (
               <p className="new-channel-popover-empty">
-                {query.trim() ? 'No matching people' : 'Everyone available is selected'}
+                {invitesTyped
+                  ? `Press Enter to invite ${tokens.length === 1 ? 'them' : 'everyone'}.`
+                  : query.trim() ? 'No matching people' : 'Everyone available is selected'}
               </p>
             )}
           </div>
