@@ -29,15 +29,13 @@ function startPostHog(): (() => string) | null {
       person_profiles: 'always',
       capture_pageview: false,
       capture_pageleave: false,
-      autocapture: true,
-      rageclick: true,
       capture_dead_clicks: true,
       enable_heatmaps: true,
       capture_exceptions: true,
       capture_performance: true,
       enable_recording_console_log: true,
-      disable_session_recording: false,
-      session_recording: { sampleRate: 1, maskAllInputs: false },
+      // Every session, whatever the project's own sample rate is set to.
+      session_recording: { sampleRate: 1 },
     });
     posthog.register({ page: currentSitePage(), source: 'site', release: __RALLY_SITE_RELEASE__ });
     return () => posthog.get_session_id();

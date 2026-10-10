@@ -208,17 +208,11 @@ is allowed.
 
 ### 2026-10-10 — Run PostHog's browser SDK on the marketing pages
 
-**What changed:** Every public page except a deny list of credential-carrying
-paths loads the full `posthog-js` SDK through the `p.rallywith.ai` reverse proxy, with
-session replay at 100%, heatmaps, autocapture, dead clicks, exceptions and
-console logs. The SDK shares the site's anonymous epoch, and site events now
-carry the SDK's session instead of a per-page one. The Cookie Notice describes
-the recording.
-
-Recording is on by default and denied by path, rather than allowed by page
-class, so a new landing variant or marketing page is recorded without anyone
-remembering to opt it in. The cost is the reverse risk: a new handoff page is
-recorded until it is denied.
+**What changed:** Public pages run PostHog's browser SDK with replay and
+heatmaps, as described above. Recording is on by default and denied by path,
+rather than allowed by page class, so a new marketing page is recorded without
+anyone opting it in; the cost is that a new handoff page is recorded until it
+is denied.
 
 **Why:** The landing is not converting and page views and tagged clicks cannot
 say why. The team wants to watch visits and see where people click and stop for
@@ -238,9 +232,14 @@ the SDK's own `$pageleave`, which is off, so scroll maps stay empty; replays
 still show scrolling. Removing the SDK means deleting `posthog.ts`, the loader,
 its build input and meta tag, the CSP additions and Cookie Notice section 4;
 the reporter then falls back to a per-page session. Any page whose URL can
-carry a credential must be in `RECORDING_DENIED_PATHS`. A visitor who leaves
-before the SDK loads releases the held events with the page's own session, so
-bounces are never lost to the wait.
+carry a credential must be in `RECORDING_DENIED_PATHS`. Site events now wait
+for the SDK to load or fail, so they leave later than before; a visitor who
+leaves first releases them with the page's own session, so bounces are still
+counted, but a browser that is killed outright can lose a page view it would
+have sent before. Read any jump in landing conversion during the SDK's weeks
+with that in mind. Inputs stay masked in recordings: recording is on by
+default, so a new form field must not be captured keystroke by keystroke
+without a review.
 
 Shipped in [PR #1187](https://github.com/juno-ai-labs/avalon/pull/1187).
 

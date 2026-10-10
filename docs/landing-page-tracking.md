@@ -9,11 +9,7 @@ must keep so the reporting keeps working. The mechanism behind it is in
 Three events, all anonymous, sent by the site to `api.rallywith.ai` and
 forwarded to PostHog. These are the source of record for the dashboard.
 
-For a few weeks the page also runs PostHog's browser SDK through
-`p.rallywith.ai`: session replay of every visit, heatmaps, autocapture, rage
-and dead clicks. It shares the visitor id and session with the three events
-below, so a page view links to its recording, and it sends no page views of its
-own. How it works is in
+For a few weeks the page also runs PostHog's session replay and heatmaps; see
 [`public-site-telemetry.md`](public-site-telemetry.md#posthog-browser-sdk-temporary).
 
 | PostHog event | Sent when | Carries |
@@ -47,10 +43,7 @@ keeps the landing attribution. Authentication retires it. See
 [`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
 
 Not reported as site events: scrolling, section views, header nav clicks, and
-the founders' LinkedIn, GitHub and Hugging Face links. While the SDK runs, every
-click shows up as `$autocapture` and in the click heatmap, and replays show
-scrolling; the scroll-depth heatmap stays empty because the SDK sends no
-`$pageleave`.
+the founders' LinkedIn, GitHub and Hugging Face links.
 
 The footer is rendered from `apps/site/src/site-chrome.ts`, so its help@ link and
 its id live there, not in `index.html`. The `/compare/` pages share the header
