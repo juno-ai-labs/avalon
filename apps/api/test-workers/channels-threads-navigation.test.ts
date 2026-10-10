@@ -584,6 +584,35 @@ describe("Activity tab", () => {
     expect((await activity(OWNER)).items).toEqual([]);
   });
 
+  it("given a mention in a breakout, when the person named reads Activity, then it appears only once they may list the breakout", async () => {
+    await channelWithThreads();
+    await publish(OPEN_THREAD, [viewerEffect(MEMBER)]);
+    await publish(OPEN_THREAD, [breakoutEffect("Side work"), viewerEffect(OWNER)], BREAKOUT);
+    // What WorkspaceDO stores for a breakout's forwarded mention: no text, the
+    // author as its only audience, the mention as its one target
+    // (`breakout-activity.ts`; hosted-parent-local-effects.test.ts proves it).
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO workspace_activity_events (
+          event_id, event_type, subject_type, subject_id, subject_sequence_number, actor_type, actor_user_id,
+          actor_label, title, body, canonical_url, audience_kind, audience_user_id, audience_workstream_id,
+          digestible, occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json
+        ) VALUES ('mention-event', 'workstream_message_created', 'workstream', ?, 3, 'user', ?, 'Owner', 'Side work', '',
+          NULL, 'user', ?, NULL, 0, 1759708800000, 1759708800000, 'workstream_message', 'breakout-turn',
+          'message:breakout-turn', ?)`, OPEN_THREAD, OWNER, OWNER, JSON.stringify({ substreamId: BREAKOUT }));
+      state.storage.sql.exec(`INSERT INTO workspace_activity_event_targets (event_id, user_id, relation, created_at)
+        VALUES ('mention-event', ?, 'mentioned', 1759708800000)`, MEMBER);
+    });
+    const mentions = async () => (await activity(MEMBER)).items.filter((item) => item.kind === "mentioned");
+
+    // Private to the owner: the member is named but may not list it.
+    expect(await mentions()).toEqual([]);
+
+    await publish(OPEN_THREAD, [viewerEffect(MEMBER)], BREAKOUT);
+    expect(await mentions()).toEqual([expect.objectContaining({
+      kind: "mentioned", threadId: OPEN_THREAD, breakout: expect.objectContaining({ substreamId: BREAKOUT }),
+    })]);
+  });
+
   it("given a finished run in a thread the person takes part in, when they read Activity, then Rally's finish appears once and marking it seen clears its dot", async () => {
     await openThreadObject(MEMBER_THREAD);
     await publish(MEMBER_THREAD, [
