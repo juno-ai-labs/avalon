@@ -48,6 +48,9 @@ export const connectorProviders = [
     name: 'Canva', description: 'Designs, presentations, graphics, comments, and exports.',
     mark: ConnectorConnectionCardCatalog.canva.iconName, scopes: ['you'] as const,
     capabilities: ['canva.personal.mcp'],
+    // Canva's OAuth returns to a loopback listener in the Mac app's main
+    // process (`canva-loopback.ts`), which a browser tab cannot open.
+    desktopOnly: true,
   },
   {
     id: 'fireflies' as const,
@@ -160,4 +163,10 @@ export function isOAuthConnectorProvider(
   return provider.provider !== 'custom_mcp'
     && provider.provider !== 'generic_webhook'
     && provider.provider !== 'x';
+}
+
+/** Whether connecting `connectorType` needs the Mac app; a browser tab cannot start or refresh it. */
+export function isDesktopOnlyConnector(connectorType: string): boolean {
+  return connectorProviders.some((provider) =>
+    provider.provider === connectorType && 'desktopOnly' in provider && provider.desktopOnly);
 }
