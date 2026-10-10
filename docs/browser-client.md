@@ -617,6 +617,8 @@ in a second place that can drift from it.
 marked `desktopOnly` in the change that adds it. Removing Canva's mark waits on
 Canva approving Rally's server callback.
 
+Shipped in #1186.
+
 ### 2026-10-07: Add Rally to the iOS Home Screen
 
 **What changed:** The host serves a web app manifest and icons. On iOS,

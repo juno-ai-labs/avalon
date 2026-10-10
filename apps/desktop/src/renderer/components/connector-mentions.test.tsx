@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   // move until its token rotates. The session still carries one so the
   // placeholder path is exercised.
   session: {
+    authentication: undefined as undefined | 'cookie',
     user: { id: 'user-one', name: 'Ada', email: 'ada@example.com', timezone: 'America/Los_Angeles' },
     workspace: { id: 'workspace-one', name: 'Rally', region: 'global', timezone: 'America/Los_Angeles', role: 'member' as 'owner' | 'admin' | 'member' },
   },
@@ -77,6 +78,7 @@ beforeEach(() => {
   mocks.pendingConnectorOAuth = null;
   mocks.resourceAuthorizationAttempts = {};
   mocks.setupEnabled = true;
+  mocks.session.authentication = undefined;
   mocks.workspaceRole = 'owner';
   mocks.getAvailableConnectorTypes.mockResolvedValue(['google', 'github', 'granola', 'linear', 'notion', 'slack']);
   mocks.getConnectorOAuthAttempt.mockResolvedValue({ status: 'pending' });
@@ -344,6 +346,32 @@ describe('connector connection resolution', () => {
       source: 'conversation',
       workspaceId: 'workspace-one',
     });
+  });
+
+  it('points a browser at the Mac app for a desktop-only connector, reconnect included', async () => {
+    mocks.session.authentication = 'cookie';
+    mocks.getAvailableConnectorTypes.mockResolvedValue(['canva']);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConnectorConnectionsProvider connections={[{
+          id: 'connection-canva',
+          modelPluginId: 'plugin_canva',
+          connectorType: 'canva',
+          displayName: 'Canva',
+          scope: 'you',
+          status: 'reconnect_required',
+          capabilities: ['canva.personal.mcp'],
+        }]}>
+          <ConnectorConnectionCard request={{ connectorId: 'canva', scope: 'personal' }} />
+        </ConnectorConnectionsProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('link', { name: 'Download the Mac app to connect this.' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
+    expect(mocks.reconnectConnection).not.toHaveBeenCalled();
+    expect(mocks.startProviderConnection).not.toHaveBeenCalled();
   });
 
   it('disables organization OAuth for members', async () => {
