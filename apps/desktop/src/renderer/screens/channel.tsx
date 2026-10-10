@@ -8,7 +8,7 @@ import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/c
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconLock, IconPlus } from '@tabler/icons-react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
 
 import { ChannelComposer } from '../components/channel-composer';
@@ -158,13 +158,23 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   const rows = useMemo<FeedRow[]>(() => {
     const fetched = (feed.data?.pages ?? []).flatMap((page) => page.items);
     const known = new Set(fetched.map((item) => item.kind === 'thread' ? item.thread.id : item.threadId));
+    // A thread stays drawn from the socket from the moment it is started until
+    // the feed lists it. Its pending mark clears when the create answers, which
+    // can be before the feed is read again; dropping it in that gap made the
+    // row vanish and come back. Newer than the newest listed placement is what
+    // keeps an older thread that is merely not on a loaded page out.
+    // Until the feed has answered there is nothing to be newer than, so only a
+    // thread still being created is drawn; otherwise every thread the socket
+    // knows in this Channel would flash in as if just started.
+    const newestListed = feed.isSuccess ? fetched[0]?.placedAt ?? '' : undefined;
     const started = (live.data ?? [])
-      .filter((row) => row.pending && !known.has(row.id) && row.spaceIds.includes(channelId))
+      .filter((row) => !known.has(row.id) && row.spaceIds.includes(channelId)
+        && (row.pending || (newestListed !== undefined && (row.createdAt ?? '') > newestListed)))
       .map((thread): FeedRow => ({ kind: 'thread', placedAt: thread.createdAt ?? new Date().toISOString(), thread }));
     return [...started, ...fetched.map((item): FeedRow => item.kind === 'thread'
       ? { ...item, thread: liveById.get(item.thread.id) ?? item.thread }
       : item)];
-  }, [channelId, feed.data, live.data, liveById]);
+  }, [channelId, feed.data, feed.isSuccess, live.data, liveById]);
   const queryClient = useQueryClient();
   // The Channel is read while it is open in a focused, visible window: the
   // same gate a conversation's read acknowledgement uses. One request per
@@ -215,6 +225,34 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
     staleTime: 60_000,
   });
   const memberById = useMemo(() => new Map((members.data ?? []).map((member) => [member.id, member])), [members.data]);
+  // The feed reads down to now, so it opens at its newest row, beside the
+  // composer, and stays there as threads arrive, unless the reader has
+  // scrolled up to read something older. Loading an earlier page keeps the
+  // rows they were looking at where they were.
+  const feedScroll = useRef<HTMLDivElement>(null);
+  const atNewest = useRef(true);
+  const anchoredChannel = useRef<string | null>(null);
+  const previousHeight = useRef(0);
+  const earlierPages = feed.data?.pages.length ?? 0;
+  const previousPages = useRef(earlierPages);
+  useLayoutEffect(() => {
+    const element = feedScroll.current;
+    if (!element) return;
+    const loadedEarlier = earlierPages > previousPages.current;
+    previousPages.current = earlierPages;
+    if (anchoredChannel.current !== channelId) {
+      if (rows.length === 0) return;
+      anchoredChannel.current = channelId;
+      element.scrollTop = element.scrollHeight;
+    } else if (loadedEarlier) {
+      element.scrollTop += element.scrollHeight - previousHeight.current;
+    } else if (atNewest.current) {
+      element.scrollTop = element.scrollHeight;
+    }
+    previousHeight.current = element.scrollHeight;
+    // `space` too: the feed element first mounts when the Channel list arrives,
+    // which may be after the rows were already in hand.
+  }, [channelId, earlierPages, rows, space]);
 
   if (active.data === undefined) return <LoadingState label="Opening channel…" />;
   if (!space) return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
@@ -224,7 +262,14 @@ function ChannelPane({ channelId, openThreadId, workspace }: {
   const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
   return <div className="channel-screen">
     <ChannelHeader members={members.data ?? []} space={space} workspace={workspace} />
-    <div className="channel-feed transcript-scroll">
+    <div
+      className="channel-feed transcript-scroll"
+      onScroll={(event) => {
+        const element = event.currentTarget;
+        atNewest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+      }}
+      ref={feedScroll}
+    >
       {/* Newest nearest the composer: the list reads down to now. */}
       <ol aria-label={`Threads in ${space.name}`} className="channel-feed-list">
         {feed.hasNextPage && <li className="channel-feed-more">
@@ -260,12 +305,17 @@ function ThreadCard({ author, onOpen, open, placedAt, thread }: {
   placedAt: string;
   thread: WorkstreamSummary;
 }): React.JSX.Element {
+  // The chip and the thread's own title pill say the same thing at every
+  // moment: a skeleton while Rally names it, never the request's first line,
+  // and no "new" on the thread the reader has open beside it, which they are
+  // reading as it arrives.
   const mark: BreakoutMark = {
     substreamId: thread.id,
-    title: thread.pending ? 'Starting…' : thread.title,
-    unreadCount: thread.hasUnread ? 1 : 0,
-    youAreMentioned: thread.youAreMentioned,
-    unseen: thread.unseen,
+    title: thread.title,
+    naming: thread.pending === true || thread.titleStatus === 'naming',
+    unreadCount: open || !thread.hasUnread ? 0 : 1,
+    youAreMentioned: !open && thread.youAreMentioned,
+    unseen: !open && thread.unseen,
     needsInput: thread.harnessStatus === 'needs_input',
   };
   return <li className="channel-feed-item">
