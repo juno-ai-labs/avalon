@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiError } from '../lib/api';
 import { CHANNEL_STATS_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
@@ -96,6 +97,14 @@ describe('the navigation sidebar', () => {
     const all = within(screen.getByRole('region', { name: 'All channels' }));
     expect(all.getAllByRole('button').filter((row) => row.classList.contains('navigation-channel-row')).map((row) => row.textContent))
       .toEqual(['Apple1 thread', 'Zebra0 threads']);
+  });
+
+  it('says why a pin did not save', async () => {
+    api.setPinned.mockRejectedValue(new ApiError('limit', 409, 'pin_limit_reached'));
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+    fireEvent.contextMenu(screen.getByRole('button', { name: /Outbound/u }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    expect(await screen.findByText('You’ve pinned as many items as Rally allows. Unpin one first.')).toBeInTheDocument();
   });
 
   it('opens a Channel on its own route', () => {

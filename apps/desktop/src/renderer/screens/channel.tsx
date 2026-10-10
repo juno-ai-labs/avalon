@@ -290,7 +290,7 @@ function ChannelHeader({ members, space, workspace }: {
       name: sidekick.name,
       description: sidekick.description,
       ...(sidekick.appearance ? { appearance: sidekick.appearance } : {}),
-      ...(editable ? { onRemove: () => void run(() => api!.removeSpaceSidekick(space.id, sidekick.id), 'That Sidekick couldn’t be removed.') } : {}),
+      ...(editable ? { removeLabel: 'Remove from this channel', onRemove: () => void run(() => api!.removeSpaceSidekick(space.id, sidekick.id), 'That Sidekick couldn’t be removed.') } : {}),
     }));
   const addable = (library.data ?? []).filter((sidekick) => !recommended.has(sidekick.id));
   const level: TitlePillLevel = {
