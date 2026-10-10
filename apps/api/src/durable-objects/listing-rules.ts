@@ -142,7 +142,13 @@ export function spaceReachedThroughChannelSql(
 
 /**
  * Whether this person may be told a Space exists: Organization-wide (members),
- * a participant, or a Channel in it they may list.
+ * a participant, or a Channel in it they may list — the last only while the
+ * Space is Organization-wide.
+ *
+ * A private Space (the product's private Channel) is listed to its
+ * participants alone. Reaching it through a thread placed in it would name a
+ * private Channel to somebody its owners did not add, which is the one thing
+ * making it private is for.
  *
  * `viewer` is the Space's own viewer row, already narrowed to participants by
  * its join, so `user_id IS NOT NULL` is participation.
@@ -155,7 +161,8 @@ export function spaceListedSql(
 ): string {
   return `(${organizationWideSql(`${space}.scope`, accessClass)}
             OR ${viewer}.user_id IS NOT NULL
-            OR ${spaceReachedThroughChannelSql(space, accessClass, options)})`;
+            OR (${space}.scope = 'workspace'
+                AND ${spaceReachedThroughChannelSql(space, accessClass, options)}))`;
 }
 
 /** The TypeScript form of {@link organizationWideSql}, for rows already read. */

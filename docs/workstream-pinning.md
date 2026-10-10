@@ -1,5 +1,13 @@
 # Work-stream pinning
 
+> **Moving to one pin list per kind.** The navigation redesign
+> ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) pins threads,
+> Channels and breakouts in `workspace_pins`, one list per person per kind, read
+> by the new sidebar's Channels and Threads tabs. The per-Space pins below still
+> work for desktops that predate it and are mirrored into the new table; see
+> [One pin list per kind](#one-pin-list-per-kind). "Channel" in the rest of this
+> document is the storage Channel, which the product now calls a thread.
+
 A pinned Channel leaves its selected Space's ordinary Channel order and moves
 into that Space's **Pinned** section, where it stays until it is unpinned there.
 The section is arranged by hand — dragged into order, never sorted — and both the
@@ -434,6 +442,32 @@ The legacy API suite runs the checked-in D1 migrations against `node:sqlite` in
 memory. Post-cutover ownership assertions belong in the workerd suite; do not
 replace its real Durable Object SQL transaction with a D1 shim.
 
+## One pin list per kind
+
+WorkspaceDO migration 97 (`apps/api/src/durable-objects/workspace-pin-storage.ts`)
+adds `workspace_pins(user_id, item_kind, item_id, parent_id, position, …)`, keyed
+`(user_id, item_kind, item_id)`, with `item_kind` one of `thread`, `channel`
+(a stored Space) or `breakout` (which carries its thread in `parent_id`).
+
+- **Copy.** The migration copies every `workspace_workstream_pins` row in as a
+  thread pin, once per thread: a thread pinned in two Spaces becomes one pin,
+  placed by All's arranged order (`workspace_pinned_order`) first and by its
+  earliest Space position after that.
+- **Mirror.** `pinWorkstream` and `unpinWorkstream` keep writing the old table
+  and also write the new one: a pin adds the thread pin, and an unpin removes it
+  once no Space pins the thread any more. A pin made on the new client is not
+  written back, so an older desktop does not see it.
+- **Routes.** `GET /navigation/pins`, `PUT /navigation/pins` (`{kind, ids}`
+  reorder) and `PUT|DELETE /navigation/pins/:kind/:id` (`parentId` in the body
+  for a breakout), for members and guests. A pin is refused as
+  `pin_target_not_found` for anything the person may not list; an unpin is
+  never refused. The old per-person limit
+  (`MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER`) caps all kinds together.
+- **Delivery.** The list rides the sidebar payload and the Space snapshot as
+  `pins`, and a change republishes the snapshot to that person's sockets.
+
+The old tables and routes go once the desktops that call them have aged out.
+
 ## Data model
 
 `WorkspaceDO.workspace_workstream_pins` is keyed
@@ -458,6 +492,25 @@ Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
+
+### 2026-10-10 — One pin table for threads, Channels and breakouts
+
+**What changed:** Migration 97 adds `workspace_pins`, copied from the per-Space
+pins, with routes under `/navigation/pins`. The old routes mirror into it.
+
+**Why:** The new sidebar has a Channels tab and a Threads tab, each with a
+Pinned section that is the person's alone and not tied to a Space
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)). A thread pinned in
+two Spaces is one pin there.
+
+**Considered and rejected:** A table per kind: three of every read, write and
+delivery for one question. A new `container_kind` in
+`workspace_container_order`: a shipped desktop drops an order kind it does not
+know, the reason All's order got a table of its own.
+
+**Consequences:** Until the old routes are removed, an unpin on an old desktop
+keeps the thread pinned while any other Space still pins it, and a pin made on
+the new client does not appear on an old desktop.
 
 ### 2026-10-08 — A touch drag no longer opens the row menus over itself
 

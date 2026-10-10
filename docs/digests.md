@@ -175,6 +175,39 @@ Producers today:
 | `WorkstreamObjectProduct.addParticipant`, `WorkstreamObjectProduct.initialize` | `workstream_participant_added` | the work stream; the person added is an `added` target | always — being put in a room is addressed at exactly one person. `initialize` writes one per name in `participantUserIds`, never for the creator |
 | `activity-consumer` after routing | `connector.<provider>.<manifest event type>` — so `connector.github.github.push`, and `connector.google.email.received`, because GitHub's manifest ids carry a provider prefix and Google's do not | the connection's own scope | whatever the connector's manifest declared for that activity type |
 
+Since the navigation redesign, a conversation's message and participant events
+also carry `metadata.substreamId` (`"0"` for the thread itself, a breakout's id
+otherwise), and its message events name each mentioned person as a `mentioned`
+target ahead of the `participant` targets (`activityTargets` in
+`workstream-object-product.ts`, cut at the effect schema's hundred). The
+Activity tab reads these; see [The Activity tab](#the-activity-tab).
+
+
+### The Activity tab
+
+`WorkspaceActivityFeed` (`apps/api/src/durable-objects/workspace-activity-feed.ts`)
+is the second reader of this log, behind `GET /navigation/activity`. It reads,
+for one person, newest first:
+
+- events naming them as an `added` or `mentioned` target;
+- every conversation's opening message (`workstream_message_created` at
+  sequence 1 with `metadata.substreamId`) by somebody else, as a thread or
+  breakout start; and
+- the latest finished run (`exact_state = 'completed'`, `completed_at`) of
+  each thread and breakout they take part in, read from the directory rather
+  than from an event.
+
+Every row passes the listing rules at read time, a breakout through both of the
+conversation page's gates, and is dropped when the person may not list its
+conversation now. That is what lets breakout events, which the digest's
+audience rule keeps from the shared digest, reach the one person who may see
+them. Nothing here changes what a digest reads. Read state is one time per
+person (`workspace_activity_seen`, migration 97), moved forward by
+`PUT /navigation/activity/seen`.
+
+Only events written after this change carry `metadata.substreamId`, so starts
+from before it do not appear.
+
 ### The digest
 
 One digest per person per workspace: a set of days, a set of times, and a set of
@@ -706,6 +739,25 @@ existing audience and projection semantics. [Apple push](push-notifications.md)
 owns device registration, provider delivery and retry receipts.
 
 ## Changelog
+
+### 2026-10-10 — The activity log feeds the Activity tab too
+
+**What changed:** Conversation events carry `metadata.substreamId` and
+`mentioned` targets, and `WorkspaceActivityFeed` reads the log for the new
+Activity tab with the listing rules applied per row.
+
+**Why:** The navigation redesign replaces the attention pop-out with an Activity
+tab of things that happened to a person
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)). The log already
+held most of it; a second log would be a second answer to the same question.
+
+**Considered and rejected:** New `thread.started`, `breakout.started` and
+`run.finished` events. The opening message and the directory's completion
+already say each of those, so new producers would only duplicate them.
+
+**Consequences:** A digest is unchanged: it ignores the new metadata and reads
+`mentioned` targets as involvement, as it always read `involved`. A run that
+finishes twice shows once, at its latest finish.
 
 ### 2026-09-14 — Share notification eligibility with Apple push
 
