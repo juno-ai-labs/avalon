@@ -70,7 +70,7 @@ import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError, type RallyApi } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { desktopBridge } from '../lib/platform';
-import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, useConnectorStartAvailable } from '../lib/browser-connectors';
+import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, connectorStartsHere } from '../lib/browser-connectors';
 import { disableWebPush, enableWebPush, webPushState } from '../lib/web-push';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useEscapeClosesWindow } from '../lib/window-escape';
@@ -603,7 +603,6 @@ export function WorkspaceSettingsScreen({
   } = useAppSession();
   const { host, guest } = useShellCapabilities();
   const browserHost = host === 'browser';
-  const connectorStartAvailable = useConnectorStartAvailable(api, session);
   const workspaceSocket = useOptionalWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
   // Fails open: `digestsEnabled` defaults `true` and only an explicit `false`
@@ -1374,11 +1373,11 @@ export function WorkspaceSettingsScreen({
       {(isAdmin || connection.scope === 'you') && reconnectableConnectorTypes.has(connection.connectorType)
         && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') && (
         <ConnectionIconAction
-          disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
+          disabled={!connectorStartsHere(session, connection.connectorType) || reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
           icon={<RefreshCcw aria-hidden="true" size={14} />}
           label={`Refresh ${connection.displayName}`}
           onClick={() => setReconnectTarget(connection)}
-          tooltip="Refresh authorization with the provider."
+          tooltip={connectorStartsHere(session, connection.connectorType) ? 'Refresh authorization with the provider.' : MAC_APP_CONNECT_NOTE}
         />
       )}
       {isAdmin && connection.connectorType === 'generic_webhook' && (
@@ -2027,11 +2026,10 @@ export function WorkspaceSettingsScreen({
                       const personalConnectPrerequisite = provider.provider === 'ashby'
                         ? "Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account."
                         : undefined;
-                      // A browser tab starts only the connections the served list names.
-                      const personalStartsHere = connectorStartAvailable(providerCapabilitiesForScope(provider, 'you'));
-                      const workspaceStartsHere = connectorStartAvailable(providerCapabilitiesForScope(provider, 'workspace'));
-                      const personalConnectDisabled = !personalStartsHere || !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
-                      const personalConnectTitle = !personalStartsHere
+                      // A browser tab starts every connection but those marked desktop only.
+                      const startsHere = connectorStartsHere(session, provider.provider);
+                      const personalConnectDisabled = !startsHere || !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
+                      const personalConnectTitle = !startsHere
                         ? MAC_APP_CONNECT_NOTE
                         : hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
@@ -2042,8 +2040,8 @@ export function WorkspaceSettingsScreen({
                           : personalConnectionStateUnavailable && connections.isError
                             ? 'Installed personal connections could not be loaded.'
                             : undefined;
-                      const workspaceConnectDisabled = !workspaceStartsHere || !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
-                      const workspaceConnectTitle = !workspaceStartsHere
+                      const workspaceConnectDisabled = !startsHere || !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
+                      const workspaceConnectTitle = !startsHere
                         ? MAC_APP_CONNECT_NOTE
                         : hasActiveWorkspaceConnection
                         ? `A ${provider.name} organization connection is already installed. Manage it above.`
@@ -2065,8 +2063,7 @@ export function WorkspaceSettingsScreen({
                             <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
-                          {((provider.scopes.includes('you' as never) && !personalStartsHere)
-                            || (provider.scopes.includes('workspace' as never) && isAdmin && !workspaceStartsHere)) && (
+                          {!startsHere && (
                             <p className="settings-oauth-status">{MAC_APP_DOWNLOADABLE ? <a href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a> : MAC_APP_CONNECT_NOTE}</p>
                           )}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
