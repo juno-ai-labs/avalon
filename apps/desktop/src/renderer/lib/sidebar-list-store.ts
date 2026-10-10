@@ -152,6 +152,12 @@ export function applyVersionedSpaceSnapshot(
   navigation: { pins?: PinList | undefined; channelStats?: ChannelStats[] | undefined } = {},
 ): boolean {
   pinWaterlineLedger(queryClient);
+  // Not under the Space waterline: a pin or a Channel read republishes the
+  // snapshot without moving it, and that republication is how this person's
+  // other windows hear of either. Both are this person's own state, sent in
+  // order on one socket, so the newest frame is the current one.
+  if (navigation.pins) queryClient.setQueryData(PINS_QUERY_KEY, navigation.pins);
+  if (navigation.channelStats) queryClient.setQueryData(CHANNEL_STATS_QUERY_KEY, navigation.channelStats);
   const waterlines = queryClient.getQueryData<Partial<Record<SidebarWaterline, number>>>(
     SIDEBAR_LIST_WATERLINES_KEY,
   ) ?? {};
@@ -164,8 +170,6 @@ export function applyVersionedSpaceSnapshot(
   queryClient.setQueryData(INACTIVE_SPACES_QUERY_KEY, snapshot.inactive);
   queryClient.setQueryData(PERSONAL_ORDER_QUERY_KEY, ordering);
   queryClient.setQueryData(PINNED_ORDER_QUERY_KEY, pinnedOrder);
-  if (navigation.pins) queryClient.setQueryData(PINS_QUERY_KEY, navigation.pins);
-  if (navigation.channelStats) queryClient.setQueryData(CHANNEL_STATS_QUERY_KEY, navigation.channelStats);
   queryClient.setQueryData(SPACES_READY_QUERY_KEY, spacesReady);
   return true;
 }
