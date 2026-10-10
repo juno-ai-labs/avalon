@@ -30,10 +30,24 @@ export interface ConnectorDocumentReader {
   maxSourceBytes: number;
   /** Whether `read` understands this file, decided before downloading it. */
   reads(file: ConnectorFile): boolean;
-  /** The file's text, or the code naming why it could not be read. */
-  read(file: ConnectorFile & { bytes: Uint8Array; signal: AbortSignal }): Promise<
+  /**
+   * The file's text, or the code naming why it could not be read. `connection`
+   * says whose read this is, so a conversion that costs something (OCR of a
+   * scanned PDF) is billed to that workspace.
+   */
+  read(file: ConnectorFile & {
+    bytes: Uint8Array;
+    signal: AbortSignal;
+    connection: ConnectorDocumentConnection;
+  }): Promise<
     { ok: true; text: string } | { ok: false; code: string }
   >;
+}
+
+/** The connection a file was read through. */
+export interface ConnectorDocumentConnection {
+  id: string;
+  workspaceId: string;
 }
 
 /** A read file's content fields, in the shape connector tool outputs carry. */
@@ -60,6 +74,7 @@ export type ConnectorDocumentContent = {
 export async function readConnectorDocument(input: {
   reader: ConnectorDocumentReader;
   file: ConnectorFile;
+  connection: ConnectorDocumentConnection;
   textBudgetBytes: number;
   signal: AbortSignal;
   download: () => Promise<Response>;
@@ -81,7 +96,12 @@ export async function readConnectorDocument(input: {
     if (error instanceof ConnectorError && error.code === "payload_too_large") return tooLarge;
     throw error;
   }
-  const converted = await reader.read({ ...file, bytes, signal: input.signal });
+  const converted = await reader.read({
+    ...file,
+    bytes,
+    signal: input.signal,
+    connection: { id: input.connection.id, workspaceId: input.connection.workspaceId },
+  });
   if (!converted.ok) {
     return {
       textContent: null,

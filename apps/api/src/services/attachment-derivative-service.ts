@@ -371,7 +371,12 @@ export async function ocrPdfWithWorkersAi(
   bytes: Uint8Array,
   pageCount: number,
   signal: AbortSignal,
-  metering: { env: Parameters<typeof emitInferenceUsage>[0]; workspaceId: string; resourceId: string },
+  /**
+   * Who pays for the conversion. `sourceId` names what was converted — a stored
+   * resource, or the connection a connector read the file through — and only
+   * keeps the usage event id readable; the workspace is what is billed.
+   */
+  metering: { env: Parameters<typeof emitInferenceUsage>[0]; workspaceId: string; sourceId: string },
 ): Promise<AttachmentOcrText> {
   if (signal.aborted) throw signal.reason;
   const response = await ai.toMarkdown({
@@ -389,7 +394,7 @@ export async function ocrPdfWithWorkersAi(
   // exists (docs/usage-metering.md). Each conversion is a separate call, so
   // each gets its own event ID.
   emitInferenceUsage(metering.env, runtimeDeferral, {
-    eventId: `ocr:${metering.resourceId}:${crypto.randomUUID()}`,
+    eventId: `ocr:${metering.sourceId}:${crypto.randomUUID()}`,
     workspaceId: metering.workspaceId,
     activity: "document_ocr",
     costCents: undefined,

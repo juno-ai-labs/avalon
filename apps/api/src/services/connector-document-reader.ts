@@ -4,6 +4,7 @@ import {
   ATTACHMENT_MAX_SOURCE_BYTES,
   attachmentTextFormat,
   buildAttachmentDerivative,
+  ocrPdfWithWorkersAi,
 } from "./attachment-derivative-service";
 
 /**
@@ -13,11 +14,10 @@ import {
  * It is the same conversion an uploaded attachment gets — plain text, Word,
  * Excel, PowerPoint and a PDF's text layer — so a file reads identically
  * whether someone uploaded it or the agent found it in Drive, a Slack thread or
- * any other connector. The one difference is OCR: a scanned PDF needs a metered
- * provider call that is billed against a stored resource, and a connector read
- * has no resource, so it fails as `pdf_ocr_required` instead.
+ * any other connector. That includes OCR of a scanned PDF, metered to the
+ * workspace of the connection the file was read through.
  */
-export function connectorDocumentReader(env: Pick<Env, "DOCUMENT_PROCESSOR">): ConnectorDocumentReader {
+export function connectorDocumentReader(env: Env): ConnectorDocumentReader {
   return {
     maxSourceBytes: ATTACHMENT_MAX_SOURCE_BYTES,
     reads: (file) => attachmentTextFormat(file.mimeType, file.fileName) !== null,
@@ -29,6 +29,15 @@ export function connectorDocumentReader(env: Pick<Env, "DOCUMENT_PROCESSOR">): C
         signal: file.signal,
         ...(env.DOCUMENT_PROCESSOR
           ? { pdfExtractor: (bytes: Uint8Array) => env.DOCUMENT_PROCESSOR.extractText(bytes) }
+          : {}),
+        ...(env.AI
+          ? {
+              ocr: (bytes: Uint8Array, pageCount: number) => ocrPdfWithWorkersAi(env.AI, file.fileName, bytes, pageCount, file.signal, {
+                env,
+                workspaceId: file.connection.workspaceId,
+                sourceId: `connection:${file.connection.id}`,
+              }),
+            }
           : {}),
       });
       return result.status === "ready" ? { ok: true, text: result.text } : { ok: false, code: result.errorCode };

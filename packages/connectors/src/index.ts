@@ -2,6 +2,7 @@ export { CANVA_POLL_SECONDS } from "./canva-polling";
 export { parseCanvaDesignReference } from "./canva-resource";
 export {
   readConnectorDocument,
+  type ConnectorDocumentConnection,
   type ConnectorDocumentContent,
   type ConnectorDocumentReader,
   type ConnectorFile,
@@ -4635,6 +4636,7 @@ async function readDriveTextContent(
     return readConnectorDocument({
       reader: documents,
       file,
+      connection,
       textBudgetBytes: maximumBytes,
       signal,
       download: () => api(connection, driveMediaUrl(fileId).toString(), { signal })

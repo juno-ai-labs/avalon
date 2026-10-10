@@ -5,7 +5,7 @@ import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition }
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import { createHostedMcpPassthrough } from "./hosted-mcp";
-import { readConnectorDocument, type ConnectorDocumentReader } from "./documents";
+import { readConnectorDocument, type ConnectorDocumentConnection, type ConnectorDocumentReader } from "./documents";
 import {
   isProviderCredentialRejection,
   isRecord,
@@ -1761,7 +1761,7 @@ async function executeSlackDirectTool(
     }
     case "read_file": {
       const args = SlackDirectInputSchemas.read_file.parse(rawArgs);
-      const output = await readSlackFile(token, args.file_id, context.signal, fetcher, documents);
+      const output = await readSlackFile(token, args.file_id, context.connection, context.signal, fetcher, documents);
       return { output, summary: `Read Slack file ${args.file_id}` };
     }
     case "send_message": {
@@ -1986,6 +1986,7 @@ async function readSlackMessageContext(
 async function readSlackFile(
   token: string,
   fileId: string,
+  connection: ConnectorDocumentConnection,
   signal: AbortSignal,
   fetcher: FetchLike,
   documents: ConnectorDocumentReader | undefined,
@@ -2009,6 +2010,7 @@ async function readSlackFile(
     const read = await readConnectorDocument({
       reader: documents,
       file: document,
+      connection,
       textBudgetBytes: SLACK_MAX_FILE_CONTENT_BYTES,
       signal,
       download: () => downloadSlackFile(token, downloadUrl, "*/*", signal, fetcher),

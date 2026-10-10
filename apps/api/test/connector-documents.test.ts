@@ -8,7 +8,13 @@ import {
 import { strToU8, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import { connectorDocumentReader } from "../src/services/connector-document-reader";
-import { extractPdfText } from "../src/services/document-processing-codecs";
+import {
+  buildGifStoryboard,
+  decodeTiffToPng,
+  extractPdfText,
+} from "../src/services/document-processing-codecs";
+import type { DocumentProcessingRpcBinding } from "../src/services/document-processing-contract";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 
 // The reader is the real one the registry hands adapters, over the real
 // attachment converter and PDF extractor; only the providers' HTTP APIs are
@@ -51,6 +57,19 @@ describe("files read through Google Drive", () => {
     expect(word.textContent).toBe("# Investment Memo\n\nWe own 12.5%.");
     expect(powerpoint.textContent).toBe("# Slide 1\n\nQ3 board update\n\n## Speaker notes\n\nLead with runway");
     expect(pdf.textContent).toBe("# Page 1\n\nLiquidation preference 1x");
+  });
+
+  it("reads a scanned PDF through OCR when its text layer is empty", async () => {
+    const conversions: string[] = [];
+
+    const result = await driveDownload(
+      { name: "Signed Term Sheet.pdf", mimeType: "application/pdf", bytes: textPdf(" ") },
+      undefined,
+      workersAi(conversions, "Signed by both parties"),
+    );
+
+    expect(conversions).toEqual(["Signed Term Sheet.pdf"]);
+    expect(result.textContent).toBe("# Page 1\n\nSigned by both parties");
   });
 
   it("names why a file that is not really an Office archive could not be read", async () => {
@@ -118,9 +137,12 @@ describe("files shared in Slack", () => {
   });
 });
 
-function registry(fetcher: typeof fetch) {
+function registry(fetcher: typeof fetch, ai: Ai = workersAi([])) {
   return createConnectorRegistry({
-    documents: connectorDocumentReader({ DOCUMENT_PROCESSOR: { extractText: extractPdfText } as never }),
+    documents: connectorDocumentReader(createTestEnv({
+      DOCUMENT_PROCESSOR: documentProcessor,
+      AI: ai,
+    })),
     google: {
       clientId: "google-client",
       clientSecret: "google-secret",
@@ -137,10 +159,28 @@ function registry(fetcher: typeof fetch) {
   });
 }
 
+/** The real PDF extractor, as the document-processing Worker exposes it. */
+const documentProcessor = {
+  extractText: extractPdfText,
+  buildGifStoryboard: async (bytes: Uint8Array) => buildGifStoryboard(bytes),
+  decodeTiffToPng: async (bytes: Uint8Array) => decodeTiffToPng(bytes),
+} satisfies DocumentProcessingRpcBinding;
+
+/** Workers AI's document conversion, which cannot run here: records each file it is asked to convert. */
+function workersAi(conversions: string[], text = ""): Ai {
+  return createCloudflareTestBinding<Ai>({
+    toMarkdown: async (file: { name: string }) => {
+      conversions.push(file.name);
+      return { name: file.name, mimeType: "application/pdf", format: "markdown", tokens: 0, data: text };
+    },
+  });
+}
+
 /** `drive.download` of one file, with Drive answering its metadata and stored bytes. */
 async function driveDownload(
   file: { name: string; mimeType: string; bytes: Uint8Array; size?: number },
   onMedia: () => void = () => undefined,
+  ai?: Ai,
 ) {
   const fetcher = (async (input: RequestInfo | URL) => {
     const url = new URL(input instanceof Request ? input.url : input.toString());
@@ -150,7 +190,7 @@ async function driveDownload(
     }
     return Response.json({ id: "file-1", name: file.name, mimeType: file.mimeType, size: String(file.size ?? file.bytes.byteLength) });
   }) as typeof fetch;
-  const adapter: ConnectorAdapter = registry(fetcher).get("google");
+  const adapter: ConnectorAdapter = registry(fetcher, ai).get("google");
   const result = await adapter.executeTool!("drive.download", { fileId: "file-1" }, {
     connection: authorizedConnection({
       id: "00000000-0000-7000-8000-000000000003",
