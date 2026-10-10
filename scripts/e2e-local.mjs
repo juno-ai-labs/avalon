@@ -142,7 +142,7 @@ async function main() {
   };
   const uid = () => crypto.randomUUID();
   const substreamCommand = async (workstreamId, command) => {
-    const ticket = await api("GET", `/workstreams/${workstreamId}/substreams/0/socket`);
+    const ticket = await api("GET", `/conversations/${workstreamId}/substreams/0/socket`);
     if (ticket.status !== 200) return ticket;
     const socket = await openSubstreamSocket(socketUrlWithoutTicket(ticket.body.url), {
       expectOpen: true,
@@ -182,7 +182,7 @@ async function main() {
   const waitForTerminal = async (workstreamId, timeoutMs = 120_000) => {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const workstream = await api("GET", `/workstreams/${workstreamId}`);
+      const workstream = await api("GET", `/conversations/${workstreamId}`);
       const turns = canonicalTurns(workstream.body);
       const agent = turns.filter((turn) => turn.actor === "assistant" && turn.entryKind === "conversation");
       const status = workstream.body?.harnessStatus;
@@ -255,7 +255,7 @@ async function main() {
     async happy_transcript_ordered() {
       const workstreamId = await create("Reply with the word ORDERED.");
       await waitForTerminal(workstreamId);
-      const listed = await api("GET", `/workstreams/${workstreamId}`);
+      const listed = await api("GET", `/conversations/${workstreamId}`);
       const items = canonicalTurns(listed.body);
       if (listed.status !== 200 || items.length < 1) throw new Error(`transcript ${listed.status}`);
       const sequences = items.map((turn) => turn.transcriptSequence);
@@ -272,7 +272,7 @@ async function main() {
       const start = Date.now();
       let titleStatus = "naming";
       while (Date.now() - start < 60_000) {
-        const workstream = await api("GET", `/workstreams/${workstreamId}`);
+        const workstream = await api("GET", `/conversations/${workstreamId}`);
         titleStatus = workstream.body?.workstream?.titleStatus ?? "?";
         if (titleStatus !== "naming") break;
         await new Promise((resolve) => setTimeout(resolve, 2_500));
@@ -305,7 +305,7 @@ async function main() {
       }
     },
     async sad_missing_workstream() {
-      const response = await api("GET", `/workstreams/${uid()}`);
+      const response = await api("GET", `/conversations/${uid()}`);
       if (![403, 404].includes(response.status)) throw new Error(`expected 403/404, got ${response.status}`);
     },
     async sad_message_to_missing_workstream() {
@@ -334,7 +334,7 @@ async function main() {
           throw new Error(`${label} receipt has invalid delivery state`);
         }
       }
-      const listed = await api("GET", `/workstreams/${workstreamId}`);
+      const listed = await api("GET", `/conversations/${workstreamId}`);
       const copies = canonicalTurns(listed.body).filter((turn) => turn.clientMessageId === clientMessageId);
       if (copies.length > 1) throw new Error(`replay landed ${copies.length} times`);
       return { first: first.status, replay: replay.status };
