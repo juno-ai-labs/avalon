@@ -1,6 +1,6 @@
 import { AccessRequestDialog } from './access-request-dialog';
 import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
-import type { CreateSpaceRequest, PinnedOrder, SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
+import type { SpaceDirectory, SpaceSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
@@ -32,25 +32,23 @@ import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { uuidV7 } from '../lib/telemetry';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
-import { INACTIVE_SPACES_QUERY_KEY, PINNED_ORDER_QUERY_KEY, SPACES_QUERY_KEY, applyPinnedOrder } from '../lib/sidebar-list-store';
+import { INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
-import { usePinnedOrder, useSpaceDirectories, useSpacesReady } from '../lib/use-space-directories';
+import { useSpaceDirectories } from '../lib/use-space-directories';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { activeRealtimeWorkstreamId } from '../lib/workspace-workstream-sockets';
 import { useWorkspaceSocket, type SidebarConnect, type WorkspaceSocketState } from '../lib/workspace-socket';
-import { channelDestination, useOpenFirstWorkstream, openWorkstreamId } from '../lib/workstream-landing';
+import { channelDestination, openWorkstreamId } from '../lib/workstream-landing';
 import { heldChannelBreakouts, isWorkstreamChildrenQueryKey, type ChannelBreakoutLists } from '../lib/channel-viewer-state';
-import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import {
-  evictCachedWorkstream,
-  holdCachedWorkstreamArchive,
   patchCachedWorkstream,
   setCachedWorkstreams,
 } from '../lib/workstreams-cache';
 import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
 import { SearchModal, type SearchPlace } from './search-modal';
-import { Sidebar } from './sidebar';
+import { NavigationSidebar } from './navigation-sidebar';
+import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { OrganizationUsageMenuItem } from './organization-usage';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
 
@@ -498,21 +496,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const location = useLocation();
   useEffect(() => {
     const path = location.pathname;
-    if (!/^\/spaces\/[^/]+$/.test(path)
-      && (!/^\/workstreams\/[^/]+$/.test(path) || path === '/workstreams/new')) return;
+    // A Channel, a thread under one, or a thread on its own: what reopens next time.
+    if (!/^\/channels\/[^/]+(\/threads\/[^/]+)?$/.test(path) && !/^\/workstreams\/[^/]+$/.test(path)) return;
     const breakout = new URLSearchParams(location.search).get('substream');
     writeLayout(layoutKey(workspace.id, workspace.currentUser.id, 'last-route'),
-      path.startsWith('/workstreams/') && breakout
-        ? `${path}?substream=${encodeURIComponent(breakout)}` : path);
+      breakout ? `${path}?substream=${encodeURIComponent(breakout)}` : path);
   }, [location.pathname, location.search, workspace.id, workspace.currentUser.id]);
-  const currentPathname = useLatestCommittedValue(location.pathname);
-  const shellMounted = useLayoutMountedRef();
-  const openFirstWorkstream = useOpenFirstWorkstream();
   const queryClient = useQueryClient();
-  const channelSpaceHandlers = useMemo(
-    () => channelSpaceMutationHandlers(api, queryClient),
-    [api, queryClient],
-  );
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
@@ -540,29 +530,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // it changes a row. This query exists for what a person asks for afterwards:
   // scrolling past page one, or widening the list with Debug enabled.
   const workstreams = useWorkstreamsQuery();
-  // One counter across all three pin mutations, because they all rewrite the
-  // same list and a response can only be judged stale against the others.
-  const pinRequestsIssued = useRef(new Map<string, number>());
-  // Answers whether this response was the one applied, which the sidebar needs
-  // as well: a superseded response updates nothing, so the action behind it has
-  // no row movement to follow and must not scroll the viewport either.
-  const applyPinResponse = async (spaceId: string, request: () => Promise<WorkstreamSummary[]>): Promise<boolean> => {
-    const issued = (pinRequestsIssued.current.get(spaceId) ?? 0) + 1;
-    pinRequestsIssued.current.set(spaceId, issued);
-    const pinned = await request();
-    if (!applyPinnedWorkstreamsIfCurrent(
-      queryClient, spaceId, pinned, issued, pinRequestsIssued.current.get(spaceId) ?? 0,
-    )) return false;
-    // The response is the whole pinned list and can name a work stream this
-    // device has never listed — pinned on another machine, and too quiet to sit
-    // on the page this one last fetched. Patching positions cannot conjure that
-    // row, so the list is refetched behind the patch: the patch is what moves
-    // the section immediately, the refetch is what makes it complete.
-    void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-    return true;
-  };
-  const { active: spaces, inactive: inactiveSpaces } = useSpaceDirectories();
-  const socketSpacesReady = useSpacesReady();
+  const { active: spaces } = useSpaceDirectories();
   const associativeNavigation = useQuery({
     queryKey: conversationDirectoryQueryKey(workspace.id),
     queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal),
@@ -586,6 +554,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // The attention button's number: waiting conversations and access requests.
   useDockBadge(attentionItems.length + accessRequests.length, attentionComplete && breakoutListsLoaded);
   const visibleSpaces = spaces.data?.items ?? [];
+  const downloadedUpdate = useDownloadedUpdate();
+  // An import lands in a Channel this person may place threads in; only the
+  // Mac app has the embedded browser it runs in.
+  const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
+  const importChannels = visibleSpaces.filter((space) => space.reach !== 'through_channel' && !guestSession);
   // While search is open, a Breakout list the socket writes re-reads the
   // places, so a Breakout created or renamed meanwhile shows at once.
   const [breakoutListsVersion, setBreakoutListsVersion] = useState(0);
@@ -604,9 +577,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   }, [searchOpen, sidebarWorkstreams, associativeNavigation.data, breakoutListsVersion, queryClient]);
   const searchSpaces = useMemo(() => (spaces.data?.items ?? []).map((space): SearchPlace => (
     { kind: 'space', id: space.id, name: space.name, iconKey: space.iconKey, colorKey: space.colorKey })), [spaces.data]);
-  const visibleInactiveSpaces = inactiveSpaces.data?.items ?? [];
-  const spacesReady = socketSpacesReady;
-  const pinnedOrder = usePinnedOrder();
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
   const workspaceDirectory = useQuery<DesktopWorkspaceOnboardingState>({
@@ -743,9 +713,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
     enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',
   ].filter(Boolean).join(' ');
-  const {
-    loadedSpaceIds, prioritizeSpace, setForegroundWorkstreamId, sidebarConnect, state: workspaceSocketState,
-  } = useWorkspaceSocket();
+  const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
   // A pending Channel may not be in the Organization's directory yet, and
@@ -779,7 +747,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         workspaceId={workspace.id}
       />
       <div className={shellClassName} style={shellStyle}>
-      <Sidebar
+      <NavigationSidebar
         onOpenSearch={api ? () => setSearchOpen(true) : undefined}
         // A desktop browser tab offers the Mac app, member or guest; a phone or tablet cannot run it.
         footerItems={host === 'browser' && MAC_APP_DOWNLOADABLE ? <MacDownloadLink /> : undefined}
@@ -879,152 +847,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             workspaces={knownWorkspaces}
           />
         )}
-        // Not `isLoading`: the first page is not fetched, so there is no
-        // in-flight request to report. The sidebar is waiting exactly while it
-        // has no list yet — which also keeps the skeletons up rather than
-        // claiming an empty workspace when the socket cannot connect.
-        loading={workstreams.data === undefined}
-        spaces={spacesEnabled ? visibleSpaces : undefined}
-        spacesReadOnly={guestSession}
-        inactiveSpaces={visibleInactiveSpaces}
-        spacesReady={spacesReady}
-        onArchiveWorkstream={async (workstream) => {
-          // Thrown rather than returned, unlike the handlers around it. The
-          // sidebar treats this promise resolving as the archive having
-          // happened: it reports the `archive` intent and closes the dialog. A
-          // signed-out `api` would therefore claim success for a request that
-          // was never sent — the one outcome the confirmation's failure dialog
-          // exists to prevent, and a false product event besides.
-          if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          // WorkstreamDO commits the loop stop request and archive together;
-          // there is no separate child command to race against lost access.
-          const archived = await api.archiveWorkstream(workstream.id);
-          // No list invalidation: WorkstreamDO answers this write with a
-          // directory tombstone. Until it arrives, retain the response as a
-          // hidden row so an older directory page already in flight has no
-          // empty slot to seed. The versioned tombstone removes that marker and
-          // is still the authority that orders the removal against every other
-          // producer.
-          //
-          // Leaving the screen is this handler's, though. The socket removes the
-          // query but not the route, so the reader would be left on a work stream
-          // the API no longer serves. The hidden marker has already removed the
-          // row from every directory reader; naming it to the landing remains a
-          // route-level fence as well. Detail and transcript data cannot wait
-          // for the tombstone: the PATCH may succeed while the socket is down.
-          holdCachedWorkstreamArchive(queryClient, archived);
-          if (openWorkstreamId(location.pathname) === workstream.id) {
-            openFirstWorkstream([workstream.id]);
-          }
-        }}
-        onApplyWorkstreamBatch={async (operationId, filter, update) => {
-          if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const accepted = await api.applyWorkstreamBatch(operationId, filter, update);
-          const selected = activeWorkstreamId === null
-            ? undefined
-            : workstreams.data?.find((workstream) => workstream.id === activeWorkstreamId);
-          if (update.kind === 'archive' && selected && workstreamMatchesBatchFilter(selected, filter)) {
-            evictCachedWorkstream(queryClient, selected.id);
-            openFirstWorkstream(batchArchiveSkipIds(workstreams.data ?? [], filter));
-          }
-          return accepted;
-        }}
-        onChangeWorkstreamScope={async (workstream, scope) => {
-          if (!api) return;
-          const updated = await api.setWorkstreamScope(workstream.id, scope);
-          // The fields this write moves on the server: `updated_at` is stamped
-          // on every PATCH, while `last_people_activity_at` is not, so the
-          // sidebar's sort key is deliberately left alone here.
-          patchCachedWorkstream(queryClient, updated.id, { scope: updated.scope, updatedAt: updated.updatedAt });
-        }}
-        onMarkWorkstreamUnread={async (workstream) => {
-          if (!api) return;
-          const updated = await api.markWorkstreamUnread(workstream.id);
-          patchCachedWorkstreamViewerState(queryClient, updated.id, updated);
-          // Skipped rather than gone: the row stays, and opening it is what
-          // would read it again.
-          if (location.pathname === `/workstreams/${updated.id}`) openFirstWorkstream([updated.id]);
-        }}
-        onPinWorkstream={async (workstream, spaceId, pinned) => {
-          if (!api) return false;
-          return applyPinResponse(spaceId, () => pinned
-            ? api.pinWorkstream(workstream.id, spaceId)
-            : api.unpinWorkstream(workstream.id, spaceId));
-        }}
-        onReorderPinnedWorkstreams={async (spaceId, workstreamIds) => {
-          if (!api) return;
-          await applyPinResponse(spaceId, () => api.reorderWorkstreamPins(spaceId, workstreamIds));
-        }}
-        allPinnedOrder={pinnedOrder}
-        onReorderAllPinned={async (workstreamIds) => {
-          if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const expected = queryClient.getQueryData<PinnedOrder>(PINNED_ORDER_QUERY_KEY);
-          applyPinnedOrder(queryClient, await api.reorderAllPinned(workstreamIds), expected);
-        }}
-        onRenameWorkstream={async (workstream, title) => {
-          if (!api) return;
-          const updated = await api.renameWorkstream(workstream.id, title);
-          patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
-        }}
-        onRunAutomation={async (automation) => {
-          if (!api) return;
-          await api.runAutomation(automation.id);
-          // A run is a substream of the automation, listed on its screen, so
-          // that is where a person who asked for one lands.
-          await queryClient.invalidateQueries({ queryKey: ['automation-runs', automation.id] });
-          void navigate(`/automations/${automation.id}`);
-        }}
-        onPreviewWorkstreamBatch={async (filter) => {
-          if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          return api.previewWorkstreamBatch(filter);
-        }}
-        onCreateChannel={({ spaceId }) => {
-          void navigate(`/spaces/${spaceId}/workstreams/new`, {
-            state: { returnTo: location.pathname },
-          });
-        }}
-        onCreateSpace={async (input: CreateSpaceRequest) => {
-          if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const created = await api.createSpace(input);
-          queryClient.setQueryData<SpaceDirectory>(
-            SPACES_QUERY_KEY,
-            (current) => upsertSpaceDirectory(current, created),
-          );
-          return created;
-        }}
-        {...channelSpaceHandlers}
-        onRestoreSpace={async (spaceId) => {
-          if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const restored = await api.restoreSpace(spaceId);
-          queryClient.setQueryData<SpaceDirectory>(INACTIVE_SPACES_QUERY_KEY, (current) => current ? {
-            ...current,
-            items: current.items.filter((space) => space.id !== restored.id),
-          } : current);
-          queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
-            ...current,
-            items: current.items.some((space) => space.id === restored.id)
-              ? current.items.map((space) => space.id === restored.id ? restored : space)
-              : [...current.items, restored],
-          } : current);
-        }}
-        onArchiveSpace={!hasLiveSpaceArchiveAuthority(workspaceSocketState, sidebarConnect)
-          ? undefined : archiveSpaceMutationHandler(
-          api,
-          queryClient,
-          () => currentPathname.current,
-          openFirstWorkstream,
-          () => shellMounted.current,
-        )}
-        onSignOut={() => {
-          void signOut().catch(() => undefined);
-        }}
-        hasMoreWorkstreams={workstreams.hasMore}
-        loadingMoreWorkstreams={workstreams.isFetchingMore}
-        onLoadMoreWorkstreams={workstreams.fetchMore}
-        // A walk that failed says so through the query; the Spaces it did not
-        // reach stop drawing placeholders rather than waiting for it.
-        loadedSpaceIds={sidebarConnect?.channelsBySpace && !workstreams.isError ? loadedSpaceIds : undefined}
-        onViewSpace={prioritizeSpace}
+        downloadedUpdate={downloadedUpdate}
+        onOpenImport={openBrowserImport && importChannels.length > 0 ? () => void openBrowserImport({
+          spaces: importChannels.map((space) => ({ id: space.id, name: space.name })),
+        }) : undefined}
         workspace={workspace}
         attentionItems={attentionItems}
         attentionComplete={attentionComplete}
@@ -1032,7 +858,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         accessDecisionFailed={decideAccessRequest.isError}
         onDecideAccessRequest={(request, decision) => decideAccessRequest.mutate({ id: request.id, decision })}
         onOpenAccessRequest={(request) => setOpenAccessRequestId(request.id)}
-        workstreams={sidebarWorkstreams}
       />
         <span aria-live="polite" className="sr-only">
           {switchingWorkspace ? `Opening ${switchingWorkspace.name}…` : ''}

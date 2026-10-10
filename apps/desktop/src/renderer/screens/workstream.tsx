@@ -6,7 +6,7 @@ import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type HarnessStatus } from '@rally/contracts';
 import { logError } from '../../common/logger';
@@ -64,6 +64,7 @@ export {
 } from './conversation-surface';
 
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
+import { channelRoute, useChannelPane } from '../lib/navigation-routes';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { normalizeHarnessStatus } from '../lib/api';
 
@@ -673,6 +674,19 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     const stored = Number.parseFloat(readLayout(breakoutWidthKey) ?? '');
     return Number.isFinite(stored) ? stored : null;
   });
+  // Beside a Channel, this thread is the right of two panes. Opening a
+  // breakout or a panel needs both panes for itself, so the Channel steps off
+  // screen and rides as the first breadcrumb instead
+  // (`docs/pane-stack.md`).
+  const channelPane = useChannelPane();
+  const navigate = useNavigate();
+  const threadUsesTwoPanes = breakoutPaneOpen || mainOwnsRail;
+  const setThreadUsesTwoPanes = channelPane?.setThreadUsesTwoPanes;
+  useEffect(() => {
+    setThreadUsesTwoPanes?.(threadUsesTwoPanes);
+  }, [setThreadUsesTwoPanes, threadUsesTwoPanes]);
+  useEffect(() => () => setThreadUsesTwoPanes?.(false), [setThreadUsesTwoPanes]);
+  const channelCrumbs = channelPane?.shifted ? [channelPane.crumb] : [];
   const changeBreakoutWidth = useCallback((width: number): void => {
     setBreakoutWidth(width);
     writeLayout(breakoutWidthKey, String(width));
@@ -826,7 +840,13 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     openBreakoutId={openBreakoutId}
     parentId={id}
     parentKind="workstream"
-    renderHeader={(context) => <TitlePillHeader current={channelLevel(context)} />}
+    renderHeader={(context) => <TitlePillHeader
+      ancestors={channelCrumbs}
+      current={channelLevel(context)}
+      trailing={channelPane && !channelPane.shifted
+        ? <TitlePillClose label="Close thread" onClose={() => void navigate(channelRoute(channelPane.channelId))} />
+        : undefined}
+    />}
     scrollToTurn={scrollToTurn}
     sidebarScope={conversationScoped ? 'conversation' : 'workstream'}
     substreamId="0"
@@ -854,7 +874,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     parentId={id}
     parentKind="workstream"
     renderHeader={(context) => <TitlePillHeader
-      ancestors={splitMode === 'breakout' && mainVisible ? [channelLevel(null, closeRail)] : []}
+      ancestors={splitMode === 'breakout' && mainVisible ? [...channelCrumbs, channelLevel(null, closeRail)] : []}
       current={breakoutLevel(context)}
       trailing={mainVisible ? closeBreakout : undefined}
     />}

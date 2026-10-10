@@ -251,9 +251,11 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
       new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
           ...body,
           descriptionSource: body.objective ? "authored" : "derived",
-          // A Channel somebody starts in Rally is Organization-wide. A Space
-          // no longer grants its audience, so the route says it rather than
-          // leaving the fail-closed default to make every new Channel private.
+          // A thread somebody starts in Rally is Organization-wide, unless it
+          // starts in a private Channel, where `resolveSpaceWorkstreamStart`
+          // narrows it to private. A Space grants no audience, so the route
+          // says it rather than leaving the fail-closed default to make every
+          // new thread private.
           scope: "workspace",
         }, {
           span,

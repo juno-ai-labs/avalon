@@ -3,6 +3,15 @@ import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationR
 import { SharedDirectorySchema, SharedNavigationDirectorySchema, WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
 import { MemberPreferencesSchema, PersonalSystemPromptSchema, SessionImportRunSchema, type MemberPreferences, type SessionImportPreview } from "@rally/contracts";
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
+import {
+  ActivityPageSchema,
+  ChannelFeedPageSchema,
+  MyThreadsPageSchema,
+  PinListSchema,
+  type ActivityPage,
+  type PinKind,
+  type PinList,
+} from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type UpdateAccountOnboarding } from "@rally/contracts";
 import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, type ConversationAccessDecisionResult, type ConversationAccessPreview } from "@rally/contracts";
@@ -1396,6 +1405,22 @@ export class RallyApi {
     });
   }
 
+  /** Recommend a Sidekick to every thread started in this Channel (a Space default). */
+  addSpaceSidekick(id: string, sidekickId: string): Promise<SpaceSummary> {
+    return this.request(`/spaces/${encodeURIComponent(id)}/defaults`, {
+      method: 'POST',
+      body: { kind: 'sidekick', targetId: sidekickId },
+      schema: WireSpaceSummarySchema,
+    });
+  }
+
+  removeSpaceSidekick(id: string, sidekickId: string): Promise<SpaceSummary> {
+    return this.request(
+      `/spaces/${encodeURIComponent(id)}/defaults/sidekick/${encodeURIComponent(sidekickId)}`,
+      { method: 'DELETE', schema: WireSpaceSummarySchema },
+    );
+  }
+
   archiveSpace(id: string): Promise<SpaceSummary> {
     return this.request(`/spaces/${encodeURIComponent(id)}/archive`, {
       method: 'POST',
@@ -1476,6 +1501,62 @@ export class RallyApi {
       })),
       nextCursor: page.nextCursor,
     };
+  }
+
+  /**
+   * One page of a Channel's feed (a stored Space's threads), newest placement
+   * first. A thread this person may not open is a locked row with its id and
+   * time only; see `docs/listing-rules.md`.
+   */
+  async getChannelFeed(channelId: string, cursor: string | null, signal?: AbortSignal): Promise<ChannelFeedPageView> {
+    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+    const page = await this.request(`/spaces/${encodeURIComponent(channelId)}/feed${query}`, {
+      schema: ChannelFeedPageSchema,
+      ...(signal ? { signal } : {}),
+    });
+    return {
+      items: page.items.map((item) => item.kind === 'thread'
+        ? { kind: 'thread' as const, placedAt: item.placedAt, thread: mapWorkstreamSummary(item.thread) }
+        : { kind: 'locked' as const, placedAt: item.placedAt, threadId: item.threadId }),
+      nextCursor: page.nextCursor,
+    };
+  }
+
+  /** One page of the threads and breakouts this person takes part in or pinned, newest activity first. */
+  async getMyThreads(cursor: string | null, signal?: AbortSignal): Promise<{ items: SpaceConversationSummary[]; nextCursor: string | null }> {
+    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+    const page = await this.request(`/navigation/threads${query}`, {
+      schema: MyThreadsPageSchema,
+      ...(signal ? { signal } : {}),
+    });
+    return {
+      items: page.items.map((conversation) => ({
+        ...mapWorkstreamSummary(conversation),
+        kind: conversation.kind,
+        breakoutOf: conversation.breakoutOf,
+      })),
+      nextCursor: page.nextCursor,
+    };
+  }
+
+  setPinned(kind: PinKind, id: string, pinned: boolean, parentId?: string): Promise<PinList> {
+    const path = `/navigation/pins/${kind}/${encodeURIComponent(id)}`;
+    return pinned
+      ? this.request(path, { method: 'PUT', body: parentId ? { parentId } : {}, schema: PinListSchema })
+      : this.request(path, { method: 'DELETE', schema: PinListSchema });
+  }
+
+  reorderPins(kind: PinKind, ids: readonly string[]): Promise<PinList> {
+    return this.request('/navigation/pins', { method: 'PUT', body: { kind, ids }, schema: PinListSchema });
+  }
+
+  getActivity(cursor: string | null, signal?: AbortSignal): Promise<ActivityPage> {
+    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+    return this.request(`/navigation/activity${query}`, { schema: ActivityPageSchema, ...(signal ? { signal } : {}) });
+  }
+
+  markActivitySeen(seenThrough: string): Promise<void> {
+    return this.requestVoid('/navigation/activity/seen', { method: 'PUT', body: { seenThrough } });
   }
 
   addChannelToSpace(spaceId: string, workstreamId: string): Promise<SpaceSummary> {
@@ -2683,4 +2764,13 @@ export class RallyApi {
     return result.url;
   }
 
+}
+
+/** A Channel feed page with its threads in the client's row shape. */
+export interface ChannelFeedPageView {
+  items: Array<
+    | { kind: 'thread'; placedAt: string; thread: WorkstreamSummary }
+    | { kind: 'locked'; placedAt: string; threadId: string }
+  >;
+  nextCursor: string | null;
 }

@@ -1,0 +1,372 @@
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import type { SpaceSummary } from '@rally/contracts';
+import { BreakoutChipRow, type BreakoutMark } from '@rally/ui/components/breakout-marks';
+import { ChannelContainerMenu } from '@rally/ui/components/conversation-menus';
+import type { SidekickRow } from '@rally/ui/components/sidekick-section';
+import { SpaceIcon } from '@rally/ui/components/space-icon';
+import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
+import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { IconLock, IconPlus } from '@tabler/icons-react';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useMemo, useState } from 'react';
+import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
+
+import { ChannelComposer } from '../components/channel-composer';
+import { Button, EmptyState, InlineError, LoadingState, Modal } from '../components/primitives';
+import { RelativeTime } from '../components/relative-time';
+import { useAppSession } from '../lib/app-session';
+import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
+import { ChannelPaneContextValue, threadRoute, type ChannelPaneContext } from '../lib/navigation-routes';
+import { desktopBridge } from '../lib/platform';
+import { PINS_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
+import type { AutomationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
+import { useSpaceDirectories } from '../lib/use-space-directories';
+import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
+import { WorkstreamScreen } from './workstream';
+import type { PinList, SpaceDirectory } from '@rally/contracts';
+
+/**
+ * A Channel: a list of threads, and a composer that starts one. There is no
+ * conversation here — nothing is said in a Channel and nothing runs in it — so
+ * the screen is a feed of what has been started, each thread as its summary
+ * and the one chip every nested piece of AI work wears, and the composer below.
+ * See `docs/PRDs/2026-10-10_channels-threads-navigation/prd.md`.
+ */
+export function ChannelScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
+  const { channelId = '', '*': rest = '' } = useParams();
+  const threadId = /^threads\/([^/]+)$/.exec(rest)?.[1] ?? null;
+  return <ChannelStack channelId={channelId} threadId={threadId} workspace={workspace} />;
+}
+
+/**
+ * A Channel, and one of its threads open beside it: the first two panes of
+ * the stack. The thread pane is the ordinary thread screen; when it opens a
+ * breakout or a panel it needs both panes, and the Channel steps off screen to
+ * ride as the first breadcrumb (`docs/pane-stack.md`). The same two-slot layout
+ * a thread uses for its breakout, one level up, so both panes stay mounted —
+ * the Channel's composer and scroll survive a thread opening and closing.
+ */
+function ChannelStack({ channelId, threadId, workspace }: {
+  channelId: string;
+  threadId: string | null;
+  workspace: Workspace;
+}): React.JSX.Element {
+  const navigate = useNavigate();
+  const { session } = useAppSession();
+  const space = useChannel(channelId);
+  const [threadUsesTwoPanes, setThreadUsesTwoPanes] = useState(false);
+  const [shown, setShown] = useState<SplitConversationMode>('split');
+  const widthKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', 'thread-width');
+  const [threadWidth, setThreadWidth] = useState<number | null>(() => {
+    const stored = Number.parseFloat(readLayout(widthKey) ?? '');
+    return Number.isFinite(stored) ? stored : null;
+  });
+  const changeThreadWidth = useCallback((width: number): void => {
+    setThreadWidth(width);
+    writeLayout(widthKey, String(width));
+  }, [widthKey]);
+  const shifted = threadId !== null && (threadUsesTwoPanes || shown === 'breakout');
+  const pane = useMemo<ChannelPaneContext | null>(() => threadId === null ? null : ({
+    channelId,
+    crumb: {
+      key: `channel-container:${channelId}`,
+      icon: space ? <SpaceIcon size={18} space={space} /> : null,
+      title: space?.name ?? 'Channel',
+      label: `Back to ${space?.name ?? 'the channel'}`,
+      // Back one step: the Channel and this thread, whatever the thread had open.
+      onSelect: () => void navigate(threadRoute(threadId, channelId)),
+    },
+    shifted,
+    setThreadUsesTwoPanes,
+  }), [channelId, navigate, shifted, space, threadId]);
+  return <ChannelPaneContextValue.Provider value={pane}>
+    <SplitConversationLayout
+      breakout={threadId === null ? null : <WorkstreamRoute key={threadId} />}
+      breakoutWidth={threadWidth}
+      main={<ChannelPane channelId={channelId} openThreadId={threadId} workspace={workspace} />}
+      mode={threadId === null ? 'main' : threadUsesTwoPanes ? 'breakout' : 'split'}
+      onBreakoutWidthChange={changeThreadWidth}
+      onShownChange={setShown}
+    />
+  </ChannelPaneContextValue.Provider>;
+}
+
+/** The thread screen reads its id from the route, so it is mounted under `threads/:id`. */
+function WorkstreamRoute(): React.JSX.Element {
+  return <Routes>
+    <Route element={<WorkstreamScreen />} path="threads/:id" />
+  </Routes>;
+}
+
+/** The Channel's directory row, as the socket keeps it. */
+function useChannel(channelId: string): SpaceSummary | undefined {
+  const { active } = useSpaceDirectories();
+  return active.data?.items.find((space) => space.id === channelId);
+}
+
+type FeedRow =
+  | { kind: 'thread'; placedAt: string; thread: WorkstreamSummary }
+  | { kind: 'locked'; placedAt: string; threadId: string };
+
+function ChannelPane({ channelId, openThreadId, workspace }: {
+  channelId: string;
+  openThreadId: string | null;
+  workspace: Workspace;
+}): React.JSX.Element {
+  const { api } = useAppSession();
+  const navigate = useNavigate();
+  const { active } = useSpaceDirectories();
+  const space = useChannel(channelId);
+  const live = useWorkstreamsQuery();
+  const feed = useInfiniteQuery({
+    queryKey: channelFeedQueryKey(channelId),
+    queryFn: ({ pageParam, signal }) => api!.getChannelFeed(channelId, pageParam, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.nextCursor,
+    enabled: Boolean(api && channelId && space),
+  });
+  // The feed is the server's order and visibility; a row the socket already
+  // holds is drawn from the socket, so its dot and title move live. A thread
+  // started here a moment ago is in the socket's list before the feed is read
+  // again, so it is drawn at once.
+  const liveById = useMemo(() => new Map((live.data ?? []).map((row) => [row.id, row])), [live.data]);
+  const rows = useMemo<FeedRow[]>(() => {
+    const fetched = (feed.data?.pages ?? []).flatMap((page) => page.items);
+    const known = new Set(fetched.map((item) => item.kind === 'thread' ? item.thread.id : item.threadId));
+    const started = (live.data ?? [])
+      .filter((row) => row.pending && !known.has(row.id) && row.spaceIds.includes(channelId))
+      .map((thread): FeedRow => ({ kind: 'thread', placedAt: thread.createdAt ?? new Date().toISOString(), thread }));
+    return [...started, ...fetched.map((item): FeedRow => item.kind === 'thread'
+      ? { ...item, thread: liveById.get(item.thread.id) ?? item.thread }
+      : item)];
+  }, [channelId, feed.data, live.data, liveById]);
+  const members = useQuery({
+    queryKey: ['workspace-members'],
+    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
+    enabled: Boolean(api),
+    staleTime: 60_000,
+  });
+  const memberById = useMemo(() => new Map((members.data ?? []).map((member) => [member.id, member])), [members.data]);
+
+  if (active.data === undefined) return <LoadingState label="Opening channel…" />;
+  if (!space) return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
+  const openThread = (threadId: string): void => void navigate(threadRoute(threadId, channelId));
+  // Only a member may start a thread in a private Channel; a thread placed
+  // there is the Channel's to accept (`canEdit` on the server).
+  const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
+  return <div className="channel-screen">
+    <ChannelHeader members={members.data ?? []} space={space} workspace={workspace} />
+    <div className="channel-feed transcript-scroll">
+      {/* Newest nearest the composer: the list reads down to now. */}
+      <ol aria-label={`Threads in ${space.name}`} className="channel-feed-list">
+        {feed.hasNextPage && <li className="channel-feed-more">
+          <Button disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>Show earlier threads</Button>
+        </li>}
+        {[...rows].reverse().map((row) => row.kind === 'thread'
+          ? <ThreadCard
+            author={row.thread.createdByUserId ? memberById.get(row.thread.createdByUserId) : undefined}
+            key={row.thread.id}
+            onOpen={openThread}
+            open={row.thread.id === openThreadId}
+            placedAt={row.placedAt}
+            thread={row.thread}
+          />
+          : <LockedCard key={row.threadId} onOpen={openThread} placedAt={row.placedAt} threadId={row.threadId} />)}
+      </ol>
+      {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
+      {feed.isError && <InlineError>The threads in this channel couldn’t be loaded.</InlineError>}
+    </div>
+    {canStart && <ChannelComposer channelId={channelId} channelName={space.name} channelScope={space.scope} workspace={workspace} />}
+  </div>;
+}
+
+/**
+ * One thread in the feed: who started it and when, the thread's summary in a
+ * line or two, and the chip that opens it — the same chip a breakout wears
+ * under the message it came from, so nested AI work always looks the same.
+ */
+function ThreadCard({ author, onOpen, open, placedAt, thread }: {
+  author: WorkspaceMember | undefined;
+  onOpen: (threadId: string) => void;
+  open: boolean;
+  placedAt: string;
+  thread: WorkstreamSummary;
+}): React.JSX.Element {
+  const mark: BreakoutMark = {
+    substreamId: thread.id,
+    title: thread.pending ? 'Starting…' : thread.title,
+    unreadCount: thread.hasUnread ? 1 : 0,
+    youAreMentioned: thread.youAreMentioned,
+    unseen: thread.unseen,
+    needsInput: thread.harnessStatus === 'needs_input',
+  };
+  return <li className="channel-feed-item">
+    <div className="channel-feed-meta">
+      <strong>{author?.name ?? 'Rally'}</strong>
+      <span aria-hidden="true">·</span>
+      <RelativeTime value={placedAt} />
+    </div>
+    {thread.objective && <p className="channel-feed-summary">{thread.objective}</p>}
+    <BreakoutChipRow breakouts={[mark]} onOpen={onOpen} openSubstreamId={open ? thread.id : null} />
+  </li>;
+}
+
+/**
+ * A thread placed in this Channel that this person may not open: that it
+ * exists and when, and a way to ask. Nothing else about it is on the client.
+ */
+function LockedCard({ onOpen, placedAt, threadId }: {
+  onOpen: (threadId: string) => void;
+  placedAt: string;
+  threadId: string;
+}): React.JSX.Element {
+  return <li className="channel-feed-item is-locked">
+    <div className="channel-feed-meta">
+      <IconLock aria-hidden="true" size={13} stroke={1.8} />
+      <span>Private thread</span>
+      <span aria-hidden="true">·</span>
+      <RelativeTime value={placedAt} />
+    </div>
+    <div className="breakout-chip-row">
+      <button className="breakout-chip" onClick={() => onOpen(threadId)} type="button">
+        <IconLock aria-hidden="true" className="breakout-chip-icon" size={13} stroke={1.9} />
+        <span className="breakout-chip-title">Request access</span>
+      </button>
+    </div>
+  </li>;
+}
+
+/** The Channel's pill and its menu: people, privacy, pin and Sidekicks. */
+function ChannelHeader({ members, space, workspace }: {
+  members: readonly WorkspaceMember[];
+  space: SpaceSummary;
+  workspace: Workspace;
+}): React.JSX.Element {
+  const { api } = useAppSession();
+  const queryClient = useQueryClient();
+  const [failure, setFailure] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const pins = useQuery<PinList>({ queryKey: PINS_QUERY_KEY, queryFn: async () => [], enabled: false });
+  const library = useQuery<AutomationSummary[]>({ queryKey: ['automations'], queryFn: async () => [], enabled: false });
+  const member = workspace.currentUser.accessClass !== 'guest';
+  const editable = member && space.reach !== 'through_channel';
+  const general = space.systemRole === 'general';
+  const participantIds = space.participants.map((participant) => participant.userId as string);
+  const roster = participantIds.flatMap((id) => {
+    const found = members.find((candidate) => candidate.id === id);
+    return found ? [found] : [];
+  });
+  const stored = (next: SpaceSummary): void => {
+    queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current ? {
+      ...current,
+      items: current.items.map((item) => item.id === next.id ? next : item),
+    } : current);
+  };
+  const run = async (write: () => Promise<SpaceSummary>, copy: string): Promise<void> => {
+    setFailure(null);
+    try {
+      stored(await write());
+    } catch {
+      setFailure(copy);
+    }
+  };
+  const setAudience = (scope: 'personal' | 'workspace', ids: readonly string[]): Promise<void> => run(
+    () => api!.updateSpaceAudience(space.id, {
+      scope,
+      // A private Channel nobody is in is one nobody can open; the person
+      // making it private stays in it.
+      participantUserIds: [...new Set([...ids, ...(scope === 'personal' ? [workspace.currentUser.id] : [])])],
+    }),
+    scope === 'personal' ? 'This channel couldn’t be made private.' : 'This channel’s people couldn’t be updated.',
+  );
+  const pinned = (pins.data ?? []).some((pin) => pin.kind === 'channel' && pin.id === space.id);
+  const recommended = new Set(space.defaultSidekickIds);
+  const sidekicks: SidekickRow[] = (library.data ?? [])
+    .filter((sidekick) => recommended.has(sidekick.id))
+    .map((sidekick) => ({
+      id: sidekick.id,
+      name: sidekick.name,
+      description: sidekick.description,
+      ...(sidekick.appearance ? { appearance: sidekick.appearance } : {}),
+      ...(editable ? { onRemove: () => void run(() => api!.removeSpaceSidekick(space.id, sidekick.id), 'That Sidekick couldn’t be removed.') } : {}),
+    }));
+  const addable = (library.data ?? []).filter((sidekick) => !recommended.has(sidekick.id));
+  const level: TitlePillLevel = {
+    key: `channel-container:${space.id}`,
+    icon: <SpaceIcon size={18} space={space} />,
+    title: space.name,
+    label: `Channel menu: ${space.name}`,
+    menu: <ChannelContainerMenu
+      addSidekick={editable && addable.length > 0 ? <DropdownMenu.Sub>
+        <DropdownMenu.SubTrigger className="menu-item title-menu-item">
+          <IconPlus aria-hidden="true" size={16} stroke={1.8} /> Add Sidekick
+        </DropdownMenu.SubTrigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.SubContent className="menu-content" sideOffset={6}>
+            {addable.map((sidekick) => <TitleMenuItem
+              icon={null}
+              key={sidekick.id}
+              onSelect={() => void run(() => api!.addSpaceSidekick(space.id, sidekick.id), 'That Sidekick couldn’t be added.')}
+            >{sidekick.name}</TitleMenuItem>)}
+          </DropdownMenu.SubContent>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Sub> : undefined}
+      channel={{ name: space.name, scope: space.scope }}
+      members={roster}
+      onOpenSidekick={(id) => void desktopBridge().openSidekicks(id)}
+      onRename={editable && !general ? () => setRenaming(space.name) : undefined}
+      people={editable ? {
+        candidates: members.filter((candidate) => !participantIds.includes(candidate.id) && (candidate.status ?? 'active') === 'active'),
+        adding,
+        currentUserId: workspace.currentUser.id,
+        ...(failure ? { error: failure } : {}),
+        onAdd: async (person) => {
+          setAdding(true);
+          try { await setAudience(space.scope, [...participantIds, person.id]); } finally { setAdding(false); }
+        },
+        onRemove: (person) => void setAudience(space.scope, participantIds.filter((id) => id !== person.id)),
+      } : undefined}
+      pinned={api ? {
+        on: pinned,
+        onChange: (next) => void api.setPinned('channel', space.id, next)
+          .then((list) => queryClient.setQueryData(PINS_QUERY_KEY, list))
+          .catch(() => setFailure('This channel couldn’t be pinned.')),
+      } : undefined}
+      privacy={editable && !general ? {
+        on: space.scope === 'personal',
+        onChange: (next) => void setAudience(next ? 'personal' : 'workspace', participantIds),
+      } : undefined}
+      sidekicks={sidekicks}
+    />,
+  };
+  return <>
+    <div className="channel-header">
+      <TitlePillHeader current={level} />
+    </div>
+    {failure && <InlineError>{failure}</InlineError>}
+    <Modal
+      footer={<>
+        <Button onClick={() => setRenaming(null)}>Cancel</Button>
+        <Button
+          className="button-primary"
+          disabled={!renaming?.trim() || renaming.trim() === space.name}
+          onClick={() => {
+            const name = renaming?.trim() ?? '';
+            setRenaming(null);
+            void run(() => api!.updateSpacePresentation(space.id, { name, iconKey: space.iconKey, colorKey: space.colorKey }), 'This channel couldn’t be renamed.');
+          }}
+        >Rename</Button>
+      </>}
+      onOpenChange={(open) => { if (!open) setRenaming(null); }}
+      open={renaming !== null}
+      title="Rename channel"
+    >
+      <label className="form-field">
+        <span>Name</span>
+        <input autoFocus maxLength={180} onChange={(event) => setRenaming(event.target.value)} value={renaming ?? ''} />
+      </label>
+    </Modal>
+  </>;
+}
+
