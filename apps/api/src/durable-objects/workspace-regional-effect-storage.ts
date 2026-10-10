@@ -3,6 +3,7 @@ import type {
   WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
 import { isPersonNotificationEffect } from "@rally/contracts/conversation-effects";
+import { isBreakoutActivityEvent } from "./breakout-activity";
 
 // Conversation-parent effect receipts are a replay fence, not history. After this
 // window a redelivery falls back to the idempotent product guards
@@ -80,13 +81,17 @@ export function applyWorkstreamRegionalEnvelope(
     }
     let notificationIntentId: string | null = null;
     if (effect.kind === "activity_event") {
+      // A breakout's mention is its author's to read back and nobody else's:
+      // the parent thread's participants are not the breakout's
+      // (`breakout-activity.ts`). Its target edges are what the Activity tab reads.
+      const breakout = isBreakoutActivityEvent(effect) && request.actorUserId !== null;
       storage.sql.exec(
         `INSERT OR IGNORE INTO workspace_activity_events (
           event_id, event_type, subject_type, subject_id, subject_sequence_number,
           actor_type, actor_user_id, actor_label, title, body, canonical_url,
           audience_kind, audience_user_id, audience_workstream_id, digestible,
           occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json
-        ) VALUES (?, ?, 'workstream', ?, ?, ?, ?, ?, ?, ?, ?, 'workstream', NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, 'workstream', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         effect.eventId,
         effect.eventType,
         envelope.parentId,
@@ -97,7 +102,9 @@ export function applyWorkstreamRegionalEnvelope(
         effect.title,
         effect.body,
         effect.canonicalUrl,
-        envelope.parentId,
+        breakout ? "user" : "workstream",
+        breakout ? request.actorUserId : null,
+        breakout ? null : envelope.parentId,
         effect.digestible ? 1 : 0,
         epochMs(effect.occurredAt),
         now,

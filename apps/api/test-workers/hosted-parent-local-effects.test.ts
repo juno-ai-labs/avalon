@@ -127,8 +127,8 @@ const activity: ConversationEffect = {
   targets: [],
 };
 
-/** What the Channel's Main conversation stamps on an effect it sends its parent. */
-function childEnvelope(sourceVersion: number, effect: ConversationEffect) {
+/** What the Channel's Main conversation, or one of its breakouts, stamps on an effect it sends its parent. */
+function childEnvelope(sourceVersion: number, effect: ConversationEffect, substreamId = "0") {
   return ConversationEffectEnvelopeSchema.parse({
     kind: "conversation_effect",
     contractVersion: 1,
@@ -136,7 +136,7 @@ function childEnvelope(sourceVersion: number, effect: ConversationEffect) {
     workspaceId: WORKSPACE_ID,
     parentKind: "workstream",
     parentId: CHANNEL_ID,
-    substreamId: "0",
+    substreamId,
     generation: 1,
     messageId: `00000000-0000-7000-8000-0000000f${String(sourceVersion).padStart(4, "0")}`,
     partitionKey: effect.kind === "directory_user" ? `user:${effect.userId}` : "common",
@@ -258,6 +258,46 @@ describe("a hosted parent's write", () => {
         outbox: [],
         receipts: before + envelopes.length,
       });
+    });
+  });
+
+  it("forwards a breakout's mention without its text or a reader beyond its author, and drops one that names nobody", async () => {
+    await parkActivityQueue();
+    const message = (dedupeKey: string, targets: Array<{ userId: string; relation: string }>): ConversationEffect => ({
+      ...activity,
+      eventId: dedupeKey === "breakout-mention" ? "00000000-0000-7000-8000-000000000f21" : "00000000-0000-7000-8000-000000000f22",
+      actorType: "user",
+      actorUserId: USER_ID,
+      actorLabel: "Avery",
+      body: "The private plan, in the breakout",
+      digestible: true,
+      sourceKind: "workstream_message",
+      sourceId: dedupeKey,
+      dedupeKey,
+      metadata: { substreamId: BREAKOUT_ID },
+      targets,
+    });
+    await runInDurableObject(workspace(), async (instance, state) => {
+      await instance.reserveChild(reservation);
+      await instance.receiveChildEffects({
+        substreamId: asSubstreamId(BREAKOUT_ID),
+        envelopes: [
+          childEnvelope(1, message("breakout-mention", [
+            { userId: OTHER_USER_ID, relation: "mentioned" }, { userId: USER_ID, relation: "participant" },
+          ]), BREAKOUT_ID),
+          childEnvelope(2, message("breakout-chatter", [{ userId: USER_ID, relation: "participant" }]), BREAKOUT_ID),
+        ],
+      });
+      const sql = state.storage.sql;
+      expect(sql.exec(`SELECT dedupe_key, body, digestible, audience_kind, audience_user_id, audience_workstream_id
+                         FROM workspace_activity_events WHERE dedupe_key LIKE 'breakout-%'`).toArray()).toEqual([{
+        dedupe_key: "breakout-mention", body: "", digestible: 0,
+        audience_kind: "user", audience_user_id: USER_ID, audience_workstream_id: null,
+      }]);
+      expect(sql.exec(`SELECT target.user_id, target.relation FROM workspace_activity_event_targets target
+                         JOIN workspace_activity_events event ON event.event_id = target.event_id
+                        WHERE event.dedupe_key = 'breakout-mention'`).toArray())
+        .toEqual([{ user_id: OTHER_USER_ID, relation: "mentioned" }]);
     });
   });
 

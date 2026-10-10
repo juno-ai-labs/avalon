@@ -199,16 +199,26 @@ for one person, newest first:
 
 Every row passes the listing rules at read time, a breakout through both of the
 conversation page's gates, and is dropped when the person may not list its
-conversation now. That is what lets breakout events, which the digest's
-audience rule keeps from the shared digest, reach the one person who may see
-them. Nothing here changes what a digest reads. Read state is one time per
+conversation now.
+
+**A breakout's mentions** reach the log in one narrow shape
+(`breakout-activity.ts`). A breakout is private to the people in it, and a
+`workstream`-audience event reaches every participant of the parent thread
+through `listActivityEvents`. So the parent forwards a breakout's message event
+only when it names somebody, and forwards it emptied: no body, `digestible:
+false`, its targets the mentions alone. WorkspaceDO stores it with the author as
+its `user` audience, the one reader who could already see it, and sends it to
+no further consumer. The work-opportunity lookup needs a thread audience and
+finds none. The Activity tab reads its target edge, and the breakout listing
+check above decides whether the person named sees it. Nothing here changes what
+a digest reads. Read state is one time per
 person (`workspace_activity_seen`, migration 97), moved forward by
 `PUT /navigation/activity/seen`.
 
 Starts are not read from the opening message's event. Driving the local stack
 showed that event does not reliably reach WorkspaceDO (only a handful of
-thread-level activity receipts for dozens of threads), and a breakout's is never
-forwarded (`forwardsChildEffect`). The directory row is what every other list
+thread-level activity receipts for dozens of threads), and a breakout's is not
+forwarded unless it names somebody (`forwardsChildEffect`). The directory row is what every other list
 here is drawn from, so a start appears exactly when the thread does. Starts
 carry the starter's id and an empty label; the client names them from the
 member directory, as the Channel feed names its authors.
@@ -764,7 +774,10 @@ already say each of those, so new producers would only duplicate them.
 
 **Consequences:** A digest is unchanged: it ignores the new metadata and reads
 `mentioned` targets as involvement, as it always read `involved`. A run that
-finishes twice shows once, at its latest finish.
+finishes twice shows once, at its latest finish. A breakout's mention reaches the
+log emptied and readable by its author alone, so the Activity tab can show it
+without the shared log carrying breakout text. Any future reader of the log
+must keep to the audience columns, or it will see these rows.
 
 ### 2026-09-14 — Share notification eligibility with Apple push
 
