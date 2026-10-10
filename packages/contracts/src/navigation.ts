@@ -56,6 +56,19 @@ export const ChannelStatsSchema = z.strictObject({
   channelId: IdSchema,
   threadCount: z.number().int().nonnegative(),
   lastActivityAt: z.string().datetime({ offset: true }).nullable(),
+  /**
+   * The Channel's unread state, in the same fields and with the same meaning
+   * a thread or a breakout carries: each thread placed in the Channel takes
+   * the next attention sequence number, and the viewer's read position is
+   * acknowledged the way a conversation's is. Only a placement advances it.
+   * A guest is never unread (they see no locked rows).
+   */
+  latestAttentionSequenceNumber: z.number().int().nonnegative(),
+  readThroughSequenceNumber: z.number().int().nonnegative(),
+  manualUnreadFromSequenceNumber: z.number().int().positive().nullable(),
+  manualUnreadGeneration: z.number().int().nonnegative(),
+  firstUnreadSequenceNumber: z.number().int().positive().nullable(),
+  hasUnread: z.boolean(),
 });
 export type ChannelStats = z.infer<typeof ChannelStatsSchema>;
 

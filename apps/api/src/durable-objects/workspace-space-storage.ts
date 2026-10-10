@@ -26,6 +26,7 @@ import {
 } from "@rally/contracts";
 
 import { boundParameterChunks } from "./bound-parameters";
+import { channelReadState, type ChannelReadRow, type ChannelReadState } from "./workspace-channel-read-storage";
 import {
   breakoutListedSql,
   mainOpenableSql,
@@ -792,6 +793,7 @@ const EMPTY_DIRECTORY: SpaceDirectory = SpaceDirectorySchema.parse({ waterline: 
 export class WorkspaceSpaceStorage {
   private tablesPresent: boolean | null = null;
   private breakoutTablesPresent: boolean | null = null;
+  private readTablesPresent: boolean | null = null;
   /** Sidekick defaults this instance wrote onto a Channel in place; the caller refreshes the rails when nonzero. */
   sidekickDefaultsApplied = 0;
 
@@ -854,6 +856,18 @@ export class WorkspaceSpaceStorage {
       sql: spaceListedSql(space, spaceViewer, viewer.accessClass, { breakouts }),
       binds: breakouts ? [viewer.userId, viewer.userId] : [viewer.userId],
     };
+  }
+
+  /**
+   * Whether this object has reached migration 98, which gave a Channel its
+   * waterline. Asked for the reason {@link ready} is: an object can hold Space
+   * tables on a schema that stops short of the newest migration.
+   */
+  readsReady(): boolean {
+    this.readTablesPresent ??= this.storage.sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'space_reads'`,
+    ).toArray().length === 1;
+    return this.readTablesPresent;
   }
 
   breakoutsReady(): boolean {
@@ -1748,17 +1762,21 @@ export class WorkspaceSpaceStorage {
     viewer: Viewer,
     spaceId: string,
     cursor: string | null,
-  ): { items: Array<{ workstreamId: string; placedAt: number; openable: boolean }>; nextCursor: string | null }
-    | "invalid_cursor" | false {
+  ): {
+    items: Array<{ workstreamId: string; placedAt: number; attentionOrdinal: number; openable: boolean }>;
+    nextCursor: string | null;
+  } | "invalid_cursor" | false {
     if (this.reach(viewer, spaceId) === null) return false;
     const after = cursor === null ? null : decodeConversationCursor(cursor);
     if (cursor !== null && after === null) return "invalid_cursor";
+    const attention = this.readsReady() ? "COALESCE(membership.attention_ordinal, 0)" : "0";
     const rows = this.storage.sql.exec<{
       workstream_id: string;
       joined_at: number;
+      attention_ordinal: number;
       openable: number;
     } & Record<string, SqlStorageValue>>(
-      `SELECT membership.workstream_id, membership.joined_at,
+      `SELECT membership.workstream_id, membership.joined_at, ${attention} AS attention_ordinal,
               CASE WHEN ${mainOpenableSql("directory", "viewer", viewer.accessClass)} THEN 1 ELSE 0 END AS openable
          FROM space_channel_memberships membership
          JOIN channels directory
@@ -1790,6 +1808,7 @@ export class WorkspaceSpaceStorage {
       items: rows.map((row) => ({
         workstreamId: row.workstream_id,
         placedAt: row.joined_at,
+        attentionOrdinal: row.attention_ordinal,
         openable: row.openable === 1,
       })),
       nextCursor: hasMore && last
@@ -1909,16 +1928,24 @@ export class WorkspaceSpaceStorage {
   }
 
   /**
-   * For each Space this viewer may list, how many threads in it they may list
-   * and when the newest of those last moved: the Channels tab's second line.
+   * For each Space this viewer may list, how many threads in it they may list,
+   * when the newest of those last moved, and the viewer's read state in it:
+   * the Channels tab's second line and its unread dot.
    *
    * One grouped pass over the active memberships of the listed Spaces, the
-   * same cost {@link attentionCounts} pays. A Space with nothing listable in it
-   * is still answered, with zero and no time.
+   * same cost {@link attentionCounts} pays, plus the listing query reading the
+   * waterline columns beside each Space id. A Space with nothing listable in
+   * it is still answered, with zero and no time.
    */
-  channelStats(viewer: Viewer): Array<{ spaceId: string; threadCount: number; lastActivityAt: number | null }> {
+  channelStats(viewer: Viewer, onlySpaceId?: string): Array<{
+    spaceId: string;
+    threadCount: number;
+    lastActivityAt: number | null;
+    read: ChannelReadState;
+  }> {
     if (!this.ready()) return [];
-    const spaceIds = this.visibleSpaceIds(viewer);
+    const reads = this.visibleSpaceReads(viewer, onlySpaceId);
+    const spaceIds = [...reads.keys()];
     if (spaceIds.length === 0) return [];
     const listed = this.channelListing(viewer);
     const counted = new Map<string, { count: number; last: number | null }>();
@@ -1953,7 +1980,116 @@ export class WorkspaceSpaceStorage {
       spaceId,
       threadCount: counted.get(spaceId)?.count ?? 0,
       lastActivityAt: counted.get(spaceId)?.last ?? null,
+      read: reads.get(spaceId) as ChannelReadState,
     }));
+  }
+
+  /**
+   * {@link visibleSpaceIds} with each Space's read state for this viewer, in
+   * the same order. On an object short of migration 98 every Channel reads as
+   * caught up at zero.
+   */
+  private visibleSpaceReads(viewer: Viewer, onlySpaceId?: string): Map<string, ChannelReadState> {
+    const listed = this.spaceListing(viewer);
+    const columns = this.readsReady()
+      ? `space.latest_attention_ordinal, space.unread_tracking_start_ordinal,
+         reads.seen_attention_ordinal, reads.manual_unread_from_ordinal, reads.manual_unread_generation`
+      : `0 AS latest_attention_ordinal, 0 AS unread_tracking_start_ordinal,
+         NULL AS seen_attention_ordinal, NULL AS manual_unread_from_ordinal, 0 AS manual_unread_generation`;
+    const join = this.readsReady()
+      ? "LEFT JOIN space_reads reads ON reads.space_id = space.space_id AND reads.user_id = ?1"
+      : "";
+    const rows = this.storage.sql.exec<{ space_id: string } & ChannelReadRow & Record<string, SqlStorageValue>>(
+      `SELECT space.space_id, ${columns}
+         FROM spaces space
+         LEFT JOIN space_viewers viewer
+           ON viewer.space_id = space.space_id
+          AND viewer.user_id = ?1 AND viewer.is_participant = 1
+         ${join}
+        WHERE space.archived_at IS NULL
+          AND (?2 IS NULL OR space.space_id = ?2)
+          AND ${listed.sql}
+        ORDER BY space.created_at, space.space_id`,
+      viewer.userId,
+      onlySpaceId ?? null,
+      ...listed.binds,
+    ).toArray();
+    return new Map(rows.map((row) => [row.space_id, channelReadState(row, viewer.accessClass === "guest")]));
+  }
+
+  /**
+   * Move this viewer's read position in a Channel forward, never back, and
+   * clear their manual unread mark when it is the one they saw.
+   *
+   * The thread acknowledgement's rule (`acknowledgeRead` in
+   * `workstream-object-product.ts`) against this Channel's columns, except
+   * that a position past the waterline is clamped rather than refused: a
+   * client can hold a feed row a moment longer than the waterline it read, and
+   * the answer is the same either way. `false` for a Channel this viewer
+   * cannot list, the same refusal the feed gives.
+   */
+  acknowledgeRead(
+    viewer: Viewer,
+    spaceId: string,
+    readThrough: number,
+    observedManualUnreadGeneration: number,
+    now = Date.now(),
+  ): ChannelReadState | false {
+    if (!this.ready() || !this.readsReady()) return false;
+    return this.storage.transactionSync(() => {
+      const current = this.visibleSpaceReads(viewer, spaceId).get(spaceId);
+      if (!current) return false;
+      const seen = Math.min(readThrough, current.latestAttentionSequenceNumber);
+      this.storage.sql.exec(
+        `INSERT INTO space_reads (space_id, user_id, seen_attention_ordinal, manual_unread_from_ordinal,
+                                  manual_unread_generation, updated_at)
+         SELECT ?1, ?2, MAX(space.unread_tracking_start_ordinal, ?3), NULL, 0, ?4
+           FROM spaces space WHERE space.space_id = ?1
+         ON CONFLICT(space_id, user_id) DO UPDATE SET
+           seen_attention_ordinal = MAX(
+             COALESCE(space_reads.seen_attention_ordinal, excluded.seen_attention_ordinal),
+             excluded.seen_attention_ordinal),
+           manual_unread_from_ordinal = CASE
+             WHEN space_reads.manual_unread_generation = ?5
+              AND ?3 >= COALESCE(space_reads.manual_unread_from_ordinal, ?3)
+             THEN NULL ELSE space_reads.manual_unread_from_ordinal END,
+           updated_at = excluded.updated_at`,
+        spaceId,
+        viewer.userId,
+        seen,
+        now,
+        observedManualUnreadGeneration,
+      );
+      return this.visibleSpaceReads(viewer, spaceId).get(spaceId) ?? false;
+    });
+  }
+
+  /**
+   * Mark a Channel unread from its newest placement, as a thread's "mark
+   * unread" does. A Channel nothing was ever placed in has nothing to mark and
+   * answers unchanged. `false` for a Channel this viewer cannot list.
+   */
+  markUnread(viewer: Viewer, spaceId: string, now = Date.now()): ChannelReadState | false {
+    if (!this.ready() || !this.readsReady()) return false;
+    return this.storage.transactionSync(() => {
+      const current = this.visibleSpaceReads(viewer, spaceId).get(spaceId);
+      if (!current) return false;
+      if (current.latestAttentionSequenceNumber === 0) return current;
+      this.storage.sql.exec(
+        `INSERT INTO space_reads (space_id, user_id, seen_attention_ordinal, manual_unread_from_ordinal,
+                                  manual_unread_generation, updated_at)
+         VALUES (?1, ?2, NULL, ?3, 1, ?4)
+         ON CONFLICT(space_id, user_id) DO UPDATE SET
+           manual_unread_from_ordinal = excluded.manual_unread_from_ordinal,
+           manual_unread_generation = space_reads.manual_unread_generation + 1,
+           updated_at = excluded.updated_at`,
+        spaceId,
+        viewer.userId,
+        current.latestAttentionSequenceNumber,
+        now,
+      );
+      return this.visibleSpaceReads(viewer, spaceId).get(spaceId) ?? false;
+    });
   }
 
   /**
@@ -2437,6 +2573,9 @@ export class WorkspaceSpaceStorage {
       request.workstreamId,
       request.targetMembershipGeneration,
     );
+    if (targetState !== "active") {
+      this.stampPlacements(request.targetSpaceId, [request.workstreamId], request.userId, now);
+    }
     this.storage.sql.exec(
       `UPDATE space_channel_memberships
           SET state = 'removed', generation = generation + 1, updated_at = ?, removed_at = ?
@@ -2584,6 +2723,13 @@ export class WorkspaceSpaceStorage {
       ).toArray()[0];
       if (!space) return false;
       if (space.revision !== request.spaceRevision) return "conflict";
+      // Read before the update so an idempotent re-add of a row that is
+      // already active does not take a fresh ordinal: only a placement does.
+      const wasActive = this.storage.sql.exec<{ state: string } & Record<string, SqlStorageValue>>(
+        `SELECT state FROM space_channel_memberships WHERE space_id = ? AND workstream_id = ?`,
+        request.spaceId,
+        request.workstreamId,
+      ).toArray()[0]?.state === "active";
       // `active` as well as `joining`, at the *same* generation. `prepareMembership`
       // answers an already-active row with its current generation rather than
       // staging a new one, so re-adding a Channel a Space already holds arrives
@@ -2602,6 +2748,7 @@ export class WorkspaceSpaceStorage {
         request.membershipGeneration,
       ).toArray()[0];
       if (!activated) return false;
+      if (!wasActive) this.stampPlacements(request.spaceId, [request.workstreamId], request.userId, now);
       this.advanceWaterline(now);
       return this.space(request.spaceId, member(request.userId));
     });
@@ -2668,6 +2815,7 @@ export class WorkspaceSpaceStorage {
           now,
           now,
         );
+        this.stampPlacements(request.spaceId, [request.workstreamId], request.userId, now);
         this.advanceWaterline(now);
       }
       const space = this.space(request.spaceId, member(request.userId));
@@ -2896,6 +3044,7 @@ export class WorkspaceSpaceStorage {
             now, intent.spaceId, workstreamId, generation,
           ).toArray()[0];
           if (activated) {
+            this.stampPlacements(intent.spaceId, [workstreamId], intent.requestedByUserId, now);
             this.stageDefaultsForMember(intent.spaceId, workstreamId, generation, intent.requestedByUserId, now);
             this.advanceWaterline(now);
           }
@@ -2928,11 +3077,13 @@ export class WorkspaceSpaceStorage {
             // The archive cannot finish as its requester, so it is taken back:
             // the memberships it staged return rather than sit `removing`
             // under a Space that is still live.
-            this.storage.sql.exec(
+            const returned = this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
               `UPDATE space_channel_memberships SET state = 'active', generation = generation + 1, updated_at = ?
-                WHERE space_id = ? AND state = 'removing'`,
+                WHERE space_id = ? AND state = 'removing'
+                RETURNING workstream_id`,
               now, intent.spaceId,
-            );
+            ).toArray().map((row) => row.workstream_id);
+            this.stampPlacements(intent.spaceId, returned, intent.requestedByUserId, now);
             this.advanceWaterline(now);
             settle("archive_abandoned");
           } else {
@@ -3059,13 +3210,15 @@ export class WorkspaceSpaceStorage {
         spaceId,
       ).toArray()[0];
       if (!restored) return false;
-      this.storage.sql.exec(
+      const returned = this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE space_channel_memberships
             SET state = 'active', generation = generation + 1, updated_at = ?
-          WHERE space_id = ? AND state = 'removing'`,
+          WHERE space_id = ? AND state = 'removing'
+          RETURNING workstream_id`,
         now,
         spaceId,
-      );
+      ).toArray().map((row) => row.workstream_id);
+      this.stampPlacements(spaceId, returned, userId, now);
       this.appendOrder(workspaceId, userId, spaceId, now);
       this.advanceWaterline(now);
       return this.space(spaceId, member(userId));
@@ -4625,6 +4778,59 @@ export class WorkspaceSpaceStorage {
       spaceId,
       kind,
     ).toArray().map((row) => row.target_id);
+  }
+
+  /**
+   * Give each newly active placement the Channel's next attention ordinal, in
+   * the caller's transaction, and count it read for whoever placed it.
+   *
+   * The one place a Channel's waterline moves. Called only on a transition
+   * into `active` — a fresh placement, a re-add of a removed one, a move's
+   * target, a restore — never on an idempotent settle of a row that was
+   * already active, so a re-add after a removal takes a higher ordinal than
+   * the one it had and a removal never lowers the waterline. Ordered by
+   * `(joined_at, workstream_id)` so a restore numbers its rows the way the
+   * migration 98 backfill does.
+   *
+   * The placer's read position rises to the newest ordinal: your own placement
+   * is not news to you, the way your own message is not unread to you.
+   */
+  private stampPlacements(spaceId: string, workstreamIds: readonly string[], placerUserId: string, now: number): void {
+    if (workstreamIds.length === 0 || !this.readsReady()) return;
+    const ordered = this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT workstream_id FROM space_channel_memberships
+        WHERE space_id = ? AND workstream_id IN (SELECT value FROM json_each(?))
+        ORDER BY joined_at, workstream_id`,
+      spaceId,
+      JSON.stringify(workstreamIds),
+    ).toArray().map((row) => row.workstream_id);
+    let latest = 0;
+    for (const workstreamId of ordered) {
+      latest = this.storage.sql.exec<{ latest_attention_ordinal: number } & Record<string, SqlStorageValue>>(
+        `UPDATE spaces SET latest_attention_ordinal = latest_attention_ordinal + 1
+          WHERE space_id = ? RETURNING latest_attention_ordinal`,
+        spaceId,
+      ).one().latest_attention_ordinal;
+      this.storage.sql.exec(
+        `UPDATE space_channel_memberships SET attention_ordinal = ? WHERE space_id = ? AND workstream_id = ?`,
+        latest,
+        spaceId,
+        workstreamId,
+      );
+    }
+    if (latest === 0) return;
+    this.storage.sql.exec(
+      `INSERT INTO space_reads (space_id, user_id, seen_attention_ordinal, manual_unread_from_ordinal,
+                                manual_unread_generation, updated_at)
+       VALUES (?1, ?2, ?3, NULL, 0, ?4)
+       ON CONFLICT(space_id, user_id) DO UPDATE SET
+         seen_attention_ordinal = MAX(COALESCE(space_reads.seen_attention_ordinal, 0), excluded.seen_attention_ordinal),
+         updated_at = excluded.updated_at`,
+      spaceId,
+      placerUserId,
+      latest,
+      now,
+    );
   }
 
   private advanceWaterline(now: number): void {

@@ -11,6 +11,7 @@ import {
   SpaceChannelPageSchema,
   type ActivityPage,
   type ChannelFeedPage,
+  type ChannelStats,
   type ChannelStatsList,
   type MyThreadsPage,
   type PinKind,
@@ -32,6 +33,7 @@ import {
   WorkspaceActivityResultSchema,
   WorkspaceChannelFeedResultSchema,
   WorkspaceChannelStatsResultSchema,
+  WorkspaceSpaceReadResultSchema,
   WorkspaceMyThreadsResultSchema,
   WorkspacePinResultSchema,
   type WorkspacePinResult,
@@ -267,6 +269,48 @@ export class SpaceService {
     }));
     if (!result.ok) throw spaceRefusal(result.code, "");
     return result.stats;
+  }
+
+  /**
+   * Acknowledge a Channel read through a placement, answered with the
+   * person's `ChannelStats` row for it. A support session reads without moving
+   * the person's position (`docs/impersonation.md`), as a thread's
+   * acknowledgement does.
+   */
+  async acknowledgeRead(
+    spaceId: SpaceId,
+    input: { readThroughSequenceNumber: number; observedManualUnreadGeneration: number },
+  ): Promise<ChannelStats> {
+    if (this.auth.impersonatorUserId) return this.currentChannelStats(spaceId);
+    return this.channelReadAnswer(await (await this.workspace()).acknowledgeSpaceRead({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      spaceId,
+      readThroughSequenceNumber: input.readThroughSequenceNumber,
+      observedManualUnreadGeneration: input.observedManualUnreadGeneration,
+    }));
+  }
+
+  /** Mark a Channel unread from its newest placement. */
+  async markUnread(spaceId: SpaceId): Promise<ChannelStats> {
+    if (this.auth.impersonatorUserId) return this.currentChannelStats(spaceId);
+    return this.channelReadAnswer(await (await this.workspace()).markSpaceUnread({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      spaceId,
+    }));
+  }
+
+  private channelReadAnswer(result: unknown): ChannelStats {
+    const parsed = WorkspaceSpaceReadResultSchema.parse(result);
+    if (!parsed.ok) throw spaceRefusal(parsed.code, "");
+    return parsed.stats;
+  }
+
+  private async currentChannelStats(spaceId: SpaceId): Promise<ChannelStats> {
+    const stats = (await this.listChannelStats()).find((row) => row.channelId === spaceId);
+    if (!stats) throw spaceRefusal("space_not_found", "");
+    return stats;
   }
 
   async listPins(): Promise<PinList> {

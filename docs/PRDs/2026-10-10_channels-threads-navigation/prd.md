@@ -108,7 +108,8 @@ that showed what a nested layout costs.
    inference and its own PRD.
 4. **Unread dots and new-thread counts on Channels are rejected for now** by the
    product owner. Channels are a place to find things, not a second queue. The
-   Threads count is the one number to watch.
+   Threads count is the one number to watch. *Reversed for the dot: see the
+   decision log, "Channels get an unread dot from placements only".*
 5. **Nested breakouts are rejected.** A breakout cannot have its own breakout.
    The pane stack stays two deep for any piece of work, and a breakout is
    already a sub-task.
@@ -416,6 +417,35 @@ every creator, then limited to the person-started route
 (`narrowInPrivateSpaces`): a connector such as Slack resolves its own audience
 from its room, and narrowing it left a public Slack channel's thread unreadable
 to that channel's members.
+
+### 2026-10-10 — Channels get an unread dot from placements only
+
+**Decided:** A Channel row shows a red dot when a thread was placed in it since
+the person last opened it, and the Channels list gains Recent and
+Needs-attention sorts. Only a placement advances a Channel's waterline:
+activity inside a thread already in the Channel does not. The waterline and
+read position use the columns a thread and a breakout already use
+(`latest_attention_ordinal`, `unread_tracking_start_ordinal`,
+`seen_attention_ordinal`, the manual-unread pair), and a person acknowledges a
+Channel the way they acknowledge a conversation. A guest is never unread. New
+thread counts stay out.
+
+**Why:** The product owner asked for the dot and the two sorts after using the
+Channels tab. Placements are a Channel's own news; a thread's activity already
+has the thread's dot, and counting it twice would make every busy Channel
+permanently unread. The Channel stays in WorkspaceDO, because the feed is a
+per-viewer projection of mutable placements and WorkspaceDO owns the listing
+rules; moving it onto a SubstreamAgent would add a hop and a second authority
+over the same fact. Breakout-identical columns keep that move open: a future
+Channel SubstreamAgent under the Space's existing hosted parent
+(`hostedParent(spaceId)`) would write the same columns through directory
+effects.
+
+**Changes:** Reverses non-goal 4 for the dot. Adds WorkspaceDO migration 98, the
+`ChannelStats` read fields, the feed's `attentionSequenceNumber`, and
+`PATCH /spaces/:id/read-state` and `POST /spaces/:id/read-state/mark-unread`
+([`spaces.md`](../../spaces.md#the-channels-read-state)). Revisit the
+WorkspaceDO decision when Channels gain chat, mentions or typing.
 
 ## Key design decisions
 
