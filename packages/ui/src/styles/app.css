@@ -7535,6 +7535,12 @@ button.new-channel-popover-row:hover { background: var(--av-cmp-row-background-s
   .sidekicks-library-heading { flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
   .sidekicks-library-list { grid-template-columns: minmax(0, 1fr); }
   }
+/* On a phone the tab's close button sits where Settings puts its own: the top
+   right corner, not beside New Sidekick. */
+@media (max-width: 640px) {
+  .sidekicks-library { position: relative; }
+  .sidekicks-library-heading .settings-close { position: absolute; right: 12px; top: 15px; }
+}
 /* Same host measurement drives layout and conversation visibility. */
 .sidekick-detail[data-compact=true] {
   .sidekick-detail-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
