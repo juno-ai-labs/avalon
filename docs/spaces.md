@@ -1,5 +1,14 @@
 # Spaces
 
+> **A Space is now the product's Channel.** The navigation redesign
+> ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) shows each Space
+> as a **Channel**: a list of threads (the stored Channels) that a person starts
+> from its composer. The rows, ids, links and Slack bindings are the same; only
+> the product words moved, and this document keeps the storage ones. What the
+> redesign added on the server is under
+> [The Channel's reads](#the-channels-reads) and
+> [A Space may be private again](#a-space-may-be-private-again).
+
 A **Space** is how an Organization groups its Channels. It carries a name, an
 icon and colour, an Organization-wide audience, a participant list, resources and
 Sidekick recommendations, and every Channel in the Organization belongs to at
@@ -147,6 +156,20 @@ Only a newly reserved Space gets a pass; a replay of a stable creation id does
 not, and skips the icon in its "same Space?" comparison, because the first
 attempt's pass may already have written one. The desktop sidebar's **New
 space** sends no icon; a caller that sends one keeps it.
+
+### A Space may be private again
+
+The section below described the rule from migration 94 to the navigation
+redesign. A Space may now be private (`personal`) through an audience change:
+`UpdateSpaceAudienceRequest.scope` accepts both values again, while
+`CreateSpaceRequest.scope` still reads every creation as `workspace`, so every
+Space starts Organization-wide — including one created by an older desktop
+that sends `personal`. A private Space is listed to its participants alone; the
+rule is in [`listing-rules.md`](listing-rules.md). General refuses `personal`
+with `space_protected`, because it is every Channel's fallback home. Making a
+Space private still grants and removes no reader of any Channel in it, and only
+a participant may place a Channel into it (`canEdit`). Guests are shown only
+Organization-wide Spaces through `sharedNavigationSpaces`.
 
 ### Every Space is Organization-wide
 
@@ -1307,6 +1330,33 @@ and a Channel menu lists its Breakouts by latest activity; neither exposes a
 reorder gesture.
 An ordinary Channel can still be dragged onto a Space pill to move its placement or into the pinned section to pin it.
 
+### The Channel's reads
+
+Three reads serve the new sidebar and Channel screen, each one synchronous SQL
+read over the listing rules:
+
+- **`feedPage`** (`GET /spaces/:id/feed`, `listChannelFeed`): the Channels
+  placed in a Space, newest placement first, ordered by migration 97's
+  `space_channel_memberships(space_id, state, joined_at, workstream_id)` index.
+  A Channel the viewer may open comes back whole, with its description as the
+  one-to-two-line summary; one a member may not open is a locked row with its id
+  and placement time only. A guest gets no locked rows. Archived and system
+  Channels are left out.
+- **`participatingPage`** (`GET /navigation/threads`, `listMyThreads`): the
+  Channels and breakouts a person takes part in or pinned, newest activity
+  first — the conversation page's two-arm shape started from the person, through
+  migration 97's `(user_id, is_participant)` indexes on both viewer tables.
+- **`channelStats`**: per listed Space, how many Channels in it the viewer may
+  list and when the newest of those last moved. It rides the sidebar payload and
+  the Space snapshot as `channelStats`, beside the Spaces rather than on
+  `SpaceSummary`, which shipped desktops parse strictly. It is refreshed only
+  when the snapshot is.
+
+`listSpaceChannels` and `listMyThreads` share one projection,
+`conversationRows` in `workspace-do.ts`. The feed and the stats each cost one
+pass over a Space's active memberships, which for General is every Channel in
+the Organization, as the dashboard page already did.
+
 ## Invariants
 
 - **Seeing a Space is not access to anything in it, and is not permission to
@@ -1911,6 +1961,29 @@ whoever reads it afterwards; `space_default_delivery_failed` does the same for a
 default target.
 
 ## Changelog
+
+### 2026-10-10: A Space is the product's Channel, and may be private again
+
+**What changed:** A Space's audience may be `personal` again, by audience
+change only; a private Space is listed to its participants alone; General
+cannot be made private. The feed, participating and stats reads serve the new
+navigation.
+
+**Why:** The navigation redesign turns each Space into a Channel and lets a
+Channel be private
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)). Every Space
+already had the parts a Channel needs: rows with no conversation of their own,
+many-to-many placement, General, Slack room bindings and canonical links.
+
+**Considered and rejected:** A new channel table, which would copy rows,
+re-key pins, move hosted parents and D1 anchors, re-point Slack bindings and
+rewrite links for no product gain. Delta member routes beside the audience
+route: `noteSpaceAudience` already sets the scope and the whole participant set
+in one transaction.
+
+**Consequences:** Migration 94's "every Space is Organization-wide" no longer
+holds; its migration is not touched. Storage names stay, and the product words
+differ from them.
 
 ### 2026-10-08: A Space lists Organization invitees until they join
 

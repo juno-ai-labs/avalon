@@ -40,9 +40,23 @@ built from the one below it:
    Breakout in it is `listable` for this person
    (`channelReachedThroughBreakoutSql`). An Organization-wide Breakout inherits
    its Channel's audience, so it never lists a Channel by itself.
-5. **Space listed** (`spaceListedSql`). Organization-wide, a participant, or an
-   active placement of a Channel this person may list
-   (`spaceReachedThroughChannelSql`).
+5. **Space listed** (`spaceListedSql`). Organization-wide, a participant, or —
+   only while the Space is Organization-wide — an active placement of a Channel
+   this person may list (`spaceReachedThroughChannelSql`). A private Space is
+   the product's private Channel, so it is listed to its participants alone.
+
+In product words a Space is a **Channel** and a stored Channel is a **thread**
+([the navigation PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)).
+The rules keep the storage words.
+
+**One exception: the Channel feed's locked rows.** A Channel's feed
+(`feedPage` in `workspace-space-storage.ts`) lists every thread placed in it to
+a member who may see the Channel, and a thread that member may not open comes
+back as a locked row: its id and when it was placed, and nothing else — no
+title, summary, participants or activity. It is the one place a thread is named
+to somebody it is not listed to, by product decision, so a Channel's members
+see the whole shape of its work and can ask for access to a piece of it. A
+guest gets no locked rows.
 
 A call site passes a `Viewer` (`userId` and `accessClass`) and never branches
 on the access class itself. The socket pins the access class on its attachment
@@ -105,7 +119,17 @@ everyone's, because each answers only for what the person may already reach.
   its name and none of Main".
 - **Reach never flows down.** Seeing a Space or a Channel is never a reason to
   list what is in it. Breaking this lists private Breakouts to everyone in
-  their Channel. Guard: `space-conversation-page.test.ts`.
+  their Channel. Guard: `space-conversation-page.test.ts`. The feed's locked
+  rows are the one exception, and they carry an id and a time only.
+- **A private Space reaches nobody through a thread.** If the Space rule
+  admitted a private Space through a thread in it, every reader of one thread
+  would learn a private Channel's name. Guard:
+  `channels-threads-navigation.test.ts` "given a Channel made private, when a
+  member who is not in it reads it, then it does not exist for them even
+  through a thread in it".
+- **A locked row names nothing.** Guard: `channels-threads-navigation.test.ts`
+  "given a private thread in a Channel, when a member who cannot open it reads
+  the feed, then it is a locked row with nothing but its id".
 
 ## Boundary
 
@@ -143,6 +167,30 @@ Each rule has a test that fails when it is broken: Breakout reach
 (`channel-rails`). The client half is `app-shell.test.tsx`.
 
 ## Changelog
+
+### 2026-10-10 — A private Space is listed to its participants alone, and the feed names locked threads
+
+**What changed:** The Space rule's third arm, reach through a listable thread,
+now applies only to an Organization-wide Space. A Space may be private again
+(it is the product's Channel), and a private one is listed to its participants.
+`sharedNavigationSpaces` names only Organization-wide Spaces to a guest. The
+Channel feed lists threads a member may not open as locked rows with an id and
+a time.
+
+**Why:** The navigation redesign makes a Space the product's Channel and lets a
+Channel be private
+([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)). Under the old rule
+anybody who could read one thread in a private Channel was told its name, which
+is the one thing making it private is for. The locked rows are the product
+owner's call: a Channel's members see that work exists and can ask for it.
+
+**Considered and rejected:** Omitting threads a member cannot open from the
+feed. It kept the ladder exceptionless, but the product owner chose to show the
+shape of the Channel's work.
+
+**Consequences:** A member never has `through_channel` reach any more; it arises
+only for a guest in an Organization-wide Space. The locked row must never gain
+a field beyond its id and placement time.
 
 ### 2026-10-03 — One listing ladder for members and guests
 

@@ -77,6 +77,9 @@ import {
   automationTriggersAdmitResourceType,
   IdSchema,
   SpaceConversationSchema,
+  type ChannelStats,
+  type Pin,
+  type PinKind,
   type SpaceConversation,
   UserIdSchema,
   SubstreamIdSchema,
@@ -658,6 +661,22 @@ import {
   WorkspaceSpaceBootstrapStatusSchema,
   WorkspaceSpaceChannelPageRequestSchema,
   WorkspaceSpaceChannelPageResultSchema,
+  WorkspaceChannelFeedResultSchema,
+  WorkspaceActivityResultSchema,
+  WorkspaceActivitySeenRequestSchema,
+  type WorkspaceActivityResult,
+  type WorkspaceActivitySeenRequest,
+  WorkspaceMyThreadsRequestSchema,
+  WorkspaceMyThreadsResultSchema,
+  WorkspacePinChangeRequestSchema,
+  WorkspacePinOrderRequestSchema,
+  WorkspacePinResultSchema,
+  type WorkspaceChannelFeedResult,
+  type WorkspaceMyThreadsRequest,
+  type WorkspaceMyThreadsResult,
+  type WorkspacePinChangeRequest,
+  type WorkspacePinOrderRequest,
+  type WorkspacePinResult,
   WorkspaceSpaceDefaultRequestSchema,
   WorkspaceSpaceDefaultResultSchema,
   WorkspaceSpaceBootstrapPageSchema,
@@ -729,6 +748,7 @@ import {
   type WorkspaceSpaceReserveRequest,
 } from "./workspace-space-protocol";
 import {
+  breakoutListedSql,
   channelListed,
   channelListedSql,
   mainOpenableSql,
@@ -748,7 +768,10 @@ import {
   SPACE_INVITEES_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
+  type SpaceConversationKey,
 } from "./workspace-space-storage";
+import { WorkspacePinStorage, WORKSPACE_PINS_MIGRATION } from "./workspace-pin-storage";
+import { WorkspaceActivityFeed } from "./workspace-activity-feed";
 import {
   PersonalSystemPromptReadRequestSchema,
   PersonalSystemPromptWriteRequestSchema,
@@ -4201,6 +4224,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 96,
   description: "Organization invitees listed in a Space until they join",
   statements: SPACE_INVITEES_MIGRATION,
+}, {
+  version: 97,
+  description: "one pin table for threads, Channels and breakouts, and the Threads and Channel feed indexes",
+  // The old pin tables stay and are still written; see workspace-pin-storage.ts.
+  statements: WORKSPACE_PINS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -9147,6 +9175,71 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * What each keyed conversation looks like to this viewer, in the order the
+   * keys came in: the projection the dashboard, the Threads tab and anything
+   * else listing a mix of threads and breakouts answer with.
+   *
+   * Two reads rather than one join, because the two kinds live in two tables
+   * on purpose (`workspace-breakout-storage.ts` says why). A key the second
+   * read cannot find — a thread this viewer may not open after all, which is
+   * the directory's fact rather than the caller's — is dropped.
+   */
+  private conversationRows(
+    viewer: Viewer,
+    workspaceId: string,
+    keys: readonly SpaceConversationKey[],
+  ): SpaceConversation[] {
+    const channelIds = keys.flatMap((item) => (
+      item.kind === "channel" ? [item.workstreamId] : []
+    ));
+    const breakoutIds = keys.flatMap((item) => (
+      item.kind === "breakout" && item.substreamId !== null ? [item.substreamId] : []
+    ));
+    // Chunked, because a page is up to `SPACE_CHANNEL_PAGE_SIZE` ids and one
+    // statement binds at most a hundred parameters.
+    const channelRows = boundParameterChunks(channelIds).flatMap((chunk) =>
+      this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+        `${SELECT_WORKSPACE_DIRECTORY}
+         WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
+           AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+         ORDER BY directory.workstream_id`,
+        viewer.userId,
+        viewer.userId,
+        ...chunk,
+      ).toArray());
+    const breakoutRows = boundParameterChunks(breakoutIds).flatMap((chunk) =>
+      this.state.storage.sql.exec<WorkspaceBreakoutRow>(
+        `${SELECT_WORKSPACE_BREAKOUT}
+         WHERE breakout.substream_id IN (${chunk.map(() => "?").join(", ")})
+         ORDER BY breakout.substream_id`,
+        viewer.userId,
+        ...chunk,
+      ).toArray());
+    const spaceStorage = this.spaceStorage();
+    const channels = new Map(mapDirectoryWorkstreams(
+      this.state.storage.sql, channelRows, workspaceId, spaceStorage, viewer,
+    ).map((workstream) => [workstream.id as string, workstream]));
+    // A breakout's Spaces are its parent Channel's: a breakout has no
+    // membership of its own, and the field is what a client uses to decide
+    // which Space a row belongs under.
+    const spaceIdsByChannel = spaceStorage.spaceIdsByChannel(
+      viewer, [...new Set(breakoutRows.map((row) => row.workstream_id))],
+    );
+    const breakouts = new Map(breakoutRows.map((row) => [
+      row.substream_id,
+      breakoutConversation(row, workspaceId, spaceIdsByChannel.get(row.workstream_id) ?? []),
+    ]));
+    return keys.flatMap((item) => {
+      if (item.kind === "channel") {
+        const channel = channels.get(item.workstreamId);
+        return channel ? [{ ...channel, kind: "channel" as const, breakoutOf: null }] : [];
+      }
+      const breakout = item.substreamId === null ? undefined : breakouts.get(item.substreamId);
+      return breakout ? [breakout] : [];
+    });
+  }
+
+  /**
    * One page of the conversations in a Space that currently need this viewer.
    *
    * The route is still `/spaces/:id/channels` and the RPC still carries that
@@ -9176,58 +9269,160 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const page = this.spaceStorage().conversationPage(viewer, request.spaceId, request.cursor);
     if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
     if (page === false) return { ok: false, code: "space_not_found" };
-    const channelIds = page.items.flatMap((item) => (
-      item.kind === "channel" ? [item.workstreamId] : []
-    ));
-    const breakoutIds = page.items.flatMap((item) => (
-      item.kind === "breakout" && item.substreamId !== null ? [item.substreamId] : []
-    ));
-    // Chunked, because a page is up to `SPACE_CHANNEL_PAGE_SIZE` ids and one
-    // statement binds at most a hundred parameters.
-    const channelRows = boundParameterChunks(channelIds).flatMap((chunk) =>
-      this.state.storage.sql.exec<WorkspaceDirectoryRow>(
-        `${SELECT_WORKSPACE_DIRECTORY}
-         WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
-           AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
-         ORDER BY directory.workstream_id`,
-        request.userId,
-        request.userId,
-        ...chunk,
-      ).toArray());
-    const breakoutRows = boundParameterChunks(breakoutIds).flatMap((chunk) =>
-      this.state.storage.sql.exec<WorkspaceBreakoutRow>(
-        `${SELECT_WORKSPACE_BREAKOUT}
-         WHERE breakout.substream_id IN (${chunk.map(() => "?").join(", ")})
-         ORDER BY breakout.substream_id`,
-        request.userId,
-        ...chunk,
-      ).toArray());
-    const spaceStorage = this.spaceStorage();
-    const channels = new Map(mapDirectoryWorkstreams(
-      this.state.storage.sql, channelRows, request.workspaceId, spaceStorage, viewer,
-    ).map((workstream) => [workstream.id as string, workstream]));
-    // A breakout's Spaces are its parent Channel's: a breakout has no
-    // membership of its own, and the field is what a client uses to decide
-    // which Space a row belongs under.
-    const spaceIdsByChannel = spaceStorage.spaceIdsByChannel(
-      viewer, [...new Set(breakoutRows.map((row) => row.workstream_id))],
-    );
-    const breakouts = new Map(breakoutRows.map((row) => [
-      row.substream_id,
-      breakoutConversation(row, request.workspaceId, spaceIdsByChannel.get(row.workstream_id) ?? []),
-    ]));
-    const items = page.items.flatMap((item) => {
-      if (item.kind === "channel") {
-        const channel = channels.get(item.workstreamId);
-        return channel ? [{ ...channel, kind: "channel" as const, breakoutOf: null }] : [];
-      }
-      const breakout = item.substreamId === null ? undefined : breakouts.get(item.substreamId);
-      return breakout ? [breakout] : [];
-    });
+    const items = this.conversationRows(viewer, request.workspaceId, page.items);
     return WorkspaceSpaceChannelPageResultSchema.parse({
       ok: true,
       page: { items, nextCursor: page.nextCursor },
     });
+  }
+
+  /**
+   * One page of a Channel's feed (the storage Space's threads, newest placement
+   * first). A thread this viewer may open comes back whole; one they may not is
+   * a locked row with its id and placement time and nothing else, which is the
+   * whole point of reading it from storage as a flag rather than projecting it.
+   */
+  async listChannelFeed(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceChannelFeedResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceChannelPageRequestSchema, input, "list_channel_feed");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const page = this.spaceStorage().feedPage(viewer, request.spaceId, request.cursor);
+    if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
+    if (page === false) return { ok: false, code: "space_not_found" };
+    const threads = new Map(this.conversationRows(
+      viewer,
+      request.workspaceId,
+      page.items.flatMap((item) => (item.openable
+        ? [{ kind: "channel" as const, workstreamId: item.workstreamId, substreamId: null }]
+        : [])),
+    ).map((thread) => [thread.id as string, thread]));
+    return WorkspaceChannelFeedResultSchema.parse({
+      ok: true,
+      page: {
+        items: page.items.map((item) => {
+          const thread = item.openable ? threads.get(item.workstreamId) : undefined;
+          const placedAt = iso(item.placedAt);
+          if (!thread) return { kind: "locked", placedAt, threadId: item.workstreamId };
+          return { kind: "thread", placedAt, thread: WorkstreamSchema.parse(thread) };
+        }),
+        nextCursor: page.nextCursor,
+      },
+    });
+  }
+
+  /** One page of the Threads tab: the threads and breakouts this person takes part in or pinned. */
+  async listMyThreads(input: WorkspaceMyThreadsRequest): Promise<WorkspaceMyThreadsResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceMyThreadsRequestSchema, input, "list_my_threads");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const page = this.spaceStorage().participatingPage(viewer, request.cursor);
+    if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
+    return WorkspaceMyThreadsResultSchema.parse({
+      ok: true,
+      page: { items: this.conversationRows(viewer, request.workspaceId, page.items), nextCursor: page.nextCursor },
+    });
+  }
+
+  /** One page of the Activity tab; see `workspace-activity-feed.ts`. */
+  async listActivity(input: WorkspaceMyThreadsRequest): Promise<WorkspaceActivityResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceMyThreadsRequestSchema, input, "list_activity");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const page = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage()).page(viewer, request.cursor);
+    if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
+    return WorkspaceActivityResultSchema.parse({ ok: true, page });
+  }
+
+  /** Mark the Activity tab read through a time, for this person's other windows too. */
+  async markActivitySeen(input: WorkspaceActivitySeenRequest): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceActivitySeenRequestSchema, input, "mark_activity_seen");
+    this.assertWorkspace(request.workspaceId);
+    const feed = new WorkspaceActivityFeed(this.state.storage, this.spaceStorage());
+    if (!feed.ready()) return;
+    feed.markSeen(request.userId, request.seenThrough, Date.now());
+  }
+
+  /** This person's pins, every kind. */
+  async listPins(input: WorkspaceSpaceListRequest): Promise<WorkspacePinResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "list_pins");
+    this.assertWorkspace(request.workspaceId);
+    return WorkspacePinResultSchema.parse({ ok: true, pins: new WorkspacePinStorage(this.state.storage).list(request.userId) });
+  }
+
+  /**
+   * Pin or unpin a thread, a Channel or a breakout.
+   *
+   * A pin is refused for an item this person may not list, so a pin can never
+   * be how somebody learns a thread exists. An unpin is never refused: taking
+   * away a pin to something you can no longer see is how you tidy it up.
+   */
+  async changePin(input: WorkspacePinChangeRequest): Promise<WorkspacePinResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspacePinChangeRequestSchema, input, "change_pin");
+    this.assertWorkspace(request.workspaceId);
+    const pins = new WorkspacePinStorage(this.state.storage);
+    if (request.pinned) {
+      const viewer = await this.spaceReader(request.workspaceId, request.userId);
+      if (!viewer || !this.pinTargetListed(viewer, request.kind, request.itemId, request.parentId)) {
+        return { ok: false, code: "pin_target_not_found" };
+      }
+    }
+    const now = Date.now();
+    const outcome = this.state.storage.transactionSync((): "changed" | "unchanged" | "limit" => {
+      if (!request.pinned) return pins.unpin(request.userId, request.kind, request.itemId) ? "changed" : "unchanged";
+      if (pins.count(request.userId) >= MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER) return "limit";
+      return pins.pin(request.userId, request.kind, request.itemId, request.parentId, now) ? "changed" : "unchanged";
+    });
+    if (outcome === "limit") return { ok: false, code: "pin_limit_reached" };
+    if (outcome === "changed") this.publishSpaceSnapshot(request.userId);
+    return WorkspacePinResultSchema.parse({ ok: true, pins: pins.list(request.userId) });
+  }
+
+  /** Put one kind of pin in this person's order. */
+  async reorderPins(input: WorkspacePinOrderRequest): Promise<WorkspacePinResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspacePinOrderRequestSchema, input, "reorder_pins");
+    this.assertWorkspace(request.workspaceId);
+    const pins = new WorkspacePinStorage(this.state.storage);
+    const now = Date.now();
+    this.state.storage.transactionSync(() => pins.reorder(request.userId, request.kind, request.ids, now));
+    this.publishSpaceSnapshot(request.userId);
+    return WorkspacePinResultSchema.parse({ ok: true, pins: pins.list(request.userId) });
+  }
+
+  private pinTargetListed(viewer: Viewer, kind: PinKind, itemId: string, parentId: string | null): boolean {
+    if (kind === "thread") return parentId === null && this.directoryVisible(viewer, itemId);
+    if (kind === "channel") return parentId === null && this.spaceStorage().reach(viewer, itemId, true) !== null;
+    if (parentId === null || !this.spaceStorage().breakoutsReady()) return false;
+    // The conversation page's two gates: the thread is listed, then the breakout is.
+    return this.state.storage.sql.exec(
+      `SELECT 1 AS one FROM breakouts breakout
+         JOIN channels directory ON directory.workstream_id = breakout.workstream_id
+         LEFT JOIN channel_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?1
+          AND viewer.authority_generation = directory.authority_generation
+         LEFT JOIN breakout_viewers breakout_viewer
+           ON breakout_viewer.workstream_id = breakout.workstream_id
+          AND breakout_viewer.substream_id = breakout.substream_id
+          AND breakout_viewer.user_id = ?1
+          AND breakout_viewer.authority_generation = breakout.authority_generation
+        WHERE breakout.workstream_id = ?2 AND breakout.substream_id = ?3
+          AND breakout.archived_at IS NULL AND directory.archived_at IS NULL
+          AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true, userId: "?1" })}
+          AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}`,
+      viewer.userId,
+      parentId,
+      itemId,
+    ).toArray().length === 1;
   }
 
   /** The active Spaces one Channel currently sits in. */
@@ -9346,6 +9541,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    // General is every thread's fallback home, so it stays Organization-wide:
+    // a private General would hide every unplaced thread's Channel.
+    if (request.audience.scope === "personal" && this.spaceStorage().generalSpaceId() === request.spaceId) {
+      return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
+    }
     const activeMembers = await Promise.all(request.audience.participantUserIds.map((userId) => (
       this.activeSpaceMember(request.workspaceId, userId)
     )));
@@ -14290,6 +14490,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       throw new Error("workstream_not_found");
     }
     const now = Date.now();
+    const pinStorage = new WorkspacePinStorage(this.state.storage);
     const changed = this.state.storage.transactionSync(() => {
       const alreadyPinned = this.state.storage.sql.exec<{ one: number }>(
         `SELECT 1 AS one FROM workspace_workstream_pins
@@ -14319,6 +14520,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         now,
         now,
       ).toArray().length === 1;
+      // Mirrored into the one pin table the new client reads, so a pin made on
+      // an older desktop shows there too; see workspace-pin-storage.ts.
+      if (inserted && pinStorage.ready()) pinStorage.pin(request.userId, "thread", request.workstreamId, null, now);
       if (inserted) this.advanceDirectoryVersion(now);
       return inserted;
     });
@@ -14347,6 +14551,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray().length === 1;
       if (removed) {
         this.rewritePinOrder(request.userId, request.spaceId, [], now);
+        // The thread stays pinned while any Space still pins it, as it did
+        // under All; see workspace-pin-storage.ts.
+        const stillPinned = this.state.storage.sql.exec(
+          `SELECT 1 FROM workspace_workstream_pins WHERE user_id = ? AND workstream_id = ?`,
+          request.userId,
+          request.workstreamId,
+        ).toArray().length > 0;
+        const pinStorage = new WorkspacePinStorage(this.state.storage);
+        if (!stillPinned && pinStorage.ready()) pinStorage.unpin(request.userId, "thread", request.workstreamId);
         this.advanceDirectoryVersion(now);
       }
       return removed;
@@ -16469,6 +16682,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     spaces: SpaceSnapshot;
     ordering: PersonalOrder;
     pinnedOrder: string[];
+    pins: Pin[];
+    channelStats: ChannelStats[];
     spacesReady: boolean;
   } {
     const spaces = this.spaceStorage();
@@ -16482,6 +16697,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       spaces: { active, inactive: spaces.listInactive(viewer) },
       ordering: spaces.readOrders(attachment.workspaceId, viewer),
       pinnedOrder: spaces.readPinnedOrder(viewer),
+      pins: new WorkspacePinStorage(this.state.storage).list(viewer.userId),
+      channelStats: spaces.channelStats(viewer).map((stats) => ({
+        channelId: stats.spaceId,
+        threadCount: stats.threadCount,
+        lastActivityAt: iso(stats.lastActivityAt),
+      })),
       spacesReady: spaces.bootstrapStatus().ready,
     };
   }

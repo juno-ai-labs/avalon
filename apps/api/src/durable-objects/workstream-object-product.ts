@@ -458,6 +458,26 @@ function userFromRow(row: UserRow) {
  * profiles, and other control-plane facts. Workspace-owned resources,
  * connectors, automation labels, and pins resolve through WorkspaceDO.
  */
+
+/**
+ * A message event's targets: who it mentions, then who takes part. Mentions
+ * lead because the Activity tab reads them and a digest only ranks by them, and
+ * the list is cut at the effect schema's hundred so a crowded thread can never
+ * make the effect fail to parse inside the commit that carries it.
+ */
+function activityTargets(
+  participantIds: readonly string[],
+  mentionedIds: readonly string[],
+  authorUserId: string | null,
+): Array<{ userId: string; relation: "mentioned" | "participant" }> {
+  return [
+    ...mentionedIds
+      .filter((userId) => userId !== authorUserId)
+      .map((userId) => ({ userId, relation: "mentioned" as const })),
+    ...participantIds.map((userId) => ({ userId, relation: "participant" as const })),
+  ].slice(0, 100);
+}
+
 export class WorkstreamObjectProductService {
   /**
    * The admissions this isolate believes it is still preparing, by input id.
@@ -1672,8 +1692,10 @@ export class WorkstreamObjectProductService {
             sourceKind: "workstream_message",
             sourceId: messageId,
             dedupeKey: `message:${messageId}`,
-            metadata: {},
-            targets: memberIds.map((userId) => ({ userId, relation: "participant" })),
+            // Which conversation of the thread spoke: "0" for the thread itself,
+            // a breakout's id otherwise. The Activity tab tells the two apart.
+            metadata: { substreamId: this.externalSubstreamId() },
+            targets: activityTargets(memberIds, mentionedPersonIds, input.creatorUserId),
           },
         };
         const mentionNotifications = mentionedPersonIds
@@ -3119,7 +3141,7 @@ export class WorkstreamObjectProductService {
           sourceKind: "workstream_participant",
           sourceId,
           dedupeKey: sourceId,
-          metadata: { participantUserId: input.userId, addedByUserId: input.actorUserId },
+          metadata: { participantUserId: input.userId, addedByUserId: input.actorUserId, substreamId },
           targets: [{ userId: input.userId, relation: "added" }],
         },
       },
@@ -3774,11 +3796,12 @@ export class WorkstreamObjectProductService {
           sourceKind: "workstream_message",
           sourceId: delivery.turnId,
           dedupeKey: `message:${delivery.turnId}`,
-          metadata: {},
-          targets: delivery.affectedUserIds.map((userId) => ({
-            userId,
-            relation: "participant" as const,
-          })),
+          metadata: { substreamId: this.externalSubstreamId() },
+          targets: activityTargets(
+            delivery.affectedUserIds,
+            delivery.authorUserId === null ? [] : delivery.mentionedUserIds,
+            delivery.authorUserId,
+          ),
         },
       });
       if (delivery.authorUserId !== null) {
@@ -5064,8 +5087,8 @@ export class WorkstreamObjectProductService {
             sourceKind: "workstream_message",
             sourceId: messageId,
             dedupeKey: `message:${messageId}`,
-            metadata: {},
-            targets: affectedUsers.map((userId) => ({ userId, relation: "participant" })),
+            metadata: { substreamId: this.externalSubstreamId() },
+            targets: activityTargets(affectedUsers, personIds, auth.userId),
           },
         };
         const notifications = personIds.filter((userId) => userId !== auth.userId).map((userId) => ({

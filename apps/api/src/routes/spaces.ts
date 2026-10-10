@@ -1,4 +1,5 @@
 import {
+  ChannelFeedPageSchema,
   CreateSpaceRequestSchema,
   MoveChannelBetweenSpacesRequestSchema,
   MoveChannelBetweenSpacesResultSchema,
@@ -67,6 +68,20 @@ spaceReadRoutes.get(
   zValidator("query", channelPageQuery),
   async (c) => c.json(SpaceChannelPageSchema.parse(
     await new SpaceService(c.env, getWorkspaceAuth(c)).listChannels(
+      c.req.valid("param").id,
+      c.req.valid("query").cursor ?? null,
+    ),
+  )),
+);
+
+/** A Channel's feed: the threads placed in it, newest first; see `ChannelFeedItemSchema`. */
+spaceReadRoutes.get(
+  "/:id/feed",
+  requireWorkspaceAuth,
+  zValidator("param", idParam),
+  zValidator("query", channelPageQuery),
+  async (c) => c.json(ChannelFeedPageSchema.parse(
+    await new SpaceService(c.env, getWorkspaceAuth(c)).listFeed(
       c.req.valid("param").id,
       c.req.valid("query").cursor ?? null,
     ),
