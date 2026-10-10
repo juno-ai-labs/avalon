@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   setPinned: vi.fn(),
   reorderPins: vi.fn(),
   getChannelStats: vi.fn(async () => []),
+  getWorkspaceMembers: vi.fn(async () => [{ id: 'maya', name: 'Maya K', email: 'maya@rally.test', timezone: 'UTC' }]),
   restoreSpace: vi.fn(),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
@@ -163,6 +164,18 @@ describe('the navigation sidebar', () => {
       .map((row) => row.textContent)).toEqual(['Make a websiteQ4 plan', 'Q4 planOutbound']));
     fireEvent.click(list.getByRole('button', { name: /Make a website/u }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan?substream=site');
+  });
+
+  it('names who started a thread from the member directory when the row carries only their id', async () => {
+    useUiStore.getState().setSidebarSection('activity');
+    api.getActivity.mockResolvedValue({ nextCursor: null, items: [{
+      id: 'started:plan', kind: 'thread_started', occurredAt: new Date().toISOString(), actorUserId: 'maya', actorLabel: '',
+      threadId: 'plan', threadTitle: 'Q4 plan', breakout: null, channelIds: ['outbound'], unread: true,
+    }] });
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+
+    const today = within(await screen.findByRole('region', { name: 'Today' }));
+    await waitFor(() => expect(today.getByRole('button')).toHaveTextContent('Maya K started Q4 plan'));
   });
 
   it('groups Activity by day, marks what is new, and marks it read once shown', async () => {

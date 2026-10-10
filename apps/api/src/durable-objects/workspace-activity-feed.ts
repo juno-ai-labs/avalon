@@ -105,18 +105,33 @@ export class WorkspaceActivityFeed {
                  AND target.relation IN ('added', 'mentioned')
                  AND event.subject_type = 'workstream'
                  AND event.event_type IN ('workstream_participant_added', 'workstream_message_created')`),
-      ...arm(`SELECT event.event_id AS id,
-                     CASE json_extract(event.metadata_json, '$.substreamId')
-                       WHEN '0' THEN 'thread_started' ELSE 'breakout_started' END AS kind,
-                     event.occurred_at, event.actor_user_id, event.actor_label,
-                     event.subject_id AS thread_id,
-                     json_extract(event.metadata_json, '$.substreamId') AS substream_id
-                FROM workspace_activity_events event
-               WHERE event.event_type = 'workstream_message_created'
-                 AND event.subject_sequence_number = 1
-                 AND event.subject_type = 'workstream'
-                 AND json_extract(event.metadata_json, '$.substreamId') IS NOT NULL
-                 AND (event.actor_user_id IS NULL OR event.actor_user_id <> ?1)`),
+      // A start is read from the thread's and the breakout's own directory
+      // rows, as a finish is: the conversation's opening-message event does
+      // not reliably reach this object (a breakout's is never forwarded), and
+      // the directory row is what every other list here is drawn from. The
+      // listing rules apply in `hydrate`, so a start the viewer may not list
+      // never appears. The starter's name is the client's to resolve.
+      ...arm(`SELECT 'started:' || directory.workstream_id AS id,
+                     'thread_started' AS kind,
+                     directory.source_created_at AS occurred_at,
+                     directory.created_by_user_id AS actor_user_id, '' AS actor_label,
+                     directory.workstream_id AS thread_id, '0' AS substream_id
+                FROM channels directory
+               WHERE directory.created_by_user_id IS NOT NULL
+                 AND directory.created_by_user_id <> ?1
+                 AND directory.source_created_at IS NOT NULL
+                 AND directory.archived_at IS NULL
+                 AND directory.system_kind IS NULL`),
+      ...(breakouts ? arm(`SELECT 'started:' || breakout.substream_id AS id,
+                     'breakout_started' AS kind,
+                     breakout.source_created_at AS occurred_at,
+                     breakout.created_by_user_id AS actor_user_id, '' AS actor_label,
+                     breakout.workstream_id AS thread_id, breakout.substream_id AS substream_id
+                FROM breakouts breakout
+               WHERE breakout.created_by_user_id IS NOT NULL
+                 AND breakout.created_by_user_id <> ?1
+                 AND breakout.source_created_at IS NOT NULL
+                 AND breakout.archived_at IS NULL`) : []),
       ...arm(`SELECT 'finished:' || directory.workstream_id || ':' || directory.completed_at AS id,
                      'run_finished' AS kind,
                      directory.completed_at AS occurred_at,
