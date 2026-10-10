@@ -5,6 +5,7 @@ import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition }
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import { createHostedMcpPassthrough } from "./hosted-mcp";
+import { readConnectorDocument, type ConnectorDocumentReader } from "./documents";
 import {
   isProviderCredentialRejection,
   isRecord,
@@ -53,6 +54,8 @@ export interface SlackConnectorConfig {
   appId?: string;
   fetch?: FetchLike;
   now?: () => number;
+  /** Reads shared files that are not plain text, such as Office files and PDFs. */
+  documents?: ConnectorDocumentReader;
 }
 
 export const SlackCapabilities = {
@@ -1666,6 +1669,7 @@ async function executeSlackDirectTool(
   rawArgs: unknown,
   context: ConnectorToolContext,
   fetcher: FetchLike,
+  documents: ConnectorDocumentReader | undefined,
 ): Promise<ConnectorToolResult> {
   const token = context.connection.scope === "workspace"
     ? botToken(context.connection)
@@ -1757,7 +1761,7 @@ async function executeSlackDirectTool(
     }
     case "read_file": {
       const args = SlackDirectInputSchemas.read_file.parse(rawArgs);
-      const output = await readSlackFile(token, args.file_id, context.signal, fetcher);
+      const output = await readSlackFile(token, args.file_id, context.signal, fetcher, documents);
       return { output, summary: `Read Slack file ${args.file_id}` };
     }
     case "send_message": {
@@ -1984,6 +1988,7 @@ async function readSlackFile(
   fileId: string,
   signal: AbortSignal,
   fetcher: FetchLike,
+  documents: ConnectorDocumentReader | undefined,
 ): Promise<Record<string, unknown>> {
   const result = await slackApi(token, "files.info", { file: fileId }, signal, fetcher);
   const file = result.file;
@@ -1997,18 +2002,47 @@ async function readSlackFile(
     permalink: file.permalink ?? null,
   };
   const downloadUrl = file.url_private_download ?? file.url_private;
-  if (!downloadUrl || !isSlackTextFile(file)) {
-    return { file: metadata, content: null, content_omitted_reason: downloadUrl ? "binary_file" : "download_unavailable" };
+  if (!downloadUrl) return { file: metadata, content: null, content_omitted_reason: "download_unavailable" };
+  if (!isSlackTextFile(file)) {
+    const document = { fileName: file.name ?? file.title ?? "", mimeType: file.mimetype ?? null, size: file.size ?? null };
+    if (!documents?.reads(document)) return { file: metadata, content: null, content_omitted_reason: "binary_file" };
+    const read = await readConnectorDocument({
+      reader: documents,
+      file: document,
+      textBudgetBytes: SLACK_MAX_FILE_CONTENT_BYTES,
+      signal,
+      download: () => downloadSlackFile(token, downloadUrl, "*/*", signal, fetcher),
+    });
+    if (read.textContent === null) {
+      return { file: metadata, content: null, content_omitted_reason: read.contentOmittedReason ?? "binary_file" };
+    }
+    return {
+      file: metadata,
+      content: read.textContent,
+      ...(read.contentTruncated ? { content_truncated: true, content_notice: read.contentNotice } : {}),
+    };
   }
   if (file.size != null && file.size > SLACK_MAX_FILE_CONTENT_BYTES) {
     return { file: metadata, content: null, content_omitted_reason: "file_too_large" };
   }
+  const response = await downloadSlackFile(token, downloadUrl, "text/*, application/json, application/xml", signal, fetcher);
+  const content = new TextDecoder().decode(await readResponseBytes(response, SLACK_MAX_FILE_CONTENT_BYTES));
+  return { file: metadata, content };
+}
+
+async function downloadSlackFile(
+  token: string,
+  downloadUrl: string,
+  accept: string,
+  signal: AbortSignal,
+  fetcher: FetchLike,
+): Promise<Response> {
   const url = trustedSlackFileUrl(downloadUrl);
   let response: Response;
   try {
     response = await fetcher(url, {
       method: "GET",
-      headers: { authorization: `Bearer ${token}`, accept: "text/*, application/json, application/xml" },
+      headers: { authorization: `Bearer ${token}`, accept },
       redirect: "error",
       signal,
     });
@@ -2023,8 +2057,7 @@ async function readSlackFile(
       { status: response.status },
     );
   }
-  const content = new TextDecoder().decode(await readResponseBytes(response, SLACK_MAX_FILE_CONTENT_BYTES));
-  return { file: metadata, content };
+  return response;
 }
 
 function isSlackTextFile(file: z.infer<typeof SlackHistoryFileSchema>): boolean {
@@ -2537,7 +2570,7 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
         return reauthorizing(
           context.connection,
           context.signal,
-          () => executeSlackDirectTool(name, rawArgs, context, fetcher),
+          () => executeSlackDirectTool(name, rawArgs, context, fetcher, config.documents),
         );
       }
       throw new ConnectorError("unsupported_capability", `Slack workspace tool ${name} is unsupported`);

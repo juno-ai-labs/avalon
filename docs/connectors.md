@@ -139,6 +139,16 @@ the installation-provider enum the same three names happen to fill today.
 different questions, and a connector installed over OAuth would otherwise have
 to invent an issuing page to satisfy the guard.
 
+### Reading provider files
+
+A connector that can reach a file — a Drive file, a Slack upload, a Linear comment attachment — reads it through one converter, never its own parser. `packages/connectors/src/documents.ts` defines the contract:
+
+- `ConnectorDocumentReader` is the host's converter. The API builds it in `apps/api/src/services/connector-document-reader.ts` over the attachment pipeline's `buildAttachmentDerivative`, so a connector file reads exactly as the same file uploaded: plain text, Word, Excel, PowerPoint, and a PDF's text layer. The one gap is OCR, which is metered against a stored resource; a scanned PDF fails as `pdf_ocr_required`.
+- `createConnectorRegistry({ documents })` hands it to every adapter that takes a `documents` config field. Google and Slack take it today.
+- `readConnectorDocument({ reader, file, textBudgetBytes, signal, download })` is the only call an adapter makes. It refuses a format the reader does not know, skips the download when the declared size exceeds the converter's ceiling, reads the source bounded by that ceiling, converts it, and cuts the text to the adapter's budget with `contentTruncated: true`. A failure comes back as `contentOmittedReason` naming the converter's code.
+
+To read files from another provider, describe the file (`fileName`, `mimeType`, `size`), pass a `download` that returns the provider's authenticated `Response`, and map the returned fields onto the tool's output. The adapter keeps its own URL trust checks and credentials; the reader never sees them.
+
 ### Authorization model
 
 Rally-authored cursor tools use [first/next pagination](tool-pagination.md).
@@ -556,7 +566,7 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
 
 Every tool that returns something a person can open returns it as **`webUrl`** — Gmail threads and drafts, calendar events, Drive files, and created Docs and Sheets alike — rather than the four provider-shaped names those surfaces use natively. A Workspace file id is the same shape whatever it addresses, so any Docs or Sheets call the provider refuses — reads and writes alike, not only the two document readers — is re-checked against Drive's MIME type and, where they disagree, fails as `wrong_id_family` naming the canonical tool that does accept it; the check needs the connection's Drive read capability and is skipped without it, and never replaces the original failure with one of its own. `google_sheets_read_values` returns what the sheet displays by default and accepts `valueRenderOption: "UNFORMATTED_VALUE"` for numbers and serial dates that can be computed with.
 
-`google_drive_download` also reads Word, Excel and PowerPoint files stored in Drive. The API hands the adapter a `StoredDocumentTextReader` (the attachment pipeline's Office converter) through `GoogleConnectorConfig.storedDocumentText`. The original is downloaded when the converter accepts its size, and the text is cut to the tool's text budget with `contentTruncated: true` rather than refused. A file the converter cannot read says why in `contentOmittedReason`. `fileType` accepts `word`, `excel`, and `powerpoint`, and a Docs or Sheets tool handed one of those ids fails as `wrong_id_family` naming `drive.download`.
+`google_drive_download` also reads Word, Excel, PowerPoint and PDF files stored in Drive, through the registry's document reader (see [Reading provider files](#reading-provider-files)). `fileType` accepts `word`, `excel`, and `powerpoint`, and a Docs or Sheets tool handed one of those ids fails as `wrong_id_family` naming `drive.download`.
 
 Docs and Sheets operations use their native provider APIs. Docs reads return bounded document structure and text; writes create a document, append plain text, or replace exact text. Sheets reads return bounded spreadsheet metadata or formatted values from an explicit A1 range; writes create a spreadsheet or update/append bounded row values. Drive download/export remains available for file-oriented retrieval, but it does not replace the native Docs and Sheets operations.
 
@@ -1482,15 +1492,15 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
 
-### 2026-10-10: Drive reads Office files through the attachment converter
+### 2026-10-10: Connectors read provider files through the attachment converter
 
-**What changed:** `drive.download`, and hydration of a `drive_file` resource, return text for `.docx`, `.xlsx`, and `.pptx` files stored in Drive. They use the converter the API passes in as `GoogleConnectorConfig.storedDocumentText`. `drive.search`'s `fileType` gained `word`, `excel`, and `powerpoint`, and the family check now knows them. So `sheets.read_spreadsheet` on an `.xlsx` id fails as `wrong_id_family` naming `drive.download`, not as a bare `provider_error` 400. The `drive_file` hydration branch now goes through `readDriveTextContent`, as the Doc and Sheet branches already did.
+**What changed:** `packages/connectors/src/documents.ts` adds `ConnectorDocumentReader` and `readConnectorDocument`, and `createConnectorRegistry` takes a `documents` reader and hands it to adapters. The API's reader wraps the attachment converter. Google's `drive.download` and `drive_file` hydration now return text for Word, Excel, PowerPoint and PDF files stored in Drive, and Slack's `read_file` does the same for shared files, where it used to answer `binary_file`. `drive.search`'s `fileType` gained `word`, `excel`, and `powerpoint`, and the family check knows them, so `sheets.read_spreadsheet` on an `.xlsx` id fails as `wrong_id_family` naming `drive.download` rather than a bare `provider_error` 400. The `drive_file` hydration branch now goes through `readDriveTextContent`, like the Doc and Sheet branches.
 
-**Why:** On 2026-10-02 an investor's portfolio folder held only Office files. The agent found `Investment Memo.docx` and `Cap Table.xlsx` but could read neither: download said "Binary and unsupported Drive content", and the Sheets reader returned `Google API failed (400)`. It could not answer "what is our ownership". The same files uploaded as attachments already read correctly.
+**Why:** On 2026-10-02 an investor's portfolio folder held only Office files. The agent found `Investment Memo.docx` and `Cap Table.xlsx` but could read neither: download said "Binary and unsupported Drive content", and the Sheets reader returned `Google API failed (400)`. The same files uploaded as attachments already read correctly. Slack threads and Linear comments carry the same kinds of files, so the fix is a contract every adapter shares, not a Drive feature.
 
-**Rejected:** A parser inside the connectors package, which would be a second converter and needed a dependency that churned the lockfile ([`agent-attachments.md`](agent-attachments.md#changelog) has the detail). Bounding the source by the text budget, which would refuse most decks, since their size is images. Refusing over-budget text the way plain-text files are refused, which would turn away the large workbooks this is for.
+**Rejected:** A parser inside the connectors package. It would be a second converter, and it needed a dependency that churned the lockfile ([`agent-attachments.md`](agent-attachments.md#changelog) has the detail). A reader passed per call on `ConnectorToolContext`, which `hydrateResource` does not receive, so every adapter's hydration signature would change. Bounding the source by the text budget, which would refuse most decks, since their size is images. Refusing over-budget text the way plain-text files are refused, which would turn away the large workbooks this is for. OCR for connector reads, which has no resource to meter against.
 
-**What a future change must respect:** The source ceiling is the converter's (`OFFICE_DOCUMENT_MAX_SOURCE_BYTES`, shared with attachments), not a Drive number. Another storage connector should take the same `StoredDocumentTextReader` rather than parse files itself. `prePaginationTool` in `integrations.ts` restores `drive.search`'s old `fileType` enum and description, so receipts recorded before pagination still match their hash. A later change to a pre-pagination tool's schema needs an entry there too, which `connector-tool-selection.test.ts` enforces. The `pdf` family remedy still says `drive.download` returns text, which is not yet true: PDFs in Drive are still metadata-only.
+**What a future change must respect:** An adapter that reads a provider file takes `documents` and calls `readConnectorDocument`; it never parses a format. The source ceiling is the attachment converter's (`ATTACHMENT_MAX_SOURCE_BYTES`), not a per-connector number. `prePaginationTool` in `integrations.ts` restores `drive.search`'s old `fileType` enum and description, so receipts recorded before pagination still match their hash. A later change to a pre-pagination tool's schema needs an entry there too, which `connector-tool-selection.test.ts` enforces.
 
 ### 2026-09-28: The GitHub delivery message is sent as `v8`
 

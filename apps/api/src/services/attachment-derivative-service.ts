@@ -3,6 +3,7 @@ import {
   convertOfficeDocument,
   officeDocumentFormat,
   OfficeDocumentConversionError as ConversionFailure,
+  type OfficeDocumentFormat,
 } from "../lib/office-document-text";
 import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
 import { runtimeDeferral } from "../lib/defer";
@@ -13,7 +14,7 @@ export const ATTACHMENT_TEXT_EXTRACTOR_VERSION = "attachment-text-v3";
 // Local conversion is an isolate-safe fast path. Provider-backed PDF OCR and
 // the document summarizer remain separate calls; no single conversion is
 // allowed to materialize the former 50 MiB/20M-character envelope in memory.
-const MAX_SOURCE_BYTES = 8 * 1_024 * 1_024;
+export const ATTACHMENT_MAX_SOURCE_BYTES = 8 * 1_024 * 1_024;
 const MAX_DERIVATIVE_CHARACTERS = 2_000_000;
 const MAX_PDF_PAGES = 200;
 
@@ -119,7 +120,7 @@ export async function buildAttachmentDerivative(
   input: BuildAttachmentDerivativeInput,
 ): Promise<AttachmentDerivativeResult> {
   if (input.bytes.byteLength === 0) return { status: "failed", errorCode: "empty_source" };
-  if (input.bytes.byteLength > MAX_SOURCE_BYTES) return { status: "failed", errorCode: "source_too_large" };
+  if (input.bytes.byteLength > ATTACHMENT_MAX_SOURCE_BYTES) return { status: "failed", errorCode: "source_too_large" };
   if (input.signal?.aborted) return { status: "failed", errorCode: "conversion_aborted" };
 
   try {
@@ -192,7 +193,7 @@ export async function materializeAttachmentDerivative(
     emitDerivativePhase(options, sourceReadStartedAt, "source_read", "failed", "source_unavailable");
     return updateTerminalState(database, resource, "failed", "source_unavailable", options);
   }
-  if (object.size > MAX_SOURCE_BYTES) {
+  if (object.size > ATTACHMENT_MAX_SOURCE_BYTES) {
     emitDerivativePhase(options, sourceReadStartedAt, "source_read", "failed", "source_too_large");
     return updateTerminalState(database, resource, "failed", "source_too_large", options);
   }
@@ -417,13 +418,29 @@ const OFFICE_ATTACHMENT_KIND = {
   xlsx: "spreadsheet",
 } as const;
 
+export type AttachmentTextFormat = "pdf" | OfficeDocumentFormat | "text";
+
+/**
+ * Which converter reads a file, or null when none does. Decided from the
+ * declared type and name alone, so a caller holding only a provider's file
+ * description can tell whether downloading the bytes is worth it.
+ */
+export function attachmentTextFormat(mimeType: string | null, fileName: string): AttachmentTextFormat | null {
+  const mime = mimeType?.trim().toLowerCase() ?? "";
+  const kind = classifyAttachmentKind({ mimeType: mime, fileName });
+  if (kind === "pdf" && isPdf(mime, fileName)) return "pdf";
+  const office = officeDocumentFormat(mime, fileName);
+  if (office && kind === OFFICE_ATTACHMENT_KIND[office]) return office;
+  if (isPlainText(mime, fileName)) return "text";
+  return null;
+}
+
 async function convertAttachment(input: BuildAttachmentDerivativeInput): Promise<ConvertedText | null> {
-  const mime = input.mimeType?.trim().toLowerCase() ?? "";
-  const kind = classifyAttachmentKind({ mimeType: mime, fileName: input.fileName });
-  if (kind === "pdf" && isPdf(mime, input.fileName)) return convertPdf(input);
-  const office = officeDocumentFormat(mime, input.fileName);
-  if (office && kind === OFFICE_ATTACHMENT_KIND[office]) return convertOfficeDocument(input.bytes, office);
-  if (isPlainText(mime, input.fileName)) {
+  const format = attachmentTextFormat(input.mimeType, input.fileName);
+  if (format === "pdf") return convertPdf(input);
+  if (format === "docx" || format === "pptx" || format === "xlsx") return convertOfficeDocument(input.bytes, format);
+  if (format === "text") {
+    const mime = input.mimeType?.trim().toLowerCase() ?? "";
     let text: string;
     try {
       text = new TextDecoder("utf-8", { fatal: true }).decode(input.bytes);
