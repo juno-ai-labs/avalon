@@ -2251,6 +2251,12 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
       desktopAuthAttempts.discard(candidate.attemptId as string);
       throw new Error('Rally was signed out while sign-in was completing');
     }
+    // Read the stored state before checking the attempt. Creating an attempt
+    // does not take this lock, so one can start during any await here; nothing
+    // may yield between the check and clearing the registry, or this older
+    // callback would retire a newer attempt and overwrite its sign-in.
+    const currentAuth = await loadStoredAuthSet();
+    const currentSession = currentAuth ? await loadStoredSession() : null;
     const currentAttempt = desktopAuthAttempts.proof(candidate.attemptId as string);
     if (
       !currentAttempt
@@ -2259,30 +2265,52 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     ) {
       throw new Error('A newer Rally sign-in attempt replaced this callback');
     }
-    const currentAuth = await loadStoredAuthSet();
-    if (currentAuth) {
-      if (currentAuth.account) {
-        desktopAuthAttempts.discard(candidate.attemptId as string);
-        throw new Error('Another Rally sign-in completed first');
-      }
-      const currentSession = await loadStoredSession();
-      if (
-        !currentSession?.workspace
-        || currentSession.user.email.toLocaleLowerCase('en-US')
-          !== session.user.email.toLocaleLowerCase('en-US')
-      ) {
-        desktopAuthAttempts.discard(candidate.attemptId as string);
-        throw new Error('This Rally account does not match the active organization');
-      }
-      desktopAuthAttempts.clear();
-      inMemoryAuthSet = await writeSplitSessionFiles(session, { activate: false });
-      return publicSession(currentSession);
+    if (
+      currentSession?.workspace
+      && currentSession.user.email.toLocaleLowerCase('en-US')
+        !== session.user.email.toLocaleLowerCase('en-US')
+    ) {
+      desktopAuthAttempts.discard(candidate.attemptId as string);
+      throw new Error('This Rally account does not match the active organization');
     }
     // One successful PKCE attempt wins. Late callbacks from any other browser
     // tab must not replace the account that just signed in.
     desktopAuthAttempts.clear();
+    if (currentAuth && currentSession?.workspace) {
+      inMemoryAuthSet = await writeSplitSessionFiles(session, { activate: false });
+      if (currentAuth.account) revokeReplacedCredentials({ ...currentAuth, workspaces: [] });
+      return publicSession(currentSession);
+    }
+    // Past here nothing stored can be shown: the state the renderer drew
+    // sign-in for. The attempt was live, so nothing newer has signed in since
+    // it began, and replacing the stored state is safe.
+    if (currentAuth?.account && currentAuth.account.binding.userId === session.user.id) {
+      // The same person: keep their organizations, but drop the selection,
+      // since it is what could not be shown.
+      inMemoryAuthSet = { ...currentAuth, activeWorkspace: null };
+      await persistSessionUnlocked(session);
+      revokeReplacedCredentials({ ...currentAuth, workspaces: [] });
+      return publicSession(session);
+    }
+    if (currentAuth) {
+      sessionLifecycleEpoch += 1;
+      desktopPush.signOut(currentAuth.workspaces);
+      await clearStoredSessionUnlocked();
+      revokeReplacedCredentials(currentAuth);
+    }
     await persistSessionUnlocked(session);
     return publicSession(session);
+  });
+}
+
+/** A sign-in that displaces stored credentials must not wait on the server
+ * to end their sessions, nor fail because it could not. */
+function revokeReplacedCredentials(replaced: StoredAuthSet): void {
+  void revokeStoredCredentials(replaced).then((failures) => {
+    if (failures.length > 0) logWarn('rally', 'could not revoke every replaced session',
+      new AggregateError(failures, 'Rally could not revoke every replaced session'));
+  }).catch((error: unknown) => {
+    logWarn('rally', 'could not revoke replaced sessions', error);
   });
 }
 
