@@ -3535,10 +3535,16 @@ function providerDeclaredTransportFailure(details: unknown): {
   // Normalize only provider-controlled casing and separator variants; the
   // captured code itself remains unchanged in the inference-attempt ledger.
   const normalizedCode = code.trim().toLowerCase().replaceAll("-", "_");
+  // `server_error` and `rate_limit_exceeded` are the transient codes a
+  // Responses stream's `response.failed` carries, where Chat streams sent a
+  // numeric status.
   switch (normalizedCode) {
     case "unavailable":
     case "service_unavailable":
+    case "server_error":
       return { kind: "server_error", statusCode: null };
+    case "rate_limit_exceeded":
+      return { kind: "rate_limit", statusCode: null };
     default:
       return null;
   }
