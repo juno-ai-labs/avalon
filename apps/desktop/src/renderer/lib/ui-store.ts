@@ -7,6 +7,8 @@ export const CONTEXT_SIDEBAR_ENABLED = false;
 export type RailVariant = 'context' | 'browser';
 /** How the sidebar orders the Channels nobody pinned. */
 export type SidebarChannelSort = 'alphabetical' | 'recent' | 'needs_you';
+/** Which list the sidebar's section switcher shows. */
+export type SidebarSection = 'channels' | 'threads' | 'activity';
 /** The panel occupying the right sidebar slot. */
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
@@ -19,6 +21,9 @@ interface UiState {
   /** The Space the sidebar's Channel list is filtered to, or null for All. */
   sidebarSpaceFilter: string | null;
   sidebarChannelSort: SidebarChannelSort;
+  sidebarSection: SidebarSection;
+  /** How the Threads tab orders the threads nobody pinned; Recent until changed. */
+  threadSort: SidebarChannelSort;
   railOpen: boolean;
   railVariant: RailVariant;
   railWidth: number;
@@ -29,6 +34,8 @@ interface UiState {
   setSidebarWidth: (width: number) => void;
   setSidebarSpaceFilter: (spaceId: string | null) => void;
   setSidebarChannelSort: (sort: SidebarChannelSort) => void;
+  setSidebarSection: (section: SidebarSection) => void;
+  setThreadSort: (sort: SidebarChannelSort) => void;
   openRail: (variant?: RailVariant) => void;
   closeRail: () => void;
   setRailVariant: (variant: RailVariant) => void;
@@ -61,6 +68,28 @@ const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const SIDEBAR_SPACE_FILTER_STORAGE_KEY = 'rally.sidebar-space-filter';
 const SIDEBAR_CHANNEL_SORT_STORAGE_KEY = 'rally.sidebar-channel-sort';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
+const SIDEBAR_SECTION_STORAGE_KEY = 'rally.sidebar-section';
+const THREAD_SORT_STORAGE_KEY = 'rally.sidebar-thread-sort';
+
+/** A device preference read once; storage that throws or holds junk reads as the fallback. */
+function loadPreference<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const stored = window.localStorage.getItem(key);
+    return allowed.find((value) => value === stored) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function savePreference(key: string, value: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Best-effort device preference; it still applies for this session.
+  }
+}
 
 function loadSpaceFilter(): string | null {
   if (typeof window === 'undefined') return null;
@@ -136,6 +165,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
   sidebarSpaceFilter: loadSpaceFilter(),
   sidebarChannelSort: loadChannelSort(),
+  sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['channels', 'threads', 'activity'], 'channels'),
+  threadSort: loadPreference<SidebarChannelSort>(THREAD_SORT_STORAGE_KEY, ['alphabetical', 'recent', 'needs_you'], 'recent'),
   railOpen: false,
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
@@ -155,6 +186,14 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSidebarChannelSort: (sidebarChannelSort) => {
     saveChannelSort(sidebarChannelSort);
     set({ sidebarChannelSort });
+  },
+  setSidebarSection: (sidebarSection) => {
+    savePreference(SIDEBAR_SECTION_STORAGE_KEY, sidebarSection);
+    set({ sidebarSection });
+  },
+  setThreadSort: (threadSort) => {
+    savePreference(THREAD_SORT_STORAGE_KEY, threadSort);
+    set({ threadSort });
   },
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
   // The detail view is cleared when the rail is next opened rather than as it

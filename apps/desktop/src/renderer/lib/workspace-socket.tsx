@@ -65,6 +65,8 @@ import {
   applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
   spaceConversationsQueryKey,
+  MY_THREADS_QUERY_KEY,
+  channelFeedQueryKey,
 } from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from './telemetry';
@@ -571,7 +573,7 @@ export function WorkspaceSocketProvider({
           sidebar.automations.items.map(mapAutomationSummary),
         );
         if (sidebar.spaces) {
-          applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true, sidebar.pinnedOrder);
+          applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true, sidebar.pinnedOrder, { pins: sidebar.pins, channelStats: sidebar.channelStats });
         }
         directoryLive = true;
         setSidebarConnect((current) => ({
@@ -613,6 +615,7 @@ export function WorkspaceSocketProvider({
           sidebar.ordering ?? [],
           sidebar.spacesReady ?? true,
           sidebar.pinnedOrder,
+          { pins: sidebar.pins, channelStats: sidebar.channelStats },
         );
       }
       directoryLive = true;
@@ -1204,6 +1207,7 @@ export function WorkspaceSocketProvider({
               spaceSnapshot.data.ordering,
               spaceSnapshot.data.spacesReady,
               spaceSnapshot.data.pinnedOrder,
+              { pins: spaceSnapshot.data.pins, channelStats: spaceSnapshot.data.channelStats },
             );
             setSidebarConnect((current) => current ? { ...current, spacesLive: true } : current);
             // Guest hierarchy is a separately authorized associative read.
@@ -1246,7 +1250,12 @@ export function WorkspaceSocketProvider({
             // and there is no timer here to tune.
             for (const spaceId of spaceConversations.data.spaceIds) {
               void queryClient.invalidateQueries({ queryKey: spaceConversationsQueryKey(spaceId) });
+              // A Channel's feed is the same membership read in placement order.
+              void queryClient.invalidateQueries({ queryKey: channelFeedQueryKey(spaceId) });
             }
+            // A placement or attention change can add a thread this person
+            // takes part in; the Threads tab's own list is read again.
+            void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
             if (spaceConversations.data.attentionCounts.length > 0) {
               const counts = new Map(spaceConversations.data.attentionCounts.map((entry) => [
                 entry.spaceId,

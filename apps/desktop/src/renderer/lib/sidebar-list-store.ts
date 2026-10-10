@@ -1,4 +1,4 @@
-import type { ContainerOrder, PersonalOrder, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
+import type { ChannelStats, ContainerOrder, PersonalOrder, PinList, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import { sameContainer } from './personal-order';
@@ -72,6 +72,18 @@ export const SPACES_READY_QUERY_KEY = ['spaces-ready'] as const;
 export const PERSONAL_ORDER_QUERY_KEY = ['personal-order'] as const;
 /** All's Pinned order; see `PinnedOrderSchema`. */
 export const PINNED_ORDER_QUERY_KEY = ['pinned-order'] as const;
+/** Every pin this person has, each kind in their order: the Channels and Threads tabs' Pinned sections. */
+export const PINS_QUERY_KEY = ['pins'] as const;
+/** Each listed Channel's thread count and last activity, for the Channels tab. */
+export const CHANNEL_STATS_QUERY_KEY = ['channel-stats'] as const;
+/** The Threads tab's server list: threads and breakouts this person takes part in or pinned. */
+export const MY_THREADS_QUERY_KEY = ['my-threads'] as const;
+/** The Activity tab's first page. */
+export const ACTIVITY_QUERY_KEY = ['activity'] as const;
+/** One Channel's feed. */
+export function channelFeedQueryKey(channelId: string): readonly ['channel-feed', string] {
+  return ['channel-feed', channelId];
+}
 
 const SIDEBAR_LIST_WATERLINES_KEY = ['sidebar-list-waterlines'] as const;
 
@@ -152,6 +164,8 @@ export function applyVersionedSpaceSnapshot(
   spacesReady: boolean,
   /** All's Pinned order; a payload from a server without it reads as none. */
   pinnedOrder: PinnedOrder = [],
+  /** Absent from a server before the navigation redesign; leaves what is held. */
+  navigation: { pins?: PinList | undefined; channelStats?: ChannelStats[] | undefined } = {},
 ): boolean {
   pinWaterlineLedger(queryClient);
   const waterlines = queryClient.getQueryData<Partial<Record<SidebarWaterline, number>>>(
@@ -166,6 +180,8 @@ export function applyVersionedSpaceSnapshot(
   queryClient.setQueryData(INACTIVE_SPACES_QUERY_KEY, snapshot.inactive);
   queryClient.setQueryData(PERSONAL_ORDER_QUERY_KEY, ordering);
   queryClient.setQueryData(PINNED_ORDER_QUERY_KEY, pinnedOrder);
+  if (navigation.pins) queryClient.setQueryData(PINS_QUERY_KEY, navigation.pins);
+  if (navigation.channelStats) queryClient.setQueryData(CHANNEL_STATS_QUERY_KEY, navigation.channelStats);
   queryClient.setQueryData(SPACES_READY_QUERY_KEY, spacesReady);
   return true;
 }

@@ -9,6 +9,7 @@ import {
   IconDots,
   IconHexagons,
   IconLink,
+  IconLock,
   IconPencil,
   IconPin,
   IconUserMinus,
@@ -550,6 +551,63 @@ export function ChannelMenu({
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(workstream.participants.length, workstream.scope, participantsPending)} view={PEOPLE_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
     <LevelRow icon={<IconCornerDownRight aria-hidden="true" size={17} stroke={1.7} />} label="Breakouts" meta={breakouts?.length} view={BREAKOUTS_VIEW} />
+  </>;
+}
+
+/**
+ * A Channel's title-pill menu, for the Channel screen: a Channel holds threads
+ * rather than a conversation, so its menu is its people and its Sidekicks, and
+ * the settings a Channel has (private or Organization-wide, pinned).
+ *
+ * The Sidekicks level lists the Sidekicks the Channel recommends to every
+ * thread started in it (the stored Space's Sidekick defaults), which is where
+ * the product owner put the Sidekick list
+ * (`docs/PRDs/2026-10-10_channels-threads-navigation/prd.md`).
+ */
+export function ChannelContainerMenu({
+  addSidekick,
+  channel,
+  members,
+  onCopyLink,
+  onOpenSidekick,
+  onRename,
+  people,
+  pinned,
+  privacy,
+  sidekickFailure,
+  sidekicks,
+}: {
+  addSidekick?: ReactNode;
+  channel: { name: string; scope: 'personal' | 'workspace' };
+  members: readonly WorkspaceMember[];
+  onCopyLink?: (() => void) | undefined;
+  onOpenSidekick?: (id: string) => void;
+  onRename?: (() => void) | undefined;
+  people?: TitleMenuPeople | undefined;
+  pinned?: { on: boolean; onChange: (next: boolean) => void } | undefined;
+  /** Private to its members, and the switch; absent where the viewer may not change it. */
+  privacy?: { on: boolean; onChange: (next: boolean) => void; disabled?: boolean } | undefined;
+  sidekickFailure?: SidekickSectionFailure | undefined;
+  sidekicks?: SidekickRow[] | undefined;
+}): React.JSX.Element {
+  const nav = useTitleMenuNav();
+  if (nav.view?.key === 'people') {
+    return <PeopleView members={members} noun="channel" people={people} presentUserIds={[]} />;
+  }
+  if (nav.view?.key === 'sidekicks') {
+    return <SidekicksView addSidekick={addSidekick} failure={sidekickFailure} items={sidekicks} onOpen={onOpenSidekick} />;
+  }
+  return <>
+    <ActionTiles>
+      <ActionTile disabled={!people} icon={<IconUserPlus aria-hidden="true" size={20} stroke={1.6} />} label="Add people" onSelect={openLevel(nav, PEOPLE_VIEW)} />
+      {onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={onRename} />}
+      {onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={onCopyLink} />}
+    </ActionTiles>
+    <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(members.length, channel.scope, false)} view={PEOPLE_VIEW} />
+    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={sidekickMeta(sidekicks)} view={SIDEKICKS_VIEW} />
+    {(privacy || pinned) && <TitleMenuSeparator />}
+    {privacy && <SwitchRow checked={privacy.on} disabled={privacy.disabled} icon={<IconLock aria-hidden="true" size={16} stroke={1.8} />} label="Private to its members" onChange={privacy.onChange} />}
+    {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
   </>;
 }
 
