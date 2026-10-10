@@ -292,13 +292,25 @@ function usePinFailure(): string | null {
   return useQuery<string | null>({ queryKey: PIN_FAILURE_QUERY_KEY, queryFn: () => null, enabled: false }).data ?? null;
 }
 
-/** Hold a pin write's answer, or say why it failed. */
+/** How many pin writes this window has started; only the newest one's answer is held. */
+let pinWritesStarted = 0;
+
+/**
+ * Hold a pin write's answer, or say why it failed. Each answer is the whole
+ * list, and two writes in flight can answer in either order, so an answer is
+ * held only when no later write has started; the later one's answer, or the
+ * snapshot every write republishes, carries what the older one would have.
+ */
 function usePinWrite(): (write: Promise<PinList>) => void {
   const queryClient = useQueryClient();
-  return (write) => void write.then((list) => {
-    queryClient.setQueryData(PINS_QUERY_KEY, list);
-    queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, null);
-  }, (error: unknown) => queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, pinFailureCopy(error)));
+  return (write) => {
+    const issued = ++pinWritesStarted;
+    void write.then((list) => {
+      if (issued !== pinWritesStarted) return;
+      queryClient.setQueryData(PINS_QUERY_KEY, list);
+      queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, null);
+    }, (error: unknown) => queryClient.setQueryData(PIN_FAILURE_QUERY_KEY, pinFailureCopy(error)));
+  };
 }
 
 function usePins(): PinList {

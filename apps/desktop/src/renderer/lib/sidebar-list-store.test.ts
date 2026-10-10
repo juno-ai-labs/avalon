@@ -71,6 +71,34 @@ describe('applyVersionedSidebarList', () => {
     expect(queryClient.getQueryData(['personal-order'])).toEqual(arranged);
   });
 
+  // A pin or a Channel read republishes the snapshot without moving the Space
+  // waterline; that republication is how a person's other windows hear of it.
+  it('takes pins and Channel stats from a snapshot whose Space waterline did not move', () => {
+    const queryClient = new QueryClient();
+    const spaces = {
+      active: { waterline: 4, items: [] },
+      inactive: { waterline: 4, items: [] },
+    } satisfies SpaceSnapshot;
+    applyVersionedSpaceSnapshot(queryClient, spaces, [], true, [], { pins: [], channelStats: [] });
+
+    const pins = [{ kind: 'channel' as const, id: SPACE_ID, parentId: null }];
+    const channelStats = [{
+      channelId: SPACE_ID,
+      threadCount: 2,
+      lastActivityAt: '2026-10-10T18:00:00.000Z',
+      latestAttentionSequenceNumber: 3,
+      readThroughSequenceNumber: 3,
+      manualUnreadFromSequenceNumber: null,
+      manualUnreadGeneration: 0,
+      firstUnreadSequenceNumber: null,
+      hasUnread: false,
+    }];
+    expect(applyVersionedSpaceSnapshot(queryClient, spaces, [], true, [], { pins, channelStats })).toBe(false);
+
+    expect(queryClient.getQueryData(['pins'])).toEqual(pins);
+    expect(queryClient.getQueryData(['channel-stats'])).toEqual(channelStats);
+  });
+
   // `spacesReady` has no ledger of its own: a write can be the write that
   // finishes the cutover, so it is only ever as current as the snapshot it
   // arrived with. An older payload must not put the opening state back.

@@ -253,7 +253,9 @@ export class SpaceService {
     return result.page;
   }
 
+  /** A support session reads Activity without moving the person's position (`docs/impersonation.md`). */
   async markActivitySeen(seenThrough: number): Promise<void> {
+    if (this.auth.impersonatorUserId) return;
     await (await this.workspace()).markActivitySeen({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
       userId: asUserId(this.auth.userId),
