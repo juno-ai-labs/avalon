@@ -1374,11 +1374,11 @@ export function WorkspaceSettingsScreen({
       {(isAdmin || connection.scope === 'you') && reconnectableConnectorTypes.has(connection.connectorType)
         && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') && (
         <ConnectionIconAction
-          disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
+          disabled={!connectorStartAvailable(connection.connectorType) || reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
           icon={<RefreshCcw aria-hidden="true" size={14} />}
           label={`Refresh ${connection.displayName}`}
           onClick={() => setReconnectTarget(connection)}
-          tooltip="Refresh authorization with the provider."
+          tooltip={connectorStartAvailable(connection.connectorType) ? 'Refresh authorization with the provider.' : MAC_APP_CONNECT_NOTE}
         />
       )}
       {isAdmin && connection.connectorType === 'generic_webhook' && (
@@ -2028,7 +2028,7 @@ export function WorkspaceSettingsScreen({
                         ? "Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account."
                         : undefined;
                       // A browser tab starts every connection but those marked desktop only.
-                      const startsHere = connectorStartAvailable(provider);
+                      const startsHere = connectorStartAvailable(provider.provider);
                       const personalConnectDisabled = !startsHere || !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = !startsHere
                         ? MAC_APP_CONNECT_NOTE
