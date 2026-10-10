@@ -222,5 +222,5 @@ update it in the same change.
 | [`site-blog.md`](site-blog.md) | The public site's blog at `/blog/`: posts as Markdown files in `apps/site/content/blog/`, how they become pages, cards, a sitemap and footer links, and the rule that a post is one file. Read before adding a post or changing how posts render. |
 | [`landing-comparisons.md`](landing-comparisons.md) | The landing page's "Compared to" section, the `/compare/` pages, and the column footer they share: the one list of rivals in `site-chrome.ts`, the marker plugin, the page shape built for AI search, and the rule that claims about a rival stay checkable. Read before adding a rival or a footer link. |
 | [`landing-page-tracking.md`](landing-page-tracking.md) | What the landing page reports to PostHog, the tagged links, and the checklist a redesign must keep so tracking survives. |
-| [`public-site-telemetry.md`](public-site-telemetry.md) | Global anonymous acquisition and desktop-handoff measurement. |
+| [`public-site-telemetry.md`](public-site-telemetry.md) | Global anonymous acquisition and desktop-handoff measurement, and the temporary PostHog browser SDK (session replay, heatmaps) on the marketing pages. |
 | [`terminal-production-qa-2026-08-21.md`](terminal-production-qa-2026-08-21.md) | Historical Terminal production verification. |
