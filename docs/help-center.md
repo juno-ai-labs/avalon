@@ -26,7 +26,7 @@ the machinery.
 | `apps/site/build/help/layout.ts` | The page template: header, chapters sidebar, article header for each page kind, chapter contents, previous/next links, outline, and the search dialog. |
 | `apps/site/build/help/site.ts` | Builds every output file: resolves and checks links, publishes images, writes the Markdown copies, `llms.txt`, `llms-full.txt`, `search-index.json` and `sitemap.xml`. |
 | `apps/site/worker/index.ts` | The site's only Worker code. It runs for `/help` and `/help/*` alone (`run_worker_first` in `wrangler.jsonc`): it answers `Accept: text/markdown` with the page's Markdown copy and adds the discovery headers. |
-| `apps/site/build/help/plugin.ts` | The Vite plugin: serves pages on request under `vite dev`, and emits every output during `vite build`, linking the `help` entry's hashed script and stylesheet. |
+| `apps/site/build/help/plugin.ts` | The Vite plugin: serves pages on request under `vite dev`, and emits every output during `vite build`, linking the `help` entry's hashed script and stylesheet, and naming other entries a page script loads itself (`entryMeta`, the PostHog SDK) in meta tags. |
 | `apps/site/src/help.ts`, `src/help-search.ts` | The browser script: phone menu, copy buttons, the outline's current-section marker, and search. Ranking lives in `help-search.ts` so it can be tested without a DOM. |
 | `apps/site/build/help/og.ts` | Each page's social card: a 1200×630 PNG laid out by Satori and rasterized by resvg (WebAssembly), named by a hash of its words. |
 | `apps/site/public/_redirects` | Sends every retired `/support/...` address to its page in the manual. |
