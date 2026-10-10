@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AzureOpenAIClient, OpenRouterClient } from './index';
 import { createInferenceDelayObserver } from './inference-delay';
+import { createResponsesFixtureEncoder } from './test-support/responses-stream';
 
 afterEach(() => vi.useRealTimers());
 
@@ -23,9 +24,13 @@ for (const provider of ['azure', 'openrouter'] as const) {
         : new OpenRouterClient({ apiKey: 'key', primaryModel: 'test/model', sameModelRetries: 0, streamIdleTimeoutMs, fetch: fetcher });
       const result = client.stream(input, () => undefined);
       void result.catch(() => undefined);
-      const send = (delta: Record<string, unknown>) => controller.enqueue(new TextEncoder().encode(
-        `data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'test/model', choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`,
-      ));
+      // Azure streams Chat Completions; OpenRouter streams the Responses events for the same chunk.
+      const encoder = createResponsesFixtureEncoder();
+      const send = (delta: Record<string, unknown>) => {
+        const chunk = { id: 'test', object: 'chat.completion.chunk', created: 1, model: 'test/model', choices: [{ index: 0, delta, finish_reason: null }] };
+        const events = provider === 'azure' ? [chunk] : encoder.chunk(chunk);
+        controller.enqueue(new TextEncoder().encode(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')));
+      };
       return { changes, controller, result, send, abort };
     }
 

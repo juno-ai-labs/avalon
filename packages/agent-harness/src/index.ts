@@ -39,6 +39,7 @@ import { createInferenceStreamWatchdog } from "./inference-stream-watchdog";
 import { chatRequestToJSON } from "@openrouter/sdk/models/chatrequest.js";
 import { chatResultFromJSON } from "@openrouter/sdk/models/chatresult.js";
 import { chatStreamChunkFromJSON } from "@openrouter/sdk/models/chatstreamchunk.js";
+import { responsesRequestToJSON } from "@openrouter/sdk/models/responsesrequest.js";
 import {
   createEmbeddingsRequestBodyToJSON,
   createEmbeddingsResponseFromJSON,
@@ -49,6 +50,7 @@ import type { ProviderPreferences as OpenRouterProviderPreferences } from "@open
 import type { ChatResult } from "@openrouter/sdk/models/chatresult.js";
 import type { ChatStreamChunk } from "@openrouter/sdk/models/chatstreamchunk.js";
 import type { ChatUsage } from "@openrouter/sdk/models/chatusage.js";
+import type { ResponsesRequest as OpenRouterResponsesRequest } from "@openrouter/sdk/models/responsesrequest.js";
 import type { OpenRouterMetadata } from "@openrouter/sdk/models/openroutermetadata.js";
 import { z } from "zod";
 import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
@@ -382,24 +384,43 @@ export interface HarnessActivationBoundaryResult {
   replayedActivationInputIds: readonly string[];
 }
 
-export interface OpenRouterInferencePayload {
+/** The streamed Chat Completions body Rally sends to Azure. */
+export interface ChatCompletionsInferencePayload {
   model: string;
   messages: ModelMessage[];
   stream: true;
   stream_options: { include_usage: true };
-  /** Usage accounting. Absent on providers Rally prices itself. */
-  usage?: { include: true };
   tools?: ModelRequestTool[];
   tool_choice?: "auto";
   parallel_tool_calls?: true;
-  plugins?: Array<Record<string, unknown>>;
-  reasoning?: { effort: "none" | "low" | "medium" | "high" };
   /** Azure's OpenAI-compatible Chat Completions reasoning control. */
   reasoning_effort?: "low" | "medium" | "high";
+}
+
+/**
+ * The streamed Responses body Rally sends to OpenRouter, exactly as
+ * serialized. `input` is the wire projection of Bind's Chat-shaped messages
+ * (`toResponsesInput`); nothing upstream of the client sees this shape.
+ */
+export interface OpenRouterResponsesInferencePayload {
+  model: string;
+  input: Array<Record<string, unknown>>;
+  stream: true;
+  /** Usage accounting, without which `usage.cost` is absent. */
+  usage: { include: true };
+  tools?: Array<Record<string, unknown>>;
+  tool_choice?: "auto" | "none";
+  parallel_tool_calls?: true;
+  plugins?: Array<Record<string, unknown>>;
+  reasoning?: { effort: "none" | "low" | "medium" | "high" };
   user?: string;
   session_id?: string;
-  trace?: OpenRouterTracePayload["trace"];
+  trace?: Record<string, unknown>;
 }
+
+export type InferenceRequestPayload =
+  | ChatCompletionsInferencePayload
+  | OpenRouterResponsesInferencePayload;
 
 export interface InferenceRequestEvent {
   inferenceRequestId: string;
@@ -415,7 +436,8 @@ export interface InferenceRequestEvent {
     candidateIndex: number;
     endpointAttempt: number;
   };
-  payload: OpenRouterInferencePayload;
+  /** The exact provider request body. */
+  payload: InferenceRequestPayload;
 }
 
 export interface InferenceAttemptEvent {
@@ -533,6 +555,12 @@ export interface ChatRequest {
   trace?: OpenRouterTracePayload | undefined;
   signal?: AbortSignal | undefined;
   onInferenceDelay?: (active: boolean) => void | Promise<void>;
+  /**
+   * The Responses body `openRouterResponsesRequest` already built for this
+   * model. Sent as-is, so a caller that archived it sent exactly that and the
+   * transcript is serialized once per attempt.
+   */
+  prebuiltBody?: OpenRouterResponsesInferencePayload | undefined;
 }
 
 export interface StreamResult {
@@ -1127,35 +1155,11 @@ export class OpenRouterClient {
       establishmentTimedOut = true;
       establishment.abort(new DOMException("OpenRouter request establishment timed out", "TimeoutError"));
     }, this.config.requestEstablishmentTimeoutMs ?? 30_000);
-    const tools = [...(input.tools ?? [])];
-    if (input.includeWebSearch) {
-      tools.push({
-        type: "openrouter:web_search",
-        search_context_size: "medium",
-        max_total_results: input.maxWebResults ?? 8
-      });
-    }
-    const reasoningEffort = reasoningEffortFor(model, input.reasoningEffort);
     try {
-      const requestPayload = serializeOpenRouterChatRequest({
-        model,
-        messages: input.messages,
-        stream: true,
-        streamOptions: { includeUsage: true },
-        ...(tools.length > 0 ? {
-          tools,
-          toolChoice: input.toolChoice ?? "auto",
-          parallelToolCalls: true,
-        } : {}),
-        ...(input.plugins?.length ? { plugins: input.plugins } : {}),
-        ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
-        ...(input.trace ? {
-          ...(input.trace.user ? { user: input.trace.user } : {}),
-          ...(input.trace.session_id ? { sessionId: input.trace.session_id } : {}),
-          trace: toSdkTrace(input.trace.trace),
-        } : {}),
-      });
-      const response = await this.fetcher("https://openrouter.ai/api/v1/chat/completions", {
+      const requestPayload = input.prebuiltBody?.model === model
+        ? input.prebuiltBody
+        : openRouterResponsesRequest(model, input);
+      const response = await this.fetcher(OPENROUTER_RESPONSES_URL, {
         method: "POST",
         headers: this.headers(),
         body: JSON.stringify(requestPayload),
@@ -1181,56 +1185,27 @@ export class OpenRouterClient {
     }
 
     delayObserver.open();
-    let content = "";
-    let usage: Record<string, number> | null = null;
-    let finishReason: string | null = null;
-    let generationId: string | null = response.headers.get("x-generation-id");
-    let openRouterMetadata: Record<string, unknown> | null = null;
-    const pendingCalls = new Map<number, ModelToolCall>();
     let deltaChain = Promise.resolve();
+    const reduced = createResponsesStreamReducer(response.headers.get("x-generation-id"));
     const parser = createParser({
       onEvent: (event: EventSourceMessage) => {
         if (event.data === "[DONE]") return;
-        const chunk = parseOpenRouterStreamChunk(event.data);
-        if (chunk.error) {
-          throw new OpenRouterError("OpenRouter stream error", undefined, {
-            providerError: openRouterProviderError({ error: chunk.error }),
-          });
-        }
-        generationId ??= chunk.id || null;
-        if (chunk.openrouterMetadata) openRouterMetadata = openRouterMetadataRecord(chunk.openrouterMetadata);
-        if (chunk.usage) usage = sdkUsageRecord(chunk.usage);
-        const choice = chunk.choices?.[0];
-        if (!choice) return;
-        if (choice.finishReason) finishReason = choice.finishReason;
-        const text = choice.delta?.content;
-        const toolCallDeltas = choice.delta?.toolCalls ?? [];
-        if (text || toolCallDeltas.length > 0) delayObserver.observedOutput();
+        const step = reduced.apply(event.data);
+        if (step.answered) delayObserver.observedOutput();
         // Metadata/keepalives must not restart the first-output deadline.
-        if (text || toolCallDeltas.length > 0 || firstOutputAt !== null) {
-          watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+        if (step.answered || firstOutputAt !== null) {
+          watchdog.observedChunk(step.answered ? "answer" : "none");
         }
-        if (text || toolCallDeltas.length > 0) {
+        if (step.answered) {
           firstOutputAt ??= Date.now();
           onOutput();
         }
+        const text = step.text;
         if (text) {
-          content += text;
           deltaChain = deltaChain.then(async () => {
             await delayObserver.flush();
             await onDelta(text);
           });
-        }
-        for (const deltaCall of toolCallDeltas) {
-          const current = pendingCalls.get(deltaCall.index) ?? {
-            id: deltaCall.id ?? `tool-${deltaCall.index}`,
-            type: "function" as const,
-            function: { name: "", arguments: "" }
-          };
-          if (deltaCall.id) current.id = deltaCall.id;
-          if (deltaCall.function?.name) current.function.name += deltaCall.function.name;
-          if (deltaCall.function?.arguments) current.function.arguments += deltaCall.function.arguments;
-          pendingCalls.set(deltaCall.index, current);
         }
       }
     });
@@ -1248,16 +1223,9 @@ export class OpenRouterClient {
     await deltaChain;
       return {
       model,
-      content,
-      toolCalls: [...pendingCalls.entries()]
-        .sort(([left], [right]) => left - right)
-        .map(([, call]) => call),
-      usage,
-      finishReason,
-      generationId,
+      ...reduced.result(),
       ttftMs: firstOutputAt === null ? null : Math.max(0, firstOutputAt - requestStartedAt),
       responseBytes,
-      openRouterMetadata,
       };
     } catch (error) {
       const stall = watchdog.stall();
@@ -1634,6 +1602,306 @@ function toSdkContent(content: ModelMessageContent): unknown {
   });
 }
 
+/** Where every streamed agent turn goes. Structured calls and embeddings stay on their own endpoints. */
+export const OPENROUTER_RESPONSES_URL = "https://openrouter.ai/api/v1/responses";
+
+/**
+ * The exact Responses body `OpenRouterClient` streams for one model. Bind
+ * builds it once, archives it, and passes it back as `prebuiltBody`, so the
+ * archived body is the body sent.
+ */
+export function openRouterResponsesRequest(
+  model: string,
+  input: Pick<ChatRequest, "messages" | "tools" | "toolChoice" | "includeWebSearch" | "maxWebResults" | "plugins" | "reasoningEffort" | "trace">,
+): OpenRouterResponsesInferencePayload {
+  const tools: ModelRequestTool[] = [...(input.tools ?? [])];
+  if (input.includeWebSearch) {
+    tools.push({
+      type: "openrouter:web_search",
+      search_context_size: "medium",
+      max_total_results: input.maxWebResults ?? 8,
+    });
+  }
+  const reasoningEffort = reasoningEffortFor(model, input.reasoningEffort);
+  try {
+    const sdkRequest: OpenRouterResponsesRequest = {
+      model,
+      input: toResponsesInput(input.messages) as OpenRouterResponsesRequest["input"],
+      stream: true,
+      ...(tools.length > 0 ? {
+        tools: toResponsesTools(tools),
+        toolChoice: input.toolChoice ?? "auto",
+        parallelToolCalls: true,
+      } : {}),
+      ...(input.plugins?.length
+        ? { plugins: toSdkPlugins(input.plugins) as OpenRouterResponsesRequest["plugins"] }
+        : {}),
+      ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
+      ...(input.trace ? {
+        ...(input.trace.user ? { user: input.trace.user } : {}),
+        ...(input.trace.session_id ? { sessionId: input.trace.session_id } : {}),
+        trace: toSdkTrace(input.trace.trace),
+      } : {}),
+    };
+    return {
+      ...JSON.parse(responsesRequestToJSON(sdkRequest)) as Omit<OpenRouterResponsesInferencePayload, "usage">,
+      // Same reason as the Chat Completions serializer: without the opt-in the
+      // usage object carries no `cost`, and the SDK drops the key it has no
+      // typed field for.
+      usage: { include: true },
+    };
+  } catch (error) {
+    if (error instanceof OpenRouterRequestError) throw error;
+    throw new OpenRouterRequestError("Invalid OpenRouter responses request");
+  }
+}
+
+function toResponsesTools(tools: ModelRequestTool[]): NonNullable<OpenRouterResponsesRequest["tools"]> {
+  return tools.map((tool) => tool.type === "function"
+    ? {
+        type: "function" as const,
+        name: tool.function.name,
+        ...(tool.function.description === undefined ? {} : { description: tool.function.description }),
+        parameters: tool.function.parameters ?? null,
+        ...(tool.function.strict === undefined ? {} : { strict: tool.function.strict }),
+      }
+    : {
+        type: "openrouter:web_search" as const,
+        parameters: {
+          searchContextSize: tool.search_context_size,
+          maxTotalResults: tool.max_total_results,
+        },
+      }) as NonNullable<OpenRouterResponsesRequest["tools"]>;
+}
+
+/**
+ * Bind's Chat-shaped transcript as Responses input items, in SDK (camelCase)
+ * form. The transcript, its storage and every caller keep the Chat shape; this
+ * is the only place the Responses item model exists on the way out.
+ *
+ * - An assistant message becomes its text, if any, followed by one
+ *   `function_call` item per tool call.
+ * - A tool message becomes a `function_call_output` keyed by the same call id.
+ * - Responses requires an `fc_`-prefixed item id on a replayed function call.
+ *   OpenRouter is stateless (`store` is always false), so the id names nothing
+ *   upstream; it is derived from the call id so the prefix stays byte-stable
+ *   across turns for prompt caching.
+ */
+export function toResponsesInput(messages: ModelMessage[]): Array<Record<string, unknown>> {
+  const items: Array<Record<string, unknown>> = [];
+  for (const message of messages) {
+    if (message.role === "tool") {
+      items.push({
+        type: "function_call_output",
+        callId: message.tool_call_id ?? "",
+        output: toResponsesToolOutput(message.content),
+      });
+      continue;
+    }
+    if (message.role === "assistant") {
+      const text = Array.isArray(message.content)
+        ? message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
+        : message.content ?? "";
+      if (text) items.push({ type: "message", role: "assistant", content: text });
+      for (const call of message.tool_calls ?? []) {
+        items.push({
+          type: "function_call",
+          id: responsesFunctionCallItemId(call.id),
+          callId: call.id,
+          name: call.function.name,
+          arguments: call.function.arguments,
+        });
+      }
+      continue;
+    }
+    items.push({
+      type: "message",
+      role: message.role,
+      content: toResponsesContent(message.content) ?? "",
+    });
+  }
+  return items;
+}
+
+function responsesFunctionCallItemId(callId: string): string {
+  return `fc_${callId.replace(/[^A-Za-z0-9_-]/gu, "_")}`;
+}
+
+function toResponsesContent(content: ModelMessageContent): string | Array<Record<string, unknown>> | null {
+  if (!Array.isArray(content)) return content;
+  return content.map((part) => {
+    if (part.type === "text") return { type: "input_text", text: part.text };
+    if (part.type === "image_url") {
+      assertSupportedOpenRouterImageUrl(part.image_url.url);
+      return { type: "input_image", detail: part.image_url.detail ?? "auto", imageUrl: part.image_url.url };
+    }
+    if (part.type === "file") {
+      return { type: "input_file", filename: part.file.filename, fileData: part.file.file_data };
+    }
+    return { type: "input_audio", inputAudio: part.input_audio };
+  });
+}
+
+/** A function output takes text, image and file parts; audio has no slot there. */
+function toResponsesToolOutput(content: ModelMessageContent): string | Array<Record<string, unknown>> {
+  const converted = toResponsesContent(content) ?? "";
+  if (Array.isArray(converted) && converted.some((part) => part.type === "input_audio")) {
+    throw new OpenRouterRequestError("OpenRouter responses do not accept audio in a tool result");
+  }
+  return converted;
+}
+
+/** What one stream event changed, for the client's deadlines and text sink. */
+interface ResponsesStreamStep {
+  /** The event carried answer text or a tool call. */
+  answered: boolean;
+  text: string;
+}
+
+/**
+ * Folds an OpenRouter Responses event stream into the Chat-shaped result Bind
+ * stores: concatenated text, tool calls in output order, a Chat finish reason,
+ * and usage under Chat Completions names. Reasoning items are not kept; Bind's
+ * transcript has nowhere to replay them yet.
+ */
+export function createResponsesStreamReducer(headerGenerationId: string | null) {
+  let content = "";
+  let usage: Record<string, number> | null = null;
+  let status: string | null = null;
+  let incompleteReason: string | null = null;
+  let generationId = headerGenerationId;
+  let openRouterMetadata: Record<string, unknown> | null = null;
+  const calls = new Map<number, ModelToolCall>();
+  const callAt = (outputIndex: number): ModelToolCall => {
+    const existing = calls.get(outputIndex);
+    if (existing) return existing;
+    const created: ModelToolCall = {
+      id: `tool-${outputIndex}`,
+      type: "function",
+      function: { name: "", arguments: "" },
+    };
+    calls.set(outputIndex, created);
+    return created;
+  };
+  const settleCall = (outputIndex: number, item: Record<string, unknown>) => {
+    const call = callAt(outputIndex);
+    if (typeof item.call_id === "string" && item.call_id) call.id = item.call_id;
+    if (typeof item.name === "string" && item.name) call.function.name = item.name;
+    if (typeof item.arguments === "string" && item.arguments) call.function.arguments = item.arguments;
+  };
+  const settleResponse = (response: Record<string, unknown>) => {
+    if (typeof response.status === "string") status = response.status;
+    if (typeof response.id === "string" && response.id) generationId ??= response.id;
+    const details = record(response.incomplete_details);
+    if (typeof details?.reason === "string") incompleteReason = details.reason;
+    const rawUsage = record(response.usage);
+    if (rawUsage) usage = sdkUsageRecord(rawUsageToSdk(responsesUsageAsChat(rawUsage)));
+    const metadata = record(response.openrouter_metadata);
+    if (metadata) openRouterMetadata = metadata;
+  };
+  return {
+    apply(serialized: string): ResponsesStreamStep {
+      const event = record(decodeJson(serialized));
+      if (!event) return { answered: false, text: "" };
+      const outputIndex = typeof event.output_index === "number" ? event.output_index : 0;
+      switch (event.type) {
+        case "response.output_text.delta": {
+          const text = typeof event.delta === "string" ? event.delta : "";
+          content += text;
+          return { answered: text.length > 0, text };
+        }
+        case "response.output_item.added":
+        case "response.output_item.done": {
+          const item = record(event.item);
+          if (item?.type !== "function_call") return { answered: false, text: "" };
+          settleCall(outputIndex, item);
+          return { answered: true, text: "" };
+        }
+        case "response.function_call_arguments.delta": {
+          const delta = typeof event.delta === "string" ? event.delta : "";
+          callAt(outputIndex).function.arguments += delta;
+          return { answered: true, text: "" };
+        }
+        case "response.function_call_arguments.done":
+          settleCall(outputIndex, event);
+          return { answered: true, text: "" };
+        case "response.created":
+        case "response.in_progress":
+        case "response.completed":
+        case "response.incomplete": {
+          const response = record(event.response);
+          if (response) settleResponse(response);
+          return { answered: false, text: "" };
+        }
+        case "response.failed": {
+          const response = record(event.response);
+          throw new OpenRouterError("OpenRouter stream error", undefined, {
+            providerError: openRouterProviderError({ error: response?.error ?? {} }),
+          });
+        }
+        case "error":
+          throw new OpenRouterError("OpenRouter stream error", undefined, {
+            providerError: openRouterProviderError({ error: event.error ?? event }),
+          });
+        default:
+          return { answered: false, text: "" };
+      }
+    },
+    result(): Pick<StreamResult, "content" | "toolCalls" | "usage" | "finishReason" | "generationId" | "openRouterMetadata"> {
+      const toolCalls = [...calls.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([, call]) => call);
+      return {
+        content,
+        toolCalls,
+        usage,
+        finishReason: chatFinishReason(status, incompleteReason, toolCalls.length > 0),
+        generationId,
+        openRouterMetadata,
+      };
+    },
+  };
+}
+
+/** A Responses terminal status in the Chat Completions vocabulary Bind reads (`length` above all). */
+function chatFinishReason(status: string | null, incompleteReason: string | null, calledTools: boolean): string | null {
+  if (status === "completed") return calledTools ? "tool_calls" : "stop";
+  if (status === "incomplete") {
+    if (incompleteReason === "max_output_tokens") return "length";
+    return incompleteReason ?? "incomplete";
+  }
+  return null;
+}
+
+/** Responses usage under Chat Completions names, so one normalizer and one ledger serve both. */
+function responsesUsageAsChat(usage: Record<string, unknown>): Record<string, unknown> {
+  const inputDetails = record(usage.input_tokens_details);
+  const outputDetails = record(usage.output_tokens_details);
+  const costDetails = record(usage.cost_details);
+  return {
+    prompt_tokens: usage.input_tokens,
+    completion_tokens: usage.output_tokens,
+    total_tokens: usage.total_tokens,
+    cost: usage.cost,
+    is_byok: usage.is_byok,
+    ...(costDetails ? {
+      cost_details: {
+        upstream_inference_cost: costDetails.upstream_inference_cost,
+        upstream_inference_prompt_cost: costDetails.upstream_inference_input_cost,
+        upstream_inference_completions_cost: costDetails.upstream_inference_output_cost,
+      },
+    } : {}),
+    ...(inputDetails ? { prompt_tokens_details: { cached_tokens: inputDetails.cached_tokens } } : {}),
+    ...(outputDetails ? { completion_tokens_details: { reasoning_tokens: outputDetails.reasoning_tokens } } : {}),
+  };
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 const OPENROUTER_IMAGE_DATA_URL = /^data:(image\/(?:png|jpeg|webp|gif));base64,/iu;
 
 /**
@@ -1827,10 +2095,6 @@ function sdkUsageRecord(usage: ChatUsage): Record<string, number> {
       ? { cached_tokens: usage.promptTokensDetails.cachedTokens }
       : {}),
   };
-}
-
-function openRouterMetadataRecord(metadata: OpenRouterMetadata): Record<string, unknown> {
-  return JSON.parse(JSON.stringify(metadata)) as Record<string, unknown>;
 }
 
 type OpenRouterFailureDisposition = "retry" | "fallback" | "terminal";
@@ -4284,6 +4548,9 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   // to take — while the window Rally had wrong is an operator's, which is why
   // the sentence still asks for the request ID.
   context_length_exceeded: "This conversation is longer than the selected model will accept. Start a new work stream to continue, and copy the request ID for support",
+  // Separable by remedy: the member can remove the attachment or pick another
+  // model, which no other code tells them.
+  model_input_unsupported: "The selected model cannot read part of this message, such as an attached image or file. Remove it or use a different model, and copy the request ID for support",
   tool_surface_too_large: "The authorized tool surface is too large for one run",
   ambiguous_external_write: "An external write may have completed, so Rally did not retry it",
   // Not "did not respond": this code also covers a 429 and a 5xx, where the

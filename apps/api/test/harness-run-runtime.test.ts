@@ -35,6 +35,7 @@ import {
   testToolReceiptPort,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
+import { responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
@@ -3700,6 +3701,5 @@ describe("inline child-run durability", () => {
 });
 
 function inferenceStreamResponse(events: unknown[]): Response {
-  const body = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
-  return new Response(body, { headers: { "content-type": "text/event-stream" } });
+  return responsesStreamResponse(events);
 }

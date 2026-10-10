@@ -753,8 +753,17 @@ The registry marks Grok 4.6 and both Gemini Flash models `reasoningRequired`,
 because their providers refuse `none` ("Reasoning is mandatory for this
 endpoint"); a task's `none` is served at that model's default there, so a
 fallback can still answer a call whose primary runs without reasoning.
-Tool-bearing Chat Completions requests also opt in to parallel tool calls on
-both OpenRouter and Azure; requests with no tools omit the field.
+Tool-bearing requests also opt in to parallel tool calls on both OpenRouter
+and Azure; requests with no tools omit the field.
+
+The two transports speak different APIs. A streamed OpenRouter turn goes to
+the Responses API (`/api/v1/responses`); an Azure turn goes to Chat
+Completions. Structured calls and embeddings stay on OpenRouter's Chat
+Completions and embeddings endpoints. Bind's transcript and storage keep the
+Chat message shape; only the OpenRouter client translates, out through
+`toResponsesInput` and back through `createResponsesStreamReducer`.
+`openRouterResponsesRequest` is the one builder: Bind builds the body once,
+archives it, and hands it to the client to send as-is.
 
 The checked-in Monad production bindings were verified against the live
 `monad-prod-resource` deployment details on 2026-08-30 for Grok and on
@@ -828,8 +837,9 @@ the billable output count so hidden reasoning is not treated as free.
 The Bind/OpenRouter boundary is converted member by member rather than asserted
 through `unknown`. Bind's OpenAI-wire-compatible structural messages remain an
 internal loop contract, but Rally has no direct OpenAI SDK dependency: the
-official `@openrouter/sdk` schemas own provider request serialization and
-successful response/chunk parsing. Model content parts and function tools are
+official `@openrouter/sdk` schemas own provider request serialization (Chat and
+Responses) and successful Chat response/chunk parsing; Responses stream events
+are read by the reducer above. Model content parts and function tools are
 mapped to Rally's wire types, unsupported tool variants fail at the boundary,
 and input audio admits only the `wav` and `mp3` formats the OpenRouter SDK
 contract supports. This keeps an SDK union or return-shape change visible to the
@@ -837,7 +847,7 @@ compiler instead of letting it emerge later in a provider request.
 
 ### Streaming stability
 
-OpenAI-compatible SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the SubstreamAgent event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
+SSE comments are ignored. Azure's Chat function-call fragments are combined by index, and OpenRouter's Responses argument deltas by output index, with the `done` event's arguments taken as final. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the SubstreamAgent event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
 
 Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The room commits each sequenced stream frame together with an accumulated active-stream checkpoint in Durable Object storage. Its metadata and bounded text chunks share that transaction, so a long answer cannot make one storage value reject every later frame. An initial snapshot or history-gap resync reassembles that checkpoint, including its independent Bind cursor and attempt boundary, so somebody joining after the response began installs the exact partial text before catch-up and live frames cross the same sequence boundary.
 
@@ -1086,7 +1096,10 @@ participants remain deferred product work.
 - **Owning a failure is not a reason to stop naming it.** The one 400 whose
   cause the endpoint states in a machine code — `context_length_exceeded` —
   is reported under that name with kind `context`, still Rally's request and
-  never the provider's. The invariant above is about *who owns* a failure; this
+  never the provider's. So is OpenRouter's 404 when its routing funnel names an
+  input filter (`failed_routing_step` of `Filter by Image Support`, `File` or
+  `Audio`): `model_input_unsupported`, kind `context`, because the model
+  cannot read an input the request carries. The invariant above is about *who owns* a failure; this
   one is about *what it was*, and answering the first by discarding the second
   is how a run that crossed a known token limit reached a member as "Rally
   could not complete this run. Retrying is unlikely to help."
@@ -1450,6 +1463,55 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-09 — OpenRouter agent turns stream over the Responses API
+
+**What changed:** The OpenRouter streaming client sends agent turns to
+`/api/v1/responses` instead of `/api/v1/chat/completions`. Only its wire layer
+changed: `toResponsesInput` and `openRouterResponsesRequest` translate Bind's
+Chat-shaped messages out, and `createResponsesStreamReducer` translates the
+event stream back into the Chat-shaped result Bind stores. Bind builds the body
+once, archives it, and passes it to the client to send as-is. Azure turns,
+structured calls and embeddings are unchanged. A Responses stream's transient
+failure codes (`server_error`, `rate_limit_exceeded`) traverse like the numeric
+ones Chat streams sent. A model that cannot read an input the request carries
+now fails as `model_input_unsupported`, read from OpenRouter's
+`failed_routing_step` (image, file and audio filters only).
+
+**Why:** OpenAI is moving tool calls with reasoning off Chat Completions
+(GPT-5.4 onward refuses tools with any effort but `none`; GPT-6 Astra needs
+Responses for any tool call; GPT-6.1 Sol, the default primary, is documented as
+"use the Responses API for tool calling"). OpenRouter's GPT-6 guide says it
+already translates some Chat fields into Responses items for these models, so
+staying on Chat Completions meant depending on a translation layer for the
+default model's core path. Token prices are the same on both endpoints, and
+OpenRouter's Responses endpoint is stateless, so retention and payload size do
+not change. Live two-turn tool loops on Sol 6.1, Gemini 3.8 Flash and Grok 4.6
+completed with synthetic `fc_` ids and reported cost and cached tokens. The live
+sweep that verified the switch also found a DeepSeek V4 Pro run with an image
+attached failing as `harness_execution_failed` while OpenRouter's 404 named the
+cause, which is the generic-code defect CLAUDE.md forbids.
+
+**Considered and rejected:** Changing the transcript to Responses items. It
+would have meant a Durable Object storage migration and touching every caller
+for no gain this change needs; the translation at the client is cheap and
+reversible. Replaying reasoning items was left out: it needs a place in the
+transcript and a rule for dropping them on compaction and on a fallback to
+another model, and is the change that would realize most of the Responses API's
+benefit. Building the body in both Bind and the client was the first version;
+it serialized the whole transcript twice per attempt on the startup path.
+
+**Consequences:** The transcript stays Chat-shaped until reasoning replay gives
+it a reason not to. Any new streamed provider request field goes through
+`openRouterResponsesRequest`, never around it, or the archived body stops being
+the body sent. A new transient stream code from the Responses API belongs in
+`providerDeclaredTransportFailure`'s allowlist, or that outage fails as Rally's
+defect. A tool-support, provider or price routing refusal keeps the catch-all,
+because the member has nothing to remove. OpenRouter's Responses endpoint does
+not expose Anthropic per-block `cache_control` or its 1-hour TTL; explicit
+Claude caching would need `prompt_cache_breakpoint` or the Messages endpoint.
+
+Shipped in #1182.
 
 ### 2026-10-02 — Sol low is the default primary model
 

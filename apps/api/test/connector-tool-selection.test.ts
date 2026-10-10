@@ -25,6 +25,7 @@ import {
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
+import { responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 
 // Frozen from the real pre-cutover definitions at d7289cdbe, not from the
 // compatibility helper under test. Input-schema prose participates in this hash.
@@ -1715,6 +1716,5 @@ describe("editing an automation a conversation already owns", () => {
 });
 
 function authorityStreamResponse(events: unknown[]): Response {
-  const body = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
-  return new Response(body, { headers: { "content-type": "text/event-stream" } });
+  return responsesStreamResponse(events);
 }
