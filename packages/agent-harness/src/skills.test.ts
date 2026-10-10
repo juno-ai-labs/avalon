@@ -14,6 +14,7 @@ import {
 } from "./index";
 import { AUTOMATIONS_PLUGIN_ID } from "./automation-creator-tools";
 import { renderPromptSkillCatalog } from "./prompts/skill-catalog";
+import { providerRequestView, responsesStreamResponse } from "./test-support/responses-stream";
 
 const triage: HarnessSkill = {
   name: "triaging-inbound-work",
@@ -100,7 +101,7 @@ describe("skills in a run", () => {
   it("recommends a catalog skill without activating its instructions", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const fetcher: typeof fetch = async (_request, init) => {
-      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      bodies.push(providerRequestView(JSON.parse(String(init?.body))) as Record<string, unknown>);
       return textResponse("Done.");
     };
     await runHarness({ ...runInput(fetcher), skills: [{ ...triage, recommended: true }] });
@@ -116,7 +117,7 @@ describe("skills in a run", () => {
       textResponse("Sorted by blast radius."),
     ];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      bodies.push(providerRequestView(JSON.parse(String(init?.body))) as Record<string, unknown>);
       return responses.shift()!;
     }) as typeof fetch;
 
@@ -156,7 +157,7 @@ describe("skills in a run", () => {
     // A resumed attempt starts with the body already in the prompt.
     const resumedBodies: Array<Record<string, unknown>> = [];
     const resumedFetch = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      resumedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      resumedBodies.push(providerRequestView(JSON.parse(String(init?.body))) as Record<string, unknown>);
       return textResponse("resumed");
     }) as typeof fetch;
     await runHarness({
@@ -170,7 +171,7 @@ describe("skills in a run", () => {
   it("drops a hint whose skill is no longer in the run's scope", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      bodies.push(providerRequestView(JSON.parse(String(init?.body))) as Record<string, unknown>);
       return textResponse("ok");
     }) as typeof fetch;
     await expect(
@@ -191,7 +192,7 @@ describe("skills in a run", () => {
     const observed: unknown[] = [];
     const events: HarnessEvent[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      observed.push(JSON.parse(String(init?.body)));
+      observed.push(providerRequestView(JSON.parse(String(init?.body))));
       return responses.shift()!;
     }) as typeof fetch;
     await expect(
@@ -226,7 +227,7 @@ describe("skills in a run", () => {
     ];
     const observed: unknown[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      observed.push(JSON.parse(String(init?.body)));
+      observed.push(providerRequestView(JSON.parse(String(init?.body))));
       return responses.shift()!;
     }) as typeof fetch;
 
@@ -256,7 +257,7 @@ describe("skills in a run", () => {
     ];
     const observed: unknown[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      observed.push(JSON.parse(String(init?.body)));
+      observed.push(providerRequestView(JSON.parse(String(init?.body))));
       return responses.shift()!;
     }) as typeof fetch;
 
@@ -276,7 +277,7 @@ describe("skills in a run", () => {
     ];
     const observed: unknown[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      observed.push(JSON.parse(String(init?.body)));
+      observed.push(providerRequestView(JSON.parse(String(init?.body))));
       return responses.shift()!;
     }) as typeof fetch;
 
@@ -295,7 +296,7 @@ describe("skills in a run", () => {
     const observed: unknown[] = [];
     const events: HarnessEvent[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      observed.push(JSON.parse(String(init?.body)));
+      observed.push(providerRequestView(JSON.parse(String(init?.body))));
       return responses.shift()!;
     }) as typeof fetch;
 
@@ -330,7 +331,7 @@ describe("skills in a run", () => {
       textResponse("could not"),
     ];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      bodies.push(providerRequestView(JSON.parse(String(init?.body))) as Record<string, unknown>);
       return responses.shift()!;
     }) as typeof fetch;
 
@@ -376,7 +377,7 @@ describe("skills in a run", () => {
     ];
     const observed: unknown[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      observed.push(JSON.parse(String(init?.body)));
+      observed.push(providerRequestView(JSON.parse(String(init?.body))));
       return responses.shift()!;
     }) as typeof fetch;
 
@@ -412,7 +413,7 @@ describe("skills in a run", () => {
     ];
     const observed: unknown[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      observed.push(JSON.parse(String(init?.body)));
+      observed.push(providerRequestView(JSON.parse(String(init?.body))));
       return responses.shift()!;
     }) as typeof fetch;
 
@@ -443,7 +444,7 @@ describe("skills in a run", () => {
   it("adds no skill surface at all to a run without skills", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      bodies.push(providerRequestView(JSON.parse(String(init?.body))) as Record<string, unknown>);
       return textResponse("no skills here");
     }) as typeof fetch;
 
@@ -477,9 +478,9 @@ function webPlugin(): HarnessPlugin {
   };
 }
 
+/** An OpenRouter turn described in Chat chunks, streamed as Responses events. */
 function streamResponse(events: unknown[]): Response {
-  const body = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
-  return new Response(body, { headers: { "content-type": "text/event-stream" } });
+  return responsesStreamResponse(events);
 }
 
 function textResponse(content: string): Response {
@@ -670,7 +671,7 @@ describe("built-in skills", () => {
       textResponse("Researched."),
     ];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      bodies.push(providerRequestView(JSON.parse(String(init?.body))) as Record<string, unknown>);
       return responses.shift()!;
     }) as typeof fetch;
 

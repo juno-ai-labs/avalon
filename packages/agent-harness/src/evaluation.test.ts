@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { asUserId } from '@rally/contracts';
 import { parseRallyCheckpoint, runRallyEvaluation, type RallyCheckpoint } from './evaluation';
 import type { RunHarnessInput } from './index';
+import { providerRequestView, responsesStreamResponse } from './test-support/responses-stream';
 
 const bindings = { configuration: { model: 'eval/model' }, environment: { writes: 0 } };
 function stream(delta: unknown, finish_reason: string): Response {
-  return new Response(`data: ${JSON.stringify({ choices: [{ delta, finish_reason }] })}\n\ndata: [DONE]\n\n`,
-    { headers: { 'content-type': 'text/event-stream' } });
+  return responsesStreamResponse([{ choices: [{ delta, finish_reason }] }]);
 }
 
 describe('Rally evaluation host', () => {
@@ -15,7 +15,7 @@ describe('Rally evaluation host', () => {
     const checkpoints: RallyCheckpoint[] = [];
     const requests: { messages: { role: string; content?: unknown }[] }[] = [];
     const fetcher: typeof fetch = async (_url, init) => {
-      const request = JSON.parse(String(init?.body)) as typeof requests[number];
+      const request = providerRequestView<typeof requests[number]>(JSON.parse(String(init?.body)));
       requests.push(request);
       return request.messages.some((message) => message.role === 'tool')
         ? stream({ content: 'Saved the document.' }, 'stop')

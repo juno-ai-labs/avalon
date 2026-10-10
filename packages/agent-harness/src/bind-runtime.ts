@@ -70,6 +70,7 @@ import {
   buildOpenRouterTracePayload,
   canonicalToolInputHash,
   modelMessageWithoutProvenance,
+  openRouterResponsesRequest,
   providerCostCents,
   type HarnessEvent,
   type HarnessFailure,
@@ -80,6 +81,7 @@ import {
   type HarnessToolContext,
   type HarnessToolPolicyIdentity,
   type HarnessToolResult,
+  type InferenceRequestPayload,
   type ModelMessageContent,
   type ModelMessageContentPart,
   type ModelToolDefinition,
@@ -2124,6 +2126,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     // candidate with a larger window is still tried first, and this is what is
     // left when every one of them refused the prompt too.
     const contextLengthRejection = isProviderContextLengthRejection(error);
+    // Same standing and position as the context-length arm.
+    const inputUnsupported = !contextLengthRejection && isProviderInputUnsupportedRejection(error);
     const code = error instanceof HarnessLimitError
       ? error.code
       : error instanceof AmbiguousExternalWriteError
@@ -2132,7 +2136,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         ? error.code
       : timedOut
         ? "run_wall_time_limit_exceeded"
-      : providerCode ?? (contextLengthRejection ? "context_length_exceeded" as const : "harness_execution_failed");
+      : providerCode ?? (contextLengthRejection
+        ? "context_length_exceeded" as const
+        : inputUnsupported
+          ? "model_input_unsupported" as const
+          : "harness_execution_failed");
     const failure: HarnessFailure = {
       kind: error instanceof HarnessLimitError
         ? error.code === "context_limit_exceeded"
@@ -2150,7 +2158,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ? "provider"
         : error instanceof ProviderCircuitOpenError
           ? "routing"
-        : contextLengthRejection
+        : contextLengthRejection || inputUnsupported
           ? "context"
           : "execution",
       code,
@@ -2299,34 +2307,34 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 },
               )
             : undefined;
-          const payload = {
-            model: candidate.providerInvocationModel,
-            messages: requestMessages,
-            stream: true as const,
-            stream_options: { include_usage: true as const },
-            // Mirrors what the OpenRouter client actually serializes, so the
-            // recorded request is the request. Azure is priced from Rally's
-            // own rate card and takes no accounting flag.
-            ...(candidate.providerId === OPENROUTER_PROVIDER
-              ? { usage: { include: true as const } }
-              : {}),
-            ...(wireTools.length > 0
-              ? {
-                  tools: wireTools,
-                  tool_choice: "auto" as const,
-                  parallel_tool_calls: true as const,
-                }
-              : {}),
-            ...(candidate.providerId === OPENROUTER_PROVIDER && requestPlugins.length > 0
-              ? { plugins: requestPlugins }
-              : {}),
-            ...(reasoningEffort
-              ? candidate.providerId === AZURE_PROVIDER
-                ? { reasoning_effort: reasoningEffort }
-                : { reasoning: { effort: reasoningEffort } }
-              : {}),
-            ...(trace ?? {}),
-          };
+          // The recorded request is the request. OpenRouter streams the
+          // Responses API, and its body is built once here and handed to the
+          // client to send as-is. Azure stays on Chat Completions, is priced
+          // from Rally's own rate card, and takes no accounting flag.
+          const openRouterBody = candidate.providerId === AZURE_PROVIDER
+            ? undefined
+            : openRouterResponsesRequest(candidate.providerInvocationModel, {
+                messages: requestMessages,
+                ...(wireTools.length > 0 ? { tools: wireTools } : {}),
+                ...(requestPlugins.length > 0 ? { plugins: requestPlugins } : {}),
+                includeWebSearch: false,
+                reasoningEffort,
+                trace,
+              });
+          const payload: InferenceRequestPayload = openRouterBody ?? {
+                model: candidate.providerInvocationModel,
+                messages: requestMessages,
+                stream: true as const,
+                stream_options: { include_usage: true as const },
+                ...(wireTools.length > 0
+                  ? {
+                      tools: wireTools,
+                      tool_choice: "auto" as const,
+                      parallel_tool_calls: true as const,
+                    }
+                  : {}),
+                ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+              };
           startupTiming("route_preparation", routePreparationStartedAt);
           firstStartupRequestObserved = true;
           await args.input.onInferenceRequest?.({
@@ -2365,8 +2373,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                   : { streamIdleTimeoutMs: args.input.config.streamIdleTimeoutMs }),
               }).stream({
                 model: candidate.providerInvocationModel,
-                messages: payload.messages,
-                ...(payload.tools ? { tools: payload.tools } : {}),
+                messages: requestMessages,
+                ...(wireTools.length > 0 ? { tools: wireTools } : {}),
                 includeWebSearch: false,
                 reasoningEffort,
                 signal: args.signal,
@@ -2378,12 +2386,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 fallbackModels: [],
                 sameModelRetries: args.input.config.sameModelRetries ?? 0,
               }).stream({
-                messages: payload.messages,
-                ...(payload.tools ? { tools: payload.tools } : {}),
-                ...(payload.plugins ? { plugins: payload.plugins } : {}),
+                messages: requestMessages,
+                ...(wireTools.length > 0 ? { tools: wireTools } : {}),
+                ...(requestPlugins.length > 0 ? { plugins: requestPlugins } : {}),
                 includeWebSearch: false,
                 reasoningEffort,
                 trace,
+                prebuiltBody: openRouterBody,
                 signal: args.signal,
                 onInferenceDelay,
               }, handleDelta);
@@ -3473,6 +3482,28 @@ function isProviderContextLengthRejection(error: unknown): boolean {
   return forwardedUpstreamErrorCode(providerError.detail) === CONTEXT_LENGTH_REJECTION_CODE;
 }
 
+/**
+ * OpenRouter found no endpoint for the model that accepts an input the
+ * request carries, read from `error.metadata.failed_routing_step` and never
+ * from the message text. Only input steps count: a tool-support or provider
+ * filter is Rally's own routing, which the member cannot change.
+ */
+function isProviderInputUnsupportedRejection(error: unknown): boolean {
+  if (!(error instanceof OpenRouterError) || error.status !== 404) return false;
+  const detail = (error.details as { providerError?: OpenRouterProviderError } | undefined)
+    ?.providerError?.detail;
+  if (detail === undefined) return false;
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(detail);
+  } catch {
+    return false;
+  }
+  const step = (envelope as { error?: { metadata?: { failed_routing_step?: unknown } } })
+    ?.error?.metadata?.failed_routing_step;
+  return typeof step === "string" && /^Filter by (?:Image|File|Audio) Support$/u.test(step.trim());
+}
+
 function providerDeclaredTransportFailure(details: unknown): {
   kind: "rate_limit" | "server_error";
   statusCode: number | null;
@@ -3504,10 +3535,16 @@ function providerDeclaredTransportFailure(details: unknown): {
   // Normalize only provider-controlled casing and separator variants; the
   // captured code itself remains unchanged in the inference-attempt ledger.
   const normalizedCode = code.trim().toLowerCase().replaceAll("-", "_");
+  // `server_error` and `rate_limit_exceeded` are the transient codes a
+  // Responses stream's `response.failed` carries, where Chat streams sent a
+  // numeric status.
   switch (normalizedCode) {
     case "unavailable":
     case "service_unavailable":
+    case "server_error":
       return { kind: "server_error", statusCode: null };
+    case "rate_limit_exceeded":
+      return { kind: "rate_limit", statusCode: null };
     default:
       return null;
   }

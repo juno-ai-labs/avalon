@@ -879,7 +879,7 @@ describe("a member's message travels the whole pipeline", () => {
     })();
 
     const chatRequests = providerRequests.filter((request) =>
-      request.url === "https://openrouter.ai/api/v1/chat/completions");
+      request.url === "https://openrouter.ai/api/v1/responses");
     expect(chatRequests).toHaveLength(1);
     expect(chatRequests[0]!.body.model).toBe(SCHEDULED_ACTIVATION_MODEL);
     const providerMessages = chatRequests[0]!.body.messages as Array<{
@@ -1902,7 +1902,7 @@ describe("a member's message travels the whole pipeline", () => {
     const stub = agentStub();
     const instructions = "Answer in French, and keep every reply under fifty words.";
     const systemMessages = (requests: Awaited<ReturnType<typeof capturedProviderRequests>>) => requests
-      .filter((request) => request.url === "https://openrouter.ai/api/v1/chat/completions")
+      .filter((request) => request.url === "https://openrouter.ai/api/v1/responses")
       .map((request) => JSON.stringify((request.body.messages as Array<{ role?: unknown; content?: unknown }>)
         .filter((message) => message.role === "system")));
     try {
