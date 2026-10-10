@@ -4,6 +4,7 @@ import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowled
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { fetchThroughOwner } from '../lib/fetch-through-owner';
 import clsx from 'clsx';
 import { personalColor, personalColorInk } from '../components/personal-avatar';
 import { MemberPresentationContext } from '../lib/member-presentation';
@@ -1374,13 +1375,13 @@ export function ConversationSurface({
   ), [detailQueryKey, queryClient, transcriptQueryKey]);
   const workstream = useQuery<WorkstreamDetail | undefined>({
     queryKey: detailQueryKey,
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
     staleTime: 5_000,
   });
   const orderedTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
     queryKey: transcriptQueryKey,
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
     staleTime: Number.POSITIVE_INFINITY,
   });
@@ -1689,7 +1690,7 @@ export function ConversationSurface({
   // Breakout's origin card. Subscribed rather than fetched.
   const channelTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
     queryKey: orderedTranscriptQueryKey(id, '0'),
-    queryFn: async () => undefined,
+    queryFn: fetchThroughOwner,
     enabled: false,
   });
   const originTurnId = substreamId === '0' ? undefined : breakoutOrigin?.turnId;
@@ -2188,7 +2189,6 @@ export function ConversationSurface({
     mutationFn: () => socketConnection.retryHarness(),
     onSuccess: async () => {
       requestSocketSnapshot();
-      await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     },
   });
 
@@ -2403,7 +2403,6 @@ export function ConversationSurface({
     try {
       await socketConnection.answerElicitation(elicitationId, answer, customResponse);
       requestSocketSnapshot();
-      await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     } catch (error) {
       queryClient.setQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey, (current) =>
         current ? setTranscriptElicitationState(current, elicitationId, {
@@ -2587,7 +2586,6 @@ export function ConversationSurface({
       setCarriedStopAcknowledgement(NO_STOP_ACKNOWLEDGEMENT);
       attachmentDraft.commitLease(attachmentLease.leaseId);
       requestSocketSnapshot();
-      await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     } catch (error) {
       await attachmentDraft.restoreLease(attachmentLease.leaseId);
       queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) =>
