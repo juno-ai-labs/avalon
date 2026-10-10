@@ -27,6 +27,10 @@ export function connectorDocumentReader(env: Env): ConnectorDocumentReader {
         fileName: file.fileName,
         mimeType: file.mimeType,
         signal: file.signal,
+        // The derivative ceiling exists so a stored derivative can be read
+        // back whole; a connector read keeps only its caller's text budget,
+        // which `readConnectorDocument` applies.
+        maxTextCharacters: null,
         ...(env.DOCUMENT_PROCESSOR
           ? { pdfExtractor: (bytes: Uint8Array) => env.DOCUMENT_PROCESSOR.extractText(bytes) }
           : {}),
