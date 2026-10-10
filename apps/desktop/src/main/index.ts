@@ -2277,19 +2277,22 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     // tab must not replace the account that just signed in.
     desktopAuthAttempts.clear();
     if (currentAuth && currentSession?.workspace) {
-      const displaced = currentAuth.account;
       inMemoryAuthSet = await writeSplitSessionFiles(session, { activate: false });
-      if (displaced) revokeReplacedCredentials({ ...currentAuth, account: displaced, workspaces: [] });
+      if (currentAuth.account) revokeReplacedCredentials({ ...currentAuth, workspaces: [] });
       return publicSession(currentSession);
     }
+    // Past here nothing stored can be shown: the state the renderer drew
+    // sign-in for. The attempt was live, so nothing newer has signed in since
+    // it began, and replacing the stored state is safe.
+    if (currentAuth?.account && currentAuth.account.binding.userId === session.user.id) {
+      // The same person: keep their organizations, but drop the selection,
+      // since it is what could not be shown.
+      inMemoryAuthSet = { ...currentAuth, activeWorkspace: null };
+      await persistSessionUnlocked(session);
+      revokeReplacedCredentials({ ...currentAuth, workspaces: [] });
+      return publicSession(session);
+    }
     if (currentAuth) {
-      // Stored credentials with no organization session to show: an identity
-      // credential whose profile could not be rebuilt, or an active entry
-      // whose profile is gone. The renderer drew the sign-in screen for this
-      // state, and refusing the sign-in it asked for strands the person there
-      // with no way back in. The attempt was live, so nothing newer has signed
-      // in since it began (creating it retired every earlier attempt, and a
-      // completed exchange retires it), and replacing the stale set is safe.
       sessionLifecycleEpoch += 1;
       desktopPush.signOut(currentAuth.workspaces);
       await clearStoredSessionUnlocked();
