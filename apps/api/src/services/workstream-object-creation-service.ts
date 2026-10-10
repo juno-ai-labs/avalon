@@ -106,6 +106,12 @@ interface CreateOptions {
    */
   notifyParticipants?: boolean;
   /**
+   * A person started this thread from a Channel, so a private Channel makes
+   * it private (`resolveSpaceWorkstreamStart`). Like `notifyParticipants`,
+   * the caller's to state: a connector ingress never sets it.
+   */
+  narrowInPrivateSpaces?: boolean;
+  /**
    * The external thread this Channel is created for (a Slack thread addressed
    * to Rally under a linked room). Claimed `pending` inside
    * `reserveChannelInSpaces`, activated once the creation receipt completes,
@@ -425,6 +431,7 @@ export class WorkstreamObjectCreationService {
         spaceIds: [...body.spaceIds],
         requestedScope,
         requestedParticipantUserIds: body.participantUserIds.map(asUserId),
+        ...(options.narrowInPrivateSpaces ? { narrowInPrivateSpaces: true } : {}),
         authorityGeneration: control.generation,
         directory: {
           title,
@@ -441,6 +448,7 @@ export class WorkstreamObjectCreationService {
       scope: requestedScope,
       requestedParticipantUserIds: body.participantUserIds,
       originResourceIds: options.originResourceIds ?? [],
+      narrowInPrivateSpaces: options.narrowInPrivateSpaces === true,
     });
     const scope = start.scope;
     const participantUserIds = start.participantUserIds;

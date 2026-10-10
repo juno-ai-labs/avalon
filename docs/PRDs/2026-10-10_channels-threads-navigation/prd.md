@@ -411,8 +411,11 @@ never held a Sidekick list, so nothing moves out of it.
 
 **Changes:** Resolves both open questions. Space Sidekick defaults are kept
 rather than retired in the cleanup PR. `resolveSpaceWorkstreamStart` narrows a
-thread born in any private channel to private, for every creator (the
-composer, Slack rooms, Sidekick runs). Shipped in PR B.
+thread a person starts in a private channel to private. Shipped in PR B for
+every creator, then limited to the person-started route
+(`narrowInPrivateSpaces`): a connector such as Slack resolves its own audience
+from its room, and narrowing it left a public Slack channel's thread unreadable
+to that channel's members.
 
 ## Key design decisions
 
