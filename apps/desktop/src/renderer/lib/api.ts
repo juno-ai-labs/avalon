@@ -7,6 +7,8 @@ import {
   ActivityPageSchema,
   ChannelFeedPageSchema,
   MyThreadsPageSchema,
+  ChannelStatsListSchema,
+  type ChannelStatsList,
   PinListSchema,
   type ActivityPage,
   type PinKind,
@@ -76,9 +78,7 @@ import {
   type WorkstreamDetail as WireWorkstreamDetail,
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
   ChannelAccessSchema as WireChannelAccessSchema,
-  SpaceChannelPageSchema as WireSpaceChannelPageSchema,
   ContainerOrderSchema as WireContainerOrderSchema,
-  PinnedOrderWriteSchema,
   SpaceSummarySchema as WireSpaceSummarySchema,
   MoveChannelBetweenSpacesResultSchema as WireMoveChannelBetweenSpacesResultSchema,
   type ChannelAccess,
@@ -96,7 +96,7 @@ import {
   SidekickAttachmentsSchema,
   SidekickRecommendationOptionsSchema,
   type SidekickAttachment,
-  type UpdateOnboardingJourney,
+  type UpdateOnboardingJourney
 } from '@rally/contracts';
 import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
@@ -1454,56 +1454,6 @@ export class RallyApi {
   }
 
   /**
-   * Save this person's order for **All**'s Pinned section, in full. Answers
-   * with what was stored: only Channels they can list, each once.
-   */
-  async reorderAllPinned(itemIds: string[]): Promise<string[]> {
-    return (await this.request('/workspace/pinned-order', {
-      method: 'PUT',
-      body: { itemIds },
-      schema: PinnedOrderWriteSchema,
-    })).itemIds;
-  }
-
-  /**
-   * One page of the conversations in a Space that currently need this viewer:
-   * its member Channels and their breakouts, newest activity first.
-   *
-   * The one Space read that is not on the socket: General holds every Channel
-   * in the Organization, so the answer is paginated and the opening sidebar
-   * payload carries a count instead. The cursor is opaque — the ordering is
-   * the authority's — and so is the filtering: the server decides which
-   * conversations still need this reader, because a filter applied here would
-   * make every page arbitrarily short and the cursor a promise about rows the
-   * client had already thrown away.
-   *
-   * The path still says `channels`. It answers conversations.
-   */
-  async listSpaceChannels(
-    spaceId: string,
-    cursor: string | null,
-    signal?: AbortSignal,
-  ): Promise<{ items: SpaceConversationSummary[]; nextCursor: string | null }> {
-    const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
-    const page = await this.request(`/spaces/${encodeURIComponent(spaceId)}/channels${query}`, {
-      schema: WireSpaceChannelPageSchema,
-      ...(signal ? { signal } : {}),
-    });
-    // Through the same mapper every other Channel row goes through, so a
-    // placement on the dashboard and the same Channel in the sidebar are one
-    // shape rather than two that drift. A breakout adds two fields to it and
-    // changes none.
-    return {
-      items: page.items.map((conversation) => ({
-        ...mapWorkstreamSummary(conversation),
-        kind: conversation.kind,
-        breakoutOf: conversation.breakoutOf,
-      })),
-      nextCursor: page.nextCursor,
-    };
-  }
-
-  /**
    * One page of a Channel's feed (a stored Space's threads), newest placement
    * first. A thread this person may not open is a locked row with its id and
    * time only; see `docs/listing-rules.md`.
@@ -1537,6 +1487,10 @@ export class RallyApi {
       })),
       nextCursor: page.nextCursor,
     };
+  }
+
+  getChannelStats(signal?: AbortSignal): Promise<ChannelStatsList> {
+    return this.request('/navigation/channel-stats', { schema: ChannelStatsListSchema, ...(signal ? { signal } : {}) });
   }
 
   setPinned(kind: PinKind, id: string, pinned: boolean, parentId?: string): Promise<PinList> {

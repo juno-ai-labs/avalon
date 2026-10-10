@@ -12,7 +12,7 @@ describe('learning by doing', () => {
     render(<OnboardingIntroduction busy={false} error={null} onComplete={complete} />);
     expect(screen.getByText('Rally, help us plan a welcome session for our new customers.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Meet streams' }));
-    expect(screen.getByRole('heading', { name: 'A stream gives your work a home.' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'A channel gives your work a home.' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Explore breakouts' }));
     expect(screen.getByRole('heading', { name: 'Explore an idea in a breakout.' })).toBeInTheDocument();
     expect(complete).not.toHaveBeenCalled();

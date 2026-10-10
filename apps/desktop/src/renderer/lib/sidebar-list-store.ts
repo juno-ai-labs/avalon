@@ -28,22 +28,6 @@ export const SIDEBAR_LIST_QUERY_KEYS = {
   automations: ['automations'],
 } as const satisfies Record<SidebarList, readonly unknown[]>;
 
-/**
- * The Space dashboard's page of conversations, one entry per Space.
- *
- * Declared here rather than in the screen because the screen is not the only
- * thing that names it: the workspace socket invalidates it when WorkspaceDO
- * nudges, and the screen invalidates it again after a reconnect. A key spelled
- * in two places is a refetch that silently stops happening the day one of the
- * spellings changes.
- *
- * Unlike the entries around it this one is *not* socket-owned — it is fetched,
- * paginated, and only ever told to read itself again.
- */
-export function spaceConversationsQueryKey(spaceId: string | undefined): readonly unknown[] {
-  return ['space-channels', spaceId];
-}
-
 export const SPACES_QUERY_KEY = ['spaces'] as const;
 export const INACTIVE_SPACES_QUERY_KEY = ['spaces-inactive'] as const;
 /**
@@ -184,20 +168,6 @@ export function applyVersionedSpaceSnapshot(
   if (navigation.channelStats) queryClient.setQueryData(CHANNEL_STATS_QUERY_KEY, navigation.channelStats);
   queryClient.setQueryData(SPACES_READY_QUERY_KEY, spacesReady);
   return true;
-}
-
-/**
- * All's Pinned order as the write answered it, ahead of the snapshot that
- * carries it, for the reason `applyContainerOrder` gives.
- */
-export function applyPinnedOrder(
-  queryClient: QueryClient,
-  order: PinnedOrder,
-  expectedCurrent?: PinnedOrder,
-): void {
-  queryClient.setQueryData<PinnedOrder>(PINNED_ORDER_QUERY_KEY, (current = []) => (
-    expectedCurrent !== undefined && current !== expectedCurrent ? current : order
-  ));
 }
 
 /**

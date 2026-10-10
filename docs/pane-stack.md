@@ -73,7 +73,10 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 ## Failure modes and limits
 
 - **Narrow windows:** below two conversation minimums the right pane stands
-  alone, with the crumb.
+  alone, with the crumbs: a breakout alone carries its Channel and its thread,
+  each of which `onShownChange` reports at its own level. Below 460px a
+  pane's header (`@container conversation-pane`) shows the crumbs as marks
+  only, so the pane's own pill keeps its room and truncates last.
 - **A thread with no visible Channel** opens on `/workstreams/:id`, alone; it
   has nothing to step back to.
 

@@ -15,14 +15,15 @@ const api = vi.hoisted(() => ({
   markActivitySeen: vi.fn(async () => undefined),
   setPinned: vi.fn(),
   reorderPins: vi.fn(),
+  getChannelStats: vi.fn(async () => []),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 vi.mock('../lib/use-workstreams-query', () => ({ useWorkstreamsQuery: () => ({ data: [] }) }));
 
-const workspace = {
-  id: 'org', name: 'Rally', region: 'global',
-  currentUser: { id: 'me', name: 'Me', email: 'me@rally.test', role: 'owner', accessClass: 'member' },
-} as unknown as Workspace;
+const workspace: Workspace = {
+  id: 'org', name: 'Rally', region: 'enterprise', timezone: 'UTC',
+  currentUser: { id: 'me', name: 'Me', email: 'me@rally.test', timezone: 'UTC', role: 'owner', accessClass: 'member' },
+};
 
 function channel(id: string, name: string, overrides: Record<string, unknown> = {}) {
   return {

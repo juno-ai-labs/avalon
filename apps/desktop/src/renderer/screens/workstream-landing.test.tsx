@@ -62,6 +62,15 @@ describe('the root landing', () => {
     expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/channels\/general$/u);
   });
 
+  it('returns a screen that just left a thread to the Channel it was in, ahead of a pin', async () => {
+    spaces.data = { items: [general, { id: 'outbound', name: 'Outbound' }, { id: 'growth', name: 'Growth' }] };
+    render(<Router
+      initial={{ pathname: '/', state: { skipWorkstreamIds: ['left'], spaceId: 'outbound' } }}
+      pins={[{ kind: 'channel', id: 'growth', parentId: null }]}
+    />);
+    expect(await screen.findByTestId('destination')).toHaveTextContent(/^\/channels\/outbound$/u);
+  });
+
   it('opens the first pinned Channel ahead of General', async () => {
     spaces.data = { items: [general, { id: 'outbound', name: 'Outbound' }, { id: 'growth', name: 'Growth' }] };
     render(<Router pins={[

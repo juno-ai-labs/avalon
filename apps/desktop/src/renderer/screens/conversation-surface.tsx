@@ -615,7 +615,7 @@ export function AddParticipantDialog({
   return (
     <Modal
       description={privateSubstream
-        ? 'Added participants can read this breakout and its shared context. This does not grant access to the parent channel.'
+        ? 'Added participants can read this breakout and its shared context. This does not grant access to the parent thread.'
         : 'Add people to the main conversation. Opening or viewing never adds someone as a participant.'}
       onOpenChange={onOpenChange}
       open={open}
@@ -702,7 +702,7 @@ export function AddParticipantDialog({
 export function RemoveParticipantDialog({ failure, member, noun, onCancel, onContinue, pending, self }: {
   failure?: string | undefined;
   member: WorkspaceMember | undefined;
-  noun: 'channel' | 'breakout';
+  noun: 'thread' | 'breakout';
   onCancel: () => void;
   onContinue: () => void;
   pending: boolean;
@@ -712,7 +712,7 @@ export function RemoveParticipantDialog({ failure, member, noun, onCancel, onCon
   // Channel's own list ends access only when nothing else grants it.
   const who = self ? 'You' : member?.name ?? 'They';
   const keeps = self ? 'You keep' : 'They keep';
-  const viaSpace = noun === 'channel' ? ` or a space ${self ? 'you’re' : 'they’re'} in includes it` : '';
+  const viaSpace = noun === 'thread' ? ` or a channel ${self ? 'you’re' : 'they’re'} in includes it` : '';
   return (
     <Modal
       description={`${who} will be taken off this ${noun}. ${keeps} access only if it’s public${viaSpace}.`}
@@ -863,10 +863,10 @@ export function WorkstreamErrorState({
       <div className="screen-drag-strip window-drag" />
       <div className="screen-state-actions window-no-drag">
         <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild><IconButton label="More channel actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
+          <DropdownMenu.Trigger asChild><IconButton label="More thread actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-              <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy channel ID</DropdownMenu.Item>
+              <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy thread ID</DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
@@ -874,7 +874,7 @@ export function WorkstreamErrorState({
       <EmptyState
         action={<Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>}
         description={description}
-        title={`${parentNoun === 'automation' ? 'Sidekick' : 'Channel'} could not be opened`}
+        title={`${parentNoun === 'automation' ? 'Sidekick' : 'Thread'} could not be opened`}
       />
     </div>
   );
@@ -2093,14 +2093,9 @@ export function ConversationSurface({
     // screen stayed, and the reader was left on "could not be opened".
     onMutate: ({ target }) => {
       const previous = queryClient.getQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target));
-      const filter = useUiStore.getState().sidebarSpaceFilter;
-      const spaceIds = previous?.spaceIds ?? [];
-      return {
-        previous,
-        // The Space the reader is looking at when the Channel is in it, and
-        // otherwise the Channel's own first Space.
-        spaceId: filter !== null && spaceIds.includes(filter) ? filter : spaceIds[0],
-      };
+      // Beside a Channel, the landing returns to it; a thread open on its own
+      // returns to its first Channel.
+      return { previous, spaceId: previous?.spaceIds?.[0] };
     },
     onSuccess: (_result, { member, target }, context) => {
       const targetKey = workstreamDetailQueryKey(id, target);
@@ -2402,7 +2397,7 @@ export function ConversationSurface({
     deliveryMode?: WorkstreamMessageDeliveryMode,
     invitedEmails: string[] = [],
   ): Promise<void> => {
-    if (!api || !routedDetail) throw new Error('This channel is not ready to receive messages.');
+    if (!api || !routedDetail) throw new Error('This thread is not ready to receive messages.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
     // refuse must not appear in the transcript first and be pulled back out of
     // it, and the person is the only one who can resolve this.
@@ -2891,7 +2886,7 @@ export function ConversationSurface({
           state={socketConnection.openingError
             ? 'failed'
             : socketState === 'unavailable' ? 'offline' : 'connecting'}
-          subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'channel' : 'breakout'}
+          subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'thread' : 'breakout'}
         /> : null}
         currentUser={launchAuthor}
         draft={{
@@ -3055,7 +3050,7 @@ export function ConversationSurface({
               state={socketConnection.openingError
                 ? 'failed'
                 : socketState === 'unavailable' ? 'offline' : 'connecting'}
-              subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'channel' : 'breakout'}
+              subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'thread' : 'breakout'}
             />
           )}
         </ConnectingCardSlot>
@@ -3102,7 +3097,7 @@ export function ConversationSurface({
               title="Ready to begin"
               description={parentKind === 'automation'
                 ? 'Tell your Sidekick what you’d like help with. You can ask for changes as you go.'
-                : 'Send a message to start work in this stream.'}
+                : 'Send a message to start work in this thread.'}
             />
           ) : (
             <MessageFeed
@@ -3172,7 +3167,7 @@ export function ConversationSurface({
               ? 'Ask your Sidekick…'
               // A name still being chosen is not one to address yet.
               : displayedDetail.titleStatus === 'naming' || !displayedDetail.title
-                ? 'Message the channel…'
+                ? 'Message the thread…'
                 : substreamId === '0' ? `Message ${displayedDetail.title}` : `Reply in ${displayedDetail.title}`}
             attachments={attachmentDraft.attachments}
             error={sendError
@@ -3315,7 +3310,7 @@ export function ConversationSurface({
         failure={removeConfirm && removeParticipant.error
           ? refusalMessage(removeParticipant.error) ?? 'That participant couldn’t be removed.'
           : undefined}
-        noun={removeConfirm?.target === '0' ? 'channel' : 'breakout'}
+        noun={removeConfirm?.target === '0' ? 'thread' : 'breakout'}
         onCancel={() => { setRemoveConfirm(null); removeParticipant.reset(); }}
         onContinue={() => {
           if (!removeConfirm) return;

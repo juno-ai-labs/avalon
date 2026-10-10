@@ -59,6 +59,9 @@ export const ChannelStatsSchema = z.strictObject({
 });
 export type ChannelStats = z.infer<typeof ChannelStatsSchema>;
 
+export const ChannelStatsListSchema = z.array(ChannelStatsSchema);
+export type ChannelStatsList = z.infer<typeof ChannelStatsListSchema>;
+
 /**
  * One row of the Activity tab.
  *

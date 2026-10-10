@@ -11,6 +11,7 @@ import {
   SpaceChannelPageSchema,
   type ActivityPage,
   type ChannelFeedPage,
+  type ChannelStatsList,
   type MyThreadsPage,
   type PinKind,
   type PinList,
@@ -30,6 +31,7 @@ import { conversationObjectName, workspaceDOName } from "../durable-objects/name
 import {
   WorkspaceActivityResultSchema,
   WorkspaceChannelFeedResultSchema,
+  WorkspaceChannelStatsResultSchema,
   WorkspaceMyThreadsResultSchema,
   WorkspacePinResultSchema,
   type WorkspacePinResult,
@@ -77,7 +79,7 @@ export function spaceRefusal(
   // Named when the caller has the name in hand and "this Space" when it does
   // not, rather than rendering an empty pair of quotation marks: a refusal that
   // says “” about a Space is worse than one that does not name it.
-  const subject = spaceName.trim().length > 0 ? `“${spaceName.trim()}”` : "this Space";
+  const subject = spaceName.trim().length > 0 ? `“${spaceName.trim()}”` : "this channel";
   // Carried on refusals that are about a Channel, so a confirmation can
   // name what has to move first instead of asking the person to find it.
   const details = blockedChannelIds.length > 0
@@ -93,32 +95,32 @@ export function spaceRefusal(
     case "space_access_denied":
       return new ApiError(403, code, `Your access to ${subject} does not allow this`);
     case "space_not_found":
-      return new ApiError(404, code, "Space not found");
+      return new ApiError(404, code, "Channel not found");
     case "space_protected":
       return new ApiError(409, code, "General cannot be archived or made private");
     case "space_membership_final":
       return new ApiError(409, code,
-        `A Channel in ${subject} belongs to no other Space, so it would have no home`, details);
+        `A thread in ${subject} belongs to no other channel, so it would have no home`, details);
     case "space_audience_incompatible":
       return new ApiError(409, code,
-        `Leaving ${subject} would leave ${unreachable.length || "some"} of its readers unable to find the Channel in any Space they can see`,
+        `Leaving ${subject} would leave ${unreachable.length || "some"} of its readers unable to find the thread in any channel they can see`,
         details);
     case "space_membership_content_fence":
       return new ApiError(409, code,
-        "A Channel holds retained content this audience cannot view");
+        "A thread holds retained content this audience cannot view");
     case "space_default_audience_mismatch":
       return new ApiError(409, code,
-        `Everyone who can read a Channel in ${subject} must be able to use this`);
+        `Everyone who can read a thread in ${subject} must be able to use this`);
     case "space_revision_conflict":
-      return new ApiError(409, code, "The Space changed while this was being applied; try again");
+      return new ApiError(409, code, "The channel changed while this was being applied; try again");
     case "space_bootstrap_pending":
       return new ApiError(409, code, "This Organization is still being prepared");
     case "channel_scope_locked_by_space":
       return new ApiError(409, code,
-        `A Channel in ${subject} is public through an Organization-wide Space, so its own audience cannot narrow`);
+        `A thread in ${subject} is public through an Organization-wide channel, so its own audience cannot narrow`);
     case "space_conversation_unreachable":
       return new ApiError(409, code,
-        `A Channel in ${subject} could not be asked whether this audience may read it`);
+        `A thread in ${subject} could not be asked whether this audience may read it`);
     case "space_authority_unreachable":
       // 503 rather than 500: nothing about the request is wrong, the Space's
       // own authority did not answer, and retrying is the whole of what the
@@ -128,7 +130,7 @@ export function spaceRefusal(
       return new ApiError(409, code,
         `Making ${subject} private without you in it would leave you unable to change it back`);
     case "space_cursor_invalid":
-      return new ApiError(400, code, "That page cursor is not one this Space issued");
+      return new ApiError(400, code, "That page cursor is not one this channel issued");
   }
 }
 
@@ -257,6 +259,16 @@ export class SpaceService {
     });
   }
 
+  /** The Channels tab's thread counts and last activity. */
+  async listChannelStats(): Promise<ChannelStatsList> {
+    const result = WorkspaceChannelStatsResultSchema.parse(await (await this.workspace()).listChannelStats({
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+    }));
+    if (!result.ok) throw spaceRefusal(result.code, "");
+    return result.stats;
+  }
+
   async listPins(): Promise<PinList> {
     return this.pins(await (await this.workspace()).listPins({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
@@ -379,7 +391,7 @@ export class SpaceService {
     if (spaceId && (reserved.name !== input.name.trim() || reserved.scope !== input.scope
       || (input.iconKey !== undefined && reserved.iconKey !== input.iconKey)
       || reserved.colorKey !== input.colorKey || reserved.reach === "through_channel")) {
-      throw new ApiError(409, "space_revision_conflict", "The creation identity already names a different Space");
+      throw new ApiError(409, "space_revision_conflict", "The creation identity already names a different channel");
     }
     if (input.iconKey === undefined && reservation.created) {
       const choosing = this.chooseIcon(reserved);
@@ -481,7 +493,7 @@ export class SpaceService {
     const administrator = this.auth.role === "owner" || this.auth.role === "admin";
     if (removed.some((userId) => userId !== this.auth.userId) && !administrator) {
       throw new ApiError(403, "participant_removal_denied",
-        "Only an Organization owner or admin can remove another Space participant");
+        "Only an Organization owner or admin can remove another channel participant");
     }
     if (input.inviteeEmails !== undefined) {
       // An invitee is a participant who has not joined, under the same rule:
@@ -496,7 +508,7 @@ export class SpaceService {
         const requestedInvitees = new Set(input.inviteeEmails);
         if ((await this.invitees(spaceId)).some((email) => !requestedInvitees.has(email))) {
           throw new ApiError(403, "participant_removal_denied",
-            "Only an Organization owner or admin can remove another Space participant");
+            "Only an Organization owner or admin can remove another channel participant");
         }
       }
     }

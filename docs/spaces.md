@@ -1349,8 +1349,9 @@ read over the listing rules:
 - **`channelStats`**: per listed Space, how many Channels in it the viewer may
   list and when the newest of those last moved. It rides the sidebar payload and
   the Space snapshot as `channelStats`, beside the Spaces rather than on
-  `SpaceSummary`, which shipped desktops parse strictly. It is refreshed only
-  when the snapshot is.
+  `SpaceSummary`, which shipped desktops parse strictly. Between snapshots
+  `GET /navigation/channel-stats` (`listChannelStats`) reads it on its own,
+  which the desktop does on the same placement nudge that rereads a feed.
 
 `listSpaceChannels` and `listMyThreads` share one projection,
 `conversationRows` in `workspace-do.ts`. The feed and the stats each cost one

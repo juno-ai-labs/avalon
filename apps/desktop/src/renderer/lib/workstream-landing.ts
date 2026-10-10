@@ -3,6 +3,8 @@ import type { WorkstreamSummary } from './types';
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import { useChannelPane } from './navigation-routes';
+
 /**
  * The one route a screen leaves for when what it was showing is no longer
  * there to show — an archived Channel, note, or Space, a deleted
@@ -27,10 +29,7 @@ export const WORKSTREAM_LANDING_ROUTE = '/';
  */
 export interface WorkstreamLandingState {
   skipWorkstreamIds: string[];
-  /**
-   * The Space to land in: its first Channel, or starting one there when it has
-   * none. Absent lands across the whole Organization.
-   */
+  /** The Channel to land on, when it is still listed. Absent opens the usual first Channel. */
   spaceId?: string;
 }
 
@@ -42,7 +41,7 @@ export function skippedWorkstreamIds(state: unknown): ReadonlySet<string> {
   return new Set(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : []);
 }
 
-/** The Space a landing entry's `location.state` asks it to stay in, if any. */
+/** The Channel a landing entry's `location.state` asks it to return to, if any. */
 export function landingSpaceId(state: unknown): string | null {
   const id = typeof state === 'object' && state !== null && 'spaceId' in state ? state.spaceId : undefined;
   return typeof id === 'string' ? id : null;
@@ -55,13 +54,17 @@ export function landingSpaceId(state: unknown): string | null {
  */
 export function useOpenFirstWorkstream(): (skipWorkstreamIds?: readonly string[], spaceId?: string) => void {
   const navigate = useNavigate();
-  return useCallback((skipWorkstreamIds: readonly string[] = [], spaceId?: string) => {
+  // A thread open beside its Channel returns to that Channel; one open on its
+  // own returns to the Channel its caller names, if any.
+  const paneChannelId = useChannelPane()?.channelId;
+  return useCallback((skipWorkstreamIds: readonly string[] = [], fallbackSpaceId?: string) => {
+    const spaceId = paneChannelId ?? fallbackSpaceId;
     const state: WorkstreamLandingState = {
       skipWorkstreamIds: [...skipWorkstreamIds],
       ...(spaceId === undefined ? {} : { spaceId }),
     };
     void navigate(WORKSTREAM_LANDING_ROUTE, { replace: true, state });
-  }, [navigate]);
+  }, [navigate, paneChannelId]);
 }
 
 export function openWorkstreamId(pathname: string): string | null {
@@ -78,16 +81,6 @@ export function openWorkstreamId(pathname: string): string | null {
     // equal to the one the screen keys its detail query by.
     return id;
   }
-}
-
-/**
- * Where a Space with no Channel to open sends its reader: the screen that
- * starts one there. A reader who cannot start Channels gets the Space's
- * dashboard instead, which is all that route would hand them.
- */
-export function emptySpaceRoute(spaceId: string, canCreate = true): string {
-  const encoded = encodeURIComponent(spaceId);
-  return canCreate ? `/spaces/${encoded}/workstreams/new` : `/spaces/${encoded}`;
 }
 
 /** Shared by startup warming and the Space-less root route; recency is its only order. */
