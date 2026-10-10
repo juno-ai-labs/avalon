@@ -238,7 +238,11 @@ the SDK's own `$pageleave`, which is off, so scroll maps stay empty; replays
 still show scrolling. Removing the SDK means deleting `posthog.ts`, the loader,
 its build input and meta tag, the CSP additions and Cookie Notice section 4;
 the reporter then falls back to a per-page session. Any page whose URL can
-carry a credential must be in `RECORDING_DENIED_PATHS`.
+carry a credential must be in `RECORDING_DENIED_PATHS`. A visitor who leaves
+before the SDK loads releases the held events with the page's own session, so
+bounces are never lost to the wait.
+
+Shipped in [PR #1187](https://github.com/juno-ai-labs/avalon/pull/1187).
 
 ### 2026-10-08 — Name the page on each click
 
