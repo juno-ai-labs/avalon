@@ -6919,6 +6919,12 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .workstream-launch-screen.is-launching > .launch-header {
   height: 44px;
 }
+/* A thread's breakout settles into a title pill, whose row is 64px
+   (`.workstream-screen:has(> .title-pill-header)`); the 44px above stays
+   for a header that is not a title pill. */
+.workstream-launch-screen.is-launching > .launch-header.title-pill-header {
+  height: 64px;
+}
 
 /* Both layers share one grid cell, so the home content can fade out over the
    transcript that replaced it without being taken out of flow first. */
@@ -7863,9 +7869,37 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   position: relative;
   z-index: 3;
 }
-.title-pill-ancestors { align-items: center; display: flex; gap: 6px; justify-self: start; min-width: 0; }
+.title-pill-ancestors { align-items: center; display: flex; gap: 6px; justify-self: start; max-width: 100%; min-width: 0; }
+/* Breadcrumbs give way rather than run under the centred pill: each shrinks
+   to its mark, its title ending in an ellipsis. A Channel's name is short and
+   says where you are, so the thread beside it gives way first. */
+.title-pill-ancestor { display: flex; min-width: 0; }
+.title-pill-ancestor:first-child:not(:last-child) { flex-shrink: 0; max-width: 45%; }
+.title-pill.is-ancestor,
+.title-pill.is-ancestor .title-pill-select { min-width: 0; }
 .title-pill-current { justify-self: center; min-width: 0; }
 .title-pill-trailing { align-items: center; display: flex; gap: 8px; justify-self: end; }
+/*
+ * A breakout's Channel and thread crumbs need about twice the room of one, so
+ * a pane short of desktop width shows both as marks while the pill stays
+ * centred.
+ */
+@container conversation-pane (width < 760px) {
+  .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) .title-pill-menu-trigger { display: none; }
+  .title-pill-ancestors:has(> .title-pill-ancestor + .title-pill-ancestor) .title-pill.is-ancestor :is(
+    .title-pill-title,
+    .title-pill-meta,
+    .title-pill-chevron,
+    .title-pill-crumb-separator
+  ) {
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+}
 /*
  * A pane too narrow to centre its pill between full ancestors (a breakout
  * standing alone on a phone, with its Channel and thread as breadcrumbs):
@@ -7876,6 +7910,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 @container conversation-pane (width < 460px) {
   .title-pill-header { grid-template-columns: auto minmax(0, 1fr) auto; }
   .title-pill-current { display: flex; justify-content: center; justify-self: stretch; }
+  .title-pill.is-ancestor .title-pill-menu-trigger { display: none; }
   .title-pill.is-ancestor .title-pill-title,
   .title-pill.is-ancestor .title-pill-meta,
   .title-pill.is-ancestor .title-pill-chevron,

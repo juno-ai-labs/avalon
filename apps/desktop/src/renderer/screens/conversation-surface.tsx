@@ -2785,6 +2785,10 @@ export function ConversationSurface({
     runTiming,
   });
   const visibleTranscript = transcript;
+  // The origin card a breakout being started from here will open with.
+  const launchOrigin = substreamLaunch && parentKind !== 'automation'
+    ? breakoutOriginMessages(visibleTranscript, substreamLaunch.throughTurnId)
+    : null;
   const firstUnreadSequenceNumber = detail.firstUnreadSequenceNumber;
   const firstUnreadIndex = firstUnreadSequenceNumber === null
     ? -1
@@ -2929,6 +2933,8 @@ export function ConversationSurface({
         onOpenAttachment={setAttachmentPreview}
         parent={displayedDetail}
         sendBlocked={feedFromLocalCache}
+        titlePill={parentKind !== 'automation'}
+        {...(launchOrigin ? { origin: { channelTitle: displayedDetail.title, ...launchOrigin } } : {})}
         workspaceId={workspaceId}
         workspaceRegion={workspaceRegion}
       /> : <>

@@ -666,7 +666,7 @@ export function Meter({
 export function TitleSkeleton({ className }: { className?: string }): React.JSX.Element {
   return (
     <span className={clsx('title-skeleton', className)}>
-      <span className="sr-only">Rally is naming this thread</span>
+      <span className="sr-only">Rally is choosing a name</span>
     </span>
   );
 }

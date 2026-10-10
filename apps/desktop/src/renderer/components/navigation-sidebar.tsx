@@ -45,6 +45,8 @@ import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/c
 import type { ChannelStats, SpaceDirectory } from '@rally/contracts';
 
 const NAVIGATION_SHEET_ID = 'rally-navigation-sheet';
+/** The stylesheet's phone breakpoint: at or under it the sidebar is a sheet. */
+const PHONE_LAYOUT_MAX_WIDTH = 640;
 
 const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNode }> = [
   { id: 'threads', label: 'Threads', icon: <IconMessages aria-hidden="true" size={20} stroke={1.7} /> },
@@ -142,6 +144,36 @@ export function NavigationSidebar({
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  const menuToggle = useRef<HTMLButtonElement>(null);
+  const { pathname } = useLocation();
+  // The phone sheet. Escape closes it as it would any menu and hands focus
+  // back to the button; widening past the phone layout closes it, so an open
+  // sheet never leaves the conversation behind it inert at a width that draws
+  // no sheet. Both carried over from the sidebar this one replaced.
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      // A menu or dialog open over the sheet takes this Escape for itself.
+      if (event.key !== 'Escape' || document.querySelector('[role="menu"], [role="dialog"]')) return;
+      setSidebarOpen(false);
+      menuToggle.current?.focus();
+    };
+    const closeWhenWide = (): void => {
+      if (window.innerWidth > PHONE_LAYOUT_MAX_WIDTH) setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape, true);
+    window.addEventListener('resize', closeWhenWide);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape, true);
+      window.removeEventListener('resize', closeWhenWide);
+    };
+  }, [setSidebarOpen, sidebarOpen]);
+  // Opening anything closes the sheet, whoever navigated: a row, a search
+  // result, a new Channel. Switching sections does not navigate, so the
+  // sheet stays open on the list just picked.
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [pathname, setSidebarOpen]);
   const [accountSlot, setAccountSlot] = useState<HTMLDivElement | null>(null);
   const panel = useRef<HTMLElement>(null);
   const guest = workspace.currentUser.accessClass === 'guest';
@@ -192,6 +224,7 @@ export function NavigationSidebar({
             className="sidebar-menu-toggle window-no-drag"
             label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
             onClick={() => setSidebarOpen(!sidebarOpen)}
+            ref={menuToggle}
             showTooltip={false}
           >
             {sidebarOpen

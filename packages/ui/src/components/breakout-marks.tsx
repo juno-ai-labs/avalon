@@ -93,7 +93,7 @@ export function BreakoutChipRow({ breakouts, onOpen, openSubstreamId }: {
       const open = breakout.substreamId === openSubstreamId;
       const news = breakoutNewsLabel(breakout);
       return <button
-        aria-label={[breakout.naming ? 'Rally is naming this thread' : breakout.title, news, open && 'Open'].filter(Boolean).join(', ')}
+        aria-label={[breakout.naming ? 'Rally is choosing a name' : breakout.title, news, open && 'Open'].filter(Boolean).join(', ')}
         aria-pressed={open}
         className={clsx('breakout-chip', open && 'is-open', news && 'has-news')}
         key={breakout.substreamId}
