@@ -3697,14 +3697,16 @@ describe("agent harness", () => {
       failure: { kind: "context", code: "model_input_unsupported" },
     });
 
-    // A step that is Rally's own routing configuration, not a capability the
-    // model lacks, keeps the catch-all.
-    await expect(runHarness(runInput(capabilityRefusal("Filter by Provider Allow List"), {
-      workspaceId: "workspace-openrouter-provider-filter",
-    }))).resolves.toMatchObject({
-      status: "failed",
-      failure: { kind: "execution", code: "harness_execution_failed" },
-    });
+    // Steps that are Rally's own routing, not an input the member sent, keep
+    // the catch-all: the member has nothing to remove.
+    for (const step of ["Filter by Provider Allow List", "Filter by Tool Support"]) {
+      await expect(runHarness(runInput(capabilityRefusal(step), {
+        workspaceId: `workspace-openrouter-${step.replaceAll(" ", "-").toLowerCase()}`,
+      }))).resolves.toMatchObject({
+        status: "failed",
+        failure: { kind: "execution", code: "harness_execution_failed" },
+      });
+    }
 
     expect(memberSafeHarnessFailureMessage("model_input_unsupported"))
       .toBe("The selected model cannot read part of this message, such as an attached image or file. Remove it or use a different model, and copy the request ID for support");

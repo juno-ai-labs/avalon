@@ -2126,8 +2126,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     // candidate with a larger window is still tried first, and this is what is
     // left when every one of them refused the prompt too.
     const contextLengthRejection = isProviderContextLengthRejection(error);
-    // Same standing and position as the context-length arm: the endpoint
-    // named why it refused, so the catch-all would discard a reason in hand.
+    // Same standing and position as the context-length arm.
     const inputUnsupported = !contextLengthRejection && isProviderInputUnsupportedRejection(error);
     const code = error instanceof HarnessLimitError
       ? error.code
@@ -2308,12 +2307,21 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 },
               )
             : undefined;
-          // The recorded request is the request: each branch builds the body
-          // its client will send. OpenRouter streams the Responses API; Azure
-          // stays on Chat Completions. Azure is priced from Rally's own rate
-          // card and takes no accounting flag.
-          const payload: InferenceRequestPayload = candidate.providerId === AZURE_PROVIDER
-            ? {
+          // The recorded request is the request. OpenRouter streams the
+          // Responses API, and its body is built once here and handed to the
+          // client to send as-is. Azure stays on Chat Completions, is priced
+          // from Rally's own rate card, and takes no accounting flag.
+          const openRouterBody = candidate.providerId === AZURE_PROVIDER
+            ? undefined
+            : openRouterResponsesRequest(candidate.providerInvocationModel, {
+                messages: requestMessages,
+                ...(wireTools.length > 0 ? { tools: wireTools } : {}),
+                ...(requestPlugins.length > 0 ? { plugins: requestPlugins } : {}),
+                includeWebSearch: false,
+                reasoningEffort,
+                trace,
+              });
+          const payload: InferenceRequestPayload = openRouterBody ?? {
                 model: candidate.providerInvocationModel,
                 messages: requestMessages,
                 stream: true as const,
@@ -2326,15 +2334,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                     }
                   : {}),
                 ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-              }
-            : openRouterResponsesRequest(candidate.providerInvocationModel, {
-                messages: requestMessages,
-                ...(wireTools.length > 0 ? { tools: wireTools } : {}),
-                ...(requestPlugins.length > 0 ? { plugins: requestPlugins } : {}),
-                includeWebSearch: false,
-                reasoningEffort,
-                trace,
-              });
+              };
           startupTiming("route_preparation", routePreparationStartedAt);
           firstStartupRequestObserved = true;
           await args.input.onInferenceRequest?.({
@@ -2392,6 +2392,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 includeWebSearch: false,
                 reasoningEffort,
                 trace,
+                prebuiltBody: openRouterBody,
                 signal: args.signal,
                 onInferenceDelay,
               }, handleDelta);
@@ -3482,17 +3483,10 @@ function isProviderContextLengthRejection(error: unknown): boolean {
 }
 
 /**
- * Did OpenRouter find no endpoint for the model that accepts what this request
- * carries — an image, a file, tool use?
- *
- * OpenRouter answers 404 and names the routing step that filtered the last
- * endpoint out in `error.metadata.failed_routing_step`, a label of the form
- * `Filter by <capability> Support` ("Filter by Image Support"). That field is
- * read; the free-text `message` is not. A step that is not a capability
- * filter (a provider allow-list, a price ceiling) is Rally's own routing
- * configuration and stays `harness_execution_failed`. Kind `context` like the
- * context-length arm: the request's content is what the model cannot take,
- * and the remedy is the attachment or the model, not a retry.
+ * OpenRouter found no endpoint for the model that accepts an input the
+ * request carries, read from `error.metadata.failed_routing_step` and never
+ * from the message text. Only input steps count: a tool-support or provider
+ * filter is Rally's own routing, which the member cannot change.
  */
 function isProviderInputUnsupportedRejection(error: unknown): boolean {
   if (!(error instanceof OpenRouterError) || error.status !== 404) return false;
@@ -3507,7 +3501,7 @@ function isProviderInputUnsupportedRejection(error: unknown): boolean {
   }
   const step = (envelope as { error?: { metadata?: { failed_routing_step?: unknown } } })
     ?.error?.metadata?.failed_routing_step;
-  return typeof step === "string" && /^Filter by .+ Support$/u.test(step.trim());
+  return typeof step === "string" && /^Filter by (?:Image|File|Audio) Support$/u.test(step.trim());
 }
 
 function providerDeclaredTransportFailure(details: unknown): {
