@@ -1,5 +1,5 @@
 import { startConnectorAuthorization } from '../lib/start-connector-authorization';
-import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, useConnectorStartAvailable } from '../lib/browser-connectors';
+import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, connectorStartsHere } from '../lib/browser-connectors';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ConnectorConnectionCardCatalog,
@@ -316,7 +316,6 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
   const capabilities = scope === 'you' && 'personalCapabilities' in provider
     ? [...provider.personalCapabilities]
     : [...provider.capabilities];
-  const connectorStartAvailable = useConnectorStartAvailable(session);
   const connect = useMutation({
     mutationFn: async () => {
       if (!api || !session?.workspace) throw new Error('Rally is not ready to connect this account.');
@@ -361,7 +360,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
       checkingAvailability={availability.isLoading}
       connected={connected}
       error={connect.error?.message}
-      macAppOnly={!connectorStartAvailable(provider.provider)}
+      macAppOnly={!connectorStartsHere(session, provider.provider)}
       onConnect={() => connect.mutate()}
       pending={pending}
       provider={provider}

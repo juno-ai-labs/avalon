@@ -70,7 +70,7 @@ import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError, type RallyApi } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { desktopBridge } from '../lib/platform';
-import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, useConnectorStartAvailable } from '../lib/browser-connectors';
+import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, connectorStartsHere } from '../lib/browser-connectors';
 import { disableWebPush, enableWebPush, webPushState } from '../lib/web-push';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useEscapeClosesWindow } from '../lib/window-escape';
@@ -603,7 +603,6 @@ export function WorkspaceSettingsScreen({
   } = useAppSession();
   const { host, guest } = useShellCapabilities();
   const browserHost = host === 'browser';
-  const connectorStartAvailable = useConnectorStartAvailable(session);
   const workspaceSocket = useOptionalWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
   // Fails open: `digestsEnabled` defaults `true` and only an explicit `false`
@@ -1374,11 +1373,11 @@ export function WorkspaceSettingsScreen({
       {(isAdmin || connection.scope === 'you') && reconnectableConnectorTypes.has(connection.connectorType)
         && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') && (
         <ConnectionIconAction
-          disabled={!connectorStartAvailable(connection.connectorType) || reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
+          disabled={!connectorStartsHere(session, connection.connectorType) || reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
           icon={<RefreshCcw aria-hidden="true" size={14} />}
           label={`Refresh ${connection.displayName}`}
           onClick={() => setReconnectTarget(connection)}
-          tooltip={connectorStartAvailable(connection.connectorType) ? 'Refresh authorization with the provider.' : MAC_APP_CONNECT_NOTE}
+          tooltip={connectorStartsHere(session, connection.connectorType) ? 'Refresh authorization with the provider.' : MAC_APP_CONNECT_NOTE}
         />
       )}
       {isAdmin && connection.connectorType === 'generic_webhook' && (
@@ -2028,7 +2027,7 @@ export function WorkspaceSettingsScreen({
                         ? "Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account."
                         : undefined;
                       // A browser tab starts every connection but those marked desktop only.
-                      const startsHere = connectorStartAvailable(provider.provider);
+                      const startsHere = connectorStartsHere(session, provider.provider);
                       const personalConnectDisabled = !startsHere || !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = !startsHere
                         ? MAC_APP_CONNECT_NOTE
