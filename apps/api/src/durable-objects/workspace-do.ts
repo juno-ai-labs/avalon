@@ -234,6 +234,7 @@ import {
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
 import { boundParameterChunks } from "./bound-parameters";
+import { isBreakoutActivityEvent } from "./breakout-activity";
 import { projectionSupersedes, type StoredProjection } from "./projection-fence";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import { conversationObjectName, workspaceDOName } from "./names";
@@ -5390,7 +5391,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (isPersonNotificationEffect(effect)) {
         if (applied.notificationIntentId) outbox.push(envelope);
       } else if (effect.kind === "activity_event" && effect.sourceKind === "workstream_message"
-        && effect.sourceId && effect.targets.length > 0) {
+        && effect.sourceId && effect.targets.length > 0 && !isBreakoutActivityEvent(effect)) {
         outbox.push(envelope);
       }
     }
