@@ -190,9 +190,9 @@ is the second reader of this log, behind `GET /navigation/activity`. It reads,
 for one person, newest first:
 
 - events naming them as an `added` or `mentioned` target;
-- every conversation's opening message (`workstream_message_created` at
-  sequence 1 with `metadata.substreamId`) by somebody else, as a thread or
-  breakout start; and
+- every thread and breakout somebody else started, read from its own
+  directory row (`channels` / `breakouts`: `created_by_user_id`,
+  `source_created_at`) rather than from an event; and
 - the latest finished run (`exact_state = 'completed'`, `completed_at`) of
   each thread and breakout they take part in, read from the directory rather
   than from an event.
@@ -205,8 +205,13 @@ them. Nothing here changes what a digest reads. Read state is one time per
 person (`workspace_activity_seen`, migration 97), moved forward by
 `PUT /navigation/activity/seen`.
 
-Only events written after this change carry `metadata.substreamId`, so starts
-from before it do not appear.
+Starts are not read from the opening message's event. Driving the local stack
+showed that event does not reliably reach WorkspaceDO (only a handful of
+thread-level activity receipts for dozens of threads), and a breakout's is never
+forwarded (`forwardsChildEffect`). The directory row is what every other list
+here is drawn from, so a start appears exactly when the thread does. Starts
+carry the starter's id and an empty label; the client names them from the
+member directory, as the Channel feed names its authors.
 
 ### The digest
 
@@ -752,7 +757,9 @@ tab of things that happened to a person
 held most of it; a second log would be a second answer to the same question.
 
 **Considered and rejected:** New `thread.started`, `breakout.started` and
-`run.finished` events. The opening message and the directory's completion
+`run.finished` events. Starts were first read from the opening message's
+event; they are read from the directory row instead, because that event did
+not reliably reach WorkspaceDO on the live stack. The directory's completion
 already say each of those, so new producers would only duplicate them.
 
 **Consequences:** A digest is unchanged: it ignores the new metadata and reads

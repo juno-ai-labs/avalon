@@ -539,35 +539,11 @@ describe("pins", () => {
 });
 
 describe("Activity tab", () => {
-  async function recordStart(workstreamId: WorkstreamId, substreamId: string, eventId: string, occurredAt: string) {
-    await workspace().recordActivityEvent({
-      workspaceId: WORKSPACE_ID,
-      eventId,
-      eventType: "workstream_message_created",
-      subjectType: "workstream",
-      subjectId: workstreamId,
-      subjectSequenceNumber: 1,
-      actorType: "user",
-      actorUserId: OWNER,
-      actorLabel: "Owner",
-      title: "opening",
-      audience: { kind: "workstream", workstreamId },
-      digestible: true,
-      occurredAt,
-      sourceKind: "workstream_message",
-      sourceId: eventId,
-      dedupeKey: `message:${eventId}`,
-      metadata: { substreamId },
-    });
-  }
-
   it("given starts in conversations a member may and may not list, when they read Activity, then only the listable ones appear", async () => {
     await channelWithThreads();
+    // The owner starts all three: an Organization-wide thread, a private one,
+    // and a breakout private to the owner inside the thread the member can open.
     await publish(OPEN_THREAD, [breakoutEffect("Side work"), viewerEffect(OWNER)], BREAKOUT);
-    await recordStart(OPEN_THREAD, "0", "00000000-0000-7000-8000-00000000e201", "2026-10-03T00:00:00.000Z");
-    await recordStart(PRIVATE_THREAD, "0", "00000000-0000-7000-8000-00000000e202", "2026-10-04T00:00:00.000Z");
-    // A breakout private to the owner, inside a thread the member can open.
-    await recordStart(OPEN_THREAD, BREAKOUT, "00000000-0000-7000-8000-00000000e203", "2026-10-05T00:00:00.000Z");
 
     const member = await activity(MEMBER);
     expect(member.items.map((item) => [item.kind, item.threadId, item.breakout])).toEqual([
@@ -584,13 +560,15 @@ describe("Activity tab", () => {
       viewerEffect(MEMBER),
     ]);
 
-    expect((await activity(MEMBER)).items).toEqual([expect.objectContaining({
+    // The owner started it too, which is its own row; this is about the finish.
+    const finished = async () => (await activity(MEMBER)).items.filter((item) => item.kind === "run_finished");
+    expect(await finished()).toEqual([expect.objectContaining({
       kind: "run_finished", threadId: MEMBER_THREAD, threadTitle: "Funnel report", actorLabel: "Rally", unread: true,
     })]);
 
     await workspace().markActivitySeen({
       workspaceId: WORKSPACE_ID, userId: MEMBER, seenThrough: Date.parse("2026-10-06T00:00:00.000Z"),
     });
-    expect((await activity(MEMBER)).items.map((item) => item.unread)).toEqual([false]);
+    expect((await finished()).map((item) => item.unread)).toEqual([false]);
   });
 });

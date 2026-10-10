@@ -219,6 +219,7 @@ export function NavigationSidebar({
             accessDecisionFailed={accessDecisionFailed}
             accessRequests={accessRequests}
             attentionComplete={attentionComplete}
+            guest={guest}
             onDecideAccessRequest={onDecideAccessRequest}
             onOpenAccessRequest={onOpenAccessRequest}
           />}
@@ -696,8 +697,9 @@ function dayLabel(value: string, now = new Date()): string {
  * happened to them, newest first and grouped by day. Opening it reads it, so
  * the next opening's dots are only what came after.
  */
-function ActivitySection({ accessDecisionFailed, accessRequests, attentionComplete, onDecideAccessRequest, onOpenAccessRequest }: {
+function ActivitySection({ accessDecisionFailed, accessRequests, attentionComplete, guest, onDecideAccessRequest, onOpenAccessRequest }: {
   accessDecisionFailed: boolean;
+  guest: boolean;
   accessRequests: readonly ConversationAccessRequestItem[];
   attentionComplete: boolean;
   onDecideAccessRequest: (request: ConversationAccessRequestItem, decision: AccessDecision) => void;
@@ -707,6 +709,18 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   const navigate = useNavigate();
   const live = useWorkstreamsQuery();
   const spaces = useSpaceMap();
+  // A start names its starter by id; the name is the member directory's, the
+  // same read the Channel feed names its authors from. A guest has no
+  // directory and sees the label the server sent.
+  const members = useQuery({
+    queryKey: ['workspace-members'],
+    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
+    enabled: Boolean(api) && !guest,
+    staleTime: 60_000,
+  });
+  const actorName = (item: ActivityItem): string => item.actorLabel
+    || members.data?.find((member) => member.id === item.actorUserId)?.name
+    || 'Someone';
   const feed = useInfiniteQuery({
     queryKey: ACTIVITY_QUERY_KEY,
     queryFn: ({ pageParam, signal }) => api!.getActivity(pageParam, signal),
@@ -758,11 +772,11 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
         const channel = item.channelIds.map((id) => spaces.get(id)).find(Boolean);
         return <button className={clsx('activity-row', item.unread && 'is-unread')} key={item.id} onClick={() => open(item)} type="button">
           <span aria-hidden="true" className={clsx('activity-avatar', item.actorUserId === null && 'is-rally')}>
-            {item.actorUserId === null ? '✦' : item.actorLabel.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
+            {item.actorUserId === null ? '✦' : actorName(item).split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
           </span>
           <span className="activity-row-body">
             <span className="activity-row-text">
-              <strong>{item.actorLabel}</strong> {ACTIVITY_VERBS[item.kind]}{item.kind === 'run_finished' ? ': ' : ' '}
+              <strong>{actorName(item)}</strong> {ACTIVITY_VERBS[item.kind]}{item.kind === 'run_finished' ? ': ' : ' '}
               <strong>{item.breakout && item.kind !== 'breakout_started' ? item.breakout.title : item.threadTitle}</strong>
             </span>
             {item.kind === 'breakout_started' && item.breakout && <span className="breakout-chip activity-chip">
