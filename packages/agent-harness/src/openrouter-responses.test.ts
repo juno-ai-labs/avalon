@@ -223,6 +223,32 @@ describe("Responses request", () => {
     });
   });
 
+  it("sends a prebuilt body as-is, and rebuilds one made for another model", async () => {
+    const sent: unknown[] = [];
+    const client = new OpenRouterClient({
+      apiKey: "key",
+      primaryModel: "openai/gpt-6.1-sol",
+      sameModelRetries: 0,
+      fetch: (async (_request: RequestInfo | URL, init?: RequestInit) => {
+        sent.push(JSON.parse(String(init?.body)));
+        return new Response(sseBody([
+          { type: "response.completed", response: { status: "completed", usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 } } },
+        ]), { headers: { "content-type": "text/event-stream" } });
+      }) as typeof fetch,
+    });
+    const messages = [{ role: "user" as const, content: "hello" }];
+    const prebuilt = openRouterResponsesRequest("openai/gpt-6.1-sol", { messages });
+    // A field no rebuild from `messages` could produce: only the prebuilt
+    // body itself can carry it to the wire.
+    const marked = { ...prebuilt, user: "archived-body" };
+
+    await client.stream({ messages, prebuiltBody: marked }, () => undefined);
+    await client.stream({ messages, prebuiltBody: { ...marked, model: "google/gemini-3.8-flash" } }, () => undefined);
+
+    expect(sent[0]).toEqual(marked);
+    expect(sent[1]).toEqual(prebuilt);
+  });
+
   it("is what the streaming client sends, to the Responses endpoint", async () => {
     let url = "";
     let sent: unknown;

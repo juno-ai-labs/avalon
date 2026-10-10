@@ -555,6 +555,12 @@ export interface ChatRequest {
   trace?: OpenRouterTracePayload | undefined;
   signal?: AbortSignal | undefined;
   onInferenceDelay?: (active: boolean) => void | Promise<void>;
+  /**
+   * The Responses body `openRouterResponsesRequest` already built for this
+   * model. Sent as-is, so a caller that archived it sent exactly that and the
+   * transcript is serialized once per attempt.
+   */
+  prebuiltBody?: OpenRouterResponsesInferencePayload | undefined;
 }
 
 export interface StreamResult {
@@ -1150,7 +1156,9 @@ export class OpenRouterClient {
       establishment.abort(new DOMException("OpenRouter request establishment timed out", "TimeoutError"));
     }, this.config.requestEstablishmentTimeoutMs ?? 30_000);
     try {
-      const requestPayload = openRouterResponsesRequest(model, input);
+      const requestPayload = input.prebuiltBody?.model === model
+        ? input.prebuiltBody
+        : openRouterResponsesRequest(model, input);
       const response = await this.fetcher(OPENROUTER_RESPONSES_URL, {
         method: "POST",
         headers: this.headers(),
@@ -1598,9 +1606,9 @@ function toSdkContent(content: ModelMessageContent): unknown {
 export const OPENROUTER_RESPONSES_URL = "https://openrouter.ai/api/v1/responses";
 
 /**
- * The exact Responses body `OpenRouterClient` streams for one model. Exported
- * so Bind archives the request it is about to send rather than a description
- * of it; the client calls this same function, so the two cannot drift.
+ * The exact Responses body `OpenRouterClient` streams for one model. Bind
+ * builds it once, archives it, and passes it back as `prebuiltBody`, so the
+ * archived body is the body sent.
  */
 export function openRouterResponsesRequest(
   model: string,

@@ -759,23 +759,11 @@ and Azure; requests with no tools omit the field.
 The two transports speak different APIs. A streamed OpenRouter turn goes to
 the Responses API (`/api/v1/responses`); an Azure turn goes to Chat
 Completions. Structured calls and embeddings stay on OpenRouter's Chat
-Completions and embeddings endpoints. The Responses switch is confined to the
-OpenRouter client's wire layer: Bind's transcript, its durable storage, the
-projection and every caller keep the Chat message shape. On the way out,
-`toResponsesInput` turns each assistant message into its text plus one
-`function_call` item per tool call, and each tool message into a
-`function_call_output` keyed by the same call id. Responses requires an
-`fc_`-prefixed item id on a replayed call; OpenRouter is stateless (`store` is
-always false), so that id names nothing upstream and is derived from the call id
-to keep the prompt prefix byte-stable. On the way back,
-`createResponsesStreamReducer` folds the event stream into the same
-`StreamResult` the Chat parser produced: text, tool calls in output order, a
-Chat finish reason (an `incomplete` response cut at `max_output_tokens` reads as
-`length`), and usage under Chat names so the ledger, cost and cached-token
-accounting read one shape. Reasoning items OpenRouter returns are dropped:
-the transcript has nowhere to replay them yet. `openRouterResponsesRequest` is
-the one builder; Bind archives what it returns for the request event and the
-client sends the same function's output, so the recorded body is the body sent.
+Completions and embeddings endpoints. Bind's transcript and storage keep the
+Chat message shape; only the OpenRouter client translates, out through
+`toResponsesInput` and back through `createResponsesStreamReducer`.
+`openRouterResponsesRequest` is the one builder: Bind builds the body once,
+archives it, and hands it to the client to send as-is.
 
 The checked-in Monad production bindings were verified against the live
 `monad-prod-resource` deployment details on 2026-08-30 for Grok and on
@@ -1108,9 +1096,9 @@ participants remain deferred product work.
 - **Owning a failure is not a reason to stop naming it.** The one 400 whose
   cause the endpoint states in a machine code — `context_length_exceeded` —
   is reported under that name with kind `context`, still Rally's request and
-  never the provider's. So is OpenRouter's 404 when its routing funnel names a
-  capability filter (`failed_routing_step` of the form `Filter by <capability>
-  Support`): `model_input_unsupported`, kind `context`, because the model
+  never the provider's. So is OpenRouter's 404 when its routing funnel names an
+  input filter (`failed_routing_step` of `Filter by Image Support`, `File` or
+  `Audio`): `model_input_unsupported`, kind `context`, because the model
   cannot read an input the request carries. The invariant above is about *who owns* a failure; this
   one is about *what it was*, and answering the first by discarding the second
   is how a run that crossed a known token limit reached a member as "Rally
@@ -1508,9 +1496,9 @@ The live sweep that verified this change also found a run with an image
 attached to DeepSeek V4 Pro failing as `harness_execution_failed` while
 OpenRouter's 404 named the cause (`failed_routing_step: "Filter by Image
 Support"`). It now fails as `model_input_unsupported`, read from that field and
-never from the message text; a routing step that is not a capability filter
-keeps the catch-all, because a provider allow-list or price ceiling is Rally's
-own configuration.
+never from the message text. Only input filters (image, file, audio) count; a
+tool-support, provider or price step keeps the catch-all, because those are
+Rally's own routing and the member has nothing to remove.
 
 **What a future change must respect:** the transcript stays Chat-shaped until
 reasoning replay gives it a reason not to. Any new streamed provider request

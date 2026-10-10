@@ -169,13 +169,8 @@ export const HarnessFailureCodeSchema = z.enum([
   // body the whole time. The name is the endpoint's own machine code so an
   // operator grepping what the provider said finds the run that got it.
   "context_length_exceeded",
-  // No endpoint for the model accepts something the request carries: an
-  // attached image, a file, tool use. OpenRouter's routing funnel filtered
-  // every endpoint out and named the step that did it
-  // (`metadata.failed_routing_step`, "Filter by Image Support"). Before this
-  // code a DeepSeek V4 Pro run with an image attached reached the member as
-  // `harness_execution_failed`, Rally's own defect, when the 404 said exactly
-  // which input the model cannot read.
+  // No endpoint for the model accepts an input the request carries (an image,
+  // a file, audio), as OpenRouter's `failed_routing_step` names it.
   "model_input_unsupported",
   "tool_surface_too_large",
   "ambiguous_external_write",
