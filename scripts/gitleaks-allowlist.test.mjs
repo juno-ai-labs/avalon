@@ -167,3 +167,23 @@ test("the invitation fixture exception admits exactly one dead value", () => {
   assert.doesNotMatch(fixture.slice(0, -1), allowlist);
   assert.doesNotMatch(fixture.slice(4), allowlist);
 });
+
+test("the PostHog exception admits exactly the public project token", () => {
+  const patterns = allowlistRegexes(config).filter((pattern) => pattern.includes("phc_"));
+  assert.equal(patterns.length, 1);
+  const allowlist = new RegExp(patterns[0], "u");
+
+  // What it is for: the project's `phc_` ingestion token, which PostHog's
+  // browser SDK carries in page source and which can only send events.
+  const reviewed = "phc_DdHrRpgL7QujHkP4dMRaWyiBJZ94pNxAVuAv4Eurk3FR";
+  assert.match(reviewed, allowlist);
+
+  // What it must never admit: another project's token, a personal API key
+  // (`phx_`, which reads and writes the whole organization), or the reviewed
+  // value embedded in or cut from a longer secret.
+  assert.doesNotMatch("phc_Qz4Wne9Lf2YsMk8Ux3Vc5Jt7Hd1Kb0Bg6Sv2Pl4Mi3Ab", allowlist);
+  assert.doesNotMatch(`phx_${reviewed.slice(4)}`, allowlist);
+  assert.doesNotMatch(`${reviewed}a`, allowlist);
+  assert.doesNotMatch(`a${reviewed}`, allowlist);
+  assert.doesNotMatch(reviewed.slice(0, -1), allowlist);
+});
